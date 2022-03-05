@@ -28,7 +28,7 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "pumkin",
+	Use:   "noir",
 	Short: "Discover all API and web page in the source code",
 	Long:  `Discover all API and web page in the source code`,
 }
@@ -45,7 +45,7 @@ func init() {
 	// Cobra supports persistent flags, which, if defined here,
 	// will be global for your application.
 
-	// rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.pumkin.yaml)")
+	// rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.noir.yaml)")
 
 	// Cobra also supports local flags, which will only run
 	// when this action is called directly.

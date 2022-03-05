@@ -1,4 +1,4 @@
-module github.com/hahwul/pumkin
+module github.com/hahwul/noir
 
 go 1.17
 

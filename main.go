@@ -21,7 +21,7 @@ THE SOFTWARE.
 */
 package main
 
-import "github.com/hahwul/pumkin/cmd"
+import "github.com/hahwul/noir/cmd"
 
 func main() {
 	cmd.Execute()

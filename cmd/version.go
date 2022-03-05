@@ -3,14 +3,15 @@ package cmd
 import (
 	"fmt"
 
+	noir "github.com/hahwul/noir/pkg/noir"
 	"github.com/spf13/cobra"
 )
 
 var versionCmd = &cobra.Command{
 	Use:   "version",
-	Short: "version of pumkin",
+	Short: "version of noir",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("version called")
+		fmt.Println(noir.VERSION)
 	},
 }
 
