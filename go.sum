@@ -194,6 +194,8 @@ github.com/googleapis/gax-go/v2 v2.1.1/go.mod h1:hddJymUZASv3XPyGkUpKj8pPO47Rmb0
 github.com/grpc-ecosystem/grpc-gateway v1.16.0/go.mod h1:BDjrQk3hbvj6Nolgz8mAMFbcEtjT1g+wF4CSlocrBnw=
 github.com/hahwul/volt v0.0.0-20220123142348-4d3cce3c6025 h1:zTRMUg6s+Mdr/df/OD4T8IaIvs6oyp2EzNkamef2PlA=
 github.com/hahwul/volt v0.0.0-20220123142348-4d3cce3c6025/go.mod h1:DW/WJZKzf7McvXzpC2qQtokoeaohnMwfdhVK1SF8hq0=
+github.com/hahwul/volt v1.0.0 h1:+QKYn8TVIqXY6/68xny1xCEI5X/4C9bxhNYwnsgKFBo=
+github.com/hahwul/volt v1.0.0/go.mod h1:DW/WJZKzf7McvXzpC2qQtokoeaohnMwfdhVK1SF8hq0=
 github.com/hashicorp/consul/api v1.11.0/go.mod h1:XjsvQN+RJGWI2TWy1/kqaE16HrR2J/FWgkYjdZQsX9M=
 github.com/hashicorp/consul/sdk v0.8.0/go.mod h1:GBvyrGALthsZObzUGsfgHZQDXjg4lOjagTIwIR1vPms=
 github.com/hashicorp/errwrap v1.0.0/go.mod h1:YH+1FKiLXxHSkmPseP+kNlulaMuP3n2brvKWEqk/Jc4=
