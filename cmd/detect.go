@@ -5,6 +5,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var output, format, baseHost, basePath string
+var ignorePublic, ignoreSwagger bool
+
 // detectCmd represents the detect command
 var detectCmd = &cobra.Command{
 	Use:   "detect <BASE-PATH>",
@@ -18,14 +21,11 @@ var detectCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(detectCmd)
+	detectCmd.PersistentFlags().BoolVar(&ignoreSwagger, "ignore-swagger", false, "ignore swagger doc.json")
+	detectCmd.PersistentFlags().BoolVar(&ignorePublic, "ignore-public", false, "ignore public/assets directory")
+	detectCmd.PersistentFlags().StringVarP(&output, "output", "o", "", "output file")
+	detectCmd.PersistentFlags().StringVarP(&format, "format", "f", "plain", "output format [plain, json, curl]")
+	detectCmd.PersistentFlags().StringVar(&baseHost, "base-host", "http://localhost:80", "base host")
+	detectCmd.PersistentFlags().StringVar(&basePath, "base-path", "/", "base path")
 
-	// Here you will define your flags and configuration settings.
-
-	// Cobra supports Persistent Flags which will work for this command
-	// and all subcommands, e.g.:
-	// detectCmd.PersistentFlags().String("foo", "", "A help for foo")
-
-	// Cobra supports local flags which will only run when this command
-	// is called directly, e.g.:
-	// detectCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 }
