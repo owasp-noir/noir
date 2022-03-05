@@ -1,8 +1,7 @@
 package cmd
 
 import (
-	"fmt"
-
+	volt "github.com/hahwul/volt/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -12,7 +11,8 @@ var detectCmd = &cobra.Command{
 	Short: "Detect API and page",
 	Long:  `Detect API and web page in the source code`,
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("detect called")
+		logger := volt.GetLogger(debug)
+		logger.Info("start detect mode")
 	},
 }
 
