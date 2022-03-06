@@ -13,4 +13,6 @@ func AutoDetect() {
 	initDjango()
 	initEcho()
 	initPhp()
+	initJsp()
+	initSpring()
 }
