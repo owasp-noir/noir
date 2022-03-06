@@ -12,4 +12,5 @@ func AutoDetect() {
 	initSinatra()
 	initDjango()
 	initEcho()
+	initPhp()
 }

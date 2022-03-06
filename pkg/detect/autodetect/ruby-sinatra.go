@@ -11,6 +11,11 @@ func initSinatra() {
 				Ext:   "rb",
 				Match: "require 'sinatra'",
 			},
+			{
+				File:  "",
+				Ext:   "rb",
+				Match: "require \"sinatra\"",
+			},
 		},
 	})
 }
