@@ -12,7 +12,7 @@ import (
 
 var output, format, baseHost, basePath string
 var ignorePublic, ignoreSwagger bool
-var lang []string
+var lang, publicPath []string
 
 // detectCmd represents the detect command
 var detectCmd = &cobra.Command{
@@ -63,5 +63,6 @@ func init() {
 	detectCmd.PersistentFlags().StringVarP(&format, "format", "f", "plain", "output format [plain, json, curl]")
 	detectCmd.PersistentFlags().StringVar(&baseHost, "base-host", "http://localhost:80", "base host")
 	detectCmd.PersistentFlags().StringVar(&basePath, "base-path", "/", "base path")
+	detectCmd.PersistentFlags().StringSliceVar(&publicPath, "public-path", []string{}, "set public path")
 	detectCmd.PersistentFlags().StringSliceVarP(&lang, "lang", "l", []string{}, "Use fixed language/framework without auto-detection.")
 }
