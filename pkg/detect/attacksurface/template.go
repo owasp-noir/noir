@@ -1,19 +1,13 @@
 package attacksurface
 
 import (
-	"path/filepath"
 	"sync"
 
 	"github.com/hahwul/noir/pkg/models"
 	"github.com/hahwul/noir/pkg/noir"
 )
 
-const (
-	publicDir = "public"
-	route     = "config/route.rb"
-)
-
-func ScanRails(files []string, basePath string) []models.AttackSurfaceEndpoint {
+func ScanTemplate(files []string, basePath string) []models.AttackSurfaceEndpoint {
 	var result []models.AttackSurfaceEndpoint
 	var wg sync.WaitGroup
 	jobs := make(chan string)
@@ -21,12 +15,8 @@ func ScanRails(files []string, basePath string) []models.AttackSurfaceEndpoint {
 		wg.Add(1)
 		go func() {
 			for file := range jobs {
-				if filepath.Dir(file) == publicDir {
-					//TODO Parse public
-				}
-				if file == route {
-					//TODO Parse route.rb
-				}
+				_ = file
+				// Logic
 			}
 			wg.Done()
 		}()

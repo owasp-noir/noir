@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hahwul/noir/pkg/detect/attacksurface"
 	"github.com/hahwul/noir/pkg/detect/autodetect"
 	file "github.com/hahwul/volt/file"
 	vLog "github.com/hahwul/volt/logger"
@@ -52,6 +53,7 @@ var detectCmd = &cobra.Command{
 		}
 		sLog := dLog.WithField("data2", strings.Join(lang, " "))
 		sLog.Info("start scan attack-surface")
+		attacksurface.ScanAttackSurface(baseHost, basePath, files, lang)
 	},
 }
 
