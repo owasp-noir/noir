@@ -46,7 +46,7 @@ var detectCmd = &cobra.Command{
 			aLog.Debug("run auto-detection")
 			detected := autodetect.AutoDetect(files)
 			for _, lv := range detected {
-				lang = append(lang, lv.Name)
+				lang = append(lang, lv)
 			}
 			aLog.Info(lang)
 		}

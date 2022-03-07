@@ -14,10 +14,10 @@ var (
 	Patterns = []models.AutoDetect{}
 )
 
-func AutoDetect(files []string) []models.AutoDetectResult {
-	var detected []models.AutoDetectResult
-	var result map[string]string
-	result = map[string]string{}
+func AutoDetect(files []string) []string {
+	var detected []string
+	var result map[string]bool
+	result = map[string]bool{}
 	initRails()
 	initSinatra()
 	initDjango()
@@ -47,21 +47,16 @@ func AutoDetect(files []string) []models.AutoDetectResult {
 	close(jobs)
 	wg.Wait()
 	for key, _ := range result {
-		obj := models.AutoDetectResult{
-			Name:     key,
-			BasePath: "",
-		}
-		detected = append(detected, obj)
+		detected = append(detected, key)
 	}
 	return detected
 }
 
-func isDetect(filename string) map[string]string {
-	var result map[string]string
-	result = map[string]string{}
+func isDetect(filename string) map[string]bool {
+	var result map[string]bool
+	result = map[string]bool{}
 	for _, lang := range Patterns {
 		for _, pattern := range lang.Patterns {
-			basepath := filepath.Dir(filename)
 			if pattern.Ext != "" {
 				ext := filepath.Ext(filename)
 				if pattern.Ext == ext {
@@ -69,29 +64,29 @@ func isDetect(filename string) map[string]string {
 						if filepath.Base(filename) == pattern.File {
 							if pattern.Match != "" {
 								if matchFile(filename, pattern.Match) {
-									result[lang.Name] = basepath
+									result[lang.Name] = true
 								}
 							} else {
-								result[lang.Name] = basepath
+								result[lang.Name] = true
 							}
 						}
 					} else {
 						if pattern.Match != "" {
 							if matchFile(filename, pattern.Match) {
-								result[lang.Name] = ""
+								result[lang.Name] = true
 							}
 						} else {
-							result[lang.Name] = ""
+							result[lang.Name] = true
 						}
 					}
 				}
 			} else {
 				if pattern.Match != "" {
 					if matchFile(filename, pattern.Match) {
-						result[lang.Name] = ""
+						result[lang.Name] = true
 					}
 				} else {
-					result[lang.Name] = ""
+					result[lang.Name] = true
 				}
 			}
 		}

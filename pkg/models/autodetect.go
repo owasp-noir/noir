@@ -10,8 +10,3 @@ type AutoDetectPattern struct {
 	Ext   string
 	Match string
 }
-
-type AutoDetectResult struct {
-	Name     string
-	BasePath string
-}
