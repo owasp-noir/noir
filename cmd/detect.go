@@ -63,7 +63,7 @@ func init() {
 	detectCmd.PersistentFlags().BoolVar(&ignorePublic, "ignore-public", false, "ignore public/assets directory")
 	detectCmd.PersistentFlags().StringVarP(&output, "output", "o", "", "output file")
 	detectCmd.PersistentFlags().StringVarP(&format, "format", "f", "plain", "output format [plain, json, curl]")
-	detectCmd.PersistentFlags().StringVar(&baseHost, "base-host", "http://localhost:80", "base host")
+	detectCmd.PersistentFlags().StringVar(&baseHost, "base-host", "http://localhost/", "base host")
 	detectCmd.PersistentFlags().StringSliceVar(&publicPath, "public-path", []string{}, "set public path")
 	detectCmd.PersistentFlags().StringSliceVarP(&lang, "lang", "l", []string{}, "Use fixed language/framework without auto-detection.")
 }
