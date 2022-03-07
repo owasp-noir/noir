@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -13,7 +14,7 @@ import (
 
 var output, format, baseHost, basePath string
 var ignorePublic, ignoreSwagger bool
-var lang, publicPath []string
+var lang, publicPath, ignoreFile, ignoreExt []string
 
 // detectCmd represents the detect command
 var detectCmd = &cobra.Command{
@@ -21,8 +22,11 @@ var detectCmd = &cobra.Command{
 	Short: "Detect API and page",
 	Long:  `Detect API and web page in the source code`,
 	Run: func(cmd *cobra.Command, args []string) {
-		basePath = args[0]
 		logger := vLog.GetLogger(debug)
+		if len(args) < 1 {
+			logger.Fatal("The base-path is essential. Please input the value of the first factor.")
+		}
+		basePath = args[0]
 		logger.Info("start detect mode")
 		aLog := logger.WithField("data1", "arguments")
 		aLog.Info("baseHost: " + baseHost)
@@ -37,8 +41,28 @@ var detectCmd = &cobra.Command{
 		}
 		eLog := logger.WithField("data1", "enum")
 		eLog.Info("found " + strconv.Itoa(len(files)) + " files in base directory")
-		for _, file := range files {
+		iLog := eLog.WithField("data2", "ignore")
+		if len(ignoreFile) > 0 {
+			iLog.Info("ignore predefined files")
+		}
+		if len(ignoreExt) > 0 {
+			iLog.Info("ignore predefined ext of files")
+		}
+		for index, file := range files {
 			eLog.Debug(file)
+			_ = index
+			for _, ifile := range ignoreFile {
+				if filepath.Base(file) == ifile {
+					// RemoveIndex()
+					// 미리 만들고, 루프 완료 후 큰 값부터 빼면 오류 없을듯
+				}
+			}
+			for _, iext := range ignoreExt {
+				if filepath.Ext(file) == iext {
+					// RemoveIndex()
+					// 미리 만들고, 루프 완료 후 큰 값부터 빼면 오류 없을듯
+				}
+			}
 		}
 		dLog := logger.WithField("data1", "detector")
 		if len(lang) == 0 {
@@ -65,5 +89,7 @@ func init() {
 	detectCmd.PersistentFlags().StringVarP(&format, "format", "f", "plain", "output format [plain, json, curl]")
 	detectCmd.PersistentFlags().StringVar(&baseHost, "base-host", "http://localhost/", "base host")
 	detectCmd.PersistentFlags().StringSliceVar(&publicPath, "public-path", []string{}, "set public path")
-	detectCmd.PersistentFlags().StringSliceVarP(&lang, "lang", "l", []string{}, "Use fixed language/framework without auto-detection.")
+	detectCmd.PersistentFlags().StringSliceVarP(&lang, "lang", "l", []string{}, "Use fixed language/framework without auto-detection")
+	detectCmd.PersistentFlags().StringSliceVar(&ignoreFile, "ignore-file", []string{}, "ignore files")
+	detectCmd.PersistentFlags().StringSliceVar(&ignoreExt, "ignore-ext", []string{}, "ignore extensions of file")
 }
