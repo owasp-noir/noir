@@ -20,11 +20,11 @@ var detectCmd = &cobra.Command{
 	Short: "Detect API and page",
 	Long:  `Detect API and web page in the source code`,
 	Run: func(cmd *cobra.Command, args []string) {
+		basePath = args[0]
 		logger := vLog.GetLogger(debug)
 		logger.Info("start detect mode")
 		aLog := logger.WithField("data1", "arguments")
 		aLog.Info("baseHost: " + baseHost)
-		aLog.Info("basePath: " + basePath)
 		if len(lang) > 0 {
 			aLog.Info("lang: " + strings.Join(lang, " "))
 		}
@@ -62,7 +62,6 @@ func init() {
 	detectCmd.PersistentFlags().StringVarP(&output, "output", "o", "", "output file")
 	detectCmd.PersistentFlags().StringVarP(&format, "format", "f", "plain", "output format [plain, json, curl]")
 	detectCmd.PersistentFlags().StringVar(&baseHost, "base-host", "http://localhost:80", "base host")
-	detectCmd.PersistentFlags().StringVar(&basePath, "base-path", "/", "base path")
 	detectCmd.PersistentFlags().StringSliceVar(&publicPath, "public-path", []string{}, "set public path")
 	detectCmd.PersistentFlags().StringSliceVarP(&lang, "lang", "l", []string{}, "Use fixed language/framework without auto-detection.")
 }
