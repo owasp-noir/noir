@@ -8,12 +8,12 @@ func initSinatra() {
 		Patterns: []models.AutoDetectPattern{
 			{
 				File:  "",
-				Ext:   "rb",
+				Ext:   ".rb",
 				Match: "require 'sinatra'",
 			},
 			{
 				File:  "",
-				Ext:   "rb",
+				Ext:   ".rb",
 				Match: "require \"sinatra\"",
 			},
 		},

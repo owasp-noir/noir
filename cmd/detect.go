@@ -2,14 +2,17 @@ package cmd
 
 import (
 	"strconv"
+	"strings"
 
+	"github.com/hahwul/noir/pkg/detect/autodetect"
 	file "github.com/hahwul/volt/file"
 	vLog "github.com/hahwul/volt/logger"
 	"github.com/spf13/cobra"
 )
 
-var output, format, baseHost, basePath, lang string
+var output, format, baseHost, basePath string
 var ignorePublic, ignoreSwagger bool
+var lang []string
 
 // detectCmd represents the detect command
 var detectCmd = &cobra.Command{
@@ -22,8 +25,8 @@ var detectCmd = &cobra.Command{
 		aLog := logger.WithField("data1", "arguments")
 		aLog.Info("baseHost: " + baseHost)
 		aLog.Info("basePath: " + basePath)
-		if lang != "" {
-			aLog.Info("lang: " + lang)
+		if len(lang) > 0 {
+			aLog.Info("lang: " + strings.Join(lang, " "))
 		}
 		aLog.Debug("arguments - output: " + output)
 		aLog.Debug("arguments - format: " + format)
@@ -37,14 +40,18 @@ var detectCmd = &cobra.Command{
 			eLog.Debug(file)
 		}
 		dLog := logger.WithField("data1", "detector")
-		if lang == "" {
+		if len(lang) == 0 {
 			dLog.Info("run auto-detection.")
 			aLog := dLog.WithField("data2", "auto-detect")
 			aLog.Debug("run auto-detection")
-		} else {
-			aLog := dLog.WithField("data2", lang)
-			aLog.Info("start analyzing attack-surface")
+			detected := autodetect.AutoDetect(files)
+			aLog.Info(detected)
+			for _, lv := range detected {
+				lang = append(lang, lv)
+			}
 		}
+		sLog := dLog.WithField("data2", strings.Join(lang, " "))
+		sLog.Info("start scan attack-surface")
 	},
 }
 
@@ -56,5 +63,5 @@ func init() {
 	detectCmd.PersistentFlags().StringVarP(&format, "format", "f", "plain", "output format [plain, json, curl]")
 	detectCmd.PersistentFlags().StringVar(&baseHost, "base-host", "http://localhost:80", "base host")
 	detectCmd.PersistentFlags().StringVar(&basePath, "base-path", "/", "base path")
-	detectCmd.PersistentFlags().StringVarP(&lang, "lang", "l", "", "Use fixed language/framework without auto-detection.")
+	detectCmd.PersistentFlags().StringSliceVarP(&lang, "lang", "l", []string{}, "Use fixed language/framework without auto-detection.")
 }

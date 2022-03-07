@@ -8,7 +8,7 @@ func initEcho() {
 		Patterns: []models.AutoDetectPattern{
 			{
 				File:  "go.mod",
-				Ext:   "mod",
+				Ext:   ".mod",
 				Match: "github.com/labstack/echo",
 			},
 		},

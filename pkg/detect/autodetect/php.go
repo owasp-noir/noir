@@ -8,7 +8,7 @@ func initPhp() {
 		Patterns: []models.AutoDetectPattern{
 			{
 				File:  "",
-				Ext:   "php",
+				Ext:   ".php",
 				Match: "",
 			},
 		},

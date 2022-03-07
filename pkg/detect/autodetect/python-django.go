@@ -8,7 +8,7 @@ func initDjango() {
 		Patterns: []models.AutoDetectPattern{
 			{
 				File:  "",
-				Ext:   "py",
+				Ext:   ".py",
 				Match: "from django.",
 			},
 		},

@@ -8,7 +8,7 @@ func initRails() {
 		Patterns: []models.AutoDetectPattern{
 			{
 				File:  "route.rb",
-				Ext:   "rb",
+				Ext:   ".rb",
 				Match: "",
 			},
 		},

@@ -8,7 +8,7 @@ func initJsp() {
 		Patterns: []models.AutoDetectPattern{
 			{
 				File:  "",
-				Ext:   "jsp",
+				Ext:   ".jsp",
 				Match: "",
 			},
 		},

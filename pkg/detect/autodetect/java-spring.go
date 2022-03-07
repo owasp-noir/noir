@@ -8,7 +8,7 @@ func initSpring() {
 		Patterns: []models.AutoDetectPattern{
 			{
 				File:  "pom.xml",
-				Ext:   "xml",
+				Ext:   ".xml",
 				Match: "org.springframework",
 			},
 		},
