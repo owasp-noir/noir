@@ -14,10 +14,10 @@ var (
 	Patterns = []models.AutoDetect{}
 )
 
-func AutoDetect(files []string) []string {
-	var detected []string
-	var result map[string]bool
-	result = map[string]bool{}
+func AutoDetect(files []string) []models.AutoDetectResult {
+	var detected []models.AutoDetectResult
+	var result map[string]string
+	result = map[string]string{}
 	initRails()
 	initSinatra()
 	initDjango()
@@ -33,8 +33,8 @@ func AutoDetect(files []string) []string {
 		go func() {
 			for file := range jobs {
 				rtn := isDetect(file)
-				for key, _ := range rtn {
-					result[key] = true
+				for key, value := range rtn {
+					result[key] = value
 				}
 			}
 			wg.Done()
@@ -47,16 +47,21 @@ func AutoDetect(files []string) []string {
 	close(jobs)
 	wg.Wait()
 	for key, _ := range result {
-		detected = append(detected, key)
+		obj := models.AutoDetectResult{
+			Name:     key,
+			BasePath: "",
+		}
+		detected = append(detected, obj)
 	}
 	return detected
 }
 
-func isDetect(filename string) map[string]bool {
-	var result map[string]bool
-	result = map[string]bool{}
+func isDetect(filename string) map[string]string {
+	var result map[string]string
+	result = map[string]string{}
 	for _, lang := range Patterns {
 		for _, pattern := range lang.Patterns {
+			basepath := filepath.Dir(filename)
 			if pattern.Ext != "" {
 				ext := filepath.Ext(filename)
 				if pattern.Ext == ext {
@@ -64,29 +69,29 @@ func isDetect(filename string) map[string]bool {
 						if filepath.Base(filename) == pattern.File {
 							if pattern.Match != "" {
 								if matchFile(filename, pattern.Match) {
-									result[lang.Name] = true
+									result[lang.Name] = basepath
 								}
 							} else {
-								result[lang.Name] = true
+								result[lang.Name] = basepath
 							}
 						}
 					} else {
 						if pattern.Match != "" {
 							if matchFile(filename, pattern.Match) {
-								result[lang.Name] = true
+								result[lang.Name] = ""
 							}
 						} else {
-							result[lang.Name] = true
+							result[lang.Name] = ""
 						}
 					}
 				}
 			} else {
 				if pattern.Match != "" {
 					if matchFile(filename, pattern.Match) {
-						result[lang.Name] = true
+						result[lang.Name] = ""
 					}
 				} else {
-					result[lang.Name] = true
+					result[lang.Name] = ""
 				}
 			}
 		}

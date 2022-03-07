@@ -45,10 +45,10 @@ var detectCmd = &cobra.Command{
 			aLog := dLog.WithField("data2", "auto-detect")
 			aLog.Debug("run auto-detection")
 			detected := autodetect.AutoDetect(files)
-			aLog.Info(detected)
 			for _, lv := range detected {
-				lang = append(lang, lv)
+				lang = append(lang, lv.Name)
 			}
+			aLog.Info(lang)
 		}
 		sLog := dLog.WithField("data2", strings.Join(lang, " "))
 		sLog.Info("start scan attack-surface")
