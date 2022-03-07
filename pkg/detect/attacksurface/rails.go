@@ -10,7 +10,7 @@ import (
 
 const (
 	publicDir = "public"
-	route     = "config/route.rb"
+	routes    = "config/routes.rb"
 )
 
 func ScanRails(files []string, basePath string) []models.AttackSurfaceEndpoint {
@@ -24,8 +24,8 @@ func ScanRails(files []string, basePath string) []models.AttackSurfaceEndpoint {
 				if filepath.Dir(file) == publicDir {
 					//TODO Parse public
 				}
-				if file == route {
-					//TODO Parse route.rb
+				if file == routes {
+					//TODO Parse routes.rb
 				}
 			}
 			wg.Done()
