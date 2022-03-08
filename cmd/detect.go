@@ -7,6 +7,7 @@ import (
 
 	"github.com/hahwul/noir/pkg/detect/attacksurface"
 	"github.com/hahwul/noir/pkg/detect/autodetect"
+	"github.com/hahwul/noir/pkg/models"
 	file "github.com/hahwul/volt/file"
 	vLog "github.com/hahwul/volt/logger"
 	"github.com/spf13/cobra"
@@ -27,6 +28,12 @@ var detectCmd = &cobra.Command{
 			logger.Fatal("The base-path is essential. Please input the value of the first factor.")
 		}
 		basePath = args[0]
+		options := models.Options{
+			BasePath: basePath,
+			BaseHost: baseHost,
+			Debug:    debug,
+		}
+
 		logger.Info("start detect mode")
 		aLog := logger.WithField("data1", "arguments")
 		aLog.Info("baseHost: " + baseHost)
@@ -77,7 +84,7 @@ var detectCmd = &cobra.Command{
 		}
 		sLog := dLog.WithField("data2", strings.Join(lang, " "))
 		sLog.Info("start scan attack-surface")
-		attacksurface.ScanAttackSurface(baseHost, basePath, files, lang)
+		attacksurface.ScanAttackSurface(files, lang, options)
 	},
 }
 

@@ -13,18 +13,18 @@ const (
 	routes    = "config/routes.rb"
 )
 
-func ScanRails(files []string, basePath string) []models.AttackSurfaceEndpoint {
+func ScanRails(files []string, options models.Options) []models.AttackSurfaceEndpoint {
 	var result []models.AttackSurfaceEndpoint
 	var wg sync.WaitGroup
 	jobs := make(chan string)
 	for i := 0; i < noir.FileConcurrency; i++ {
 		wg.Add(1)
 		go func() {
-			for file := range jobs {
-				if filepath.Dir(file) == publicDir {
+			for filename := range jobs {
+				if filepath.Dir(filename) == publicDir {
 					//TODO Parse public
 				}
-				if file == routes {
+				if filename == routes {
 					//TODO Parse routes.rb
 				}
 			}

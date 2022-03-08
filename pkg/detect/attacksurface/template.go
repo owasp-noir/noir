@@ -7,16 +7,30 @@ import (
 	"github.com/hahwul/noir/pkg/noir"
 )
 
-func ScanTemplate(files []string, basePath string) []models.AttackSurfaceEndpoint {
+func ScanTemplate(files []string, options models.Options) []models.AttackSurfaceEndpoint {
 	var result []models.AttackSurfaceEndpoint
 	var wg sync.WaitGroup
+
+	resultChan := make(chan models.AttackSurfaceEndpoint)
 	jobs := make(chan string)
+
+	go func(ch chan models.AttackSurfaceEndpoint) {
+		for {
+			result = append(result, <-ch)
+		}
+	}(resultChan)
+
 	for i := 0; i < noir.FileConcurrency; i++ {
 		wg.Add(1)
 		go func() {
-			for file := range jobs {
-				_ = file
-				// Logic
+			for filename := range jobs {
+				url := MakeURL(options.BaseHost, GetRealPath(options.BasePath, filename))
+				ep := models.AttackSurfaceEndpoint{
+					URL:         url,
+					Method:      "GET",
+					ContentType: "form",
+				}
+				resultChan <- ep
 			}
 			wg.Done()
 		}()
@@ -27,6 +41,7 @@ func ScanTemplate(files []string, basePath string) []models.AttackSurfaceEndpoin
 	}
 	close(jobs)
 	wg.Wait()
+	close(resultChan)
 
 	return result
 }
