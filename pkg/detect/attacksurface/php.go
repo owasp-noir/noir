@@ -1,6 +1,9 @@
 package attacksurface
 
 import (
+	"io/ioutil"
+	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/hahwul/noir/pkg/models"
@@ -25,10 +28,22 @@ func ScanPhp(files []string, options models.Options) []models.AttackSurfaceEndpo
 		go func() {
 			for filename := range jobs {
 				url := MakeURL(options.BaseHost, GetRealPath(options.BasePath, filename))
+				ext := filepath.Ext(filename)
+				contentType := ""
+				method := "GET"
+				if strings.Contains(ext, ".php") {
+					dat, err := ioutil.ReadFile(filename)
+					if err == nil {
+						// \$_GET\[".*"]
+						// \$_POST\[".*"]
+						_ = dat
+					}
+				}
+
 				ep := models.AttackSurfaceEndpoint{
 					URL:         url,
-					Method:      "GET",
-					ContentType: "form",
+					Method:      method,
+					ContentType: contentType,
 				}
 				resultChan <- ep
 			}
