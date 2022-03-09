@@ -34,8 +34,7 @@ func ScanPhp(files []string, options models.Options) []models.AttackSurfaceEndpo
 				if strings.Contains(ext, ".php") {
 					dat, err := ioutil.ReadFile(filename)
 					if err == nil {
-						// \$_GET\[".*"]
-						// \$_POST\[".*"]
+						// /\$GET\[([\s\S]*)]/g
 						_ = dat
 					}
 				}
