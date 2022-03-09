@@ -99,6 +99,37 @@ var detectCmd = &cobra.Command{
 				fileData, _ := json.MarshalIndent(ase, "", " ")
 				_ = ioutil.WriteFile(output, fileData, 0644)
 				break
+			case "curl":
+				buf := ""
+				for _, endpoint := range ase {
+					param := ""
+					body := ""
+					mime := ""
+					if len(endpoint.Params) > 0 {
+						param = "?"
+						for _, pv := range endpoint.Params {
+							param = param + pv.Name + "=" + pv.Value + "&"
+						}
+					}
+					if endpoint.Body != "" {
+						body = " -d " + endpoint.Body
+					}
+					if endpoint.ContentType != "" {
+						mime = " -H 'Content-Type: "
+						switch endpoint.ContentType {
+						case "json":
+							mime = mime + "application/json"
+							break
+						case "form":
+							mime = mime + "application/x-www-form-urlencoded"
+							break
+						}
+						mime = mime + "' "
+					}
+					buf = buf + "curl -i -k " + endpoint.URL + param + body + mime + "\n"
+				}
+				_ = ioutil.WriteFile(output, []byte(buf), 0644)
+				break
 			case "plain":
 				fileData, _ := json.MarshalIndent(ase, "", " ")
 				_ = ioutil.WriteFile(output, fileData, 0644)
