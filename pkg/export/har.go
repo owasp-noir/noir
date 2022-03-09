@@ -26,8 +26,9 @@ func ASEtoHAR(ase []models.AttackSurfaceEndpoint) volt.HARObject {
 
 		entry := volt.Entry{
 			Request: volt.Request{
-				Method: endpoint.Method,
-				URL:    endpoint.URL,
+				Method:      endpoint.Method,
+				URL:         endpoint.URL,
+				QueryString: endpoint.Params,
 				PostData: volt.PostData{
 					Text:     endpoint.Body,
 					MimeType: mime,
