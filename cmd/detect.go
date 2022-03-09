@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"encoding/json"
+	"io/ioutil"
 	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/hahwul/noir/pkg/detect/attacksurface"
 	"github.com/hahwul/noir/pkg/detect/autodetect"
+	export "github.com/hahwul/noir/pkg/export"
 	"github.com/hahwul/noir/pkg/models"
 	file "github.com/hahwul/volt/file"
 	vLog "github.com/hahwul/volt/logger"
@@ -84,7 +87,24 @@ var detectCmd = &cobra.Command{
 		}
 		sLog := dLog.WithField("data2", strings.Join(lang, " "))
 		sLog.Info("start scan attack-surface")
-		attacksurface.ScanAttackSurface(files, lang, options)
+		ase := attacksurface.ScanAttackSurface(files, lang, options)
+		if output != "" {
+			switch format {
+			case "har":
+				harData := export.ASEtoHAR(ase)
+				fileData, _ := json.MarshalIndent(harData, "", " ")
+				_ = ioutil.WriteFile(output, fileData, 0644)
+				break
+			case "json":
+				fileData, _ := json.MarshalIndent(ase, "", " ")
+				_ = ioutil.WriteFile(output, fileData, 0644)
+				break
+			case "plain":
+				fileData, _ := json.MarshalIndent(ase, "", " ")
+				_ = ioutil.WriteFile(output, fileData, 0644)
+				break
+			}
+		}
 	},
 }
 
@@ -93,7 +113,7 @@ func init() {
 	detectCmd.PersistentFlags().BoolVar(&ignoreSwagger, "ignore-swagger", false, "ignore swagger doc.json")
 	detectCmd.PersistentFlags().BoolVar(&ignorePublic, "ignore-public", false, "ignore public/assets directory")
 	detectCmd.PersistentFlags().StringVarP(&output, "output", "o", "", "output file")
-	detectCmd.PersistentFlags().StringVarP(&format, "format", "f", "plain", "output format [plain, json, curl]")
+	detectCmd.PersistentFlags().StringVarP(&format, "output-format", "f", "plain", "output format [plain, json, har]")
 	detectCmd.PersistentFlags().StringVar(&baseHost, "base-host", "http://localhost/", "base host")
 	detectCmd.PersistentFlags().StringSliceVar(&publicPath, "public-path", []string{}, "set public path")
 	detectCmd.PersistentFlags().StringSliceVarP(&lang, "lang", "l", []string{}, "Use fixed language/framework without auto-detection")

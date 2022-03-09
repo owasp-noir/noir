@@ -3,7 +3,7 @@ module github.com/hahwul/noir
 go 1.17
 
 require (
-	github.com/hahwul/volt v1.0.2
+	github.com/hahwul/volt v1.0.3
 	github.com/spf13/cobra v1.3.0
 )
 
