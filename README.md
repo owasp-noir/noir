@@ -25,3 +25,4 @@ Discover all API and web page in the source code
 - Plain
 - JSON
 - HAR
+- CURL
