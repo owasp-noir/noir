@@ -32,6 +32,10 @@ func ScanPhp(files []string, options models.Options) []models.AttackSurfaceEndpo
 			Pattern: utils.GetRegex("\\$_POST\\[([\\s\\S]*)]"),
 		},
 		{
+			Type:    "POST",
+			Pattern: utils.GetRegex("post_var\\(([^)]+)"),
+		},
+		{
 			Type:    "PUT",
 			Pattern: utils.GetRegex("\\$_PUT\\[([\\s\\S]*)]"),
 		},
@@ -78,8 +82,10 @@ func ScanPhp(files []string, options models.Options) []models.AttackSurfaceEndpo
 								lst = strings.ReplaceAll(lst, "\"", "")
 								lst = strings.ReplaceAll(lst, "'", "")
 								lst = strings.ReplaceAll(lst, "]", "")
+								lst = strings.ReplaceAll(lst, ")", "")
 								lst = strings.ReplaceAll(lst, "$_GET[", "")
 								lst = strings.ReplaceAll(lst, "$_POST[", "")
+								lst = strings.ReplaceAll(lst, "post_var(", "")
 								lst = strings.ReplaceAll(lst, "$_PUT[", "")
 								lst = strings.ReplaceAll(lst, "$_DELETE[", "")
 								lst = strings.ReplaceAll(lst, "$_REQUEST[", "")
