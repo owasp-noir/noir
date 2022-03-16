@@ -1,18 +1,49 @@
 package attacksurface
 
 import (
-	"io/ioutil"
+	"bufio"
+	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 
 	"github.com/hahwul/noir/pkg/models"
 	"github.com/hahwul/noir/pkg/noir"
+	"github.com/hahwul/noir/pkg/utils"
+	volt "github.com/hahwul/volt/format/har"
 )
+
+type DetectPattern struct {
+	Type    string
+	Pattern *regexp.Regexp
+}
 
 func ScanPhp(files []string, options models.Options) []models.AttackSurfaceEndpoint {
 	var result []models.AttackSurfaceEndpoint
 	var wg sync.WaitGroup
+	patterns := []DetectPattern{
+		{
+			Type:    "GET",
+			Pattern: utils.GetRegex("\\$GET\\[([\\s\\S]*)]"),
+		},
+		{
+			Type:    "POST",
+			Pattern: utils.GetRegex("\\$POST\\[([\\s\\S]*)]"),
+		},
+		{
+			Type:    "PUT",
+			Pattern: utils.GetRegex("\\$PUT\\[([\\s\\S]*)]"),
+		},
+		{
+			Type:    "DELETE",
+			Pattern: utils.GetRegex("\\$DELETE\\[([\\s\\S]*)]"),
+		},
+		{
+			Type:    "REQUEST",
+			Pattern: utils.GetRegex("\\$REQUEST\\[([\\s\\S]*)]"),
+		},
+	}
 
 	resultChan := make(chan models.AttackSurfaceEndpoint)
 	jobs := make(chan string)
@@ -30,21 +61,42 @@ func ScanPhp(files []string, options models.Options) []models.AttackSurfaceEndpo
 				url := MakeURL(options.BaseHost, GetRealPath(options.BasePath, filename))
 				ext := filepath.Ext(filename)
 				contentType := ""
-				method := "GET"
 				if strings.Contains(ext, ".php") {
-					dat, err := ioutil.ReadFile(filename)
-					if err == nil {
-						// /\$GET\[([\s\S]*)]/g
-						_ = dat
+
+					f, err := os.OpenFile(filename, os.O_RDONLY, os.ModePerm)
+					if err != nil {
+
+					}
+					defer f.Close()
+
+					sc := bufio.NewScanner(f)
+					for sc.Scan() {
+						line := sc.Text()
+						for _, pattern := range patterns {
+							lst := pattern.Pattern.FindString(line)
+							if lst != "" {
+								obj := models.AttackSurfaceEndpoint{
+									Type:   "",
+									URL:    url,
+									Method: pattern.Type,
+									Params: []volt.QueryString{
+										{
+											Name:  lst,
+											Value: "",
+										},
+									},
+									ContentType: contentType,
+									Body:        "",
+								}
+								result = append(result, obj)
+								//resultChan <- obj
+							}
+						}
+					}
+					if err := sc.Err(); err != nil {
+
 					}
 				}
-
-				ep := models.AttackSurfaceEndpoint{
-					URL:         url,
-					Method:      method,
-					ContentType: contentType,
-				}
-				resultChan <- ep
 			}
 			wg.Done()
 		}()
