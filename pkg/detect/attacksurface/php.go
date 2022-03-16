@@ -149,7 +149,6 @@ func ScanPhp(files []string, options models.Options) []models.AttackSurfaceEndpo
 			}
 		}()
 	}
-
 	for _, file := range files {
 		jobs <- file
 	}
