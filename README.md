@@ -15,10 +15,10 @@ Discover all API and web page in the source code
 |--------|---------|-------------|-----|-------|--------|
 | Go     | Echo    |      ✅      |  X  | X     | X      |
 | Python | Django  |      ✅      |  X  | X     | X      |
-| Ruby   | Rails   |      ✅      |  X  | X     | X      |
+| Ruby   | Rails   |      ✅      |  🟠  | X     | X      |
 | Ruby   | Sinatra |      ✅      |  X  | X     | X      |
 | Php    |         |      ✅      |  ✅  | ✅     | X      |
-| Java   | Spring  |      ✅      |  X  | X     | X      |
+| Java   | Spring  |      ✅      |  🟠  | X     | X      |
 | Java   | Jsp     |      ✅      |  X  | X     | X      |
 
 ### Output Format

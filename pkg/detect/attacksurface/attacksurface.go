@@ -11,10 +11,12 @@ func ScanAttackSurface(files, langs []string, options models.Options) []models.A
 
 	for _, lang := range langs {
 		switch lang {
-		case "rails":
+		case "ruby-rails":
 			result = append(result, ScanRails(files, options)...)
 		case "php":
 			result = append(result, ScanPhp(files, options)...)
+		case "spring":
+			result = append(result, ScanSpring(files, options)...)
 		}
 
 	}

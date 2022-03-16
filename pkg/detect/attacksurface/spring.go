@@ -13,33 +13,32 @@ import (
 	volt "github.com/hahwul/volt/format/har"
 )
 
-func ScanPhp(files []string, options models.Options) []models.AttackSurfaceEndpoint {
+func ScanSpring(files []string, options models.Options) []models.AttackSurfaceEndpoint {
+	const (
+		publicDir = "src/main/resources/static"
+	)
 	var result []models.AttackSurfaceEndpoint
 	var wg sync.WaitGroup
 	patterns := []DetectPattern{
 		{
 			Type:    "GET",
-			Pattern: utils.GetRegex("\\$_GET\\[([\\S]*)]"),
+			Pattern: utils.GetRegex("@GetMapping([\\S]*)"),
 		},
 		{
 			Type:    "POST",
-			Pattern: utils.GetRegex("\\$_POST\\[([\\S]*)]"),
-		},
-		{
-			Type:    "POST",
-			Pattern: utils.GetRegex("post_var\\(([^)]+)"),
+			Pattern: utils.GetRegex("@PostMapping([\\S]*)"),
 		},
 		{
 			Type:    "PUT",
-			Pattern: utils.GetRegex("\\$_PUT\\[([\\S]*)]"),
+			Pattern: utils.GetRegex("@PutMapping([\\S]*)"),
 		},
 		{
 			Type:    "DELETE",
-			Pattern: utils.GetRegex("\\$_DELETE\\[([\\S]*)]"),
+			Pattern: utils.GetRegex("@DeleteMapping([\\S]*)"),
 		},
 		{
 			Type:    "REQUEST",
-			Pattern: utils.GetRegex("\\$_REQUEST\\[([\\S]*)]"),
+			Pattern: utils.GetRegex("@RequestMapping([\\S]*)"),
 		},
 	}
 
@@ -55,13 +54,23 @@ func ScanPhp(files []string, options models.Options) []models.AttackSurfaceEndpo
 	for i := 0; i < noir.FileConcurrency; i++ {
 		wg.Add(1)
 		go func() {
-			defer wg.Done()
 			for filename := range jobs {
 				var fileResult []models.AttackSurfaceEndpoint
-				url := MakeURL(options.BaseHost, GetRealPath(options.BasePath, filename))
 				ext := filepath.Ext(filename)
-				contentType := ""
-				if strings.Contains(ext, ".php") {
+
+				if strings.Contains(GetRealPath(options.BasePath, filename), publicDir) {
+					ppath := GetRealPath(options.BasePath, filename)
+					publicUrl := MakeURL(options.BaseHost, ppath[len(publicDir):len(ppath)])
+					obj := models.AttackSurfaceEndpoint{
+						Type:        "public",
+						URL:         publicUrl,
+						Method:      "GET",
+						ContentType: "",
+						Body:        "",
+					}
+					fileResult = append(fileResult, obj)
+				}
+				if ext == ".java" {
 					f, err := os.OpenFile(filename, os.O_RDONLY, os.ModePerm)
 					if err != nil {
 
@@ -76,17 +85,16 @@ func ScanPhp(files []string, options models.Options) []models.AttackSurfaceEndpo
 							if lst != "" {
 								lst = strings.ReplaceAll(lst, "\"", "")
 								lst = strings.ReplaceAll(lst, "'", "")
-								lst = strings.ReplaceAll(lst, "]", "")
 								lst = strings.ReplaceAll(lst, ")", "")
-								lst = strings.ReplaceAll(lst, "$_GET[", "")
-								lst = strings.ReplaceAll(lst, "$_POST[", "")
-								lst = strings.ReplaceAll(lst, "post_var(", "")
-								lst = strings.ReplaceAll(lst, "$_PUT[", "")
-								lst = strings.ReplaceAll(lst, "$_DELETE[", "")
-								lst = strings.ReplaceAll(lst, "$_REQUEST[", "")
+								lst = strings.ReplaceAll(lst, "@GetMapping(", "")
+								lst = strings.ReplaceAll(lst, "@PostMapping(", "")
+								lst = strings.ReplaceAll(lst, "@PutMapping(", "")
+								lst = strings.ReplaceAll(lst, "@DeleteMapping(", "")
+								lst = strings.ReplaceAll(lst, "@RequestMapping(", "")
+								springUrl := MakeURL(options.BaseHost, lst)
 								obj := models.AttackSurfaceEndpoint{
-									Type:   "php",
-									URL:    url,
+									Type:   "spring",
+									URL:    springUrl,
 									Method: pattern.Type,
 									Params: []volt.QueryString{
 										{
@@ -94,7 +102,7 @@ func ScanPhp(files []string, options models.Options) []models.AttackSurfaceEndpo
 											Value: "",
 										},
 									},
-									ContentType: contentType,
+									ContentType: "",
 									Body:        "",
 								}
 								if pattern.Type != "GET" {
@@ -106,48 +114,23 @@ func ScanPhp(files []string, options models.Options) []models.AttackSurfaceEndpo
 							}
 						}
 					}
-					if err := sc.Err(); err != nil {
-
-					}
-					if len(fileResult) > 1 {
-						var methods []string
-						for _, r := range fileResult {
-							methods = append(methods, r.Method)
-						}
-						uMethods := MakeSliceUnique(methods)
-						for _, m := range uMethods {
-							var comboParams []volt.QueryString
-							var comboBody string
-							for _, r := range fileResult {
-								if r.Method == "GET" {
-									comboParams = append(comboParams, r.Params...)
-								} else {
-									comboBody = comboBody + r.Params[0].Name + "=" + r.Params[0].Value + "&"
-								}
-							}
-
-							comboObj := models.AttackSurfaceEndpoint{
-								Type:   "php",
-								URL:    url,
-								Method: m,
-								Params: comboParams,
-								Body:   comboBody,
-							}
-							fileResult = append(fileResult, comboObj)
-						}
-					}
+				}
+				if GetRealPath(options.BasePath, filename) == "" {
+					// TODO
 				}
 				for _, fr := range fileResult {
 					resultChan <- fr
 				}
 			}
+			wg.Done()
 		}()
 	}
+
 	for _, file := range files {
 		jobs <- file
 	}
 	close(jobs)
 	wg.Wait()
-	close(resultChan)
+
 	return result
 }

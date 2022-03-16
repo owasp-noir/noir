@@ -14,6 +14,9 @@ func GetRealPath(basePath, filename string) string {
 	} else {
 		realPath = filename
 	}
+	if realPath[0:1] == "/" {
+		return realPath[1:len(realPath)]
+	}
 	return realPath
 }
 
