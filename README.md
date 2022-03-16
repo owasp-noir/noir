@@ -17,7 +17,7 @@ Discover all API and web page in the source code
 | Python | Django  |      ✅      |  X  | X     | X      |
 | Ruby   | Rails   |      ✅      |  X  | X     | X      |
 | Ruby   | Sinatra |      ✅      |  X  | X     | X      |
-| Php    |         |      ✅      |  ✅  | X     | X      |
+| Php    |         |      ✅      |  ✅  | ✅     | X      |
 | Java   | Spring  |      ✅      |  X  | X     | X      |
 | Java   | Jsp     |      ✅      |  X  | X     | X      |
 
