@@ -135,6 +135,8 @@ var detectCmd = &cobra.Command{
 				_ = ioutil.WriteFile(output, fileData, 0644)
 				break
 			}
+			dLog.Info("complete scan")
+			logger.Info("finish! found '" + strconv.Itoa(len(ase)) + "' endpoints")
 		}
 	},
 }
