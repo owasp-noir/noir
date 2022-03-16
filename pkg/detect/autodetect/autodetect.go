@@ -18,6 +18,7 @@ func AutoDetect(files []string) []string {
 	var detected []string
 	var result map[string]bool
 	result = map[string]bool{}
+	resultChan := make(chan map[string]bool)
 	initRails()
 	initSinatra()
 	initDjango()
@@ -26,6 +27,14 @@ func AutoDetect(files []string) []string {
 	initJsp()
 	initSpring()
 
+	go func(rtn chan map[string]bool) {
+		for {
+			for key, value := range <-rtn {
+				result[key] = value
+			}
+		}
+	}(resultChan)
+
 	var wg sync.WaitGroup
 	jobs := make(chan string)
 	for i := 0; i < noir.FileConcurrency; i++ {
@@ -33,9 +42,7 @@ func AutoDetect(files []string) []string {
 		go func() {
 			for file := range jobs {
 				rtn := isDetect(file)
-				for key, value := range rtn {
-					result[key] = value
-				}
+				resultChan <- rtn
 			}
 			wg.Done()
 		}()
@@ -46,6 +53,7 @@ func AutoDetect(files []string) []string {
 	}
 	close(jobs)
 	wg.Wait()
+	close(resultChan)
 	for key, _ := range result {
 		detected = append(detected, key)
 	}
