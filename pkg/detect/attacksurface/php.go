@@ -25,23 +25,23 @@ func ScanPhp(files []string, options models.Options) []models.AttackSurfaceEndpo
 	patterns := []DetectPattern{
 		{
 			Type:    "GET",
-			Pattern: utils.GetRegex("\\$GET\\[([\\s\\S]*)]"),
+			Pattern: utils.GetRegex("\\$_GET\\[([\\s\\S]*)]"),
 		},
 		{
 			Type:    "POST",
-			Pattern: utils.GetRegex("\\$POST\\[([\\s\\S]*)]"),
+			Pattern: utils.GetRegex("\\$_POST\\[([\\s\\S]*)]"),
 		},
 		{
 			Type:    "PUT",
-			Pattern: utils.GetRegex("\\$PUT\\[([\\s\\S]*)]"),
+			Pattern: utils.GetRegex("\\$_PUT\\[([\\s\\S]*)]"),
 		},
 		{
 			Type:    "DELETE",
-			Pattern: utils.GetRegex("\\$DELETE\\[([\\s\\S]*)]"),
+			Pattern: utils.GetRegex("\\$_DELETE\\[([\\s\\S]*)]"),
 		},
 		{
 			Type:    "REQUEST",
-			Pattern: utils.GetRegex("\\$REQUEST\\[([\\s\\S]*)]"),
+			Pattern: utils.GetRegex("\\$_REQUEST\\[([\\s\\S]*)]"),
 		},
 	}
 
@@ -78,11 +78,11 @@ func ScanPhp(files []string, options models.Options) []models.AttackSurfaceEndpo
 								lst = strings.ReplaceAll(lst, "\"", "")
 								lst = strings.ReplaceAll(lst, "'", "")
 								lst = strings.ReplaceAll(lst, "]", "")
-								lst = strings.ReplaceAll(lst, "$GET[", "")
-								lst = strings.ReplaceAll(lst, "$POST[", "")
-								lst = strings.ReplaceAll(lst, "$PUT[", "")
-								lst = strings.ReplaceAll(lst, "$DELETE[", "")
-								lst = strings.ReplaceAll(lst, "$REQUEST[", "")
+								lst = strings.ReplaceAll(lst, "$_GET[", "")
+								lst = strings.ReplaceAll(lst, "$_POST[", "")
+								lst = strings.ReplaceAll(lst, "$_PUT[", "")
+								lst = strings.ReplaceAll(lst, "$_DELETE[", "")
+								lst = strings.ReplaceAll(lst, "$_REQUEST[", "")
 								obj := models.AttackSurfaceEndpoint{
 									Type:   "",
 									URL:    url,
