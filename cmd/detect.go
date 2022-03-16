@@ -112,7 +112,7 @@ var detectCmd = &cobra.Command{
 						}
 					}
 					if endpoint.Body != "" {
-						body = " -d " + endpoint.Body
+						body = " -d \"" + endpoint.Body + "\""
 					}
 					if endpoint.ContentType != "" {
 						mime = " -H 'Content-Type: "
@@ -126,7 +126,7 @@ var detectCmd = &cobra.Command{
 						}
 						mime = mime + "' "
 					}
-					buf = buf + "curl -i -k " + endpoint.URL + param + body + mime + "\n"
+					buf = buf + "curl -i -k \"" + endpoint.URL + param + "\"" + body + mime + "\n"
 				}
 				_ = ioutil.WriteFile(output, []byte(buf), 0644)
 				break

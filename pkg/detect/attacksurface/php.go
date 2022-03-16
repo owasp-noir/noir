@@ -25,11 +25,11 @@ func ScanPhp(files []string, options models.Options) []models.AttackSurfaceEndpo
 	patterns := []DetectPattern{
 		{
 			Type:    "GET",
-			Pattern: utils.GetRegex("\\$_GET\\[([\\s\\S]*)]"),
+			Pattern: utils.GetRegex("\\$_GET\\[([\\S]*)]"),
 		},
 		{
 			Type:    "POST",
-			Pattern: utils.GetRegex("\\$_POST\\[([\\s\\S]*)]"),
+			Pattern: utils.GetRegex("\\$_POST\\[([\\S]*)]"),
 		},
 		{
 			Type:    "POST",
@@ -37,15 +37,15 @@ func ScanPhp(files []string, options models.Options) []models.AttackSurfaceEndpo
 		},
 		{
 			Type:    "PUT",
-			Pattern: utils.GetRegex("\\$_PUT\\[([\\s\\S]*)]"),
+			Pattern: utils.GetRegex("\\$_PUT\\[([\\S]*)]"),
 		},
 		{
 			Type:    "DELETE",
-			Pattern: utils.GetRegex("\\$_DELETE\\[([\\s\\S]*)]"),
+			Pattern: utils.GetRegex("\\$_DELETE\\[([\\S]*)]"),
 		},
 		{
 			Type:    "REQUEST",
-			Pattern: utils.GetRegex("\\$_REQUEST\\[([\\s\\S]*)]"),
+			Pattern: utils.GetRegex("\\$_REQUEST\\[([\\S]*)]"),
 		},
 	}
 
