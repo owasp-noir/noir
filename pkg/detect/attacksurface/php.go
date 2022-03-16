@@ -75,6 +75,14 @@ func ScanPhp(files []string, options models.Options) []models.AttackSurfaceEndpo
 						for _, pattern := range patterns {
 							lst := pattern.Pattern.FindString(line)
 							if lst != "" {
+								lst = strings.ReplaceAll(lst, "\"", "")
+								lst = strings.ReplaceAll(lst, "'", "")
+								lst = strings.ReplaceAll(lst, "]", "")
+								lst = strings.ReplaceAll(lst, "$GET[", "")
+								lst = strings.ReplaceAll(lst, "$POST[", "")
+								lst = strings.ReplaceAll(lst, "$PUT[", "")
+								lst = strings.ReplaceAll(lst, "$DELETE[", "")
+								lst = strings.ReplaceAll(lst, "$REQUEST[", "")
 								obj := models.AttackSurfaceEndpoint{
 									Type:   "",
 									URL:    url,
