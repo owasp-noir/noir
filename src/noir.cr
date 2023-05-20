@@ -10,4 +10,17 @@ module Noir
     :output => "",
     :format => "plain",
   }
+
+  class App
+    def initialize
+      @options = OPTIONS
+    end
+
+    def run
+      puts OPTIONS[:format]
+    end
+  end
 end
+
+app = Noir::App.new
+app.run
