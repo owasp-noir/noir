@@ -1,15 +1,18 @@
 require "option_parser"
 
 OptionParser.parse do |parser|
-    parser.banner = "Usage: noir <path> <flags>"
-    parser.on "-u", "--url", "Set base URL" do
-      # TODO
+    parser.banner = "Usage: noir <flags>"
+    parser.on "-b", "--base-path", "Set base path" do |var|
+      Noir::OPTIONS[:base] = var
     end
-    parser.on "-o", "--output", "Write result to file" do
-      # TODO
+    parser.on "-u", "--url", "Set base url" do |var|
+      Noir::OPTIONS[:url] = var
     end
-    parser.on "-f", "--format", "Set output format [plain/json]" do
-      # TODO
+    parser.on "-f", "--format", "Set output format [plain/json]" do |var|
+      Noir::OPTIONS[:format] = var
+    end
+    parser.on "-o", "--output", "Write result to file" do |var|
+      Noir::OPTIONS[:output] = var
     end
     parser.on "-v", "--version", "Show version" do
       puts Noir::VERSION
