@@ -22,6 +22,6 @@ def cmd
       exit(1)
     end
   end
-  puts noir_options
+  
   noir_options
 end
