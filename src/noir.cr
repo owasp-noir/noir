@@ -4,23 +4,19 @@ require "./identify/identify.cr"
 
 module Noir
   VERSION = "0.1.0"
-  OPTIONS = {
-    :base => ".",
-    :url => "",
-    :output => "",
-    :format => "plain",
-  }
 
   class App
-    def initialize
-      @options = OPTIONS
+    @options : Hash(Symbol, String)
+
+    def initialize(options)
+      @options = options
     end
 
     def run
-      puts OPTIONS[:format]
+      puts @options[:format]
     end
   end
 end
 
-app = Noir::App.new
+app = Noir::App.new cmd()
 app.run
