@@ -18,5 +18,5 @@ class NoirRunner
   end
 end
 
-app = NoirRunner.new cmd()
+app = NoirRunner.new get_options
 app.run

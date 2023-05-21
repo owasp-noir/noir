@@ -1,6 +1,6 @@
 require "option_parser"
 
-def cmd
+def get_options
   noir_options = {:base => ".", :url => "", :format => "plain", :output => ""}
   OptionParser.parse do |parser|
     parser.banner = "Usage: noir <flags>"
