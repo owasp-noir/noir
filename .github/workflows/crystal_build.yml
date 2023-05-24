@@ -1,4 +1,4 @@
-name: Crystal CI
+name: Crystal Build
 
 on:
   push:
@@ -18,7 +18,5 @@ jobs:
     - uses: actions/checkout@v3
     - name: Install dependencies
       run: shards install
-    - name: Run tests
-      run: crystal spec
-    - name: Build test
+    - name: Build
       run: shards build
