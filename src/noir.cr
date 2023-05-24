@@ -1,8 +1,5 @@
 require "option_parser"
-
 require "./models/noir.cr"
-require "./detector/detector.cr"
-require "./identify/identify.cr"
 
 module Noir
   VERSION = "0.1.0"
