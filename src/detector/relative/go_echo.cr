@@ -1,5 +1,5 @@
 def detect_go_echo(filename : String, file_contents : String)
-  if filename.include? "go.mod" && file_contents.include?("github.com/labstack/echo")
+  if (filename.includes? "go.mod") && (file_contents.includes? "github.com/labstack/echo")
       true
   else
       false

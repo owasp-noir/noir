@@ -17,6 +17,10 @@ class NoirRunner
     @options
   end
 
+  def techs
+    @techs
+  end
+
   def run
     puts @techs
   end

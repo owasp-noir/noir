@@ -1,5 +1,5 @@
 def detect_python_django(filename : String, file_contents : String)
-  if filename.include? ".py" && file_contents.include?("from django.")
+  if (filename.includes? ".py") && (file_contents.includes? "from django.")
       true
   else
       false

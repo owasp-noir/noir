@@ -5,7 +5,7 @@ module Noir
   VERSION = "0.1.0"
 end
 
-noir_options = {:base => ".", :url => "", :format => "plain", :output => ""}
+noir_options = {:base => ".", :url => "", :format => "plain", :output => "", :techs => ""}
 OptionParser.parse do |parser|
   parser.banner = "Usage: noir <flags>"
   parser.on "-b PATH", "--base-path ./app", "Set base path" { |var| noir_options[:base] = var }
@@ -29,4 +29,5 @@ OptionParser.parse do |parser|
 end
 
 app = NoirRunner.new noir_options
-app.run
+app.detect
+puts app.techs

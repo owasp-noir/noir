@@ -4,7 +4,7 @@ require "./relative/*"
 def detect_tech(base_path : String)
   techs = [] of String
   techs = techs + detect_absolute(base_path)
-  techs = techs + detect_ralative(base_path)
+  techs = techs + detect_relative(base_path)
 
   techs.uniq
 end
@@ -23,11 +23,11 @@ def detect_relative(base_path : String)
   Dir.glob("#{base_path}/**/*") do |file|
     next if File.directory?(file)
 
-    content = File.read
-    if detect_rails(file, content)
+    content = File.read(file)
+    if detect_ruby_rails(file, content)
       techs << "ruby_rails"
     end
-    if detect_sinatra(file, content)
+    if detect_ruby_sinatra(file, content)
       techs << "ruby_sinatra"
     end
     if detect_go_echo(file, content)
