@@ -8,6 +8,9 @@ class NoirRunner
   def initialize(options)
     @options = options
     @techs = [] of String
+    if options[:techs].size > 0
+      @techs = options[:techs].split(",")
+    end
   end
 
   def options
@@ -15,7 +18,7 @@ class NoirRunner
   end
 
   def run
-    puts @options[:format]
+    puts @techs
   end
 
   def detect

@@ -1,4 +1,5 @@
-require "./absolute/rails.cr"
+require "./absolute/*"
+require "./relative/*"
 
 def detect_tech(base_path : String)
   techs = [] of String
@@ -24,7 +25,19 @@ def detect_relative(base_path : String)
 
     content = File.read
     if detect_rails(file, content)
-      techs << "rails"
+      techs << "ruby_rails"
+    end
+    if detect_sinatra(file, content)
+      techs << "ruby_sinatra"
+    end
+    if detect_go_echo(file, content)
+      techs << "go_echo"
+    end
+    if detect_java_spring(file, content)
+      techs << "java_spring"
+    end
+    if detect_python_django(file, content)
+      techs << "python_django"
     end
   end
 
