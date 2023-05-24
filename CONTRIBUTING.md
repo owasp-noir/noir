@@ -1,9 +1,17 @@
-## Build
-```
-$ go build .
+## Develop Env
+### Clone repo
+```bash
+git clone https://github.com/hahwul/noir
+cd noir
 ```
 
-## Test
+### Install Dependencies
+```bash
+shards install
 ```
-$ go test ./...
+
+## Build
+```bash
+shards build
+# ./bin/noir
 ```
