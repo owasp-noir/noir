@@ -39,6 +39,12 @@ def detect_relative(base_path : String)
     if detect_python_django(file, content)
       techs << "python_django"
     end
+    if detect_php_pure(file, content)
+      techs << "php_pure"
+    end
+    if detect_java_jsp(file, content)
+      techs << "java_jsp"
+    end
   end
 
   techs
