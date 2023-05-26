@@ -19,12 +19,9 @@ def analyzer_rails(options : Hash(Symbol, String))
           splited = match[0].split(":")
           if splited.size > 1
             resource = splited[1].split(",")[0]
-            result << Endpoint.new("#{url}/#{resource}", "GET")
-            result << Endpoint.new("#{url}/#{resource}", "POST")
-            result << Endpoint.new("#{url}/#{resource}/1", "GET")
-            result << Endpoint.new("#{url}/#{resource}/1", "PUT")
-            result << Endpoint.new("#{url}/#{resource}/1", "DELETE")
-            result << Endpoint.new("#{url}/#{resource}/1", "PATCH")
+            result += controller_to_endpoint("#{base_path}/app/controllers/#{resource}_controller.rb", url, resource)
+            result += controller_to_endpoint("#{base_path}/app/controllers/#{resource}s_controller.rb", url, resource)
+            result += controller_to_endpoint("#{base_path}/app/controllers/#{resource}es_controller.rb", url, resource)
           end
         end
 
@@ -45,6 +42,56 @@ def analyzer_rails(options : Hash(Symbol, String))
         end
       end
     end
+  end
+
+  result
+end
+
+def controller_to_endpoint(path : String, url : String, resource : String)
+  result = [] of Endpoint
+
+  if File.exists?(path)
+    File.open(path, "r") do |controller_file|
+      param_type = "form"
+      params_query = [] of Param
+      params_body = [] of Param
+
+      controller_content = controller_file.gets_to_end
+      if controller_content.includes? "render json:"
+        param_type = "json"
+      end
+
+      controller_file.rewind
+      controller_file.each_line do |controller_line|
+        controller_line.strip.scan(/params\[:.*.]/) do |param_match|
+          param = param_match[0].gsub(/\[|\]/, "").split(":")[1].strip
+
+          params_query << Param.new(param, "", "query")
+          params_body << Param.new(param, "", param_type)
+        end
+
+        result << Endpoint.new("#{url}/#{resource}", "GET", params_query)
+        result << Endpoint.new("#{url}/#{resource}", "POST", params_body)
+        result << Endpoint.new("#{url}/#{resource}/1", "GET", params_query)
+        result << Endpoint.new("#{url}/#{resource}/1", "PUT", params_body)
+        result << Endpoint.new("#{url}/#{resource}/1", "DELETE", params_query)
+        result << Endpoint.new("#{url}/#{resource}/1", "PATCH", params_body)
+      end
+    rescue
+      result << Endpoint.new("#{url}/#{resource}", "GET")
+      result << Endpoint.new("#{url}/#{resource}", "POST")
+      result << Endpoint.new("#{url}/#{resource}/1", "GET")
+      result << Endpoint.new("#{url}/#{resource}/1", "PUT")
+      result << Endpoint.new("#{url}/#{resource}/1", "DELETE")
+      result << Endpoint.new("#{url}/#{resource}/1", "PATCH")
+    end
+  else
+    result << Endpoint.new("#{url}/#{resource}", "GET")
+    result << Endpoint.new("#{url}/#{resource}", "POST")
+    result << Endpoint.new("#{url}/#{resource}/1", "GET")
+    result << Endpoint.new("#{url}/#{resource}/1", "PUT")
+    result << Endpoint.new("#{url}/#{resource}/1", "DELETE")
+    result << Endpoint.new("#{url}/#{resource}/1", "PATCH")
   end
 
   result
