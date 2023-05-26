@@ -41,7 +41,7 @@ class NoirRunner
     @endpoints = analysis_endpoints options, @techs
   end
 
-  def report 
+  def report
     case options[:format]
     when "json"
       # TODO // puts @endpoints.to_json
