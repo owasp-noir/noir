@@ -18,7 +18,7 @@ Discover all API and web page in the source code
 | Ruby   | Rails   |      ✅     |  ✅  | ✅     | X      |
 | Ruby   | Sinatra |      ✅     |  X  | X     | X      |
 | Php    |         |      ✅     |  X  | X     | X      |
-| Java   | Spring  |      ✅     |  X  | X     | X      |
+| Java   | Spring  |      ✅     |  ✅  | X     | X      |
 | Java   | Jsp     |      ✅     |  X  | X     | X      |
 
 ### Output Format
