@@ -5,4 +5,3 @@ def detect_ruby_rails(filename : String, file_contents : String)
 
   check
 end
-  

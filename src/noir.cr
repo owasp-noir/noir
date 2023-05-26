@@ -31,3 +31,5 @@ end
 app = NoirRunner.new noir_options
 app.detect
 puts app.techs
+app.analyze
+puts app.endpoints

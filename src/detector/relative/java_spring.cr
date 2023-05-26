@@ -1,8 +1,7 @@
 def detect_java_spring(filename : String, file_contents : String)
   if (filename.includes? "pom.xml") && (file_contents.includes? "org.springframework")
-      true
+    true
   else
-      false
+    false
   end
 end
-  
