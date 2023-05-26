@@ -16,3 +16,9 @@ shards build
 ```bash
 crystal spec -v
 ```
+
+## Lint
+```bash
+crystal tool format
+ameba --fix
+```
