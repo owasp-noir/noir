@@ -1,7 +1,8 @@
 struct Endpoint
   property url, method, params
 
-  def initialize(@url : String, @method : String, @params = nil)
+  def initialize(@url : String, @method : String)
+    @params = [] of Param
   end
 
   def initialize(@url : String, @method : String, @params : Array(Param))

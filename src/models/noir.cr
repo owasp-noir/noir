@@ -49,11 +49,22 @@ class NoirRunner
       # TODO
     when "curl"
       @endpoints.each do |endpoint|
-        puts "curl -i -k -X #{endpoint.method} #{endpoint.url}}"
+        cmd = "curl -i -k -X #{endpoint.method} #{endpoint.url}"
+        if !endpoint.params.nil?
+          endpoint.params.each do |param|
+            cmd += " -d \"#{param.name}=#{param.value}\""
+          end
+        end
+        puts cmd
       end
     else
       @endpoints.each do |endpoint|
-        puts "curl -i -k -X #{endpoint.method} #{endpoint.url}}"
+        puts "#{endpoint.method} #{endpoint.url}"
+        if !endpoint.params.nil?
+            endpoint.params.each do |param|
+              puts " - #{param.name} (#{param.param_type})"
+          end
+        end
       end
     end
   end
