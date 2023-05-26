@@ -41,4 +41,8 @@ describe "Detect PHP Pure" do
   it "detect_php 1" do
     detect_php_pure("1.php", "<? phpinfo(); ?>").should eq(true)
   end
+
+  it "detect_php 2" do
+    detect_php_pure("admin.php", "<?php TITLE!!! ?>").should eq(true)
+  end
 end
