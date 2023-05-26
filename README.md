@@ -21,11 +21,11 @@ Discover all API and web page in the source code
 | Java   | Spring  |      ✅     |  ✅  | X     | X      |
 | Java   | Jsp     |      ✅     |  X  | X     | X      |
 
-### Output Format
-- Plain
-- JSON
-- HAR
-- CURL
+### Report Format
+- Plain (default/`--format plain`)
+- JSON (`--format json`)
+- [Curl](https://github.com/curl/curl) (`--format curl`)
+- [Httpie](https://github.com/httpie/httpie) (`--format httpie`)
 
 ### Contributing
 Please refer to [CONTRIBUTING.md](./CONTRIBUTING.md)

@@ -45,8 +45,17 @@ class NoirRunner
     case options[:format]
     when "json"
       puts @endpoints.to_json
-    when "har"
-      # TODO
+    when "httpie"
+      @endpoints.each do |endpoint|
+        cmd = "http #{endpoint.method} #{endpoint.url}"
+
+        if !endpoint.params.nil?
+          endpoint.params.each do |param|
+            cmd += " \"#{param.name}=#{param.value}\""
+          end
+        end
+        puts cmd
+      end
     when "curl"
       @endpoints.each do |endpoint|
         cmd = "curl -i -k -X #{endpoint.method} #{endpoint.url}"
