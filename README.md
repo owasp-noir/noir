@@ -10,18 +10,18 @@ Discover all API and web page in the source code
 - It is possible to interact with other tools by providing structured data such as JSON and HAR for the results. (pipeline)
 
 ## Support
-### Lanauge and Framework
-|        |         | Auto-Detect | URL | Param | Header |
-|--------|---------|-------------|-----|-------|--------|
-| Go     | Echo    |      ✅     |  X  | X     | X      |
-| Python | Django  |      ✅     |  X  | X     | X      |
-| Ruby   | Rails   |      ✅     |  ✅  | ✅     | X      |
-| Ruby   | Sinatra |      ✅     |  X  | X     | X      |
-| Php    |         |      ✅     |  ✅  | ✅     | X      |
-| Java   | Spring  |      ✅     |  ✅  | X     | X      |
-| Java   | Jsp     |      ✅     |  X  | X     | X      |
+### Language and Framework
+| Language | Framework | Tech Detect | URL | Param | Header |
+|----------|-----------|-------------|-----|-------|--------|
+| Go       | Echo      |      ✅     |  X  | X     | X      |
+| Python   | Django    |      ✅     |  X  | X     | X      |
+| Ruby     | Rails     |      ✅     |  ✅ | ✅    | X      |
+| Ruby     | Sinatra   |      ✅     |  X  | X     | X      |
+| Php      |           |      ✅     |  ✅ | ✅    | X      |
+| Java     | Spring    |      ✅     |  ✅ | X     | X      |
+| Java     | Jsp       |      ✅     |  X  | X     | X      |
 
-### Report Format
+### Output Format
 - Plain (default/`--format plain`)
 - JSON (`--format json`)
 - [Curl](https://github.com/curl/curl) (`--format curl`)
