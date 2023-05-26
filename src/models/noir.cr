@@ -44,7 +44,7 @@ class NoirRunner
   def report
     case options[:format]
     when "json"
-      # TODO // puts @endpoints.to_json
+      puts @endpoints.to_json
     when "har"
       # TODO
     when "curl"
