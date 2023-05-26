@@ -3,6 +3,7 @@ require "./analyzer/*"
 def initialize_analyzers
   analyzers = {} of String => Proc(Hash(Symbol, String), Array(Endpoint))
   analyzers["ruby_rails"] = ->analyzer_rails(Hash(Symbol, String))
+  analyzers["java_spring"] = ->analyzer_spring(Hash(Symbol, String))
 
   analyzers
 end
