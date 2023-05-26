@@ -27,16 +27,5 @@ Discover all API and web page in the source code
 - HAR
 - CURL
 
-## For Developers
-### Set DevEnv
-```bash
-# If you've forked this repository, clone to https://github.com/<YOU>/noir
-git clone https://github.com/hahwul/noir
-cd noir
-shards install
-```
-
-### Unit Test
-```bash
-crystal spec -v
-```
+### Contributing
+![CONTRIBUTING.md](./CONTRIBUTING.md)
