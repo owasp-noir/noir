@@ -1,3 +1,5 @@
+require "../../utils/utils.cr"
+
 def analyzer_php_pure(options : Hash(Symbol, String))
   result = [] of Endpoint
   base_path = options[:base]
@@ -43,13 +45,4 @@ def analyzer_php_pure(options : Hash(Symbol, String))
   end
 
   result
-end
-
-def remove_start_slash(input_path : String)
-  path = input_path
-  if path[0] == "/"
-    remove_start_slash(path[1..-1])
-  else
-    path
-  end
 end
