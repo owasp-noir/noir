@@ -46,7 +46,7 @@ def mapping_to_path(content : String)
   splited_line = content.strip.split("(")
   if splited_line.size > 1
     line = splited_line[1].gsub(/"|\)/, "")
-    if line[0] == '/'
+    if line[0].to_s == '/'
       return line
     else
       return "/#{line}"
