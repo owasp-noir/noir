@@ -8,8 +8,8 @@ def analyzer_php_pure(options : Hash(Symbol, String))
   # Source Analysis
   Dir.glob("#{base_path}/**/*") do |path|
     next if File.directory?(path)
-    if base_path[-1] == "/"
-      relative_path = path.sub("#{base_path}//", "").sub("./", "").sub("//", "/")
+    if base_path[-1].to_s == "/"
+      relative_path = path.sub("#{base_path}", "").sub("./", "").sub("//", "/")
     else
       relative_path = path.sub("#{base_path}/", "").sub("./", "").sub("//", "/")
     end
