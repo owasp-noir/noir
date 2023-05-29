@@ -13,7 +13,7 @@ Discover all API and web page in the source code
 ### Language and Framework
 | Language | Framework | Tech Detect | URL | Param | Header |
 |----------|-----------|-------------|-----|-------|--------|
-| Go       | Echo      |      ✅     |  X  | X     | X      |
+| Go       | Echo      |      ✅     |  ✅ | X     | X      |
 | Python   | Django    |      ✅     |  X  | X     | X      |
 | Ruby     | Rails     |      ✅     |  ✅ | ✅    | X      |
 | Ruby     | Sinatra   |      ✅     |  X  | X     | X      |
