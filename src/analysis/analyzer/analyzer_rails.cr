@@ -71,7 +71,7 @@ def controller_to_endpoint(path : String, url : String, resource : String)
           params_body << Param.new(param, "", param_type)
         end
       end
-      
+
       result << Endpoint.new("#{url}/#{resource}", "GET", params_query)
       result << Endpoint.new("#{url}/#{resource}", "POST", params_body)
       result << Endpoint.new("#{url}/#{resource}/1", "GET", params_query)

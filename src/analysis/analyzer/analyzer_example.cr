@@ -2,6 +2,7 @@ def analyzer_example(options : Hash(Symbol, String))
   result = [] of Endpoint
   base_path = options[:base]
   url = options[:url]
+  _ = url
 
   # Source Analysis
   Dir.glob("#{base_path}/**/*") do |path|

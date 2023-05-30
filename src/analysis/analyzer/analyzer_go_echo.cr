@@ -9,13 +9,13 @@ def analyzer_go_echo(options : Hash(Symbol, String))
     if File.exists?(path)
       File.open(path, "r") do |file|
         file.each_line do |line|
-            if line.includes?(".GET(") || line.includes?(".POST(") || line.includes?(".PUT(") || line.includes?(".DELETE(")
-              get_route_path_go_echo(line).tap do |route_path|
-                if route_path.size > 0
-                  result << Endpoint.new("#{url}#{route_path}", line.split(".")[1].split("(")[0])
-                end
+          if line.includes?(".GET(") || line.includes?(".POST(") || line.includes?(".PUT(") || line.includes?(".DELETE(")
+            get_route_path_go_echo(line).tap do |route_path|
+              if route_path.size > 0
+                result << Endpoint.new("#{url}#{route_path}", line.split(".")[1].split("(")[0])
               end
             end
+          end
         end
       end
     end

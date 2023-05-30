@@ -70,8 +70,8 @@ class NoirRunner
       @endpoints.each do |endpoint|
         puts "#{endpoint.method} #{endpoint.url}"
         if !endpoint.params.nil?
-            endpoint.params.each do |param|
-              puts " - #{param.name} (#{param.param_type})"
+          endpoint.params.each do |param|
+            puts " - #{param.name} (#{param.param_type})"
           end
         end
       end

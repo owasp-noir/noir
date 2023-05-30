@@ -13,7 +13,7 @@ def analyzer_sinatra(options : Hash(Symbol, String))
             if match.size > 1
               result << Endpoint.new("#{url}#{match[1]}", "GET")
             end
-          end 
+          end
 
           line.scan(/post\s+['"](.+?)['"]/) do |match|
             if match.size > 1
@@ -50,7 +50,6 @@ def analyzer_sinatra(options : Hash(Symbol, String))
               result << Endpoint.new("#{url}#{match[1]}", "OPTIONS")
             end
           end
-
         end
       end
     end

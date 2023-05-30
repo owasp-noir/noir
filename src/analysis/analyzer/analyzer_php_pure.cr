@@ -17,7 +17,6 @@ def analyzer_php_pure(options : Hash(Symbol, String))
 
     if File.exists?(path)
       File.open(path, "r") do |file|
-        param_type = "form"
         params_query = [] of Param
         params_body = [] of Param
         methods = [] of String
