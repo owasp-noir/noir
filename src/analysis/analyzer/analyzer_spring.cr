@@ -54,3 +54,11 @@ def mapping_to_path(content : String)
   end
   ""
 end
+
+def extract_param(content : String)
+ # TODO
+ # case1 -> @RequestParam("a")
+ # case2 -> String a = param.get("a");
+ # case3 -> String a = request.getParameter("a");
+ # case4 -> (PATH) @PathVariable("a")
+end
