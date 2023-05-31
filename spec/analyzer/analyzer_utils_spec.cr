@@ -1,4 +1,4 @@
-require "../src/analysis/analyzer/analyzer_go_echo.cr"
+require "../../src/analysis/analyzer/analyzer_go_echo.cr"
 
 describe "analyzer_go_echo" do
   it "get_route_path_go_echo - GET" do
