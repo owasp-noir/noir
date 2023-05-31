@@ -1,15 +1,15 @@
 struct CodeBlock
   property depth : Integer
 
-  def initialize()
+  def initialize
     @depth = 1
   end
 
-  def enter()
+  def enter
     @depth += 1
   end
 
-  def exit()
+  def exit
     @depth -= 1
   end
 end
