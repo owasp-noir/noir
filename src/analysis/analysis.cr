@@ -8,6 +8,7 @@ def initialize_analyzers
   analyzers["php_pure"] = ->analyzer_php_pure(Hash(Symbol, String))
   analyzers["go_echo"] = ->analyzer_go_echo(Hash(Symbol, String))
   analyzers["python_flask"] = ->analyzer_flask(Hash(Symbol, String))
+  analyzers["python_django"] = ->analyzer_django(Hash(Symbol, String))
 
   analyzers
 end
