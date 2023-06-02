@@ -10,7 +10,7 @@ def analyzer_django(options : Hash(Symbol, String))
       next if File.directory?(path)
       if File.exists?(path) && File.extname(path) == ".py"
         File.open(path, "r") do |file|
-          file.each_line do |line|
+          file.each_line do |_|
             # TODO
           end
         end
