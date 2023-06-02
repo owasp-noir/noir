@@ -29,11 +29,11 @@ OptionParser.parse do |parser|
 end
 
 app = NoirRunner.new noir_options
-puts "[+] Detecting technologies..."
+puts "Detecting technologies..."
 app.detect
-puts "[+] Found #{app.techs.join(" ")} techs."
-puts "[+] Start Analyzing..."
+puts "==> Found #{app.techs.join(" ")} techs."
+puts "Start Analyzing..."
 app.analyze
-puts "[+] Finish"
+puts "==> Finish!"
 puts ""
 app.report
