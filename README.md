@@ -29,4 +29,7 @@ Discover all API and web page in the source code
 - [Httpie](https://github.com/httpie/httpie) (`--format httpie`)
 
 ### Contributing
-Please refer to [CONTRIBUTING.md](./CONTRIBUTING.md)
+Noir is open-source project and made it with ❤️ 
+if you want contribute this project, please see [CONTRIBUTING.md](./CONTRIBUTING.md) and Pull-Request with cool your contents.
+
+![](./CONTRIBUTORS.svg)
