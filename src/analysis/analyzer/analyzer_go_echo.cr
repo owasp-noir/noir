@@ -5,14 +5,16 @@ def analyzer_go_echo(options : Hash(Symbol, String))
 
   # Source Analysis
   Dir.glob("#{base_path}/**/*") do |path|
-    next if File.directory?(path)
-    if File.exists?(path) && File.extname(path) == ".go"
-      File.open(path, "r") do |file|
-        file.each_line do |line|
-          if line.includes?(".GET(") || line.includes?(".POST(") || line.includes?(".PUT(") || line.includes?(".DELETE(")
-            get_route_path_go_echo(line).tap do |route_path|
-              if route_path.size > 0
-                result << Endpoint.new("#{url}#{route_path}", line.split(".")[1].split("(")[0])
+    spawn do
+      next if File.directory?(path)
+      if File.exists?(path) && File.extname(path) == ".go"
+        File.open(path, "r") do |file|
+          file.each_line do |line|
+            if line.includes?(".GET(") || line.includes?(".POST(") || line.includes?(".PUT(") || line.includes?(".DELETE(")
+              get_route_path_go_echo(line).tap do |route_path|
+                if route_path.size > 0
+                  result << Endpoint.new("#{url}#{route_path}", line.split(".")[1].split("(")[0])
+                end
               end
             end
           end
@@ -20,6 +22,7 @@ def analyzer_go_echo(options : Hash(Symbol, String))
       end
     end
   end
+  Fiber.yield
 
   result
 end
