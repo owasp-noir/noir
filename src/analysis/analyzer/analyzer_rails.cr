@@ -15,7 +15,7 @@ def analyzer_rails(options : Hash(Symbol, String))
     file.each_line do |line|
       stripped_line = line.strip
       if stripped_line.size > 0 && stripped_line[0] != '#'
-        line.scan(/resource\s+:.*/) do |match|
+        line.scan(/resources?\s+:.*/) do |match|
           splited = match[0].split(":")
           if splited.size > 1
             resource = splited[1].split(",")[0]
