@@ -27,19 +27,19 @@ def analyzer_rails(options : Hash(Symbol, String))
         end
 
         line.scan(/get\s+['"](.+?)['"]/) do |match|
-          result << Endpoint.new("#{url}/#{match[1]}", "GET")
+          result << Endpoint.new("#{url}#{match[1]}", "GET")
         end
         line.scan(/post\s+['"](.+?)['"]/) do |match|
-          result << Endpoint.new("#{url}/#{match[1]}", "POST")
+          result << Endpoint.new("#{url}#{match[1]}", "POST")
         end
         line.scan(/put\s+['"](.+?)['"]/) do |match|
-          result << Endpoint.new("#{url}/#{match[1]}", "PUT")
+          result << Endpoint.new("#{url}#{match[1]}", "PUT")
         end
         line.scan(/delete\s+['"](.+?)['"]/) do |match|
-          result << Endpoint.new("#{url}/#{match[1]}", "DELETE")
+          result << Endpoint.new("#{url}#{match[1]}", "DELETE")
         end
         line.scan(/patch\s+['"](.+?)['"]/) do |match|
-          result << Endpoint.new("#{url}/#{match[1]}", "PATCH")
+          result << Endpoint.new("#{url}#{match[1]}", "PATCH")
         end
       end
     end
