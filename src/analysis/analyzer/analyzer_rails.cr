@@ -11,35 +11,37 @@ def analyzer_rails(options : Hash(Symbol, String))
   end
 
   # Config Analysis
-  File.open("#{base_path}/config/routes.rb", "r") do |file|
-    file.each_line do |line|
-      stripped_line = line.strip
-      if stripped_line.size > 0 && stripped_line[0] != '#'
-        line.scan(/resources?\s+:.*/) do |match|
-          splited = match[0].split(":")
-          if splited.size > 1
-            resource = splited[1].split(",")[0]
+  if File.exists?("#{base_path}/config/routes.rb")
+    File.open("#{base_path}/config/routes.rb", "r") do |file|
+      file.each_line do |line|
+        stripped_line = line.strip
+        if stripped_line.size > 0 && stripped_line[0] != '#'
+          line.scan(/resources?\s+:.*/) do |match|
+            splited = match[0].split(":")
+            if splited.size > 1
+              resource = splited[1].split(",")[0]
 
-            result += controller_to_endpoint("#{base_path}/app/controllers/#{resource}_controller.rb", url, resource)
-            result += controller_to_endpoint("#{base_path}/app/controllers/#{resource}s_controller.rb", url, resource)
-            result += controller_to_endpoint("#{base_path}/app/controllers/#{resource}es_controller.rb", url, resource)
+              result += controller_to_endpoint("#{base_path}/app/controllers/#{resource}_controller.rb", url, resource)
+              result += controller_to_endpoint("#{base_path}/app/controllers/#{resource}s_controller.rb", url, resource)
+              result += controller_to_endpoint("#{base_path}/app/controllers/#{resource}es_controller.rb", url, resource)
+            end
           end
-        end
 
-        line.scan(/get\s+['"](.+?)['"]/) do |match|
-          result << Endpoint.new("#{url}#{match[1]}", "GET")
-        end
-        line.scan(/post\s+['"](.+?)['"]/) do |match|
-          result << Endpoint.new("#{url}#{match[1]}", "POST")
-        end
-        line.scan(/put\s+['"](.+?)['"]/) do |match|
-          result << Endpoint.new("#{url}#{match[1]}", "PUT")
-        end
-        line.scan(/delete\s+['"](.+?)['"]/) do |match|
-          result << Endpoint.new("#{url}#{match[1]}", "DELETE")
-        end
-        line.scan(/patch\s+['"](.+?)['"]/) do |match|
-          result << Endpoint.new("#{url}#{match[1]}", "PATCH")
+          line.scan(/get\s+['"](.+?)['"]/) do |match|
+            result << Endpoint.new("#{url}#{match[1]}", "GET")
+          end
+          line.scan(/post\s+['"](.+?)['"]/) do |match|
+            result << Endpoint.new("#{url}#{match[1]}", "POST")
+          end
+          line.scan(/put\s+['"](.+?)['"]/) do |match|
+            result << Endpoint.new("#{url}#{match[1]}", "PUT")
+          end
+          line.scan(/delete\s+['"](.+?)['"]/) do |match|
+            result << Endpoint.new("#{url}#{match[1]}", "DELETE")
+          end
+          line.scan(/patch\s+['"](.+?)['"]/) do |match|
+            result << Endpoint.new("#{url}#{match[1]}", "PATCH")
+          end
         end
       end
     end
