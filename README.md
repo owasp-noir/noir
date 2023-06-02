@@ -15,6 +15,7 @@ Discover all API and web page in the source code
 |----------|-----------|-------------|-----|-------|--------|
 | Go       | Echo      |      ✅     |  ✅ | X     | X      |
 | Python   | Django    |      ✅     |  X  | X     | X      |
+| Python   | Flask     |      ✅     |  X  | X     | X      |
 | Ruby     | Rails     |      ✅     |  ✅ | ✅    | X      |
 | Ruby     | Sinatra   |      ✅     |  ✅ | X     | X      |
 | Php      |           |      ✅     |  ✅ | ✅    | X      |
