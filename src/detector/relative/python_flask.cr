@@ -1,4 +1,4 @@
-def detect_python_django(filename : String, file_contents : String)
+def detect_python_flask(filename : String, file_contents : String)
   if (filename.includes? ".py") && (file_contents.includes? "from flask")
     true
   else

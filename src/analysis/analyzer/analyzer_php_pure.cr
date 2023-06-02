@@ -15,7 +15,7 @@ def analyzer_php_pure(options : Hash(Symbol, String))
     end
     relative_path = remove_start_slash(relative_path)
 
-    if File.exists?(path)
+    if File.exists?(path) && File.extname(path) == ".php"
       File.open(path, "r") do |file|
         params_query = [] of Param
         params_body = [] of Param

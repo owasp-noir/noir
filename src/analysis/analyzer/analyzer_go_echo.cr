@@ -6,7 +6,7 @@ def analyzer_go_echo(options : Hash(Symbol, String))
   # Source Analysis
   Dir.glob("#{base_path}/**/*") do |path|
     next if File.directory?(path)
-    if File.exists?(path)
+    if File.exists?(path) && File.extname(path) == ".go"
       File.open(path, "r") do |file|
         file.each_line do |line|
           if line.includes?(".GET(") || line.includes?(".POST(") || line.includes?(".PUT(") || line.includes?(".DELETE(")
