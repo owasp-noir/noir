@@ -3,6 +3,16 @@ require "./models/noir.cr"
 
 module Noir
   VERSION = "0.1.0"
+  TECHS = [
+    "ruby_rails",
+    "ruby_sinatra",
+    "go_echo",
+    "java_spring",
+    "python_django",
+    "python_flask",
+    "php_pure",
+    "java_jsp"
+  ]
 end
 
 noir_options = {:base => ".", :url => "", :format => "plain", :output => "", :techs => ""}
@@ -18,6 +28,11 @@ OptionParser.parse do |parser|
   
   parser.separator "\n  Others:"
   parser.on "-t TECHS", "--techs rails,php", "Set technologies to use" { |var| noir_options[:techs] = var }
+  parser.on "-tl", "--techs-list", "Show all technologies" do
+    puts "Available technologies:"
+    puts Noir::TECHS.join(" ")
+    exit
+  end
   parser.on "-v", "--version", "Show version" do
     puts Noir::VERSION
     exit
