@@ -15,11 +15,11 @@ module Noir
   ]
 end
 
-noir_options = {:base => ".", :url => "", :format => "plain", :output => "", :techs => ""}
+noir_options = {:base => "", :url => "", :format => "plain", :output => "", :techs => ""}
 OptionParser.parse do |parser|
   parser.banner = "Usage: noir <flags>"
   parser.separator "  Basic:"
-  parser.on "-b PATH", "--base-path ./app", "Set base path" { |var| noir_options[:base] = var }
+  parser.on "-b PATH", "--base-path ./app", "(Required) Set base path" { |var| noir_options[:base] = var }
   parser.on "-u URL", "--url http://..", "Set base url" { |var| noir_options[:url] = var }
 
   parser.separator "\n  Output:"
@@ -48,6 +48,12 @@ OptionParser.parse do |parser|
     STDERR.puts parser
     exit(1)
   end
+end
+
+if noir_options[:base].empty?
+  STDERR.puts "ERROR: Base path is required."
+  STDERR.puts "Please use -b or --base-path to set base path."
+  exit(1)
 end
 
 app = NoirRunner.new noir_options
