@@ -3,7 +3,7 @@ require "./models/noir.cr"
 
 module Noir
   VERSION = "0.1.0"
-  TECHS = [
+  TECHS   = [
     "ruby_rails",
     "ruby_sinatra",
     "go_echo",
@@ -11,7 +11,7 @@ module Noir
     "python_django",
     "python_flask",
     "php_pure",
-    "java_jsp"
+    "java_jsp",
   ]
 end
 
@@ -20,12 +20,12 @@ OptionParser.parse do |parser|
   parser.banner = "Usage: noir <flags>"
   parser.separator "  Basic:"
   parser.on "-b PATH", "--base-path ./app", "(Required) Set base path" { |var| noir_options[:base] = var }
-  parser.on "-u URL", "--url http://..", "Set base url" { |var| noir_options[:url] = var }
+  parser.on "-u URL", "--url http://..", "Set base url for endpoints" { |var| noir_options[:url] = var }
 
   parser.separator "\n  Output:"
   parser.on "-f FORMAT", "--format json", "Set output format [plain/json/curl/httpie]" { |var| noir_options[:format] = var }
   parser.on "-o PATH", "--output out.txt", "Write result to file" { |var| noir_options[:output] = var }
-  
+
   parser.separator "\n  Technologies:"
   parser.on "-t TECHS", "--techs rails,php", "Set technologies to use" { |var| noir_options[:techs] = var }
   parser.on "-tl", "--techs-list", "Show all technologies" do
