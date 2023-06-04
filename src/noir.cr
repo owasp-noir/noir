@@ -26,13 +26,15 @@ OptionParser.parse do |parser|
   parser.on "-f FORMAT", "--format json", "Set output format [plain/json/curl/httpie]" { |var| noir_options[:format] = var }
   parser.on "-o PATH", "--output out.txt", "Write result to file" { |var| noir_options[:output] = var }
   
-  parser.separator "\n  Others:"
+  parser.separator "\n  Technologies:"
   parser.on "-t TECHS", "--techs rails,php", "Set technologies to use" { |var| noir_options[:techs] = var }
   parser.on "-tl", "--techs-list", "Show all technologies" do
     puts "Available technologies:"
     puts Noir::TECHS.join(" ")
     exit
   end
+
+  parser.separator "\n  Others:"
   parser.on "-v", "--version", "Show version" do
     puts Noir::VERSION
     exit
