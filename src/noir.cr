@@ -15,7 +15,6 @@ module Noir
     "php_pure",
     "java_jsp",
   ]
-
 end
 
 noir_options = {:base => "", :url => "", :format => "plain", :output => "", :techs => ""}
