@@ -1,5 +1,5 @@
 # Noir
-Discover all API and web page in the source code
+♣️ Noir is an attack surface detector form source code.
 
 > Developing now.. 🚧
 
@@ -7,7 +7,7 @@ Discover all API and web page in the source code
 - Automatically identify language and framework from source code.
 - Find API endpoints and web pages through code analysis.
 - Load results quickly through interactions with proxy tools such as ZAP, Burpsuite, Caido and More Proxy tools.
-- It is possible to interact with other tools by providing structured data such as JSON and HAR for the results. (pipeline)
+- Noir is a multi-purpose tool that provides structured data such as JSON and HAR for identified Attack Surfaces to enable seamless interaction with other tools. Noir also provides command line samples to easily integrate and collaborate with other tools, such as curls or httpie.
 
 ## Support
 ### Language and Framework
