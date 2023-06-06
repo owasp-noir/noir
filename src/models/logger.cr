@@ -1,5 +1,6 @@
 class NoirLogger
-  def initialize
+  def initialize(debug : Bool)
+    @debug = debug
   end
 
   def puts(message)
@@ -7,6 +8,26 @@ class NoirLogger
   end
 
   def info(message)
-    puts message
+    STDERR.puts message
+  end
+
+  def info(message, depth)
+    case depth
+    when 0
+      STDERR.puts message
+    when 1
+      STDERR.puts "  #{message}"
+    when 2
+      STDERR.puts "    #{message}"
+    when 3
+      STDERR.puts "      #{message}"
+    else
+      STDERR.puts "        #{message}"
+    end
+    STDERR.puts message
+  end
+
+  def debug(message)
+    STDERR.puts message if @debug
   end
 end

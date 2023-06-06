@@ -17,7 +17,7 @@ module Noir
   ]
 end
 
-noir_options = {:base => "", :url => "", :format => "plain", :output => "", :techs => ""}
+noir_options = {:base => "", :url => "", :format => "plain", :output => "", :techs => "", :debug => "no"}
 banner()
 
 OptionParser.parse do |parser|
@@ -40,6 +40,9 @@ OptionParser.parse do |parser|
   end
 
   parser.separator "\n  Others:".colorize(:blue)
+  parser.on "-d", "--debug", "Show debug messages" do
+    noir_options[:debug] = "yes"
+  end
   parser.on "-v", "--version", "Show version" do
     puts Noir::VERSION
     exit
@@ -55,7 +58,7 @@ OptionParser.parse do |parser|
   end
 end
 
-if noir_options[:base].empty?
+if noir_options[:base] == ""
   STDERR.puts "ERROR: Base path is required."
   STDERR.puts "Please use -b or --base-path to set base path."
   STDERR.puts "If you need help, use -h or --help."
@@ -63,11 +66,14 @@ if noir_options[:base].empty?
 end
 
 app = NoirRunner.new noir_options
-puts "Detecting technologies..."
+app.logger.debug("Start Debug mode")
+app.logger.debug("Noir version: #{Noir::VERSION}")
+app.logger.debug("Noir options: #{noir_options}")
+
+app.logger.info "Detecting technologies..."
 app.detect
-puts "==> Found #{app.techs.join(" ")} techs."
-puts "Start Analyzing..."
+app.logger.info "==> Found #{app.techs.join(" ")} techs."
+app.logger.info "Start Analyzing..."
 app.analyze
-puts "==> Finish!"
-puts ""
+app.logger.info "Start Reporting..."
 app.report

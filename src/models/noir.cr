@@ -14,7 +14,12 @@ class NoirRunner
     @options = options
     @techs = [] of String
     @endpoints = [] of Endpoint
-    @logger = NoirLogger.new
+    
+    if options[:debug] == "yes"
+      @logger = NoirLogger.new true
+    else 
+      @logger = NoirLogger.new false
+    end
 
     if options[:techs].size > 0
       @techs = options[:techs].split(",")
