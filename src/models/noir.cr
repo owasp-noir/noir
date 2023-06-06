@@ -9,12 +9,14 @@ class NoirRunner
   @techs : Array(String)
   @endpoints : Array(Endpoint)
   @logger : NoirLogger
+  @proxy : String
 
   def initialize(options)
     @options = options
     @techs = [] of String
     @endpoints = [] of Endpoint
-    
+    @proxy = options[:proxy]
+
     if options[:debug] == "yes"
       @logger = NoirLogger.new true
     else 
@@ -87,6 +89,14 @@ class NoirRunner
             puts " - #{param.name} (#{param.param_type})"
           end
         end
+      end
+    end
+  end
+
+  def send_proxy
+    if !@proxy.nil?
+      @endpoints.each do |endpoint|
+        # TODO: send to proxy
       end
     end
   end

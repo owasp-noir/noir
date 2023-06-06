@@ -17,7 +17,11 @@ module Noir
   ]
 end
 
-noir_options = {:base => "", :url => "", :format => "plain", :output => "", :techs => "", :debug => "no"}
+noir_options = {
+  :base => "", :url => "", :format => "plain", 
+  :output => "", :techs => "", :debug => "no",
+  :proxy => ""
+}
 banner()
 
 OptionParser.parse do |parser|
@@ -30,6 +34,7 @@ OptionParser.parse do |parser|
 
   parser.on "-f FORMAT", "--format json", "Set output format [plain/json/curl/httpie]" { |var| noir_options[:format] = var }
   parser.on "-o PATH", "--output out.txt", "Write result to file" { |var| noir_options[:output] = var }
+  #parser.on "-p PROXY", "--proxy http://..", "Set proxy for interaction" { |var| noir_options[:proxy] = var }
 
   parser.separator "\n  Technologies:".colorize(:blue)
   parser.on "-t TECHS", "--techs rails,php", "Set technologies to use" { |var| noir_options[:techs] = var }
