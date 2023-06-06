@@ -73,7 +73,7 @@ app.logger.debug("Noir options: #{noir_options}")
 app.logger.info "Detecting technologies..."
 app.detect
 app.logger.info "==> Found #{app.techs.join(" ")} techs."
-app.logger.info "Start Analyzing..."
+app.logger.info "Analyzing..."
 app.analyze
-app.logger.info "Start Reporting..."
+app.logger.info "Generating Report..."
 app.report
