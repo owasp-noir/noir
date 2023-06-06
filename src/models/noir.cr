@@ -19,7 +19,7 @@ class NoirRunner
 
     if options[:debug] == "yes"
       @logger = NoirLogger.new true
-    else 
+    else
       @logger = NoirLogger.new false
     end
 
@@ -95,7 +95,7 @@ class NoirRunner
 
   def send_proxy
     if !@proxy.nil?
-      @endpoints.each do |endpoint|
+      @endpoints.each do |_|
         # TODO: send to proxy
       end
     end
