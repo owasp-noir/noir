@@ -19,9 +19,9 @@
 | Php      |           |      ✅     |  ✅ | ✅    | X      |
 | Java     | Spring    |      ✅     |  ✅ | X     | X      |
 | Java     | Jsp       |      ✅     |  X  | X     | X      |
-| Node JS  | Pure      |      X      |  X  | X     | X      |
-| Node JS  | Express   |      X      |  X  | X     | X      |
-| Node JS  | Next      |      X      |  X  | X     | X      |
+| JS       | Node.js   |      X      |  X  | X     | X      |
+| JS       | Express   |      X      |  X  | X     | X      |
+| JS       | Next      |      X      |  X  | X     | X      |
 
 ### Output Format
 - Plain (default/`--format plain`)
