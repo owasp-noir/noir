@@ -58,6 +58,7 @@ end
 if noir_options[:base].empty?
   STDERR.puts "ERROR: Base path is required."
   STDERR.puts "Please use -b or --base-path to set base path."
+  STDERR.puts "If you need help, use -h or --help."
   exit(1)
 end
 
