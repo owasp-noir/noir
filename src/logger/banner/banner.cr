@@ -1,10 +1,12 @@
 def banner
+  content = <<-CONTENT
+              .__        
+  ____   ____ |__|______ 
+ /    \\ /  _ \\|  \\_  __ \\
+|   |  (  <_> )  ||  | \\/
+|___|  /\\____/|__||__|   
+     \\/                 v#{Noir::VERSION}
+CONTENT
+  STDERR.puts content
   STDERR.puts ""
-  STDERR.puts "   |\\---/|"
-  STDERR.puts "   | ,_, |                  >> Noir v#{Noir::VERSION} <<"
-  STDERR.puts "    \\_`_/-..----."
-  STDERR.puts " ___/ `   ' ,\"\"+ \\          Noir is an attack surface detector"
-  STDERR.puts "(__...'   __\\    |`.___.';  from source code."
-  STDERR.puts "  (_,...'(_,.`__)/'.....+"
-  STDERR.puts "========================="
 end
