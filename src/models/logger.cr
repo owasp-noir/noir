@@ -1,13 +1,12 @@
 class NoirLogger
-    def initialize
+  def initialize
+  end
 
-    end
+  def puts(message)
+    puts message
+  end
 
-    def puts(message)
-        puts message
-    end
-
-    def info(message)
-        puts message
-    end
+  def info(message)
+    puts message
+  end
 end
