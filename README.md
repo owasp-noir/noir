@@ -1,5 +1,7 @@
-# Noir
-♣️ Noir is an attack surface detector form source code.
+<div align="center">
+  <img src="https://github.com/hahwul/noir/assets/13212227/d4e3d075-9cb0-4ca2-b577-958bfab6ca59" alt="" width="600px;">
+  <p>♠️ Noir is an attack surface detector form source code.</p>
+</div>
 
 ## Key Features
 - Automatically identify language and framework from source code.
