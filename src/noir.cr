@@ -35,7 +35,7 @@ OptionParser.parse do |parser|
   parser.on "-t TECHS", "--techs rails,php", "Set technologies to use" { |var| noir_options[:techs] = var }
   parser.on "-tl", "--techs-list", "Show all technologies" do
     puts "Available technologies:"
-    puts Noir::TECHS.join(" ")
+    puts Noir::TECHS.join("\n")
     exit
   end
 
