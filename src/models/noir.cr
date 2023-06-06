@@ -1,17 +1,21 @@
 require "../detector/detector.cr"
 require "../analysis/analysis.cr"
 require "./endpoint.cr"
+require "./logger.cr"
 require "json"
 
 class NoirRunner
   @options : Hash(Symbol, String)
   @techs : Array(String)
   @endpoints : Array(Endpoint)
+  @logger : NoirLogger
 
   def initialize(options)
     @options = options
     @techs = [] of String
     @endpoints = [] of Endpoint
+    @logger = NoirLogger.new
+
     if options[:techs].size > 0
       @techs = options[:techs].split(",")
     end
@@ -27,6 +31,10 @@ class NoirRunner
 
   def endpoints
     @endpoints
+  end
+
+  def logger
+    @logger
   end
 
   def run
