@@ -49,6 +49,9 @@ def detect_relative(base_path : String)
       if detect_java_jsp(file, content)
         techs << "java_jsp"
       end
+      if detect_js_express(file, content)
+        techs << "js_express"
+      end
     end
     Fiber.yield
   end
