@@ -14,7 +14,7 @@ module Noir
     "python_flask",
     "php_pure",
     "java_jsp",
-    "js_express"
+    "js_express",
   ]
 end
 
@@ -81,7 +81,7 @@ app.detect
 if app.techs.size == 0
   app.logger.info "No technologies detected."
   exit(1)
-else 
+else
   app.logger.info "==> Found #{app.techs.size} techs."
   app.logger.info "==> Techs: #{app.techs.join(" ")}"
   app.logger.info "Analyzing..."

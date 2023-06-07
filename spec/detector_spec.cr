@@ -53,3 +53,12 @@ describe "Detect PHP Pure" do
     detect_php_pure("admin.js", "<? This is template ?>").should_not eq(true)
   end
 end
+
+describe "Detect Express" do
+  it "detect_js_express - require_single_quot" do
+    detect_js_express("index.js", "require('express')").should eq(true)
+  end
+  it "detect_js_express - require_double_quot" do
+    detect_js_express("index.js", "require(\"express\")").should eq(true)
+  end
+end
