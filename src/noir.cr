@@ -77,8 +77,15 @@ app.logger.debug("Noir options: #{noir_options}")
 
 app.logger.info "Detecting technologies..."
 app.detect
-app.logger.info "==> Found #{app.techs.join(" ")} techs."
-app.logger.info "Analyzing..."
-app.analyze
-app.logger.info "Generating Report..."
-app.report
+if app.techs.size == 0
+  app.logger.info "No technologies detected."
+  exit(1)
+else 
+  app.logger.info "==> Found #{app.techs.size} techs."
+  app.logger.info "==> Techs: #{app.techs.join(" ")}"
+  app.logger.info "Analyzing..."
+  app.analyze
+  app.logger.info "==> Finish! Found #{app.endpoints.size} endpoints."
+  app.logger.info "Generating Report..."
+  app.report
+end
