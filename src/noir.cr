@@ -14,6 +14,7 @@ module Noir
     "python_flask",
     "php_pure",
     "java_jsp",
+    "js_express"
   ]
 end
 
