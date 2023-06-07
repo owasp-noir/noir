@@ -17,7 +17,9 @@ def analysis_endpoints(options : Hash(Symbol, String), techs)
   result = [] of Endpoint
   analyzer = initialize_analyzers
   techs.each do |tech|
-    result = result + analyzer[tech].call(options)
+    if analyzer.has_key?(tech)
+      result = result + analyzer[tech].call(options)
+    end
   end
 
   result
