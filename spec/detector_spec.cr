@@ -2,25 +2,25 @@ require "../src/detector/absolute/*"
 require "../src/detector/relative/*"
 
 describe "Detect Ruby Rails" do
-  it "detect_rails 1" do
+  it "detect_rails gemfile/single_quot" do
     detect_ruby_rails("Gemfile", "gem 'rails'").should eq(true)
   end
-  it "detect_rails 2" do
+  it "detect_rails gemfile/double_quot" do
     detect_ruby_rails("Gemfile", "gem \"rails\"").should eq(true)
   end
 end
 
 describe "Detect Ruby Sinatra" do
-  it "detect_sinatra 1" do
+  it "detect_sinatra - gemfile/single_quot" do
     detect_ruby_sinatra("Gemfile", "gem 'sinatra'").should eq(true)
   end
-  it "detect_sinatra 2" do
+  it "detect_sinatra gemfile/double_quot" do
     detect_ruby_sinatra("Gemfile", "gem \"sinatra\"").should eq(true)
   end
 end
 
 describe "Detect Go Echo" do
-  it "detect_echo 1" do
+  it "detect_echo - go.mod" do
     detect_go_echo("go.mod", "github.com/labstack/echo").should eq(true)
   end
 end
@@ -32,8 +32,11 @@ describe "Detect Java JSP" do
 end
 
 describe "Detect Java Spring" do
-  it "detect_spring 1" do
+  it "detect_spring - pom.xml" do
     detect_java_spring("pom.xml", "org.springframework").should eq(true)
+  end
+  it "detect_spring - build.gradle" do
+    detect_java_spring("build.gradle", "'org.springframework.boot' version '2.6.2'").should eq(true)
   end
 end
 
