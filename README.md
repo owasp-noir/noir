@@ -21,7 +21,7 @@
 | Php      |           |      ✅     |  ✅ | ✅    | X      |
 | Java     | Spring    |      ✅     |  ✅ | X     | X      |
 | Java     | Jsp       |      ✅     |  X  | X     | X      |
-| JS       | Express   |      ✅     |  X  | X     | X      |
+| JS       | Express   |      ✅     |  🟧  | X     | X      |
 | JS       | Next      |      X      |  X  | X     | X      |
 
 ### Output Format
