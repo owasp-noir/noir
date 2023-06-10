@@ -1,4 +1,4 @@
-require "./analyzer/*"
+require "./analyzers/*"
 
 def initialize_analyzers
   analyzers = {} of String => Proc(Hash(Symbol, String), Array(Endpoint))

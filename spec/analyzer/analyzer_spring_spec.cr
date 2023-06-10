@@ -1,4 +1,4 @@
-require "../../src/analysis/analyzer/analyzer_spring.cr"
+require "../../src/analyzer/analyzers/analyzer_spring.cr"
 
 describe "mapping_to_path" do
   it "mapping_to_path - GET" do

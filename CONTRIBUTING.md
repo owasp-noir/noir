@@ -32,7 +32,7 @@ ameba --fix
 ## Code structure
 - spec: unit-test codes
 - src
-  - analysis: Code analyzers for Endpoint URL and Parameter analysis
+  - analyzer: Code analyzers for Endpoint URL and Parameter analysis
   - detector: Codes for language, framework identification 
   - models: Everything for the model, such as class, structure, etc
   - utils: Utility codes

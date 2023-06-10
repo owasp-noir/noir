@@ -1,5 +1,5 @@
 require "../detector/detector.cr"
-require "../analysis/analysis.cr"
+require "../analyzer/analyzer.cr"
 require "./endpoint.cr"
 require "./logger.cr"
 require "json"
