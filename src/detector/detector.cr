@@ -1,24 +1,6 @@
-require "./absolute/*"
-require "./relative/*"
+require "./detectors/*"
 
-def detect_tech(base_path : String)
-  techs = [] of String
-  techs = techs + detect_absolute(base_path)
-  techs = techs + detect_relative(base_path)
-
-  techs.uniq
-end
-
-def detect_absolute(base_path : String)
-  techs = [] of String
-  if detect_absolute_rails(base_path)
-    techs << "rails"
-  end
-
-  techs
-end
-
-def detect_relative(base_path : String)
+def detect_techs(base_path : String)
   techs = [] of String
   Dir.glob("#{base_path}/**/*") do |file|
     spawn do
@@ -56,5 +38,5 @@ def detect_relative(base_path : String)
     Fiber.yield
   end
 
-  techs
+  techs.uniq
 end

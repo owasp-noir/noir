@@ -1,5 +1,4 @@
-require "../src/detector/absolute/*"
-require "../src/detector/relative/*"
+require "../src/detector/detectors/*"
 
 describe "Detect Ruby Rails" do
   it "detect_rails gemfile/single_quot" do
