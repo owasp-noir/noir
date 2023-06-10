@@ -62,3 +62,15 @@ describe "Detect Express" do
     detect_js_express("index.js", "require(\"express\")").should eq(true)
   end
 end
+
+describe "Detect Python Django" do
+  it "detect_django - settings.py" do
+    detect_python_django("settings.py", "from django.apps import AppConfig").should eq(true)
+  end
+end
+
+describe "Detect Python Flask" do
+  it "detect_flask - app.py" do
+    detect_python_flask("app.py", "from flask import Flask").should eq(true)
+  end
+end
