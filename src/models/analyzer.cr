@@ -9,6 +9,7 @@ class Analyzer
   end
 
   def run
+    # After inheriting the class, write an action code here.
   end
 
   def result
