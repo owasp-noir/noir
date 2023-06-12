@@ -11,6 +11,16 @@ class NoirRunner
   @logger : NoirLogger
   @proxy : String
 
+  macro define_getter_methods(names)
+    {% for name, index in names %}
+      def {{name.id}}
+        @{{name.id}}
+      end
+    {% end %}
+  end
+
+  define_getter_methods [options, techs, endpoints, logger]
+
   def initialize(options)
     @options = options
     @techs = [] of String
@@ -26,22 +36,6 @@ class NoirRunner
     if options[:techs].size > 0
       @techs = options[:techs].split(",")
     end
-  end
-
-  def options
-    @options
-  end
-
-  def techs
-    @techs
-  end
-
-  def endpoints
-    @endpoints
-  end
-
-  def logger
-    @logger
   end
 
   def run
