@@ -1,3 +1,5 @@
+require "./logger"
+
 class Analyzer
   @result : Array(Endpoint)
   @base_path : String
