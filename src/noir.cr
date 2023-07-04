@@ -21,7 +21,7 @@ end
 noir_options = {
   :base => "", :url => "", :format => "plain",
   :output => "", :techs => "", :debug => "no",
-  :proxy => "", :scope => "url,param"
+  :proxy => "", :scope => "url,param",
 }
 banner()
 
