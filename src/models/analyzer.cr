@@ -3,12 +3,14 @@ class Analyzer
   @base_path : String
   @url : String
   @scope : String
+  @logger : NoirLogger
 
   def initialize(options : Hash(Symbol, String))
     @base_path = options[:base]
     @url = options[:url]
     @result = [] of Endpoint
     @scope = options[:scope]
+    @logger = NoirLogger.new
   end
 
   def run
@@ -23,5 +25,5 @@ class Analyzer
     {% end %}
   end
 
-  define_getter_methods [result, base_path, url, scope]
+  define_getter_methods [result, base_path, url, scope, logger]
 end
