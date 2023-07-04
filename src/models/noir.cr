@@ -55,6 +55,21 @@ class NoirRunner
     case options[:format]
     when "json"
       puts @endpoints.to_json
+    when "markdown-table"
+      puts "| Endpoint | Params |"
+      puts "| -------- | ------ |"
+
+      @endpoints.each do |endpoint|
+        if !endpoint.params.nil?
+          params_text = ""
+          endpoint.params.each do |param|
+            params_text += "`#{param.name} (#{param.param_type})` "
+          end
+          puts "| #{endpoint.method} #{endpoint.url} | #{params_text} |"
+        else
+          puts "| #{endpoint.method} #{endpoint.url} | - |"
+        end
+      end
     when "httpie"
       @endpoints.each do |endpoint|
         cmd = "http #{endpoint.method} #{endpoint.url}"
@@ -88,7 +103,7 @@ class NoirRunner
     end
   end
 
-  def send_proxy
+  def send_with_proxy
     if !@proxy.nil?
       @endpoints.each do |_|
         # TODO: send to proxy
