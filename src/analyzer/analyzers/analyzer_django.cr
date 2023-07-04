@@ -1,3 +1,11 @@
+require "../../models/analyzer"
+
+class AnalyzerDjango < Analyzer
+  def analyze
+    analyzer_django(@options)
+  end
+end
+
 def analyzer_django(options : Hash(Symbol, String))
   result = [] of Endpoint
   base_path = options[:base]

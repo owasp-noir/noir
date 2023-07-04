@@ -1,3 +1,11 @@
+require "../../models/analyzer"
+
+class AnalyzerRails < Analyzer
+  def analyze
+    # TODO
+  end
+end
+
 def analyzer_rails(options : Hash(Symbol, String))
   result = [] of Endpoint
   base_path = options[:base]

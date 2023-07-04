@@ -1,4 +1,11 @@
 require "../../utils/utils.cr"
+require "../../models/analyzer"
+
+class AnalyzerPhpPure < Analyzer
+  def analyze
+    # TODO
+  end
+end
 
 def analyzer_php_pure(options : Hash(Symbol, String))
   result = [] of Endpoint

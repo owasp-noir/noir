@@ -1,3 +1,11 @@
+require "../../models/analyzer"
+
+class AnalyzerSpring < Analyzer
+  def analyze
+    # TODO
+  end
+end
+
 def analyzer_spring(options : Hash(Symbol, String))
   result = [] of Endpoint
   base_path = options[:base]

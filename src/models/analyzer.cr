@@ -2,11 +2,13 @@ class Analyzer
   @result : Array(Endpoint)
   @base_path : String
   @url : String
+  @scope : String
 
   def initialize(options : Hash(Symbol, String))
     @base_path = options[:base]
     @url = options[:url]
     @result = [] of Endpoint
+    @scope = options[:scope]
   end
 
   def run
