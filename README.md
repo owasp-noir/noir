@@ -24,11 +24,37 @@
 | JS       | Express   |      ✅     |  🟧  | X     | X      |
 | JS       | Next      |      X      |  X  | X     | X      |
 
-### Output Format
-- Plain (default/`--format plain`)
-- JSON (`--format json`)
-- [Curl](https://github.com/curl/curl) (`--format curl`)
-- [Httpie](https://github.com/httpie/httpie) (`--format httpie`)
+## Installation
+```bash
+git clone https://github.com/hahwul/noir
+cd noir
+shards install
+shards build
+cp ./bin/noir /usr/bin/
+
+# I'll support homebrew when noir is officially released.
+```
+
+## Usage
+```
+Usage: noir <flags>
+  Basic:
+    -b PATH, --base-path ./app       (Required) Set base path
+    -u URL, --url http://..          Set base url for endpoints
+
+  Output:
+    -f FORMAT, --format json         Set output format [plain/json/curl/httpie]
+    -o PATH, --output out.txt        Write result to file
+
+  Technologies:
+    -t TECHS, --techs rails,php      Set technologies to use
+    --techs-list                     Show all technologies
+
+  Others:
+    -d, --debug                      Show debug messages
+    -v, --version                    Show version
+    -h, --help                       Show help
+```
 
 ### Contributing
 Noir is open-source project and made it with ❤️ 
