@@ -23,5 +23,5 @@ class Analyzer
     {% end %}
   end
 
-  define_getter_methods [result, base_path, url]
+  define_getter_methods [result, base_path, url, scope]
 end
