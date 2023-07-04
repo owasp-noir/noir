@@ -10,6 +10,7 @@ class NoirRunner
   @endpoints : Array(Endpoint)
   @logger : NoirLogger
   @proxy : String
+  @scope : String
 
   macro define_getter_methods(names)
     {% for name, index in names %}
@@ -26,6 +27,7 @@ class NoirRunner
     @techs = [] of String
     @endpoints = [] of Endpoint
     @proxy = options[:proxy]
+    @scope = options[:scope]
 
     if options[:debug] == "yes"
       @logger = NoirLogger.new true
@@ -60,7 +62,7 @@ class NoirRunner
       puts "| -------- | ------ |"
 
       @endpoints.each do |endpoint|
-        if !endpoint.params.nil?
+        if !endpoint.params.nil? && @scope.includes?("param")
           params_text = ""
           endpoint.params.each do |param|
             params_text += "`#{param.name} (#{param.param_type})` "
@@ -74,7 +76,7 @@ class NoirRunner
       @endpoints.each do |endpoint|
         cmd = "http #{endpoint.method} #{endpoint.url}"
 
-        if !endpoint.params.nil?
+        if !endpoint.params.nil? && @scope.includes?("param")
           endpoint.params.each do |param|
             cmd += " \"#{param.name}=#{param.value}\""
           end
@@ -84,7 +86,7 @@ class NoirRunner
     when "curl"
       @endpoints.each do |endpoint|
         cmd = "curl -i -k -X #{endpoint.method} #{endpoint.url}"
-        if !endpoint.params.nil?
+        if !endpoint.params.nil? && @scope.includes?("param")
           endpoint.params.each do |param|
             cmd += " -d \"#{param.name}=#{param.value}\""
           end
@@ -94,7 +96,7 @@ class NoirRunner
     else
       @endpoints.each do |endpoint|
         puts "#{endpoint.method} #{endpoint.url}"
-        if !endpoint.params.nil?
+        if !endpoint.params.nil? && @scope.includes?("param")
           endpoint.params.each do |param|
             puts " - #{param.name} (#{param.param_type})"
           end

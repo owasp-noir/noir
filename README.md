@@ -48,9 +48,10 @@ Usage: noir <flags>
   Basic:
     -b PATH, --base-path ./app       (Required) Set base path
     -u URL, --url http://..          Set base url for endpoints
+    -s SCOPE, --scope url,param      Set scope for detection
 
   Output:
-    -f FORMAT, --format json         Set output format [plain/json/curl/httpie]
+    -f FORMAT, --format json         Set output format [plain/json/markdown-table/curl/httpie]
     -o PATH, --output out.txt        Write result to file
 
   Technologies:

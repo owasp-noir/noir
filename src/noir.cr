@@ -21,7 +21,7 @@ end
 noir_options = {
   :base => "", :url => "", :format => "plain",
   :output => "", :techs => "", :debug => "no",
-  :proxy => "",
+  :proxy => "", :scope => "url,param"
 }
 banner()
 
@@ -30,6 +30,7 @@ OptionParser.parse do |parser|
   parser.separator "  Basic:".colorize(:blue)
   parser.on "-b PATH", "--base-path ./app", "(Required) Set base path" { |var| noir_options[:base] = var }
   parser.on "-u URL", "--url http://..", "Set base url for endpoints" { |var| noir_options[:url] = var }
+  parser.on "-s SCOPE", "--scope url,param", "Set scope for detection" { |var| noir_options[:scope] = var }
 
   parser.separator "\n  Output:".colorize(:blue)
 
