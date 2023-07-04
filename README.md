@@ -26,10 +26,17 @@
 
 ## Installation
 ```bash
+# Clone this repo
 git clone https://github.com/hahwul/noir
 cd noir
+
+# Install Dependencies
 shards install
-shards build
+
+# Build
+shards build --release --no-debug
+
+# Copy binary
 cp ./bin/noir /usr/bin/
 
 # I'll support homebrew when noir is officially released.
