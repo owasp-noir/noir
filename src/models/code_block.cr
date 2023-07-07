@@ -1,5 +1,5 @@
 struct CodeBlock
-  property depth : Integer
+  property depth : Int32
   property state : String
 
   def initialize
