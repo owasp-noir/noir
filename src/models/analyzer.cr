@@ -1,4 +1,5 @@
 require "./logger"
+require "./code_block"
 
 class Analyzer
   @result : Array(Endpoint)
