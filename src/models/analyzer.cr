@@ -13,7 +13,7 @@ class Analyzer
     @url = options[:url]
     @result = [] of Endpoint
     @scope = options[:scope]
-    @logger = NoirLogger.new
+    @logger = NoirLogger.new false
   end
 
   def run

@@ -2,11 +2,6 @@ require "../../models/analyzer"
 
 class AnalyzerExample < Analyzer
   def analyze
-    result = [] of Endpoint
-    base_path = @options[:base]
-    url = @options[:url]
-    _ = url
-
     # Source Analysis
     Dir.glob("#{base_path}/**/*") do |path|
       next if File.directory?(path)
@@ -18,6 +13,6 @@ class AnalyzerExample < Analyzer
       end
     end
 
-    result
+    @result
   end
 end
