@@ -2,6 +2,7 @@ require "option_parser"
 require "colorize"
 require "./models/noir.cr"
 require "./logger/banner/banner.cr"
+require "./options.cr"
 
 module Noir
   VERSION = "0.1.0"
@@ -18,11 +19,7 @@ module Noir
   ]
 end
 
-noir_options = {
-  :base => "", :url => "", :format => "plain",
-  :output => "", :techs => "", :debug => "no",
-  :proxy => "", :scope => "url,param",
-}
+noir_options = default_options()
 banner()
 
 OptionParser.parse do |parser|
