@@ -53,6 +53,7 @@ Usage: noir <flags>
   Output:
     -f FORMAT, --format json         Set output format [plain/json/markdown-table/curl/httpie]
     -o PATH, --output out.txt        Write result to file
+    --no-color                       Disable color output
 
   Technologies:
     -t TECHS, --techs rails,php      Set technologies to use

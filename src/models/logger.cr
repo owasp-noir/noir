@@ -1,6 +1,7 @@
 class NoirLogger
-  def initialize(debug : Bool)
+  def initialize(debug : Bool, colorize : Bool)
     @debug = debug
+    @color_mode = colorize
   end
 
   def puts(message)

@@ -28,12 +28,19 @@ class NoirRunner
     @endpoints = [] of Endpoint
     @proxy = options[:proxy]
     @scope = options[:scope]
-
     if options[:debug] == "yes"
-      @logger = NoirLogger.new true
+      @is_debug = true
     else
-      @logger = NoirLogger.new false
+      @is_debug = false
     end
+
+    if options[:color] == "yes"
+      @is_color = true
+    else
+      @is_color = false
+    end
+
+    @logger = NoirLogger.new @is_debug, @is_color
 
     if options[:techs].size > 0
       @techs = options[:techs].split(",")
