@@ -1,7 +1,7 @@
 require "option_parser"
 require "colorize"
 require "./models/noir.cr"
-require "./logger/banner/banner.cr"
+require "./banner/banner.cr"
 require "./options.cr"
 
 module Noir
