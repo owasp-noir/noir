@@ -1,5 +1,6 @@
 require "../detector/detector.cr"
 require "../analyzer/analyzer.cr"
+require "../deliver/*"
 require "./endpoint.cr"
 require "./logger.cr"
 require "json"
@@ -9,8 +10,8 @@ class NoirRunner
   @techs : Array(String)
   @endpoints : Array(Endpoint)
   @logger : NoirLogger
-  @proxy : String
   @scope : String
+  @send_proxy : String
 
   macro define_getter_methods(names)
     {% for name, index in names %}
@@ -26,7 +27,7 @@ class NoirRunner
     @options = options
     @techs = [] of String
     @endpoints = [] of Endpoint
-    @proxy = options[:proxy]
+    @send_proxy = options[:send_proxy]
     @scope = options[:scope]
     if options[:debug] == "yes"
       @is_debug = true
@@ -58,6 +59,13 @@ class NoirRunner
 
   def analyze
     @endpoints = analysis_endpoints options, @techs
+    deliver()
+  end
+
+  def deliver
+    if @send_proxy != ""
+      send_with_proxy(@endpoints, @send_proxy)
+    end
   end
 
   def report

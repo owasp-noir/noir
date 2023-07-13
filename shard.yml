@@ -8,6 +8,10 @@ targets:
   noir:
     main: src/noir.cr
 
+dependencies:
+  crest:
+    github: mamantoha/crest
+
 crystal: 1.8.2
 
 license: MIT
