@@ -55,6 +55,9 @@ Usage: noir <flags>
     -o PATH, --output out.txt        Write result to file
     --no-color                       Disable color output
 
+  Deliver:
+    --send-proxy http://proxy..      Send the results to the web request via http proxy
+
   Technologies:
     -t TECHS, --techs rails,php      Set technologies to use
     --techs-list                     Show all technologies
