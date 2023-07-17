@@ -38,6 +38,7 @@ OptionParser.parse do |parser|
   end
 
   parser.separator "\n  Deliver:".colorize(:blue)
+  parser.on "--send-req", "Send the results to the web request" { |_| noir_options[:send_req] = "yes" }
   parser.on "--send-proxy http://proxy..", "Send the results to the web request via http proxy" { |var| noir_options[:send_proxy] = var }
 
   parser.separator "\n  Technologies:".colorize(:blue)

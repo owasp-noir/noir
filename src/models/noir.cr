@@ -12,6 +12,7 @@ class NoirRunner
   @logger : NoirLogger
   @scope : String
   @send_proxy : String
+  @send_req : String
 
   macro define_getter_methods(names)
     {% for name, index in names %}
@@ -28,6 +29,7 @@ class NoirRunner
     @techs = [] of String
     @endpoints = [] of Endpoint
     @send_proxy = options[:send_proxy]
+    @send_req = options[:send_req]
     @scope = options[:scope]
     if options[:debug] == "yes"
       @is_debug = true
@@ -65,6 +67,10 @@ class NoirRunner
   def deliver
     if @send_proxy != ""
       send_with_proxy(@endpoints, @send_proxy)
+    end
+
+    if @send_req != "no"
+      send_req(@endpoints)
     end
   end
 
@@ -116,14 +122,6 @@ class NoirRunner
             puts " - #{param.name} (#{param.param_type})"
           end
         end
-      end
-    end
-  end
-
-  def send_with_proxy
-    if !@proxy.nil?
-      @endpoints.each do |_|
-        # TODO: send to proxy
       end
     end
   end
