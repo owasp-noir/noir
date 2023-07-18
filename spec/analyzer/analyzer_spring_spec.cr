@@ -11,4 +11,7 @@ describe "mapping_to_path" do
   it "mapping_to_path - POST" do
     instance.mapping_to_path("@PostMapping(\"/abcd\")").should eq("/abcd")
   end
+  it "mapping_to_path - case1" do
+    instance.mapping_to_path("@GetMapping(value = \"/abcd\")").should eq("/abcd")
+  end
 end

@@ -52,6 +52,9 @@ class AnalyzerSpring < Analyzer
         if line[0].to_s == "/"
           return line
         else
+          if line.to_s.includes? "="
+            return line.split("=")[1].strip
+          end
           return "/#{line}"
         end
       end
