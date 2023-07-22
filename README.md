@@ -40,6 +40,13 @@ shards build --release --no-debug
 cp ./bin/noir /usr/bin/
 
 # I'll support homebrew when noir is officially released.
+# brew tap hahwul/noir
+# brew install noir
+```
+
+### Docker (GHCR)
+```bash
+docker pull ghcr.io/hahwul/noir:main
 ```
 
 ## Usage
