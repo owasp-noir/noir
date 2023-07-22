@@ -14,4 +14,10 @@ describe "mapping_to_path" do
   it "mapping_to_path - case1" do
     instance.mapping_to_path("@GetMapping(value = \"/abcd\")").should eq("/abcd")
   end
+  it "mapping_to_path - case2" do
+    instance.mapping_to_path("@RequestMapping(value = \"/abcd\", method={RequestMethod.GET, RequestMethod.POST})").should eq("/abcd")
+  end
+  it "mapping_to_path - case3" do
+    instance.mapping_to_path("@RequestMapping(method={RequestMethod.GET, RequestMethod.POST}, value = \"/abcd\")").should eq("/abcd")
+  end
 end
