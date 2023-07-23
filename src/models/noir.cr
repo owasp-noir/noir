@@ -61,7 +61,20 @@ class NoirRunner
 
   def analyze
     @endpoints = analysis_endpoints options, @techs
+    optimize_endpoints
     deliver()
+  end
+
+  def optimize_endpoints
+    # copy array @endpoints to tmp.
+    tmp = [] of Endpoint
+    @endpoints.each do |endpoint|
+      if endpoint.url != ""
+        tmp << endpoint
+      end
+    end
+
+    @endpoints = tmp
   end
 
   def deliver
