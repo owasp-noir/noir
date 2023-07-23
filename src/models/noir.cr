@@ -66,11 +66,20 @@ class NoirRunner
   end
 
   def optimize_endpoints
-    # copy array @endpoints to tmp.
     tmp = [] of Endpoint
     @endpoints.each do |endpoint|
+      tiny_tmp = endpoint
+      if endpoint.params.size > 0
+        tiny_tmp.params = [] of Param
+        endpoint.params.each do |param|
+          if !param.name.includes? " "
+            tiny_tmp.params << param
+          end
+        end
+      end
+
       if endpoint.url != ""
-        tmp << endpoint
+        tmp << tiny_tmp
       end
     end
 
