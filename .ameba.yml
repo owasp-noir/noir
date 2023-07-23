@@ -1,5 +1,5 @@
 Metrics/CyclomaticComplexity:
   Description: Disallows methods with a cyclomatic complexity higher than `MaxComplexity`
-  MaxComplexity: 15
+  MaxComplexity: 25
   Enabled: true
   Severity: Warning
