@@ -12,8 +12,13 @@ class AnalyzerSpring < Analyzer
             file.each_line do |line|
               if line.includes? "RequestMapping"
                 path_with_slash = mapping_to_path(line)
-                @result << Endpoint.new("#{@url}#{path_with_slash}", "GET")
+                if line.includes? "RequestMethod"
+                  define_requestmapping_handlers(["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE"])
+                else
+                  @result << Endpoint.new("#{@url}#{path_with_slash}", "GET")
+                end
               end
+
               if line.includes? "PostMapping"
                 path_with_slash = mapping_to_path(line)
                 @result << Endpoint.new("#{@url}#{path_with_slash}", "POST")
@@ -76,6 +81,14 @@ class AnalyzerSpring < Analyzer
     # case2 -> String a = param.get("a");
     # case3 -> String a = request.getParameter("a");
     # case4 -> (PATH) @PathVariable("a")
+  end
+
+  macro define_requestmapping_handlers(methods)
+    {% for method, index in methods %}
+      if line.includes? "RequestMethod.{{method.id}}"
+        @result << Endpoint.new("#{@url}#{path_with_slash}", "{{method.id}}")
+      end
+    {% end %}
   end
 end
 
