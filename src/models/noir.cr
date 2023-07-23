@@ -138,7 +138,7 @@ class NoirRunner
         if !endpoint.params.nil? && @scope.includes?("param")
           endpoint.params.each do |param|
             if param.param_type == "query"
-              if first_query 
+              if first_query
                 final_url += "?#{param.name}=#{param.value}"
                 first_query = false
               else
