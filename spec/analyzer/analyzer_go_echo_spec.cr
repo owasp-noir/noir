@@ -26,4 +26,10 @@ describe "analyzer_go_echo" do
   it "instance.get_route_path_go_echo - OPTIONS" do
     instance.get_route_path_go_echo("e.OPTIONS(\"/\", func(c echo.Context) error {").should eq("/")
   end
+  it "instance.get_route_path_go_echo - customContext1" do
+    instance.get_route_path_go_echo("customEnv.OPTIONS(\"/\", func(c echo.Context) error {").should eq("/")
+  end
+  it "instance.get_route_path_go_echo - customContext2" do
+    instance.get_route_path_go_echo("customEnv.OPTIONS(\"/\", func(myContext echo.Context) error {").should eq("/")
+  end
 end
