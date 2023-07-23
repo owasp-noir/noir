@@ -78,19 +78,37 @@ end
 app = NoirRunner.new noir_options
 app.logger.debug("Start Debug mode")
 app.logger.debug("Noir version: #{Noir::VERSION}")
-app.logger.debug("Noir options: #{noir_options}")
+app.logger.debug("Noir options from arguments:")
+noir_options.each do |k, v|
+  app.logger.debug_sub("#{k}: #{v}")
+end
 
-app.logger.info "Detecting technologies..."
+app.logger.debug "Initialized Options:"
+app.logger.debug_sub "Base: #{app.options[:base]}"
+app.logger.debug_sub "Techs: #{app.options[:techs]}"
+app.logger.debug_sub "Scope: #{app.options[:scope]}"
+app.logger.debug_sub "Send Proxy: #{app.@send_proxy}"
+app.logger.debug_sub "Send Req: #{app.@send_req}"
+app.logger.debug_sub "Debug: #{app.@is_debug}"
+app.logger.debug_sub "Color: #{app.@is_color}"
+app.logger.debug_sub "Format: #{app.options[:format]}"
+app.logger.debug_sub "Output: #{app.options[:output]}"
+
+app.logger.system "Detecting technologies."
 app.detect
 if app.techs.size == 0
   app.logger.info "No technologies detected."
   exit(1)
 else
-  app.logger.info "==> Found #{app.techs.size} techs."
-  app.logger.info "==> Techs: #{app.techs.join(" ")}"
-  app.logger.info "Analyzing..."
+  app.logger.info "Detected #{app.techs.size} technologies."
+  app.techs.each do |tech|
+    app.logger.info_sub "#{tech}"
+  end
+
+  app.logger.system "Initiate code analysis based on the detected technology."
   app.analyze
-  app.logger.info "==> Finish! Found #{app.endpoints.size} endpoints."
-  app.logger.info "Generating Report..."
+  app.logger.info "Found #{app.endpoints.size} endpoints."
+
+  app.logger.system "Generating Report."
   app.report
 end

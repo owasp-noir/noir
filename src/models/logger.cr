@@ -1,3 +1,5 @@
+require "colorize"
+
 class NoirLogger
   def initialize(debug : Bool, colorize : Bool)
     @debug = debug
@@ -8,27 +10,42 @@ class NoirLogger
     puts message
   end
 
-  def info(message)
-    STDERR.puts message
+  def system(message)
+    if @color_mode
+      prefix = "[*] ".colorize(:light_cyan)
+      STDERR.puts "#{prefix}#{message}"
+    else
+      STDERR.puts "[*]" + message
+    end
   end
 
-  def info(message, depth)
-    case depth
-    when 0
-      STDERR.puts message
-    when 1
-      STDERR.puts "  #{message}"
-    when 2
-      STDERR.puts "    #{message}"
-    when 3
-      STDERR.puts "      #{message}"
+  def info(message)
+    if @color_mode
+      prefix = "[I] ".colorize(:light_blue)
+      STDERR.puts "#{prefix}#{message}"
     else
-      STDERR.puts "        #{message}"
+      STDERR.puts "[I] " + message
     end
-    STDERR.puts message
+  end
+
+  def info_sub(message)
+      STDERR.puts "    " + message
   end
 
   def debug(message)
-    STDERR.puts message if @debug
+    if @debug
+      if @color_mode
+        prefix = "[D] ".colorize(:dark_gray)
+        STDERR.puts "#{prefix}#{message}"
+      else
+        STDERR.puts "[D] " + message
+      end
+    end
+  end
+
+  def debug_sub(message)
+    if @debug
+      STDERR.puts "    " + message
+    end
   end
 end

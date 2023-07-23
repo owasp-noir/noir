@@ -60,12 +60,13 @@ class NoirRunner
   end
 
   def analyze
-    @endpoints = analysis_endpoints options, @techs
+    @endpoints = analysis_endpoints options, @techs, @logger
     optimize_endpoints
     deliver()
   end
 
   def optimize_endpoints
+    @logger.info "Optimizing endpoints."
     tmp = [] of Endpoint
     @endpoints.each do |endpoint|
       tiny_tmp = endpoint
@@ -88,10 +89,12 @@ class NoirRunner
 
   def deliver
     if @send_proxy != ""
+      @logger.system "Sending requests with proxy #{@send_proxy}"
       send_with_proxy(@endpoints, @send_proxy)
     end
 
     if @send_req != "no"
+      @logger.system "Sending requests without proxy"
       send_req(@endpoints)
     end
   end

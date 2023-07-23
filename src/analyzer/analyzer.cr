@@ -1,6 +1,6 @@
 require "./analyzers/*"
 
-def initialize_analyzers
+def initialize_analyzers(logger : NoirLogger)
   analyzers = {} of String => Proc(Hash(Symbol, String), Array(Endpoint))
   analyzers["ruby_rails"] = ->analyzer_rails(Hash(Symbol, String))
   analyzers["ruby_sinatra"] = ->analyzer_sinatra(Hash(Symbol, String))
@@ -10,13 +10,19 @@ def initialize_analyzers
   analyzers["python_flask"] = ->analyzer_flask(Hash(Symbol, String))
   analyzers["python_django"] = ->analyzer_django(Hash(Symbol, String))
   analyzers["js_express"] = ->analyzer_express(Hash(Symbol, String))
-
+  
+  logger.info "#{analyzers.size} Analyzers initialized"
+  logger.debug "Analyzers:"
+  analyzers.each do |key, value|
+    logger.debug_sub "#{key} initialized"
+  end
   analyzers
 end
 
-def analysis_endpoints(options : Hash(Symbol, String), techs)
+def analysis_endpoints(options : Hash(Symbol, String), techs, logger : NoirLogger)
   result = [] of Endpoint
-  analyzer = initialize_analyzers
+
+  analyzer = initialize_analyzers logger
   techs.each do |tech|
     if analyzer.has_key?(tech)
       result = result + analyzer[tech].call(options)
