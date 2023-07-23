@@ -10,10 +10,10 @@ def initialize_analyzers(logger : NoirLogger)
   analyzers["python_flask"] = ->analyzer_flask(Hash(Symbol, String))
   analyzers["python_django"] = ->analyzer_django(Hash(Symbol, String))
   analyzers["js_express"] = ->analyzer_express(Hash(Symbol, String))
-  
+
   logger.info "#{analyzers.size} Analyzers initialized"
   logger.debug "Analyzers:"
-  analyzers.each do |key, value|
+  analyzers.each do |key, _|
     logger.debug_sub "#{key} initialized"
   end
   analyzers

@@ -16,8 +16,8 @@ def detect_techs(base_path : String)
       content = File.read(file)
 
       define_detectors([
-        ruby_rails, ruby_sinatra, go_echo, java_spring, 
-        python_django, python_flask, php_pure, java_jsp, js_express
+        ruby_rails, ruby_sinatra, go_echo, java_spring,
+        python_django, python_flask, php_pure, java_jsp, js_express,
       ])
     end
     Fiber.yield

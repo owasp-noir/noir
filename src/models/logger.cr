@@ -29,7 +29,7 @@ class NoirLogger
   end
 
   def info_sub(message)
-      STDERR.puts "    " + message
+    STDERR.puts "    " + message
   end
 
   def debug(message)
