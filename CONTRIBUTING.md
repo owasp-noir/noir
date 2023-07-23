@@ -22,6 +22,9 @@ crystal spec -v
 ```bash
 crystal tool format
 ameba --fix
+
+# Ameba installation
+# https://github.com/crystal-ameba/ameba#installation
 ```
 
 ## Contribute
