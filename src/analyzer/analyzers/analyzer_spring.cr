@@ -53,21 +53,14 @@ class AnalyzerSpring < Analyzer
           return line
         else
           if line.to_s.includes? "="
-            tmp = line.gsub(",","=").split("=")
+            tmp = line.gsub(",", "=").split("=")
             i = 0
-            tmp.each do 
+            tmp.each do
               if tmp[i].strip == "value"
-                return tmp[i+1].gsub(/"|\)/, "").strip.split(",")[0].strip
+                return tmp[i + 1].gsub(/"|\)/, "").strip.split(",")[0].strip
               end
               i += 1
             end
-
-            # tmp = line.split("=")[1].strip
-            # if tmp.includes? ","
-            #   return tmp.split(",")[0].strip
-            # else 
-            #   return tmp
-            # end
           end
           return "/#{line}"
         end
