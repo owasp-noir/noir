@@ -25,7 +25,18 @@
 | JS       | Next      |      X      |  X  | X     | X      |
 
 ## Installation
+### Homebrew (macOS)
 ```bash
+# I'll support homebrew when noir is officially released.
+# brew tap hahwul/noir
+# brew install noir
+```
+
+### From Sources
+```bash
+# Install Crystal-lang
+# https://crystal-lang.org/install/
+
 # Clone this repo
 git clone https://github.com/hahwul/noir
 cd noir
@@ -38,10 +49,6 @@ shards build --release --no-debug
 
 # Copy binary
 cp ./bin/noir /usr/bin/
-
-# I'll support homebrew when noir is officially released.
-# brew tap hahwul/noir
-# brew install noir
 ```
 
 ### Docker (GHCR)
