@@ -129,11 +129,55 @@ class NoirRunner
       end
     else
       @endpoints.each do |endpoint|
-        puts "#{endpoint.method} #{endpoint.url}"
+        final_url = endpoint.url
+        final_body = ""
+        is_json = false
+        first_query = true
+        first_form = true
+
         if !endpoint.params.nil? && @scope.includes?("param")
           endpoint.params.each do |param|
-            puts " - #{param.name} (#{param.param_type})"
+            if param.param_type == "query"
+              if first_query 
+                final_url += "?#{param.name}=#{param.value}"
+                first_query = false
+              else
+                final_url += "&#{param.name}=#{param.value}"
+              end
+            end
+
+            if param.param_type == "body"
+              if first_form
+                final_body += "#{param.name}=#{param.value}"
+                first_form
+              else
+                final_body += "&#{param.name}=#{param.value}"
+              end
+            end
+
+            if param.param_type == "json"
+              is_json = true
+            end
           end
+        end
+
+        if final_body != ""
+          puts "#{endpoint.method} #{final_url}"
+          puts final_body
+          puts ""
+        elsif is_json
+          final_json = Hash(String, String).new
+          endpoint.params.each do |param|
+            if param.param_type == "json"
+              final_json[param.name] = param.value
+            end
+          end
+
+          puts "#{endpoint.method} #{final_url}"
+          puts final_json.to_json
+          puts ""
+        else
+          puts "#{endpoint.method} #{final_url}"
         end
       end
     end
