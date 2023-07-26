@@ -11,11 +11,32 @@ describe "mapping_to_path" do
   it "mapping_to_path - POST" do
     instance.mapping_to_path("@PostMapping(\"/abcd\")").should eq("/abcd")
   end
+  it "mapping_to_path - PUT" do
+    instance.mapping_to_path("@PutMapping(\"/abcd\")").should eq("/abcd")
+  end
+  it "mapping_to_path - DELETE" do
+    instance.mapping_to_path("@DeleteMapping(\"/abcd\")").should eq("/abcd")
+  end
+  it "mapping_to_path - PATCH" do
+    instance.mapping_to_path("@PatchMapping(\"/abcd\")").should eq("/abcd")
+  end
   it "mapping_to_path - code style1" do
     instance.mapping_to_path("@GetMapping(value = \"/abcd\")").should eq("/abcd")
   end
   it "mapping_to_path - code style2" do
     instance.mapping_to_path("@GetMapping({ \"/abcd\" })").should eq("/abcd")
+  end
+  it "mapping_to_path - multiple path" do
+    instance.mapping_to_path("@GetMapping(value={\"/abcd\", \"/efgh\"})").should eq("/abcd, /efgh")
+  end
+  it "mapping_to_path - url template style" do
+    instance.mapping_to_path("@GetMapping(\"/{abcd}\")").should eq("/{abcd}")
+  end
+  it "mapping_to_path - ant-style" do
+    instance.mapping_to_path("@GetMapping(\"/{abcd:[a-z]+}\")").should eq("/{abcd:[a-z]+}")
+  end
+  it "mapping_to_path - regular expression style" do
+    instance.mapping_to_path("@GetMapping(\"/{number:^[0-9]+$}\")").should eq("/{number:^[0-9]+$}")
   end
   it "mapping_to_path - requestmapping style1" do
     instance.mapping_to_path("@RequestMapping(value = \"/abcd\", method={RequestMethod.GET, RequestMethod.POST})").should eq("/abcd")
