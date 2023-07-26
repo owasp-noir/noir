@@ -11,33 +11,45 @@ class AnalyzerSpring < Analyzer
           File.open(path, "r") do |file|
             file.each_line do |line|
               if line.includes? "RequestMapping"
-                path_with_slash = mapping_to_path(line)
-                if line.includes? "RequestMethod"
-                  define_requestmapping_handlers(["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE"])
-                else
-                  @result << Endpoint.new("#{@url}#{path_with_slash}", "GET")
+                mapping_paths = mapping_to_path(line)
+                mapping_paths.each do |mapping_path|
+                  if line.includes? "RequestMethod"
+                    define_requestmapping_handlers(["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE"])
+                  else
+                    @result << Endpoint.new("#{@url}#{mapping_path}", "GET")
+                  end
                 end
               end
 
               if line.includes? "PostMapping"
-                path_with_slash = mapping_to_path(line)
-                @result << Endpoint.new("#{@url}#{path_with_slash}", "POST")
+                mapping_paths = mapping_to_path(line)
+                mapping_paths.each do |mapping_path|
+                  @result << Endpoint.new("#{@url}#{mapping_path}", "POST")
+                end
               end
               if line.includes? "PutMapping"
-                path_with_slash = mapping_to_path(line)
-                @result << Endpoint.new("#{@url}#{path_with_slash}", "PUT")
+                mapping_paths = mapping_to_path(line)
+                mapping_paths.each do |mapping_path|
+                  @result << Endpoint.new("#{@url}#{mapping_path}", "PUT")
+                end
               end
               if line.includes? "DeleteMapping"
-                path_with_slash = mapping_to_path(line)
-                @result << Endpoint.new("#{@url}#{path_with_slash}", "DELETE")
+                mapping_paths = mapping_to_path(line)
+                mapping_paths.each do |mapping_path|
+                  @result << Endpoint.new("#{@url}#{mapping_path}", "DELETE")
+                end
               end
               if line.includes? "PatchMapping"
-                path_with_slash = mapping_to_path(line)
-                @result << Endpoint.new("#{@url}#{path_with_slash}", "PATCH")
+                mapping_paths = mapping_to_path(line)
+                mapping_paths.each do |mapping_path|
+                  @result << Endpoint.new("#{@url}#{mapping_path}", "PATCH")
+                end
               end
               if line.includes? "GetMapping"
-                path_with_slash = mapping_to_path(line)
-                @result << Endpoint.new("#{@url}#{path_with_slash}", "GET")
+                mapping_paths = mapping_to_path(line)
+                mapping_paths.each do |mapping_path|
+                  @result << Endpoint.new("#{@url}#{mapping_path}", "GET")
+                end
               end
             end
           end
@@ -50,29 +62,48 @@ class AnalyzerSpring < Analyzer
   end
 
   def mapping_to_path(content : String)
+    paths = Array(String).new
+
     splited_line = content.strip.split("(")
     if splited_line.size > 1
-      line = splited_line[1].gsub(/"|\)|{|}| /, "")
+      line = splited_line[1].gsub(/"|\)| /, "").gsub("s", "").strip
       if line.size > 0
         if line[0].to_s == "/"
-          return line
+          paths << line
         else
-          if line.to_s.includes? "="
-            tmp = line.gsub(",", "=").split("=")
-            i = 0
-            tmp.each do
-              if tmp[i].strip == "value"
-                return tmp[i + 1].gsub(/"|\)/, "").strip.split(",")[0].strip
+          if is_bracket(line)
+            line = line.gsub(/\{|\}/, "")
+          end
+          if line[0].to_s == "/"
+            paths << line
+          else
+            line = comma_in_bracket(line)
+            line.split(",").each do |comma_line|
+              if comma_line.to_s.includes? "value="
+                tmp = comma_line.split("=")
+                tmp[1].gsub(/"|\)/, "").strip.split("_BRACKET_COMMA_").each do |path|
+                  paths << "#{path.strip}"
+                end
               end
-              i += 1
             end
           end
-          return "/#{line}"
         end
       end
     end
 
-    ""
+    paths
+  end
+
+  def is_bracket(content : String)
+    content.gsub(/\s/, "")[0].to_s == "{"
+  end
+
+  def comma_in_bracket(content : String)
+    result = content.gsub(/\{(.*?)\}/) do |match|
+      match.gsub(",", "_BRACKET_COMMA_")
+    end
+
+    result.gsub("{", "").gsub("}", "")
   end
 
   def extract_param(content : String)
@@ -86,7 +117,7 @@ class AnalyzerSpring < Analyzer
   macro define_requestmapping_handlers(methods)
     {% for method, index in methods %}
       if line.includes? "RequestMethod.{{method.id}}"
-        @result << Endpoint.new("#{@url}#{path_with_slash}", "{{method.id}}")
+        @result << Endpoint.new("#{@url}#{mapping_path}", "{{method.id}}")
       end
     {% end %}
   end
