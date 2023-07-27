@@ -16,7 +16,7 @@ class Analyzer
     @logger = NoirLogger.new false, true
   end
 
-  def run
+  def analyze
     # After inheriting the class, write an action code here.
   end
 
