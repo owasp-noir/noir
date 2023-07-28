@@ -70,6 +70,7 @@ Usage: noir <flags>
     --no-color                       Disable color output
 
   Deliver:
+    --send-req                       Send the results to the web request
     --send-proxy http://proxy..      Send the results to the web request via http proxy
 
   Technologies:
