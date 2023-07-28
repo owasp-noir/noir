@@ -107,7 +107,7 @@ else
 
   app.logger.system "Initiate code analysis based on the detected technology."
   app.analyze
-  app.logger.info "Found #{app.endpoints.size} endpoints."
+  app.logger.info "Finally identified #{app.endpoints.size} endpoints."
 
   app.logger.system "Generating Report."
   app.report

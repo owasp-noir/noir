@@ -66,7 +66,7 @@ class NoirRunner
   end
 
   def optimize_endpoints
-    @logger.info "Optimizing endpoints."
+    @logger.system "Optimizing endpoints."
     tmp = [] of Endpoint
     duplicate = [] of String
 
