@@ -13,6 +13,9 @@ class NoirRunner
   @scope : String
   @send_proxy : String
   @send_req : String
+  @is_debug : Bool
+  @is_color : Bool
+  @is_log : Bool
 
   macro define_getter_methods(names)
     {% for name, index in names %}
@@ -31,19 +34,11 @@ class NoirRunner
     @send_proxy = options[:send_proxy]
     @send_req = options[:send_req]
     @scope = options[:scope]
-    if options[:debug] == "yes"
-      @is_debug = true
-    else
-      @is_debug = false
-    end
+    @is_debug = str_to_bool(options[:debug])
+    @is_color = str_to_bool(options[:color])
+    @is_log = str_to_bool(options[:nolog])
 
-    if options[:color] == "yes"
-      @is_color = true
-    else
-      @is_color = false
-    end
-
-    @logger = NoirLogger.new @is_debug, @is_color
+    @logger = NoirLogger.new @is_debug, @is_color, @is_log
 
     if options[:techs].size > 0
       @techs = options[:techs].split(",")

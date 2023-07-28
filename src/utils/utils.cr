@@ -6,3 +6,11 @@ def remove_start_slash(input_path : String)
 
   path
 end
+
+def str_to_bool(str)
+  if str == "yes"
+    return true
+  end
+
+  false
+end

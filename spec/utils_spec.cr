@@ -38,3 +38,15 @@ describe "get_symbol" do
     get_symbol("PATCH").should eq(:patch)
   end
 end
+
+describe "str_to_bool" do
+  it "yes" do
+    str_to_bool("yes").should eq(true)
+  end
+  it "no" do
+    str_to_bool("no").should eq(false)
+  end
+  it "any string" do
+    str_to_bool("hahwul").should eq(false)
+  end
+end

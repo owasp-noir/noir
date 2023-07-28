@@ -37,6 +37,9 @@ OptionParser.parse do |parser|
   parser.on "--no-color", "Disable color output" do
     noir_options[:color] = "no"
   end
+  parser.on "--no-log", "Displaying only the results" do
+    noir_options[:nolog] = "yes"
+  end
 
   parser.separator "\n  Deliver:".colorize(:blue)
   parser.on "--send-req", "Send the results to the web request" { |_| noir_options[:send_req] = "yes" }

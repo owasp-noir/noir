@@ -69,6 +69,7 @@ Usage: noir <flags>
     -o PATH, --output out.txt        Write result to file
     --set-pvalue VALUE               Specifies the value of the identified parameter
     --no-color                       Disable color output
+    --no-log                         Displaying only the results
 
   Deliver:
     --send-req                       Send the results to the web request
