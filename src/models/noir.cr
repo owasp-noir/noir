@@ -76,6 +76,9 @@ class NoirRunner
         tiny_tmp.params = [] of Param
         endpoint.params.each do |param|
           if !param.name.includes? " "
+            if @options[:set_pvalue] != ""
+              param.value = @options[:set_pvalue]
+            end
             tiny_tmp.params << param
           end
         end
