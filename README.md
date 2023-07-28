@@ -67,7 +67,7 @@ Usage: noir <flags>
   Output:
     -f FORMAT, --format json         Set output format [plain/json/markdown-table/curl/httpie]
     -o PATH, --output out.txt        Write result to file
-    --set-pvalue VALUE               Specifies the value of the identified parameter.
+    --set-pvalue VALUE               Specifies the value of the identified parameter
     --no-color                       Disable color output
 
   Deliver:

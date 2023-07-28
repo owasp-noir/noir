@@ -33,7 +33,7 @@ OptionParser.parse do |parser|
 
   parser.on "-f FORMAT", "--format json", "Set output format [plain/json/markdown-table/curl/httpie]" { |var| noir_options[:format] = var }
   parser.on "-o PATH", "--output out.txt", "Write result to file" { |var| noir_options[:output] = var }
-  parser.on "--set-pvalue VALUE", "Specifies the value of the identified parameter." { |var| noir_options[:set_pvalue] = var }
+  parser.on "--set-pvalue VALUE", "Specifies the value of the identified parameter" { |var| noir_options[:set_pvalue] = var }
   parser.on "--no-color", "Disable color output" do
     noir_options[:color] = "no"
   end
