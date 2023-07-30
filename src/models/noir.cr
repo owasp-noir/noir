@@ -100,6 +100,64 @@ class NoirRunner
     end
   end
 
+  def bake_endpoint(url : String, params : Array(Param))
+    result = {
+      url:       "",
+      body:      "",
+      body_type: "",
+    }
+
+    final_url = url
+    final_body = ""
+    is_json = false
+    first_query = true
+    first_form = true
+
+    if !params.nil? && @scope.includes?("param")
+      params.each do |param|
+        if param.param_type == "query"
+          if first_query
+            final_url += "?#{param.name}=#{param.value}"
+            first_query = false
+          else
+            final_url += "&#{param.name}=#{param.value}"
+          end
+        end
+
+        if param.param_type == "body"
+          if first_form
+            final_body += "#{param.name}=#{param.value}"
+            first_form
+          else
+            final_body += "&#{param.name}=#{param.value}"
+          end
+        end
+
+        if param.param_type == "json"
+          is_json = true
+        end
+      end
+
+      if is_json
+        json_tmp = Hash(String, String).new
+
+        params.each do |param|
+          if param.param_type == "json"
+            json_tmp[param.name] = param.value
+          end
+        end
+
+        final_body = json_tmp.to_json
+      end
+    end
+
+    return {
+      url:       final_url,
+      body:      final_body,
+      body_type: is_json ? "json" : "form",
+    }
+  end
+
   def report
     case options[:format]
     when "json"
@@ -121,75 +179,42 @@ class NoirRunner
       end
     when "httpie"
       @endpoints.each do |endpoint|
-        cmd = "http #{endpoint.method} #{endpoint.url}"
+        baked = bake_endpoint(endpoint.url, endpoint.params)
 
-        if !endpoint.params.nil? && @scope.includes?("param")
-          endpoint.params.each do |param|
-            cmd += " \"#{param.name}=#{param.value}\""
+        cmd = "http #{endpoint.method} #{baked[:url]}"
+        if baked[:body] != "" 
+          cmd += " #{baked[:body]}"
+          if baked[:body_type] == "json"
+            cmd += " \"Content-Type:application/json\""
           end
         end
+
         puts cmd
       end
     when "curl"
       @endpoints.each do |endpoint|
-        cmd = "curl -i -k -X #{endpoint.method} #{endpoint.url}"
-        if !endpoint.params.nil? && @scope.includes?("param")
-          endpoint.params.each do |param|
-            cmd += " -d \"#{param.name}=#{param.value}\""
+        baked = bake_endpoint(endpoint.url, endpoint.params)
+
+        cmd = "curl -i -k -X #{endpoint.method} #{baked[:url]}"
+        if baked[:body] != "" 
+          cmd += " -d \"#{baked[:body]}\""
+          if baked[:body_type] == "json"
+            cmd += " -H \"Content-Type:application/json\""
           end
         end
+
         puts cmd
       end
     else
       @endpoints.each do |endpoint|
-        final_url = endpoint.url
-        final_body = ""
-        is_json = false
-        first_query = true
-        first_form = true
-
-        if !endpoint.params.nil? && @scope.includes?("param")
-          endpoint.params.each do |param|
-            if param.param_type == "query"
-              if first_query
-                final_url += "?#{param.name}=#{param.value}"
-                first_query = false
-              else
-                final_url += "&#{param.name}=#{param.value}"
-              end
-            end
-
-            if param.param_type == "body"
-              if first_form
-                final_body += "#{param.name}=#{param.value}"
-                first_form
-              else
-                final_body += "&#{param.name}=#{param.value}"
-              end
-            end
-
-            if param.param_type == "json"
-              is_json = true
-            end
-          end
-        end
+        baked = bake_endpoint(endpoint.url, endpoint.params)
 
         r_method = endpoint.method.colorize(:light_blue).toggle(@is_color)
-        r_url = final_url.colorize(:light_yellow).toggle(@is_color)
+        r_url = baked[:url].colorize(:light_yellow).toggle(@is_color)
 
-        if final_body != ""
-          r_body = final_body.colorize(:light_red).toggle(@is_color)
+        if baked[:body] != "" 
+          r_body = baked[:body].colorize(:cyan).toggle(@is_color)
           puts "#{r_method} #{r_url} #{r_body}"
-        elsif is_json
-          final_json = Hash(String, String).new
-          endpoint.params.each do |param|
-            if param.param_type == "json"
-              final_json[param.name] = param.value
-            end
-          end
-
-          r_json = final_json.to_json.colorize(:light_red).toggle(@is_color)
-          puts "#{r_method} #{r_url} #{r_json}"
         else
           puts "#{r_method} #{r_url}"
         end
