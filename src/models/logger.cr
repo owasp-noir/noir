@@ -17,8 +17,8 @@ class NoirLogger
     end
 
     if @color_mode
-      prefix = "[*] ".colorize(:light_cyan)
-      STDERR.puts "#{prefix}#{message}"
+      prefix = "[*]".colorize(:light_cyan)
+      STDERR.puts "#{prefix} #{message}"
     else
       STDERR.puts "[*]" + message
     end
@@ -30,8 +30,8 @@ class NoirLogger
     end
 
     if @color_mode
-      prefix = "[I] ".colorize(:light_blue)
-      STDERR.puts "#{prefix}#{message}"
+      prefix = "[I]".colorize(:light_blue)
+      STDERR.puts "#{prefix} #{message}"
     else
       STDERR.puts "[I] " + message
     end
@@ -52,8 +52,8 @@ class NoirLogger
 
     if @debug
       if @color_mode
-        prefix = "[D] ".colorize(:dark_gray)
-        STDERR.puts "#{prefix}#{message}"
+        prefix = "[D]".colorize(:dark_gray)
+        STDERR.puts "#{prefix} #{message}"
       else
         STDERR.puts "[D] " + message
       end
