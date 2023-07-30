@@ -174,10 +174,12 @@ class NoirRunner
           end
         end
 
+        r_method = endpoint.method.colorize(:light_blue).toggle(@is_color)
+        r_url = final_url.colorize(:light_yellow).toggle(@is_color)
+
         if final_body != ""
-          puts "#{endpoint.method} #{final_url}"
-          puts final_body
-          puts ""
+          r_body = final_body.colorize(:light_red).toggle(@is_color)
+          puts "#{r_method} #{r_url} #{r_body}"
         elsif is_json
           final_json = Hash(String, String).new
           endpoint.params.each do |param|
@@ -186,11 +188,10 @@ class NoirRunner
             end
           end
 
-          puts "#{endpoint.method} #{final_url}"
-          puts final_json.to_json
-          puts ""
+          r_json = final_json.to_json.colorize(:light_red).toggle(@is_color)
+          puts "#{r_method} #{r_url} #{r_json}"
         else
-          puts "#{endpoint.method} #{final_url}"
+          puts "#{r_method} #{r_url}"
         end
       end
     end
