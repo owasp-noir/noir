@@ -20,7 +20,7 @@ class NoirLogger
       prefix = "[*]".colorize(:light_cyan)
       STDERR.puts "#{prefix} #{message}"
     else
-      STDERR.puts "[*]" + message
+      STDERR.puts "[*] " + message
     end
   end
 
