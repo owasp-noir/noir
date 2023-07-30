@@ -195,7 +195,7 @@ class NoirRunner
       @endpoints.each do |endpoint|
         baked = bake_endpoint(endpoint.url, endpoint.params)
 
-        cmd = "curl -i -k -X #{endpoint.method} #{baked[:url]}"
+        cmd = "curl -i -X #{endpoint.method} #{baked[:url]}"
         if baked[:body] != "" 
           cmd += " -d \"#{baked[:body]}\""
           if baked[:body_type] == "json"
