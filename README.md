@@ -11,18 +11,19 @@
 
 ## Support
 ### Language and Framework
-| Language | Framework | Tech Detect | URL | Param | Header |
-|----------|-----------|-------------|-----|-------|--------|
-| Go       | Echo      |      ✅     |  ✅ | X     | X      |
-| Python   | Django    |      ✅     |  X  | X     | X      |
-| Python   | Flask     |      ✅     |  ✅ | X     | X      |
-| Ruby     | Rails     |      ✅     |  ✅ | ✅    | X      |
-| Ruby     | Sinatra   |      ✅     |  ✅ | X     | X      |
-| Php      |           |      ✅     |  ✅ | ✅    | X      |
-| Java     | Spring    |      ✅     |  ✅ | X     | X      |
-| Java     | Jsp       |      ✅     |  X  | X     | X      |
-| JS       | Express   |      ✅     |  🟧  | X     | X      |
-| JS       | Next      |      X      |  X  | X     | X      |
+
+| Language | Framework | Tech Detect | URL | Method | Param | Header |
+|----------|-----------|-------------|-----|--------|-------|--------|
+| Go       | Echo      | ✅           | ✅   | ✅      | X     | X      |
+| Python   | Django    | ✅           | ✅   | X      | X     | X      |
+| Python   | Flask     | ✅           | ✅   | X      | X     | X      |
+| Ruby     | Rails     | ✅           | ✅   | ✅      | ✅     | X      |
+| Ruby     | Sinatra   | ✅           | ✅   | ✅      | X     | X      |
+| Php      |           | ✅           | ✅   | ✅      | ✅     | X      |
+| Java     | Spring    | ✅           | ✅   | ✅      | X     | X      |
+| Java     | Jsp       | ✅           | X   | X      | X     | X      |
+| JS       | Express   | ✅           | ✅   | ✅      | X     | X      |
+| JS       | Next      | X           | X   | X      | X     | X      |
 
 ## Installation
 ### Homebrew (macOS)
