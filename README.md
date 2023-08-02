@@ -28,9 +28,8 @@
 ## Installation
 ### Homebrew (macOS)
 ```bash
-# I'll support homebrew when noir is officially released.
-# brew tap hahwul/noir
-# brew install noir
+brew tap hahwul/noir
+brew install noir
 ```
 
 ### From Sources
