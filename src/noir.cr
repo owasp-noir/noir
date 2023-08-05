@@ -5,7 +5,7 @@ require "./banner.cr"
 require "./options.cr"
 
 module Noir
-  VERSION = "0.1.0"
+  VERSION = "0.2.0"
   TECHS   = [
     "ruby_rails",
     "ruby_sinatra",
