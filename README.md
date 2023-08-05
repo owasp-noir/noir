@@ -9,8 +9,15 @@
 - Load results quickly through interactions with proxy tools such as ZAP, Burpsuite, Caido and More Proxy tools.
 - That provides structured data such as JSON and HAR for identified Attack Surfaces to enable seamless interaction with other tools. Also provides command line samples to easily integrate and collaborate with other tools, such as curls or httpie.
 
-## Support
-### Language and Framework
+## Available Support Scope
+### Endpoint's Entities
+- Path
+- Method
+- Param
+- Header
+- Protocol (e.g ws)
+
+### Languages and Frameworks
 
 | Language | Framework | URL | Method | Param | Header | WS |
 |----------|-----------|-----|--------|-------|--------|----|
