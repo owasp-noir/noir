@@ -10,6 +10,7 @@ def initialize_analyzers(logger : NoirLogger)
   analyzers["python_flask"] = ->analyzer_flask(Hash(Symbol, String))
   analyzers["python_django"] = ->analyzer_django(Hash(Symbol, String))
   analyzers["js_express"] = ->analyzer_express(Hash(Symbol, String))
+  analyzers["crystal_kemal"] = ->analyzer_kemal(Hash(Symbol, String))
 
   logger.info_sub "#{analyzers.size} Analyzers initialized"
   logger.debug "Analyzers:"
