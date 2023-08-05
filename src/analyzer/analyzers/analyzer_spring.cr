@@ -81,8 +81,9 @@ class AnalyzerSpring < Analyzer
             line.split(",").each do |comma_line|
               if comma_line.to_s.includes? "value="
                 tmp = comma_line.split("=")
+                puts tmp
                 tmp[1].gsub(/"|\)/, "").strip.split("_BRACKET_COMMA_").each do |path|
-                  paths << "#{path.strip}"
+                  paths << "#{path.strip.gsub("\\", "").gsub(";", "")}"
                 end
               end
             end
