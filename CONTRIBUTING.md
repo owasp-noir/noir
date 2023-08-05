@@ -1,4 +1,4 @@
-## Develop
+## 🛠️ How to Build and Test?
 ### Clone and Install Dependencies
 ```bash
 # If you've forked this repository, clone to https://github.com/<YOU>/noir
@@ -27,12 +27,12 @@ ameba --fix
 # https://github.com/crystal-ameba/ameba#installation
 ```
 
-## Contribute
+## ❤️ Contribute
 1. Write code in forked repo
 2. Make Pull Request
 3. Finish :D
 
-## Code structure
+## 🧭 Code structure
 - spec: unit-test codes
 - src
   - analyzer: Code analyzers for Endpoint URL and Parameter analysis
