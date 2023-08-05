@@ -5,7 +5,7 @@ class AnalyzerKemal < Analyzer
     # Source Analysis
     Dir.glob("#{@base_path}/**/*") do |path|
       next if File.directory?(path)
-      if File.exists?(path) && File.extname(path) == ".cr"
+      if File.exists?(path) && File.extname(path) == ".cr" && !path.includes?("spec") && !path.includes?("lib")
         File.open(path, "r") do |file|
           file.each_line do |line|
             line.scan(/get\s+['"](.+?)['"]/) do |match|
