@@ -12,19 +12,19 @@
 ## Support
 ### Language and Framework
 
-| Language | Framework | Tech Detect | URL | Method | Param | Header |
-|----------|-----------|-------------|-----|--------|-------|--------|
-| Go       | Echo      | ✅           | ✅   | ✅      | X     | X      |
-| Python   | Django    | ✅           | ✅   | X      | X     | X      |
-| Python   | Flask     | ✅           | ✅   | X      | X     | X      |
-| Ruby     | Rails     | ✅           | ✅   | ✅      | ✅     | X      |
-| Ruby     | Sinatra   | ✅           | ✅   | ✅      | X     | X      |
-| Php      |           | ✅           | ✅   | ✅      | ✅     | X      |
-| Java     | Spring    | ✅           | ✅   | ✅      | X     | X      |
-| Java     | Jsp       | ✅           | X   | X      | X     | X      |
-| Crystal       | Kemal      | ✅           | ✅   | ✅      | X     | X      |
-| JS       | Express   | ✅           | ✅   | ✅      | X     | X      |
-| JS       | Next      | X           | X   | X      | X     | X      |
+| Language | Framework | URL | Method | Param | Header | WS |
+|----------|-----------|-----|--------|-------|--------|----|
+| Go       | Echo      | ✅   | ✅      | X     | X      | X  |
+| Python   | Django    | ✅   | X      | X     | X      | X  |
+| Python   | Flask     | ✅   | X      | X     | X      | X  |
+| Ruby     | Rails     | ✅   | ✅      | ✅     | X      | X  |
+| Ruby     | Sinatra   | ✅   | ✅      | X     | X      | X  |
+| Php      |           | ✅   | ✅      | ✅     | X      | X  |
+| Java     | Spring    | ✅   | ✅      | X     | X      | X  |
+| Java     | Jsp       | X   | X      | X     | X      | X  |
+| Crystal  | Kemal     | ✅   | ✅      | X     | X      | ✅  |
+| JS       | Express   | ✅   | ✅      | X     | X      | X  |
+| JS       | Next      | X   | X      | X     | X      | X  |
 
 ## Installation
 ### Homebrew (macOS)
