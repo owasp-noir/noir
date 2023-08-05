@@ -85,7 +85,7 @@ Usage: noir <flags>
     -h, --help                       Show help
 ```
 
-![](https://github.com/hahwul/noir/assets/13212227/2f85a5fc-1870-42f4-804b-3d7f53230f03)
+![noir result preview](https://github.com/hahwul/noir/assets/13212227/1cde6445-eeae-492a-888b-59480aaf9a96)
 
 ### Contributing
 Noir is open-source project and made it with ❤️ 
