@@ -57,6 +57,7 @@ class AnalyzerRails < Analyzer
         param_type = "form"
         params_query = [] of Param
         params_body = [] of Param
+        methods = [] of String
 
         controller_content = controller_file.gets_to_end
         if controller_content.includes? "render json:"
@@ -65,20 +66,67 @@ class AnalyzerRails < Analyzer
 
         controller_file.rewind
         controller_file.each_line do |controller_line|
-          controller_line.strip.scan(/params\[:.*.]/) do |param_match|
-            param = param_match[0].gsub(/\[|\]/, "").split(":")[1].strip
+          if controller_line.includes? "def "
+            func_name = controller_line.split("def ")[1].split("(")[0]
+            case func_name
+            when "index"
+              methods << "GET/INDEX"
+            when "show"
+              methods << "GET/SHOW"
+            when "create"
+              methods << "POST"
+            when "update"
+              methods << "PUT"
+            when "destroy"
+              methods << "DELETE"
+            end
+          end
 
-            params_query << Param.new(param, "", "query")
-            params_body << Param.new(param, "", param_type)
+          if controller_line.includes? "params.require"
+            splited_param = controller_line.strip.split("permit")
+            if splited_param.size > 1
+              tparam = splited_param[1].gsub("\(","").gsub("\)","").gsub("\s","").gsub(":","")
+              tparam.split(",").each do |param|
+                params_body << Param.new(param.strip, "", param_type)
+                params_query << Param.new(param.strip, "", "query")
+              end
+            end
+          end
+
+          if controller_line.includes? "params[:"
+            splited_param = controller_line.strip.split("params[:")[1]
+            if splited_param
+              param = splited_param.split("]")[0]
+              params_body << Param.new(param.strip, "", param_type)
+              params_query << Param.new(param.strip, "", "query")
+            end
           end
         end
 
-        @result << Endpoint.new("#{@url}/#{resource}", "GET", params_query)
-        @result << Endpoint.new("#{@url}/#{resource}", "POST", params_body)
-        @result << Endpoint.new("#{@url}/#{resource}/1", "GET", params_query)
-        @result << Endpoint.new("#{@url}/#{resource}/1", "PUT", params_body)
-        @result << Endpoint.new("#{@url}/#{resource}/1", "DELETE", params_query)
-        @result << Endpoint.new("#{@url}/#{resource}/1", "PATCH", params_body)
+        deduplication_params_query = [] of Param
+        get_param_duplicated : Array(String) = [] of String
+
+        params_query.each do |get_param|
+          if get_param_duplicated.includes? get_param.name
+            deduplication_params_query << get_param
+          else
+            get_param_duplicated << get_param.name
+          end
+        end
+
+        methods.each do |method|
+          if method == "GET/INDEX"
+            @result << Endpoint.new("#{@url}/#{resource}", "GET", deduplication_params_query)
+          elsif method == "GET/SHOW"
+            @result << Endpoint.new("#{@url}/#{resource}/1", "GET", deduplication_params_query)
+          else
+            if method == "POST"
+              @result << Endpoint.new("#{@url}/#{resource}", method, params_body)
+            else
+              @result << Endpoint.new("#{@url}/#{resource}/1", method, params_body)
+            end
+          end
+        end
       end
     end
 
