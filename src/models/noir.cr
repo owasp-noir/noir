@@ -163,8 +163,8 @@ class NoirRunner
     when "json"
       puts @endpoints.to_json
     when "markdown-table"
-      puts "| Endpoint | Params |"
-      puts "| -------- | ------ |"
+      puts "| Endpoint | Protocol | Params |"
+      puts "| -------- | -------- | ------ |"
 
       @endpoints.each do |endpoint|
         if !endpoint.params.nil? && @scope.includes?("param")
@@ -172,9 +172,9 @@ class NoirRunner
           endpoint.params.each do |param|
             params_text += "`#{param.name} (#{param.param_type})` "
           end
-          puts "| #{endpoint.method} #{endpoint.url} | #{params_text} |"
+          puts "| #{endpoint.method} #{endpoint.url} | #{endpoint.protocol} | #{params_text} |"
         else
-          puts "| #{endpoint.method} #{endpoint.url} | - |"
+          puts "| #{endpoint.method} #{endpoint.url} | #{endpoint.protocol} | - |"
         end
       end
     when "httpie"
@@ -211,12 +211,16 @@ class NoirRunner
 
         r_method = endpoint.method.colorize(:light_blue).toggle(@is_color)
         r_url = baked[:url].colorize(:light_yellow).toggle(@is_color)
+        r_ws = ""
+        if endpoint.protocol == "ws"
+          r_ws = "[WEBSOCKET]".colorize(:light_red).toggle(@is_color)
+        end
 
         if baked[:body] != "" 
           r_body = baked[:body].colorize(:cyan).toggle(@is_color)
-          puts "#{r_method} #{r_url} #{r_body}"
+          puts "#{r_method} #{r_url} #{r_body} #{r_ws}"
         else
-          puts "#{r_method} #{r_url}"
+          puts "#{r_method} #{r_url} #{r_ws}"
         end
       end
     end

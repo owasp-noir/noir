@@ -49,6 +49,14 @@ class AnalyzerKemal < Analyzer
                 @result << Endpoint.new("#{@url}#{match[1]}", "OPTIONS")
               end
             end
+
+            line.scan(/ws\s+['"](.+?)['"]/) do |match|
+              if match.size > 1
+                endpoint = Endpoint.new("#{@url}#{match[1]}", "GET")
+                endpoint.set_protocol("ws")
+                @result << endpoint
+              end
+            end
           end
         end
       end
