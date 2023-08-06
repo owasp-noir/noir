@@ -52,3 +52,11 @@ struct Header
   def initialize(@name : String, @value : String)
   end
 end
+
+struct EndpointReference
+  include JSON::Serializable
+  property endpoint, metadata
+
+  def initialize(@endpoint : Endpoint, @metadata : Hash(Symbol, String))
+  end
+end

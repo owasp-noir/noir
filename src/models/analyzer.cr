@@ -1,8 +1,10 @@
 require "./logger"
 require "./code_block"
+require "./endpoint"
 
 class Analyzer
   @result : Array(Endpoint)
+  @endpoint_references : Array(EndpointReference)
   @base_path : String
   @url : String
   @scope : String
@@ -15,6 +17,7 @@ class Analyzer
     @base_path = options[:base]
     @url = options[:url]
     @result = [] of Endpoint
+    @endpoint_references = [] of EndpointReference
     @scope = options[:scope]
     @is_debug = str_to_bool(options[:debug])
     @is_color = str_to_bool(options[:color])
