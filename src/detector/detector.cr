@@ -1,25 +1,32 @@
 require "./detectors/*"
+require "../models/detector"
 
-macro define_detectors(detectors)
+macro defind_detectors(detectors)
   {% for detector, index in detectors %}
-    if detect_{{detector}}(file, content)
-      techs << "{{detector}}"
-    end
+    instance = {{detector}}.new(options)
+    instance.set_name
+    detector_list << instance
   {% end %}
 end
 
-def detect_techs(base_path : String)
+def detect_techs(base_path : String, options : Hash(Symbol, String))
   techs = [] of String
+  detector_list = [] of Detector
+  defind_detectors([
+    DetectorCrystalKemal, DetectorGoEcho, DetectorJavaJsp, DetectorJavaSpring,
+    DetectorJsExpress, DetectorPhpPure, DetectorPythonDjango, DetectorPythonFlask,
+    DetectorRubyRails, DetectorRubySinatra,
+  ])
   Dir.glob("#{base_path}/**/*") do |file|
     spawn do
       next if File.directory?(file)
       content = File.read(file)
 
-      define_detectors([
-        ruby_rails, ruby_sinatra, go_echo, java_spring,
-        python_django, python_flask, php_pure, java_jsp, js_express,
-        crystal_kemal,
-      ])
+      detector_list.each do |detector|
+        if detector.detect(file, content)
+          techs << detector.name
+        end
+      end
     end
     Fiber.yield
   end

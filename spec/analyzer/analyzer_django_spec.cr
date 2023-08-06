@@ -14,7 +14,7 @@ describe "mapping_to_path" do
   end
 
   it "mapping_to_path - code style3 (regex)" do
-    instance.mapping_to_path("re_path(r'^archive/(?P<year>\d{4})/$', views.archive_year_view, name='archive_year'),").should eq(["/archive/(?P<year>d{4})/$"])
+    instance.mapping_to_path("re_path(r'^archive/(?P<year>d{4})/$', views.archive_year_view, name='archive_year'),").should eq(["/archive/(?P<year>d{4})/$"])
   end
 
   it "mapping_to_path - code style4 (register)" do

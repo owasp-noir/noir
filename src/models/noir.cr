@@ -50,7 +50,7 @@ class NoirRunner
   end
 
   def detect
-    detected_techs = detect_techs options[:base]
+    detected_techs = detect_techs options[:base], options
     @techs += detected_techs
   end
 
@@ -101,12 +101,6 @@ class NoirRunner
   end
 
   def bake_endpoint(url : String, params : Array(Param))
-    result = {
-      url:       "",
-      body:      "",
-      body_type: "",
-    }
-
     final_url = url
     final_body = ""
     is_json = false
@@ -151,7 +145,7 @@ class NoirRunner
       end
     end
 
-    return {
+    {
       url:       final_url,
       body:      final_body,
       body_type: is_json ? "json" : "form",
@@ -182,7 +176,7 @@ class NoirRunner
         baked = bake_endpoint(endpoint.url, endpoint.params)
 
         cmd = "http #{endpoint.method} #{baked[:url]}"
-        if baked[:body] != "" 
+        if baked[:body] != ""
           cmd += " #{baked[:body]}"
           if baked[:body_type] == "json"
             cmd += " \"Content-Type:application/json\""
@@ -196,7 +190,7 @@ class NoirRunner
         baked = bake_endpoint(endpoint.url, endpoint.params)
 
         cmd = "curl -i -X #{endpoint.method} #{baked[:url]}"
-        if baked[:body] != "" 
+        if baked[:body] != ""
           cmd += " -d \"#{baked[:body]}\""
           if baked[:body_type] == "json"
             cmd += " -H \"Content-Type:application/json\""
@@ -216,7 +210,7 @@ class NoirRunner
           r_ws = "[WEBSOCKET]".colorize(:light_red).toggle(@is_color)
         end
 
-        if baked[:body] != "" 
+        if baked[:body] != ""
           r_body = baked[:body].colorize(:cyan).toggle(@is_color)
           puts "#{r_method} #{r_url} #{r_body} #{r_ws}"
         else

@@ -1,7 +1,15 @@
-def detect_ruby_sinatra(filename : String, file_contents : String)
-  check = file_contents.includes?("gem 'sinatra'")
-  check = check || file_contents.includes?("gem \"sinatra\"")
-  check = check && filename.includes?("Gemfile")
+require "../../models/detector"
 
-  check
+class DetectorRubySinatra < Detector
+  def detect(filename : String, file_contents : String) : Bool
+    check = file_contents.includes?("gem 'sinatra'")
+    check = check || file_contents.includes?("gem \"sinatra\"")
+    check = check && filename.includes?("Gemfile")
+
+    check
+  end
+
+  def set_name
+    @name = "ruby_sinatra"
+  end
 end

@@ -85,7 +85,7 @@ class AnalyzerRails < Analyzer
           if controller_line.includes? "params.require"
             splited_param = controller_line.strip.split("permit")
             if splited_param.size > 1
-              tparam = splited_param[1].gsub("\(","").gsub("\)","").gsub("\s","").gsub(":","")
+              tparam = splited_param[1].gsub("(", "").gsub(")", "").gsub("s", "").gsub(":", "")
               tparam.split(",").each do |param|
                 params_body << Param.new(param.strip, "", param_type)
                 params_query << Param.new(param.strip, "", "query")
