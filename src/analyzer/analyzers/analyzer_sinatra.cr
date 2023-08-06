@@ -4,49 +4,51 @@ class AnalyzerSinatra < Analyzer
   def analyze
     # Source Analysis
     Dir.glob("#{@base_path}/**/*") do |path|
-      next if File.directory?(path)
-      if File.exists?(path)
-        File.open(path, "r") do |file|
-          file.each_line do |line|
-            line.scan(/get\s+['"](.+?)['"]/) do |match|
-              if match.size > 1
-                @result << Endpoint.new("#{@url}#{match[1]}", "GET")
+      spawn do
+        next if File.directory?(path)
+        if File.exists?(path)
+          File.open(path, "r") do |file|
+            file.each_line do |line|
+              line.scan(/get\s+['"](.+?)['"]/) do |match|
+                if match.size > 1
+                  @result << Endpoint.new("#{@url}#{match[1]}", "GET")
+                end
               end
-            end
 
-            line.scan(/post\s+['"](.+?)['"]/) do |match|
-              if match.size > 1
-                @result << Endpoint.new("#{@url}#{match[1]}", "POST")
+              line.scan(/post\s+['"](.+?)['"]/) do |match|
+                if match.size > 1
+                  @result << Endpoint.new("#{@url}#{match[1]}", "POST")
+                end
               end
-            end
 
-            line.scan(/put\s+['"](.+?)['"]/) do |match|
-              if match.size > 1
-                @result << Endpoint.new("#{@url}#{match[1]}", "PUT")
+              line.scan(/put\s+['"](.+?)['"]/) do |match|
+                if match.size > 1
+                  @result << Endpoint.new("#{@url}#{match[1]}", "PUT")
+                end
               end
-            end
 
-            line.scan(/delete\s+['"](.+?)['"]/) do |match|
-              if match.size > 1
-                @result << Endpoint.new("#{@url}#{match[1]}", "DELETE")
+              line.scan(/delete\s+['"](.+?)['"]/) do |match|
+                if match.size > 1
+                  @result << Endpoint.new("#{@url}#{match[1]}", "DELETE")
+                end
               end
-            end
 
-            line.scan(/patch\s+['"](.+?)['"]/) do |match|
-              if match.size > 1
-                @result << Endpoint.new("#{@url}#{match[1]}", "PATCH")
+              line.scan(/patch\s+['"](.+?)['"]/) do |match|
+                if match.size > 1
+                  @result << Endpoint.new("#{@url}#{match[1]}", "PATCH")
+                end
               end
-            end
 
-            line.scan(/head\s+['"](.+?)['"]/) do |match|
-              if match.size > 1
-                @result << Endpoint.new("#{@url}#{match[1]}", "HEAD")
+              line.scan(/head\s+['"](.+?)['"]/) do |match|
+                if match.size > 1
+                  @result << Endpoint.new("#{@url}#{match[1]}", "HEAD")
+                end
               end
-            end
 
-            line.scan(/options\s+['"](.+?)['"]/) do |match|
-              if match.size > 1
-                @result << Endpoint.new("#{@url}#{match[1]}", "OPTIONS")
+              line.scan(/options\s+['"](.+?)['"]/) do |match|
+                if match.size > 1
+                  @result << Endpoint.new("#{@url}#{match[1]}", "OPTIONS")
+                end
               end
             end
           end
