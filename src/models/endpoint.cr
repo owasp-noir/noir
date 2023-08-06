@@ -23,6 +23,10 @@ struct Endpoint
     @protocol = protocol
   end
 
+  def push_param(param : Param)
+    @params << param
+  end
+
   def params_to_hash
     params_hash = {} of String => Hash(String, String)
     params_hash["query"] = {} of String => String
