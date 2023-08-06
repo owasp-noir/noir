@@ -45,7 +45,7 @@ class AnalyzerKemal < Analyzer
       return Param.new(param, "", "body")
     end
 
-    return Param.new("", "", "")
+    Param.new("", "", "")
   end
 
   def line_to_endpoint(content : String) : Endpoint
@@ -99,7 +99,7 @@ class AnalyzerKemal < Analyzer
       end
     end
 
-    return Endpoint.new("", "")
+    Endpoint.new("", "")
   end
 end
 

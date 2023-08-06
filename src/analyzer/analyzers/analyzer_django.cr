@@ -4,11 +4,9 @@ class AnalyzerDjango < Analyzer
   def analyze
     # Public Dir Analysis
     Dir.glob("#{@base_path}/static/**/*") do |file|
-      spawn do
-        next if File.directory?(file)
-        relative_path = file.sub("#{@base_path}/static/", "")
-        @result << Endpoint.new("#{@url}/#{relative_path}", "GET")
-      end
+      next if File.directory?(file)
+      relative_path = file.sub("#{@base_path}/static/", "")
+      @result << Endpoint.new("#{@url}/#{relative_path}", "GET")
     end
 
     # urls.py Analysis

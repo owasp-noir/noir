@@ -4,52 +4,50 @@ class AnalyzerSpring < Analyzer
   def analyze
     # Source Analysis
     Dir.glob("#{@base_path}/**/*") do |path|
-      spawn do
-        next if File.directory?(path)
+      next if File.directory?(path)
 
-        if File.exists?(path)
-          File.open(path, "r") do |file|
-            file.each_line do |line|
-              if line.includes? "RequestMapping"
-                mapping_paths = mapping_to_path(line)
-                mapping_paths.each do |mapping_path|
-                  if line.includes? "RequestMethod"
-                    define_requestmapping_handlers(["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE"])
-                  else
-                    @result << Endpoint.new("#{@url}#{mapping_path}", "GET")
-                  end
-                end
-              end
-
-              if line.includes? "PostMapping"
-                mapping_paths = mapping_to_path(line)
-                mapping_paths.each do |mapping_path|
-                  @result << Endpoint.new("#{@url}#{mapping_path}", "POST")
-                end
-              end
-              if line.includes? "PutMapping"
-                mapping_paths = mapping_to_path(line)
-                mapping_paths.each do |mapping_path|
-                  @result << Endpoint.new("#{@url}#{mapping_path}", "PUT")
-                end
-              end
-              if line.includes? "DeleteMapping"
-                mapping_paths = mapping_to_path(line)
-                mapping_paths.each do |mapping_path|
-                  @result << Endpoint.new("#{@url}#{mapping_path}", "DELETE")
-                end
-              end
-              if line.includes? "PatchMapping"
-                mapping_paths = mapping_to_path(line)
-                mapping_paths.each do |mapping_path|
-                  @result << Endpoint.new("#{@url}#{mapping_path}", "PATCH")
-                end
-              end
-              if line.includes? "GetMapping"
-                mapping_paths = mapping_to_path(line)
-                mapping_paths.each do |mapping_path|
+      if File.exists?(path)
+        File.open(path, "r") do |file|
+          file.each_line do |line|
+            if line.includes? "RequestMapping"
+              mapping_paths = mapping_to_path(line)
+              mapping_paths.each do |mapping_path|
+                if line.includes? "RequestMethod"
+                  define_requestmapping_handlers(["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE"])
+                else
                   @result << Endpoint.new("#{@url}#{mapping_path}", "GET")
                 end
+              end
+            end
+
+            if line.includes? "PostMapping"
+              mapping_paths = mapping_to_path(line)
+              mapping_paths.each do |mapping_path|
+                @result << Endpoint.new("#{@url}#{mapping_path}", "POST")
+              end
+            end
+            if line.includes? "PutMapping"
+              mapping_paths = mapping_to_path(line)
+              mapping_paths.each do |mapping_path|
+                @result << Endpoint.new("#{@url}#{mapping_path}", "PUT")
+              end
+            end
+            if line.includes? "DeleteMapping"
+              mapping_paths = mapping_to_path(line)
+              mapping_paths.each do |mapping_path|
+                @result << Endpoint.new("#{@url}#{mapping_path}", "DELETE")
+              end
+            end
+            if line.includes? "PatchMapping"
+              mapping_paths = mapping_to_path(line)
+              mapping_paths.each do |mapping_path|
+                @result << Endpoint.new("#{@url}#{mapping_path}", "PATCH")
+              end
+            end
+            if line.includes? "GetMapping"
+              mapping_paths = mapping_to_path(line)
+              mapping_paths.each do |mapping_path|
+                @result << Endpoint.new("#{@url}#{mapping_path}", "GET")
               end
             end
           end

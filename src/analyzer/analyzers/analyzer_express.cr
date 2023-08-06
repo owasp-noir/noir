@@ -14,40 +14,38 @@ def analyzer_express(options : Hash(Symbol, String))
 
   # Source Analysis
   Dir.glob("#{base_path}/**/*") do |path|
-    spawn do
-      next if File.directory?(path)
-      if File.exists?(path)
-        File.open(path, "r") do |file|
-          file.each_line do |line|
-            if line.includes? ".get('/"
-              api_path = express_get_endpoint(line)
-              if api_path != ""
-                result << Endpoint.new(api_path, "GET")
-              end
+    next if File.directory?(path)
+    if File.exists?(path)
+      File.open(path, "r") do |file|
+        file.each_line do |line|
+          if line.includes? ".get('/"
+            api_path = express_get_endpoint(line)
+            if api_path != ""
+              result << Endpoint.new(api_path, "GET")
             end
-            if line.includes? ".post('/"
-              api_path = express_get_endpoint(line)
-              if api_path != ""
-                result << Endpoint.new(api_path, "POST")
-              end
+          end
+          if line.includes? ".post('/"
+            api_path = express_get_endpoint(line)
+            if api_path != ""
+              result << Endpoint.new(api_path, "POST")
             end
-            if line.includes? ".put('/"
-              api_path = express_get_endpoint(line)
-              if api_path != ""
-                result << Endpoint.new(api_path, "PUT")
-              end
+          end
+          if line.includes? ".put('/"
+            api_path = express_get_endpoint(line)
+            if api_path != ""
+              result << Endpoint.new(api_path, "PUT")
             end
-            if line.includes? ".delete('/"
-              api_path = express_get_endpoint(line)
-              if api_path != ""
-                result << Endpoint.new(api_path, "DELETE")
-              end
+          end
+          if line.includes? ".delete('/"
+            api_path = express_get_endpoint(line)
+            if api_path != ""
+              result << Endpoint.new(api_path, "DELETE")
             end
-            if line.includes? ".patch('/"
-              api_path = express_get_endpoint(line)
-              if api_path != ""
-                result << Endpoint.new(api_path, "PATCH")
-              end
+          end
+          if line.includes? ".patch('/"
+            api_path = express_get_endpoint(line)
+            if api_path != ""
+              result << Endpoint.new(api_path, "PATCH")
             end
           end
         end
