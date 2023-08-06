@@ -2,14 +2,20 @@ require "json"
 
 struct Endpoint
   include JSON::Serializable
-  property url, method, params, protocol
+  property url, method, params, headers, protocol
 
   def initialize(@url : String, @method : String)
     @params = [] of Param
+    @headers = [] of Header
     @protocol = "http"
   end
 
   def initialize(@url : String, @method : String, @params : Array(Param))
+    @headers = [] of Header
+    @protocol = "http"
+  end
+
+  def initialize(@url : String, @method : String, @params : Array(Param), @headers : Array(Header))
     @protocol = "http"
   end
 
@@ -36,5 +42,13 @@ struct Param
   property name, value, param_type
 
   def initialize(@name : String, @value : String, @param_type : String)
+  end
+end
+
+struct Header
+  include JSON::Serializable
+  property name, value
+
+  def initialize(@name : String, @value : String)
   end
 end
