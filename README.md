@@ -25,7 +25,7 @@
 | Python   | Django    | ✅   | X      | X     | X      | X  |
 | Python   | Flask     | ✅   | X      | X     | X      | X  |
 | Ruby     | Rails     | ✅   | ✅      | ✅     | X      | X  |
-| Ruby     | Sinatra   | ✅   | ✅      | X     | X      | X  |
+| Ruby     | Sinatra   | ✅   | ✅      | ✅     | X      | X  |
 | Php      |           | ✅   | ✅      | ✅     | X      | X  |
 | Java     | Spring    | ✅   | ✅      | X     | X      | X  |
 | Java     | Jsp       | X   | X      | X     | X      | X  |
