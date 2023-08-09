@@ -2,10 +2,10 @@ require "../../models/analyzer"
 require "json"
 
 class AnalyzerDjango < Analyzer
-  REGEX_ROOT_URLCONF  = /\s*ROOT_URLCONF\s*=\s*r?['"]([^'"\\]*)['"]/
-  REGEX_URL_PATTERNS  = /urlpatterns\s*=\s*\[(.*)\]/m
-  REGEX_URL_MAPPING   = /[url|path|register]\s*\(\s*r?['"]([^'"\\]*)['"]\s*,\s*(.*)\s*\)/
-  REGEX_INCLUDE_URLS  = /include\s*\(\s*r?['"]([^'"\\]*)['"]/
+  REGEX_ROOT_URLCONF = /\s*ROOT_URLCONF\s*=\s*r?['"]([^'"\\]*)['"]/
+  REGEX_URL_PATTERNS = /urlpatterns\s*=\s*\[(.*)\]/m
+  REGEX_URL_MAPPING  = /[url|path|register]\s*\(\s*r?['"]([^'"\\]*)['"]\s*,\s*(.*)\s*\)/
+  REGEX_INCLUDE_URLS = /include\s*\(\s*r?['"]([^'"\\]*)['"]/
 
   def analyze
     result = [] of Endpoint
