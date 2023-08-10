@@ -44,6 +44,9 @@ describe "mapping_to_path" do
   it "mapping_to_path - requestmapping style2" do
     instance.mapping_to_path("@RequestMapping(method={RequestMethod.GET, RequestMethod.POST}, value = \"/abcd\")").should eq(["/abcd"])
   end
+  it "mapping_to_path - requestmapping style3" do
+    instance.mapping_to_path("@RequestMapping(value = \"/0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\")").should eq(["/0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"])
+  end
 end
 
 describe "utils func" do
