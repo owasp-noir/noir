@@ -5,31 +5,47 @@ describe "analyzer_go_echo" do
   options = default_options()
   instance = AnalyzerGoEcho.new(options)
 
-  it "instance.get_route_path_go_echo - GET" do
-    instance.get_route_path_go_echo("e.GET(\"/\", func(c echo.Context) error {").should eq("/")
+  it "instance.get_route_path - GET" do
+    instance.get_route_path("e.GET(\"/\", func(c echo.Context) error {").should eq("/")
   end
-  it "instance.get_route_path_go_echo - POST" do
-    instance.get_route_path_go_echo("e.POST(\"/\", func(c echo.Context) error {").should eq("/")
+  it "instance.get_route_path - POST" do
+    instance.get_route_path("e.POST(\"/\", func(c echo.Context) error {").should eq("/")
   end
-  it "instance.get_route_path_go_echo - PUT" do
-    instance.get_route_path_go_echo("e.PUT(\"/\", func(c echo.Context) error {").should eq("/")
+  it "instance.get_route_path - PUT" do
+    instance.get_route_path("e.PUT(\"/\", func(c echo.Context) error {").should eq("/")
   end
-  it "instance.get_route_path_go_echo - DELETE" do
-    instance.get_route_path_go_echo("e.DELETE(\"/\", func(c echo.Context) error {").should eq("/")
+  it "instance.get_route_path - DELETE" do
+    instance.get_route_path("e.DELETE(\"/\", func(c echo.Context) error {").should eq("/")
   end
-  it "instance.get_route_path_go_echo - PATCH" do
-    instance.get_route_path_go_echo("e.PATCH(\"/\", func(c echo.Context) error {").should eq("/")
+  it "instance.get_route_path - PATCH" do
+    instance.get_route_path("e.PATCH(\"/\", func(c echo.Context) error {").should eq("/")
   end
-  it "instance.get_route_path_go_echo - HEAD" do
-    instance.get_route_path_go_echo("e.HEAD(\"/\", func(c echo.Context) error {").should eq("/")
+  it "instance.get_route_path - HEAD" do
+    instance.get_route_path("e.HEAD(\"/\", func(c echo.Context) error {").should eq("/")
   end
-  it "instance.get_route_path_go_echo - OPTIONS" do
-    instance.get_route_path_go_echo("e.OPTIONS(\"/\", func(c echo.Context) error {").should eq("/")
+  it "instance.get_route_path - OPTIONS" do
+    instance.get_route_path("e.OPTIONS(\"/\", func(c echo.Context) error {").should eq("/")
   end
-  it "instance.get_route_path_go_echo - customContext1" do
-    instance.get_route_path_go_echo("customEnv.OPTIONS(\"/\", func(c echo.Context) error {").should eq("/")
+  it "instance.get_route_path - customContext1" do
+    instance.get_route_path("customEnv.OPTIONS(\"/\", func(c echo.Context) error {").should eq("/")
   end
-  it "instance.get_route_path_go_echo - customContext2" do
-    instance.get_route_path_go_echo("customEnv.OPTIONS(\"/\", func(myContext echo.Context) error {").should eq("/")
+  it "instance.get_route_path - customContext2" do
+    instance.get_route_path("customEnv.OPTIONS(\"/\", func(myContext echo.Context) error {").should eq("/")
+  end
+
+  it "instance.get_static_path - Static" do
+    rtn = {
+      "static_path" => "/",
+      "file_path"   => "public",
+    }
+    instance.get_static_path("e.Static(\"/\", \"public\")").should eq(rtn)
+  end
+
+  it "instance.get_static_path - Static" do
+    rtn = {
+      "static_path" => "/abcd",
+      "file_path"   => "./public",
+    }
+    instance.get_static_path("e.Static(\"/abcd\", \"./public\")").should eq(rtn)
   end
 end
