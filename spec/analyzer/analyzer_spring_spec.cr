@@ -47,6 +47,12 @@ describe "mapping_to_path" do
   it "mapping_to_path - requestmapping style3" do
     instance.mapping_to_path("@RequestMapping(value = \"/0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\")").should eq(["/0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"])
   end
+  it "mapping_to_path - requestmapping style4" do
+    instance.mapping_to_path("@GetMapping()").should eq([""])
+  end
+  it "mapping_to_path - requestmapping style5" do
+    instance.mapping_to_path("@RequestMapping(method = RequestMethod.GET)").should eq([""])
+  end
 end
 
 describe "utils func" do

@@ -11,7 +11,7 @@ class AnalyzerRails < Analyzer
 
     # Config Analysis
     if File.exists?("#{@base_path}/config/routes.rb")
-      File.open("#{@base_path}/config/routes.rb", "r") do |file|
+      File.open("#{@base_path}/config/routes.rb", "r", encoding: "utf-8", invalid: :skip) do |file|
         file.each_line do |line|
           stripped_line = line.strip
           if stripped_line.size > 0 && stripped_line[0] != '#'
@@ -53,7 +53,7 @@ class AnalyzerRails < Analyzer
     @result = [] of Endpoint
 
     if File.exists?(path)
-      File.open(path, "r") do |controller_file|
+      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |controller_file|
         param_type = "form"
         params_query = [] of Param
         params_body = [] of Param

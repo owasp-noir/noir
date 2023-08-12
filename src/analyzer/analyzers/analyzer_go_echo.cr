@@ -7,7 +7,7 @@ class AnalyzerGoEcho < Analyzer
     Dir.glob("#{base_path}/**/*") do |path|
       next if File.directory?(path)
       if File.exists?(path) && File.extname(path) == ".go"
-        File.open(path, "r") do |file|
+        File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
           file.each_line do |line|
             if line.includes?(".GET(") || line.includes?(".POST(") || line.includes?(".PUT(") || line.includes?(".DELETE(")
               get_route_path(line).tap do |route_path|
