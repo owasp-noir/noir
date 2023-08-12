@@ -9,7 +9,7 @@ class AnalyzerSpring < Analyzer
       next if File.directory?(path)
 
       url = @url
-      if File.exists?(path)
+      if File.exists?(path) && path.ends_with?(".java")
         File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
           has_class_been_imported = false
           file.each_line do |line|
@@ -98,16 +98,23 @@ class AnalyzerSpring < Analyzer
             paths << line
           else
             line = comma_in_bracket(line)
+            value_flag = false
             line.split(",").each do |comma_line|
               if comma_line.to_s.includes? "value="
                 tmp = comma_line.split("=")
                 tmp[1].gsub(/"|\)/, "").strip.split("_BRACKET_COMMA_").each do |path|
                   paths << "#{path.strip.gsub("\\", "").gsub(";", "")}"
+                  value_flag = true
                 end
               end
             end
+            if value_flag == false
+              paths << ""
+            end
           end
         end
+      else
+        paths << ""
       end
     end
 
