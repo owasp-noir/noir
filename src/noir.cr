@@ -5,17 +5,18 @@ require "./banner.cr"
 require "./options.cr"
 
 module Noir
-  VERSION = "0.2.3"
+  VERSION = "0.2.4"
   TECHS   = [
-    "ruby_rails",
-    "ruby_sinatra",
+    "crystal_kemal",
     "go_echo",
+    "java_jsp",
     "java_spring",
+    "js_express",
+    "php_pure",
     "python_django",
     "python_flask",
-    "php_pure",
-    "java_jsp",
-    "js_express",
+    "ruby_rails",
+    "ruby_sinatra"
   ]
 end
 
