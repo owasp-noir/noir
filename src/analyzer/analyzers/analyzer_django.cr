@@ -34,7 +34,7 @@ class AnalyzerDjango < Analyzer
       spawn do
         next if File.directory?(file)
         if file.ends_with? ".py"
-          content = File.read(file)
+          content = File.read(file, encoding: "utf-8", invalid: :skip)
           content.scan(REGEX_ROOT_URLCONF) do |match|
             next if match.size != 2
             filepath = "#{base_path}/#{match[1].gsub(".", "/")}.py"
@@ -67,7 +67,7 @@ class AnalyzerDjango < Analyzer
 
   def get_paths(django_urls : DjangoUrls)
     paths = [] of String
-    content = File.read(django_urls.filepath)
+    content = File.read(django_urls.filepath, encoding: "utf-8", invalid: :skip)
     content.scan(REGEX_URL_PATTERNS) do |match|
       next if match.size != 2
       paths = mapping_to_path(match[1], django_urls.prefix)
@@ -89,7 +89,7 @@ class AnalyzerDjango < Analyzer
         filepath = "#{base_path}/#{include_pattern_match[1].gsub(".", "/")}.py"
 
         if File.exists?(filepath)
-          new_django_urls = DjangoUrls.new("#{prefix}#{url}", filepath)
+          new_django_urls = DjangoUrls.new("#{prefix}#{path}", filepath)
           new_paths = get_paths(new_django_urls)
           new_paths.each do |new_path|
             paths << new_path
@@ -103,7 +103,6 @@ class AnalyzerDjango < Analyzer
       unless path.starts_with?("/")
         path = "/#{path}"
       end
-
       paths << path
     end
 

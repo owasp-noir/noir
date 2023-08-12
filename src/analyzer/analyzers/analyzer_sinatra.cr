@@ -6,7 +6,7 @@ class AnalyzerSinatra < Analyzer
     Dir.glob("#{@base_path}/**/*") do |path|
       next if File.directory?(path)
       if File.exists?(path)
-        File.open(path, "r") do |file|
+        File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
           last_endpoint = Endpoint.new("", "")
           file.each_line do |line|
             endpoint = line_to_endpoint(line)

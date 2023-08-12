@@ -6,7 +6,7 @@ class AnalyzerExample < Analyzer
     Dir.glob("#{base_path}/**/*") do |path|
       next if File.directory?(path)
       if File.exists?(path)
-        File.open(path, "r") do |file|
+        File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
           file.each_line do |_|
           end
         end

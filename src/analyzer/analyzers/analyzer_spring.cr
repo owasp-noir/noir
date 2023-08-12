@@ -10,7 +10,7 @@ class AnalyzerSpring < Analyzer
 
       url = @url
       if File.exists?(path)
-        File.open(path, "r") do |file|
+        File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
           has_class_been_imported = false
           file.each_line do |line|
             if has_class_been_imported == false && REGEX_CLASS_DEFINITION.match(line)

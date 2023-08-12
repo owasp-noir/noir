@@ -14,7 +14,7 @@ class AnalyzerPhpPure < Analyzer
       relative_path = remove_start_slash(relative_path)
 
       if File.exists?(path) && File.extname(path) == ".php"
-        File.open(path, "r") do |file|
+        File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
           params_query = [] of Param
           params_body = [] of Param
           methods = [] of String
