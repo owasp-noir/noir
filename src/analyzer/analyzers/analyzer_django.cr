@@ -59,7 +59,7 @@ class AnalyzerDjango < Analyzer
         path = "/#{path}"
       end
 
-      endpoints << Endpoint.new(path, "GET")
+      endpoints << Endpoint.new("#{@url}#{path}", "GET")
     end
 
     endpoints
@@ -83,6 +83,10 @@ class AnalyzerDjango < Analyzer
       path = match[1]
       view = match[2]
 
+      path = path.gsub(/ /, "")
+      path = path.gsub(/^\^/, "")
+      path = path.gsub(/\$$/, "")
+
       filepath = nil
       view.scan(REGEX_INCLUDE_URLS) do |include_pattern_match|
         next if include_pattern_match.size != 2
@@ -96,14 +100,11 @@ class AnalyzerDjango < Analyzer
           end
         end
       end
-      path = path.gsub(/ /, "")
-      path = path.gsub(/^\^/, "")
-      path = path.gsub(/\$$/, "")
 
       unless path.starts_with?("/")
         path = "/#{path}"
       end
-      paths << path
+      paths << "#{prefix}#{path}"
     end
 
     paths
