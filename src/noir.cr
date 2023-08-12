@@ -16,7 +16,7 @@ module Noir
     "python_django",
     "python_flask",
     "ruby_rails",
-    "ruby_sinatra"
+    "ruby_sinatra",
   ]
 end
 
