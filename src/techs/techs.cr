@@ -58,11 +58,11 @@ module NoirTechs
 
     def self.similar_to_tech(word)
         TECHS.each do |key, value|
-            if value[:similar].includes? word
+            if value[:similar].includes? word.downcase
                 return key.to_s
             end
         end
-        
+
         return ""
     end
 end
