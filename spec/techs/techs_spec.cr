@@ -9,7 +9,7 @@ describe "Similar to tech" do
     NoirTechs.similar_to_tech("Rails").should eq "ruby_rails"
   end
 
-  it "False case" do 
+  it "False case" do
     NoirTechs.similar_to_tech("Noir").should_not eq "ruby_rails"
   end
 end

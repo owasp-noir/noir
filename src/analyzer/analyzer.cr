@@ -33,7 +33,7 @@ def analysis_endpoints(options : Hash(Symbol, String), techs, logger : NoirLogge
         logger.info_sub "Skipping #{tech} analysis"
         next
       end
-      
+
       result = result + analyzer[tech].call(options)
     end
   end
