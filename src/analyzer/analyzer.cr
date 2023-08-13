@@ -29,6 +29,11 @@ def analysis_endpoints(options : Hash(Symbol, String), techs, logger : NoirLogge
 
   techs.each do |tech|
     if analyzer.has_key?(tech)
+      if options[:exclude_techs].includes?(tech)
+        logger.info_sub "Skipping #{tech} analysis"
+        next
+      end
+
       result = result + analyzer[tech].call(options)
     end
   end

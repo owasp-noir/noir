@@ -4,6 +4,7 @@ def default_options
     :output => "", :techs => "", :debug => "no", :color => "yes",
     :send_proxy => "", :send_req => "no",
     :scope => "url,param", :set_pvalue => "", :nolog => "no",
+    :exclude_techs => "",
   }
 
   noir_options
