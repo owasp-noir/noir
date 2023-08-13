@@ -85,7 +85,8 @@ Usage: noir <flags>
 
   Technologies:
     -t TECHS, --techs rails,php      Set technologies to use
-    --techs-list                     Show all technologies
+    --exclude-techs rails,php        Specify the technologies to be excluded
+    --list-techs                     Show all technologies
 
   Others:
     -d, --debug                      Show debug messages
