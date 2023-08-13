@@ -94,7 +94,45 @@ Usage: noir <flags>
     -h, --help                       Show help
 ```
 
-![noir result preview](https://github.com/hahwul/noir/assets/13212227/1cde6445-eeae-492a-888b-59480aaf9a96)
+Example
+```bash
+noir -b . -u https://testapp.internal.domains
+```
+
+![](https://github.com/hahwul/noir/assets/13212227/68fb1b3a-dc57-4480-b8cf-e42f452e6706)
+
+JSON Result
+```
+noir -b . -u https://testapp.internal.domains -f json
+```
+```json
+[
+  ...
+  {
+    "headers": [],
+    "method": "POST",
+    "params": [
+      {
+        "name": "article_slug",
+        "param_type": "json",
+        "value": ""
+      },
+      {
+        "name": "body",
+        "param_type": "json",
+        "value": ""
+      },
+      {
+        "name": "id",
+        "param_type": "json",
+        "value": ""
+      }
+    ],
+    "protocol": "http",
+    "url": "https://testapp.internal.domains/comments"
+  }
+]
+```
 
 ### Contributing
 Noir is open-source project and made it with ❤️ 
