@@ -41,7 +41,12 @@ class NoirRunner
     @logger = NoirLogger.new @is_debug, @is_color, @is_log
 
     if options[:techs].size > 0
-      @techs = options[:techs].split(",")
+      techs_tmp = options[:techs].split(",")
+      @logger.system "Setting #{techs_tmp.size} techs from command line."
+      techs_tmp.each do |tech|
+        @techs << NoirTechs.similar_to_tech(tech)
+        @logger.debug "Added #{tech} to techs."
+      end
     end
   end
 

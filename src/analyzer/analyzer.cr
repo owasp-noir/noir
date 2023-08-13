@@ -22,18 +22,18 @@ end
 
 def analysis_endpoints(options : Hash(Symbol, String), techs, logger : NoirLogger)
   result = [] of Endpoint
-  logger.system "Starting analysis of endpoints"
+  logger.system "Starting analysis of endpoints."
 
   analyzer = initialize_analyzers logger
   logger.info_sub "Analysis to #{techs.size} technologies"
 
   techs.each do |tech|
     if analyzer.has_key?(tech)
-      if options[:exclude_techs].includes?(tech)
+      if NoirTechs.similar_to_tech(options[:exclude_techs]).includes?(tech)
         logger.info_sub "Skipping #{tech} analysis"
         next
       end
-
+      
       result = result + analyzer[tech].call(options)
     end
   end

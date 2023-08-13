@@ -3,21 +3,10 @@ require "colorize"
 require "./models/noir.cr"
 require "./banner.cr"
 require "./options.cr"
+require "./techs/techs.cr"
 
 module Noir
   VERSION = "0.2.4"
-  TECHS   = [
-    "crystal_kemal",
-    "go_echo",
-    "java_jsp",
-    "java_spring",
-    "js_express",
-    "php_pure",
-    "python_django",
-    "python_flask",
-    "ruby_rails",
-    "ruby_sinatra",
-  ]
 end
 
 noir_options = default_options()
@@ -51,7 +40,13 @@ OptionParser.parse do |parser|
   parser.on "--exclude-techs rails,php", "Specify the technologies to be excluded" { |var| noir_options[:exclude_techs] = var }
   parser.on "--list-techs", "Show all technologies" do
     puts "Available technologies:"
-    puts Noir::TECHS.join("\n")
+    techs = NoirTechs.get_techs
+    techs.each do |tech, value|
+      puts "  #{tech.to_s.colorize(:green)}"
+      value.each do |k, v|
+        puts "    #{k.to_s.colorize(:blue)}: #{v}"
+      end
+    end
     exit
   end
 
@@ -100,7 +95,7 @@ app.logger.debug_sub "Color: #{app.@is_color}"
 app.logger.debug_sub "Format: #{app.options[:format]}"
 app.logger.debug_sub "Output: #{app.options[:output]}"
 
-app.logger.system "Detecting technologies."
+app.logger.system "Detecting technologies to base directory."
 app.detect
 if app.techs.size == 0
   app.logger.info "No technologies detected."
