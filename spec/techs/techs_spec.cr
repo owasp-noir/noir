@@ -5,7 +5,7 @@ describe "Similar to tech" do
     NoirTechs.similar_to_tech("rails").should eq "ruby_rails"
   end
 
-  it "basic2" do 
+  it "basic2" do
     NoirTechs.similar_to_tech("ruby-rails").should eq "ruby_rails"
   end
 
@@ -18,10 +18,10 @@ describe "Similar to tech" do
   end
 end
 
-describe "Get Techs" do 
+describe "Get Techs" do
   techs = NoirTechs.get_techs
   techs.each do |k, v|
-    it "#{k.to_s} in techs" do
+    it "#{k} in techs" do
       v.should_not be_empty
     end
   end
