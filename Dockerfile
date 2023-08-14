@@ -5,7 +5,7 @@ WORKDIR /noir
 COPY . .
 
 RUN shards install
-RUN shards build --release --no-debug
+RUN shards build --release --no-debug --production
 
 # RUNNER
 FROM crystallang/crystal:latest-alpine As runner
