@@ -6,11 +6,8 @@ name: GHCR Publish
 # documentation.
 
 on:
-  schedule:
-    - cron: '25 0 * * *'
   push:
     branches: [ "main" ]
-    # Publish semver tags as releases.
     tags: [ 'v*.*.*' ]
   pull_request:
     branches: [ "main" ]
