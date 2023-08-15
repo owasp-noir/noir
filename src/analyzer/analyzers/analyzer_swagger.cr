@@ -10,6 +10,10 @@ class AnalyzerSwagger < Analyzer
       if File.exists?(swagger_json)
         content = File.read(swagger_json, encoding: "utf-8", invalid: :skip)
         json_obj = JSON.parse(content)
+        base_path = @url
+        if json_obj["basePath"].to_s != ""
+          base_path = base_path + json_obj["basePath"].to_s
+        end
         json_obj["paths"].as_h.each do |path, path_obj|
           path_obj.as_h.each do |method, method_obj|
             params_query = [] of Param
@@ -29,9 +33,9 @@ class AnalyzerSwagger < Analyzer
                   params_body << param
                 end
               end
-              @result << Endpoint.new(path, method.upcase, params_body)
+              @result << Endpoint.new(base_path + path, method.upcase, params_body)
             else
-              @result << Endpoint.new(path, method.upcase)
+              @result << Endpoint.new(base_path + path, method.upcase)
             end
           end
         end
@@ -42,6 +46,10 @@ class AnalyzerSwagger < Analyzer
       if File.exists?(swagger_yaml)
         content = File.read(swagger_yaml, encoding: "utf-8", invalid: :skip)
         yaml_obj = YAML.parse(content)
+        base_path = @url
+        if yaml_obj["basePath"].to_s != ""
+          base_path = base_path + yaml_obj["basePath"].to_s
+        end
         yaml_obj["paths"].as_h.each do |path, path_obj|
           path_obj.as_h.each do |method, method_obj|
             params_query = [] of Param
@@ -61,9 +69,9 @@ class AnalyzerSwagger < Analyzer
                   params_body << param
                 end
               end
-              @result << Endpoint.new(path.to_s, method.to_s.upcase, params_body)
+              @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params_body)
             else
-              @result << Endpoint.new(path.to_s, method.to_s.upcase)
+              @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase)
             end
           end
         end
