@@ -51,9 +51,8 @@ module NoirTechs
       :similar   => ["sinatra", "ruby-sinatra", "ruby_sinatra"],
     },
     :swagger => {
-      :language  => "Swagger",
-      :framework => "",
-      :similar   => ["swagger"],
+      :format  => ["JSON", "YAML"],
+      :similar => ["swagger"],
     },
   }
 
