@@ -33,6 +33,13 @@
 | JS       | Express   | ✅   | ✅      | X     | X      | X  |
 | JS       | Next      | X   | X      | X     | X      | X  |
 
+### Specification
+
+| Specification | Format  | URL | Method | Param | Header | WS |
+|---------------|---------|-----|--------|-------|--------|----|
+| Swagger       | JSON    | ✅   | ✅      | ✅     | X      | X  |
+| Swagger       | YAML    | ✅   | ✅      | ✅     | X      | X  |
+
 ## Installation
 ### Homebrew (macOS)
 ```bash
