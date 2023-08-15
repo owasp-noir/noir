@@ -26,10 +26,8 @@ class CodeLocator
   end
 
   def get(key : String) : String
-    begin
-        @map[key]
-    rescue
-        ""
-    end
+    @map[key]
+  rescue
+    ""
   end
 end
