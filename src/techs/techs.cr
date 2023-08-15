@@ -50,6 +50,11 @@ module NoirTechs
       :framework => "Sinatra",
       :similar   => ["sinatra", "ruby-sinatra", "ruby_sinatra"],
     },
+    :swagger => {
+      :language  => "Swagger",
+      :framework => "",
+      :similar   => ["swagger"],
+    },
   }
 
   def self.get_techs
