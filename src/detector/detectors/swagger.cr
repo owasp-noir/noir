@@ -1,6 +1,7 @@
 require "../../models/detector"
 require "../../utils/json"
 require "../../utils/yaml"
+require "../../models/code_locator"
 
 class DetectorSwagger < Detector
   def detect(filename : String, file_contents : String) : Bool
@@ -9,11 +10,15 @@ class DetectorSwagger < Detector
       data = JSON.parse(file_contents)
       if !data["swagger"].nil?
         check = true
+        locator = CodeLocator.instance
+        locator.set("swagger-json", filename)
       end
     elsif valid_yaml? file_contents
       data = YAML.parse(file_contents)
       if !data["swagger"].nil?
         check = true
+        locator = CodeLocator.instance
+        locator.set("swagger-yaml", filename)
       end
     end
 
