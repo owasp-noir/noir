@@ -35,10 +35,10 @@
 
 ### Specification
 
-| Specification | Format  | URL | Method | Param | Header | WS |
-|---------------|---------|-----|--------|-------|--------|----|
-| Swagger       | JSON    | ✅   | ✅      | ✅     | X      | X  |
-| Swagger       | YAML    | ✅   | ✅      | ✅     | X      | X  |
+| Specification     | Format  | URL | Method | Param | Header | WS |
+|-------------------|---------|-----|--------|-------|--------|----|
+| Swagger (OAS 2.0) | JSON    | ✅  | ✅     | ✅    | X      | X  |
+| Swagger (OAS 2.0) | YAML    | ✅  | ✅     | ✅    | X      | X  |
 
 ## Installation
 ### Homebrew (macOS)
