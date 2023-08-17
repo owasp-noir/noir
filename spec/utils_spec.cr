@@ -51,7 +51,7 @@ describe "str_to_bool" do
   end
 end
 
-describe "valid_json?" do 
+describe "valid_json?" do
   it "valid json" do
     valid_json?("{\"test\":\"test\"}").should eq(true)
   end
