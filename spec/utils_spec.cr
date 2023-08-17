@@ -50,3 +50,21 @@ describe "str_to_bool" do
     str_to_bool("hahwul").should eq(false)
   end
 end
+
+describe "valid_json?" do
+  it "valid json" do
+    valid_json?("{\"test\":\"test\"}").should eq(true)
+  end
+  it "invalid json" do
+    valid_json?("{\"test\":\"test\"").should eq(false)
+  end
+end
+
+describe "valid_yaml?" do
+  it "valid yaml" do
+    valid_yaml?("test: test").should eq(true)
+  end
+  it "invalid yaml" do
+    valid_yaml?(":").should eq(false)
+  end
+end
