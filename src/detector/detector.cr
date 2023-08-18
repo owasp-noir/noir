@@ -15,7 +15,7 @@ def detect_techs(base_path : String, options : Hash(Symbol, String))
   defind_detectors([
     DetectorCrystalKemal, DetectorGoEcho, DetectorJavaJsp, DetectorJavaSpring,
     DetectorJsExpress, DetectorPhpPure, DetectorPythonDjango, DetectorPythonFlask,
-    DetectorRubyRails, DetectorRubySinatra, DetectorOas2,
+    DetectorRubyRails, DetectorRubySinatra, DetectorOas2, DetectorOas3,
   ])
   Dir.glob("#{base_path}/**/*") do |file|
     spawn do

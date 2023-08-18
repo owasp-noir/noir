@@ -54,6 +54,10 @@ module NoirTechs
       :format  => ["JSON", "YAML"],
       :similar => ["oas 2.0", "oas_2_0", "swagger 2.0", "swagger_2_0", "swagger"],
     },
+    :oas3 => {
+      :format  => ["JSON", "YAML"],
+      :similar => ["oas 3.0", "oas_3_0"],
+    },
   }
 
   def self.get_techs

@@ -39,6 +39,8 @@
 |------------------------|---------|-----|--------|-------|--------|----|
 | OAS 2.0 (Swagger 2.0)  | JSON    | ✅  | ✅     | ✅    | X      | X  |
 | OAS 2.0 (Swagger 2.0)  | YAML    | ✅  | ✅     | ✅    | X      | X  |
+| OAS 3.0                | JSON    | ✅  | ✅     | ✅    | X      | X  |
+| OAS 3.0                | YAML    | ✅  | ✅     | ✅    | X      | X  |
 
 ## Installation
 ### Homebrew (macOS)
