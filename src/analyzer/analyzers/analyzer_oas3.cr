@@ -31,15 +31,14 @@ class AnalyzerOAS3 < Analyzer
 
         json_obj["paths"].as_h.each do |path, path_obj|
           path_obj.as_h.each do |method, method_obj|
-            params_query = [] of Param
-            params_body = [] of Param
+            params = [] of Param
 
             if method_obj.as_h.has_key?("parameters")
               method_obj["parameters"].as_a.each do |param_obj|
                 param_name = param_obj["name"].to_s
                 if param_obj["in"] == "query"
                   param = Param.new(param_name, "", "query")
-                  params_query << param
+                  params << param
                 end
               end
             end
@@ -49,23 +48,23 @@ class AnalyzerOAS3 < Analyzer
                 if content_type == "application/json"
                   content_obj["schema"]["properties"].as_h.each do |param_name, _|
                     param = Param.new(param_name, "", "json")
-                    params_body << param
+                    params << param
                   end
                 elsif content_type == "application/x-www-form-urlencoded"
                   content_obj["schema"]["properties"].as_h.each do |param_name, _|
                     param = Param.new(param_name, "", "form")
-                    params_body << param
+                    params << param
                   end
                 end
               end
             end
 
-            if params_query.size > 0 && params_body.size > 0
-              @result << Endpoint.new(base_path + path, method.upcase, params_query + params_body)
-            elsif params_query.size > 0
-              @result << Endpoint.new(base_path + path, method.upcase, params_query)
-            elsif params_body.size > 0
-              @result << Endpoint.new(base_path + path, method.upcase, params_body)
+            if params.size > 0 && params.size > 0
+              @result << Endpoint.new(base_path + path, method.upcase, params + params)
+            elsif params.size > 0
+              @result << Endpoint.new(base_path + path, method.upcase, params)
+            elsif params.size > 0
+              @result << Endpoint.new(base_path + path, method.upcase, params)
             else
               @result << Endpoint.new(base_path + path, method.upcase)
             end
@@ -82,15 +81,14 @@ class AnalyzerOAS3 < Analyzer
 
         yaml_obj["paths"].as_h.each do |path, path_obj|
           path_obj.as_h.each do |method, method_obj|
-            params_query = [] of Param
-            params_body = [] of Param
+            params = [] of Param
 
             if method_obj.as_h.has_key?("parameters")
               method_obj["parameters"].as_a.each do |param_obj|
                 param_name = param_obj["name"].to_s
                 if param_obj["in"] == "query"
                   param = Param.new(param_name, "", "query")
-                  params_query << param
+                  params << param
                 end
               end
             end
@@ -100,23 +98,23 @@ class AnalyzerOAS3 < Analyzer
                 if content_type == "application/json"
                   content_obj["schema"]["properties"].as_h.each do |param_name, _|
                     param = Param.new(param_name.to_s, "", "json")
-                    params_body << param
+                    params << param
                   end
                 elsif content_type == "application/x-www-form-urlencoded"
                   content_obj["schema"]["properties"].as_h.each do |param_name, _|
                     param = Param.new(param_name.to_s, "", "form")
-                    params_body << param
+                    params << param
                   end
                 end
               end
             end
 
-            if params_query.size > 0 && params_body.size > 0
-              @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params_query + params_body)
-            elsif params_query.size > 0
-              @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params_query)
-            elsif params_body.size > 0
-              @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params_body)
+            if params.size > 0 && params.size > 0
+              @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params + params)
+            elsif params.size > 0
+              @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params)
+            elsif params.size > 0
+              @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params)
             else
               @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase)
             end
