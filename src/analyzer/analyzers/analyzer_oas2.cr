@@ -1,6 +1,6 @@
 require "../../models/analyzer"
 
-class AnalyzerSwagger < Analyzer
+class AnalyzerOAS2 < Analyzer
   def analyze
     locator = CodeLocator.instance
     swagger_json = locator.get("swagger-json")
@@ -82,7 +82,7 @@ class AnalyzerSwagger < Analyzer
   end
 end
 
-def analyzer_swagger(options : Hash(Symbol, String))
-  instance = AnalyzerSwagger.new(options)
+def analyzer_oas2(options : Hash(Symbol, String))
+  instance = AnalyzerOAS2.new(options)
   instance.analyze
 end

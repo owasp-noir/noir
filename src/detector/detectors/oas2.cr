@@ -3,7 +3,7 @@ require "../../utils/json"
 require "../../utils/yaml"
 require "../../models/code_locator"
 
-class DetectorSwagger < Detector
+class DetectorOas2 < Detector
   def detect(filename : String, file_contents : String) : Bool
     check = false
     if valid_json? file_contents
@@ -32,6 +32,6 @@ class DetectorSwagger < Detector
   end
 
   def set_name
-    @name = "swagger"
+    @name = "oas2"
   end
 end

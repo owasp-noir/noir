@@ -1,9 +1,9 @@
 require "../../src/detector/detectors/*"
 require "../../src/models/code_locator"
 
-describe "Detect Swagger Docs" do
+describe "Detect OAS 2.0(Swagger) Docs" do
   options = default_options()
-  instance = DetectorSwagger.new options
+  instance = DetectorOas2.new options
 
   it "json format" do
     content = <<-EOS
