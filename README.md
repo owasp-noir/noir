@@ -37,10 +37,10 @@
 
 | Specification          | Format  | URL | Method | Param | Header | WS |
 |------------------------|---------|-----|--------|-------|--------|----|
-| OAS 2.0 (Swagger 2.0)  | JSON    | ✅  | ✅     | ✅    | X      | X  |
-| OAS 2.0 (Swagger 2.0)  | YAML    | ✅  | ✅     | ✅    | X      | X  |
-| OAS 3.0                | JSON    | ✅  | ✅     | ✅    | X      | X  |
-| OAS 3.0                | YAML    | ✅  | ✅     | ✅    | X      | X  |
+| OAS 2.0 (Swagger 2.0)  | JSON    | ✅  | ✅     | ✅    | ✅     | X  |
+| OAS 2.0 (Swagger 2.0)  | YAML    | ✅  | ✅     | ✅    | ✅     | X  |
+| OAS 3.0                | JSON    | ✅  | ✅     | ✅    | ✅     | X  |
+| OAS 3.0                | YAML    | ✅  | ✅     | ✅    | ✅     | X  |
 
 ## Installation
 ### Homebrew (macOS)

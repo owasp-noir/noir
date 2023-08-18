@@ -30,6 +30,9 @@ class AnalyzerOAS2 < Analyzer
                 elsif param_obj["in"] == "formData"
                   param = Param.new(param_name, "", "form")
                   params << param
+                elsif param_obj["in"] == "header"
+                  param = Param.new(param_name, "", "header")
+                  params << param
                 end
               end
               @result << Endpoint.new(base_path + path, method.upcase, params)
@@ -64,6 +67,9 @@ class AnalyzerOAS2 < Analyzer
                   params << param
                 elsif param_obj["in"] == "formData"
                   param = Param.new(param_name, "", "form")
+                  params << param
+                elsif param_obj["in"] == "header"
+                  param = Param.new(param_name, "", "header")
                   params << param
                 end
               end

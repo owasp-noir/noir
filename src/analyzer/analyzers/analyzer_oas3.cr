@@ -39,6 +39,9 @@ class AnalyzerOAS3 < Analyzer
                 if param_obj["in"] == "query"
                   param = Param.new(param_name, "", "query")
                   params << param
+                elsif param_obj["in"] == "header"
+                  param = Param.new(param_name, "", "header")
+                  params << param
                 end
               end
             end
@@ -88,6 +91,9 @@ class AnalyzerOAS3 < Analyzer
                 param_name = param_obj["name"].to_s
                 if param_obj["in"] == "query"
                   param = Param.new(param_name, "", "query")
+                  params << param
+                elsif param_obj["in"] == "header"
+                  param = Param.new(param_name, "", "header")
                   params << param
                 end
               end
