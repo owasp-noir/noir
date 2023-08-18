@@ -209,7 +209,7 @@ class NoirRunner
           if baked[:body_type] == "json"
             cmd += " -H \"Content-Type:application/json\""
           end
-          
+
           baked[:header].each do |header|
             cmd += " -H \"#{header}\""
           end
