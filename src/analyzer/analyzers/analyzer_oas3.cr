@@ -12,6 +12,20 @@ class AnalyzerOAS3 < Analyzer
         json_obj = JSON.parse(content)
 
         base_path = @url
+        servers = json_obj["servers"]
+        if !servers.nil?
+          servers.as_a.each do |server_obj|
+            if server_obj["url"].to_s.starts_with?("http")
+              user_uri = URI.parse(@url)
+              source_uri = URI.parse(server_obj["url"].to_s)
+              if user_uri.host == source_uri.host
+                base_path = @url + source_uri.path
+                break
+              end
+            end
+          end
+        end
+
         json_obj["paths"].as_h.each do |path, path_obj|
           path_obj.as_h.each do |method, method_obj|
             params_query = [] of Param
@@ -62,6 +76,20 @@ class AnalyzerOAS3 < Analyzer
         content = File.read(oas3_yaml, encoding: "utf-8", invalid: :skip)
         yaml_obj = YAML.parse(content)
         base_path = @url
+        servers = yaml_obj["servers"]
+        if !servers.nil?
+          servers.as_a.each do |server_obj|
+            if server_obj["url"].to_s.starts_with?("http")
+              user_uri = URI.parse(@url)
+              source_uri = URI.parse(server_obj["url"].to_s)
+              if user_uri.host == source_uri.host
+                base_path = @url + source_uri.path
+                break
+              end
+            end
+          end
+        end
+
         yaml_obj["paths"].as_h.each do |path, path_obj|
           path_obj.as_h.each do |method, method_obj|
             params_query = [] of Param
