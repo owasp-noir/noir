@@ -1,6 +1,22 @@
 require "../../models/analyzer"
 
 class AnalyzerOAS3 < Analyzer
+  def get_base_path(servers)
+    base_path = @url
+    servers.as_a.each do |server_obj|
+      if server_obj["url"].to_s.starts_with?("http")
+        user_uri = URI.parse(@url)
+        source_uri = URI.parse(server_obj["url"].to_s)
+        if user_uri.host == source_uri.host
+          base_path = @url + source_uri.path
+          break
+        end
+      end
+    end
+
+    base_path
+  end
+
   def analyze
     locator = CodeLocator.instance
     oas3_json = locator.get("oas3-json")
@@ -11,20 +27,7 @@ class AnalyzerOAS3 < Analyzer
         content = File.read(oas3_json, encoding: "utf-8", invalid: :skip)
         json_obj = JSON.parse(content)
 
-        base_path = @url
-        servers = json_obj["servers"]
-        if !servers.nil?
-          servers.as_a.each do |server_obj|
-            if server_obj["url"].to_s.starts_with?("http")
-              user_uri = URI.parse(@url)
-              source_uri = URI.parse(server_obj["url"].to_s)
-              if user_uri.host == source_uri.host
-                base_path = @url + source_uri.path
-                break
-              end
-            end
-          end
-        end
+        base_path = get_base_path json_obj["servers"]
 
         json_obj["paths"].as_h.each do |path, path_obj|
           path_obj.as_h.each do |method, method_obj|
@@ -44,12 +47,12 @@ class AnalyzerOAS3 < Analyzer
             if method_obj.as_h.has_key?("requestBody")
               method_obj["requestBody"]["content"].as_h.each do |content_type, content_obj|
                 if content_type == "application/json"
-                  content_obj["schema"]["properties"].as_h.each do |param_name, param_obj|
+                  content_obj["schema"]["properties"].as_h.each do |param_name, _|
                     param = Param.new(param_name, "", "json")
                     params_body << param
                   end
                 elsif content_type == "application/x-www-form-urlencoded"
-                  content_obj["schema"]["properties"].as_h.each do |param_name, param_obj|
+                  content_obj["schema"]["properties"].as_h.each do |param_name, _|
                     param = Param.new(param_name, "", "form")
                     params_body << param
                   end
@@ -75,20 +78,7 @@ class AnalyzerOAS3 < Analyzer
       if File.exists?(oas3_yaml)
         content = File.read(oas3_yaml, encoding: "utf-8", invalid: :skip)
         yaml_obj = YAML.parse(content)
-        base_path = @url
-        servers = yaml_obj["servers"]
-        if !servers.nil?
-          servers.as_a.each do |server_obj|
-            if server_obj["url"].to_s.starts_with?("http")
-              user_uri = URI.parse(@url)
-              source_uri = URI.parse(server_obj["url"].to_s)
-              if user_uri.host == source_uri.host
-                base_path = @url + source_uri.path
-                break
-              end
-            end
-          end
-        end
+        base_path = get_base_path yaml_obj["servers"]
 
         yaml_obj["paths"].as_h.each do |path, path_obj|
           path_obj.as_h.each do |method, method_obj|
@@ -108,12 +98,12 @@ class AnalyzerOAS3 < Analyzer
             if method_obj.as_h.has_key?("requestBody")
               method_obj["requestBody"]["content"].as_h.each do |content_type, content_obj|
                 if content_type == "application/json"
-                  content_obj["schema"]["properties"].as_h.each do |param_name, param_obj|
+                  content_obj["schema"]["properties"].as_h.each do |param_name, _|
                     param = Param.new(param_name.to_s, "", "json")
                     params_body << param
                   end
                 elsif content_type == "application/x-www-form-urlencoded"
-                  content_obj["schema"]["properties"].as_h.each do |param_name, param_obj|
+                  content_obj["schema"]["properties"].as_h.each do |param_name, _|
                     param = Param.new(param_name.to_s, "", "form")
                     params_body << param
                   end
