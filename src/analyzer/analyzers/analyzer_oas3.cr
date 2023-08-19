@@ -33,30 +33,32 @@ class AnalyzerOAS3 < Analyzer
           path_obj.as_h.each do |method, method_obj|
             params = [] of Param
 
-            if method_obj.as_h.has_key?("parameters")
-              method_obj["parameters"].as_a.each do |param_obj|
-                param_name = param_obj["name"].to_s
-                if param_obj["in"] == "query"
-                  param = Param.new(param_name, "", "query")
-                  params << param
-                elsif param_obj["in"] == "header"
-                  param = Param.new(param_name, "", "header")
-                  params << param
-                end
-              end
-            end
-
-            if method_obj.as_h.has_key?("requestBody")
-              method_obj["requestBody"]["content"].as_h.each do |content_type, content_obj|
-                if content_type == "application/json"
-                  content_obj["schema"]["properties"].as_h.each do |param_name, _|
-                    param = Param.new(param_name, "", "json")
+            if method_obj.is_a?(JSON::Any) && method_obj.is_a?(Hash(String, JSON::Any))
+              if method_obj.as_h.has_key?("parameters")
+                method_obj["parameters"].as_a.each do |param_obj|
+                  param_name = param_obj["name"].to_s
+                  if param_obj["in"] == "query"
+                    param = Param.new(param_name, "", "query")
+                    params << param
+                  elsif param_obj["in"] == "header"
+                    param = Param.new(param_name, "", "header")
                     params << param
                   end
-                elsif content_type == "application/x-www-form-urlencoded"
-                  content_obj["schema"]["properties"].as_h.each do |param_name, _|
-                    param = Param.new(param_name, "", "form")
-                    params << param
+                end
+              end
+
+              if method_obj.as_h.has_key?("requestBody")
+                method_obj["requestBody"]["content"].as_h.each do |content_type, content_obj|
+                  if content_type == "application/json"
+                    content_obj["schema"]["properties"].as_h.each do |param_name, _|
+                      param = Param.new(param_name, "", "json")
+                      params << param
+                    end
+                  elsif content_type == "application/x-www-form-urlencoded"
+                    content_obj["schema"]["properties"].as_h.each do |param_name, _|
+                      param = Param.new(param_name, "", "form")
+                      params << param
+                    end
                   end
                 end
               end
@@ -86,30 +88,32 @@ class AnalyzerOAS3 < Analyzer
           path_obj.as_h.each do |method, method_obj|
             params = [] of Param
 
-            if method_obj.as_h.has_key?("parameters")
-              method_obj["parameters"].as_a.each do |param_obj|
-                param_name = param_obj["name"].to_s
-                if param_obj["in"] == "query"
-                  param = Param.new(param_name, "", "query")
-                  params << param
-                elsif param_obj["in"] == "header"
-                  param = Param.new(param_name, "", "header")
-                  params << param
-                end
-              end
-            end
-
-            if method_obj.as_h.has_key?("requestBody")
-              method_obj["requestBody"]["content"].as_h.each do |content_type, content_obj|
-                if content_type == "application/json"
-                  content_obj["schema"]["properties"].as_h.each do |param_name, _|
-                    param = Param.new(param_name.to_s, "", "json")
+            if method_obj.is_a?(YAML::Any) && method_obj.is_a?(Hash(String, YAML::Any))
+              if method_obj.as_h.has_key?("parameters")
+                method_obj["parameters"].as_a.each do |param_obj|
+                  param_name = param_obj["name"].to_s
+                  if param_obj["in"] == "query"
+                    param = Param.new(param_name, "", "query")
+                    params << param
+                  elsif param_obj["in"] == "header"
+                    param = Param.new(param_name, "", "header")
                     params << param
                   end
-                elsif content_type == "application/x-www-form-urlencoded"
-                  content_obj["schema"]["properties"].as_h.each do |param_name, _|
-                    param = Param.new(param_name.to_s, "", "form")
-                    params << param
+                end
+              end
+
+              if method_obj.as_h.has_key?("requestBody")
+                method_obj["requestBody"]["content"].as_h.each do |content_type, content_obj|
+                  if content_type == "application/json"
+                    content_obj["schema"]["properties"].as_h.each do |param_name, _|
+                      param = Param.new(param_name.to_s, "", "json")
+                      params << param
+                    end
+                  elsif content_type == "application/x-www-form-urlencoded"
+                    content_obj["schema"]["properties"].as_h.each do |param_name, _|
+                      param = Param.new(param_name.to_s, "", "form")
+                      params << param
+                    end
                   end
                 end
               end
