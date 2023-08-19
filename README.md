@@ -33,6 +33,15 @@
 | JS       | Express   | ✅   | ✅      | X     | X      | X  |
 | JS       | Next      | X   | X      | X     | X      | X  |
 
+### Specification
+
+| Specification          | Format  | URL | Method | Param | Header | WS |
+|------------------------|---------|-----|--------|-------|--------|----|
+| OAS 2.0 (Swagger 2.0)  | JSON    | ✅  | ✅     | ✅    | ✅     | X  |
+| OAS 2.0 (Swagger 2.0)  | YAML    | ✅  | ✅     | ✅    | ✅     | X  |
+| OAS 3.0                | JSON    | ✅  | ✅     | ✅    | ✅     | X  |
+| OAS 3.0                | YAML    | ✅  | ✅     | ✅    | ✅     | X  |
+
 ## Installation
 ### Homebrew (macOS)
 ```bash

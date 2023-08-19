@@ -50,10 +50,13 @@ module NoirTechs
       :framework => "Sinatra",
       :similar   => ["sinatra", "ruby-sinatra", "ruby_sinatra"],
     },
-    :swagger => {
-      :language  => "Swagger",
-      :framework => "",
-      :similar   => ["swagger"],
+    :oas2 => {
+      :format  => ["JSON", "YAML"],
+      :similar => ["oas 2.0", "oas_2_0", "swagger 2.0", "swagger_2_0", "swagger"],
+    },
+    :oas3 => {
+      :format  => ["JSON", "YAML"],
+      :similar => ["oas 3.0", "oas_3_0"],
     },
   }
 

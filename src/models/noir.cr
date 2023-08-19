@@ -108,6 +108,7 @@ class NoirRunner
   def bake_endpoint(url : String, params : Array(Param))
     final_url = url
     final_body = ""
+    final_headers = [] of String
     is_json = false
     first_query = true
     first_form = true
@@ -132,6 +133,10 @@ class NoirRunner
           end
         end
 
+        if param.param_type == "header"
+          final_headers << "#{param.name}: #{param.value}"
+        end
+
         if param.param_type == "json"
           is_json = true
         end
@@ -153,6 +158,7 @@ class NoirRunner
     {
       url:       final_url,
       body:      final_body,
+      header:    final_headers,
       body_type: is_json ? "json" : "form",
     }
   end
@@ -186,6 +192,9 @@ class NoirRunner
           if baked[:body_type] == "json"
             cmd += " \"Content-Type:application/json\""
           end
+          baked[:header].each do |header|
+            cmd += " \"#{header}\""
+          end
         end
 
         puts cmd
@@ -200,6 +209,10 @@ class NoirRunner
           if baked[:body_type] == "json"
             cmd += " -H \"Content-Type:application/json\""
           end
+
+          baked[:header].each do |header|
+            cmd += " -H \"#{header}\""
+          end
         end
 
         puts cmd
@@ -210,6 +223,8 @@ class NoirRunner
 
         r_method = endpoint.method.colorize(:light_blue).toggle(@is_color)
         r_url = baked[:url].colorize(:light_yellow).toggle(@is_color)
+        r_headers = baked[:header].join(" ").colorize(:light_green).toggle(@is_color)
+
         r_ws = ""
         if endpoint.protocol == "ws"
           r_ws = "[WEBSOCKET]".colorize(:light_red).toggle(@is_color)
@@ -217,9 +232,9 @@ class NoirRunner
 
         if baked[:body] != ""
           r_body = baked[:body].colorize(:cyan).toggle(@is_color)
-          puts "#{r_method} #{r_url} #{r_body} #{r_ws}"
+          puts "#{r_method} #{r_url} #{r_body} #{r_headers} #{r_ws}"
         else
-          puts "#{r_method} #{r_url} #{r_ws}"
+          puts "#{r_method} #{r_url} #{r_headers} #{r_ws}"
         end
       end
     end

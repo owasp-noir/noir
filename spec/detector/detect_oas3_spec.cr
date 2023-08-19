@@ -1,14 +1,14 @@
 require "../../src/detector/detectors/*"
 require "../../src/models/code_locator"
 
-describe "Detect Swagger Docs" do
+describe "Detect OAS 3.0 Docs" do
   options = default_options()
-  instance = DetectorSwagger.new options
+  instance = DetectorOas3.new options
 
   it "json format" do
     content = <<-EOS
     {
-      "swagger": "2.0",
+      "openapi": "3.0.0",
       "info": "test"
     }
     EOS
@@ -17,7 +17,7 @@ describe "Detect Swagger Docs" do
   end
   it "yaml format" do
     content = <<-EOS
-    swagger: "2.0"
+    openapi: 3.0.0
     info:
       version: 1.0.0
     EOS
@@ -28,13 +28,13 @@ describe "Detect Swagger Docs" do
   it "code_locator" do
     content = <<-EOS
     {
-      "swagger": "2.0",
+      "openapi": "3.0.0",
       "info": "test"
     }
     EOS
 
     instance.detect("docs.json", content)
     locator = CodeLocator.instance
-    locator.get("swagger-json").should eq("docs.json")
+    locator.get("oas3-json").should eq("docs.json")
   end
 end
