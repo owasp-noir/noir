@@ -9,7 +9,7 @@ class DetectorOas3 < Detector
     if valid_json? file_contents
       data = JSON.parse(file_contents)
       begin
-        if data["openapi"].as_s == "3.0.0"
+        if data["openapi"].as_s.includes? "3."
           check = true
           locator = CodeLocator.instance
           locator.set("oas3-json", filename)
@@ -19,7 +19,7 @@ class DetectorOas3 < Detector
     elsif valid_yaml? file_contents
       data = YAML.parse(file_contents)
       begin
-        if data["openapi"].as_s == "3.0.0"
+        if data["openapi"].as_s.includes? "3."
           check = true
           locator = CodeLocator.instance
           locator.set("oas3-yaml", filename)

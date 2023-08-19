@@ -9,7 +9,7 @@ class DetectorOas2 < Detector
     if valid_json? file_contents
       data = JSON.parse(file_contents)
       begin
-        if data["swagger"].as_s == "2.0"
+        if data["swagger"].as_s.includes? "2."
           check = true
           locator = CodeLocator.instance
           locator.set("swagger-json", filename)
@@ -19,7 +19,7 @@ class DetectorOas2 < Detector
     elsif valid_yaml? file_contents
       data = YAML.parse(file_contents)
       begin
-        if data["swagger"].as_s == "2.0"
+        if data["swagger"].as_s.includes? "2."
           check = true
           locator = CodeLocator.instance
           locator.set("swagger-yaml", filename)
