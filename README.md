@@ -25,11 +25,11 @@
 | Python   | Django    | ✅   | X      | X     | X      | X  |
 | Python   | Flask     | ✅   | X      | X     | X      | X  |
 | Ruby     | Rails     | ✅   | ✅      | ✅     | X      | X  |
-| Ruby     | Sinatra   | ✅   | ✅      | ✅     | X      | X  |
+| Ruby     | Sinatra   | ✅   | ✅      | ✅     | ✅      | X  |
 | Php      |           | ✅   | ✅      | ✅     | X      | X  |
 | Java     | Spring    | ✅   | ✅      | X     | X      | X  |
 | Java     | Jsp       | X   | X      | X     | X      | X  |
-| Crystal  | Kemal     | ✅   | ✅      | ✅     | X      | ✅  |
+| Crystal  | Kemal     | ✅   | ✅      | ✅     | ✅      | ✅  |
 | JS       | Express   | ✅   | ✅      | X     | X      | X  |
 | JS       | Next      | X   | X      | X     | X      | X  |
 
