@@ -1,0 +1,35 @@
+name: Homebrew tab Publish
+
+on:
+    release:
+      types: [published]
+  
+  jobs:
+    homebrew-releaser:
+      runs-on: ubuntu-latest
+      name: homebrew-releaser
+      steps:
+        - name: Release Noir to Homebrew tap
+          uses: Justintime50/homebrew-releaser@v1
+          with:
+            homebrew_owner: hahwul
+            homebrew_tap: homebrew-noir
+            formula_folder: Formula
+
+            github_token: ${{ secrets.NOIR_PUBLISH_TOKEN }}
+  
+            commit_owner: hahwul
+            commit_email: hahwul@gmail.com
+  
+            depends_on: |
+                "crystal"
+  
+            install: |
+                system "shards install"
+                system "shards build --release --no-debug --production"
+                bin.install "bin/noir"
+
+            test: 'system "{bin}/noir", "-v"'
+            update_readme_table: true
+            skip_commit: false
+            debug: false
