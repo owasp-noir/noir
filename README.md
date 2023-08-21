@@ -29,7 +29,7 @@
 | Php      |           | ✅   | ✅      | ✅     | X      | X  |
 | Java     | Spring    | ✅   | ✅      | X     | X      | X  |
 | Java     | Jsp       | X   | X      | X     | X      | X  |
-| Crystal  | Kemal     | ✅   | ✅      | ✅     | X      | ✅  |
+| Crystal  | Kemal     | ✅   | ✅      | ✅     | ✅      | ✅  |
 | JS       | Express   | ✅   | ✅      | X     | X      | X  |
 | JS       | Next      | X   | X      | X     | X      | X  |
 

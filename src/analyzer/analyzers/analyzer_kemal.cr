@@ -45,6 +45,11 @@ class AnalyzerKemal < Analyzer
       return Param.new(param, "", "body")
     end
 
+    if content.includes? "env.response.headers["
+      param = content.split("env.response.headers[")[1].split("]")[0].gsub("\"", "").gsub("'", "")
+      return Param.new(param, "", "header")
+    end
+
     Param.new("", "", "")
   end
 
