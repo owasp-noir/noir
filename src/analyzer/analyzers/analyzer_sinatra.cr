@@ -35,6 +35,21 @@ class AnalyzerSinatra < Analyzer
       return Param.new(param, "", "query")
     end
 
+    if content.includes? "params["
+      param = content.split("params[")[1].split("]")[0].gsub("\"", "").gsub("'", "")
+      return Param.new(param, "", "query")
+    end
+
+    if content.includes? "request.env["
+      param = content.split("request.env[")[1].split("]")[0].gsub("\"", "").gsub("'", "")
+      return Param.new(param, "", "header")
+    end
+
+    if content.includes? "headers["
+      param = content.split("headers[")[1].split("]")[0].gsub("\"", "").gsub("'", "")
+      return Param.new(param, "", "header")
+    end
+
     Param.new("", "", "")
   end
 
