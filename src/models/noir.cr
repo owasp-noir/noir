@@ -55,7 +55,7 @@ class NoirRunner
   end
 
   def detect
-    detected_techs = detect_techs options[:base], options
+    detected_techs = detect_techs options[:base], options, @logger
     @techs += detected_techs
   end
 

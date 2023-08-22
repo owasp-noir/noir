@@ -32,17 +32,21 @@ class AnalyzerDjango < Analyzer
     root_django_urls_list = [] of DjangoUrls
     Dir.glob("#{base_path}/**/*") do |file|
       spawn do
-        next if File.directory?(file)
-        if file.ends_with? ".py"
-          content = File.read(file, encoding: "utf-8", invalid: :skip)
-          content.scan(REGEX_ROOT_URLCONF) do |match|
-            next if match.size != 2
-            filepath = "#{base_path}/#{match[1].gsub(".", "/")}.py"
-            if File.exists? filepath
-              root_django_urls_list << DjangoUrls.new("", filepath)
+        begin
+          next if File.directory?(file)
+          if file.ends_with? ".py"
+            content = File.read(file, encoding: "utf-8", invalid: :skip)
+            content.scan(REGEX_ROOT_URLCONF) do |match|
+              next if match.size != 2
+              filepath = "#{base_path}/#{match[1].gsub(".", "/")}.py"
+              if File.exists? filepath
+                root_django_urls_list << DjangoUrls.new("", filepath)
+              end
             end
           end
-        end
+        rescue e : File::NotFoundError
+          @logger.debug "File not found: #{file}"
+        end 
       end
       Fiber.yield
     end
