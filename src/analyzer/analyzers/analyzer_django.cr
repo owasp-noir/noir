@@ -46,7 +46,7 @@ class AnalyzerDjango < Analyzer
           end
         rescue e : File::NotFoundError
           @logger.debug "File not found: #{file}"
-        end 
+        end
       end
       Fiber.yield
     end
