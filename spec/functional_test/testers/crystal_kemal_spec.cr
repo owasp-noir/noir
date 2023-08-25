@@ -1,0 +1,12 @@
+require "../func_spec.cr"
+
+extected_endpoints = [
+  Endpoint.new("/", "GET"),
+  Endpoint.new("/socket", "GET"),
+  Endpoint.new("/query", "POST", [Param.new("query", "", "body")]),
+]
+
+FunctionalTester.new("fixtures/kemal/", {
+  :techs     => 1,
+  :endpoints => 3,
+}, extected_endpoints).test_all

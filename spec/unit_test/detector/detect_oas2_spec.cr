@@ -1,5 +1,5 @@
-require "../../src/detector/detectors/*"
-require "../../src/models/code_locator"
+require "../../../src/detector/detectors/*"
+require "../../../src/models/code_locator"
 
 describe "Detect OAS 2.0(Swagger) Docs" do
   options = default_options()

@@ -1,5 +1,5 @@
-require "../../src/analyzer/analyzers/analyzer_kemal.cr"
-require "../../src/options"
+require "../../../src/analyzer/analyzers/analyzer_kemal.cr"
+require "../../../src/options"
 
 describe "mapping_to_path" do
   options = default_options()
