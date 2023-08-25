@@ -5,7 +5,7 @@ get "/" do
 end
 
 post "/query" do
-   env.params.body["query"].as(String)
+  env.params.body["query"].as(String)
 end
 
 ws "/socket" do |socket|
