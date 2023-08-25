@@ -23,20 +23,22 @@ class FunctionalTester
 
     def test_detect
         @app.detect
-        it "funcational test - detect => #{@path}" do
+        it "test detect" do
             @app.techs.size.should eq @expected_count[:techs]
         end
     end
 
     def test_analyze
         @app.analyze
-        it "funcational test - analyze => #{@path}" do
+        it "test analyze" do
             @app.endpoints.size.should eq @expected_count[:endpoints]
         end
     end
 
     def test_all
-        test_detect
-        test_analyze
+        describe "Funcational test #{@path}" do
+            test_detect
+            test_analyze
+        end
     end
 end
