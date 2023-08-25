@@ -36,7 +36,7 @@ class FunctionalTester
     end
 
     def test_all
-        describe "Funcational test #{@path}" do
+        describe "Functional test to #{@path}" do
             test_detect
             test_analyze
         end
