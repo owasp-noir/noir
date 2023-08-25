@@ -1,5 +1,5 @@
-require "../../src/models/analyzer.cr"
-require "../../src/options.cr"
+require "../../../src/models/analyzer.cr"
+require "../../../src/options.cr"
 
 describe "Initialize" do
   options = default_options

@@ -1,5 +1,5 @@
-require "../../src/analyzer/analyzers/analyzer_go_echo.cr"
-require "../../src/options"
+require "../../../src/analyzer/analyzers/analyzer_go_echo.cr"
+require "../../../src/options"
 
 describe "analyzer_go_echo" do
   options = default_options()
