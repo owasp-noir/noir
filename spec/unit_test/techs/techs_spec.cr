@@ -1,4 +1,4 @@
-require "../../src/techs/techs"
+require "../../../src/techs/techs"
 
 describe "Similar to tech" do
   it "basic" do

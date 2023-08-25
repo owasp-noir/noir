@@ -1,4 +1,4 @@
-require "../../src/models/endpoint.cr"
+require "../../../src/models/endpoint.cr"
 
 describe "Initialize 2 arguments" do
   endpoint = Endpoint.new("/abcd", "GET")

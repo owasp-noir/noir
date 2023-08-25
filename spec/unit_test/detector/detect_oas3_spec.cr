@@ -1,5 +1,5 @@
-require "../../src/detector/detectors/*"
-require "../../src/models/code_locator"
+require "../../../src/detector/detectors/*"
+require "../../../src/models/code_locator"
 
 describe "Detect OAS 3.0 Docs" do
   options = default_options()

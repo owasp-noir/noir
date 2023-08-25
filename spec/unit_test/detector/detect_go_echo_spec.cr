@@ -1,4 +1,4 @@
-require "../../src/detector/detectors/*"
+require "../../../src/detector/detectors/*"
 
 describe "Detect Go Echo" do
   options = default_options()
