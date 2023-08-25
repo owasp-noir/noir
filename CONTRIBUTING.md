@@ -13,8 +13,11 @@ shards build
 # ./bin/noir
 ```
 
-### Unit Test
+### Unit/Functional Test
 ```bash
+crystal spec
+
+# If you want more detail?
 crystal spec -v
 ```
 
