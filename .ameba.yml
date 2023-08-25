@@ -1,3 +1,6 @@
+ignored_paths:
+  - "spec/functional_test/fixtures/**/*"
+
 Metrics/CyclomaticComplexity:
   Description: Disallows methods with a cyclomatic complexity higher than `MaxComplexity`
   MaxComplexity: 30
