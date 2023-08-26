@@ -1,7 +1,7 @@
 require "../func_spec.cr"
 
 extected_endpoints = [
-  Endpoint.new("/test.html", "GET"),
+  Endpoint.new("/secret.html", "GET"),
   Endpoint.new("/posts", "GET"),
   Endpoint.new("/posts/1", "GET"),
   Endpoint.new("/posts", "POST", [
@@ -19,5 +19,5 @@ extected_endpoints = [
 
 FunctionalTester.new("fixtures/rails/", {
   :techs     => 1,
-  :endpoints => 5,
+  :endpoints => 6,
 }, extected_endpoints).test_all
