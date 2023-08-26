@@ -1,1 +1,2 @@
-spec/functional_test/fixtures/* linguist-vendored
+* linguist-vendored
+*.cr linguist-vendored=false
