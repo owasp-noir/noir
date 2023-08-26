@@ -1,0 +1,9 @@
+plugins {
+	id "java"
+	id "org.asciidoctor.jvm.convert"
+	id "org.springframework.boot.conventions"
+	id "org.springframework.boot.deployed"
+	id 'org.jetbrains.kotlin.jvm'
+}
+
+/* REDACTED */

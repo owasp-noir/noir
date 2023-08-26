@@ -1,7 +1,9 @@
 require "../../models/analyzer"
 
 class AnalyzerSpring < Analyzer
-  REGEX_CLASS_DEFINITION = Regex.new("^(((public|private|protected|default)\\s+)|^)class\\s+", Regex::CompileOptions::MATCH_INVALID_UTF)
+  REGEX_CLASS_DEFINITION  = /^(((public|private|protected|default)\s+)|^)class\s+/
+  REGEX_ROUTER_CODE_BLOCK = /route\(\)?.*?\);/m
+  REGEX_ROUTE_CODE_LINE   = /((?:andRoute|route)\s*\(|\.)\s*(GET|POST|DELETE|PUT)\(\s*"([^"]*)/
 
   def analyze
     # Source Analysis
@@ -10,67 +12,78 @@ class AnalyzerSpring < Analyzer
 
       url = @url
       if File.exists?(path) && path.ends_with?(".java")
-        File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-          has_class_been_imported = false
-          file.each_line do |line|
-            if has_class_been_imported == false && REGEX_CLASS_DEFINITION.match(line)
-              has_class_been_imported = true
-            end
+        content = File.read(path, encoding: "utf-8", invalid: :skip)
 
-            if line.includes? "RequestMapping"
-              mapping_paths = mapping_to_path(line)
-              if has_class_been_imported == false && mapping_paths.size > 0
-                class_mapping_url = mapping_paths[0]
+        # Spring MVC
+        has_class_been_imported = false
+        content.each_line do |line|
+          if has_class_been_imported == false && REGEX_CLASS_DEFINITION.match(line)
+            has_class_been_imported = true
+          end
 
-                if class_mapping_url.ends_with?("/*")
-                  class_mapping_url = class_mapping_url[0..-3]
+          if line.includes? "RequestMapping"
+            mapping_paths = mapping_to_path(line)
+            if has_class_been_imported == false && mapping_paths.size > 0
+              class_mapping_url = mapping_paths[0]
+
+              if class_mapping_url.ends_with?("/*")
+                class_mapping_url = class_mapping_url[0..-3]
+              end
+              if class_mapping_url.ends_with?("/")
+                class_mapping_url = class_mapping_url[0..-2]
+              end
+
+              url = "#{@url}#{class_mapping_url}"
+            else
+              mapping_paths.each do |mapping_path|
+                if line.includes? "RequestMethod"
+                  define_requestmapping_handlers(["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE"])
+                else
+                  @result << Endpoint.new("#{url}#{mapping_path}", "GET")
                 end
+              end
+            end
+          end
 
-                if class_mapping_url.ends_with?("/")
-                  class_mapping_url = class_mapping_url[0..-2]
-                end
+          if line.includes? "PostMapping"
+            mapping_paths = mapping_to_path(line)
+            mapping_paths.each do |mapping_path|
+              @result << Endpoint.new("#{url}#{mapping_path}", "POST")
+            end
+          end
+          if line.includes? "PutMapping"
+            mapping_paths = mapping_to_path(line)
+            mapping_paths.each do |mapping_path|
+              @result << Endpoint.new("#{url}#{mapping_path}", "PUT")
+            end
+          end
+          if line.includes? "DeleteMapping"
+            mapping_paths = mapping_to_path(line)
+            mapping_paths.each do |mapping_path|
+              @result << Endpoint.new("#{url}#{mapping_path}", "DELETE")
+            end
+          end
+          if line.includes? "PatchMapping"
+            mapping_paths = mapping_to_path(line)
+            mapping_paths.each do |mapping_path|
+              @result << Endpoint.new("#{url}#{mapping_path}", "PATCH")
+            end
+          end
+          if line.includes? "GetMapping"
+            mapping_paths = mapping_to_path(line)
+            mapping_paths.each do |mapping_path|
+              @result << Endpoint.new("#{url}#{mapping_path}", "GET")
+            end
+          end
 
-                url = "#{@url}#{class_mapping_url}"
-              else
-                mapping_paths.each do |mapping_path|
-                  if line.includes? "RequestMethod"
-                    define_requestmapping_handlers(["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE"])
-                  else
-                    @result << Endpoint.new("#{url}#{mapping_path}", "GET")
-                  end
-                end
-              end
-            end
-
-            if line.includes? "PostMapping"
-              mapping_paths = mapping_to_path(line)
-              mapping_paths.each do |mapping_path|
-                @result << Endpoint.new("#{url}#{mapping_path}", "POST")
-              end
-            end
-            if line.includes? "PutMapping"
-              mapping_paths = mapping_to_path(line)
-              mapping_paths.each do |mapping_path|
-                @result << Endpoint.new("#{url}#{mapping_path}", "PUT")
-              end
-            end
-            if line.includes? "DeleteMapping"
-              mapping_paths = mapping_to_path(line)
-              mapping_paths.each do |mapping_path|
-                @result << Endpoint.new("#{url}#{mapping_path}", "DELETE")
-              end
-            end
-            if line.includes? "PatchMapping"
-              mapping_paths = mapping_to_path(line)
-              mapping_paths.each do |mapping_path|
-                @result << Endpoint.new("#{url}#{mapping_path}", "PATCH")
-              end
-            end
-            if line.includes? "GetMapping"
-              mapping_paths = mapping_to_path(line)
-              mapping_paths.each do |mapping_path|
-                @result << Endpoint.new("#{url}#{mapping_path}", "GET")
-              end
+          # Reactive Router
+          content.scan(REGEX_ROUTER_CODE_BLOCK) do |route_code|
+            method_code = route_code[0]
+            method_code.scan(REGEX_ROUTE_CODE_LINE) do |match|
+              next if match.size != 4
+              method = match[2]
+              endpoint = match[3].gsub(/\n/, "")
+              @result << Endpoint.new("#{url}#{endpoint}", method)
             end
           end
         end
@@ -97,8 +110,8 @@ class AnalyzerSpring < Analyzer
           if line.size > 0 && line[0].to_s == "/"
             paths << line
           else
-            line = comma_in_bracket(line)
             value_flag = false
+            line = comma_in_bracket(line)
             line.split(",").each do |comma_line|
               if comma_line.to_s.includes? "value="
                 tmp = comma_line.split("=")
@@ -116,6 +129,8 @@ class AnalyzerSpring < Analyzer
       else
         paths << ""
       end
+    else
+      paths << ""
     end
 
     paths
