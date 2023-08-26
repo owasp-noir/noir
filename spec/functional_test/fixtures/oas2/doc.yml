@@ -1,0 +1,84 @@
+swagger: "2.0"
+info:
+  version: 1.0.0
+  title: Pet Store API
+  description: Sample API for managing pets in a pet store.
+basePath: /v1
+schemes:
+  - https
+consumes:
+  - application/json
+produces:
+  - application/json
+paths:
+  /pets:
+    get:
+      summary: Get a list of pets
+      responses:
+        200:
+          description: A list of pets
+          schema:
+            type: array
+            items:
+              $ref: "#/definitions/Pet"
+    post:
+      summary: Add a new pet
+      parameters:
+        - in: body
+          name: pet
+          required: true
+          schema:
+            $ref: "#/definitions/NewPet"
+      responses:
+        201:
+          description: Pet added successfully
+  /pets/{petId}:
+    get:
+      summary: Get information about a specific pet
+      parameters:
+        - name: petId
+          in: path
+          required: true
+          type: integer
+      responses:
+        200:
+          description: Information about the pet
+          schema:
+            $ref: "#/definitions/Pet"
+    put:
+      summary: Update information about a specific pet
+      parameters:
+        - name: petId
+          in: path
+          required: true
+          type: integer
+        - in: body
+          name: pet
+          required: true
+          schema:
+            $ref: "#/definitions/UpdatePet"
+      responses:
+        200:
+          description: Pet information updated successfully
+definitions:
+  Pet:
+    type: object
+    properties:
+      id:
+        type: integer
+      name:
+        type: string
+      breed:
+        type: string
+  NewPet:
+    type: object
+    properties:
+      name:
+        type: string
+  UpdatePet:
+    type: object
+    properties:
+      name:
+        type: string
+      breed:
+        type: string

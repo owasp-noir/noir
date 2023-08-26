@@ -1,0 +1,79 @@
+openapi: 3.0.0
+info:
+  title: Pet Store API
+  version: 1.0.0
+  description: Sample API for managing pets in a pet store.
+servers:
+  - url: 'https://api.example.com/v1'
+paths:
+  /pets:
+    get:
+      summary: Get a list of pets
+      responses:
+        '200':
+          description: A list of pets
+          content:
+            application/json:
+              example:
+                - id: 1
+                  name: Fluffy
+                - id: 2
+                  name: Fido
+    post:
+      summary: Add a new pet
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+              required:
+                - name
+      responses:
+        '201':
+          description: Pet added successfully
+  '/pets/{petId}':
+    get:
+      summary: Get information about a specific pet
+      parameters:
+        - name: petId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Information about the pet
+          content:
+            application/json:
+              example:
+                id: 1
+                name: Fluffy
+                breed: Cat
+    put:
+      summary: Update information about a specific pet
+      parameters:
+        - name: petId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                breed:
+                  type: string
+              required:
+                - name
+      responses:
+        '200':
+          description: Pet information updated successfully
