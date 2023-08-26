@@ -122,6 +122,8 @@ class AnalyzerRails < Analyzer
           else
             if method == "POST"
               @result << Endpoint.new("#{@url}/#{resource}", method, params_body)
+            elsif method == "DELETE"
+              @result << Endpoint.new("#{@url}/#{resource}/1", method)
             else
               @result << Endpoint.new("#{@url}/#{resource}/1", method, params_body)
             end
