@@ -30,14 +30,15 @@ class AnalyzerGoEcho < Analyzer
     end
 
     public_dirs.each do |p_dir|
-      Dir.glob("#{p_dir["file_path"]}/**/*") do |path|
+      full_path = (base_path + "/" + p_dir["file_path"]).gsub("//","/")
+      Dir.glob("#{full_path}/**/*") do |path|
         next if File.directory?(path)
         if File.exists?(path)
           if p_dir["static_path"].ends_with?("/")
             p_dir["static_path"] = p_dir["static_path"][0..-2]
           end
 
-          result << Endpoint.new("#{url}#{p_dir["static_path"]}#{path.gsub(p_dir["file_path"], "")}", "GET")
+          result << Endpoint.new("#{url}#{p_dir["static_path"]}#{path.gsub(full_path, "")}", "GET")
         end
       end
     end
