@@ -14,5 +14,6 @@ func main() {
 	e.GET("/pet", func(c echo.Context) error {
 		return c.String(http.StatusOK, "Hello, Pet!")
 	})
+	e.Static("/public", "public")
 	e.Logger.Fatal(e.Start(":1323"))
 }
