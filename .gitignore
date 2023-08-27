@@ -3,3 +3,5 @@
 /bin/
 /.shards/
 *.dwarf
+.DS_Store
+.vscode
