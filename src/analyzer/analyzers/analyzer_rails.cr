@@ -102,6 +102,15 @@ class AnalyzerRails < Analyzer
               params_query << Param.new(param.strip, "", "query")
             end
           end
+
+          if controller_line.includes? "request.headers["
+            splited_param = controller_line.strip.split("request.headers[")[1]
+            if splited_param
+              param = splited_param.split("]")[0].gsub("'","").gsub("\"","")
+              params_body << Param.new(param.strip, "", "header")
+              params_query << Param.new(param.strip, "", "header")
+            end
+          end
         end
 
         deduplication_params_query = [] of Param
