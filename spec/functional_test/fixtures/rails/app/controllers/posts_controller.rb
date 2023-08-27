@@ -1,5 +1,6 @@
 class PostsController < ApplicationController
     before_action :set_post, only: %i[ show edit update destroy ]
+    before_action :check_header, only: %i[ edit update ]
   
     # GET /posts or /posts.json
     def index
@@ -66,5 +67,9 @@ class PostsController < ApplicationController
       # Only allow a list of trusted parameters through.
       def post_params
         params.require(:post).permit(:title, :context)
+      end
+
+      def check_header
+        check request.headers['X-API-KEY']
       end
   end

@@ -24,7 +24,7 @@
 | Go       | Echo      | ✅   | ✅      | X     | X      | X  |
 | Python   | Django    | ✅   | X      | X     | X      | X  |
 | Python   | Flask     | ✅   | X      | X     | X      | X  |
-| Ruby     | Rails     | ✅   | ✅      | ✅     | X      | X  |
+| Ruby     | Rails     | ✅   | ✅      | ✅     | ✅      | X  |
 | Ruby     | Sinatra   | ✅   | ✅      | ✅     | ✅      | X  |
 | Php      |           | ✅   | ✅      | ✅     | X      | X  |
 | Java     | Spring    | ✅   | ✅      | X     | X      | X  |
