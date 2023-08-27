@@ -8,11 +8,22 @@ class AnalyzerGoEcho < Analyzer
       next if File.directory?(path)
       if File.exists?(path) && File.extname(path) == ".go"
         File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
+          last_endpoint = Endpoint.new("", "")
           file.each_line do |line|
             if line.includes?(".GET(") || line.includes?(".POST(") || line.includes?(".PUT(") || line.includes?(".DELETE(")
               get_route_path(line).tap do |route_path|
                 if route_path.size > 0
-                  result << Endpoint.new("#{url}#{route_path}", line.split(".")[1].split("(")[0])
+                  new_endpoint = Endpoint.new("#{url}#{route_path}", line.split(".")[1].split("(")[0])
+                  result << new_endpoint
+                  last_endpoint = new_endpoint
+                end
+              end
+            end
+
+            if line.includes?("Param(") || line.includes?("FormValue(")
+              get_param(line).tap do |param|
+                if param.name.size > 0 && last_endpoint.method != ""
+                  last_endpoint.params << param
                 end
               end
             end
@@ -30,7 +41,7 @@ class AnalyzerGoEcho < Analyzer
     end
 
     public_dirs.each do |p_dir|
-      full_path = (base_path + "/" + p_dir["file_path"]).gsub("//","/")
+      full_path = (base_path + "/" + p_dir["file_path"]).gsub("//", "/")
       Dir.glob("#{full_path}/**/*") do |path|
         next if File.directory?(path)
         if File.exists?(path)
@@ -46,6 +57,29 @@ class AnalyzerGoEcho < Analyzer
     Fiber.yield
 
     result
+  end
+
+  def get_param(line : String) : Param
+    param_type = "json"
+    if line.includes?("QueryParam")
+      param_type = "query"
+    end
+    if line.includes?("FormValue")
+      param_type = "body"
+    end
+
+    first = line.strip.split("(")
+    if first.size > 1
+      second = first[1].split(")")
+      if second.size > 1
+        param_name = second[0].gsub("\"", "")
+        rtn = Param.new(param_name, "", param_type)
+
+        return rtn
+      end
+    end
+
+    Param.new("", "", "")
   end
 
   def get_static_path(line : String) : Hash(String, String)

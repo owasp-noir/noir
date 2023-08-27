@@ -12,6 +12,15 @@ func main() {
 		return c.String(http.StatusOK, "Hello, World!")
 	})
 	e.GET("/pet", func(c echo.Context) error {
+		_ = c.QueryParam("query")
+		return c.String(http.StatusOK, "Hello, Pet!")
+	})
+	e.POST("/pet", func(c echo.Context) error {
+		_ = c.Param("name")
+		return c.String(http.StatusOK, "Hello, Pet!")
+	})
+	e.POST("/pet_form", func(c echo.Context) error {
+		_ = c.FormValue("name")
 		return c.String(http.StatusOK, "Hello, Pet!")
 	})
 	e.Static("/public", "public")
