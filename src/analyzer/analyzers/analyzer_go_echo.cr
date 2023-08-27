@@ -20,7 +20,7 @@ class AnalyzerGoEcho < Analyzer
               end
             end
 
-            if line.includes?("Param(") || line.includes?("FormValue(") 
+            if line.includes?("Param(") || line.includes?("FormValue(")
               get_param(line).tap do |param|
                 if param.name.size > 0 && last_endpoint.method != ""
                   last_endpoint.params << param
@@ -41,7 +41,7 @@ class AnalyzerGoEcho < Analyzer
     end
 
     public_dirs.each do |p_dir|
-      full_path = (base_path + "/" + p_dir["file_path"]).gsub("//","/")
+      full_path = (base_path + "/" + p_dir["file_path"]).gsub("//", "/")
       Dir.glob("#{full_path}/**/*") do |path|
         next if File.directory?(path)
         if File.exists?(path)

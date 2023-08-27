@@ -3,13 +3,13 @@ require "../func_spec.cr"
 extected_endpoints = [
   Endpoint.new("/", "GET"),
   Endpoint.new("/pet", "GET", [
-    Param.new("query", "", "query")
+    Param.new("query", "", "query"),
   ]),
   Endpoint.new("/pet", "POST", [
-    Param.new("name", "", "json")
+    Param.new("name", "", "json"),
   ]),
   Endpoint.new("/pet_form", "POST", [
-    Param.new("name", "", "body")
+    Param.new("name", "", "body"),
   ]),
   Endpoint.new("/public/secret.html", "GET"),
 ]
