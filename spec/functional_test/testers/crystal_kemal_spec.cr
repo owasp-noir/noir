@@ -3,7 +3,7 @@ require "../func_spec.cr"
 extected_endpoints = [
   Endpoint.new("/", "GET"),
   Endpoint.new("/socket", "GET"),
-  Endpoint.new("/query", "POST", [Param.new("query", "", "body")]),
+  Endpoint.new("/query", "POST", [Param.new("query", "", "form")]),
 ]
 
 FunctionalTester.new("fixtures/kemal/", {

@@ -9,7 +9,7 @@ extected_endpoints = [
     Param.new("name", "", "json"),
   ]),
   Endpoint.new("/pet_form", "POST", [
-    Param.new("name", "", "body"),
+    Param.new("name", "", "form"),
   ]),
   Endpoint.new("/public/secret.html", "GET"),
 ]

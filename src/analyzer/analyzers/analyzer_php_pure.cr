@@ -26,9 +26,22 @@ class AnalyzerPhpPure < Analyzer
               method = match[1]
               param_name = match[2]
 
-              methods = methods | [method]
-              params_query << Param.new(param_name, "string", "query")
-              params_body << Param.new(param_name, "string", "form")
+              if method == "GET"
+                params_query << Param.new(param_name, "", "query")
+              elsif method == "POST"
+                params_body << Param.new(param_name, "", "form")
+                methods << "POST"
+              elsif method == "REQUEST"
+                params_query << Param.new(param_name, "", "query")
+                params_body << Param.new(param_name, "", "form")
+                methods << "POST"
+              elsif method == "SERVER"
+                if param_name.includes? "HTTP_"
+                  param_name = param_name.sub("HTTP_", "").gsub("_", "-")
+                  params_query << Param.new(param_name, "", "header")
+                  params_body << Param.new(param_name, "", "header")
+                end
+              end
             end
           rescue
             next
@@ -43,6 +56,10 @@ class AnalyzerPhpPure < Analyzer
     Fiber.yield
 
     result
+  end
+
+  def allow_methods
+    ["GET", "POST", "PUT", "DELETE", "PATCH"]
   end
 end
 

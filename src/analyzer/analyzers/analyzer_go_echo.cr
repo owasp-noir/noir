@@ -65,7 +65,7 @@ class AnalyzerGoEcho < Analyzer
       param_type = "query"
     end
     if line.includes?("FormValue")
-      param_type = "body"
+      param_type = "form"
     end
 
     first = line.strip.split("(")

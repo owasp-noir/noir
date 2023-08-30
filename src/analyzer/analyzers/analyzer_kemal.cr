@@ -42,7 +42,7 @@ class AnalyzerKemal < Analyzer
 
     if content.includes? "env.params.body["
       param = content.split("env.params.body[")[1].split("]")[0].gsub("\"", "").gsub("'", "")
-      return Param.new(param, "", "body")
+      return Param.new(param, "", "form")
     end
 
     if content.includes? "env.response.headers["
