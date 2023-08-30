@@ -7,7 +7,10 @@ extected_endpoints = [
     Param.new("param1", "", "query"),
   ]),
   Endpoint.new("/post.php", "GET"),
-  Endpoint.new("/post.php", "POST", [Param.new("param1", "", "form")]),
+  Endpoint.new("/post.php", "POST", [
+    Param.new("param1", "", "form"),
+    Param.new("password", "", "form"),
+    ]),
   Endpoint.new("/request.php", "GET", [Param.new("param1", "", "query")]),
   Endpoint.new("/request.php", "POST", [Param.new("param1", "", "form")]),
 ]

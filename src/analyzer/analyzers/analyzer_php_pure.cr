@@ -20,26 +20,28 @@ class AnalyzerPhpPure < Analyzer
           methods = [] of String
 
           file.each_line do |line|
-            match = line.strip.match(%r{.*\$_(.*?)\['(.*?)'\];})
+            if allow_patterns.any? { |pattern| line.includes? pattern }
+              match = line.strip.match(/\$_(.*?)\['(.*?)'\]/)
 
-            if match
-              method = match[1]
-              param_name = match[2]
+              if match
+                method = match[1]
+                param_name = match[2]
 
-              if method == "GET"
-                params_query << Param.new(param_name, "", "query")
-              elsif method == "POST"
-                params_body << Param.new(param_name, "", "form")
-                methods << "POST"
-              elsif method == "REQUEST"
-                params_query << Param.new(param_name, "", "query")
-                params_body << Param.new(param_name, "", "form")
-                methods << "POST"
-              elsif method == "SERVER"
-                if param_name.includes? "HTTP_"
-                  param_name = param_name.sub("HTTP_", "").gsub("_", "-")
-                  params_query << Param.new(param_name, "", "header")
-                  params_body << Param.new(param_name, "", "header")
+                if method == "GET"
+                  params_query << Param.new(param_name, "", "query")
+                elsif method == "POST"
+                  params_body << Param.new(param_name, "", "form")
+                  methods << "POST"
+                elsif method == "REQUEST"
+                  params_query << Param.new(param_name, "", "query")
+                  params_body << Param.new(param_name, "", "form")
+                  methods << "POST"
+                elsif method == "SERVER"
+                  if param_name.includes? "HTTP_"
+                    param_name = param_name.sub("HTTP_", "").gsub("_", "-")
+                    params_query << Param.new(param_name, "", "header")
+                    params_body << Param.new(param_name, "", "header")
+                  end
                 end
               end
             end
@@ -58,8 +60,8 @@ class AnalyzerPhpPure < Analyzer
     result
   end
 
-  def allow_methods
-    ["GET", "POST", "PUT", "DELETE", "PATCH"]
+  def allow_patterns
+    ["$_GET", "$_POST", "$_REQUEST", "$_SERVER"]
   end
 end
 
