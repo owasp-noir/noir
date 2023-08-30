@@ -26,7 +26,7 @@
 | Python   | Flask     | ✅   | X      | X     | X      | X  |
 | Ruby     | Rails     | ✅   | ✅      | ✅     | ✅      | X  |
 | Ruby     | Sinatra   | ✅   | ✅      | ✅     | ✅      | X  |
-| Php      |           | ✅   | ✅      | ✅     | X      | X  |
+| Php      |           | ✅   | ✅      | ✅     | ✅      | X  |
 | Java     | Spring    | ✅   | ✅      | X     | X      | X  |
 | Java     | Jsp       | X   | X      | X     | X      | X  |
 | Crystal  | Kemal     | ✅   | ✅      | ✅     | ✅      | ✅  |
