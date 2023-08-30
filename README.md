@@ -127,7 +127,7 @@ noir -b . -u https://testapp.internal.domains -f json
         "value": ""
       },
       {
-        "name": "body",
+        "name": "title",
         "param_type": "json",
         "value": ""
       },

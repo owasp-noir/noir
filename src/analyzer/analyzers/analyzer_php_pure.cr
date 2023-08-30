@@ -26,15 +26,14 @@ class AnalyzerPhpPure < Analyzer
               method = match[1]
               param_name = match[2]
 
-
               if method == "GET"
                 params_query << Param.new(param_name, "", "query")
               elsif method == "POST"
-                params_body << Param.new(param_name, "", "body")
+                params_body << Param.new(param_name, "", "form")
                 methods << "POST"
               elsif method == "REQUEST"
                 params_query << Param.new(param_name, "", "query")
-                params_body << Param.new(param_name, "", "body")
+                params_body << Param.new(param_name, "", "form")
                 methods << "POST"
               elsif method == "SERVER"
                 if param_name.includes? "HTTP_"
@@ -63,7 +62,6 @@ class AnalyzerPhpPure < Analyzer
     ["GET", "POST", "PUT", "DELETE", "PATCH"]
   end
 end
-
 
 def analyzer_php_pure(options : Hash(Symbol, String))
   instance = AnalyzerPhpPure.new(options)

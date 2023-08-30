@@ -124,7 +124,7 @@ class NoirRunner
           end
         end
 
-        if param.param_type == "body"
+        if param.param_type == "form"
           if first_form
             final_body += "#{param.name}=#{param.value}"
             first_form

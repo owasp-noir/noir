@@ -24,7 +24,7 @@ class AnalyzerOAS2 < Analyzer
                 if param_obj["in"] == "query"
                   param = Param.new(param_name, "", "query")
                   params << param
-                elsif param_obj["in"] == "body"
+                elsif param_obj["in"] == "form"
                   param = Param.new(param_name, "", "json")
                   params << param
                 elsif param_obj["in"] == "formData"
@@ -62,7 +62,7 @@ class AnalyzerOAS2 < Analyzer
                 if param_obj["in"] == "query"
                   param = Param.new(param_name, "", "query")
                   params << param
-                elsif param_obj["in"] == "body"
+                elsif param_obj["in"] == "form"
                   param = Param.new(param_name, "", "json")
                   params << param
                 elsif param_obj["in"] == "formData"
