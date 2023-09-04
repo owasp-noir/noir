@@ -13,6 +13,7 @@ def initialize_analyzers(logger : NoirLogger)
   analyzers["crystal_kemal"] = ->analyzer_kemal(Hash(Symbol, String))
   analyzers["oas2"] = ->analyzer_oas2(Hash(Symbol, String))
   analyzers["oas3"] = ->analyzer_oas3(Hash(Symbol, String))
+  analyzers["raml"] = ->analyzer_raml(Hash(Symbol, String))
 
   logger.info_sub "#{analyzers.size} Analyzers initialized"
   logger.debug "Analyzers:"
