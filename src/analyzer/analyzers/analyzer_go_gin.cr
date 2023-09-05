@@ -20,12 +20,20 @@ class AnalyzerGoGin < Analyzer
               end
             end
 
-            ["Query", "PostForm", "GetHeader", "Static"].each do |pattern|
+            ["Query", "PostForm", "GetHeader"].each do |pattern|
               if line.includes?("#{pattern}(")
                 get_param(line).tap do |param|
                   if param.name.size > 0 && last_endpoint.method != ""
                     last_endpoint.params << param
                   end
+                end
+              end
+            end
+
+            if line.includes?("Static(")
+              get_static_path(line).tap do |static_path|
+                if static_path["static_path"].size > 0 && static_path["file_path"].size > 0
+                  public_dirs << static_path
                 end
               end
             end
