@@ -35,6 +35,14 @@ class AnalyzerGoEcho < Analyzer
                 end
               end
             end
+
+            if line.includes?("Request().Header.Get(")
+              match = line.match(/Request\(\)\.Header\.Get\(\"(.*)\"\)/)
+              if match
+                header_name = match[1]
+                last_endpoint.params << Param.new(header_name, "", "header")
+              end
+            end
           end
         end
       end
