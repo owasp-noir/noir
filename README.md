@@ -28,7 +28,7 @@
 | Ruby     | Sinatra   | ✅   | ✅      | ✅     | ✅      | X  |
 | Php      |           | ✅   | ✅      | ✅     | ✅      | X  |
 | Java     | Spring    | ✅   | ✅      | X     | X      | X  |
-| Java     | Jsp       | X   | X      | X     | X      | X  |
+| Java     | Jsp       | ✅   | ✅      | ✅     | X      | X  |
 | Crystal  | Kemal     | ✅   | ✅      | ✅     | ✅      | ✅  |
 | JS       | Express   | ✅   | ✅      | X     | X      | X  |
 | JS       | Next      | X   | X      | X     | X      | X  |

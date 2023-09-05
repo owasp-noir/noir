@@ -1,0 +1,3 @@
+<%
+    String username = ${param.username}
+%>
