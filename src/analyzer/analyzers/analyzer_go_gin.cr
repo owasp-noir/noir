@@ -1,6 +1,6 @@
 require "../../models/analyzer"
 
-class AnalyzerGoEcho < Analyzer
+class AnalyzerGoGin < Analyzer
   def analyze
     # Source Analysis
     public_dirs = [] of (Hash(String, String))
@@ -20,27 +20,13 @@ class AnalyzerGoEcho < Analyzer
               end
             end
 
-            if line.includes?("Param(") || line.includes?("FormValue(")
-              get_param(line).tap do |param|
-                if param.name.size > 0 && last_endpoint.method != ""
-                  last_endpoint.params << param
+            ["Query", "PostForm", "GetHeader", "Static"].each do |pattern|
+              if line.includes?("#{pattern}(")
+                get_param(line).tap do |param|
+                  if param.name.size > 0 && last_endpoint.method != ""
+                    last_endpoint.params << param
+                  end
                 end
-              end
-            end
-
-            if line.includes?("Static(")
-              get_static_path(line).tap do |static_path|
-                if static_path.size > 0
-                  public_dirs << static_path
-                end
-              end
-            end
-
-            if line.includes?("Request().Header.Get(")
-              match = line.match(/Request\(\)\.Header\.Get\(\"(.*)\"\)/)
-              if match
-                header_name = match[1]
-                last_endpoint.params << Param.new(header_name, "", "header")
               end
             end
           end
@@ -69,19 +55,27 @@ class AnalyzerGoEcho < Analyzer
 
   def get_param(line : String) : Param
     param_type = "json"
-    if line.includes?("QueryParam")
+    if line.includes?("Query(")
       param_type = "query"
     end
-    if line.includes?("FormValue")
+    if line.includes?("PostForm(")
       param_type = "form"
+    end
+    if line.includes?("GetHeader(")
+      param_type = "header"
     end
 
     first = line.strip.split("(")
     if first.size > 1
       second = first[1].split(")")
       if second.size > 1
-        param_name = second[0].gsub("\"", "")
-        rtn = Param.new(param_name, "", param_type)
+        if line.includes?("DefaultQuery") || line.includes?("DefaultPostForm")
+          param_name = second[0].split(",")[0].gsub("\"", "")
+          rtn = Param.new(param_name, "", param_type)
+        else
+          param_name = second[0].gsub("\"", "")
+          rtn = Param.new(param_name, "", param_type)
+        end
 
         return rtn
       end
@@ -126,7 +120,7 @@ class AnalyzerGoEcho < Analyzer
   end
 end
 
-def analyzer_go_echo(options : Hash(Symbol, String))
-  instance = AnalyzerGoEcho.new(options)
+def analyzer_go_gin(options : Hash(Symbol, String))
+  instance = AnalyzerGoGin.new(options)
   instance.analyze
 end

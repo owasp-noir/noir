@@ -4,6 +4,7 @@ extected_endpoints = [
   Endpoint.new("/", "GET"),
   Endpoint.new("/pet", "GET", [
     Param.new("query", "", "query"),
+    Param.new("X-API-Key", "", "header"),
   ]),
   Endpoint.new("/pet", "POST", [
     Param.new("name", "", "json"),
