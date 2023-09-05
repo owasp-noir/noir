@@ -32,7 +32,7 @@ ameba --fix
 
 ## ❤️ Contribute
 1. Write code in forked repo
-2. Make Pull Request
+2. Make Pull Request to `dev` branch
 3. Finish :D
 
 ## 🧭 Code structure
