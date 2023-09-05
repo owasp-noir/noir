@@ -7,12 +7,15 @@ def initialize_analyzers(logger : NoirLogger)
   analyzers["java_spring"] = ->analyzer_spring(Hash(Symbol, String))
   analyzers["php_pure"] = ->analyzer_php_pure(Hash(Symbol, String))
   analyzers["go_echo"] = ->analyzer_go_echo(Hash(Symbol, String))
+  analyzers["go_gin"] = ->analyzer_go_gin(Hash(Symbol, String))
   analyzers["python_flask"] = ->analyzer_flask(Hash(Symbol, String))
   analyzers["python_django"] = ->analyzer_django(Hash(Symbol, String))
   analyzers["js_express"] = ->analyzer_express(Hash(Symbol, String))
   analyzers["crystal_kemal"] = ->analyzer_kemal(Hash(Symbol, String))
   analyzers["oas2"] = ->analyzer_oas2(Hash(Symbol, String))
   analyzers["oas3"] = ->analyzer_oas3(Hash(Symbol, String))
+  analyzers["raml"] = ->analyzer_raml(Hash(Symbol, String))
+  analyzers["java_jsp"] = ->analyzer_jsp(Hash(Symbol, String))
 
   logger.info_sub "#{analyzers.size} Analyzers initialized"
   logger.debug "Analyzers:"

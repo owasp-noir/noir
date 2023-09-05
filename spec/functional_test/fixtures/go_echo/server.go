@@ -13,6 +13,7 @@ func main() {
 	})
 	e.GET("/pet", func(c echo.Context) error {
 		_ = c.QueryParam("query")
+		_ = c.Request().Header.Get("X-API-Key")
 		return c.String(http.StatusOK, "Hello, Pet!")
 	})
 	e.POST("/pet", func(c echo.Context) error {

@@ -10,6 +10,11 @@ module NoirTechs
       :framework => "Echo",
       :similar   => ["echo", "go-echo", "go_echo"],
     },
+    :go_gin => {
+      :language  => "Go",
+      :framework => "Gin",
+      :similar   => ["gin", "go-gin", "go_gin"],
+    },
     :java_jsp => {
       :language  => "Java",
       :framework => "JSP",
@@ -57,6 +62,10 @@ module NoirTechs
     :oas3 => {
       :format  => ["JSON", "YAML"],
       :similar => ["oas 3.0", "oas_3_0"],
+    },
+    :raml => {
+      :format  => ["YAML"],
+      :similar => ["raml"],
     },
   }
 

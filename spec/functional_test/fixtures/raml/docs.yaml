@@ -1,0 +1,34 @@
+#%RAML 1.0
+title: User API
+version: v1
+
+/users/{userId}:
+  get:
+    description: Retrieve user information
+    queryParameters:
+      userId:
+        description: The ID of the user to retrieve
+        type: integer
+        example: 123
+    headers:
+      Authorization:
+        description: API key or token for authentication
+        type: string
+        example: Bearer my_api_token
+    responses:
+      200:
+        description: User information retrieved successfully
+
+/users:
+  post:
+    description: Create a new user
+    body:
+      application/json:
+        example:
+          {
+            "name": "John Doe",
+            "email": "johndoe@example.com"
+          }
+    responses:
+      201:
+        description: User created successfully

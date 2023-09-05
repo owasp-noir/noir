@@ -6,7 +6,7 @@ require "./options.cr"
 require "./techs/techs.cr"
 
 module Noir
-  VERSION = "0.5.4"
+  VERSION = "0.6.0"
 end
 
 noir_options = default_options()

@@ -21,14 +21,15 @@
 
 | Language | Framework | URL | Method | Param | Header | WS |
 |----------|-----------|-----|--------|-------|--------|----|
-| Go       | Echo      | ✅   | ✅    | ✅     | X      | X  |
+| Go       | Echo      | ✅   | ✅    | ✅     | ✅      | X  |
+| Go       | Gin       | ✅   | ✅    | ✅     | ✅      | X  |
 | Python   | Django    | ✅   | X      | X     | X      | X  |
 | Python   | Flask     | ✅   | X      | X     | X      | X  |
 | Ruby     | Rails     | ✅   | ✅      | ✅     | ✅      | X  |
 | Ruby     | Sinatra   | ✅   | ✅      | ✅     | ✅      | X  |
 | Php      |           | ✅   | ✅      | ✅     | ✅      | X  |
 | Java     | Spring    | ✅   | ✅      | X     | X      | X  |
-| Java     | Jsp       | X   | X      | X     | X      | X  |
+| Java     | Jsp       | ✅   | ✅      | ✅     | X      | X  |
 | Crystal  | Kemal     | ✅   | ✅      | ✅     | ✅      | ✅  |
 | JS       | Express   | ✅   | ✅      | X     | X      | X  |
 | JS       | Next      | X   | X      | X     | X      | X  |
