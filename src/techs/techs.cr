@@ -58,6 +58,10 @@ module NoirTechs
       :format  => ["JSON", "YAML"],
       :similar => ["oas 3.0", "oas_3_0"],
     },
+    :raml => {
+      :format  => ["YAML"],
+      :similar => ["raml"],
+    },
   }
 
   def self.get_techs
