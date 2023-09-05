@@ -10,9 +10,10 @@ extected_endpoints = [
     Param.new("password", "", "form"),
     Param.new("User-Agent", "", "header"),
   ]),
+  Endpoint.new("/public/secret.html", "GET"),
 ]
 
 FunctionalTester.new("fixtures/go_gin/", {
   :techs     => 1,
-  :endpoints => 2,
+  :endpoints => 3,
 }, extected_endpoints).test_all
