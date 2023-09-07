@@ -102,7 +102,12 @@ class AnalyzerSpring < Analyzer
       line = splited_line[1].gsub(/"|\)| /, "").gsub(/\s/, "").strip
       if line.size > 0
         if line[0].to_s == "/"
-          line = line.split(/,\w+=/)[0]
+          attribute_index = line.index(/,(\w)+=/)
+          if !attribute_index.nil?
+            attribute_index -= 1
+            line = line[0..attribute_index]
+          end
+
           paths << line
         else
           if is_bracket(line)

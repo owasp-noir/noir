@@ -15,6 +15,7 @@ extected_endpoints = [
   Endpoint.new("/quotes/0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-_.~", "GET"),
   # ItemController.java
   Endpoint.new("/items/{id}", "GET"),
+  Endpoint.new("/items/json/{id}", "GET"),
   Endpoint.new("/items", "POST"),
   Endpoint.new("/items/update/{id}", "PUT"),
   Endpoint.new("/items/delete/{id}", "DELETE"),
@@ -22,5 +23,5 @@ extected_endpoints = [
 
 FunctionalTester.new("fixtures/java_spring/", {
   :techs     => 1,
-  :endpoints => 14,
+  :endpoints => 15,
 }, extected_endpoints).test_all
