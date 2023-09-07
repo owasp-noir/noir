@@ -25,6 +25,16 @@ module NoirTechs
       :framework => "Spring",
       :similar   => ["spring", "java-spring", "java_spring"],
     },
+    :java_armeria => {
+      :language  => "Java",
+      :framework => "Armeria",
+      :similar   => ["armeria", "java-armeria", "java_armeria"],
+    },
+    :kotlin_spring => {
+      :language  => "Kotlin",
+      :framework => "Spring",
+      :similar   => ["spring", "kotlin-spring", "kotlin_spring"],
+    },
     :js_express => {
       :language  => "JavaScript",
       :framework => "Express",

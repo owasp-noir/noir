@@ -20,7 +20,7 @@ extected_endpoints = [
   Endpoint.new("/items/delete/{id}", "DELETE"),
 ]
 
-FunctionalTester.new("fixtures/spring/", {
+FunctionalTester.new("fixtures/java_spring/", {
   :techs     => 1,
   :endpoints => 14,
 }, extected_endpoints).test_all
