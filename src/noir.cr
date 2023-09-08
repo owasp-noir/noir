@@ -67,6 +67,10 @@ OptionParser.parse do |parser|
     STDERR.puts parser
     exit(1)
   end
+  parser.missing_option do |flag|
+    STDERR.puts "ERROR: #{flag} is missing an argument."
+    exit(1)
+  end
 end
 
 if noir_options[:base] == ""
