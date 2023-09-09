@@ -23,7 +23,7 @@
 |----------|-----------|-----|--------|-------|--------|----|
 | Go       | Echo      | ✅   | ✅    | ✅     | ✅      | X  |
 | Go       | Gin       | ✅   | ✅    | ✅     | ✅      | X  |
-| Python   | Django    | ✅   | X      | X     | X      | X  |
+| Python   | Django    | ✅   | ✅    | ✅     | ✅      | X  |
 | Python   | Flask     | ✅   | X      | X     | X      | X  |
 | Ruby     | Rails     | ✅   | ✅      | ✅     | ✅      | X  |
 | Ruby     | Sinatra   | ✅   | ✅      | ✅     | ✅      | X  |
