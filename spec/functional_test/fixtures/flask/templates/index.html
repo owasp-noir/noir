@@ -1,0 +1,13 @@
+<html>
+<head>
+    <title>test</title>
+    <script src="{{ url_for('static', filename='js/example.js')}}"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/example.css')}}"/>
+</head>
+<body>
+	<p>test</p>
+	{% if session['logged_in'] %}
+		<h1>{{ session['username'] }}</h1>
+	{% endif %}
+</body>
+</html>
