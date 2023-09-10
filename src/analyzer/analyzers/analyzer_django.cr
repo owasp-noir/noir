@@ -16,7 +16,7 @@ class AnalyzerDjango < Analyzer
     "data"    => {["POST", "PUT", "PATCH"], "form"},
   }
   REQUEST_PARAM_TYPE_MAP = {
-    "query"  => ["GET"],
+    "query"  => nil,
     "form"   => ["GET", "POST", "PUT", "PATCH"],
     "cookie" => nil,
     "header" => nil,
@@ -523,9 +523,6 @@ class AnalyzerDjango < Analyzer
       if !support_methods.nil?
         support_methods.each do |support_method|
           if upper_method == support_method.upcase
-            is_support_param = true
-          elsif support_method.upcase == "GET" && param.param_type == "query"
-            # The GET method allows parameters to be used in other methods as well.
             is_support_param = true
           end
         end
