@@ -462,9 +462,9 @@ class AnalyzerDjango < Analyzer
     if line.includes? "request."
       REQUEST_PARAM_FIELD_MAP.each do |field_name, tuple|
         field_methods, noir_param_type = tuple
-        matches = line.scan(/request\.#{field_name}\[['"]([^'"]*)['"]\]/)
+        matches = line.scan(/request\.#{field_name}\[[rf]?['"]([^'"]*)['"]\]/)
         if matches.size == 0
-          matches = line.scan(/request\.#{field_name}\.get\(['"]([^'"]*)['"]/)
+          matches = line.scan(/request\.#{field_name}\.get\([rf]?['"]([^'"]*)['"]/)
         end
 
         if matches.size != 0
@@ -497,9 +497,9 @@ class AnalyzerDjango < Analyzer
     end
 
     if line.includes? "form.cleaned_data"
-      matches = line.scan(/form\.cleaned_data\[['"]([^'"]*)['"]\]/)
+      matches = line.scan(/form\.cleaned_data\[[rf]?['"]([^'"]*)['"]\]/)
       if matches.size == 0
-        matches = line.scan(/form\.cleaned_data\.get\(['"]([^'"]*)['"]/)
+        matches = line.scan(/form\.cleaned_data\.get\([rf]?['"]([^'"]*)['"]/)
       end
 
       if matches.size != 0
