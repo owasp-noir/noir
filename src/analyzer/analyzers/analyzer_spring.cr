@@ -176,3 +176,9 @@ def analyzer_spring(options : Hash(Symbol, String))
   instance.sync_base_path "java_spring"
   instance.analyze
 end
+
+def analyzer_kotlin_spring(options : Hash(Symbol, String))
+  instance = AnalyzerSpring.new(options)
+  instance.sync_base_path "kotlin_spring"
+  instance.analyze
+end
