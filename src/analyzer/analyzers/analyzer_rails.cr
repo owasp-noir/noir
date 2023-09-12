@@ -148,6 +148,5 @@ end
 
 def analyzer_rails(options : Hash(Symbol, String))
   instance = AnalyzerRails.new(options)
-  instance.sync_base_path "ruby_rails"
   instance.analyze
 end

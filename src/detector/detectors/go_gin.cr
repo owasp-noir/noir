@@ -3,7 +3,6 @@ require "../../models/detector"
 class DetectorGoGin < Detector
   def detect(filename : String, file_contents : String) : Bool
     if (filename.includes? "go.mod") && (file_contents.includes? "github.com/gin-gonic/gin")
-      set_base_path true, get_parent_path(filename)
       true
     else
       false

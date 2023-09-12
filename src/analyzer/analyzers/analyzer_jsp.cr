@@ -52,6 +52,5 @@ end
 
 def analyzer_jsp(options : Hash(Symbol, String))
   instance = AnalyzerJsp.new(options)
-  instance.sync_base_path "java_jsp"
   instance.analyze
 end

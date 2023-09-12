@@ -19,6 +19,5 @@ end
 
 def analyzer_example(options : Hash(Symbol, String))
   instance = AnalyzerExample.new(options)
-  instance.sync_base_path "example"
   instance.analyze
 end

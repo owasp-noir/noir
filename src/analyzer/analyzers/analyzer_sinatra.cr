@@ -102,6 +102,5 @@ end
 
 def analyzer_sinatra(options : Hash(Symbol, String))
   instance = AnalyzerSinatra.new(options)
-  instance.sync_base_path "ruby_sinatra"
   instance.analyze
 end

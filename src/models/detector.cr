@@ -23,25 +23,6 @@ class Detector
     false
   end
 
-  def get_parent_path(path : String) : String
-    path.split("/")[0..-2].join("/")
-  end
-
-  def set_base_path(check : Bool, custom_base : String)
-    if check
-      locator = CodeLocator.instance
-
-      if custom_base != ""
-        locator.set("#{@name}_basepath", custom_base)
-        if @is_debug
-          @logger.debug("Set #{@name}_basepath to #{custom_base}")
-        end
-      else
-        locator.set("#{@name}_basepath", @base_path)
-      end
-    end
-  end
-
   macro define_getter_methods(names)
     {% for name, index in names %}
       def {{name.id}}

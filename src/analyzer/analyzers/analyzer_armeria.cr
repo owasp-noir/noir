@@ -60,6 +60,5 @@ end
 
 def analyzer_armeria(options : Hash(Symbol, String))
   instance = AnalyzerArmeria.new(options)
-  instance.sync_base_path "java_armeria"
   instance.analyze
 end

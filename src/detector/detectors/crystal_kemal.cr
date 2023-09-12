@@ -5,7 +5,6 @@ class DetectorCrystalKemal < Detector
     check = file_contents.includes?("kemalcr/kemal")
     check = check && filename.includes?("shard.yml")
 
-    set_base_path check, get_parent_path(filename)
     check
   end
 

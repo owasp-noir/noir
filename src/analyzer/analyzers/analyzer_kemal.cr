@@ -110,6 +110,5 @@ end
 
 def analyzer_kemal(options : Hash(Symbol, String))
   instance = AnalyzerKemal.new(options)
-  instance.sync_base_path "crystal_kemal"
   instance.analyze
 end

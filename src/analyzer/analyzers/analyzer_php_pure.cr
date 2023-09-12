@@ -67,6 +67,5 @@ end
 
 def analyzer_php_pure(options : Hash(Symbol, String))
   instance = AnalyzerPhpPure.new(options)
-  instance.sync_base_path "php-pure"
   instance.analyze
 end

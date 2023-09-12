@@ -58,6 +58,5 @@ end
 
 def analyzer_raml(options : Hash(Symbol, String))
   instance = AnalyzerRAML.new(options)
-  instance.sync_base_path "raml"
   instance.analyze
 end
