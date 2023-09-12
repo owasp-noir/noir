@@ -33,6 +33,9 @@ class Detector
 
       if custom_base != ""
         locator.set("#{@name}_basepath", custom_base)
+        if @is_debug
+          @logger.debug("Set #{@name}_basepath to #{custom_base}")
+        end
       else
         locator.set("#{@name}_basepath", @base_path)
       end

@@ -31,6 +31,9 @@ class Analyzer
     base = locator.get("#{key}_basepath")
     if base != ""
       @base_path = base
+      if @is_debug
+        @logger.debug("Base path is set to #{base}")
+      end
     end
   end
 
