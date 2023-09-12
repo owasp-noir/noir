@@ -5,6 +5,11 @@ module NoirTechs
       :framework => "Kemal",
       :similar   => ["kemal", "crystal-kemal", "crystal_kemal"],
     },
+    :cs_aspnet_mvc => {
+      :language  => "C#",
+      :framework => "ASP.NET MVC",
+      :similar   => ["asp.net mvc", "cs-aspnet-mvc", "cs_aspnet_mvc", "c# asp.net mvc", "c#-asp.net-mvc", "c#_aspnet_mvc"],
+    },
     :go_echo => {
       :language  => "Go",
       :framework => "Echo",
