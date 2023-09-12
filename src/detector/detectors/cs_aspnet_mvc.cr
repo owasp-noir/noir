@@ -6,6 +6,7 @@ class DetectorCSharpAspNetMvc < Detector
     check = check && filename.includes?("packages.config")
     check_routeconfig filename, file_contents
 
+    set_base_path check, get_parent_path(filename)
     check
   end
 

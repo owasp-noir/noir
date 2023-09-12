@@ -548,6 +548,7 @@ end
 
 def analyzer_django(options : Hash(Symbol, String))
   instance = AnalyzerDjango.new(options)
+  instance.sync_base_path "python_django"
   instance.analyze
 end
 

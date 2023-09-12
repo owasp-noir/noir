@@ -130,5 +130,6 @@ end
 
 def analyzer_go_gin(options : Hash(Symbol, String))
   instance = AnalyzerGoGin.new(options)
+  instance.sync_base_path "go_gin"
   instance.analyze
 end

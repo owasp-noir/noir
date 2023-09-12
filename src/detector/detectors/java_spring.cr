@@ -5,6 +5,7 @@ class DetectorJavaSpring < Detector
     if (
          (filename.includes? "pom.xml") || (filename.ends_with? "build.gradle")
        ) && (file_contents.includes? "org.springframework")
+      set_base_path true, get_parent_path(filename)
       true
     else
       false

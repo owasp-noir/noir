@@ -139,5 +139,6 @@ end
 
 def analyzer_oas3(options : Hash(Symbol, String))
   instance = AnalyzerOAS3.new(options)
+  instance.sync_base_path "oas3"
   instance.analyze
 end

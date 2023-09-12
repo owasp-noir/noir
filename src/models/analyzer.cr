@@ -26,6 +26,14 @@ class Analyzer
     @logger = NoirLogger.new @is_debug, @is_color, @is_log
   end
 
+  def sync_base_path(key : String)
+    locator = CodeLocator.instance
+    base = locator.get("#{key}_basepath")
+    if base != ""
+      @base_path = base
+    end
+  end
+
   def analyze
     # After inheriting the class, write an action code here.
   end

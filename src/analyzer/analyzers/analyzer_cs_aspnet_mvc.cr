@@ -46,5 +46,6 @@ end
 
 def analyzer_cs_aspnet_mvc(options : Hash(Symbol, String))
   instance = AnalyzerCsAspNetMvc.new(options)
+  instance.sync_base_path "c#-aspnet-mvc"
   instance.analyze
 end

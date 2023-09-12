@@ -324,5 +324,6 @@ end
 
 def analyzer_flask(options : Hash(Symbol, String))
   instance = AnalyzerFlask.new(options)
+  instance.sync_base_path "python_flask"
   instance.analyze
 end

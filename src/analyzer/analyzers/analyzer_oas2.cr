@@ -88,5 +88,6 @@ end
 
 def analyzer_oas2(options : Hash(Symbol, String))
   instance = AnalyzerOAS2.new(options)
+  instance.sync_base_path "oas2"
   instance.analyze
 end

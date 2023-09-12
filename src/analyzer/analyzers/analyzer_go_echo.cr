@@ -128,5 +128,6 @@ end
 
 def analyzer_go_echo(options : Hash(Symbol, String))
   instance = AnalyzerGoEcho.new(options)
+  instance.sync_base_path "go_echo"
   instance.analyze
 end

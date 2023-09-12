@@ -6,6 +6,7 @@ class DetectorRubySinatra < Detector
     check = check || file_contents.includes?("gem \"sinatra\"")
     check = check && filename.includes?("Gemfile")
 
+    set_base_path check, get_parent_path(filename)
     check
   end
 
