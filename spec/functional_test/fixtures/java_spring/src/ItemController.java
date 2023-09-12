@@ -19,4 +19,8 @@ public class ItemController {
     @DeleteMapping("/delete/{id}")
     public void deleteItem(@PathVariable Long id) {
     }
+
+    @GetMapping("/json/{id}", produces = [MediaType.APPLICATION_JSON_VALUE])
+    public void getItemJson(){       
+    }
 }

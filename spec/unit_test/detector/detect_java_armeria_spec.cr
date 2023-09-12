@@ -1,0 +1,13 @@
+require "../../../src/detector/detectors/*"
+
+describe "Detect Java Armeria" do
+  options = default_options()
+  instance = DetectorJavaArmeria.new options
+
+  it "pom.xml" do
+    instance.detect("pom.xml", "com.linecorp.armeria").should eq(true)
+  end
+  it "build.gradle" do
+    instance.detect("build.gradle", "com.linecorp.armeria").should eq(true)
+  end
+end
