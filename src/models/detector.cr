@@ -6,12 +6,14 @@ class Detector
   @is_color : Bool
   @is_log : Bool
   @name : String
+  @base_path : String
 
   def initialize(options : Hash(Symbol, String))
     @is_debug = str_to_bool(options[:debug])
     @is_color = str_to_bool(options[:color])
     @is_log = str_to_bool(options[:nolog])
     @name = ""
+    @base_path = options[:base]
 
     @logger = NoirLogger.new @is_debug, @is_color, @is_log
   end
@@ -19,10 +21,6 @@ class Detector
   def detect(filename : String, file_contents : String) : Bool
     # After inheriting the class, write an action code here.
     false
-  end
-
-  def name
-    @name
   end
 
   macro define_getter_methods(names)
@@ -33,5 +31,5 @@ class Detector
     {% end %}
   end
 
-  define_getter_methods [result, base_path, url, scope, logger]
+  define_getter_methods [name, logger]
 end
