@@ -6,7 +6,7 @@ require "./options.cr"
 require "./techs/techs.cr"
 
 module Noir
-  VERSION = "0.6.0"
+  VERSION = "0.7.0"
 end
 
 noir_options = default_options()
@@ -65,6 +65,10 @@ OptionParser.parse do |parser|
   parser.invalid_option do |flag|
     STDERR.puts "ERROR: #{flag} is not a valid option."
     STDERR.puts parser
+    exit(1)
+  end
+  parser.missing_option do |flag|
+    STDERR.puts "ERROR: #{flag} is missing an argument."
     exit(1)
   end
 end

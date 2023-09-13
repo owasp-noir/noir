@@ -5,6 +5,11 @@ module NoirTechs
       :framework => "Kemal",
       :similar   => ["kemal", "crystal-kemal", "crystal_kemal"],
     },
+    :cs_aspnet_mvc => {
+      :language  => "C#",
+      :framework => "ASP.NET MVC",
+      :similar   => ["asp.net mvc", "cs-aspnet-mvc", "cs_aspnet_mvc", "c# asp.net mvc", "c#-asp.net-mvc", "c#_aspnet_mvc"],
+    },
     :go_echo => {
       :language  => "Go",
       :framework => "Echo",
@@ -24,6 +29,16 @@ module NoirTechs
       :language  => "Java",
       :framework => "Spring",
       :similar   => ["spring", "java-spring", "java_spring"],
+    },
+    :java_armeria => {
+      :language  => "Java",
+      :framework => "Armeria",
+      :similar   => ["armeria", "java-armeria", "java_armeria"],
+    },
+    :kotlin_spring => {
+      :language  => "Kotlin",
+      :framework => "Spring",
+      :similar   => ["spring", "kotlin-spring", "kotlin_spring"],
     },
     :js_express => {
       :language  => "JavaScript",

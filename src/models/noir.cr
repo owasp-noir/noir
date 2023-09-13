@@ -106,6 +106,10 @@ class NoirRunner
   end
 
   def bake_endpoint(url : String, params : Array(Param))
+    if @is_debug
+      @logger.debug "Baking endpoint #{url} with #{params.size} params."
+    end
+
     final_url = url
     final_body = ""
     final_headers = [] of String
@@ -153,6 +157,10 @@ class NoirRunner
 
         final_body = json_tmp.to_json
       end
+    end
+
+    if @is_debug
+      @logger.debug "Baked endpoint #{final_url} with #{final_body} body and #{final_headers.size} headers."
     end
 
     {

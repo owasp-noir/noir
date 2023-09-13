@@ -11,7 +11,7 @@ class AnalyzerSpring < Analyzer
       next if File.directory?(path)
 
       url = @url
-      if File.exists?(path) && path.ends_with?(".java")
+      if File.exists?(path) && (path.ends_with?(".java") || path.ends_with?(".kt"))
         content = File.read(path, encoding: "utf-8", invalid: :skip)
 
         # Spring MVC
@@ -75,16 +75,16 @@ class AnalyzerSpring < Analyzer
               @result << Endpoint.new("#{url}#{mapping_path}", "GET")
             end
           end
+        end
 
-          # Reactive Router
-          content.scan(REGEX_ROUTER_CODE_BLOCK) do |route_code|
-            method_code = route_code[0]
-            method_code.scan(REGEX_ROUTE_CODE_LINE) do |match|
-              next if match.size != 4
-              method = match[2]
-              endpoint = match[3].gsub(/\n/, "")
-              @result << Endpoint.new("#{url}#{endpoint}", method)
-            end
+        # Reactive Router
+        content.scan(REGEX_ROUTER_CODE_BLOCK) do |route_code|
+          method_code = route_code[0]
+          method_code.scan(REGEX_ROUTE_CODE_LINE) do |match|
+            next if match.size != 4
+            method = match[2]
+            endpoint = match[3].gsub(/\n/, "")
+            @result << Endpoint.new("#{url}#{endpoint}", method)
           end
         end
       end
@@ -102,6 +102,12 @@ class AnalyzerSpring < Analyzer
       line = splited_line[1].gsub(/"|\)| /, "").gsub(/\s/, "").strip
       if line.size > 0
         if line[0].to_s == "/"
+          attribute_index = line.index(/,(\w)+=/)
+          if !attribute_index.nil?
+            attribute_index -= 1
+            line = line[0..attribute_index]
+          end
+
           paths << line
         else
           if is_bracket(line)
