@@ -30,7 +30,9 @@
 | Ruby     | Sinatra         | ✅  | ✅     | ✅    | ✅     | X  |
 | Php      |                 | ✅  | ✅     | ✅    | ✅     | X  |
 | Java     | Jsp             | ✅  | ✅     | ✅    | X      | X  |
+| Java     | Armeria         | ✅  | ✅     | X     | X      | X  |
 | Java     | Spring          | ✅  | ✅     | X     | X      | X  |
+| Kotlin   | Spring          | ✅  | ✅     | X     | X      | X  |
 | JS       | Express         | ✅  | ✅     | X     | X      | X  |
 | C#       | ASP.NET MVC     | ✅  | X      | X     | X      | X  |
 | JS       | Next            | X   | X      | X     | X      | X  |
