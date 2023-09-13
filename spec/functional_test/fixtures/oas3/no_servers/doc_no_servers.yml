@@ -1,0 +1,19 @@
+openapi: 3.0.0
+info:
+  title: Gem Store API
+  version: 1.0.0
+  description: Sample API for managing pets in a Gem store.
+paths:
+  /gems:
+    get:
+      summary: Get a list of pets
+      responses:
+        '200':
+          description: A list of pets
+          content:
+            application/json:
+              example:
+                - id: 1
+                  name: Ruby
+                - id: 2
+                  name: Crystal

@@ -21,13 +21,17 @@ class AnalyzerOAS3 < Analyzer
     locator = CodeLocator.instance
     oas3_json = locator.get("oas3-json")
     oas3_yaml = locator.get("oas3-yaml")
+    base_path = @url
 
     if !oas3_json.nil?
       if File.exists?(oas3_json)
         content = File.read(oas3_json, encoding: "utf-8", invalid: :skip)
         json_obj = JSON.parse(content)
 
-        base_path = get_base_path json_obj["servers"]
+        begin
+          base_path = get_base_path json_obj["servers"]
+        rescue
+        end
 
         json_obj["paths"].as_h.each do |path, path_obj|
           path_obj.as_h.each do |method, method_obj|
@@ -82,7 +86,11 @@ class AnalyzerOAS3 < Analyzer
       if File.exists?(oas3_yaml)
         content = File.read(oas3_yaml, encoding: "utf-8", invalid: :skip)
         yaml_obj = YAML.parse(content)
-        base_path = get_base_path yaml_obj["servers"]
+
+        begin
+          base_path = get_base_path yaml_obj["servers"]
+        rescue
+        end
 
         yaml_obj["paths"].as_h.each do |path, path_obj|
           path_obj.as_h.each do |method, method_obj|
