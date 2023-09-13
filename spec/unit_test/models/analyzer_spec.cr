@@ -14,6 +14,11 @@ describe "Initialize" do
     object.scope.should eq("url,param")
   end
 
+  it "getter - result" do
+    empty = [] of Endpoint
+    object.result.should eq(empty)
+  end
+
   it "initialized - base_path" do
     object.base_path.should eq("noir")
   end
