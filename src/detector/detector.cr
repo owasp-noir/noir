@@ -18,22 +18,26 @@ def detect_techs(base_path : String, options : Hash(Symbol, String), logger : No
     DetectorRubyRails, DetectorRubySinatra, DetectorOas2, DetectorOas3, DetectorRAML,
     DetectorGoGin, DetectorKotlinSpring, DetectorJavaArmeria, DetectorCSharpAspNetMvc,
   ])
-  Dir.glob("#{base_path}/**/*") do |file|
-    spawn do
-      begin
-        next if File.directory?(file)
-        content = File.read(file, encoding: "utf-8", invalid: :skip)
+  begin
+    Dir.glob("#{base_path}/**/*") do |file|
+      spawn do
+        begin
+          next if File.directory?(file)
+          content = File.read(file, encoding: "utf-8", invalid: :skip)
 
-        detector_list.each do |detector|
-          if detector.detect(file, content)
-            techs << detector.name
+          detector_list.each do |detector|
+            if detector.detect(file, content)
+              techs << detector.name
+            end
           end
+        rescue e : File::NotFoundError
+          logger.debug "File not found: #{file}"
         end
-      rescue e : File::NotFoundError
-        logger.debug "File not found: #{file}"
       end
+      Fiber.yield
     end
-    Fiber.yield
+  rescue e
+    logger.debug e
   end
 
   techs.uniq
