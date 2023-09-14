@@ -3,27 +3,31 @@ require "../../models/analyzer"
 class AnalyzerSinatra < Analyzer
   def analyze
     # Source Analysis
-    Dir.glob("#{@base_path}/**/*") do |path|
-      next if File.directory?(path)
-      if File.exists?(path)
-        File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-          last_endpoint = Endpoint.new("", "")
-          file.each_line do |line|
-            endpoint = line_to_endpoint(line)
-            if endpoint.method != ""
-              @result << endpoint
-              last_endpoint = endpoint
-            end
+    begin
+      Dir.glob("#{@base_path}/**/*") do |path|
+        next if File.directory?(path)
+        if File.exists?(path)
+          File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
+            last_endpoint = Endpoint.new("", "")
+            file.each_line do |line|
+              endpoint = line_to_endpoint(line)
+              if endpoint.method != ""
+                @result << endpoint
+                last_endpoint = endpoint
+              end
 
-            param = line_to_param(line)
-            if param.name != ""
-              if last_endpoint.method != ""
-                last_endpoint.push_param(param)
+              param = line_to_param(line)
+              if param.name != ""
+                if last_endpoint.method != ""
+                  last_endpoint.push_param(param)
+                end
               end
             end
           end
         end
       end
+    rescue e
+      logger.debug e
     end
 
     @result

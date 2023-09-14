@@ -4,42 +4,46 @@ class AnalyzerGoGin < Analyzer
   def analyze
     # Source Analysis
     public_dirs = [] of (Hash(String, String))
-    Dir.glob("#{base_path}/**/*") do |path|
-      next if File.directory?(path)
-      if File.exists?(path) && File.extname(path) == ".go"
-        File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-          last_endpoint = Endpoint.new("", "")
-          file.each_line do |line|
-            if line.includes?(".GET(") || line.includes?(".POST(") || line.includes?(".PUT(") || line.includes?(".DELETE(")
-              get_route_path(line).tap do |route_path|
-                if route_path.size > 0
-                  new_endpoint = Endpoint.new("#{url}#{route_path}", line.split(".")[1].split("(")[0])
-                  result << new_endpoint
-                  last_endpoint = new_endpoint
-                end
-              end
-            end
-
-            ["Query", "PostForm", "GetHeader"].each do |pattern|
-              if line.includes?("#{pattern}(")
-                get_param(line).tap do |param|
-                  if param.name.size > 0 && last_endpoint.method != ""
-                    last_endpoint.params << param
+    begin
+      Dir.glob("#{base_path}/**/*") do |path|
+        next if File.directory?(path)
+        if File.exists?(path) && File.extname(path) == ".go"
+          File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
+            last_endpoint = Endpoint.new("", "")
+            file.each_line do |line|
+              if line.includes?(".GET(") || line.includes?(".POST(") || line.includes?(".PUT(") || line.includes?(".DELETE(")
+                get_route_path(line).tap do |route_path|
+                  if route_path.size > 0
+                    new_endpoint = Endpoint.new("#{url}#{route_path}", line.split(".")[1].split("(")[0])
+                    result << new_endpoint
+                    last_endpoint = new_endpoint
                   end
                 end
               end
-            end
 
-            if line.includes?("Static(")
-              get_static_path(line).tap do |static_path|
-                if static_path["static_path"].size > 0 && static_path["file_path"].size > 0
-                  public_dirs << static_path
+              ["Query", "PostForm", "GetHeader"].each do |pattern|
+                if line.includes?("#{pattern}(")
+                  get_param(line).tap do |param|
+                    if param.name.size > 0 && last_endpoint.method != ""
+                      last_endpoint.params << param
+                    end
+                  end
+                end
+              end
+
+              if line.includes?("Static(")
+                get_static_path(line).tap do |static_path|
+                  if static_path["static_path"].size > 0 && static_path["file_path"].size > 0
+                    public_dirs << static_path
+                  end
                 end
               end
             end
           end
         end
       end
+    rescue e
+      logger.debug e
     end
 
     public_dirs.each do |p_dir|

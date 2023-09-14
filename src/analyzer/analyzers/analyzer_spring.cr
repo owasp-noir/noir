@@ -7,87 +7,91 @@ class AnalyzerSpring < Analyzer
 
   def analyze
     # Source Analysis
-    Dir.glob("#{@base_path}/**/*") do |path|
-      next if File.directory?(path)
+    begin
+      Dir.glob("#{@base_path}/**/*") do |path|
+        next if File.directory?(path)
 
-      url = @url
-      if File.exists?(path) && (path.ends_with?(".java") || path.ends_with?(".kt"))
-        content = File.read(path, encoding: "utf-8", invalid: :skip)
+        url = @url
+        if File.exists?(path) && (path.ends_with?(".java") || path.ends_with?(".kt"))
+          content = File.read(path, encoding: "utf-8", invalid: :skip)
 
-        # Spring MVC
-        has_class_been_imported = false
-        content.each_line do |line|
-          if has_class_been_imported == false && REGEX_CLASS_DEFINITION.match(line)
-            has_class_been_imported = true
-          end
+          # Spring MVC
+          has_class_been_imported = false
+          content.each_line do |line|
+            if has_class_been_imported == false && REGEX_CLASS_DEFINITION.match(line)
+              has_class_been_imported = true
+            end
 
-          if line.includes? "RequestMapping"
-            mapping_paths = mapping_to_path(line)
-            if has_class_been_imported == false && mapping_paths.size > 0
-              class_mapping_url = mapping_paths[0]
+            if line.includes? "RequestMapping"
+              mapping_paths = mapping_to_path(line)
+              if has_class_been_imported == false && mapping_paths.size > 0
+                class_mapping_url = mapping_paths[0]
 
-              if class_mapping_url.ends_with?("/*")
-                class_mapping_url = class_mapping_url[0..-3]
-              end
-              if class_mapping_url.ends_with?("/")
-                class_mapping_url = class_mapping_url[0..-2]
-              end
+                if class_mapping_url.ends_with?("/*")
+                  class_mapping_url = class_mapping_url[0..-3]
+                end
+                if class_mapping_url.ends_with?("/")
+                  class_mapping_url = class_mapping_url[0..-2]
+                end
 
-              url = "#{@url}#{class_mapping_url}"
-            else
-              mapping_paths.each do |mapping_path|
-                if line.includes? "RequestMethod"
-                  define_requestmapping_handlers(["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE"])
-                else
-                  @result << Endpoint.new("#{url}#{mapping_path}", "GET")
+                url = "#{@url}#{class_mapping_url}"
+              else
+                mapping_paths.each do |mapping_path|
+                  if line.includes? "RequestMethod"
+                    define_requestmapping_handlers(["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE"])
+                  else
+                    @result << Endpoint.new("#{url}#{mapping_path}", "GET")
+                  end
                 end
               end
             end
+
+            if line.includes? "PostMapping"
+              mapping_paths = mapping_to_path(line)
+              mapping_paths.each do |mapping_path|
+                @result << Endpoint.new("#{url}#{mapping_path}", "POST")
+              end
+            end
+            if line.includes? "PutMapping"
+              mapping_paths = mapping_to_path(line)
+              mapping_paths.each do |mapping_path|
+                @result << Endpoint.new("#{url}#{mapping_path}", "PUT")
+              end
+            end
+            if line.includes? "DeleteMapping"
+              mapping_paths = mapping_to_path(line)
+              mapping_paths.each do |mapping_path|
+                @result << Endpoint.new("#{url}#{mapping_path}", "DELETE")
+              end
+            end
+            if line.includes? "PatchMapping"
+              mapping_paths = mapping_to_path(line)
+              mapping_paths.each do |mapping_path|
+                @result << Endpoint.new("#{url}#{mapping_path}", "PATCH")
+              end
+            end
+            if line.includes? "GetMapping"
+              mapping_paths = mapping_to_path(line)
+              mapping_paths.each do |mapping_path|
+                @result << Endpoint.new("#{url}#{mapping_path}", "GET")
+              end
+            end
           end
 
-          if line.includes? "PostMapping"
-            mapping_paths = mapping_to_path(line)
-            mapping_paths.each do |mapping_path|
-              @result << Endpoint.new("#{url}#{mapping_path}", "POST")
+          # Reactive Router
+          content.scan(REGEX_ROUTER_CODE_BLOCK) do |route_code|
+            method_code = route_code[0]
+            method_code.scan(REGEX_ROUTE_CODE_LINE) do |match|
+              next if match.size != 4
+              method = match[2]
+              endpoint = match[3].gsub(/\n/, "")
+              @result << Endpoint.new("#{url}#{endpoint}", method)
             end
-          end
-          if line.includes? "PutMapping"
-            mapping_paths = mapping_to_path(line)
-            mapping_paths.each do |mapping_path|
-              @result << Endpoint.new("#{url}#{mapping_path}", "PUT")
-            end
-          end
-          if line.includes? "DeleteMapping"
-            mapping_paths = mapping_to_path(line)
-            mapping_paths.each do |mapping_path|
-              @result << Endpoint.new("#{url}#{mapping_path}", "DELETE")
-            end
-          end
-          if line.includes? "PatchMapping"
-            mapping_paths = mapping_to_path(line)
-            mapping_paths.each do |mapping_path|
-              @result << Endpoint.new("#{url}#{mapping_path}", "PATCH")
-            end
-          end
-          if line.includes? "GetMapping"
-            mapping_paths = mapping_to_path(line)
-            mapping_paths.each do |mapping_path|
-              @result << Endpoint.new("#{url}#{mapping_path}", "GET")
-            end
-          end
-        end
-
-        # Reactive Router
-        content.scan(REGEX_ROUTER_CODE_BLOCK) do |route_code|
-          method_code = route_code[0]
-          method_code.scan(REGEX_ROUTE_CODE_LINE) do |match|
-            next if match.size != 4
-            method = match[2]
-            endpoint = match[3].gsub(/\n/, "")
-            @result << Endpoint.new("#{url}#{endpoint}", method)
           end
         end
       end
+    rescue e
+      logger.debug e
     end
     Fiber.yield
 
