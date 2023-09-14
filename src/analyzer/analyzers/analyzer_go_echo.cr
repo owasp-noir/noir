@@ -4,48 +4,52 @@ class AnalyzerGoEcho < Analyzer
   def analyze
     # Source Analysis
     public_dirs = [] of (Hash(String, String))
-    Dir.glob("#{base_path}/**/*") do |path|
-      next if File.directory?(path)
-      if File.exists?(path) && File.extname(path) == ".go"
-        File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-          last_endpoint = Endpoint.new("", "")
-          file.each_line do |line|
-            if line.includes?(".GET(") || line.includes?(".POST(") || line.includes?(".PUT(") || line.includes?(".DELETE(")
-              get_route_path(line).tap do |route_path|
-                if route_path.size > 0
-                  new_endpoint = Endpoint.new("#{url}#{route_path}", line.split(".")[1].split("(")[0])
-                  result << new_endpoint
-                  last_endpoint = new_endpoint
+    begin
+      Dir.glob("#{base_path}/**/*") do |path|
+        next if File.directory?(path)
+        if File.exists?(path) && File.extname(path) == ".go"
+          File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
+            last_endpoint = Endpoint.new("", "")
+            file.each_line do |line|
+              if line.includes?(".GET(") || line.includes?(".POST(") || line.includes?(".PUT(") || line.includes?(".DELETE(")
+                get_route_path(line).tap do |route_path|
+                  if route_path.size > 0
+                    new_endpoint = Endpoint.new("#{url}#{route_path}", line.split(".")[1].split("(")[0])
+                    result << new_endpoint
+                    last_endpoint = new_endpoint
+                  end
                 end
               end
-            end
 
-            if line.includes?("Param(") || line.includes?("FormValue(")
-              get_param(line).tap do |param|
-                if param.name.size > 0 && last_endpoint.method != ""
-                  last_endpoint.params << param
+              if line.includes?("Param(") || line.includes?("FormValue(")
+                get_param(line).tap do |param|
+                  if param.name.size > 0 && last_endpoint.method != ""
+                    last_endpoint.params << param
+                  end
                 end
               end
-            end
 
-            if line.includes?("Static(")
-              get_static_path(line).tap do |static_path|
-                if static_path.size > 0
-                  public_dirs << static_path
+              if line.includes?("Static(")
+                get_static_path(line).tap do |static_path|
+                  if static_path.size > 0
+                    public_dirs << static_path
+                  end
                 end
               end
-            end
 
-            if line.includes?("Request().Header.Get(")
-              match = line.match(/Request\(\)\.Header\.Get\(\"(.*)\"\)/)
-              if match
-                header_name = match[1]
-                last_endpoint.params << Param.new(header_name, "", "header")
+              if line.includes?("Request().Header.Get(")
+                match = line.match(/Request\(\)\.Header\.Get\(\"(.*)\"\)/)
+                if match
+                  header_name = match[1]
+                  last_endpoint.params << Param.new(header_name, "", "header")
+                end
               end
             end
           end
         end
       end
+    rescue e
+      logger.debug e
     end
 
     public_dirs.each do |p_dir|
