@@ -3,11 +3,15 @@ require "../../models/analyzer"
 class AnalyzerRails < Analyzer
   def analyze
     # Public Dir Analysis
-    Dir.glob("#{@base_path}/public/**/*") do |file|
-      next if File.directory?(file)
-      real_path = "#{@base_path}/public/".gsub(/\/+/, '/')
-      relative_path = file.sub(real_path, "")
-      @result << Endpoint.new("#{@url}/#{relative_path}", "GET")
+    begin
+      Dir.glob("#{@base_path}/public/**/*") do |file|
+        next if File.directory?(file)
+        real_path = "#{@base_path}/public/".gsub(/\/+/, '/')
+        relative_path = file.sub(real_path, "")
+        @result << Endpoint.new("#{@url}/#{relative_path}", "GET")
+      end
+    rescue e
+      logger.debug e
     end
 
     # Config Analysis

@@ -35,10 +35,14 @@ class AnalyzerDjango < Analyzer
     end
 
     # Static files
-    Dir.glob("#{@base_path}/static/**/*") do |file|
-      next if File.directory?(file)
-      relative_path = file.sub("#{@base_path}/static/", "")
-      @result << Endpoint.new("#{@url}/#{relative_path}", "GET")
+    begin
+      Dir.glob("#{@base_path}/static/**/*") do |file|
+        next if File.directory?(file)
+        relative_path = file.sub("#{@base_path}/static/", "")
+        @result << Endpoint.new("#{@url}/#{relative_path}", "GET")
+      end
+    rescue e
+      logger.debug e
     end
 
     result
@@ -48,27 +52,32 @@ class AnalyzerDjango < Analyzer
     root_django_urls_list = [] of DjangoUrls
 
     search_dir = @base_path
-    Dir.glob("#{search_dir}/**/*") do |file|
-      spawn do
-        begin
-          next if File.directory?(file)
-          if file.ends_with? ".py"
-            content = File.read(file, encoding: "utf-8", invalid: :skip)
-            content.scan(REGEX_ROOT_URLCONF) do |match|
-              next if match.size != 2
-              dotted_as_urlconf = match[1].split(".")
-              relative_path = "#{dotted_as_urlconf.join("/")}.py"
-              Dir.glob("#{search_dir}/**/#{relative_path}") do |filepath|
-                basepath = filepath.split("/")[..-(dotted_as_urlconf.size + 1)].join("/")
-                root_django_urls_list << DjangoUrls.new("", filepath, basepath)
+    begin
+      Dir.glob("#{search_dir}/**/*") do |file|
+        spawn do
+          begin
+            next if File.directory?(file)
+            if file.ends_with? ".py"
+              content = File.read(file, encoding: "utf-8", invalid: :skip)
+              content.scan(REGEX_ROOT_URLCONF) do |match|
+                next if match.size != 2
+                dotted_as_urlconf = match[1].split(".")
+                relative_path = "#{dotted_as_urlconf.join("/")}.py"
+
+                Dir.glob("#{search_dir}/**/#{relative_path}") do |filepath|
+                  basepath = filepath.split("/")[..-(dotted_as_urlconf.size + 1)].join("/")
+                  root_django_urls_list << DjangoUrls.new("", filepath, basepath)
+                end
               end
             end
+          rescue e : File::NotFoundError
+            @logger.debug "File not found: #{file}"
           end
-        rescue e : File::NotFoundError
-          @logger.debug "File not found: #{file}"
         end
+        Fiber.yield
       end
-      Fiber.yield
+    rescue e
+      logger.debug e
     end
 
     root_django_urls_list.uniq

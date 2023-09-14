@@ -29,105 +29,113 @@ class AnalyzerFlask < Analyzer
   def analyze
     blueprint_prefix_map = {} of String => String
 
-    Dir.glob("#{base_path}/**/*.py") do |path|
-      next if File.directory?(path)
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        file.each_line do |line|
-          # [TODO] We should be cautious about instance replace with other variable
-          match = line.match /(#{REGEX_PYTHON_VARIABLE_NAME})\s*=\s*Flask\s*\(/
-          if !match.nil?
-            flask_instance_name = match[1]
-            if !blueprint_prefix_map.has_key? flask_instance_name
-              blueprint_prefix_map[flask_instance_name] = ""
-            end
-          end
-
-          # Common flask instance name
-          if !blueprint_prefix_map.has_key? "app"
-            blueprint_prefix_map["app"] = ""
-          end
-
-          # https://flask.palletsprojects.com/en/2.3.x/tutorial/views/
-          match = line.match /(#{REGEX_PYTHON_VARIABLE_NAME})\s*=\s*Blueprint\s*\(/
-          if !match.nil?
-            prefix = ""
-            blueprint_instance_name = match[1]
-            param_codes = line.split("Blueprint", 2)[1]
-            prefix_match = param_codes.match /url_prefix\s=\s['"](['"]*)['"]/
-            if !prefix_match.nil? && prefix_match.size == 2
-              prefix = prefix_match[1]
+    begin
+      Dir.glob("#{base_path}/**/*.py") do |path|
+        next if File.directory?(path)
+        File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
+          file.each_line do |line|
+            # [TODO] We should be cautious about instance replace with other variable
+            match = line.match /(#{REGEX_PYTHON_VARIABLE_NAME})\s*=\s*Flask\s*\(/
+            if !match.nil?
+              flask_instance_name = match[1]
+              if !blueprint_prefix_map.has_key? flask_instance_name
+                blueprint_prefix_map[flask_instance_name] = ""
+              end
             end
 
-            if !blueprint_prefix_map.has_key? blueprint_instance_name
-              blueprint_prefix_map[blueprint_instance_name] = prefix
+            # Common flask instance name
+            if !blueprint_prefix_map.has_key? "app"
+              blueprint_prefix_map["app"] = ""
             end
-          end
 
-          # [TODO] We're not concerned with nesting blueprints at the moment
-          # https://flask.palletsprojects.com/en/2.3.x/blueprints/#nesting-blueprints
+            # https://flask.palletsprojects.com/en/2.3.x/tutorial/views/
+            match = line.match /(#{REGEX_PYTHON_VARIABLE_NAME})\s*=\s*Blueprint\s*\(/
+            if !match.nil?
+              prefix = ""
+              blueprint_instance_name = match[1]
+              param_codes = line.split("Blueprint", 2)[1]
+              prefix_match = param_codes.match /url_prefix\s=\s['"](['"]*)['"]/
+              if !prefix_match.nil? && prefix_match.size == 2
+                prefix = prefix_match[1]
+              end
 
-          # [Temporary Addition] register_view
-          blueprint_prefix_map.each do |blueprint_name, blueprint_prefix|
-            register_views_match = line.match /#{blueprint_name},\s*routes\s*=\s*(.*)\)/
-            if !register_views_match.nil?
-              route_paths = register_views_match[1]
-              route_paths.scan /['"]([^'"]*)['"]/ do |path_str_match|
-                if !path_str_match.nil? && path_str_match.size == 2
-                  route_path = path_str_match[1]
-                  # [TODO] Parse methods from reference views
-                  route_url = "#{@url}#{blueprint_prefix}#{route_path}"
-                  if !route_url.starts_with? "/"
-                    route_url = "/#{route_url}"
+              if !blueprint_prefix_map.has_key? blueprint_instance_name
+                blueprint_prefix_map[blueprint_instance_name] = prefix
+              end
+            end
+
+            # [TODO] We're not concerned with nesting blueprints at the moment
+            # https://flask.palletsprojects.com/en/2.3.x/blueprints/#nesting-blueprints
+
+            # [Temporary Addition] register_view
+            blueprint_prefix_map.each do |blueprint_name, blueprint_prefix|
+              register_views_match = line.match /#{blueprint_name},\s*routes\s*=\s*(.*)\)/
+              if !register_views_match.nil?
+                route_paths = register_views_match[1]
+                route_paths.scan /['"]([^'"]*)['"]/ do |path_str_match|
+                  if !path_str_match.nil? && path_str_match.size == 2
+                    route_path = path_str_match[1]
+                    # [TODO] Parse methods from reference views
+                    route_url = "#{@url}#{blueprint_prefix}#{route_path}"
+                    if !route_url.starts_with? "/"
+                      route_url = "/#{route_url}"
+                    end
+                    result << Endpoint.new(route_url, "GET")
                   end
-                  result << Endpoint.new(route_url, "GET")
                 end
               end
             end
           end
         end
       end
+    rescue e
+      logger.debug e
     end
 
-    Dir.glob("#{base_path}/**/*.py") do |path|
-      next if File.directory?(path)
-      source = File.read(path, encoding: "utf-8", invalid: :skip)
-      lines = source.split "\n"
+    begin
+      Dir.glob("#{base_path}/**/*.py") do |path|
+        next if File.directory?(path)
+        source = File.read(path, encoding: "utf-8", invalid: :skip)
+        lines = source.split "\n"
 
-      line_index = 0
-      while line_index < lines.size
-        line = lines[line_index]
-        blueprint_prefix_map.each do |flask_instance_name, prefix|
-          # https://flask.palletsprojects.com/en/2.3.x/quickstart/#http-methods
-          line.scan(/@#{flask_instance_name}\.route\([rf]?['"]([^'"]*)['"](.*)/) do |match|
-            if match.size > 0
-              route_path = match[1]
-              extra_params = match[2]
+        line_index = 0
+        while line_index < lines.size
+          line = lines[line_index]
+          blueprint_prefix_map.each do |flask_instance_name, prefix|
+            # https://flask.palletsprojects.com/en/2.3.x/quickstart/#http-methods
+            line.scan(/@#{flask_instance_name}\.route\([rf]?['"]([^'"]*)['"](.*)/) do |match|
+              if match.size > 0
+                route_path = match[1]
+                extra_params = match[2]
 
-              # Pass decorator lines
-              codeline_index = line_index
-              while codeline_index < lines.size
-                decorator_match = lines[codeline_index].match /\s*@/
-                if !decorator_match.nil?
-                  codeline_index += 1
-                  next
+                # Pass decorator lines
+                codeline_index = line_index
+                while codeline_index < lines.size
+                  decorator_match = lines[codeline_index].match /\s*@/
+                  if !decorator_match.nil?
+                    codeline_index += 1
+                    next
+                  end
+
+                  break
                 end
 
-                break
-              end
+                codeblock = parse_function_or_class(lines[codeline_index..].join("\n"))
+                next if codeblock.nil?
+                codeblock_lines = codeblock.split("\n")
+                codeblock_lines = codeblock_lines[1..]
 
-              codeblock = parse_function_or_class(lines[codeline_index..].join("\n"))
-              next if codeblock.nil?
-              codeblock_lines = codeblock.split("\n")
-              codeblock_lines = codeblock_lines[1..]
-
-              get_endpoints(route_path, extra_params, codeblock_lines, prefix).each do |endpoint|
-                result << endpoint
+                get_endpoints(route_path, extra_params, codeblock_lines, prefix).each do |endpoint|
+                  result << endpoint
+                end
               end
             end
           end
+          line_index += 1
         end
-        line_index += 1
       end
+    rescue e
+      logger.debug e
     end
     Fiber.yield
 
