@@ -34,6 +34,9 @@ OptionParser.parse do |parser|
   parser.separator "\n  Deliver:".colorize(:blue)
   parser.on "--send-req", "Send the results to the web request" { |_| noir_options[:send_req] = "yes" }
   parser.on "--send-proxy http://proxy..", "Send the results to the web request via http proxy" { |var| noir_options[:send_proxy] = var }
+  parser.on "--with-headers X-Header:Value", "Add Custom Headers to be Used in Deliver" do |var|
+    noir_options[:send_with_headers] += "#{var}::NOIR::HEADERS::SPLIT::"
+  end
 
   parser.separator "\n  Technologies:".colorize(:blue)
   parser.on "-t TECHS", "--techs rails,php", "Specify the technologies to use" { |var| noir_options[:techs] = var }

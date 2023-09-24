@@ -43,7 +43,7 @@ class NoirRunner
 
     if options[:techs].size > 0
       techs_tmp = options[:techs].split(",")
-      @logger.system "Setting #{techs_tmp.size} techs from command line."
+      @logger.info "Setting #{techs_tmp.size} techs from command line."
       techs_tmp.each do |tech|
         @techs << NoirTechs.similar_to_tech(tech)
         @logger.debug "Added #{tech} to techs."
@@ -97,12 +97,14 @@ class NoirRunner
   def deliver
     if @send_proxy != ""
       @logger.system "Sending requests with proxy #{@send_proxy}"
-      send_with_proxy(@endpoints, @send_proxy)
+      deliver = SendWithProxy.new(@options)
+      deliver.run(@endpoints)
     end
 
     if @send_req != "no"
       @logger.system "Sending requests without proxy"
-      send_req(@endpoints)
+      deliver = SendReq.new(@options)
+      deliver.run(@endpoints)
     end
   end
 

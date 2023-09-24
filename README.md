@@ -97,6 +97,7 @@ Usage: noir <flags>
   Deliver:
     --send-req                       Send the results to the web request
     --send-proxy http://proxy..      Send the results to the web request via http proxy
+    --with-headers X-Header:Value    Add Custom Headers to be Used in Deliver
 
   Technologies:
     -t TECHS, --techs rails,php      Set technologies to use
