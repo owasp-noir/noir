@@ -46,6 +46,6 @@ class OutputBuilderOas2 < OutputBuilder
       "paths"    => paths,
     }
 
-    puts oas2.to_json
+    ob_puts oas2.to_json
   end
 end

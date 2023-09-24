@@ -17,7 +17,7 @@ class OutputBuilderHttpie < OutputBuilder
         end
       end
 
-      puts cmd
+      ob_puts cmd
     end
   end
 end
