@@ -119,6 +119,12 @@ class NoirRunner
     when "curl"
       builder = OutputBuilderCurl.new @options
       builder.print @endpoints
+    when "oas2"
+      buidler = OutputBuilderOas2.new @options
+      buidler.print @endpoints
+    when "oas3"
+      buidler = OutputBuilderOas3.new @options
+      buidler.print @endpoints
     else
       builder = OutputBuilderCommon.new @options
       builder.print @endpoints
