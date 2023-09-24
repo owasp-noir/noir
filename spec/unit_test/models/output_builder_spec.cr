@@ -30,4 +30,14 @@ describe "Initialize" do
     object = OutputBuilderMarkdownTable.new options
     object.scope.should eq("param")
   end
+
+  it "OutputBuilderOas2" do
+    object = OutputBuilderOas2.new options
+    object.scope.should eq("param")
+  end
+
+  it "OutputBuilderOas3" do
+    object = OutputBuilderOas3.new options
+    object.scope.should eq("param")
+  end
 end
