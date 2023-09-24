@@ -17,9 +17,9 @@ class OutputBuilderCommon < OutputBuilder
 
       if baked[:body] != ""
         r_body = baked[:body].colorize(:cyan).toggle(@is_color)
-        puts "#{r_method} #{r_url} #{r_body} #{r_headers} #{r_ws}"
+        ob_puts "#{r_method} #{r_url} #{r_body} #{r_headers} #{r_ws}"
       else
-        puts "#{r_method} #{r_url} #{r_headers} #{r_ws}"
+        ob_puts "#{r_method} #{r_url} #{r_headers} #{r_ws}"
       end
     end
   end
