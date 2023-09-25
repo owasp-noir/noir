@@ -53,4 +53,15 @@ class CodeLocator
     @s_map.clear
     @a_map.clear
   end
+
+  def show_table
+    @logger.info_sub("String Map:")
+    @s_map.each do |key, value|
+      @logger.info_sub("  #{key} => #{value}")
+    end
+    @logger.info_sub("Array Map:")
+    @a_map.each do |key, value|
+      @logger.info_sub("  #{key} => #{value}")
+    end
+  end
 end
