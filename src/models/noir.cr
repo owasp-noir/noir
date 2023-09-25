@@ -58,6 +58,11 @@ class NoirRunner
   def detect
     detected_techs = detect_techs options[:base], options, @logger
     @techs += detected_techs
+    if @is_debug
+      @logger.debug("CodeLocator Table:")
+      locator = CodeLocator.instance
+      locator.show_table
+    end
   end
 
   def analyze
