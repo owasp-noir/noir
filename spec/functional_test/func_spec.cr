@@ -118,6 +118,8 @@ class FunctionalTester
 
   def test_all
     describe "Functional test to #{@path}" do
+      locator = CodeLocator.instance
+      locator.clear_all
       test_detect
       test_analyze
     end

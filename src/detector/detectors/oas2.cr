@@ -12,7 +12,7 @@ class DetectorOas2 < Detector
         if data["swagger"].as_s.includes? "2."
           check = true
           locator = CodeLocator.instance
-          locator.set("swagger-json", filename)
+          locator.push("swagger-json", filename)
         end
       rescue
       end
@@ -22,7 +22,7 @@ class DetectorOas2 < Detector
         if data["swagger"].as_s.includes? "2."
           check = true
           locator = CodeLocator.instance
-          locator.set("swagger-yaml", filename)
+          locator.push("swagger-yaml", filename)
         end
       rescue
       end
