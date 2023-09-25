@@ -16,3 +16,8 @@ FunctionalTester.new("fixtures/oas3/no_servers/", {
   :techs     => 1,
   :endpoints => 1,
 }, nil).test_all
+
+FunctionalTester.new("fixtures/oas3/multiple_docs/", {
+  :techs     => 1,
+  :endpoints => 2,
+}, nil).test_all

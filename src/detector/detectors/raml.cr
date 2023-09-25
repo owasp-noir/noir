@@ -11,7 +11,7 @@ class DetectorRAML < Detector
           YAML.parse(file_contents)
           check = true
           locator = CodeLocator.instance
-          locator.set("raml-spec", filename)
+          locator.push("raml-spec", filename)
         rescue
         end
       end

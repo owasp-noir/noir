@@ -12,7 +12,7 @@ class DetectorOas3 < Detector
         if data["openapi"].as_s.includes? "3."
           check = true
           locator = CodeLocator.instance
-          locator.set("oas3-json", filename)
+          locator.push("oas3-json", filename)
         end
       rescue
       end
@@ -22,7 +22,7 @@ class DetectorOas3 < Detector
         if data["openapi"].as_s.includes? "3."
           check = true
           locator = CodeLocator.instance
-          locator.set("oas3-yaml", filename)
+          locator.push("oas3-yaml", filename)
         end
       rescue
       end
