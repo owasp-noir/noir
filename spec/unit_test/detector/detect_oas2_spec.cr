@@ -33,8 +33,9 @@ describe "Detect OAS 2.0(Swagger) Docs" do
     }
     EOS
 
-    instance.detect("docs.json", content)
     locator = CodeLocator.instance
-    locator.get("swagger-json").should eq("docs.json")
+    locator.clear "swagger-json"
+    instance.detect("docs.json", content)
+    locator.all("swagger-json").should eq(["docs.json"])
   end
 end

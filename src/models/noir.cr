@@ -1,6 +1,7 @@
 require "../detector/detector.cr"
 require "../analyzer/analyzer.cr"
 require "../deliver/*"
+require "../output_builder/*"
 require "./endpoint.cr"
 require "./logger.cr"
 require "json"
@@ -42,7 +43,7 @@ class NoirRunner
 
     if options[:techs].size > 0
       techs_tmp = options[:techs].split(",")
-      @logger.system "Setting #{techs_tmp.size} techs from command line."
+      @logger.info "Setting #{techs_tmp.size} techs from command line."
       techs_tmp.each do |tech|
         @techs << NoirTechs.similar_to_tech(tech)
         @logger.debug "Added #{tech} to techs."
@@ -57,6 +58,11 @@ class NoirRunner
   def detect
     detected_techs = detect_techs options[:base], options, @logger
     @techs += detected_techs
+    if @is_debug
+      @logger.debug("CodeLocator Table:")
+      locator = CodeLocator.instance
+      locator.show_table
+    end
   end
 
   def analyze
@@ -96,79 +102,15 @@ class NoirRunner
   def deliver
     if @send_proxy != ""
       @logger.system "Sending requests with proxy #{@send_proxy}"
-      send_with_proxy(@endpoints, @send_proxy)
+      deliver = SendWithProxy.new(@options)
+      deliver.run(@endpoints)
     end
 
     if @send_req != "no"
       @logger.system "Sending requests without proxy"
-      send_req(@endpoints)
+      deliver = SendReq.new(@options)
+      deliver.run(@endpoints)
     end
-  end
-
-  def bake_endpoint(url : String, params : Array(Param))
-    if @is_debug
-      @logger.debug "Baking endpoint #{url} with #{params.size} params."
-    end
-
-    final_url = url
-    final_body = ""
-    final_headers = [] of String
-    is_json = false
-    first_query = true
-    first_form = true
-
-    if !params.nil? && @scope.includes?("param")
-      params.each do |param|
-        if param.param_type == "query"
-          if first_query
-            final_url += "?#{param.name}=#{param.value}"
-            first_query = false
-          else
-            final_url += "&#{param.name}=#{param.value}"
-          end
-        end
-
-        if param.param_type == "form"
-          if first_form
-            final_body += "#{param.name}=#{param.value}"
-            first_form = false
-          else
-            final_body += "&#{param.name}=#{param.value}"
-          end
-        end
-
-        if param.param_type == "header"
-          final_headers << "#{param.name}: #{param.value}"
-        end
-
-        if param.param_type == "json"
-          is_json = true
-        end
-      end
-
-      if is_json
-        json_tmp = Hash(String, String).new
-
-        params.each do |param|
-          if param.param_type == "json"
-            json_tmp[param.name] = param.value
-          end
-        end
-
-        final_body = json_tmp.to_json
-      end
-    end
-
-    if @is_debug
-      @logger.debug "Baked endpoint #{final_url} with #{final_body} body and #{final_headers.size} headers."
-    end
-
-    {
-      url:       final_url,
-      body:      final_body,
-      header:    final_headers,
-      body_type: is_json ? "json" : "form",
-    }
   end
 
   def report
@@ -176,75 +118,23 @@ class NoirRunner
     when "json"
       puts @endpoints.to_json
     when "markdown-table"
-      puts "| Endpoint | Protocol | Params |"
-      puts "| -------- | -------- | ------ |"
-
-      @endpoints.each do |endpoint|
-        if !endpoint.params.nil? && @scope.includes?("param")
-          params_text = ""
-          endpoint.params.each do |param|
-            params_text += "`#{param.name} (#{param.param_type})` "
-          end
-          puts "| #{endpoint.method} #{endpoint.url} | #{endpoint.protocol} | #{params_text} |"
-        else
-          puts "| #{endpoint.method} #{endpoint.url} | #{endpoint.protocol} | - |"
-        end
-      end
+      builder = OutputBuilderMarkdownTable.new @options
+      builder.print @endpoints
     when "httpie"
-      @endpoints.each do |endpoint|
-        baked = bake_endpoint(endpoint.url, endpoint.params)
-
-        cmd = "http #{endpoint.method} #{baked[:url]}"
-        if baked[:body] != ""
-          cmd += " #{baked[:body]}"
-          if baked[:body_type] == "json"
-            cmd += " \"Content-Type:application/json\""
-          end
-          baked[:header].each do |header|
-            cmd += " \"#{header}\""
-          end
-        end
-
-        puts cmd
-      end
+      builder = OutputBuilderHttpie.new @options
+      builder.print @endpoints
     when "curl"
-      @endpoints.each do |endpoint|
-        baked = bake_endpoint(endpoint.url, endpoint.params)
-
-        cmd = "curl -i -X #{endpoint.method} #{baked[:url]}"
-        if baked[:body] != ""
-          cmd += " -d \"#{baked[:body]}\""
-          if baked[:body_type] == "json"
-            cmd += " -H \"Content-Type:application/json\""
-          end
-
-          baked[:header].each do |header|
-            cmd += " -H \"#{header}\""
-          end
-        end
-
-        puts cmd
-      end
+      builder = OutputBuilderCurl.new @options
+      builder.print @endpoints
+    when "oas2"
+      buidler = OutputBuilderOas2.new @options
+      buidler.print @endpoints
+    when "oas3"
+      buidler = OutputBuilderOas3.new @options
+      buidler.print @endpoints
     else
-      @endpoints.each do |endpoint|
-        baked = bake_endpoint(endpoint.url, endpoint.params)
-
-        r_method = endpoint.method.colorize(:light_blue).toggle(@is_color)
-        r_url = baked[:url].colorize(:light_yellow).toggle(@is_color)
-        r_headers = baked[:header].join(" ").colorize(:light_green).toggle(@is_color)
-
-        r_ws = ""
-        if endpoint.protocol == "ws"
-          r_ws = "[WEBSOCKET]".colorize(:light_red).toggle(@is_color)
-        end
-
-        if baked[:body] != ""
-          r_body = baked[:body].colorize(:cyan).toggle(@is_color)
-          puts "#{r_method} #{r_url} #{r_body} #{r_headers} #{r_ws}"
-        else
-          puts "#{r_method} #{r_url} #{r_headers} #{r_ws}"
-        end
-      end
+      builder = OutputBuilderCommon.new @options
+      builder.print @endpoints
     end
   end
 end

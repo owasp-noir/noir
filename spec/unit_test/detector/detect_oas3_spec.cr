@@ -33,8 +33,9 @@ describe "Detect OAS 3.0 Docs" do
     }
     EOS
 
-    instance.detect("docs.json", content)
     locator = CodeLocator.instance
-    locator.get("oas3-json").should eq("docs.json")
+    locator.clear "oas3-json"
+    instance.detect("docs.json", content)
+    locator.all("oas3-json").should eq(["docs.json"])
   end
 end
