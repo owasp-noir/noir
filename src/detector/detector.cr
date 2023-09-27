@@ -13,8 +13,8 @@ def detect_techs(base_path : String, options : Hash(Symbol, String), logger : No
   techs = [] of String
   detector_list = [] of Detector
   defind_detectors([
-    DetectorCrystalKemal, DetectorGoEcho, DetectorJavaJsp, DetectorJavaSpring,
-    DetectorJsExpress, DetectorPhpPure, DetectorPythonDjango, DetectorPythonFlask,
+    DetectorCrystalKemal, DetectorGoEcho, DetectorJavaJsp, DetectorJavaSpring, DetectorJsExpress,
+    DetectorPhpPure, DetectorPythonDjango, DetectorPythonFlask, DetectorPythonFastAPI,
     DetectorRubyRails, DetectorRubySinatra, DetectorOas2, DetectorOas3, DetectorRAML,
     DetectorGoGin, DetectorKotlinSpring, DetectorJavaArmeria, DetectorCSharpAspNetMvc,
   ])

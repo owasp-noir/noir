@@ -23,7 +23,7 @@ extected_endpoints = [
   Endpoint.new("/delete_test", "DELETE"),
 ]
 
-FunctionalTester.new("fixtures/django/", {
+FunctionalTester.new("fixtures/python_django/", {
   :techs     => 1,
   :endpoints => 20,
 }, extected_endpoints).test_all

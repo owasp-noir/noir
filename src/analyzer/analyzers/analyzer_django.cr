@@ -1,13 +1,12 @@
 require "../../models/analyzer"
+require "./analyzer_python"
 require "json"
 
-class AnalyzerDjango < Analyzer
+class AnalyzerDjango < AnalyzerPython
   @django_base_path : String = ""
   REGEX_ROOT_URLCONF      = /\s*ROOT_URLCONF\s*=\s*r?['"]([^'"\\]*)['"]/
   REGEX_ROUTE_MAPPING     = /(?:url|path|register)\s*\(\s*r?['"]([^"']*)['"][^,]*,\s*([^),]*)/
   REGEX_INCLUDE_URLS      = /include\s*\(\s*r?['"]([^'"\\]*)['"]/
-  INDENT_SPACE_SIZE       = 4 # Different indentation sizes can result in code analysis being disregarded
-  HTTP_METHOD_NAMES       = ["get", "post", "put", "patch", "delete", "head", "options", "trace"]
   REQUEST_PARAM_FIELD_MAP = {
     "GET"     => {["GET"], "query"},
     "POST"    => {["POST"], "form"},
@@ -88,138 +87,13 @@ class AnalyzerDjango < Analyzer
     CODE = 1
   end
 
-  def travel_package(package_path, dotted_as_names)
-    travel_package_map = Array(Tuple(String, String, Int32)).new
-
-    py_path = ""
-    is_travel_positive = false
-    dotted_as_names_split = dotted_as_names.split(".")
-    dotted_as_names_split[0..-1].each_with_index do |names, index|
-      travel_package_path = File.join(package_path, names)
-
-      py_guess = "#{travel_package_path}.py"
-      if File.directory? travel_package_path
-        package_path = travel_package_path
-        is_travel_positive = true
-      elsif dotted_as_names_split.size - 2 <= index && File.exists? py_guess
-        py_path = py_guess
-        is_travel_positive = true
-      else
-        break
-      end
-    end
-
-    if is_travel_positive == false
-      return travel_package_map
-    end
-
-    names = dotted_as_names_split[-1]
-    names.split(",").each do |name|
-      _import = name.strip
-      next if _import == ""
-
-      _alias = nil
-      if _import.includes? " as "
-        _import, _alias = _import.split(" as ")
-      end
-
-      package_type = PackageType::CODE
-      py_guess = File.join(package_path, "#{_import}.py")
-      if File.exists? py_guess
-        package_type = PackageType::FILE
-        py_path = py_guess
-      end
-
-      next if py_path == ""
-      if !_alias.nil?
-        travel_package_map << {_alias, py_path, package_type}
-      else
-        travel_package_map << {_import, py_path, package_type}
-      end
-    end
-
-    travel_package_map
-  end
-
-  def parse_import_packages(url_base_path : String, content : String)
-    # https://docs.python.org/3/reference/import.html
-    package_map = {} of String => Tuple(String, Int32)
-
-    offset = 0
-    content.each_line do |line|
-      package_path = @django_base_path
-
-      _from = ""
-      _imports = ""
-      _aliases = ""
-      if line.starts_with? "from"
-        line.scan(/from\s*([^'"\s\\]*)\s*import\s*(.*)/) do |match|
-          next if match.size != 3
-          _from = match[1]
-          _imports = match[2]
-        end
-      elsif line.starts_with? "import"
-        line.scan(/import\s*([^'"\s\\]*)/) do |match|
-          next if match.size != 2
-          _imports = match[1]
-        end
-      end
-
-      unless _imports == ""
-        round_bracket_index = line.index('(')
-        if !round_bracket_index.nil?
-          # Parse 'import (\n a,\n b,\n c)' pattern
-          index = offset + round_bracket_index + 1
-          while index < content.size && content[index] != ')'
-            index += 1
-          end
-          _imports = content[(offset + round_bracket_index + 1)..(index - 1)].strip
-        end
-
-        # Relative path
-        if _from.starts_with? ".."
-          package_path = File.join(url_base_path, "..")
-          _from = _from[2..]
-        elsif _from.starts_with? "."
-          package_path = url_base_path
-          _from = _from[1..]
-        end
-
-        _imports.split(",").each do |_import|
-          if _import.starts_with? ".."
-            package_path = File.join(url_base_path, "..")
-          elsif _import.starts_with? "."
-            package_path = url_base_path
-          end
-
-          dotted_as_names = _import
-          if _from != ""
-            dotted_as_names = _from + "." + _import
-          end
-
-          # Create package map (Hash[name => filepath, ...])
-          travel_package_map = travel_package(package_path, dotted_as_names)
-          next if travel_package_map.size == 0
-          travel_package_map.each do |travel_package|
-            name, filepath, package_type = travel_package
-            package_map[name] = {filepath, package_type}
-          end
-        end
-      end
-
-      offset += line.size + 1
-    end
-
-    package_map
-  end
-
   def get_endpoints(django_urls : DjangoUrls) : Array(Endpoint)
     endpoints = [] of Endpoint
     url_base_path = File.dirname(django_urls.filepath)
 
     file = File.open(django_urls.filepath, encoding: "utf-8", invalid: :skip)
     content = file.gets_to_end
-    package_map = parse_import_packages(url_base_path, content)
+    package_map = find_imported_modules(@django_base_path, url_base_path, content)
 
     # [Temporary Fix] Parse only the string after "urlpatterns = ["
     keywords = ["urlpatterns", "=", "["]
@@ -338,7 +212,7 @@ class AnalyzerDjango < Analyzer
             end
           end
 
-          parse_params(line, suspicious_http_methods).each do |param|
+          parse_params_in_codeline(line, suspicious_http_methods).each do |param|
             suspicious_params << param
           end
         end
@@ -383,7 +257,7 @@ class AnalyzerDjango < Analyzer
             suspicious_http_methods << method_function_match[1].upcase
           end
 
-          parse_params(line, suspicious_http_methods).each do |param|
+          parse_params_in_codeline(line, suspicious_http_methods).each do |param|
             suspicious_params << param
           end
         end
@@ -400,72 +274,7 @@ class AnalyzerDjango < Analyzer
     [Endpoint.new(url, "GET")]
   end
 
-  def parse_function_or_class(content : String)
-    lines = content.split("\n")
-
-    indent_size = 0
-    if lines.size > 0
-      while indent_size < lines[0].size && lines[0][indent_size] == ' '
-        # Only spaces, no tabs
-        indent_size += 1
-      end
-
-      indent_size += INDENT_SPACE_SIZE
-    end
-
-    if indent_size > 0
-      double_quote_open, single_quote_open = [false] * 2
-      double_comment_open, single_comment_open = [false] * 2
-      end_index = lines[0].size + 1
-      lines[1..].each do |line|
-        line_index = 0
-        clear_line = line
-        while line_index < line.size
-          if line_index < line.size - 2
-            if !single_quote_open && !double_quote_open
-              if !double_comment_open && line[line_index..line_index + 2] == "'''"
-                single_comment_open = !single_comment_open
-                line_index += 3
-                next
-              elsif !single_comment_open && line[line_index..line_index + 2] == "\"\"\""
-                double_comment_open = !double_comment_open
-                line_index += 3
-                next
-              end
-            end
-          end
-
-          if !single_comment_open && !double_comment_open
-            if !single_quote_open && line[line_index] == '"' && line[line_index - 1] != '\\'
-              double_quote_open = !double_quote_open
-            elsif !double_quote_open && line[line_index] == '\'' && line[line_index - 1] != '\\'
-              single_quote_open = !single_quote_open
-            elsif !single_quote_open && !double_quote_open && line[line_index] == '#' && line[line_index - 1] != '\\'
-              clear_line = line[..(line_index - 1)]
-              break
-            end
-          end
-
-          # [TODO] Remove comments on codeblock
-          line_index += 1
-        end
-
-        open_status = single_comment_open || double_comment_open || single_quote_open || double_quote_open
-        if clear_line[0..(indent_size - 1)].strip == "" || open_status
-          end_index += line.size + 1
-        else
-          break
-        end
-      end
-
-      end_index -= 1
-      return content[..end_index].strip
-    end
-
-    nil
-  end
-
-  def parse_params(line : String, endpoint_methods : Array(String))
+  def parse_params_in_codeline(line : String, endpoint_methods : Array(String))
     suspicious_params = Array(Param).new
 
     if line.includes? "request."
