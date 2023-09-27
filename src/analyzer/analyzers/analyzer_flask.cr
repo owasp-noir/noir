@@ -1,10 +1,7 @@
 require "../../models/analyzer"
+require "./analyzer_python"
 
-class AnalyzerFlask < Analyzer
-  REGEX_PYTHON_VARIABLE_NAME = "[a-zA-Z_][a-zA-Z0-9_]*"
-  HTTP_METHOD_NAMES          = ["get", "post", "put", "patch", "delete", "head", "options", "trace"]
-  INDENT_SPACE_SIZE          = 4
-
+class AnalyzerFlask < AnalyzerPython
   # https://stackoverflow.com/a/16664376
   # https://tedboy.github.io/flask/generated/generated/flask.Request.html
   REQUEST_PARAM_FIELD_MAP = {
@@ -229,71 +226,6 @@ class AnalyzerFlask < Analyzer
     end
 
     endpoints
-  end
-
-  def parse_function_or_class(content : String)
-    # [TODO] Split to other module (duplicated method with analyzer_django)
-    indent_size = 0
-    lines = content.split "\n"
-    if lines.size > 0
-      while indent_size < lines[0].size && lines[0][indent_size] == ' '
-        # Only spaces, no tabs
-        indent_size += 1
-      end
-
-      indent_size += INDENT_SPACE_SIZE
-    end
-
-    if indent_size > 0
-      double_quote_open, single_quote_open = [false] * 2
-      double_comment_open, single_comment_open = [false] * 2
-      end_index = lines[0].size + 1
-      lines[1..].each do |line|
-        line_index = 0
-        clear_line = line
-        while line_index < line.size
-          if line_index < line.size - 2
-            if !single_quote_open && !double_quote_open
-              if !double_comment_open && line[line_index..line_index + 2] == "'''"
-                single_comment_open = !single_comment_open
-                line_index += 3
-                next
-              elsif !single_comment_open && line[line_index..line_index + 2] == "\"\"\""
-                double_comment_open = !double_comment_open
-                line_index += 3
-                next
-              end
-            end
-          end
-
-          if !single_comment_open && !double_comment_open
-            if !single_quote_open && line[line_index] == '"' && line[line_index - 1] != '\\'
-              double_quote_open = !double_quote_open
-            elsif !double_quote_open && line[line_index] == '\'' && line[line_index - 1] != '\\'
-              single_quote_open = !single_quote_open
-            elsif !single_quote_open && !double_quote_open && line[line_index] == '#' && line[line_index - 1] != '\\'
-              clear_line = line[..(line_index - 1)]
-              break
-            end
-          end
-
-          # [TODO] Remove comments on codeblock
-          line_index += 1
-        end
-
-        open_status = single_comment_open || double_comment_open || single_quote_open || double_quote_open
-        if clear_line[0..(indent_size - 1)].strip == "" || open_status
-          end_index += line.size + 1
-        else
-          break
-        end
-      end
-
-      end_index -= 1
-      return content[..end_index].strip
-    end
-
-    nil
   end
 
   def get_filtered_params(method : String, params : Array(Param))
