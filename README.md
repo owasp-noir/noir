@@ -26,6 +26,7 @@
 | Go       | Gin             | ✅  | ✅     | ✅    | ✅     | X  |
 | Python   | Django          | ✅  | ✅     | ✅    | ✅     | X  |
 | Python   | Flask           | ✅  | ✅     | ✅    | ✅     | X  |
+| Python   | FastAPI         | ✅  | ✅     | ✅    | ✅     | ✅ |
 | Ruby     | Rails           | ✅  | ✅     | ✅    | ✅     | X  |
 | Ruby     | Sinatra         | ✅  | ✅     | ✅    | ✅     | X  |
 | Php      |                 | ✅  | ✅     | ✅    | ✅     | X  |

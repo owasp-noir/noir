@@ -60,6 +60,11 @@ module NoirTechs
       :framework => "Flask",
       :similar   => ["flask", "python-flask", "python_flask"],
     },
+    :python_fastapi => {
+      :language  => "Python",
+      :framework => "FastAPI",
+      :similar   => ["fastapi", "python-fastapi", "python_fastapi"],
+    },
     :ruby_rails => {
       :language  => "Ruby",
       :framework => "Rails",
