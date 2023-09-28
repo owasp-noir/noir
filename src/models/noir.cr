@@ -125,6 +125,8 @@ class NoirRunner
     case options[:format]
     when "json"
       puts @endpoints.to_json
+    when "yaml"
+      puts @endpoints.to_yaml
     when "markdown-table"
       builder = OutputBuilderMarkdownTable.new @options
       builder.print @endpoints
