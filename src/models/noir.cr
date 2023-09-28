@@ -14,6 +14,7 @@ class NoirRunner
   @scope : String
   @send_proxy : String
   @send_req : String
+  @send_es : String
   @is_debug : Bool
   @is_color : Bool
   @is_log : Bool
@@ -34,6 +35,7 @@ class NoirRunner
     @endpoints = [] of Endpoint
     @send_proxy = options[:send_proxy]
     @send_req = options[:send_req]
+    @send_es = options[:send_es]
     @scope = options[:scope]
     @is_debug = str_to_bool(options[:debug])
     @is_color = str_to_bool(options[:color])
@@ -101,15 +103,21 @@ class NoirRunner
 
   def deliver
     if @send_proxy != ""
-      @logger.system "Sending requests with proxy #{@send_proxy}"
+      @logger.system "Sending requests with proxy #{@send_proxy}."
       deliver = SendWithProxy.new(@options)
       deliver.run(@endpoints)
     end
 
     if @send_req != "no"
-      @logger.system "Sending requests without proxy"
+      @logger.system "Sending requests without proxy."
       deliver = SendReq.new(@options)
       deliver.run(@endpoints)
+    end
+
+    if @send_es != ""
+      @logger.system "Sending requests to Elasticsearch."
+      deliver = SendElasticSearch.new(@options)
+      deliver.run(@endpoints, @send_es)
     end
   end
 
