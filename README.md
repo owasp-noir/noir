@@ -89,7 +89,8 @@ Usage: noir <flags>
     -s SCOPE, --scope url,param      Set scope for detection
 
   Output:
-    -f FORMAT, --format json         Set output format [plain/json/markdown-table/curl/httpie/oas2/oas3]
+    -f FORMAT, --format json         Set output format
+                                     [plain/json/yaml/markdown-table/curl/httpie/oas2/oas3]
     -o PATH, --output out.txt        Write result to file
     --set-pvalue VALUE               Specifies the value of the identified parameter
     --no-color                       Disable color output
