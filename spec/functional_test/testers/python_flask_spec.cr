@@ -10,7 +10,7 @@ extected_endpoints = [
   Endpoint.new("/", "GET"),
 ]
 
-FunctionalTester.new("fixtures/flask/", {
+FunctionalTester.new("fixtures/python_flask/", {
   :techs     => 1,
   :endpoints => 7,
 }, extected_endpoints).test_all

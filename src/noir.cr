@@ -6,7 +6,7 @@ require "./options.cr"
 require "./techs/techs.cr"
 
 module Noir
-  VERSION = "0.8.0"
+  VERSION = "0.9.0"
 end
 
 noir_options = default_options()
@@ -21,7 +21,7 @@ OptionParser.parse do |parser|
 
   parser.separator "\n  Output:".colorize(:blue)
 
-  parser.on "-f FORMAT", "--format json", "Set output format [plain/json/markdown-table/curl/httpie/oas2/oas3]" { |var| noir_options[:format] = var }
+  parser.on "-f FORMAT", "--format json", "Set output format \n[plain/json/yaml/markdown-table/curl/httpie/oas2/oas3]" { |var| noir_options[:format] = var }
   parser.on "-o PATH", "--output out.txt", "Write result to file" { |var| noir_options[:output] = var }
   parser.on "--set-pvalue VALUE", "Specifies the value of the identified parameter" { |var| noir_options[:set_pvalue] = var }
   parser.on "--no-color", "Disable color output" do
@@ -34,6 +34,7 @@ OptionParser.parse do |parser|
   parser.separator "\n  Deliver:".colorize(:blue)
   parser.on "--send-req", "Send the results to the web request" { |_| noir_options[:send_req] = "yes" }
   parser.on "--send-proxy http://proxy..", "Send the results to the web request via http proxy" { |var| noir_options[:send_proxy] = var }
+  parser.on "--send-es http://es..", "Send the results to elasticsearch" { |var| noir_options[:send_es] = var }
   parser.on "--with-headers X-Header:Value", "Add Custom Headers to be Used in Deliver" do |var|
     noir_options[:send_with_headers] += "#{var}::NOIR::HEADERS::SPLIT::"
   end

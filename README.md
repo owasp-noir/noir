@@ -7,7 +7,7 @@
 - Automatically identify language and framework from source code.
 - Find API endpoints and web pages through code analysis.
 - Load results quickly through interactions with proxy tools such as ZAP, Burpsuite, Caido and More Proxy tools.
-- That provides structured data such as JSON and HAR for identified Attack Surfaces to enable seamless interaction with other tools. Also provides command line samples to easily integrate and collaborate with other tools, such as curls or httpie.
+- That provides structured data such as JSON and YAML for identified Attack Surfaces to enable seamless interaction with other tools. Also provides command line samples to easily integrate and collaborate with other tools, such as curls or httpie.
 
 ## Available Support Scope
 ### Endpoint's Entities
@@ -26,6 +26,7 @@
 | Go       | Gin             | ✅  | ✅     | ✅    | ✅     | X  |
 | Python   | Django          | ✅  | ✅     | ✅    | ✅     | X  |
 | Python   | Flask           | ✅  | ✅     | ✅    | ✅     | X  |
+| Python   | FastAPI         | ✅  | ✅     | ✅    | ✅     | ✅ |
 | Ruby     | Rails           | ✅  | ✅     | ✅    | ✅     | X  |
 | Ruby     | Sinatra         | ✅  | ✅     | ✅    | ✅     | X  |
 | Php      |                 | ✅  | ✅     | ✅    | ✅     | X  |
@@ -88,7 +89,8 @@ Usage: noir <flags>
     -s SCOPE, --scope url,param      Set scope for detection
 
   Output:
-    -f FORMAT, --format json         Set output format [plain/json/markdown-table/curl/httpie/oas2/oas3]
+    -f FORMAT, --format json         Set output format
+                                     [plain/json/yaml/markdown-table/curl/httpie/oas2/oas3]
     -o PATH, --output out.txt        Write result to file
     --set-pvalue VALUE               Specifies the value of the identified parameter
     --no-color                       Disable color output
@@ -97,6 +99,7 @@ Usage: noir <flags>
   Deliver:
     --send-req                       Send the results to the web request
     --send-proxy http://proxy..      Send the results to the web request via http proxy
+    --send-es https://es..           Send the results to elasticsearch
     --with-headers X-Header:Value    Add Custom Headers to be Used in Deliver
 
   Technologies:
