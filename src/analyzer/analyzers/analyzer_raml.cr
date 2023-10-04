@@ -46,8 +46,11 @@ class AnalyzerRAML < Analyzer
                 end
 
                 @result << Endpoint.new(path.to_s, method.to_s.upcase, params)
+              rescue e
+                @logger.debug e
               end
-            rescue
+            rescue e
+              @logger.debug e
             end
           end
         end

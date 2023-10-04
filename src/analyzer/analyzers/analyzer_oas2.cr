@@ -43,7 +43,11 @@ class AnalyzerOAS2 < Analyzer
               else
                 @result << Endpoint.new(base_path + path, method.upcase)
               end
+            rescue e
+              @logger.debug e
             end
+          rescue e
+            @logger.debug e
           end
         end
       end
@@ -86,7 +90,11 @@ class AnalyzerOAS2 < Analyzer
               else
                 @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase)
               end
+            rescue e
+              @logger.debug e
             end
+          rescue e
+            @logger.debug e
           end
         end
       end

@@ -21,3 +21,8 @@ FunctionalTester.new("fixtures/oas3/multiple_docs/", {
   :techs     => 1,
   :endpoints => 2,
 }, nil).test_all
+
+FunctionalTester.new("fixtures/oas3/nil_cast/", {
+  :techs     => 1,
+  :endpoints => 0,
+}, nil).test_all

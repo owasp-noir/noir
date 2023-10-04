@@ -31,7 +31,8 @@ class AnalyzerOAS3 < Analyzer
 
           begin
             base_path = get_base_path json_obj["servers"]
-          rescue
+          rescue e
+            @logger.debug e
           end
 
           json_obj["paths"].as_h.each do |path, path_obj|
@@ -78,6 +79,8 @@ class AnalyzerOAS3 < Analyzer
               else
                 @result << Endpoint.new(base_path + path, method.upcase)
               end
+            rescue e
+              @logger.debug e
             end
           end
         end
@@ -92,7 +95,8 @@ class AnalyzerOAS3 < Analyzer
 
           begin
             base_path = get_base_path yaml_obj["servers"]
-          rescue
+          rescue e
+            @logger.debug e
           end
 
           yaml_obj["paths"].as_h.each do |path, path_obj|
@@ -140,6 +144,8 @@ class AnalyzerOAS3 < Analyzer
                 @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase)
               end
             end
+          rescue e
+            @logger.debug e
           end
         end
       end
