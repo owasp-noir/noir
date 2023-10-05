@@ -16,32 +16,39 @@ class AnalyzerOAS2 < Analyzer
             if json_obj["basePath"].to_s != ""
               base_path = base_path + json_obj["basePath"].to_s
             end
-          rescue
+          rescue e
+            @logger.debug e
           end
-          json_obj["paths"].as_h.each do |path, path_obj|
-            path_obj.as_h.each do |method, method_obj|
-              params = [] of Param
 
-              if method_obj.as_h.has_key?("parameters")
-                method_obj["parameters"].as_a.each do |param_obj|
-                  param_name = param_obj["name"].to_s
-                  if param_obj["in"] == "query"
-                    param = Param.new(param_name, "", "query")
-                    params << param
-                  elsif param_obj["in"] == "form"
-                    param = Param.new(param_name, "", "json")
-                    params << param
-                  elsif param_obj["in"] == "formData"
-                    param = Param.new(param_name, "", "form")
-                    params << param
-                  elsif param_obj["in"] == "header"
-                    param = Param.new(param_name, "", "header")
-                    params << param
+          begin
+            paths = json_obj["paths"].as_h
+            paths.each do |path, path_obj|
+              path_obj.as_h.each do |method, method_obj|
+                params = [] of Param
+
+                if method_obj.as_h.has_key?("parameters")
+                  method_obj["parameters"].as_a.each do |param_obj|
+                    param_name = param_obj["name"].to_s
+                    if param_obj["in"] == "query"
+                      param = Param.new(param_name, "", "query")
+                      params << param
+                    elsif param_obj["in"] == "form"
+                      param = Param.new(param_name, "", "json")
+                      params << param
+                    elsif param_obj["in"] == "formData"
+                      param = Param.new(param_name, "", "form")
+                      params << param
+                    elsif param_obj["in"] == "header"
+                      param = Param.new(param_name, "", "header")
+                      params << param
+                    end
                   end
+                  @result << Endpoint.new(base_path + path, method.upcase, params)
+                else
+                  @result << Endpoint.new(base_path + path, method.upcase)
                 end
-                @result << Endpoint.new(base_path + path, method.upcase, params)
-              else
-                @result << Endpoint.new(base_path + path, method.upcase)
+              rescue e
+                @logger.debug e
               end
             rescue e
               @logger.debug e
@@ -63,32 +70,39 @@ class AnalyzerOAS2 < Analyzer
             if yaml_obj["basePath"].to_s != ""
               base_path = base_path + yaml_obj["basePath"].to_s
             end
-          rescue
+          rescue e
+            @logger.debug e
           end
-          yaml_obj["paths"].as_h.each do |path, path_obj|
-            path_obj.as_h.each do |method, method_obj|
-              params = [] of Param
 
-              if method_obj.as_h.has_key?("parameters")
-                method_obj["parameters"].as_a.each do |param_obj|
-                  param_name = param_obj["name"].to_s
-                  if param_obj["in"] == "query"
-                    param = Param.new(param_name, "", "query")
-                    params << param
-                  elsif param_obj["in"] == "form"
-                    param = Param.new(param_name, "", "json")
-                    params << param
-                  elsif param_obj["in"] == "formData"
-                    param = Param.new(param_name, "", "form")
-                    params << param
-                  elsif param_obj["in"] == "header"
-                    param = Param.new(param_name, "", "header")
-                    params << param
+          begin
+            paths = yaml_obj["paths"].as_h
+            paths.each do |path, path_obj|
+              path_obj.as_h.each do |method, method_obj|
+                params = [] of Param
+
+                if method_obj.as_h.has_key?("parameters")
+                  method_obj["parameters"].as_a.each do |param_obj|
+                    param_name = param_obj["name"].to_s
+                    if param_obj["in"] == "query"
+                      param = Param.new(param_name, "", "query")
+                      params << param
+                    elsif param_obj["in"] == "form"
+                      param = Param.new(param_name, "", "json")
+                      params << param
+                    elsif param_obj["in"] == "formData"
+                      param = Param.new(param_name, "", "form")
+                      params << param
+                    elsif param_obj["in"] == "header"
+                      param = Param.new(param_name, "", "header")
+                      params << param
+                    end
                   end
+                  @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params)
+                else
+                  @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase)
                 end
-                @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params)
-              else
-                @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase)
+              rescue e
+                @logger.debug e
               end
             rescue e
               @logger.debug e
