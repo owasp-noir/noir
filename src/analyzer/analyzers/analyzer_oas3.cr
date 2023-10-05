@@ -32,7 +32,8 @@ class AnalyzerOAS3 < Analyzer
           begin
             base_path = get_base_path json_obj["servers"]
           rescue e
-            @logger.debug e
+            @logger.debug "Exception of #{oas3_json}/servers"
+            @logger.debug_sub e
           end
 
           begin
@@ -82,11 +83,13 @@ class AnalyzerOAS3 < Analyzer
                   @result << Endpoint.new(base_path + path, method.upcase)
                 end
               rescue e
-                @logger.debug e
+                @logger.debug "Exception of #{oas3_json}/paths/endpoint"
+                @logger.debug_sub e
               end
             end
           rescue e
-            @logger.debug e
+            @logger.debug "Exception of #{oas3_json}/paths"
+            @logger.debug_sub e
           end
         end
       end
@@ -101,7 +104,8 @@ class AnalyzerOAS3 < Analyzer
           begin
             base_path = get_base_path yaml_obj["servers"]
           rescue e
-            @logger.debug e
+            @logger.debug "Exception of #{oas3_yaml}/servers"
+            @logger.debug_sub e
           end
 
           begin
@@ -152,10 +156,12 @@ class AnalyzerOAS3 < Analyzer
                 end
               end
             rescue e
-              @logger.debug e
+              @logger.debug "Exception of #{oas3_yaml}/paths/endpoint"
+              @logger.debug_sub e
             end
           rescue e
-            @logger.debug e
+            @logger.debug "Exception of #{oas3_yaml}/paths"
+            @logger.debug_sub e
           end
         end
       end
