@@ -47,10 +47,12 @@ class AnalyzerRAML < Analyzer
 
                 @result << Endpoint.new(path.to_s, method.to_s.upcase, params)
               rescue e
-                @logger.debug e
+                @logger.debug "Exception of #{raml_spec}/paths/#{path}/#{method}"
+                @logger.debug_sub e
               end
             rescue e
-              @logger.debug e
+              @logger.debug "Exception of #{raml_spec}/paths/#{path}"
+              @logger.debug_sub e
             end
           end
         end
