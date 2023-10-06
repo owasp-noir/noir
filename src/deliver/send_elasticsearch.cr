@@ -27,7 +27,8 @@ class SendElasticSearch < Deliver
         json: true
       )
     rescue e
-      @logger.debug e
+      @logger.debug "Exception of ES Delivery"
+      @logger.debug_sub e
     end
   rescue
   end

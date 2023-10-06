@@ -31,54 +31,65 @@ class AnalyzerOAS3 < Analyzer
 
           begin
             base_path = get_base_path json_obj["servers"]
-          rescue
+          rescue e
+            @logger.debug "Exception of #{oas3_json}/servers"
+            @logger.debug_sub e
           end
 
-          json_obj["paths"].as_h.each do |path, path_obj|
-            path_obj.as_h.each do |method, method_obj|
-              params = [] of Param
+          begin
+            paths = json_obj["paths"].as_h
+            paths.each do |path, path_obj|
+              path_obj.as_h.each do |method, method_obj|
+                params = [] of Param
 
-              if method_obj.is_a?(JSON::Any) && method_obj.is_a?(Hash(String, JSON::Any))
-                if method_obj.as_h.has_key?("parameters")
-                  method_obj["parameters"].as_a.each do |param_obj|
-                    param_name = param_obj["name"].to_s
-                    if param_obj["in"] == "query"
-                      param = Param.new(param_name, "", "query")
-                      params << param
-                    elsif param_obj["in"] == "header"
-                      param = Param.new(param_name, "", "header")
-                      params << param
-                    end
-                  end
-                end
-
-                if method_obj.as_h.has_key?("requestBody")
-                  method_obj["requestBody"]["content"].as_h.each do |content_type, content_obj|
-                    if content_type == "application/json"
-                      content_obj["schema"]["properties"].as_h.each do |param_name, _|
-                        param = Param.new(param_name, "", "json")
+                if method_obj.is_a?(JSON::Any) && method_obj.is_a?(Hash(String, JSON::Any))
+                  if method_obj.as_h.has_key?("parameters")
+                    method_obj["parameters"].as_a.each do |param_obj|
+                      param_name = param_obj["name"].to_s
+                      if param_obj["in"] == "query"
+                        param = Param.new(param_name, "", "query")
                         params << param
-                      end
-                    elsif content_type == "application/x-www-form-urlencoded"
-                      content_obj["schema"]["properties"].as_h.each do |param_name, _|
-                        param = Param.new(param_name, "", "form")
+                      elsif param_obj["in"] == "header"
+                        param = Param.new(param_name, "", "header")
                         params << param
                       end
                     end
                   end
-                end
-              end
 
-              if params.size > 0 && params.size > 0
-                @result << Endpoint.new(base_path + path, method.upcase, params + params)
-              elsif params.size > 0
-                @result << Endpoint.new(base_path + path, method.upcase, params)
-              elsif params.size > 0
-                @result << Endpoint.new(base_path + path, method.upcase, params)
-              else
-                @result << Endpoint.new(base_path + path, method.upcase)
+                  if method_obj.as_h.has_key?("requestBody")
+                    method_obj["requestBody"]["content"].as_h.each do |content_type, content_obj|
+                      if content_type == "application/json"
+                        content_obj["schema"]["properties"].as_h.each do |param_name, _|
+                          param = Param.new(param_name, "", "json")
+                          params << param
+                        end
+                      elsif content_type == "application/x-www-form-urlencoded"
+                        content_obj["schema"]["properties"].as_h.each do |param_name, _|
+                          param = Param.new(param_name, "", "form")
+                          params << param
+                        end
+                      end
+                    end
+                  end
+                end
+
+                if params.size > 0 && params.size > 0
+                  @result << Endpoint.new(base_path + path, method.upcase, params + params)
+                elsif params.size > 0
+                  @result << Endpoint.new(base_path + path, method.upcase, params)
+                elsif params.size > 0
+                  @result << Endpoint.new(base_path + path, method.upcase, params)
+                else
+                  @result << Endpoint.new(base_path + path, method.upcase)
+                end
+              rescue e
+                @logger.debug "Exception of #{oas3_json}/paths/endpoint"
+                @logger.debug_sub e
               end
             end
+          rescue e
+            @logger.debug "Exception of #{oas3_json}/paths"
+            @logger.debug_sub e
           end
         end
       end
@@ -92,54 +103,65 @@ class AnalyzerOAS3 < Analyzer
 
           begin
             base_path = get_base_path yaml_obj["servers"]
-          rescue
+          rescue e
+            @logger.debug "Exception of #{oas3_yaml}/servers"
+            @logger.debug_sub e
           end
 
-          yaml_obj["paths"].as_h.each do |path, path_obj|
-            path_obj.as_h.each do |method, method_obj|
-              params = [] of Param
+          begin
+            paths = yaml_obj["paths"].as_h
+            paths.each do |path, path_obj|
+              path_obj.as_h.each do |method, method_obj|
+                params = [] of Param
 
-              if method_obj.is_a?(YAML::Any) && method_obj.is_a?(Hash(String, YAML::Any))
-                if method_obj.as_h.has_key?("parameters")
-                  method_obj["parameters"].as_a.each do |param_obj|
-                    param_name = param_obj["name"].to_s
-                    if param_obj["in"] == "query"
-                      param = Param.new(param_name, "", "query")
-                      params << param
-                    elsif param_obj["in"] == "header"
-                      param = Param.new(param_name, "", "header")
-                      params << param
-                    end
-                  end
-                end
-
-                if method_obj.as_h.has_key?("requestBody")
-                  method_obj["requestBody"]["content"].as_h.each do |content_type, content_obj|
-                    if content_type == "application/json"
-                      content_obj["schema"]["properties"].as_h.each do |param_name, _|
-                        param = Param.new(param_name.to_s, "", "json")
+                if method_obj.is_a?(YAML::Any) && method_obj.is_a?(Hash(String, YAML::Any))
+                  if method_obj.as_h.has_key?("parameters")
+                    method_obj["parameters"].as_a.each do |param_obj|
+                      param_name = param_obj["name"].to_s
+                      if param_obj["in"] == "query"
+                        param = Param.new(param_name, "", "query")
                         params << param
-                      end
-                    elsif content_type == "application/x-www-form-urlencoded"
-                      content_obj["schema"]["properties"].as_h.each do |param_name, _|
-                        param = Param.new(param_name.to_s, "", "form")
+                      elsif param_obj["in"] == "header"
+                        param = Param.new(param_name, "", "header")
                         params << param
                       end
                     end
                   end
+
+                  if method_obj.as_h.has_key?("requestBody")
+                    method_obj["requestBody"]["content"].as_h.each do |content_type, content_obj|
+                      if content_type == "application/json"
+                        content_obj["schema"]["properties"].as_h.each do |param_name, _|
+                          param = Param.new(param_name.to_s, "", "json")
+                          params << param
+                        end
+                      elsif content_type == "application/x-www-form-urlencoded"
+                        content_obj["schema"]["properties"].as_h.each do |param_name, _|
+                          param = Param.new(param_name.to_s, "", "form")
+                          params << param
+                        end
+                      end
+                    end
+                  end
+                end
+
+                if params.size > 0 && params.size > 0
+                  @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params + params)
+                elsif params.size > 0
+                  @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params)
+                elsif params.size > 0
+                  @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params)
+                else
+                  @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase)
                 end
               end
-
-              if params.size > 0 && params.size > 0
-                @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params + params)
-              elsif params.size > 0
-                @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params)
-              elsif params.size > 0
-                @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params)
-              else
-                @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase)
-              end
+            rescue e
+              @logger.debug "Exception of #{oas3_yaml}/paths/endpoint"
+              @logger.debug_sub e
             end
+          rescue e
+            @logger.debug "Exception of #{oas3_yaml}/paths"
+            @logger.debug_sub e
           end
         end
       end
