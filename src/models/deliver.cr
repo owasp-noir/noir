@@ -24,7 +24,7 @@ class Deliver
         if header.includes? ":"
           @logger.debug "Adding '#{header}' to headers."
           splited = header.split(":")
-          @headers[splited[0]] = splited[1].gsub("s", "")
+          @headers[splited[0]] = splited[1].gsub(/\s/, "")
         end
       end
       @logger.info_sub "#{@headers.size} headers added."
@@ -33,6 +33,10 @@ class Deliver
 
   def proxy
     @proxy
+  end
+
+  def headers
+    @headers
   end
 
   def run

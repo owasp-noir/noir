@@ -10,4 +10,10 @@ describe "Initialize" do
     object = Deliver.new options
     object.proxy.should eq("http://localhost:8090")
   end
+
+  it "Deliver with headers" do
+    options[:send_with_headers] = "X-API-Key: abcdssss"
+    object = Deliver.new options
+    object.headers["X-API-Key"].should eq("abcdssss")
+  end
 end
