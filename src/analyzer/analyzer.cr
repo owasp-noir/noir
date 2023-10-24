@@ -20,6 +20,7 @@ def initialize_analyzers(logger : NoirLogger)
   analyzers["raml"] = ->analyzer_raml(Hash(Symbol, String))
   analyzers["java_jsp"] = ->analyzer_jsp(Hash(Symbol, String))
   analyzers["c#-aspnet-mvc"] = ->analyzer_cs_aspnet_mvc(Hash(Symbol, String))
+  analyzers["rust_axum"] = ->analyzer_rust_axum(Hash(Symbol, String))
 
   logger.info_sub "#{analyzers.size} Analyzers initialized"
   logger.debug "Analyzers:"
