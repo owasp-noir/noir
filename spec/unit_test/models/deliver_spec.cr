@@ -5,6 +5,7 @@ describe "Initialize" do
   options = default_options
   options[:base] = "noir"
   options[:send_proxy] = "http://localhost:8090"
+  options[:nolog] = "yes"
 
   it "Deliver" do
     object = Deliver.new options
