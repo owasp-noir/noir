@@ -9,8 +9,10 @@ class SendElasticSearch < Deliver
       uri.port = 9200
     end
 
+    applied_endpoints = apply_all(endpoints)
+
     body = {
-      "endpoints" => endpoints,
+      "endpoints" => applied_endpoints,
     }.to_json
     es_headers = @headers
     es_headers["Content-Type"] = "application/json"

@@ -7,12 +7,8 @@ class AnalyzerJsp < Analyzer
     begin
       Dir.glob("#{base_path}/**/*") do |path|
         next if File.directory?(path)
-        if base_path[-1].to_s == "/"
-          relative_path = path.sub("#{base_path}", "").sub("./", "").sub("//", "/")
-        else
-          relative_path = path.sub("#{base_path}/", "").sub("./", "").sub("//", "/")
-        end
-        relative_path = remove_start_slash(relative_path)
+
+        relative_path = get_relative_path(base_path, path)
 
         if File.exists?(path) && File.extname(path) == ".jsp"
           File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|

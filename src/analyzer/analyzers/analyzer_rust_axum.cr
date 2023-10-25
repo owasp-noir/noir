@@ -8,6 +8,7 @@ class AnalyzerRustAxum < Analyzer
     begin
       Dir.glob("#{base_path}/**/*") do |path|
         next if File.directory?(path)
+
         if File.exists?(path) && File.extname(path) == ".rs"
           File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
             file.each_line do |line|
@@ -17,7 +18,7 @@ class AnalyzerRustAxum < Analyzer
                   begin
                     route_argument = match[1]
                     callback_argument = match[2]
-                    result << Endpoint.new(route_argument, callback_to_method(callback_argument))
+                    result << Endpoint.new("#{@url}#{route_argument}", callback_to_method(callback_argument))
                   rescue
                   end
                 end

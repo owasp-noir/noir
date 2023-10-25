@@ -35,6 +35,7 @@
 | Java     | Spring          | ✅  | ✅     | X     | X      | X  |
 | Kotlin   | Spring          | ✅  | ✅     | X     | X      | X  |
 | JS       | Express         | ✅  | ✅     | X     | X      | X  |
+| Rust     | Axum            | ✅  | ✅     | X     | X      | X  |
 | C#       | ASP.NET MVC     | ✅  | X      | X     | X      | X  |
 | JS       | Next            | X   | X      | X     | X      | X  |
 

@@ -38,6 +38,12 @@ OptionParser.parse do |parser|
   parser.on "--with-headers X-Header:Value", "Add Custom Headers to be Used in Deliver" do |var|
     noir_options[:send_with_headers] += "#{var}::NOIR::HEADERS::SPLIT::"
   end
+  parser.on "--use-matchers string", "Delivers URLs that match a specific condition" do |var|
+    noir_options[:use_matchers] += "#{var}::NOIR::MATCHER::SPLIT::"
+  end
+  parser.on "--use-filters string", "Excludes URLs that match a specific condition." do |var|
+    noir_options[:use_filters] += "#{var}::NOIR::FILTER::SPLIT::"
+  end
 
   parser.separator "\n  Technologies:".colorize(:blue)
   parser.on "-t TECHS", "--techs rails,php", "Specify the technologies to use" { |var| noir_options[:techs] = var }
