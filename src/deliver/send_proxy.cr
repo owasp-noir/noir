@@ -5,7 +5,8 @@ require "../models/deliver"
 class SendWithProxy < Deliver
   def run(endpoints : Array(Endpoint))
     proxy_url = URI.parse(@proxy)
-    endpoints.each do |endpoint|
+    applied_endpoints = apply_all(endpoints)
+    applied_endpoints.each do |endpoint|
       begin
         if endpoint.params.size > 0
           endpoint_hash = endpoint.params_to_hash
