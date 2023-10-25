@@ -9,6 +9,20 @@ describe "remove_start_slash" do
   end
 end
 
+describe "get_relative_path" do
+  it "start with ./" do
+    get_relative_path("./abcd", "1.cr").should eq("1.cr")
+  end
+
+  it "start with /" do
+    get_relative_path("/abcd", "1.cr").should eq("1.cr")
+  end
+
+  it "end with /" do
+    get_relative_path("/abcd/", "1.cr").should eq("1.cr")
+  end
+end
+
 describe "get_symbol" do
   it "get" do
     get_symbol("GET").should eq(:get)
