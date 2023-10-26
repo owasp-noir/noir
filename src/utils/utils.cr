@@ -7,6 +7,17 @@ def remove_start_slash(input_path : String)
   path
 end
 
+def get_relative_path(base_path : String, path : String)
+  if base_path[-1].to_s == "/"
+    relative_path = path.sub("#{base_path}", "").sub("./", "").sub("//", "/")
+  else
+    relative_path = path.sub("#{base_path}/", "").sub("./", "").sub("//", "/")
+  end
+  relative_path = remove_start_slash(relative_path)
+
+  relative_path
+end
+
 def str_to_bool(str)
   if str == "yes"
     return true

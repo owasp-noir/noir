@@ -8,6 +8,8 @@ class Deliver
   @is_log : Bool
   @proxy : String
   @headers : Hash(String, String) = {} of String => String
+  @matchers : Array(String) = [] of String
+  @filters : Array(String) = [] of String
 
   def initialize(options : Hash(Symbol, String))
     @options = options
@@ -29,6 +31,65 @@ class Deliver
       end
       @logger.info_sub "#{@headers.size} headers added."
     end
+
+    @matchers = options[:use_matchers].split("::NOIR::MATCHER::SPLIT::")
+    @matchers.delete("")
+    if @matchers.size > 0
+      @logger.system "#{@matchers.size} matchers added."
+    end
+
+    @filters = options[:use_filters].split("::NOIR::FILTER::SPLIT::")
+    @filters.delete("")
+    if @filters.size > 0
+      @logger.system "#{@filters.size} filters added."
+    end
+  end
+
+  def apply_all(endpoints : Array(Endpoint))
+    result = endpoints
+    @logger.debug "Matchers: #{@matchers}"
+    @logger.debug "Filters: #{@filters}"
+
+    if @matchers.size > 0
+      @logger.system "Applying matchers"
+      result = apply_matchers(endpoints)
+    end
+
+    if @filters.size > 0
+      @logger.system "Applying filters"
+      result = apply_filters(endpoints)
+    end
+
+    result
+  end
+
+  def apply_matchers(endpoints : Array(Endpoint))
+    result = [] of Endpoint
+    endpoints.each do |endpoint|
+      @matchers.each do |matcher|
+        if endpoint.url.includes? matcher
+          @logger.debug "Endpoint '#{endpoint.url}' matched with '#{matcher}'."
+          result << endpoint
+        end
+      end
+    end
+
+    result
+  end
+
+  def apply_filters(endpoints : Array(Endpoint))
+    result = [] of Endpoint
+    endpoints.each do |endpoint|
+      @filters.each do |filter|
+        if endpoint.url.includes? filter
+          @logger.debug "Endpoint '#{endpoint.url}' filtered with '#{filter}'."
+        else
+          result << endpoint
+        end
+      end
+    end
+
+    result
   end
 
   def proxy
@@ -37,6 +98,14 @@ class Deliver
 
   def headers
     @headers
+  end
+
+  def matchers
+    @matchers
+  end
+
+  def filters
+    @filters
   end
 
   def run

@@ -6,7 +6,7 @@ require "./options.cr"
 require "./techs/techs.cr"
 
 module Noir
-  VERSION = "0.9.1"
+  VERSION = "0.10.0"
 end
 
 noir_options = default_options()
@@ -37,6 +37,12 @@ OptionParser.parse do |parser|
   parser.on "--send-es http://es..", "Send the results to elasticsearch" { |var| noir_options[:send_es] = var }
   parser.on "--with-headers X-Header:Value", "Add Custom Headers to be Used in Deliver" do |var|
     noir_options[:send_with_headers] += "#{var}::NOIR::HEADERS::SPLIT::"
+  end
+  parser.on "--use-matchers string", "Delivers URLs that match a specific condition" do |var|
+    noir_options[:use_matchers] += "#{var}::NOIR::MATCHER::SPLIT::"
+  end
+  parser.on "--use-filters string", "Excludes URLs that match a specific condition" do |var|
+    noir_options[:use_filters] += "#{var}::NOIR::FILTER::SPLIT::"
   end
 
   parser.separator "\n  Technologies:".colorize(:blue)

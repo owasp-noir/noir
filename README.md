@@ -35,6 +35,7 @@
 | Java     | Spring          | ✅  | ✅     | X     | X      | X  |
 | Kotlin   | Spring          | ✅  | ✅     | X     | X      | X  |
 | JS       | Express         | ✅  | ✅     | X     | X      | X  |
+| Rust     | Axum            | ✅  | ✅     | X     | X      | X  |
 | C#       | ASP.NET MVC     | ✅  | X      | X     | X      | X  |
 | JS       | Next            | X   | X      | X     | X      | X  |
 
@@ -101,6 +102,8 @@ Usage: noir <flags>
     --send-proxy http://proxy..      Send the results to the web request via http proxy
     --send-es https://es..           Send the results to elasticsearch
     --with-headers X-Header:Value    Add Custom Headers to be Used in Deliver
+    --use-matchers string            Delivers URLs that match a specific condition
+    --use-filters string             Excludes URLs that match a specific condition
 
   Technologies:
     -t TECHS, --techs rails,php      Set technologies to use
