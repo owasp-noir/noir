@@ -6,7 +6,7 @@ require "./options.cr"
 require "./techs/techs.cr"
 
 module Noir
-  VERSION = "0.9.1"
+  VERSION = "0.10.0"
 end
 
 noir_options = default_options()
@@ -41,7 +41,7 @@ OptionParser.parse do |parser|
   parser.on "--use-matchers string", "Delivers URLs that match a specific condition" do |var|
     noir_options[:use_matchers] += "#{var}::NOIR::MATCHER::SPLIT::"
   end
-  parser.on "--use-filters string", "Excludes URLs that match a specific condition." do |var|
+  parser.on "--use-filters string", "Excludes URLs that match a specific condition" do |var|
     noir_options[:use_filters] += "#{var}::NOIR::FILTER::SPLIT::"
   end
 
