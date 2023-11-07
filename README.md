@@ -53,7 +53,7 @@
 ## Installation
 ### Homebrew (macOS)
 ```bash
-brew tap hahwul/noir
+brew tap noir-cr/noir
 brew install noir
 ```
 
@@ -63,7 +63,7 @@ brew install noir
 # https://crystal-lang.org/install/
 
 # Clone this repo
-git clone https://github.com/hahwul/noir
+git clone https://github.com/noir-cr/noir
 cd noir
 
 # Install Dependencies
@@ -78,7 +78,7 @@ cp ./bin/noir /usr/bin/
 
 ### Docker (GHCR)
 ```bash
-docker pull ghcr.io/hahwul/noir:main
+docker pull ghcr.io/noir-cr/noir:main
 ```
 
 ## Usage
