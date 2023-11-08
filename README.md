@@ -53,8 +53,9 @@
 ## Installation
 ### Homebrew (macOS)
 ```bash
-brew tap noir-cr/noir
 brew install noir
+
+# https://formulae.brew.sh/formula/noir
 ```
 
 ### From Sources
