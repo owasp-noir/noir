@@ -1,4 +1,4 @@
-require "../src/utils/*"
+require "../../../src/utils/*"
 
 describe "remove_start_slash" do
   it "with slash" do
