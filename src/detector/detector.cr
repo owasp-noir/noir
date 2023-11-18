@@ -33,6 +33,7 @@ def detect_techs(base_path : String, options : Hash(Symbol, String), logger : No
         begin
           file = channel.receive
           next if File.directory?(file)
+          logger.debug "Detecting: #{file}"
           content = File.read(file, encoding: "utf-8", invalid: :skip)
 
           detector_list.each do |detector|
