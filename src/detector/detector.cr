@@ -21,20 +21,20 @@ def detect_techs(base_path : String, options : Hash(Symbol, String), logger : No
   ])
 
   channel = Channel(String).new
-  spawn do 
+  spawn do
     Dir.glob("#{base_path}/**/*") do |file|
       channel.send(file)
     end
   end
 
-  500.times do 
-    spawn do 
-      loop do 
+  options[:concurrency].to_i.times do
+    spawn do
+      loop do
         begin
           file = channel.receive
           next if File.directory?(file)
           content = File.read(file, encoding: "utf-8", invalid: :skip)
-  
+
           detector_list.each do |detector|
             if detector.detect(file, content)
               techs << detector.name
