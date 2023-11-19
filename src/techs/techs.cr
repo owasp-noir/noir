@@ -75,6 +75,11 @@ module NoirTechs
       :framework => "Sinatra",
       :similar   => ["sinatra", "ruby-sinatra", "ruby_sinatra"],
     },
+    :ruby_hanami => {
+      :language  => "Ruby",
+      :framework => "Hanami",
+      :similar   => ["hanami", "ruby-hanami", "ruby_hanami"],
+    },
     :rust_axum => {
       :language  => "Rust",
       :framework => "Axum",
