@@ -29,7 +29,7 @@
 | Python   | FastAPI         | ✅  | ✅     | ✅    | ✅     | ✅ |
 | Ruby     | Rails           | ✅  | ✅     | ✅    | ✅     | X  |
 | Ruby     | Sinatra         | ✅  | ✅     | ✅    | ✅     | X  |
-| Ruby     | Hanami          | ✅  | ✅     |       |        | X  |
+| Ruby     | Hanami          | ✅  | ✅     | X     | X      | X  |
 | Php      |                 | ✅  | ✅     | ✅    | ✅     | X  |
 | Java     | Jsp             | ✅  | ✅     | ✅    | X      | X  |
 | Java     | Armeria         | ✅  | ✅     | X     | X      | X  |
@@ -37,6 +37,7 @@
 | Kotlin   | Spring          | ✅  | ✅     | X     | X      | X  |
 | JS       | Express         | ✅  | ✅     | X     | X      | X  |
 | Rust     | Axum            | ✅  | ✅     | X     | X      | X  |
+| Elixir   | Phoenix         | ✅  | ✅     | X     | X      | ✅ |
 | C#       | ASP.NET MVC     | ✅  | X      | X     | X      | X  |
 | JS       | Next            | X   | X      | X     | X      | X  |
 
