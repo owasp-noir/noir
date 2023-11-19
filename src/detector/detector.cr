@@ -19,11 +19,21 @@ def detect_techs(base_path : String, options : Hash(Symbol, String), logger : No
     DetectorGoGin, DetectorKotlinSpring, DetectorJavaArmeria, DetectorCSharpAspNetMvc,
     DetectorRustAxum,
   ])
-  begin
+
+  channel = Channel(String).new
+  spawn do
     Dir.glob("#{base_path}/**/*") do |file|
-      spawn do
+      channel.send(file)
+    end
+  end
+
+  options[:concurrency].to_i.times do
+    spawn do
+      loop do
         begin
+          file = channel.receive
           next if File.directory?(file)
+          logger.debug "Detecting: #{file}"
           content = File.read(file, encoding: "utf-8", invalid: :skip)
 
           detector_list.each do |detector|
@@ -35,11 +45,9 @@ def detect_techs(base_path : String, options : Hash(Symbol, String), logger : No
           logger.debug "File not found: #{file}"
         end
       end
-      Fiber.yield
     end
-  rescue e
-    logger.debug e
   end
 
+  Fiber.yield
   techs.uniq
 end

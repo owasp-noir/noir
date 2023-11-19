@@ -18,6 +18,7 @@ class NoirRunner
   @is_debug : Bool
   @is_color : Bool
   @is_log : Bool
+  @concurrency : Int32
 
   macro define_getter_methods(names)
     {% for name, index in names %}
@@ -40,6 +41,7 @@ class NoirRunner
     @is_debug = str_to_bool(options[:debug])
     @is_color = str_to_bool(options[:color])
     @is_log = str_to_bool(options[:nolog])
+    @concurrency = options[:concurrency].to_i
 
     @logger = NoirLogger.new @is_debug, @is_color, @is_log
 
