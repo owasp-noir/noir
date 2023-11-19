@@ -19,7 +19,7 @@ extected_endpoints = [
   Endpoint.new("/posts/1", "DELETE"),
 ]
 
-FunctionalTester.new("fixtures/rails/", {
+FunctionalTester.new("fixtures/ruby_rails/", {
   :techs     => 1,
   :endpoints => 6,
 }, extected_endpoints).test_all

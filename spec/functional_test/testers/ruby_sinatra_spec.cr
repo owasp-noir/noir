@@ -6,7 +6,7 @@ extected_endpoints = [
   Endpoint.new("/query", "POST", [Param.new("query", "", "form")]),
 ]
 
-FunctionalTester.new("fixtures/sinatra/", {
+FunctionalTester.new("fixtures/ruby_sinatra/", {
   :techs     => 1,
   :endpoints => 2,
 }, extected_endpoints).test_all
