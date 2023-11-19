@@ -85,6 +85,11 @@ module NoirTechs
       :framework => "Axum",
       :similar   => ["axum", "rust-axum", "rust_axum"],
     },
+    :elixir_phoenix => {
+      :language  => "Elixir",
+      :framework => "Phoenix",
+      :similar   => ["phoenix", "elixir-phoenix", "elixir_phoenix"],
+    },
     :oas2 => {
       :format  => ["JSON", "YAML"],
       :similar => ["oas 2.0", "oas_2_0", "swagger 2.0", "swagger_2_0", "swagger"],
