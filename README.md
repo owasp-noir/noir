@@ -29,7 +29,7 @@
 | Python   | FastAPI         | ✅  | ✅     | ✅    | ✅     | ✅ |
 | Ruby     | Rails           | ✅  | ✅     | ✅    | ✅     | X  |
 | Ruby     | Sinatra         | ✅  | ✅     | ✅    | ✅     | X  |
-| Ruby     | Hanami          | ✅  | ✅     |       |        | X  |
+| Ruby     | Hanami          | ✅  | ✅     | X     | X      | X  |
 | Php      |                 | ✅  | ✅     | ✅    | ✅     | X  |
 | Java     | Jsp             | ✅  | ✅     | ✅    | X      | X  |
 | Java     | Armeria         | ✅  | ✅     | X     | X      | X  |
