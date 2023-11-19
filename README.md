@@ -37,7 +37,7 @@
 | Kotlin   | Spring          | ✅  | ✅     | X     | X      | X  |
 | JS       | Express         | ✅  | ✅     | X     | X      | X  |
 | Rust     | Axum            | ✅  | ✅     | X     | X      | X  |
-| Elixir   | Phoenix         | ✅  | ✅     | X     | X      | X  |
+| Elixir   | Phoenix         | ✅  | ✅     | X     | X      | ✅ |
 | C#       | ASP.NET MVC     | ✅  | X      | X     | X      | X  |
 | JS       | Next            | X   | X      | X     | X      | X  |
 
