@@ -1,0 +1,33 @@
+---
+name: crystal_lucky
+version: 0.1.0
+targets:
+  crystal_lucky:
+    main: src/crystal_lucky.cr
+crystal: '>= 1.10.1'
+dependencies:
+  lucky:
+    github: luckyframework/lucky
+    version: ~> 1.1.0
+  avram:
+    github: luckyframework/avram
+    version: ~> 1.1.0
+  carbon:
+    github: luckyframework/carbon
+    version: ~> 0.4.0
+  carbon_sendgrid_adapter:
+    github: luckyframework/carbon_sendgrid_adapter
+    version: ~> 0.4.0
+  lucky_env:
+    github: luckyframework/lucky_env
+    version: ~> 0.2.0
+  lucky_task:
+    github: luckyframework/lucky_task
+    version: ~> 0.3.0
+  authentic:
+    github: luckyframework/authentic
+    version: '>= 1.0.0, < 2.0.0'
+  jwt:
+    github: crystal-community/jwt
+    version: ~> 1.6.0
+development_dependencies: {}
