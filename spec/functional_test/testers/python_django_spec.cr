@@ -14,7 +14,7 @@ extected_endpoints = [
   Endpoint.new("/links.html", "GET"),
   Endpoint.new("/upload", "GET", [Param.new("sign", "", "query"), Param.new("sign", "", "query"), Param.new("X_FORWARDED_FOR", "", "header"), Param.new("X_REAL_IP", "", "header")]),
   Endpoint.new("/upload", "POST", [Param.new("sign", "", "query"), Param.new("X_FORWARDED_FOR", "", "header"), Param.new("X_REAL_IP", "", "header")]),
-  Endpoint.new("/not_found", "GET", [Param.new("Cookie['app_type']", "", "header")]),
+  Endpoint.new("/not_found", "GET", [Param.new("app_type", "", "cookie")]),
   Endpoint.new("/test", "GET", [Param.new("test_param", "", "form")]),
   Endpoint.new("/test", "POST", [Param.new("test_param", "", "form")]),
   Endpoint.new("/test", "PUT", [Param.new("test_param", "", "form")]),
