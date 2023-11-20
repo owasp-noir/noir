@@ -21,7 +21,7 @@ describe "mapping_to_path" do
   end
 
   it "line_to_param - env.response.headers[]" do
-    line = "env.response.headers[\"x-token\"]"
+    line = "env.request.headers[\"x-token\"]"
     instance.line_to_param(line).name.should eq("x-token")
   end
 end

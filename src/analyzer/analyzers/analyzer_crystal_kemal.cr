@@ -49,9 +49,14 @@ class AnalyzerCrystalKemal < Analyzer
       return Param.new(param, "", "form")
     end
 
-    if content.includes? "env.response.headers["
-      param = content.split("env.response.headers[")[1].split("]")[0].gsub("\"", "").gsub("'", "")
+    if content.includes? "env.request.headers["
+      param = content.split("env.request.headers[")[1].split("]")[0].gsub("\"", "").gsub("'", "")
       return Param.new(param, "", "header")
+    end
+
+    if content.includes? "env.request.cookies["
+      param = content.split("env.request.cookies[")[1].split("]")[0].gsub("\"", "").gsub("'", "")
+      return Param.new(param, "", "cookie")
     end
 
     Param.new("", "", "")

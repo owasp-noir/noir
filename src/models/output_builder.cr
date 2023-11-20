@@ -41,6 +41,7 @@ class OutputBuilder
     final_url = url
     final_body = ""
     final_headers = [] of String
+    final_cookies = [] of String
     is_json = false
     first_query = true
     first_form = true
@@ -69,6 +70,10 @@ class OutputBuilder
           final_headers << "#{param.name}: #{param.value}"
         end
 
+        if param.param_type == "cookie"
+          final_cookies << "#{param.name}=#{param.value}"
+        end
+
         if param.param_type == "json"
           is_json = true
         end
@@ -95,6 +100,7 @@ class OutputBuilder
       url:       final_url,
       body:      final_body,
       header:    final_headers,
+      cookie:    final_cookies,
       body_type: is_json ? "json" : "form",
     }
   end

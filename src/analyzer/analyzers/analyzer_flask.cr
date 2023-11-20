@@ -11,7 +11,7 @@ class AnalyzerFlask < AnalyzerPython
     "files"   => {["POST", "PUT", "PATCH", "DELETE"], "form"},
     "values"  => {["GET", "POST", "PUT", "PATCH", "DELETE"], "query"},
     "json"    => {["POST", "PUT", "PATCH", "DELETE"], "json"},
-    "cookie"  => {nil, "header"},
+    "cookie"  => {nil, "cookie"},
     "headers" => {nil, "header"},
   }
 
@@ -200,11 +200,6 @@ class AnalyzerFlask < AnalyzerPython
         matches.each do |parameter_match|
           next if parameter_match.size != 2
           param_name = parameter_match[1]
-          if noir_param_type == "header"
-            if field_name == "cookie"
-              param_name = "Cookie['#{param_name}']"
-            end
-          end
 
           suspicious_params << Param.new(param_name, "", noir_param_type)
         end

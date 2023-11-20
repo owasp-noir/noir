@@ -3,6 +3,7 @@ require "../func_spec.cr"
 extected_endpoints = [
   Endpoint.new("/sign", "GET"),
   Endpoint.new("/sign", "POST", [Param.new("username", "", "form"), Param.new("password", "", "form")]),
+  Endpoint.new("/cookie", "GET", [Param.new("test", "", "cookie")]),
   Endpoint.new("/login", "POST", [Param.new("username", "", "form"), Param.new("password", "", "form")]),
   Endpoint.new("/create_record", "PUT"),
   Endpoint.new("/delete_record", "DELETE", [Param.new("name", "", "json")]),
@@ -12,5 +13,5 @@ extected_endpoints = [
 
 FunctionalTester.new("fixtures/python_flask/", {
   :techs     => 1,
-  :endpoints => 7,
+  :endpoints => 8,
 }, extected_endpoints).test_all

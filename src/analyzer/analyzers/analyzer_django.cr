@@ -10,7 +10,7 @@ class AnalyzerDjango < AnalyzerPython
   REQUEST_PARAM_FIELD_MAP = {
     "GET"     => {["GET"], "query"},
     "POST"    => {["POST"], "form"},
-    "COOKIES" => {nil, "header"},
+    "COOKIES" => {nil, "cookie"},
     "META"    => {nil, "header"},
     "data"    => {["POST", "PUT", "PATCH"], "form"},
   }
@@ -292,10 +292,6 @@ class AnalyzerDjango < AnalyzerPython
             if field_name == "META"
               if param_name.starts_with? "HTTP_"
                 param_name = param_name[5..]
-              end
-            elsif noir_param_type == "header"
-              if field_name == "COOKIES"
-                param_name = "Cookie['#{param_name}']"
               end
             end
 
