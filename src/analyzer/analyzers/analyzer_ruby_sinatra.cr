@@ -1,6 +1,6 @@
 require "../../models/analyzer"
 
-class AnalyzerSinatra < Analyzer
+class AnalyzerRubySinatra < Analyzer
   def analyze
     # Source Analysis
     begin
@@ -104,7 +104,7 @@ class AnalyzerSinatra < Analyzer
   end
 end
 
-def analyzer_sinatra(options : Hash(Symbol, String))
-  instance = AnalyzerSinatra.new(options)
+def analyzer_ruby_sinatra(options : Hash(Symbol, String))
+  instance = AnalyzerRubySinatra.new(options)
   instance.analyze
 end
