@@ -1,6 +1,6 @@
 require "../../models/analyzer"
 
-class AnalyzerKemal < Analyzer
+class AnalyzerCrystalKemal < Analyzer
   def analyze
     # Source Analysis
     begin
@@ -112,7 +112,7 @@ class AnalyzerKemal < Analyzer
   end
 end
 
-def analyzer_kemal(options : Hash(Symbol, String))
-  instance = AnalyzerKemal.new(options)
+def analyzer_crystal_kemal(options : Hash(Symbol, String))
+  instance = AnalyzerCrystalKemal.new(options)
   instance.analyze
 end

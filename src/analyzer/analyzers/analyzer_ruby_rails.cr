@@ -1,6 +1,6 @@
 require "../../models/analyzer"
 
-class AnalyzerRails < Analyzer
+class AnalyzerRubyRails < Analyzer
   def analyze
     # Public Dir Analysis
     begin
@@ -150,7 +150,7 @@ class AnalyzerRails < Analyzer
   end
 end
 
-def analyzer_rails(options : Hash(Symbol, String))
-  instance = AnalyzerRails.new(options)
+def analyzer_ruby_rails(options : Hash(Symbol, String))
+  instance = AnalyzerRubyRails.new(options)
   instance.analyze
 end

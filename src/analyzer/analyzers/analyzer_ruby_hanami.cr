@@ -1,6 +1,6 @@
 require "../../models/analyzer"
 
-class AnalyzerHanami < Analyzer
+class AnalyzerRubyHanami < Analyzer
   def analyze
     # Config Analysis
     if File.exists?("#{@base_path}/config/routes.rb")
@@ -67,7 +67,7 @@ class AnalyzerHanami < Analyzer
   end
 end
 
-def analyzer_hanami(options : Hash(Symbol, String))
-  instance = AnalyzerHanami.new(options)
+def analyzer_ruby_hanami(options : Hash(Symbol, String))
+  instance = AnalyzerRubyHanami.new(options)
   instance.analyze
 end

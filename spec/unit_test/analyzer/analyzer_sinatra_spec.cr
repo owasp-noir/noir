@@ -1,9 +1,9 @@
-require "../../../src/analyzer/analyzers/analyzer_sinatra.cr"
+require "../../../src/analyzer/analyzers/analyzer_ruby_sinatra.cr"
 require "../../../src/options"
 
 describe "mapping_to_path" do
   options = default_options()
-  instance = AnalyzerSinatra.new(options)
+  instance = AnalyzerRubySinatra.new(options)
 
   it "line_to_param - param[]" do
     line = "param['id']"
