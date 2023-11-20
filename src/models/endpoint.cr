@@ -4,20 +4,14 @@ require "yaml"
 struct Endpoint
   include JSON::Serializable
   include YAML::Serializable
-  property url, method, params, headers, protocol
+  property url, method, params, protocol
 
   def initialize(@url : String, @method : String)
     @params = [] of Param
-    @headers = [] of Header
     @protocol = "http"
   end
 
   def initialize(@url : String, @method : String, @params : Array(Param))
-    @headers = [] of Header
-    @protocol = "http"
-  end
-
-  def initialize(@url : String, @method : String, @params : Array(Param), @headers : Array(Header))
     @protocol = "http"
   end
 
@@ -48,16 +42,9 @@ struct Param
   include YAML::Serializable
   property name, value, param_type
 
+  # param_type can be "query", "json", "form", "header", "cookie"
+
   def initialize(@name : String, @value : String, @param_type : String)
-  end
-end
-
-struct Header
-  include JSON::Serializable
-  include YAML::Serializable
-  property name, value
-
-  def initialize(@name : String, @value : String)
   end
 end
 
