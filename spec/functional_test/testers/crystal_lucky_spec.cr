@@ -10,7 +10,10 @@ extected_endpoints = [
     Param.new("X-Forwarded-For", "", "header"),
   ]),
   Endpoint.new("/api/sign_ins", "POST", [Param.new("users", "", "json")]),
-  Endpoint.new("/api/sign_ups", "POST"),
+  Endpoint.new("/api/sign_ups", "POST", [
+    Param.new("name1", "", "cookie"),
+    Param.new("name2", "", "cookie"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/crystal_lucky/", {

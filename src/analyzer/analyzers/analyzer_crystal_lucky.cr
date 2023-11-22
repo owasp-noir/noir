@@ -71,6 +71,16 @@ class AnalyzerCrystalLucky < Analyzer
       return Param.new(param, "", "header")
     end
 
+    if content.includes? "cookies.get("
+      param = content.split("cookies.get(")[1].split(")")[0].gsub("\"", "").gsub("'", "")
+      return Param.new(param, "", "cookie")
+    end
+
+    if content.includes? "cookies["
+      param = content.split("cookies[")[1].split("]")[0].gsub("\"", "").gsub("'", "")
+      return Param.new(param, "", "cookie")
+    end
+
     Param.new("", "", "")
   end
 
