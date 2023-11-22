@@ -15,6 +15,7 @@
 - Method
 - Param
 - Header
+- Cookie
 - Protocol (e.g ws)
 
 ### Languages and Frameworks
