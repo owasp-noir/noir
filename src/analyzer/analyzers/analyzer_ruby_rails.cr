@@ -118,7 +118,13 @@ class AnalyzerRubyRails < Analyzer
             splited_param = controller_line.strip.split("request.headers[")[1]
             if splited_param
               param = splited_param.split("]")[0].gsub("'", "").gsub("\"", "")
-              params_line = Param.new(param.strip, "", "header")
+              param_line = Param.new(param.strip, "", "header")
+              if params_method.has_key? this_method
+                params_method[this_method] << param_line
+              else
+                params_method[this_method] = [] of Param
+                params_method[this_method] << param_line
+              end
             end
           end
 
