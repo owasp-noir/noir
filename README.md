@@ -28,8 +28,8 @@
 | Python   | Django      | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
 | Python   | Flask       | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
 | Python   | FastAPI     | ✅   | ✅    | ✅    | ✅     | ✅     | ✅ |
-| Ruby     | Rails       | ✅   | ✅    | ✅    | ✅     | X      | X  |
-| Ruby     | Sinatra     | ✅   | ✅    | ✅    | ✅     | X      | X  |
+| Ruby     | Rails       | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
+| Ruby     | Sinatra     | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
 | Ruby     | Hanami      | ✅   | ✅    | X     | X      | X      | X  |
 | Php      |             | ✅   | ✅    | ✅    | ✅     | X      | X  |
 | Java     | Jsp         | ✅   | ✅    | ✅    | X      | X      | X  |
