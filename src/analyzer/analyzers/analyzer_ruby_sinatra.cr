@@ -50,8 +50,13 @@ class AnalyzerRubySinatra < Analyzer
     end
 
     if content.includes? "headers["
-      param = content.split("headers[")[1].split("]")[0].gsub("\"", "").gsub("'", "")
+      param = content.split("headers[")[1].split("]")[0].gsub("\"", "").gsub("'", "").gsub(":", "")
       return Param.new(param, "", "header")
+    end
+
+    if content.includes? "cookies["
+      param = content.split("cookies[")[1].split("]")[0].gsub("\"", "").gsub("'", "").gsub(":", "")
+      return Param.new(param, "", "cookie")
     end
 
     Param.new("", "", "")

@@ -59,6 +59,11 @@ class AnalyzerCrystalKemal < Analyzer
       return Param.new(param, "", "cookie")
     end
 
+    if content.includes? "cookies.get_raw("
+      param = content.split("cookies.get_raw(")[1].split(")")[0].gsub("\"", "").gsub("'", "")
+      return Param.new(param, "", "cookie")
+    end
+
     Param.new("", "", "")
   end
 

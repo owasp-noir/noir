@@ -62,7 +62,9 @@ class AnalyzerRubyRails < Analyzer
         param_type = "form"
         params_query = [] of Param
         params_body = [] of Param
+        params_method = Hash(String, Array(Param)).new
         methods = [] of String
+        this_method = ""
 
         controller_content = controller_file.gets_to_end
         if controller_content.includes? "render json:"
@@ -76,14 +78,19 @@ class AnalyzerRubyRails < Analyzer
             case func_name
             when "index"
               methods << "GET/INDEX"
+              this_method = func_name
             when "show"
               methods << "GET/SHOW"
+              this_method = func_name
             when "create"
               methods << "POST"
+              this_method = func_name
             when "update"
               methods << "PUT"
+              this_method = func_name
             when "destroy"
               methods << "DELETE"
+              this_method = func_name
             end
           end
 
@@ -111,8 +118,61 @@ class AnalyzerRubyRails < Analyzer
             splited_param = controller_line.strip.split("request.headers[")[1]
             if splited_param
               param = splited_param.split("]")[0].gsub("'", "").gsub("\"", "")
-              params_body << Param.new(param.strip, "", "header")
-              params_query << Param.new(param.strip, "", "header")
+              param_line = Param.new(param.strip, "", "header")
+              if params_method.has_key? this_method
+                params_method[this_method] << param_line
+              else
+                params_method[this_method] = [] of Param
+                params_method[this_method] << param_line
+              end
+            end
+          end
+
+          if controller_line.includes? "cookies[:"
+            splited_param = controller_line.strip.split("cookies[:")[1]
+            if splited_param
+              param = splited_param.split("]")[0].gsub("'", "").gsub("\"", "")
+              if this_method != ""
+                param_line = Param.new(param.strip, "", "cookie")
+                if params_method.has_key? this_method
+                  params_method[this_method] << param_line
+                else
+                  params_method[this_method] = [] of Param
+                  params_method[this_method] << param_line
+                end
+              end
+            end
+          end
+
+          if controller_line.includes? "cookies.signed[:"
+            splited_param = controller_line.strip.split("cookies.signed[:")[1]
+            if splited_param
+              param = splited_param.split("]")[0].gsub("'", "").gsub("\"", "")
+              if this_method != ""
+                param_line = Param.new(param.strip, "", "cookie")
+                if params_method.has_key? this_method
+                  params_method[this_method] << param_line
+                else
+                  params_method[this_method] = [] of Param
+                  params_method[this_method] << param_line
+                end
+              end
+            end
+          end
+
+          if controller_line.includes? "cookies.encrypted[:"
+            splited_param = controller_line.strip.split("cookies.encrypted[:")[1]
+            if splited_param
+              param = splited_param.split("]")[0].gsub("'", "").gsub("\"", "")
+              if this_method != ""
+                param_line = Param.new(param.strip, "", "cookie")
+                if params_method.has_key? this_method
+                  params_method[this_method] << param_line
+                else
+                  params_method[this_method] = [] of Param
+                  params_method[this_method] << param_line
+                end
+              end
             end
           end
         end
@@ -130,16 +190,59 @@ class AnalyzerRubyRails < Analyzer
 
         methods.each do |method|
           if method == "GET/INDEX"
-            @result << Endpoint.new("#{@url}/#{resource}", "GET", deduplication_params_query)
+            if params_method.has_key? "index"
+              index_params = [] of Param
+              params_method["index"].each do |param|
+                index_params << param
+              end
+            end
+
+            index_params ||= [] of Param
+            deduplication_params_query ||= [] of Param
+            last_params = index_params + deduplication_params_query
+            @result << Endpoint.new("#{@url}/#{resource}", "GET", last_params)
           elsif method == "GET/SHOW"
-            @result << Endpoint.new("#{@url}/#{resource}/1", "GET", deduplication_params_query)
+            if params_method.has_key? "show"
+              show_params = [] of Param
+              params_method["show"].each do |param|
+                show_params << param
+              end
+            end
+            show_params ||= [] of Param
+            deduplication_params_query ||= [] of Param
+            last_params = show_params + deduplication_params_query
+            @result << Endpoint.new("#{@url}/#{resource}/1", "GET", last_params)
           else
             if method == "POST"
-              @result << Endpoint.new("#{@url}/#{resource}", method, params_body)
+              if params_method.has_key? "create"
+                create_params = [] of Param
+                params_method["create"].each do |param|
+                  create_params << param
+                end
+              end
+              create_params ||= [] of Param
+              params_body ||= [] of Param
+              last_params = create_params + params_body
+              @result << Endpoint.new("#{@url}/#{resource}", method, last_params)
             elsif method == "DELETE"
-              @result << Endpoint.new("#{@url}/#{resource}/1", method)
+              params_delete = [] of Param
+              if params_method.has_key? "delete"
+                params_method["delete"].each do |param|
+                  params_delete << param
+                end
+              end
+              @result << Endpoint.new("#{@url}/#{resource}/1", method, params_delete)
             else
-              @result << Endpoint.new("#{@url}/#{resource}/1", method, params_body)
+              if params_method.has_key? "update"
+                update_params = [] of Param
+                params_method["update"].each do |param|
+                  update_params << param
+                end
+              end
+              update_params ||= [] of Param
+              params_body ||= [] of Param
+              last_params = update_params + params_body
+              @result << Endpoint.new("#{@url}/#{resource}/1", method, last_params)
             end
           end
         end
