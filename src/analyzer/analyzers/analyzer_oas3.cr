@@ -41,8 +41,7 @@ class AnalyzerOAS3 < Analyzer
             paths.each do |path, path_obj|
               path_obj.as_h.each do |method, method_obj|
                 params = [] of Param
-
-                if method_obj.is_a?(JSON::Any) && method_obj.is_a?(Hash(String, JSON::Any))
+                if method_obj.is_a?(JSON::Any) || method_obj.is_a?(Hash(String, JSON::Any))
                   if method_obj.as_h.has_key?("parameters")
                     method_obj["parameters"].as_a.each do |param_obj|
                       param_name = param_obj["name"].to_s
@@ -113,8 +112,7 @@ class AnalyzerOAS3 < Analyzer
             paths.each do |path, path_obj|
               path_obj.as_h.each do |method, method_obj|
                 params = [] of Param
-
-                if method_obj.is_a?(YAML::Any) && method_obj.is_a?(Hash(String, YAML::Any))
+                if method_obj.is_a?(YAML::Any) || method_obj.is_a?(Hash(String, YAML::Any))
                   if method_obj.as_h.has_key?("parameters")
                     method_obj["parameters"].as_a.each do |param_obj|
                       param_name = param_obj["name"].to_s
