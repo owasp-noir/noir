@@ -5,6 +5,9 @@ extected_endpoints = [
     Param.new("name", "", "query"),
     Param.new("age", "", "query"),
   ]),
+  Endpoint.new("/admin", "GET", [
+    Param.new("abcd_token", "", "cookie"),
+  ]),
   Endpoint.new("/submit", "POST", [
     Param.new("username", "", "form"),
     Param.new("password", "", "form"),
@@ -15,5 +18,5 @@ extected_endpoints = [
 
 FunctionalTester.new("fixtures/go_gin/", {
   :techs     => 1,
-  :endpoints => 3,
+  :endpoints => 4,
 }, extected_endpoints).test_all

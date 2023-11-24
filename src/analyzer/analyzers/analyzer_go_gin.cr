@@ -38,6 +38,14 @@ class AnalyzerGoGin < Analyzer
                   end
                 end
               end
+
+              if line.includes?("Cookie(")
+                match = line.match(/Cookie\(\"(.*)\"\)/)
+                if match
+                  cookie_name = match[1]
+                  last_endpoint.params << Param.new(cookie_name, "", "cookie")
+                end
+              end
             end
           end
         end
