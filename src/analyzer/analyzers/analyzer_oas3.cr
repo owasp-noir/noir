@@ -51,6 +51,9 @@ class AnalyzerOAS3 < Analyzer
                       elsif param_obj["in"] == "header"
                         param = Param.new(param_name, "", "header")
                         params << param
+                      elsif param_obj["in"] == "cookie"
+                        param = Param.new(param_name, "", "cookie")
+                        params << param
                       end
                     end
                   end
@@ -119,6 +122,9 @@ class AnalyzerOAS3 < Analyzer
                         params << param
                       elsif param_obj["in"] == "header"
                         param = Param.new(param_name, "", "header")
+                        params << param
+                      elsif param_obj["in"] == "cookie"
+                        param = Param.new(param_name, "", "cookie")
                         params << param
                       end
                     end

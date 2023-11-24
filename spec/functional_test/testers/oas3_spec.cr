@@ -4,6 +4,7 @@ extected_endpoints = [
   Endpoint.new("/pets", "GET", [
     Param.new("query","","query"),
     Param.new("sort","","query"),
+    Param.new("cookie","","cookie"),
   ]),
   Endpoint.new("/pets", "POST", [
     Param.new("name","","json"),
