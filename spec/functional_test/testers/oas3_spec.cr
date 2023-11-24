@@ -2,17 +2,17 @@ require "../func_spec.cr"
 
 extected_endpoints = [
   Endpoint.new("/pets", "GET", [
-    Param.new("query","","query"),
-    Param.new("sort","","query"),
-    Param.new("cookie","","cookie"),
+    Param.new("query", "", "query"),
+    Param.new("sort", "", "query"),
+    Param.new("cookie", "", "cookie"),
   ]),
   Endpoint.new("/pets", "POST", [
-    Param.new("name","","json"),
+    Param.new("name", "", "json"),
   ]),
   Endpoint.new("/pets/{petId}", "GET"),
   Endpoint.new("/pets/{petId}", "PUT", [
-    Param.new("breed","","json"),
-    Param.new("name","","json"),
+    Param.new("breed", "", "json"),
+    Param.new("name", "", "json"),
   ]),
 ]
 
