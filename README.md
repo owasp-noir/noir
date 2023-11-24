@@ -23,9 +23,9 @@
 | Language | Framework   | URL | Method | Param | Header | Cookie | WS |
 |----------|-------------|-----|--------|-------|--------|--------|----|
 | Crystal  | Kemal       | ✅   | ✅    | ✅    | ✅     | ✅     | ✅ |
-| Crystal  | Lucky       | ✅   | ✅    | ✅    | ✅     | ✅     |    |
-| Go       | Echo        | ✅   | ✅    | ✅    | ✅     | X      | X  |
-| Go       | Gin         | ✅   | ✅    | ✅    | ✅     | X      | X  |
+| Crystal  | Lucky       | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
+| Go       | Echo        | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
+| Go       | Gin         | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
 | Python   | Django      | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
 | Python   | Flask       | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
 | Python   | FastAPI     | ✅   | ✅    | ✅    | ✅     | ✅     | ✅ |

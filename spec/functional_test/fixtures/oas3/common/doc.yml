@@ -9,6 +9,17 @@ paths:
   /pets:
     get:
       summary: Get a list of pets
+      parameters:
+        - in: query
+          name: query
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: sort
+          required: true
+          schema:
+            type: string
       responses:
         '200':
           description: A list of pets
