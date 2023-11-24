@@ -72,9 +72,7 @@ class AnalyzerOAS3 < Analyzer
                   end
                 end
 
-                if params.size > 0 && params.size > 0
-                  @result << Endpoint.new(base_path + path, method.upcase, params + params)
-                elsif params.size > 0
+                if params.size > 0
                   @result << Endpoint.new(base_path + path, method.upcase, params)
                 elsif params.size > 0
                   @result << Endpoint.new(base_path + path, method.upcase, params)
@@ -143,9 +141,7 @@ class AnalyzerOAS3 < Analyzer
                   end
                 end
 
-                if params.size > 0 && params.size > 0
-                  @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params + params)
-                elsif params.size > 0
+                if params.size > 0
                   @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params)
                 elsif params.size > 0
                   @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params)
