@@ -23,7 +23,7 @@
 | Language | Framework   | URL | Method | Param | Header | Cookie | WS |
 |----------|-------------|-----|--------|-------|--------|--------|----|
 | Crystal  | Kemal       | ✅   | ✅    | ✅    | ✅     | ✅     | ✅ |
-| Crystal  | Lucky       | ✅   | ✅    | ✅    | ✅     | ✅     |    |
+| Crystal  | Lucky       | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
 | Go       | Echo        | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
 | Go       | Gin         | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
 | Python   | Django      | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
