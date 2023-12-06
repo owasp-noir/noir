@@ -12,7 +12,7 @@ jobs:
       - name: Release Noir to Homebrew tap
         uses: Justintime50/homebrew-releaser@v1
         with:
-          homebrew_owner: hahwul
+          homebrew_owner: noir-cr
           homebrew_tap: homebrew-noir
           formula_folder: Formula
 
