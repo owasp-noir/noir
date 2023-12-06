@@ -1,18 +1,18 @@
 require "../../models/analyzer"
 
-class AnalyzerKemal < Analyzer
+class AnalyzerRubySinatra < Analyzer
   def analyze
     # Source Analysis
     begin
       Dir.glob("#{@base_path}/**/*") do |path|
         next if File.directory?(path)
-        if File.exists?(path) && File.extname(path) == ".cr" && !path.includes?("lib")
+        if File.exists?(path)
           File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
             last_endpoint = Endpoint.new("", "")
             file.each_line do |line|
               endpoint = line_to_endpoint(line)
               if endpoint.method != ""
-                result << endpoint
+                @result << endpoint
                 last_endpoint = endpoint
               end
 
@@ -30,28 +30,33 @@ class AnalyzerKemal < Analyzer
       logger.debug e
     end
 
-    result
+    @result
   end
 
   def line_to_param(content : String) : Param
-    if content.includes? "env.params.query["
-      param = content.split("env.params.query[")[1].split("]")[0].gsub("\"", "").gsub("'", "")
+    if content.includes? "param["
+      param = content.split("param[")[1].split("]")[0].gsub("\"", "").gsub("'", "")
       return Param.new(param, "", "query")
     end
 
-    if content.includes? "env.params.json["
-      param = content.split("env.params.json[")[1].split("]")[0].gsub("\"", "").gsub("'", "")
-      return Param.new(param, "", "json")
+    if content.includes? "params["
+      param = content.split("params[")[1].split("]")[0].gsub("\"", "").gsub("'", "")
+      return Param.new(param, "", "query")
     end
 
-    if content.includes? "env.params.body["
-      param = content.split("env.params.body[")[1].split("]")[0].gsub("\"", "").gsub("'", "")
-      return Param.new(param, "", "form")
-    end
-
-    if content.includes? "env.response.headers["
-      param = content.split("env.response.headers[")[1].split("]")[0].gsub("\"", "").gsub("'", "")
+    if content.includes? "request.env["
+      param = content.split("request.env[")[1].split("]")[0].gsub("\"", "").gsub("'", "")
       return Param.new(param, "", "header")
+    end
+
+    if content.includes? "headers["
+      param = content.split("headers[")[1].split("]")[0].gsub("\"", "").gsub("'", "").gsub(":", "")
+      return Param.new(param, "", "header")
+    end
+
+    if content.includes? "cookies["
+      param = content.split("cookies[")[1].split("]")[0].gsub("\"", "").gsub("'", "").gsub(":", "")
+      return Param.new(param, "", "cookie")
     end
 
     Param.new("", "", "")
@@ -100,19 +105,11 @@ class AnalyzerKemal < Analyzer
       end
     end
 
-    content.scan(/ws\s+['"](.+?)['"]/) do |match|
-      if match.size > 1
-        endpoint = Endpoint.new("#{@url}#{match[1]}", "GET")
-        endpoint.set_protocol("ws")
-        return endpoint
-      end
-    end
-
     Endpoint.new("", "")
   end
 end
 
-def analyzer_kemal(options : Hash(Symbol, String))
-  instance = AnalyzerKemal.new(options)
+def analyzer_ruby_sinatra(options : Hash(Symbol, String))
+  instance = AnalyzerRubySinatra.new(options)
   instance.analyze
 end

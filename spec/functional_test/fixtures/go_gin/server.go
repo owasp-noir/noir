@@ -16,6 +16,9 @@ func main() {
 			"message": "pong",
 		})
 	})
+	r.GET("/admin", func(c *gin.Context) {
+		_ = c.Cookie("abcd_token")
+	})
 	r.POST("/submit", func(c *gin.Context) {
 		username := c.PostForm("username")
 		password := c.DefaultPostForm("password", "default_password")

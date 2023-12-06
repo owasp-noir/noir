@@ -9,6 +9,7 @@ import (
 func main() {
 	e := echo.New()
 	e.GET("/", func(c echo.Context) error {
+		_ = c.Cookie("abcd_token")
 		return c.String(http.StatusOK, "Hello, World!")
 	})
 	e.GET("/pet", func(c echo.Context) error {

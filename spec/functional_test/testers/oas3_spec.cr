@@ -1,10 +1,19 @@
 require "../func_spec.cr"
 
 extected_endpoints = [
-  Endpoint.new("/pets", "GET"),
-  Endpoint.new("/pets", "POST"),
+  Endpoint.new("/pets", "GET", [
+    Param.new("query", "", "query"),
+    Param.new("sort", "", "query"),
+    Param.new("cookie", "", "cookie"),
+  ]),
+  Endpoint.new("/pets", "POST", [
+    Param.new("name", "", "json"),
+  ]),
   Endpoint.new("/pets/{petId}", "GET"),
-  Endpoint.new("/pets/{petId}", "PUT"),
+  Endpoint.new("/pets/{petId}", "PUT", [
+    Param.new("breed", "", "json"),
+    Param.new("name", "", "json"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/oas3/common/", {

@@ -1,7 +1,9 @@
 require "../func_spec.cr"
 
 extected_endpoints = [
-  Endpoint.new("/", "GET"),
+  Endpoint.new("/", "GET", [
+    Param.new("abcd_token", "", "cookie"),
+  ]),
   Endpoint.new("/pet", "GET", [
     Param.new("query", "", "query"),
     Param.new("X-API-Key", "", "header"),

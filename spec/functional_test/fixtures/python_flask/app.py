@@ -11,7 +11,7 @@ app.secret_key = "dd2e7b987b357908fac0118ecdf0d3d2cae7b5a635f802d6" # random gen
 
 @app.teardown_appcontext
 def shutdown_session(exception=None):
-    db_session.remove()    
+    db_session.remove()
 
 @app.route('/sign', methods=['GET', 'POST'])
 def sign_sample():
@@ -28,6 +28,13 @@ def sign_sample():
 
     return render_template('sign.html')
 
+@app.route('/cookie', methods=['GET'])
+def cookie_test():
+    if request.cookies.get('test') == "y":
+        return "exist cookie"
+
+    return "no cookie"
+
 @app.route('/login', methods=['POST'])
 def login_sample():
     if request.method == 'POST':
@@ -40,7 +47,7 @@ def login_sample():
         else:
             return "Fail"
 
-    return render_template('login.html')    
+    return render_template('login.html')
 
 @app.route('/create_record', methods=['PUT'])
 def create_record():

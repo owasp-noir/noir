@@ -100,10 +100,6 @@ class AnalyzerFastAPI < AnalyzerPython
                         # Get param type by default value first
                         if param.default.size != 0
                           param_type = infer_parameter_type(param.default)
-                          if param_type == "cookie"
-                            param_type = "header"
-                            param.name = "Cookie['#{param.name}']"
-                          end
                         end
 
                         # Get param type by type if not found

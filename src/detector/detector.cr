@@ -13,17 +13,27 @@ def detect_techs(base_path : String, options : Hash(Symbol, String), logger : No
   techs = [] of String
   detector_list = [] of Detector
   defind_detectors([
-    DetectorCrystalKemal, DetectorGoEcho, DetectorJavaJsp, DetectorJavaSpring, DetectorJsExpress,
+    DetectorCrystalKemal, DetectorCrystalLucky, DetectorGoEcho, DetectorJavaJsp, DetectorJavaSpring, DetectorJsExpress,
     DetectorPhpPure, DetectorPythonDjango, DetectorPythonFlask, DetectorPythonFastAPI,
-    DetectorRubyRails, DetectorRubySinatra, DetectorOas2, DetectorOas3, DetectorRAML,
+    DetectorRubyRails, DetectorRubySinatra, DetectorRubyHanami, DetectorOas2, DetectorOas3, DetectorRAML,
     DetectorGoGin, DetectorKotlinSpring, DetectorJavaArmeria, DetectorCSharpAspNetMvc,
-    DetectorRustAxum,
+    DetectorRustAxum, DetectorElixirPhoenix,
   ])
-  begin
+
+  channel = Channel(String).new
+  spawn do
     Dir.glob("#{base_path}/**/*") do |file|
-      spawn do
+      channel.send(file)
+    end
+  end
+
+  options[:concurrency].to_i.times do
+    spawn do
+      loop do
         begin
+          file = channel.receive
           next if File.directory?(file)
+          logger.debug "Detecting: #{file}"
           content = File.read(file, encoding: "utf-8", invalid: :skip)
 
           detector_list.each do |detector|
@@ -35,11 +45,9 @@ def detect_techs(base_path : String, options : Hash(Symbol, String), logger : No
           logger.debug "File not found: #{file}"
         end
       end
-      Fiber.yield
     end
-  rescue e
-    logger.debug e
   end
 
+  Fiber.yield
   techs.uniq
 end

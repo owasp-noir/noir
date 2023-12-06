@@ -4,11 +4,16 @@ class PostsController < ApplicationController
   
     # GET /posts or /posts.json
     def index
+      cookies[:user_name]
+      cookies.encrypted[:discount]
+      cookies.signed[:login]
+      
       @posts = Post.all
     end
   
     # GET /posts/1 or /posts/1.json
     def show
+      request.headers['X-API-KEY']
     end
   
     # GET /posts/new

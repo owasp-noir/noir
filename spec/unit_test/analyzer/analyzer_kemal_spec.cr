@@ -1,9 +1,9 @@
-require "../../../src/analyzer/analyzers/analyzer_kemal.cr"
+require "../../../src/analyzer/analyzers/analyzer_crystal_kemal.cr"
 require "../../../src/options"
 
 describe "mapping_to_path" do
   options = default_options()
-  instance = AnalyzerKemal.new(options)
+  instance = AnalyzerCrystalKemal.new(options)
 
   it "line_to_param - env.params.query" do
     line = "env.params.query[\"id\"]"
@@ -21,7 +21,7 @@ describe "mapping_to_path" do
   end
 
   it "line_to_param - env.response.headers[]" do
-    line = "env.response.headers[\"x-token\"]"
+    line = "env.request.headers[\"x-token\"]"
     instance.line_to_param(line).name.should eq("x-token")
   end
 end

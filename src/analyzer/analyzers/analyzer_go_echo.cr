@@ -44,6 +44,14 @@ class AnalyzerGoEcho < Analyzer
                   last_endpoint.params << Param.new(header_name, "", "header")
                 end
               end
+
+              if line.includes?("Cookie(")
+                match = line.match(/Cookie\(\"(.*)\"\)/)
+                if match
+                  cookie_name = match[1]
+                  last_endpoint.params << Param.new(cookie_name, "", "cookie")
+                end
+              end
             end
           end
         end

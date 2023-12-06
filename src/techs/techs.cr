@@ -75,10 +75,20 @@ module NoirTechs
       :framework => "Sinatra",
       :similar   => ["sinatra", "ruby-sinatra", "ruby_sinatra"],
     },
+    :ruby_hanami => {
+      :language  => "Ruby",
+      :framework => "Hanami",
+      :similar   => ["hanami", "ruby-hanami", "ruby_hanami"],
+    },
     :rust_axum => {
       :language  => "Rust",
       :framework => "Axum",
       :similar   => ["axum", "rust-axum", "rust_axum"],
+    },
+    :elixir_phoenix => {
+      :language  => "Elixir",
+      :framework => "Phoenix",
+      :similar   => ["phoenix", "elixir-phoenix", "elixir_phoenix"],
     },
     :oas2 => {
       :format  => ["JSON", "YAML"],

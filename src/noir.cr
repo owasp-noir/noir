@@ -6,7 +6,7 @@ require "./options.cr"
 require "./techs/techs.cr"
 
 module Noir
-  VERSION = "0.10.0"
+  VERSION = "0.11.0"
 end
 
 noir_options = default_options()
@@ -60,6 +60,9 @@ OptionParser.parse do |parser|
     exit
   end
 
+  parser.separator "\n  Config:".colorize(:blue)
+  parser.on "--concurrency 100", "Set concurrency" { |var| noir_options[:concurrency] = var }
+
   parser.separator "\n  Others:".colorize(:blue)
   parser.on "-d", "--debug", "Show debug messages" do
     noir_options[:debug] = "yes"
@@ -108,6 +111,7 @@ app.logger.debug_sub "Debug: #{app.@is_debug}"
 app.logger.debug_sub "Color: #{app.@is_color}"
 app.logger.debug_sub "Format: #{app.options[:format]}"
 app.logger.debug_sub "Output: #{app.options[:output]}"
+app.logger.debug_sub "Concurrency: #{app.options[:concurrency]}"
 
 app.logger.system "Detecting technologies to base directory."
 app.detect

@@ -41,8 +41,7 @@ class AnalyzerOAS3 < Analyzer
             paths.each do |path, path_obj|
               path_obj.as_h.each do |method, method_obj|
                 params = [] of Param
-
-                if method_obj.is_a?(JSON::Any) && method_obj.is_a?(Hash(String, JSON::Any))
+                if method_obj.is_a?(JSON::Any) || method_obj.is_a?(Hash(String, JSON::Any))
                   if method_obj.as_h.has_key?("parameters")
                     method_obj["parameters"].as_a.each do |param_obj|
                       param_name = param_obj["name"].to_s
@@ -51,6 +50,9 @@ class AnalyzerOAS3 < Analyzer
                         params << param
                       elsif param_obj["in"] == "header"
                         param = Param.new(param_name, "", "header")
+                        params << param
+                      elsif param_obj["in"] == "cookie"
+                        param = Param.new(param_name, "", "cookie")
                         params << param
                       end
                     end
@@ -73,9 +75,7 @@ class AnalyzerOAS3 < Analyzer
                   end
                 end
 
-                if params.size > 0 && params.size > 0
-                  @result << Endpoint.new(base_path + path, method.upcase, params + params)
-                elsif params.size > 0
+                if params.size > 0
                   @result << Endpoint.new(base_path + path, method.upcase, params)
                 elsif params.size > 0
                   @result << Endpoint.new(base_path + path, method.upcase, params)
@@ -113,8 +113,7 @@ class AnalyzerOAS3 < Analyzer
             paths.each do |path, path_obj|
               path_obj.as_h.each do |method, method_obj|
                 params = [] of Param
-
-                if method_obj.is_a?(YAML::Any) && method_obj.is_a?(Hash(String, YAML::Any))
+                if method_obj.is_a?(YAML::Any) || method_obj.is_a?(Hash(String, YAML::Any))
                   if method_obj.as_h.has_key?("parameters")
                     method_obj["parameters"].as_a.each do |param_obj|
                       param_name = param_obj["name"].to_s
@@ -123,6 +122,9 @@ class AnalyzerOAS3 < Analyzer
                         params << param
                       elsif param_obj["in"] == "header"
                         param = Param.new(param_name, "", "header")
+                        params << param
+                      elsif param_obj["in"] == "cookie"
+                        param = Param.new(param_name, "", "cookie")
                         params << param
                       end
                     end
@@ -145,9 +147,7 @@ class AnalyzerOAS3 < Analyzer
                   end
                 end
 
-                if params.size > 0 && params.size > 0
-                  @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params + params)
-                elsif params.size > 0
+                if params.size > 0
                   @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params)
                 elsif params.size > 0
                   @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params)
