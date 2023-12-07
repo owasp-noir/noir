@@ -65,6 +65,9 @@ describe "mapping_to_path" do
   it "mapping_to_path - requestmapping style6" do
     instance.mapping_to_path("@RequestMapping(\"/abcd\", produces=[MediaType.APPLICATION_JSON_VALUE])").should eq(["/abcd"])
   end
+  it "mapping_to_path - requestmapping style7" do
+    instance.mapping_to_path("@GetMapping").should eq([""])
+  end
 end
 
 describe "utils func" do
