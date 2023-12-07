@@ -1,6 +1,6 @@
 <div align="center">
-  <img src="https://github.com/hahwul/noir/assets/13212227/d4e3d075-9cb0-4ca2-b577-958bfab6ca59" alt="" width="600px;">
-  <p>♠️ Noir is an attack surface detector that identifies endpoints by static analysis.</p>
+  <img src="https://github.com/noir-cr/noir/assets/13212227/8c4470fe-c8f4-4060-9f12-b038ad211913" alt="" width="500px;">
+  <p>Noir is an attack surface detector that identifies endpoints by static analysis.</p>
 </div>
 
 ## Key Features
@@ -83,7 +83,7 @@ cp ./bin/noir /usr/bin/
 
 ### Docker (GHCR)
 ```bash
-docker pull ghcr.io/noir-cr/noir:main
+docker pull ghcr.io/noir-cr/noir:latest
 ```
 
 ## Usage
@@ -105,15 +105,18 @@ Usage: noir <flags>
   Deliver:
     --send-req                       Send the results to the web request
     --send-proxy http://proxy..      Send the results to the web request via http proxy
-    --send-es https://es..           Send the results to elasticsearch
+    --send-es http://es..            Send the results to elasticsearch
     --with-headers X-Header:Value    Add Custom Headers to be Used in Deliver
     --use-matchers string            Delivers URLs that match a specific condition
     --use-filters string             Excludes URLs that match a specific condition
 
   Technologies:
-    -t TECHS, --techs rails,php      Set technologies to use
+    -t TECHS, --techs rails,php      Specify the technologies to use
     --exclude-techs rails,php        Specify the technologies to be excluded
     --list-techs                     Show all technologies
+
+  Config:
+    --concurrency 100                Set concurrency
 
   Others:
     -d, --debug                      Show debug messages
@@ -126,7 +129,7 @@ Example
 noir -b . -u https://testapp.internal.domains
 ```
 
-![](https://github.com/hahwul/noir/assets/13212227/68fb1b3a-dc57-4480-b8cf-e42f452e6706)
+![](https://github.com/noir-cr/noir/assets/13212227/40d09acf-e250-4ea9-a84b-d9251a2d5147)
 
 JSON Result
 ```
@@ -145,13 +148,13 @@ noir -b . -u https://testapp.internal.domains -f json
         "value": ""
       },
       {
-        "name": "title",
-        "param_type": "json",
-        "value": ""
+        "name": "X-API-KEY",
+        "value":"",
+        "param_type":"header"
       },
       {
-        "name": "id",
-        "param_type": "json",
+        "name": "auth",
+        "param_type": "cookie",
         "value": ""
       }
     ],
