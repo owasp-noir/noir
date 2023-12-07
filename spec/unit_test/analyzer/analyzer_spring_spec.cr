@@ -26,6 +26,15 @@ describe "mapping_to_path" do
   it "mapping_to_path - code style2" do
     instance.mapping_to_path("@GetMapping({ \"/abcd\" })").should eq(["/abcd"])
   end
+  it "mapping_to_path - code style3" do
+    instance.mapping_to_path("@GetMapping(\"abcd\")").should eq(["/abcd"])
+  end
+  it "mapping_to_path - code style4" do
+    instance.mapping_to_path("@GetMapping(value = \"abcd\")").should eq(["/abcd"])
+  end
+  it "mapping_to_path - code style5" do
+    instance.mapping_to_path("@GetMapping({ \"abcd\" })").should eq(["/abcd"])
+  end
   it "mapping_to_path - multiple path" do
     instance.mapping_to_path("@GetMapping(value={\"/abcd\", \"/efgh\"})").should eq(["/abcd", "/efgh"])
   end
