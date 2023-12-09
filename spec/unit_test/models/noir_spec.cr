@@ -14,17 +14,16 @@ describe "Initialize" do
 end
 
 describe "Methods" do
-    options = default_options
-    options[:base] = "noir"
-    options[:url] = "https://www.hahwul.com"
-    runner = NoirRunner.new(options)
+  options = default_options
+  options[:base] = "noir"
+  options[:url] = "https://www.hahwul.com"
+  runner = NoirRunner.new(options)
 
-    tmp_endpoint = Endpoint.new("/abcd", "GET")
-    runner.endpoints << tmp_endpoint
-  
-    it "combine_url_and_endpoints" do
-      runner.combine_url_and_endpoints
-      runner.endpoints[0].url.should eq("https://www.hahwul.com/abcd")
-    end
+  tmp_endpoint = Endpoint.new("/abcd", "GET")
+  runner.endpoints << tmp_endpoint
+
+  it "combine_url_and_endpoints" do
+    runner.combine_url_and_endpoints
+    runner.endpoints[0].url.should eq("https://www.hahwul.com/abcd")
   end
-  
+end
