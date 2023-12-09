@@ -14,7 +14,7 @@ class AnalyzerGoEcho < Analyzer
               if line.includes?(".GET(") || line.includes?(".POST(") || line.includes?(".PUT(") || line.includes?(".DELETE(")
                 get_route_path(line).tap do |route_path|
                   if route_path.size > 0
-                    new_endpoint = Endpoint.new("#{url}#{route_path}", line.split(".")[1].split("(")[0])
+                    new_endpoint = Endpoint.new("#{route_path}", line.split(".")[1].split("(")[0])
                     result << new_endpoint
                     last_endpoint = new_endpoint
                   end
@@ -69,7 +69,7 @@ class AnalyzerGoEcho < Analyzer
             p_dir["static_path"] = p_dir["static_path"][0..-2]
           end
 
-          result << Endpoint.new("#{url}#{p_dir["static_path"]}#{path.gsub(full_path, "")}", "GET")
+          result << Endpoint.new("#{p_dir["static_path"]}#{path.gsub(full_path, "")}", "GET")
         end
       end
     end

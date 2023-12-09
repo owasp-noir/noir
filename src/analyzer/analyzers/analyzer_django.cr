@@ -38,7 +38,7 @@ class AnalyzerDjango < AnalyzerPython
       Dir.glob("#{@base_path}/static/**/*") do |file|
         next if File.directory?(file)
         relative_path = file.sub("#{@base_path}/static/", "")
-        @result << Endpoint.new("#{@url}/#{relative_path}", "GET")
+        @result << Endpoint.new("/#{relative_path}", "GET")
       end
     rescue e
       logger.debug e
@@ -111,7 +111,7 @@ class AnalyzerDjango < AnalyzerPython
       route = route_match[1]
       route = route.gsub(/^\^/, "").gsub(/\$$/, "")
       view = route_match[2].split(",")[0]
-      url = "/#{@url}/#{django_urls.prefix}/#{route}".gsub(/\/+/, "/")
+      url = "/#{django_urls.prefix}/#{route}".gsub(/\/+/, "/")
 
       new_django_urls = nil
       view.scan(REGEX_INCLUDE_URLS) do |include_pattern_match|

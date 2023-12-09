@@ -29,27 +29,27 @@ class AnalyzerElixirPhoenix < Analyzer
 
   def line_to_endpoint(line : String) : Endpoint
     line.scan(/get\s+['"](.+?)['"]\s*,\s*(.+?)\s*/) do |match|
-      @result << Endpoint.new("#{@url}#{match[1]}", "GET")
+      @result << Endpoint.new("#{match[1]}", "GET")
     end
 
     line.scan(/post\s+['"](.+?)['"]\s*,\s*(.+?)\s*/) do |match|
-      @result << Endpoint.new("#{@url}#{match[1]}", "POST")
+      @result << Endpoint.new("#{match[1]}", "POST")
     end
 
     line.scan(/patch\s+['"](.+?)['"]\s*,\s*(.+?)\s*/) do |match|
-      @result << Endpoint.new("#{@url}#{match[1]}", "PATCH")
+      @result << Endpoint.new("#{match[1]}", "PATCH")
     end
 
     line.scan(/put\s+['"](.+?)['"]\s*,\s*(.+?)\s*/) do |match|
-      @result << Endpoint.new("#{@url}#{match[1]}", "PUT")
+      @result << Endpoint.new("#{match[1]}", "PUT")
     end
 
     line.scan(/delete\s+['"](.+?)['"]\s*,\s*(.+?)\s*/) do |match|
-      @result << Endpoint.new("#{@url}#{match[1]}", "DELETE")
+      @result << Endpoint.new("#{match[1]}", "DELETE")
     end
 
     line.scan(/socket\s+['"](.+?)['"]\s*,\s*(.+?)\s*/) do |match|
-      tmp = Endpoint.new("#{@url}#{match[1]}", "GET")
+      tmp = Endpoint.new("#{match[1]}", "GET")
       tmp.set_protocol("ws")
       @result << tmp
     end

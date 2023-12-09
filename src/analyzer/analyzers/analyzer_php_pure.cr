@@ -46,9 +46,9 @@ class AnalyzerPhpPure < Analyzer
               next
             end
             methods.each do |method|
-              result << Endpoint.new("#{url}/#{relative_path}", method, params_body)
+              result << Endpoint.new("/#{relative_path}", method, params_body)
             end
-            result << Endpoint.new("#{url}/#{relative_path}", "GET", params_query)
+            result << Endpoint.new("/#{relative_path}", "GET", params_query)
           end
         end
       end

@@ -34,7 +34,7 @@ class AnalyzerSpring < Analyzer
                   class_mapping_url = class_mapping_url[0..-2]
                 end
 
-                url = "#{@url}#{class_mapping_url}"
+                url = "#{class_mapping_url}"
               else
                 mapping_paths.each do |mapping_path|
                   if line.includes? "RequestMethod"

@@ -8,7 +8,7 @@ class AnalyzerRubyRails < Analyzer
         next if File.directory?(file)
         real_path = "#{@base_path}/public/".gsub(/\/+/, '/')
         relative_path = file.sub(real_path, "")
-        @result << Endpoint.new("#{@url}/#{relative_path}", "GET")
+        @result << Endpoint.new("/#{relative_path}", "GET")
       end
     rescue e
       logger.debug e
@@ -32,19 +32,19 @@ class AnalyzerRubyRails < Analyzer
             end
 
             line.scan(/get\s+['"](.+?)['"]/) do |match|
-              @result << Endpoint.new("#{@url}#{match[1]}", "GET")
+              @result << Endpoint.new("#{match[1]}", "GET")
             end
             line.scan(/post\s+['"](.+?)['"]/) do |match|
-              @result << Endpoint.new("#{@url}#{match[1]}", "POST")
+              @result << Endpoint.new("#{match[1]}", "POST")
             end
             line.scan(/put\s+['"](.+?)['"]/) do |match|
-              @result << Endpoint.new("#{@url}#{match[1]}", "PUT")
+              @result << Endpoint.new("#{match[1]}", "PUT")
             end
             line.scan(/delete\s+['"](.+?)['"]/) do |match|
-              @result << Endpoint.new("#{@url}#{match[1]}", "DELETE")
+              @result << Endpoint.new("#{match[1]}", "DELETE")
             end
             line.scan(/patch\s+['"](.+?)['"]/) do |match|
-              @result << Endpoint.new("#{@url}#{match[1]}", "PATCH")
+              @result << Endpoint.new("#{match[1]}", "PATCH")
             end
           end
         end
@@ -200,7 +200,7 @@ class AnalyzerRubyRails < Analyzer
             index_params ||= [] of Param
             deduplication_params_query ||= [] of Param
             last_params = index_params + deduplication_params_query
-            @result << Endpoint.new("#{@url}/#{resource}", "GET", last_params)
+            @result << Endpoint.new("/#{resource}", "GET", last_params)
           elsif method == "GET/SHOW"
             if params_method.has_key? "show"
               show_params = [] of Param
@@ -211,7 +211,7 @@ class AnalyzerRubyRails < Analyzer
             show_params ||= [] of Param
             deduplication_params_query ||= [] of Param
             last_params = show_params + deduplication_params_query
-            @result << Endpoint.new("#{@url}/#{resource}/1", "GET", last_params)
+            @result << Endpoint.new("/#{resource}/1", "GET", last_params)
           else
             if method == "POST"
               if params_method.has_key? "create"
@@ -223,7 +223,7 @@ class AnalyzerRubyRails < Analyzer
               create_params ||= [] of Param
               params_body ||= [] of Param
               last_params = create_params + params_body
-              @result << Endpoint.new("#{@url}/#{resource}", method, last_params)
+              @result << Endpoint.new("/#{resource}", method, last_params)
             elsif method == "DELETE"
               params_delete = [] of Param
               if params_method.has_key? "delete"
@@ -231,7 +231,7 @@ class AnalyzerRubyRails < Analyzer
                   params_delete << param
                 end
               end
-              @result << Endpoint.new("#{@url}/#{resource}/1", method, params_delete)
+              @result << Endpoint.new("/#{resource}/1", method, params_delete)
             else
               if params_method.has_key? "update"
                 update_params = [] of Param
@@ -242,7 +242,7 @@ class AnalyzerRubyRails < Analyzer
               update_params ||= [] of Param
               params_body ||= [] of Param
               last_params = update_params + params_body
-              @result << Endpoint.new("#{@url}/#{resource}/1", method, last_params)
+              @result << Endpoint.new("/#{resource}/1", method, last_params)
             end
           end
         end

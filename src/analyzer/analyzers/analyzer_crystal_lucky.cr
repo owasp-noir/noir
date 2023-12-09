@@ -8,7 +8,7 @@ class AnalyzerCrystalLucky < Analyzer
         next if File.directory?(file)
         real_path = "#{@base_path}/public/".gsub(/\/+/, '/')
         relative_path = file.sub(real_path, "")
-        @result << Endpoint.new("#{@url}/#{relative_path}", "GET")
+        @result << Endpoint.new("/#{relative_path}", "GET")
       end
     rescue e
       logger.debug e
@@ -87,43 +87,43 @@ class AnalyzerCrystalLucky < Analyzer
   def line_to_endpoint(content : String) : Endpoint
     content.scan(/get\s+['"](.+?)['"]/) do |match|
       if match.size > 1
-        return Endpoint.new("#{@url}#{match[1]}", "GET")
+        return Endpoint.new("#{match[1]}", "GET")
       end
     end
 
     content.scan(/post\s+['"](.+?)['"]/) do |match|
       if match.size > 1
-        return Endpoint.new("#{@url}#{match[1]}", "POST")
+        return Endpoint.new("#{match[1]}", "POST")
       end
     end
 
     content.scan(/put\s+['"](.+?)['"]/) do |match|
       if match.size > 1
-        return Endpoint.new("#{@url}#{match[1]}", "PUT")
+        return Endpoint.new("#{match[1]}", "PUT")
       end
     end
 
     content.scan(/delete\s+['"](.+?)['"]/) do |match|
       if match.size > 1
-        return Endpoint.new("#{@url}#{match[1]}", "DELETE")
+        return Endpoint.new("#{match[1]}", "DELETE")
       end
     end
 
     content.scan(/patch\s+['"](.+?)['"]/) do |match|
       if match.size > 1
-        return Endpoint.new("#{@url}#{match[1]}", "PATCH")
+        return Endpoint.new("#{match[1]}", "PATCH")
       end
     end
 
     content.scan(/trace\s+['"](.+?)['"]/) do |match|
       if match.size > 1
-        return Endpoint.new("#{@url}#{match[1]}", "TRACE")
+        return Endpoint.new("#{match[1]}", "TRACE")
       end
     end
 
     content.scan(/ws\s+['"](.+?)['"]/) do |match|
       if match.size > 1
-        endpoint = Endpoint.new("#{@url}#{match[1]}", "GET")
+        endpoint = Endpoint.new("#{match[1]}", "GET")
         endpoint.set_protocol("ws")
         return endpoint
       end

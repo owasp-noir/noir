@@ -18,7 +18,7 @@ class AnalyzerRustAxum < Analyzer
                   begin
                     route_argument = match[1]
                     callback_argument = match[2]
-                    result << Endpoint.new("#{@url}#{route_argument}", callback_to_method(callback_argument))
+                    result << Endpoint.new("#{route_argument}", callback_to_method(callback_argument))
                   rescue
                   end
                 end

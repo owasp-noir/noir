@@ -11,10 +11,10 @@ class AnalyzerOAS2 < Analyzer
         if File.exists?(swagger_json)
           content = File.read(swagger_json, encoding: "utf-8", invalid: :skip)
           json_obj = JSON.parse(content)
-          base_path = @url
+          base_path = ""
           begin
             if json_obj["basePath"].to_s != ""
-              base_path = base_path + json_obj["basePath"].to_s
+              base_path = json_obj["basePath"].to_s
             end
           rescue e
             @logger.debug "Exception of #{swagger_json}/basePath"
@@ -69,10 +69,10 @@ class AnalyzerOAS2 < Analyzer
         if File.exists?(swagger_yaml)
           content = File.read(swagger_yaml, encoding: "utf-8", invalid: :skip)
           yaml_obj = YAML.parse(content)
-          base_path = @url
+          base_path = ""
           begin
             if yaml_obj["basePath"].to_s != ""
-              base_path = base_path + yaml_obj["basePath"].to_s
+              base_path = yaml_obj["basePath"].to_s
             end
           rescue e
             @logger.debug "Exception of #{swagger_yaml}/basePath"

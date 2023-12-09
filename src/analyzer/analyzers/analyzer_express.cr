@@ -12,35 +12,31 @@ class AnalyzerExpress < Analyzer
               if line.includes? ".get('/"
                 api_path = express_get_endpoint(line)
                 if api_path != ""
-                  endpoint = (url + api_path).gsub(/\/\//, "/")
-                  result << Endpoint.new(endpoint, "GET")
+                  result << Endpoint.new(api_path, "GET")
                 end
               end
               if line.includes? ".post('/"
                 api_path = express_get_endpoint(line)
                 if api_path != ""
-                  endpoint = (url + api_path).gsub(/\/\//, "/")
-                  result << Endpoint.new(endpoint, "POST")
+                  result << Endpoint.new(api_path, "POST")
                 end
               end
               if line.includes? ".put('/"
                 api_path = express_get_endpoint(line)
                 if api_path != ""
-                  result << Endpoint.new(url + api_path, "PUT")
+                  result << Endpoint.new(api_path, "PUT")
                 end
               end
               if line.includes? ".delete('/"
                 api_path = express_get_endpoint(line)
                 if api_path != ""
-                  endpoint = (url + api_path).gsub(/\/\//, "/")
-                  result << Endpoint.new(endpoint, "DELETE")
+                  result << Endpoint.new(api_path, "DELETE")
                 end
               end
               if line.includes? ".patch('/"
                 api_path = express_get_endpoint(line)
                 if api_path != ""
-                  endpoint = (url + api_path).gsub(/\/\//, "/")
-                  result << Endpoint.new(endpoint, "PATCH")
+                  result << Endpoint.new(api_path, "PATCH")
                 end
               end
             end

@@ -73,7 +73,7 @@ class AnalyzerFlask < AnalyzerPython
                   if !path_str_match.nil? && path_str_match.size == 2
                     route_path = path_str_match[1]
                     # [TODO] Parse methods from reference views
-                    route_url = "#{@url}#{blueprint_prefix}#{route_path}"
+                    route_url = "#{blueprint_prefix}#{route_path}"
                     if !route_url.starts_with? "/"
                       route_url = "/#{route_url}"
                     end
@@ -211,7 +211,7 @@ class AnalyzerFlask < AnalyzerPython
         prefix = "#{prefix}/"
       end
 
-      route_url = "#{@url}#{prefix}#{route_path}"
+      route_url = "#{prefix}#{route_path}"
       if !route_url.starts_with? "/"
         route_url = "/#{route_url}"
       end

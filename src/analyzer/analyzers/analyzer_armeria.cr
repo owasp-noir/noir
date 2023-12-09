@@ -11,7 +11,6 @@ class AnalyzerArmeria < Analyzer
       Dir.glob("#{@base_path}/**/*") do |path|
         next if File.directory?(path)
 
-        url = @url
         if File.exists?(path) && (path.ends_with?(".java") || path.ends_with?(".kt"))
           content = File.read(path, encoding: "utf-8", invalid: :skip)
           content.scan(REGEX_SERVER_CODE_BLOCK) do |server_codeblcok_match|
@@ -31,7 +30,7 @@ class AnalyzerArmeria < Analyzer
               endpoint = split_params[endpoint_param_index].strip
 
               endpoint = endpoint[1..-2]
-              @result << Endpoint.new("#{url}#{endpoint}", "GET")
+              @result << Endpoint.new("#{endpoint}", "GET")
             end
 
             server_codeblock.scan(REGEX_ROUTE_CODE) do |route_code_match|
@@ -48,7 +47,7 @@ class AnalyzerArmeria < Analyzer
               next if endpoint[0] != '"'
 
               endpoint = endpoint[1..-2]
-              @result << Endpoint.new("#{url}#{endpoint}", method)
+              @result << Endpoint.new("#{endpoint}", method)
             end
           end
         end
