@@ -17,6 +17,7 @@ describe "Methods" do
   options = default_options
   options[:base] = "noir"
   options[:url] = "https://www.hahwul.com"
+  options[:nolog] = "yes"
   runner = NoirRunner.new(options)
 
   tmp_endpoint = Endpoint.new("/abcd", "GET")
