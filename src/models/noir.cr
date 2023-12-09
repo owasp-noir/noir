@@ -72,7 +72,8 @@ class NoirRunner
   def analyze
     @endpoints = analysis_endpoints options, @techs, @logger
     optimize_endpoints
-    deliver()
+    combine_url_and_endpoints
+    deliver
   end
 
   def optimize_endpoints
@@ -101,6 +102,26 @@ class NoirRunner
     end
 
     @endpoints = tmp
+  end
+
+  def combine_url_and_endpoints
+    tmp = [] of Endpoint
+    target_url = @options[:url]
+
+    if target_url != ""
+      @logger.system "Combining url and endpoints."
+      @endpoints.each do |endpoint|
+        tmp_endpoint = endpoint
+        if tmp_endpoint.url.includes? target_url
+          tmp_endpoint.url = tmp_endpoint.url.gsub(target_url, "")
+        end
+
+        tmp_endpoint.url = target_url + tmp_endpoint.url.gsub("//", "/")
+        tmp << tmp_endpoint
+      end
+
+      @endpoints = tmp
+    end
   end
 
   def deliver
