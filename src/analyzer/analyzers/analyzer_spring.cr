@@ -11,7 +11,7 @@ class AnalyzerSpring < Analyzer
       Dir.glob("#{@base_path}/**/*") do |path|
         next if File.directory?(path)
 
-        url = @url
+        url = ""
         if File.exists?(path) && (path.ends_with?(".java") || path.ends_with?(".kt"))
           content = File.read(path, encoding: "utf-8", invalid: :skip)
 
