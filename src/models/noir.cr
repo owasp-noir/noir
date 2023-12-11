@@ -116,7 +116,16 @@ class NoirRunner
           tmp_endpoint.url = tmp_endpoint.url.gsub(target_url, "")
         end
 
-        tmp_endpoint.url = target_url + tmp_endpoint.url.gsub("//", "/")
+        tmp_endpoint.url = tmp_endpoint.url.gsub("//", "/")
+        if tmp_endpoint.url != ""
+          if target_url[-1] == '/' && tmp_endpoint.url[0] == '/'
+            tmp_endpoint.url = tmp_endpoint.url[1..]
+          elsif target_url[-1] != '/' && tmp_endpoint.url[0] != '/'
+            tmp_endpoint.url = "/#{tmp_endpoint.url}"
+          end
+        end
+
+        tmp_endpoint.url = target_url + tmp_endpoint.url
         tmp << tmp_endpoint
       end
 

@@ -20,11 +20,12 @@ describe "Methods" do
   options[:nolog] = "yes"
   runner = NoirRunner.new(options)
 
-  tmp_endpoint = Endpoint.new("/abcd", "GET")
-  runner.endpoints << tmp_endpoint
+  runner.endpoints << Endpoint.new("/abcd", "GET")
+  runner.endpoints << Endpoint.new("abcd", "GET")
 
   it "combine_url_and_endpoints" do
     runner.combine_url_and_endpoints
     runner.endpoints[0].url.should eq("https://www.hahwul.com/abcd")
+    runner.endpoints[1].url.should eq("https://www.hahwul.com/abcd")
   end
 end
