@@ -16,5 +16,4 @@ FileAnalyzer.add_hook(->(path : String, _url : String) : Array(Endpoint) {
   end
 
   results
-}
-)
+})
