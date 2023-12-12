@@ -42,13 +42,13 @@ class Analyzer
 end
 
 class FileAnalyzer < Analyzer
-  @@hooks = [] of Proc(String, String, Nil)
+  @@hooks = [] of Proc(String, String, Array(Endpoint))
 
   def hooks_count
     @@hooks.size
   end
 
-  def self.add_hook(func : Proc(String, String, Nil))
+  def self.add_hook(func : Proc(String, String, Array(Endpoint)))
     @@hooks << func
   end
 
@@ -56,9 +56,13 @@ class FileAnalyzer < Analyzer
     begin
       Dir.glob("#{base_path}/**/*") do |path|
         next if File.directory?(path)
-        relative_path = get_relative_path(base_path, path)
-        hooks.each do |hook|
-          hook.call(relative_path, @url)
+        @@hooks.each do |hook|
+          file_results = hook.call(path, @url)
+          if !file_results.nil?
+            file_results.each do |file_result|
+              @result << file_result
+            end
+          end
         end
       end
     rescue e

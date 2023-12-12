@@ -36,12 +36,11 @@ end
 
 def analysis_endpoints(options : Hash(Symbol, String), techs, logger : NoirLogger)
   result = [] of Endpoint
-  file_analyzer = nil
+  file_analyzer = FileAnalyzer.new options
   logger.system "Starting analysis of endpoints."
 
   analyzer = initialize_analyzers logger
   if options[:url] != ""
-    file_analyzer = FileAnalyzer.new options
     logger.info_sub "File analyzer initialized and #{file_analyzer.hooks_count} hooks loaded"
   end
 
@@ -59,6 +58,10 @@ def analysis_endpoints(options : Hash(Symbol, String), techs, logger : NoirLogge
       end
       result = result + analyzer[tech].call(options)
     end
+  end
+
+  if options[:url] != ""
+    result = result + file_analyzer.analyze
   end
 
   logger.info_sub "#{result.size} endpoints found"

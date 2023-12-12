@@ -1,14 +1,20 @@
 require "../../../models/analyzer"
+require "../../../models/endpoint"
 
+FileAnalyzer.add_hook(->(path : String, _url : String) : Array(Endpoint) {
+  results = [] of Endpoint
 
-FileAnalyzer.add_hook(->(path : String, url : String) {
-    begin
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        file.each_line do |line|
-          # TODO
-        end
+  begin
+    File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
+      file.each_line do |_|
+        # TODO
+        # e.g
+        # results << Endpoint.new("/", "GET",)
       end
-    rescue
     end
-  }
+  rescue
+  end
+
+  results
+}
 )
