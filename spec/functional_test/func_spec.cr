@@ -124,4 +124,8 @@ class FunctionalTester
       test_analyze
     end
   end
+
+  def app
+    @app
+  end
 end
