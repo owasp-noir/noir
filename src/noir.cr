@@ -115,19 +115,24 @@ app.logger.debug_sub "Concurrency: #{app.options[:concurrency]}"
 
 app.logger.system "Detecting technologies to base directory."
 app.detect
+
 if app.techs.size == 0
   app.logger.info "No technologies detected."
-  exit(1)
+  if app.options[:url] != ""
+    app.logger.system "Start file-based analysis as the -u flag has been used."
+  else
+    exit(0)
+  end
 else
   app.logger.info "Detected #{app.techs.size} technologies."
   app.techs.each do |tech|
     app.logger.info_sub "#{tech}"
   end
-
-  app.logger.system "Initiate code analysis based on the detected technology."
-  app.analyze
-  app.logger.info "Finally identified #{app.endpoints.size} endpoints."
-
-  app.logger.system "Generating Report."
-  app.report
+  app.logger.system "Start code analysis based on the detected technology."
 end
+
+app.analyze
+app.logger.info "Finally identified #{app.endpoints.size} endpoints."
+
+app.logger.system "Generating Report."
+app.report
