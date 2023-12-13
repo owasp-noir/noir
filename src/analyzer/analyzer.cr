@@ -37,14 +37,15 @@ end
 def analysis_endpoints(options : Hash(Symbol, String), techs, logger : NoirLogger)
   result = [] of Endpoint
   file_analyzer = FileAnalyzer.new options
-  logger.system "Starting analysis of endpoints."
+  logger.system "Initializing analyzers"
 
   analyzer = initialize_analyzers logger
   if options[:url] != ""
     logger.info_sub "File analyzer initialized and #{file_analyzer.hooks_count} hooks loaded"
   end
 
-  logger.info_sub "Analysis to #{techs.size} technologies"
+  logger.system "Analysis Started"
+  logger.info_sub "Code Analyzer: #{techs.size} in use"
 
   if (techs.includes? "java_spring") && (techs.includes? "kotlin_spring")
     techs.delete("kotlin_spring")
@@ -61,9 +62,10 @@ def analysis_endpoints(options : Hash(Symbol, String), techs, logger : NoirLogge
   end
 
   if options[:url] != ""
+    logger.info_sub "File-based Analyzer: #{file_analyzer.hooks_count} hook in use"
     result = result + file_analyzer.analyze
   end
 
-  logger.info_sub "#{result.size} endpoints found"
+  logger.info_sub "Found #{result.size} endpoints"
   result
 end
