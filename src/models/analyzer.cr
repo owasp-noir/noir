@@ -40,3 +40,35 @@ class Analyzer
 
   define_getter_methods [result, base_path, url, scope, logger]
 end
+
+class FileAnalyzer < Analyzer
+  @@hooks = [] of Proc(String, String, Array(Endpoint))
+
+  def hooks_count
+    @@hooks.size
+  end
+
+  def self.add_hook(func : Proc(String, String, Array(Endpoint)))
+    @@hooks << func
+  end
+
+  def analyze
+    begin
+      Dir.glob("#{base_path}/**/*") do |path|
+        next if File.directory?(path)
+        @@hooks.each do |hook|
+          file_results = hook.call(path, @url)
+          if !file_results.nil?
+            file_results.each do |file_result|
+              @result << file_result
+            end
+          end
+        end
+      end
+    rescue e
+      logger.debug e
+    end
+
+    @result
+  end
+end
