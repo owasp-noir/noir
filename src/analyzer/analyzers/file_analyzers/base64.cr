@@ -12,7 +12,7 @@ FileAnalyzer.add_hook(->(path : String, url : String) : Array(Endpoint) {
         base64_match = line.match(/([A-Za-z0-9+\/]{20,}={0,2})/)
         if base64_match
           decoded = Base64.decode_string(base64_match[1])
-          url_match = decoded.match(/\b(https?:\/\/[^\s]+)/)
+          url_match = decoded.match(/(https?:\/\/[^\s"]+)/)
           if url_match
             parsed_url = URI.parse(url_match[1])
             if parsed_url.to_s.includes? url
