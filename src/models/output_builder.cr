@@ -34,9 +34,7 @@ class OutputBuilder
   end
 
   def bake_endpoint(url : String, params : Array(Param))
-    if @is_debug
-      @logger.debug "Baking endpoint #{url} with #{params.size} params."
-    end
+    @logger.debug "Baking endpoint #{url} with #{params.size} params."
 
     final_url = url
     final_body = ""
@@ -92,9 +90,7 @@ class OutputBuilder
       end
     end
 
-    if @is_debug
-      @logger.debug "Baked endpoint #{final_url} with #{final_body} body and #{final_headers.size} headers."
-    end
+    @logger.debug "Baked endpoint #{final_url} with #{final_body} body and #{final_headers.size} headers."
 
     {
       url:       final_url,
