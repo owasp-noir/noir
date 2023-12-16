@@ -102,16 +102,9 @@ noir_options.each do |k, v|
 end
 
 app.logger.debug "Initialized Options:"
-app.logger.debug_sub "Base: #{app.options[:base]}"
-app.logger.debug_sub "Techs: #{app.options[:techs]}"
-app.logger.debug_sub "Scope: #{app.options[:scope]}"
-app.logger.debug_sub "Send Proxy: #{app.@send_proxy}"
-app.logger.debug_sub "Send Req: #{app.@send_req}"
-app.logger.debug_sub "Debug: #{app.@is_debug}"
-app.logger.debug_sub "Color: #{app.@is_color}"
-app.logger.debug_sub "Format: #{app.options[:format]}"
-app.logger.debug_sub "Output: #{app.options[:output]}"
-app.logger.debug_sub "Concurrency: #{app.options[:concurrency]}"
+app.options.each do |k, v|
+  app.logger.debug_sub "#{k}: #{v}"
+end
 
 app.logger.system "Detecting technologies to base directory."
 app.detect
