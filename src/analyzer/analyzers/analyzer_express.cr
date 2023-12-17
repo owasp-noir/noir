@@ -8,35 +8,18 @@ class AnalyzerExpress < Analyzer
         next if File.directory?(path)
         if File.exists?(path)
           File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
+            last_endpoint = Endpoint.new("", "")
             file.each_line do |line|
-              if line.includes? ".get('/"
-                api_path = express_get_endpoint(line)
-                if api_path != ""
-                  result << Endpoint.new(api_path, "GET")
-                end
+              endpoint = line_to_endpoint(line)
+              if endpoint.method != ""
+                result << endpoint
+                last_endpoint = endpoint
               end
-              if line.includes? ".post('/"
-                api_path = express_get_endpoint(line)
-                if api_path != ""
-                  result << Endpoint.new(api_path, "POST")
-                end
-              end
-              if line.includes? ".put('/"
-                api_path = express_get_endpoint(line)
-                if api_path != ""
-                  result << Endpoint.new(api_path, "PUT")
-                end
-              end
-              if line.includes? ".delete('/"
-                api_path = express_get_endpoint(line)
-                if api_path != ""
-                  result << Endpoint.new(api_path, "DELETE")
-                end
-              end
-              if line.includes? ".patch('/"
-                api_path = express_get_endpoint(line)
-                if api_path != ""
-                  result << Endpoint.new(api_path, "PATCH")
+
+              param = line_to_param(line)
+              if param.name != ""
+                if last_endpoint.method != ""
+                  last_endpoint.push_param(param)
                 end
               end
             end
@@ -58,6 +41,65 @@ class AnalyzerExpress < Analyzer
     end
 
     api_path
+  end
+
+  def line_to_param(line : String) : Param
+    if line.includes? "req.body."
+      param = line.split("req.body.")[1].split(")")[0].split("}")[0].split(";")[0]
+      return Param.new(param, "", "json")
+    end
+
+    if line.includes? "req.query."
+      param = line.split("req.query.")[1].split(")")[0].split("}")[0].split(";")[0]
+      return Param.new(param, "", "query")
+    end
+
+    if line.includes? "req.cookies."
+      param = line.split("req.cookies.")[1].split(")")[0].split("}")[0].split(";")[0]
+      return Param.new(param, "", "cookie")
+    end
+
+    if line.includes? "req.header("
+      param = line.split("req.header(")[1].split(")")[0].gsub(/['"]/, "")
+      return Param.new(param, "", "header")
+    end
+
+    Param.new("", "", "")
+  end
+
+  def line_to_endpoint(line : String) : Endpoint
+    if line.includes? ".get('/"
+      api_path = express_get_endpoint(line)
+      if api_path != ""
+        return Endpoint.new(api_path, "GET")
+      end
+    end
+    if line.includes? ".post('/"
+      api_path = express_get_endpoint(line)
+      if api_path != ""
+        return Endpoint.new(api_path, "POST")
+      end
+    end
+    if line.includes? ".put('/"
+      api_path = express_get_endpoint(line)
+      if api_path != ""
+        return Endpoint.new(api_path, "PUT")
+      end
+    end
+    if line.includes? ".delete('/"
+      api_path = express_get_endpoint(line)
+      if api_path != ""
+        return Endpoint.new(api_path, "DELETE")
+      end
+    end
+    if line.includes? ".patch('/"
+      api_path = express_get_endpoint(line)
+      if api_path != ""
+        return Endpoint.new(api_path, "PATCH")
+      end
+    end
+
+    Endpoint.new("", "")
   end
 end
 
