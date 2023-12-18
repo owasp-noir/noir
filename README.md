@@ -37,7 +37,7 @@
 | Java     | Armeria     | ✅   | ✅    | X     | X      | X      | X  |
 | Java     | Spring      | ✅   | ✅    | X     | X      | X      | X  |
 | Kotlin   | Spring      | ✅   | ✅    | X     | X      | X      | X  |
-| JS       | Express     | ✅   | ✅    | X     | X      | X      | X  |
+| JS       | Express     | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
 | Rust     | Axum        | ✅   | ✅    | X     | X      | X      | X  |
 | Elixir   | Phoenix     | ✅   | ✅    | X     | X      | X      | ✅ |
 | C#       | ASP.NET MVC | ✅   | X     | X     | X      | X      | X  |

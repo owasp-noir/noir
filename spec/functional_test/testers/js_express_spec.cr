@@ -1,8 +1,14 @@
 require "../func_spec.cr"
 
 extected_endpoints = [
-  Endpoint.new("/", "GET"),
-  Endpoint.new("/upload", "POST"),
+  Endpoint.new("/", "GET", [
+    Param.new("name", "", "query"),
+    Param.new("X-API-Key", "", "header"),
+  ]),
+  Endpoint.new("/upload", "POST", [
+    Param.new("name", "", "json"),
+    Param.new("auth", "", "cookie"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/js_express/", {
