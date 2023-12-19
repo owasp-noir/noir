@@ -15,9 +15,11 @@ extected_endpoints = [
     Param.new("name", "", "form"),
   ]),
   Endpoint.new("/public/secret.html", "GET"),
+  Endpoint.new("/public/mob.txt", "GET"),
+  Endpoint.new("/public/coffee.txt", "GET"),
 ]
 
 FunctionalTester.new("fixtures/go_echo/", {
   :techs     => 1,
-  :endpoints => 5,
+  :endpoints => 7,
 }, extected_endpoints).test_all

@@ -26,5 +26,8 @@ func main() {
 		return c.String(http.StatusOK, "Hello, Pet!")
 	})
 	e.Static("/public", "public")
+	e.Static("/public", "./public2")
+	e.Static("/public", "/public3")
+
 	e.Logger.Fatal(e.Start(":1323"))
 }

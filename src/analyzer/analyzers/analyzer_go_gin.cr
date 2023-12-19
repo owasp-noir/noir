@@ -55,7 +55,7 @@ class AnalyzerGoGin < Analyzer
     end
 
     public_dirs.each do |p_dir|
-      full_path = (base_path + "/" + p_dir["file_path"]).gsub("//", "/")
+      full_path = (base_path + "/" + p_dir["file_path"]).gsub_repeatedly("//", "/")
       Dir.glob("#{full_path}/**/*") do |path|
         next if File.directory?(path)
         if File.exists?(path)
