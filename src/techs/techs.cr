@@ -20,6 +20,11 @@ module NoirTechs
       :framework => "Gin",
       :similar   => ["gin", "go-gin", "go_gin"],
     },
+    :go_fiber => {
+      :language  => "Go",
+      :framework => "Fiber",
+      :similar   => ["fiber", "go-fiber", "go_fiber"],
+    },
     :java_jsp => {
       :language  => "Java",
       :framework => "JSP",
