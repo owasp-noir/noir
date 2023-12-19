@@ -4,6 +4,7 @@ require "../deliver/*"
 require "../output_builder/*"
 require "./endpoint.cr"
 require "./logger.cr"
+require "../utils/string_extension.cr"
 require "json"
 
 class NoirRunner
@@ -116,7 +117,7 @@ class NoirRunner
           tmp_endpoint.url = tmp_endpoint.url.gsub(target_url, "")
         end
 
-        tmp_endpoint.url = tmp_endpoint.url.gsub("//", "/")
+        tmp_endpoint.url = tmp_endpoint.url.gsub_repeatedly("//", "/")
         if tmp_endpoint.url != ""
           if target_url[-1] == '/' && tmp_endpoint.url[0] == '/'
             tmp_endpoint.url = tmp_endpoint.url[1..]

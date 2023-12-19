@@ -69,7 +69,7 @@ class AnalyzerGoFiber < Analyzer
     end
 
     public_dirs.each do |p_dir|
-      full_path = (base_path + "/" + p_dir["file_path"]).gsub("//", "/").gsub("//", "/")
+      full_path = (base_path + "/" + p_dir["file_path"]).gsub_repeatedly("//", "/")
       Dir.glob("#{full_path}/**/*") do |path|
         next if File.directory?(path)
         if File.exists?(path)
@@ -116,7 +116,7 @@ class AnalyzerGoFiber < Analyzer
       second = first[1].split(",")
       if second.size > 1
         static_path = second[0].gsub("\"", "")
-        file_path = second[1].gsub("\"", "").gsub(" ", "").gsub(")", "").gsub("//", "/")
+        file_path = second[1].gsub("\"", "").gsub(" ", "").gsub(")", "").gsub_repeatedly("//", "/")
         rtn = {
           "static_path" => static_path,
           "file_path"   => file_path,
