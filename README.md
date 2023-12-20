@@ -26,7 +26,7 @@
 | Crystal  | Lucky       | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
 | Go       | Echo        | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
 | Go       | Gin         | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
-| Go       | Fiber       | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
+| Go       | Fiber       | ✅   | ✅    | ✅    | ✅     | ✅     | ✅ |
 | Python   | Django      | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
 | Python   | Flask       | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
 | Python   | FastAPI     | ✅   | ✅    | ✅    | ✅     | ✅     | ✅ |

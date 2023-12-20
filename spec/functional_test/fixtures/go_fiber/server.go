@@ -24,6 +24,10 @@ func main() {
 		return c.SendString(msg) // => ✋ register
 	})
 
+	app.Get("/ws", websocket.New(func(c *websocket.Conn) {
+		// Websocket logic
+	}))
+
 	app.Static("/", "/public")
 
 	log.Fatal(app.Listen(":3000"))
