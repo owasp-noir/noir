@@ -15,6 +15,9 @@ class AnalyzerGoFiber < Analyzer
                 get_route_path(line).tap do |route_path|
                   if route_path.size > 0
                     new_endpoint = Endpoint.new("#{route_path}", line.split(".")[1].split("(")[0].upcase)
+                    if line.includes?("websocket.New(")
+                      new_endpoint.set_protocol("ws")
+                    end
                     result << new_endpoint
                     last_endpoint = new_endpoint
                   end
