@@ -1,8 +1,10 @@
 class String
   def gsub_repeatedly(pattern, replacement)
     result = self
-    while result.includes?(pattern)
-      result = result.gsub(pattern, replacement)
+    if pattern != ""
+      while result.includes?(pattern)
+        result = result.gsub(pattern, replacement)
+      end
     end
     result
   end
