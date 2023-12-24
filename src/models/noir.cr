@@ -12,7 +12,6 @@ class NoirRunner
   @techs : Array(String)
   @endpoints : Array(Endpoint)
   @logger : NoirLogger
-  @scope : String
   @send_proxy : String
   @send_req : String
   @send_es : String
@@ -38,7 +37,6 @@ class NoirRunner
     @send_proxy = options[:send_proxy]
     @send_req = options[:send_req]
     @send_es = options[:send_es]
-    @scope = options[:scope]
     @is_debug = str_to_bool(options[:debug])
     @is_color = str_to_bool(options[:color])
     @is_log = str_to_bool(options[:nolog])

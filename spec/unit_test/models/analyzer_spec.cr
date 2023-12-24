@@ -10,10 +10,6 @@ describe "Initialize Analyzer" do
     object.url.should eq("")
   end
 
-  it "getter - scope" do
-    object.scope.should eq("url,param")
-  end
-
   it "getter - result" do
     empty = [] of Endpoint
     object.result.should eq(empty)
@@ -31,10 +27,6 @@ describe "Initialize FileAnalyzer" do
 
   it "getter - url" do
     object.url.should eq("")
-  end
-
-  it "getter - scope" do
-    object.scope.should eq("url,param")
   end
 
   it "getter - result" do

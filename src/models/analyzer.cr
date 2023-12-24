@@ -7,7 +7,6 @@ class Analyzer
   @endpoint_references : Array(EndpointReference)
   @base_path : String
   @url : String
-  @scope : String
   @logger : NoirLogger
   @is_debug : Bool
   @is_color : Bool
@@ -19,7 +18,6 @@ class Analyzer
     @url = options[:url]
     @result = [] of Endpoint
     @endpoint_references = [] of EndpointReference
-    @scope = options[:scope]
     @is_debug = str_to_bool(options[:debug])
     @is_color = str_to_bool(options[:color])
     @is_log = str_to_bool(options[:nolog])
@@ -40,7 +38,7 @@ class Analyzer
     {% end %}
   end
 
-  define_getter_methods [result, base_path, url, scope, logger]
+  define_getter_methods [result, base_path, url, logger]
 end
 
 class FileAnalyzer < Analyzer
