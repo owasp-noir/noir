@@ -7,7 +7,7 @@ class OutputBuilderMarkdownTable < OutputBuilder
     ob_puts "| -------- | -------- | ------ |"
 
     endpoints.each do |endpoint|
-      if !endpoint.params.nil? && @scope.includes?("param")
+      if !endpoint.params.nil?
         params_text = ""
         endpoint.params.each do |param|
           params_text += "`#{param.name} (#{param.param_type})` "
