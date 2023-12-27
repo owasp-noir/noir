@@ -9,6 +9,8 @@ class AnalyzerExample < Analyzer
         if File.exists?(path)
           File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
             file.each_line do |_|
+              # For example (Add endpoint to result)
+              # @result << Endpoint.new("/", "GET")
             end
           end
         end
