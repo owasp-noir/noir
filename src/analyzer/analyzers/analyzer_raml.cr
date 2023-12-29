@@ -8,6 +8,8 @@ class AnalyzerRAML < Analyzer
     if raml_specs.is_a?(Array(String))
       raml_specs.each do |raml_spec|
         if File.exists?(raml_spec)
+          details = Details.new(PathInfo.new(raml_spec))
+
           content = File.read(raml_spec, encoding: "utf-8", invalid: :skip)
           yaml_obj = YAML.parse(content)
           yaml_obj.as_h.each do |path, path_obj|
@@ -45,7 +47,7 @@ class AnalyzerRAML < Analyzer
                   end
                 end
 
-                @result << Endpoint.new(path.to_s, method.to_s.upcase, params)
+                @result << Endpoint.new(path.to_s, method.to_s.upcase, params, details)
               rescue e
                 @logger.debug "Exception of #{raml_spec}/paths/#{path}/#{method}"
                 @logger.debug_sub e

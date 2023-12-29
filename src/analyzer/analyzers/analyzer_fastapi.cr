@@ -167,7 +167,8 @@ class AnalyzerFastAPI < AnalyzerPython
                   end
                 end
 
-                result << Endpoint.new(router_class.join(http_route_path), http_method_name, params)
+                details = Details.new(PathInfo.new(path, index + 1))
+                result << Endpoint.new(router_class.join(http_route_path), http_method_name, params, details)
               end
             end
           end

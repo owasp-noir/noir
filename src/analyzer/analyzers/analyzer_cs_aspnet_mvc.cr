@@ -11,7 +11,7 @@ class AnalyzerCsAspNetMvc < Analyzer
         maproute_check = false
         maproute_buffer = ""
 
-        file.each_line do |line|
+        file.each_line.with_index do |line, index|
           if line.includes? ".MapRoute("
             maproute_check = true
             maproute_buffer = line
@@ -25,7 +25,8 @@ class AnalyzerCsAspNetMvc < Analyzer
               buffer.split(",").each do |item|
                 if item.includes? "url:"
                   url = item.gsub(/url:/, "").gsub(/"/, "")
-                  @result << Endpoint.new("/#{url}", "GET")
+                  details = Details.new(PathInfo.new(route_config_file, index + 1))
+                  @result << Endpoint.new("/#{url}", "GET", details)
                 end
               end
 

@@ -17,7 +17,8 @@ class AnalyzerSpring < Analyzer
 
           # Spring MVC
           has_class_been_imported = false
-          content.each_line do |line|
+          content.each_line.with_index do |line, index|
+            details = Details.new(PathInfo.new(path, index + 1))
             if has_class_been_imported == false && REGEX_CLASS_DEFINITION.match(line)
               has_class_been_imported = true
             end
@@ -40,7 +41,7 @@ class AnalyzerSpring < Analyzer
                   if line.includes? "RequestMethod"
                     define_requestmapping_handlers(["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE"])
                   else
-                    @result << Endpoint.new("#{url}#{mapping_path}", "GET")
+                    @result << Endpoint.new("#{url}#{mapping_path}", "GET", details)
                   end
                 end
               end
@@ -49,31 +50,31 @@ class AnalyzerSpring < Analyzer
             if line.includes? "PostMapping"
               mapping_paths = mapping_to_path(line)
               mapping_paths.each do |mapping_path|
-                @result << Endpoint.new("#{url}#{mapping_path}", "POST")
+                @result << Endpoint.new("#{url}#{mapping_path}", "POST", details)
               end
             end
             if line.includes? "PutMapping"
               mapping_paths = mapping_to_path(line)
               mapping_paths.each do |mapping_path|
-                @result << Endpoint.new("#{url}#{mapping_path}", "PUT")
+                @result << Endpoint.new("#{url}#{mapping_path}", "PUT", details)
               end
             end
             if line.includes? "DeleteMapping"
               mapping_paths = mapping_to_path(line)
               mapping_paths.each do |mapping_path|
-                @result << Endpoint.new("#{url}#{mapping_path}", "DELETE")
+                @result << Endpoint.new("#{url}#{mapping_path}", "DELETE", details)
               end
             end
             if line.includes? "PatchMapping"
               mapping_paths = mapping_to_path(line)
               mapping_paths.each do |mapping_path|
-                @result << Endpoint.new("#{url}#{mapping_path}", "PATCH")
+                @result << Endpoint.new("#{url}#{mapping_path}", "PATCH", details)
               end
             end
             if line.includes? "GetMapping"
               mapping_paths = mapping_to_path(line)
               mapping_paths.each do |mapping_path|
-                @result << Endpoint.new("#{url}#{mapping_path}", "GET")
+                @result << Endpoint.new("#{url}#{mapping_path}", "GET", details)
               end
             end
           end
@@ -85,7 +86,8 @@ class AnalyzerSpring < Analyzer
               next if match.size != 4
               method = match[2]
               endpoint = match[3].gsub(/\n/, "")
-              @result << Endpoint.new("#{url}#{endpoint}", method)
+              details = Details.new(PathInfo.new(path))
+              @result << Endpoint.new("#{url}#{endpoint}", method, details)
             end
           end
         end

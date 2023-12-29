@@ -8,7 +8,8 @@ class AnalyzerRubyRails < Analyzer
         next if File.directory?(file)
         real_path = "#{@base_path}/public/".gsub(/\/+/, '/')
         relative_path = file.sub(real_path, "")
-        @result << Endpoint.new("/#{relative_path}", "GET")
+        details = Details.new(PathInfo.new(file))
+        @result << Endpoint.new("/#{relative_path}", "GET", details)
       end
     rescue e
       logger.debug e
@@ -31,20 +32,21 @@ class AnalyzerRubyRails < Analyzer
               end
             end
 
+            details = Details.new(PathInfo.new("#{@base_path}/config/routes.rb"))
             line.scan(/get\s+['"](.+?)['"]/) do |match|
-              @result << Endpoint.new("#{match[1]}", "GET")
+              @result << Endpoint.new("#{match[1]}", "GET", details)
             end
             line.scan(/post\s+['"](.+?)['"]/) do |match|
-              @result << Endpoint.new("#{match[1]}", "POST")
+              @result << Endpoint.new("#{match[1]}", "POST", details)
             end
             line.scan(/put\s+['"](.+?)['"]/) do |match|
-              @result << Endpoint.new("#{match[1]}", "PUT")
+              @result << Endpoint.new("#{match[1]}", "PUT", details)
             end
             line.scan(/delete\s+['"](.+?)['"]/) do |match|
-              @result << Endpoint.new("#{match[1]}", "DELETE")
+              @result << Endpoint.new("#{match[1]}", "DELETE", details)
             end
             line.scan(/patch\s+['"](.+?)['"]/) do |match|
-              @result << Endpoint.new("#{match[1]}", "PATCH")
+              @result << Endpoint.new("#{match[1]}", "PATCH", details)
             end
           end
         end
@@ -188,6 +190,7 @@ class AnalyzerRubyRails < Analyzer
           end
         end
 
+        details = Details.new(PathInfo.new(path))
         methods.each do |method|
           if method == "GET/INDEX"
             if params_method.has_key? "index"
@@ -200,7 +203,7 @@ class AnalyzerRubyRails < Analyzer
             index_params ||= [] of Param
             deduplication_params_query ||= [] of Param
             last_params = index_params + deduplication_params_query
-            @result << Endpoint.new("/#{resource}", "GET", last_params)
+            @result << Endpoint.new("/#{resource}", "GET", last_params, details)
           elsif method == "GET/SHOW"
             if params_method.has_key? "show"
               show_params = [] of Param
@@ -211,7 +214,7 @@ class AnalyzerRubyRails < Analyzer
             show_params ||= [] of Param
             deduplication_params_query ||= [] of Param
             last_params = show_params + deduplication_params_query
-            @result << Endpoint.new("/#{resource}/1", "GET", last_params)
+            @result << Endpoint.new("/#{resource}/1", "GET", last_params, details)
           else
             if method == "POST"
               if params_method.has_key? "create"
@@ -223,7 +226,7 @@ class AnalyzerRubyRails < Analyzer
               create_params ||= [] of Param
               params_body ||= [] of Param
               last_params = create_params + params_body
-              @result << Endpoint.new("/#{resource}", method, last_params)
+              @result << Endpoint.new("/#{resource}", method, last_params, details)
             elsif method == "DELETE"
               params_delete = [] of Param
               if params_method.has_key? "delete"
@@ -231,7 +234,7 @@ class AnalyzerRubyRails < Analyzer
                   params_delete << param
                 end
               end
-              @result << Endpoint.new("/#{resource}/1", method, params_delete)
+              @result << Endpoint.new("/#{resource}/1", method, params_delete, details)
             else
               if params_method.has_key? "update"
                 update_params = [] of Param
@@ -242,7 +245,7 @@ class AnalyzerRubyRails < Analyzer
               update_params ||= [] of Param
               params_body ||= [] of Param
               last_params = update_params + params_body
-              @result << Endpoint.new("/#{resource}/1", method, last_params)
+              @result << Endpoint.new("/#{resource}/1", method, last_params, details)
             end
           end
         end

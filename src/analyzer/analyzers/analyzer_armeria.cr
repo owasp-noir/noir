@@ -12,6 +12,8 @@ class AnalyzerArmeria < Analyzer
         next if File.directory?(path)
 
         if File.exists?(path) && (path.ends_with?(".java") || path.ends_with?(".kt"))
+          details = Details.new(PathInfo.new(path))
+
           content = File.read(path, encoding: "utf-8", invalid: :skip)
           content.scan(REGEX_SERVER_CODE_BLOCK) do |server_codeblcok_match|
             server_codeblock = server_codeblcok_match[0]
@@ -30,7 +32,7 @@ class AnalyzerArmeria < Analyzer
               endpoint = split_params[endpoint_param_index].strip
 
               endpoint = endpoint[1..-2]
-              @result << Endpoint.new("#{endpoint}", "GET")
+              @result << Endpoint.new("#{endpoint}", "GET", details)
             end
 
             server_codeblock.scan(REGEX_ROUTE_CODE) do |route_code_match|
@@ -47,7 +49,7 @@ class AnalyzerArmeria < Analyzer
               next if endpoint[0] != '"'
 
               endpoint = endpoint[1..-2]
-              @result << Endpoint.new("#{endpoint}", method)
+              @result << Endpoint.new("#{endpoint}", method, details)
             end
           end
         end

@@ -33,7 +33,8 @@ class AnalyzerJsp < Analyzer
             rescue
               next
             end
-            result << Endpoint.new("/#{relative_path}", "GET", params_query)
+            details = Details.new(PathInfo.new(path))
+            result << Endpoint.new("/#{relative_path}", "GET", params_query, details)
           end
         end
       end

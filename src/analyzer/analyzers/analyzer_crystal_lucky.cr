@@ -21,9 +21,11 @@ class AnalyzerCrystalLucky < Analyzer
         if File.exists?(path) && File.extname(path) == ".cr" && !path.includes?("lib")
           File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
             last_endpoint = Endpoint.new("", "")
-            file.each_line do |line|
+            file.each_line.with_index do |line, index|
               endpoint = line_to_endpoint(line)
               if endpoint.method != ""
+                details = Details.new(PathInfo.new(path, index + 1))
+                endpoint.set_details(details)
                 result << endpoint
                 last_endpoint = endpoint
               end

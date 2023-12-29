@@ -7,7 +7,7 @@ FileAnalyzer.add_hook(->(path : String, url : String) : Array(Endpoint) {
 
   begin
     File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-      file.each_line do |line|
+      file.each_line.with_index do |line, index|
         # Check base64 encoded strings
         base64_match = line.match(/([A-Za-z0-9+\/]{20,}={0,2})/)
         if base64_match
@@ -16,7 +16,8 @@ FileAnalyzer.add_hook(->(path : String, url : String) : Array(Endpoint) {
           if url_match
             parsed_url = URI.parse(url_match[1])
             if parsed_url.to_s.includes? url
-              results << Endpoint.new(parsed_url.path, "GET")
+              details = Details.new(PathInfo.new(path, index + 1))
+              results << Endpoint.new(parsed_url.path, "GET", details)
             end
           end
         end
