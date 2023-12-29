@@ -11,14 +11,15 @@ class AnalyzerRustAxum < Analyzer
 
         if File.exists?(path) && File.extname(path) == ".rs"
           File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-            file.each_line do |line|
+            file.each_line.with_index do |line, index|
               if line.includes? ".route("
                 match = line.match(pattern)
                 if match
                   begin
                     route_argument = match[1]
                     callback_argument = match[2]
-                    result << Endpoint.new("#{route_argument}", callback_to_method(callback_argument))
+                    details = Details.new(PathInfo.new(path, index + 1))
+                    result << Endpoint.new("#{route_argument}", callback_to_method(callback_argument), details)
                   rescue
                   end
                 end

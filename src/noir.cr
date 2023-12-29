@@ -23,6 +23,9 @@ OptionParser.parse do |parser|
   parser.on "-f FORMAT", "--format json", "Set output format \n[plain/json/yaml/markdown-table/curl/httpie/oas2/oas3]" { |var| noir_options[:format] = var }
   parser.on "-o PATH", "--output out.txt", "Write result to file" { |var| noir_options[:output] = var }
   parser.on "--set-pvalue VALUE", "Specifies the value of the identified parameter" { |var| noir_options[:set_pvalue] = var }
+  parser.on "--include-path", "Include file path in the plain result" do
+    noir_options[:include_path] = "yes"
+  end
   parser.on "--no-color", "Disable color output" do
     noir_options[:color] = "no"
   end

@@ -9,6 +9,7 @@ class AnalyzerOAS2 < Analyzer
     if swagger_jsons.is_a?(Array(String))
       swagger_jsons.each do |swagger_json|
         if File.exists?(swagger_json)
+          details = Details.new(PathInfo.new(swagger_json))
           content = File.read(swagger_json, encoding: "utf-8", invalid: :skip)
           json_obj = JSON.parse(content)
           base_path = ""
@@ -44,9 +45,9 @@ class AnalyzerOAS2 < Analyzer
                       params << param
                     end
                   end
-                  @result << Endpoint.new(base_path + path, method.upcase, params)
+                  @result << Endpoint.new(base_path + path, method.upcase, params, details)
                 else
-                  @result << Endpoint.new(base_path + path, method.upcase)
+                  @result << Endpoint.new(base_path + path, method.upcase, details)
                 end
               rescue e
                 @logger.debug "Exception of #{swagger_json}/paths/path/method"
@@ -67,6 +68,7 @@ class AnalyzerOAS2 < Analyzer
     if swagger_yamls.is_a?(Array(String))
       swagger_yamls.each do |swagger_yaml|
         if File.exists?(swagger_yaml)
+          details = Details.new(PathInfo.new(swagger_yaml))
           content = File.read(swagger_yaml, encoding: "utf-8", invalid: :skip)
           yaml_obj = YAML.parse(content)
           base_path = ""
@@ -102,9 +104,9 @@ class AnalyzerOAS2 < Analyzer
                       params << param
                     end
                   end
-                  @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params)
+                  @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params, details)
                 else
-                  @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase)
+                  @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, details)
                 end
               rescue e
                 @logger.debug "Exception of #{swagger_yaml}/paths/path/method"

@@ -26,6 +26,7 @@ class AnalyzerOAS3 < Analyzer
     if oas3_jsons.is_a?(Array(String))
       oas3_jsons.each do |oas3_json|
         if File.exists?(oas3_json)
+          details = Details.new(PathInfo.new(oas3_json))
           content = File.read(oas3_json, encoding: "utf-8", invalid: :skip)
           json_obj = JSON.parse(content)
 
@@ -76,11 +77,11 @@ class AnalyzerOAS3 < Analyzer
                 end
 
                 if params.size > 0
-                  @result << Endpoint.new(base_path + path, method.upcase, params)
+                  @result << Endpoint.new(base_path + path, method.upcase, params, details)
                 elsif params.size > 0
-                  @result << Endpoint.new(base_path + path, method.upcase, params)
+                  @result << Endpoint.new(base_path + path, method.upcase, params, details)
                 else
-                  @result << Endpoint.new(base_path + path, method.upcase)
+                  @result << Endpoint.new(base_path + path, method.upcase, details)
                 end
               rescue e
                 @logger.debug "Exception of #{oas3_json}/paths/endpoint"
@@ -98,6 +99,7 @@ class AnalyzerOAS3 < Analyzer
     if oas3_yamls.is_a?(Array(String))
       oas3_yamls.each do |oas3_yaml|
         if File.exists?(oas3_yaml)
+          details = Details.new(PathInfo.new(oas3_yaml))
           content = File.read(oas3_yaml, encoding: "utf-8", invalid: :skip)
           yaml_obj = YAML.parse(content)
 
@@ -148,11 +150,11 @@ class AnalyzerOAS3 < Analyzer
                 end
 
                 if params.size > 0
-                  @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params)
+                  @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params, details)
                 elsif params.size > 0
-                  @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params)
+                  @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params, details)
                 else
-                  @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase)
+                  @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, details)
                 end
               end
             rescue e
