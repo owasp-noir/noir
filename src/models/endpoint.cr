@@ -4,15 +4,29 @@ require "yaml"
 struct Endpoint
   include JSON::Serializable
   include YAML::Serializable
-  property url, method, params, protocol
+  property url, method, params, protocol, details
 
   def initialize(@url : String, @method : String)
+    @params = [] of Param
+    @details = Details.new
+    @protocol = "http"
+  end
+
+  def initialize(@url : String, @method : String, @details : Details)
     @params = [] of Param
     @protocol = "http"
   end
 
   def initialize(@url : String, @method : String, @params : Array(Param))
+    @details = Details.new
     @protocol = "http"
+  end
+
+  def initialize(@url : String, @method : String, @params : Array(Param), @details : Details)
+    @protocol = "http"
+  end
+
+  def set_details(@details : Details)
   end
 
   def set_protocol(protocol : String)
@@ -45,6 +59,38 @@ struct Param
   # param_type can be "query", "json", "form", "header", "cookie"
 
   def initialize(@name : String, @value : String, @param_type : String)
+  end
+end
+
+struct Details
+  include JSON::Serializable
+  include YAML::Serializable
+  property code_paths : Array(PathInfo) = [] of PathInfo
+
+  # + New details types to be added in the future..
+
+  def initialize
+  end
+
+  def initialize(code_path : PathInfo)
+    @code_paths << code_path
+  end
+
+  def add_path(code_path : PathInfo)
+    @code_paths << code_path
+  end
+end
+
+struct PathInfo
+  include JSON::Serializable
+  include YAML::Serializable
+  property path, line
+
+  def initialize(@path : String)
+    @line = nil
+  end
+
+  def initialize(@path : String, @line : Int32 | Nil)
   end
 end
 

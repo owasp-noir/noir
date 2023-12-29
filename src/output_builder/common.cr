@@ -31,6 +31,19 @@ class OutputBuilderCommon < OutputBuilder
         r_buffer += "\n  ○ body: #{r_body}"
       end
 
+      if @options[:include_path] == "yes"
+        details = endpoint.details
+        if details.code_paths && details.code_paths.size > 0
+          details.code_paths.each do |code_path|
+            if code_path.line.nil?
+              r_buffer += "\n  ○ file: #{code_path.path}"
+            else
+              r_buffer += "\n  ○ file: #{code_path.path}##{code_path.line}"
+            end
+          end
+        end
+      end
+
       ob_puts r_buffer
     end
   end
