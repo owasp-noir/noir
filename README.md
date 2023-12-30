@@ -17,6 +17,7 @@
 - Header
 - Cookie
 - Protocol (e.g ws)
+- Details (e.g The origin of the endpoint)
 
 ### Languages and Frameworks
 
@@ -135,6 +136,7 @@ JSON Result
 ```
 noir -b . -u https://testapp.internal.domains -f json
 ```
+
 ```json
 [
   ...
@@ -159,7 +161,15 @@ noir -b . -u https://testapp.internal.domains -f json
       }
     ],
     "protocol": "http",
-    "url": "https://testapp.internal.domains/comments"
+    "url": "https://testapp.internal.domains/comments",
+    "details": {
+      "code_paths": [
+        {
+          "path": "app_source/testapp.cr",
+          "line": 3
+        }
+      ]
+    }
   }
 ]
 ```
