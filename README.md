@@ -100,6 +100,7 @@ Usage: noir <flags>
                                      [plain/json/yaml/markdown-table/curl/httpie/oas2/oas3]
     -o PATH, --output out.txt        Write result to file
     --set-pvalue VALUE               Specifies the value of the identified parameter
+    --include-path                   Include file path in the plain result
     --no-color                       Disable color output
     --no-log                         Displaying only the results
 
