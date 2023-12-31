@@ -1,4 +1,5 @@
 require "./analyzers/*"
+require "./analyzers/file_analyzers/*"
 
 def initialize_analyzers(logger : NoirLogger)
   analyzers = {} of String => Proc(Hash(Symbol, String), Array(Endpoint))
@@ -11,6 +12,7 @@ def initialize_analyzers(logger : NoirLogger)
   analyzers["php_pure"] = ->analyzer_php_pure(Hash(Symbol, String))
   analyzers["go_echo"] = ->analyzer_go_echo(Hash(Symbol, String))
   analyzers["go_gin"] = ->analyzer_go_gin(Hash(Symbol, String))
+  analyzers["go_fiber"] = ->analyzer_go_fiber(Hash(Symbol, String))
   analyzers["python_flask"] = ->analyzer_flask(Hash(Symbol, String))
   analyzers["python_fastapi"] = ->analyzer_fastapi(Hash(Symbol, String))
   analyzers["python_django"] = ->analyzer_django(Hash(Symbol, String))
@@ -35,10 +37,16 @@ end
 
 def analysis_endpoints(options : Hash(Symbol, String), techs, logger : NoirLogger)
   result = [] of Endpoint
-  logger.system "Starting analysis of endpoints."
+  file_analyzer = FileAnalyzer.new options
+  logger.system "Initializing analyzers"
 
   analyzer = initialize_analyzers logger
-  logger.info_sub "Analysis to #{techs.size} technologies"
+  if options[:url] != ""
+    logger.info_sub "File analyzer initialized and #{file_analyzer.hooks_count} hooks loaded"
+  end
+
+  logger.system "Analysis Started"
+  logger.info_sub "Code Analyzer: #{techs.size} in use"
 
   if (techs.includes? "java_spring") && (techs.includes? "kotlin_spring")
     techs.delete("kotlin_spring")
@@ -54,6 +62,11 @@ def analysis_endpoints(options : Hash(Symbol, String), techs, logger : NoirLogge
     end
   end
 
-  logger.info_sub "#{result.size} endpoints found"
+  if options[:url] != ""
+    logger.info_sub "File-based Analyzer: #{file_analyzer.hooks_count} hook in use"
+    result = result + file_analyzer.analyze
+  end
+
+  logger.info_sub "Found #{result.size} endpoints"
   result
 end

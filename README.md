@@ -17,6 +17,7 @@
 - Header
 - Cookie
 - Protocol (e.g ws)
+- Details (e.g The origin of the endpoint)
 
 ### Languages and Frameworks
 
@@ -26,6 +27,7 @@
 | Crystal  | Lucky       | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
 | Go       | Echo        | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
 | Go       | Gin         | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
+| Go       | Fiber       | ✅   | ✅    | ✅    | ✅     | ✅     | ✅ |
 | Python   | Django      | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
 | Python   | Flask       | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
 | Python   | FastAPI     | ✅   | ✅    | ✅    | ✅     | ✅     | ✅ |
@@ -37,7 +39,7 @@
 | Java     | Armeria     | ✅   | ✅    | X     | X      | X      | X  |
 | Java     | Spring      | ✅   | ✅    | X     | X      | X      | X  |
 | Kotlin   | Spring      | ✅   | ✅    | X     | X      | X      | X  |
-| JS       | Express     | ✅   | ✅    | X     | X      | X      | X  |
+| JS       | Express     | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
 | Rust     | Axum        | ✅   | ✅    | X     | X      | X      | X  |
 | Elixir   | Phoenix     | ✅   | ✅    | X     | X      | X      | ✅ |
 | C#       | ASP.NET MVC | ✅   | X     | X     | X      | X      | X  |
@@ -92,13 +94,13 @@ Usage: noir <flags>
   Basic:
     -b PATH, --base-path ./app       (Required) Set base path
     -u URL, --url http://..          Set base url for endpoints
-    -s SCOPE, --scope url,param      Set scope for detection
 
   Output:
     -f FORMAT, --format json         Set output format
                                      [plain/json/yaml/markdown-table/curl/httpie/oas2/oas3]
     -o PATH, --output out.txt        Write result to file
     --set-pvalue VALUE               Specifies the value of the identified parameter
+    --include-path                   Include file path in the plain result
     --no-color                       Disable color output
     --no-log                         Displaying only the results
 
@@ -135,6 +137,7 @@ JSON Result
 ```
 noir -b . -u https://testapp.internal.domains -f json
 ```
+
 ```json
 [
   ...
@@ -159,7 +162,15 @@ noir -b . -u https://testapp.internal.domains -f json
       }
     ],
     "protocol": "http",
-    "url": "https://testapp.internal.domains/comments"
+    "url": "https://testapp.internal.domains/comments",
+    "details": {
+      "code_paths": [
+        {
+          "path": "app_source/testapp.cr",
+          "line": 3
+        }
+      ]
+    }
   }
 ]
 ```

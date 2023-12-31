@@ -30,7 +30,7 @@ class AnalyzerFlask < AnalyzerPython
       Dir.glob("#{base_path}/**/*.py") do |path|
         next if File.directory?(path)
         File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-          file.each_line do |line|
+          file.each_line.with_index do |line, index|
             # [TODO] We should be cautious about instance replace with other variable
             match = line.match /(#{REGEX_PYTHON_VARIABLE_NAME})\s*=\s*Flask\s*\(/
             if !match.nil?
@@ -73,11 +73,12 @@ class AnalyzerFlask < AnalyzerPython
                   if !path_str_match.nil? && path_str_match.size == 2
                     route_path = path_str_match[1]
                     # [TODO] Parse methods from reference views
-                    route_url = "#{@url}#{blueprint_prefix}#{route_path}"
+                    route_url = "#{blueprint_prefix}#{route_path}"
                     if !route_url.starts_with? "/"
                       route_url = "/#{route_url}"
                     end
-                    result << Endpoint.new(route_url, "GET")
+                    details = Details.new(PathInfo.new(path, index + 1))
+                    result << Endpoint.new(route_url, "GET", details)
                   end
                 end
               end
@@ -123,6 +124,8 @@ class AnalyzerFlask < AnalyzerPython
                 codeblock_lines = codeblock_lines[1..]
 
                 get_endpoints(route_path, extra_params, codeblock_lines, prefix).each do |endpoint|
+                  details = Details.new(PathInfo.new(path, line_index + 1))
+                  endpoint.set_details(details)
                   result << endpoint
                 end
               end
@@ -211,7 +214,7 @@ class AnalyzerFlask < AnalyzerPython
         prefix = "#{prefix}/"
       end
 
-      route_url = "#{@url}#{prefix}#{route_path}"
+      route_url = "#{prefix}#{route_path}"
       if !route_url.starts_with? "/"
         route_url = "/#{route_url}"
       end

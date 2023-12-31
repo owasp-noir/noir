@@ -4,6 +4,7 @@ require "../deliver/*"
 require "../output_builder/*"
 require "./endpoint.cr"
 require "./logger.cr"
+require "../utils/string_extension.cr"
 require "json"
 
 class NoirRunner
@@ -11,7 +12,6 @@ class NoirRunner
   @techs : Array(String)
   @endpoints : Array(Endpoint)
   @logger : NoirLogger
-  @scope : String
   @send_proxy : String
   @send_req : String
   @send_es : String
@@ -37,7 +37,6 @@ class NoirRunner
     @send_proxy = options[:send_proxy]
     @send_req = options[:send_req]
     @send_es = options[:send_es]
-    @scope = options[:scope]
     @is_debug = str_to_bool(options[:debug])
     @is_color = str_to_bool(options[:color])
     @is_log = str_to_bool(options[:nolog])
@@ -72,7 +71,8 @@ class NoirRunner
   def analyze
     @endpoints = analysis_endpoints options, @techs, @logger
     optimize_endpoints
-    deliver()
+    combine_url_and_endpoints
+    deliver
   end
 
   def optimize_endpoints
@@ -101,6 +101,35 @@ class NoirRunner
     end
 
     @endpoints = tmp
+  end
+
+  def combine_url_and_endpoints
+    tmp = [] of Endpoint
+    target_url = @options[:url]
+
+    if target_url != ""
+      @logger.system "Combining url and endpoints."
+      @endpoints.each do |endpoint|
+        tmp_endpoint = endpoint
+        if tmp_endpoint.url.includes? target_url
+          tmp_endpoint.url = tmp_endpoint.url.gsub(target_url, "")
+        end
+
+        tmp_endpoint.url = tmp_endpoint.url.gsub_repeatedly("//", "/")
+        if tmp_endpoint.url != ""
+          if target_url[-1] == '/' && tmp_endpoint.url[0] == '/'
+            tmp_endpoint.url = tmp_endpoint.url[1..]
+          elsif target_url[-1] != '/' && tmp_endpoint.url[0] != '/'
+            tmp_endpoint.url = "/#{tmp_endpoint.url}"
+          end
+        end
+
+        tmp_endpoint.url = target_url + tmp_endpoint.url
+        tmp << tmp_endpoint
+      end
+
+      @endpoints = tmp
+    end
   end
 
   def deliver

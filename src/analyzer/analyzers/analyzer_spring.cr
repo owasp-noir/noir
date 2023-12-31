@@ -11,13 +11,14 @@ class AnalyzerSpring < Analyzer
       Dir.glob("#{@base_path}/**/*") do |path|
         next if File.directory?(path)
 
-        url = @url
+        url = ""
         if File.exists?(path) && (path.ends_with?(".java") || path.ends_with?(".kt"))
           content = File.read(path, encoding: "utf-8", invalid: :skip)
 
           # Spring MVC
           has_class_been_imported = false
-          content.each_line do |line|
+          content.each_line.with_index do |line, index|
+            details = Details.new(PathInfo.new(path, index + 1))
             if has_class_been_imported == false && REGEX_CLASS_DEFINITION.match(line)
               has_class_been_imported = true
             end
@@ -34,13 +35,13 @@ class AnalyzerSpring < Analyzer
                   class_mapping_url = class_mapping_url[0..-2]
                 end
 
-                url = "#{@url}#{class_mapping_url}"
+                url = "#{class_mapping_url}"
               else
                 mapping_paths.each do |mapping_path|
                   if line.includes? "RequestMethod"
                     define_requestmapping_handlers(["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE"])
                   else
-                    @result << Endpoint.new("#{url}#{mapping_path}", "GET")
+                    @result << Endpoint.new("#{url}#{mapping_path}", "GET", details)
                   end
                 end
               end
@@ -49,31 +50,31 @@ class AnalyzerSpring < Analyzer
             if line.includes? "PostMapping"
               mapping_paths = mapping_to_path(line)
               mapping_paths.each do |mapping_path|
-                @result << Endpoint.new("#{url}#{mapping_path}", "POST")
+                @result << Endpoint.new("#{url}#{mapping_path}", "POST", details)
               end
             end
             if line.includes? "PutMapping"
               mapping_paths = mapping_to_path(line)
               mapping_paths.each do |mapping_path|
-                @result << Endpoint.new("#{url}#{mapping_path}", "PUT")
+                @result << Endpoint.new("#{url}#{mapping_path}", "PUT", details)
               end
             end
             if line.includes? "DeleteMapping"
               mapping_paths = mapping_to_path(line)
               mapping_paths.each do |mapping_path|
-                @result << Endpoint.new("#{url}#{mapping_path}", "DELETE")
+                @result << Endpoint.new("#{url}#{mapping_path}", "DELETE", details)
               end
             end
             if line.includes? "PatchMapping"
               mapping_paths = mapping_to_path(line)
               mapping_paths.each do |mapping_path|
-                @result << Endpoint.new("#{url}#{mapping_path}", "PATCH")
+                @result << Endpoint.new("#{url}#{mapping_path}", "PATCH", details)
               end
             end
             if line.includes? "GetMapping"
               mapping_paths = mapping_to_path(line)
               mapping_paths.each do |mapping_path|
-                @result << Endpoint.new("#{url}#{mapping_path}", "GET")
+                @result << Endpoint.new("#{url}#{mapping_path}", "GET", details)
               end
             end
           end
@@ -85,7 +86,8 @@ class AnalyzerSpring < Analyzer
               next if match.size != 4
               method = match[2]
               endpoint = match[3].gsub(/\n/, "")
-              @result << Endpoint.new("#{url}#{endpoint}", method)
+              details = Details.new(PathInfo.new(path))
+              @result << Endpoint.new("#{url}#{endpoint}", method, details)
             end
           end
         end
@@ -98,49 +100,79 @@ class AnalyzerSpring < Analyzer
     @result
   end
 
-  def mapping_to_path(content : String)
+  def mapping_to_path(line : String)
+    unless line.includes? "("
+      # no path
+      return [""]
+    end
+
     paths = Array(String).new
-
-    splited_line = content.strip.split("(")
-    if splited_line.size > 1
-      line = splited_line[1].gsub(/"|\)| /, "").gsub(/\s/, "").strip
-      if line.size > 0
-        if line[0].to_s == "/"
-          attribute_index = line.index(/,(\w)+=/)
-          if !attribute_index.nil?
-            attribute_index -= 1
-            line = line[0..attribute_index]
-          end
-
-          paths << line
-        else
-          if is_bracket(line)
-            line = line.gsub(/\{|\}/, "")
-          end
-          if line.size > 0 && line[0].to_s == "/"
-            paths << line
-          else
-            value_flag = false
-            line = comma_in_bracket(line)
-            line.split(",").each do |comma_line|
-              if comma_line.to_s.includes? "value="
-                tmp = comma_line.split("=")
-                tmp[1].gsub(/"|\)/, "").strip.split("_BRACKET_COMMA_").each do |path|
-                  paths << "#{path.strip.gsub("\\", "").gsub(";", "")}"
-                  value_flag = true
-                end
-              end
-            end
-            if value_flag == false
-              paths << ""
+    splited_line = line.strip.split("(")
+    if splited_line.size > 1 && splited_line[1].includes? ")"
+      params = splited_line[1].split(")")[0]
+      params = params.gsub(/\s/, "") # remove space
+      if params.size > 0
+        path = nil
+        # value parameter
+        if params.includes? "value="
+          value = params.split("value=")[1]
+          if value.size > 0
+            if value[0] == '"'
+              path = value.split("\"")[1]
+            elsif value[0] == '{' && value.includes? "}"
+              path = value[1..].split("}")[0]
             end
           end
         end
+
+        # first parameter
+        if path.nil?
+          if params[0] == '"'
+            path = params.split("\"")[1]
+          elsif params[0] == '{' && params.includes? "}"
+            path = params[1..].split("}")[0]
+          end
+        end
+
+        # extract path
+        if path.nil?
+          # can't find path
+          paths << ""
+        else
+          if path.size > 0 && path[0] == '"' && path.includes? ","
+            # multiple path
+            path.split(",").each do |each_path|
+              if each_path.size > 0
+                if each_path[0] == '"'
+                  paths << each_path[1..-2]
+                else
+                  paths << ""
+                end
+              end
+            end
+          else
+            # single path
+            if path.size > 0 && path[0] == '"'
+              path = path.split("\"")[1]
+            end
+
+            paths << path
+          end
+        end
       else
+        # no path
         paths << ""
       end
-    else
-      paths << ""
+    end
+
+    # append slash
+    (0..paths.size - 1).each do |i|
+      path = paths[i]
+      if path.size > 0 && !path.starts_with? "/"
+        path = "/" + path
+      end
+
+      paths[i] = path
     end
 
     paths

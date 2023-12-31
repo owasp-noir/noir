@@ -6,7 +6,6 @@ class OutputBuilder
   @is_debug : Bool
   @is_color : Bool
   @is_log : Bool
-  @scope : String
   @output_file : String
 
   def initialize(options : Hash(Symbol, String))
@@ -14,7 +13,6 @@ class OutputBuilder
     @options = options
     @is_color = str_to_bool(options[:color])
     @is_log = str_to_bool(options[:nolog])
-    @scope = options[:scope]
     @output_file = options[:output]
 
     @logger = NoirLogger.new @is_debug, @is_color, @is_log
@@ -34,9 +32,7 @@ class OutputBuilder
   end
 
   def bake_endpoint(url : String, params : Array(Param))
-    if @is_debug
-      @logger.debug "Baking endpoint #{url} with #{params.size} params."
-    end
+    @logger.debug "Baking endpoint #{url} with #{params.size} params."
 
     final_url = url
     final_body = ""
@@ -46,7 +42,7 @@ class OutputBuilder
     first_query = true
     first_form = true
 
-    if !params.nil? && @scope.includes?("param")
+    if !params.nil?
       params.each do |param|
         if param.param_type == "query"
           if first_query
@@ -92,9 +88,7 @@ class OutputBuilder
       end
     end
 
-    if @is_debug
-      @logger.debug "Baked endpoint #{final_url} with #{final_body} body and #{final_headers.size} headers."
-    end
+    @logger.debug "Baked endpoint #{final_url} with #{final_body} body and #{final_headers.size} headers."
 
     {
       url:       final_url,
@@ -113,5 +107,5 @@ class OutputBuilder
     {% end %}
   end
 
-  define_getter_methods [scope, logger]
+  define_getter_methods [logger, output_file]
 end

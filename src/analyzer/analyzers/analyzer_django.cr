@@ -38,7 +38,7 @@ class AnalyzerDjango < AnalyzerPython
       Dir.glob("#{@base_path}/static/**/*") do |file|
         next if File.directory?(file)
         relative_path = file.sub("#{@base_path}/static/", "")
-        @result << Endpoint.new("#{@url}/#{relative_path}", "GET")
+        @result << Endpoint.new("/#{relative_path}", "GET")
       end
     rescue e
       logger.debug e
@@ -111,8 +111,7 @@ class AnalyzerDjango < AnalyzerPython
       route = route_match[1]
       route = route.gsub(/^\^/, "").gsub(/\$$/, "")
       view = route_match[2].split(",")[0]
-      url = "/#{@url}/#{django_urls.prefix}/#{route}".gsub(/\/+/, "/")
-
+      url = "/#{django_urls.prefix}/#{route}".gsub(/\/+/, "/")
       new_django_urls = nil
       view.scan(REGEX_INCLUDE_URLS) do |include_pattern_match|
         # Detect new url configs
@@ -121,15 +120,18 @@ class AnalyzerDjango < AnalyzerPython
 
         if File.exists?(new_route_path)
           new_django_urls = DjangoUrls.new("#{django_urls.prefix}#{route}", new_route_path, django_urls.basepath)
+          details = Details.new(PathInfo.new(new_route_path))
           get_endpoints(new_django_urls).each do |endpoint|
+            endpoint.set_details(details)
             endpoints << endpoint
           end
         end
       end
       next if new_django_urls != nil
 
+      details = Details.new(PathInfo.new(django_urls.filepath))
       if view == ""
-        endpoints << Endpoint.new(url, "GET")
+        endpoints << Endpoint.new(url, "GET", details)
       else
         dotted_as_names_split = view.split(".")
 
@@ -149,12 +151,13 @@ class AnalyzerDjango < AnalyzerPython
 
         if filepath != ""
           get_endpoint_from_files(url, filepath, function_or_class_name).each do |endpoint|
+            endpoint.set_details(details)
             endpoints << endpoint
           end
         else
           # By default, Django allows requests with methods other than GET as well
           # Prevent this flow, we need to improve trace code of 'get_endpoint_from_files()
-          endpoints << Endpoint.new(url, "GET")
+          endpoints << Endpoint.new(url, "GET", details)
         end
       end
     end

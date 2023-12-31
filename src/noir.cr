@@ -6,7 +6,7 @@ require "./options.cr"
 require "./techs/techs.cr"
 
 module Noir
-  VERSION = "0.11.0"
+  VERSION = "0.12.0"
 end
 
 noir_options = default_options()
@@ -17,13 +17,15 @@ OptionParser.parse do |parser|
   parser.separator "  Basic:".colorize(:blue)
   parser.on "-b PATH", "--base-path ./app", "(Required) Set base path" { |var| noir_options[:base] = var }
   parser.on "-u URL", "--url http://..", "Set base url for endpoints" { |var| noir_options[:url] = var }
-  parser.on "-s SCOPE", "--scope url,param", "Set scope for detection" { |var| noir_options[:scope] = var }
 
   parser.separator "\n  Output:".colorize(:blue)
 
   parser.on "-f FORMAT", "--format json", "Set output format \n[plain/json/yaml/markdown-table/curl/httpie/oas2/oas3]" { |var| noir_options[:format] = var }
   parser.on "-o PATH", "--output out.txt", "Write result to file" { |var| noir_options[:output] = var }
   parser.on "--set-pvalue VALUE", "Specifies the value of the identified parameter" { |var| noir_options[:set_pvalue] = var }
+  parser.on "--include-path", "Include file path in the plain result" do
+    noir_options[:include_path] = "yes"
+  end
   parser.on "--no-color", "Disable color output" do
     noir_options[:color] = "no"
   end
@@ -102,32 +104,30 @@ noir_options.each do |k, v|
 end
 
 app.logger.debug "Initialized Options:"
-app.logger.debug_sub "Base: #{app.options[:base]}"
-app.logger.debug_sub "Techs: #{app.options[:techs]}"
-app.logger.debug_sub "Scope: #{app.options[:scope]}"
-app.logger.debug_sub "Send Proxy: #{app.@send_proxy}"
-app.logger.debug_sub "Send Req: #{app.@send_req}"
-app.logger.debug_sub "Debug: #{app.@is_debug}"
-app.logger.debug_sub "Color: #{app.@is_color}"
-app.logger.debug_sub "Format: #{app.options[:format]}"
-app.logger.debug_sub "Output: #{app.options[:output]}"
-app.logger.debug_sub "Concurrency: #{app.options[:concurrency]}"
+app.options.each do |k, v|
+  app.logger.debug_sub "#{k}: #{v}"
+end
 
 app.logger.system "Detecting technologies to base directory."
 app.detect
+
 if app.techs.size == 0
   app.logger.info "No technologies detected."
-  exit(1)
+  if app.options[:url] != ""
+    app.logger.system "Start file-based analysis as the -u flag has been used."
+  else
+    exit(0)
+  end
 else
   app.logger.info "Detected #{app.techs.size} technologies."
   app.techs.each do |tech|
     app.logger.info_sub "#{tech}"
   end
-
-  app.logger.system "Initiate code analysis based on the detected technology."
-  app.analyze
-  app.logger.info "Finally identified #{app.endpoints.size} endpoints."
-
-  app.logger.system "Generating Report."
-  app.report
+  app.logger.system "Start code analysis based on the detected technology."
 end
+
+app.analyze
+app.logger.info "Finally identified #{app.endpoints.size} endpoints."
+
+app.logger.system "Generating Report."
+app.report

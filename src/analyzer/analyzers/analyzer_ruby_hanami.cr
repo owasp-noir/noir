@@ -3,11 +3,13 @@ require "../../models/analyzer"
 class AnalyzerRubyHanami < Analyzer
   def analyze
     # Config Analysis
-    if File.exists?("#{@base_path}/config/routes.rb")
-      File.open("#{@base_path}/config/routes.rb", "r", encoding: "utf-8", invalid: :skip) do |file|
+    path = "#{@base_path}/config/routes.rb"
+    if File.exists?(path)
+      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
         last_endpoint = Endpoint.new("", "")
-        file.each_line do |line|
-          endpoint = line_to_endpoint(line)
+        file.each_line.with_index do |line, index|
+          details = Details.new(PathInfo.new(path, index + 1))
+          endpoint = line_to_endpoint(line, details)
           if endpoint.method != ""
             @result << endpoint
             last_endpoint = endpoint
@@ -20,46 +22,46 @@ class AnalyzerRubyHanami < Analyzer
     @result
   end
 
-  def line_to_endpoint(content : String) : Endpoint
+  def line_to_endpoint(content : String, details : Details) : Endpoint
     content.scan(/get\s+['"](.+?)['"]/) do |match|
       if match.size > 1
-        return Endpoint.new("#{@url}#{match[1]}", "GET")
+        return Endpoint.new("#{match[1]}", "GET", details)
       end
     end
 
     content.scan(/post\s+['"](.+?)['"]/) do |match|
       if match.size > 1
-        return Endpoint.new("#{@url}#{match[1]}", "POST")
+        return Endpoint.new("#{match[1]}", "POST", details)
       end
     end
 
     content.scan(/put\s+['"](.+?)['"]/) do |match|
       if match.size > 1
-        return Endpoint.new("#{@url}#{match[1]}", "PUT")
+        return Endpoint.new("#{match[1]}", "PUT", details)
       end
     end
 
     content.scan(/delete\s+['"](.+?)['"]/) do |match|
       if match.size > 1
-        return Endpoint.new("#{@url}#{match[1]}", "DELETE")
+        return Endpoint.new("#{match[1]}", "DELETE", details)
       end
     end
 
     content.scan(/patch\s+['"](.+?)['"]/) do |match|
       if match.size > 1
-        return Endpoint.new("#{@url}#{match[1]}", "PATCH")
+        return Endpoint.new("#{match[1]}", "PATCH", details)
       end
     end
 
     content.scan(/head\s+['"](.+?)['"]/) do |match|
       if match.size > 1
-        return Endpoint.new("#{@url}#{match[1]}", "HEAD")
+        return Endpoint.new("#{match[1]}", "HEAD", details)
       end
     end
 
     content.scan(/options\s+['"](.+?)['"]/) do |match|
       if match.size > 1
-        return Endpoint.new("#{@url}#{match[1]}", "OPTIONS")
+        return Endpoint.new("#{match[1]}", "OPTIONS", details)
       end
     end
 

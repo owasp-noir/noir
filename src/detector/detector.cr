@@ -17,7 +17,7 @@ def detect_techs(base_path : String, options : Hash(Symbol, String), logger : No
     DetectorPhpPure, DetectorPythonDjango, DetectorPythonFlask, DetectorPythonFastAPI,
     DetectorRubyRails, DetectorRubySinatra, DetectorRubyHanami, DetectorOas2, DetectorOas3, DetectorRAML,
     DetectorGoGin, DetectorKotlinSpring, DetectorJavaArmeria, DetectorCSharpAspNetMvc,
-    DetectorRustAxum, DetectorElixirPhoenix,
+    DetectorRustAxum, DetectorElixirPhoenix, DetectorGoFiber,
   ])
 
   channel = Channel(String).new
