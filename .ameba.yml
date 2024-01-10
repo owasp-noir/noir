@@ -6,3 +6,6 @@ Metrics/CyclomaticComplexity:
   MaxComplexity: 40
   Enabled: true
   Severity: Warning
+
+Lint/RedundantWithIndex:
+  Enabled: false
