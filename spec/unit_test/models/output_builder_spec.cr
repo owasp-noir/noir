@@ -41,4 +41,9 @@ describe "Initialize" do
     object = OutputBuilderOas3.new options
     object.output_file.should eq("output.json")
   end
+
+  it "OutputBuilderOnlyUrl" do
+    object = OutputBuilderOnlyUrl.new options
+    object.output_file.should eq("output.json")
+  end
 end

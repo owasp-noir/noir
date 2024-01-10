@@ -173,6 +173,9 @@ class NoirRunner
     when "oas3"
       buidler = OutputBuilderOas3.new @options
       buidler.print @endpoints
+    when "only-url"
+      builder = OutputBuilderOnlyUrl.new @options
+      builder.print @endpoints
     else
       builder = OutputBuilderCommon.new @options
       builder.print @endpoints
