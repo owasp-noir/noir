@@ -46,4 +46,19 @@ describe "Initialize" do
     object = OutputBuilderOnlyUrl.new options
     object.output_file.should eq("output.json")
   end
+
+  it "OutputBuilderOnlyParam" do
+    object = OutputBuilderOnlyParam.new options
+    object.output_file.should eq("output.json")
+  end
+
+  it "OutputBuilderOnlyHeader" do
+    object = OutputBuilderOnlyHeader.new options
+    object.output_file.should eq("output.json")
+  end
+
+  it "OutputBuilderOnlyCookie" do
+    object = OutputBuilderOnlyCookie.new options
+    object.output_file.should eq("output.json")
+  end
 end
