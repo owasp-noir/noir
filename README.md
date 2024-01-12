@@ -97,7 +97,9 @@ Usage: noir <flags>
 
   Output:
     -f FORMAT, --format json         Set output format
-                                     [plain/json/yaml/markdown-table/curl/httpie/oas2/oas3]
+                                       * plain yaml json jsonl markdown-table
+                                       * curl httpie oas2 oas3
+                                       * only-url only-param only-header only-cookie
     -o PATH, --output out.txt        Write result to file
     --set-pvalue VALUE               Specifies the value of the identified parameter
     --include-path                   Include file path in the plain result
@@ -105,12 +107,12 @@ Usage: noir <flags>
     --no-log                         Displaying only the results
 
   Deliver:
-    --send-req                       Send the results to the web request
-    --send-proxy http://proxy..      Send the results to the web request via http proxy
-    --send-es http://es..            Send the results to elasticsearch
-    --with-headers X-Header:Value    Add Custom Headers to be Used in Deliver
-    --use-matchers string            Delivers URLs that match a specific condition
-    --use-filters string             Excludes URLs that match a specific condition
+    --send-req                       Send results to a web request
+    --send-proxy http://proxy..      Send results to a web request via an HTTP proxy
+    --send-es http://es..            Send results to Elasticsearch
+    --with-headers X-Header:Value    Add custom headers to be included in the delivery
+    --use-matchers string            Send URLs that match specific conditions to the Deliver
+    --use-filters string             Exclude URLs that match specified conditions and send the rest to Deliver
 
   Technologies:
     -t TECHS, --techs rails,php      Specify the technologies to use

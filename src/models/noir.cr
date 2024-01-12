@@ -154,10 +154,13 @@ class NoirRunner
 
   def report
     case options[:format]
-    when "json"
-      puts @endpoints.to_json
     when "yaml"
       puts @endpoints.to_yaml
+    when "json"
+      puts @endpoints.to_json
+    when "jsonl"
+      builder = OutputBuilderJsonl.new @options
+      builder.print @endpoints
     when "markdown-table"
       builder = OutputBuilderMarkdownTable.new @options
       builder.print @endpoints
