@@ -61,4 +61,9 @@ describe "Initialize" do
     object = OutputBuilderOnlyCookie.new options
     object.output_file.should eq("output.json")
   end
+
+  it "OutputBuilderJsonl" do
+    object = OutputBuilderJsonl.new options
+    object.output_file.should eq("output.json")
+  end
 end
