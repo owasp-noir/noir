@@ -6,7 +6,7 @@ require "./options.cr"
 require "./techs/techs.cr"
 
 module Noir
-  VERSION = "0.12.0"
+  VERSION = "0.12.1"
 end
 
 noir_options = default_options()
@@ -20,7 +20,7 @@ OptionParser.parse do |parser|
 
   parser.separator "\n  Output:".colorize(:blue)
 
-  parser.on "-f FORMAT", "--format json", "Set output format \n[plain/json/yaml/markdown-table/curl/httpie/oas2/oas3]" { |var| noir_options[:format] = var }
+  parser.on "-f FORMAT", "--format json", "Set output format\n  * plain yaml json jsonl markdown-table\n  * curl httpie oas2 oas3\n  * only-url only-param only-header only-cookie" { |var| noir_options[:format] = var }
   parser.on "-o PATH", "--output out.txt", "Write result to file" { |var| noir_options[:output] = var }
   parser.on "--set-pvalue VALUE", "Specifies the value of the identified parameter" { |var| noir_options[:set_pvalue] = var }
   parser.on "--include-path", "Include file path in the plain result" do
@@ -34,16 +34,16 @@ OptionParser.parse do |parser|
   end
 
   parser.separator "\n  Deliver:".colorize(:blue)
-  parser.on "--send-req", "Send the results to the web request" { |_| noir_options[:send_req] = "yes" }
-  parser.on "--send-proxy http://proxy..", "Send the results to the web request via http proxy" { |var| noir_options[:send_proxy] = var }
-  parser.on "--send-es http://es..", "Send the results to elasticsearch" { |var| noir_options[:send_es] = var }
-  parser.on "--with-headers X-Header:Value", "Add Custom Headers to be Used in Deliver" do |var|
+  parser.on "--send-req", "Send results to a web request" { |_| noir_options[:send_req] = "yes" }
+  parser.on "--send-proxy http://proxy..", "Send results to a web request via an HTTP proxy" { |var| noir_options[:send_proxy] = var }
+  parser.on "--send-es http://es..", "Send results to Elasticsearch" { |var| noir_options[:send_es] = var }
+  parser.on "--with-headers X-Header:Value", "Add custom headers to be included in the delivery" do |var|
     noir_options[:send_with_headers] += "#{var}::NOIR::HEADERS::SPLIT::"
   end
-  parser.on "--use-matchers string", "Delivers URLs that match a specific condition" do |var|
+  parser.on "--use-matchers string", "Send URLs that match specific conditions to the Deliver" do |var|
     noir_options[:use_matchers] += "#{var}::NOIR::MATCHER::SPLIT::"
   end
-  parser.on "--use-filters string", "Excludes URLs that match a specific condition" do |var|
+  parser.on "--use-filters string", "Exclude URLs that match specified conditions and send the rest to Deliver" do |var|
     noir_options[:use_filters] += "#{var}::NOIR::FILTER::SPLIT::"
   end
 

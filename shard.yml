@@ -1,8 +1,9 @@
 name: noir
-version: 0.12.0
+version: 0.12.1
 
 authors:
   - hahwul <hahwul@gmail.com>
+  - ksg97031 <ksg97031@gmail.com>
 
 targets:
   noir:

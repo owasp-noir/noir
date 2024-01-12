@@ -41,4 +41,29 @@ describe "Initialize" do
     object = OutputBuilderOas3.new options
     object.output_file.should eq("output.json")
   end
+
+  it "OutputBuilderOnlyUrl" do
+    object = OutputBuilderOnlyUrl.new options
+    object.output_file.should eq("output.json")
+  end
+
+  it "OutputBuilderOnlyParam" do
+    object = OutputBuilderOnlyParam.new options
+    object.output_file.should eq("output.json")
+  end
+
+  it "OutputBuilderOnlyHeader" do
+    object = OutputBuilderOnlyHeader.new options
+    object.output_file.should eq("output.json")
+  end
+
+  it "OutputBuilderOnlyCookie" do
+    object = OutputBuilderOnlyCookie.new options
+    object.output_file.should eq("output.json")
+  end
+
+  it "OutputBuilderJsonl" do
+    object = OutputBuilderJsonl.new options
+    object.output_file.should eq("output.json")
+  end
 end
