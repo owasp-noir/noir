@@ -34,3 +34,7 @@
 📑 documentation:
 - changed-files:
   - any-glob-to-any-file: docs/**
+
+⚙️ options:
+- changed-files:
+  - any-glob-to-any-file: src/options.cr
