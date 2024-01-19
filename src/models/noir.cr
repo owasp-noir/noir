@@ -19,6 +19,7 @@ class NoirRunner
   @is_color : Bool
   @is_log : Bool
   @concurrency : Int32
+  @config_file : String
 
   macro define_getter_methods(names)
     {% for name, index in names %}
@@ -32,20 +33,38 @@ class NoirRunner
 
   def initialize(options)
     @options = options
+    @config_file = @options[:config_file]
+
+    if @config_file != ""
+      config = YAML.parse(File.read(@config_file))
+      @options.each do |key, _|
+        string_key = key.to_s
+        begin
+          if config[string_key] != "" && string_key != "base"
+            @options[key] = "yes" if config[string_key] == true
+            @options[key] = "no" if config[string_key] == false
+
+            @options[key] = config[string_key].as_s
+          end
+        rescue
+        end
+      end
+    end
+
     @techs = [] of String
     @endpoints = [] of Endpoint
-    @send_proxy = options[:send_proxy]
-    @send_req = options[:send_req]
-    @send_es = options[:send_es]
-    @is_debug = str_to_bool(options[:debug])
-    @is_color = str_to_bool(options[:color])
-    @is_log = str_to_bool(options[:nolog])
-    @concurrency = options[:concurrency].to_i
+    @send_proxy = @options[:send_proxy]
+    @send_req = @options[:send_req]
+    @send_es = @options[:send_es]
+    @is_debug = str_to_bool(@options[:debug])
+    @is_color = str_to_bool(@options[:color])
+    @is_log = str_to_bool(@options[:nolog])
+    @concurrency = @options[:concurrency].to_i
 
     @logger = NoirLogger.new @is_debug, @is_color, @is_log
 
-    if options[:techs].size > 0
-      techs_tmp = options[:techs].split(",")
+    if @options[:techs].size > 0
+      techs_tmp = @options[:techs].split(",")
       @logger.info "Setting #{techs_tmp.size} techs from command line."
       techs_tmp.each do |tech|
         @techs << NoirTechs.similar_to_tech(tech)

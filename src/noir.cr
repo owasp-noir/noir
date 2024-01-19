@@ -63,6 +63,7 @@ OptionParser.parse do |parser|
   end
 
   parser.separator "\n  Config:".colorize(:blue)
+  parser.on "--config-file ./config.yaml", "Specify the path to a configuration file in YAML format" { |var| noir_options[:config_file] = var }
   parser.on "--concurrency 100", "Set concurrency" { |var| noir_options[:concurrency] = var }
 
   parser.separator "\n  Others:".colorize(:blue)
