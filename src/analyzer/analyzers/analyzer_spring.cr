@@ -14,6 +14,7 @@ class AnalyzerSpring < Analyzer
         url = ""
         if File.exists?(path) && (path.ends_with?(".java") || path.ends_with?(".kt"))
           content = File.read(path, encoding: "utf-8", invalid: :skip)
+          last_endpoint = Endpoint.new("", "")
 
           # Spring MVC
           has_class_been_imported = false
@@ -41,7 +42,9 @@ class AnalyzerSpring < Analyzer
                   if line.includes? "RequestMethod"
                     define_requestmapping_handlers(["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE"])
                   else
-                    @result << Endpoint.new("#{url}#{mapping_path}", "GET", details)
+                    endpoint = Endpoint.new("#{url}#{mapping_path}", "GET", details)
+                    last_endpoint = endpoint
+                    @result << last_endpoint
                   end
                 end
               end
@@ -50,31 +53,49 @@ class AnalyzerSpring < Analyzer
             if line.includes? "PostMapping"
               mapping_paths = mapping_to_path(line)
               mapping_paths.each do |mapping_path|
-                @result << Endpoint.new("#{url}#{mapping_path}", "POST", details)
+                endpoint = Endpoint.new("#{url}#{mapping_path}", "POST", details)
+                last_endpoint = endpoint
+                @result << last_endpoint
               end
             end
             if line.includes? "PutMapping"
               mapping_paths = mapping_to_path(line)
               mapping_paths.each do |mapping_path|
-                @result << Endpoint.new("#{url}#{mapping_path}", "PUT", details)
+                endpoint = Endpoint.new("#{url}#{mapping_path}", "PUT", details)
+                last_endpoint = endpoint
+                @result << last_endpoint
               end
             end
             if line.includes? "DeleteMapping"
               mapping_paths = mapping_to_path(line)
               mapping_paths.each do |mapping_path|
-                @result << Endpoint.new("#{url}#{mapping_path}", "DELETE", details)
+                endpoint = Endpoint.new("#{url}#{mapping_path}", "DELETE", details)
+                last_endpoint = endpoint
+                @result << last_endpoint
               end
             end
             if line.includes? "PatchMapping"
               mapping_paths = mapping_to_path(line)
               mapping_paths.each do |mapping_path|
-                @result << Endpoint.new("#{url}#{mapping_path}", "PATCH", details)
+                endpoint = Endpoint.new("#{url}#{mapping_path}", "PATCH", details)
+                last_endpoint = endpoint
+                @result << last_endpoint
               end
             end
             if line.includes? "GetMapping"
               mapping_paths = mapping_to_path(line)
               mapping_paths.each do |mapping_path|
-                @result << Endpoint.new("#{url}#{mapping_path}", "GET", details)
+                endpoint = Endpoint.new("#{url}#{mapping_path}", "GET", details)
+                last_endpoint = endpoint
+                @result << last_endpoint
+              end
+            end
+
+            # Param Analysis
+            param = line_to_param(line)
+            if param.name != ""
+              if last_endpoint.method != ""
+                last_endpoint.push_param(param)
               end
             end
           end
@@ -98,6 +119,20 @@ class AnalyzerSpring < Analyzer
     Fiber.yield
 
     @result
+  end
+
+  def line_to_param(line : String) : Param
+    if line.includes? "getParameter("
+      param = line.split("getParameter(")[1].split(")")[0].gsub("\"", "").gsub("'", "")
+      return Param.new(param, "", "query")
+    end
+
+    if line.includes? "@RequestParam("
+      param = line.split("@RequestParam(")[1].split(")")[0].gsub("\"", "").gsub("'", "")
+      return Param.new(param, "", "query")
+    end
+
+    Param.new("", "", "")
   end
 
   def mapping_to_path(line : String)
