@@ -4,6 +4,7 @@ class MiniLexer
 
   def initialize
     @mode = :normal
+    @tokens = [] of Token
   end
 
   def mode=(mode)
@@ -16,9 +17,19 @@ class MiniLexer
     if @mode == :persistent
       @tokens = @tokens + results
     end
+
+    results
   end
 
   def tokenize_logic(input : String) : Array(Token)
     # Add tokenize logic here
+    results = [] of Token
+    results << Token.new(:identifier, "foo", 3)
+
+    results
+  end
+
+  def find(token_type : Symbol) : Array(Token)
+    @tokens.select { |token| token.type == token_type }
   end
 end
