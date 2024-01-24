@@ -1,6 +1,6 @@
 require "../models/minilexer/*"
 
-class SampleLexer < Lexer
+class SampleLexer < MiniLexer
   def initialize
     super
     # Add custom initial state
