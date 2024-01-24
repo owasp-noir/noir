@@ -2,7 +2,7 @@
 🔬 analyzer:
 - changed-files:
   - any-glob-to-any-file: 
-    - src/detector/**
+    - src/analyzer/**
     - src/models/analyzer.cr
 
 💌 deliver:
