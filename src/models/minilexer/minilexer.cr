@@ -24,7 +24,7 @@ class MiniLexer
   def tokenize_logic(input : String) : Array(Token)
     # Add tokenize logic here
     results = [] of Token
-    results << Token.new(:identifier, "foo", 3)
+    # results << Token.new(:identifier, "foo", 3)
 
     results
   end
