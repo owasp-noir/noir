@@ -17,6 +17,12 @@
     - src/detector/**
     - src/models/detector.cr
 
+🥢 mini-lexer:
+- changed-files:
+  - any-glob-to-any-file: 
+    - src/minilexers/**
+    - src/models/minilexer/**
+
 📦 output-builder:
 - changed-files:
   - any-glob-to-any-file: 
