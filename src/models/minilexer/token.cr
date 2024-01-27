@@ -5,4 +5,12 @@ class Token
 
   def initialize(@type, @value, @position)
   end
+
+  def is?(type)
+    @type == type
+  end
+
+  def to_s
+    "#{@type} #{@value}"
+  end
 end
