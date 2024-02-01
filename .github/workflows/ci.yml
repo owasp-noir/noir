@@ -1,0 +1,41 @@
+---
+name: Crystal CI
+on:
+  pull_request:
+    branches: [main, dev]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+        matrix:
+          crystal-version: ['1.8.0', '1.9.0', '1.10.0', '1.11.0']
+    steps:
+      - uses: actions/checkout@v3
+      - uses: MeilCli/setup-crystal-action@v4
+        with:
+          crystal_version: ${{ matrix.crystal-version }}
+      - name: Install dependencies
+        run: shards install
+      - name: Build
+        run: shards build
+  lint:
+    runs-on: ubuntu-latest
+    container:
+      image: crystallang/crystal
+    steps:
+      - uses: actions/checkout@v3
+      - name: Crystal Ameba Linter
+        id: crystal-ameba
+        uses: crystal-ameba/github-action@v0.8.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  tests:
+    runs-on: ubuntu-latest
+    container:
+      image: crystallang/crystal
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install dependencies
+        run: shards install
+      - name: Run tests
+        run: crystal spec
