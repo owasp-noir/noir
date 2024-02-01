@@ -1,10 +1,24 @@
 def default_options
   noir_options = {
-    :base => "", :url => "", :format => "plain",
-    :output => "", :techs => "", :debug => "no", :color => "yes", :concurrency => "100", :include_path => "no",
-    :send_proxy => "", :send_req => "no", :send_with_headers => "", :send_es => "", :use_matchers => "", :use_filters => "",
-    :set_pvalue => "", :nolog => "no", :config_file => "",
-    :exclude_techs => "",
+    :base              => "",
+    :color             => "yes",
+    :config_file       => "",
+    :concurrency       => "100",
+    :debug             => "no",
+    :exclude_techs     => "",
+    :format            => "plain",
+    :include_path      => "no",
+    :nolog             => "no",
+    :output            => "",
+    :send_es           => "",
+    :send_proxy        => "",
+    :send_req          => "no",
+    :send_with_headers => "",
+    :set_pvalue        => "",
+    :techs             => "",
+    :url               => "",
+    :use_filters       => "",
+    :use_matchers      => "",
   }
 
   noir_options
