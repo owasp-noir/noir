@@ -6,7 +6,7 @@ require "./options.cr"
 require "./techs/techs.cr"
 
 module Noir
-  VERSION = "0.12.1"
+  VERSION = "0.12.2"
 end
 
 noir_options = default_options()
@@ -63,6 +63,7 @@ OptionParser.parse do |parser|
   end
 
   parser.separator "\n  Config:".colorize(:blue)
+  parser.on "--config-file ./config.yaml", "Specify the path to a configuration file in YAML format" { |var| noir_options[:config_file] = var }
   parser.on "--concurrency 100", "Set concurrency" { |var| noir_options[:concurrency] = var }
 
   parser.separator "\n  Others:".colorize(:blue)

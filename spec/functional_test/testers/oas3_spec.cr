@@ -35,3 +35,29 @@ FunctionalTester.new("fixtures/oas3/nil_cast/", {
   :techs     => 1,
   :endpoints => 0,
 }, nil).test_all
+
+FunctionalTester.new("fixtures/oas3/param_in_path/", {
+  :techs     => 1,
+  :endpoints => 4,
+}, [
+  Endpoint.new("/gems_yml", "GET", [
+    Param.new("query", "", "query"),
+    Param.new("sort", "", "query"),
+    Param.new("cookie", "", "cookie"),
+  ]),
+  Endpoint.new("/gems_yml", "PUT", [
+    Param.new("query", "", "query"),
+    Param.new("sort", "", "query"),
+    Param.new("cookie", "", "cookie"),
+  ]),
+  Endpoint.new("/gems_json", "GET", [
+    Param.new("query", "", "query"),
+    Param.new("sort", "", "query"),
+    Param.new("cookie", "", "cookie"),
+  ]),
+  Endpoint.new("/gems_json", "POST", [
+    Param.new("query", "", "query"),
+    Param.new("sort", "", "query"),
+    Param.new("cookie", "", "cookie"),
+  ]),
+]).test_all

@@ -1,0 +1,52 @@
+
+🔬 analyzer:
+- changed-files:
+  - any-glob-to-any-file: 
+    - src/analyzer/**
+    - src/models/analyzer.cr
+
+💌 deliver:
+- changed-files:
+  - any-glob-to-any-file: 
+    - src/deliver/**
+    - src/models/deliver.cr
+
+🔎 detector:
+- changed-files:
+  - any-glob-to-any-file: 
+    - src/detector/**
+    - src/models/detector.cr
+
+🥢 mini-lexer:
+- changed-files:
+  - any-glob-to-any-file: 
+    - src/minilexers/**
+    - src/models/minilexer/**
+
+📦 output-builder:
+- changed-files:
+  - any-glob-to-any-file: 
+    - src/output_builder/**
+    - src/models/output_builder.cr
+
+💊 spec:
+- changed-files:
+  - any-glob-to-any-file: spec/**
+
+🦺 github-action:
+- changed-files:
+  - any-glob-to-any-file: .github/workflows/**
+
+📑 documentation:
+- changed-files:
+  - any-glob-to-any-file: docs/**
+
+⚙️ options:
+- changed-files:
+  - any-glob-to-any-file: src/options.cr
+
+🛥️ workflow:
+- changed-files:
+  - any-glob-to-any-file: 
+    - .github/workflows/**
+    - .github/labeler.yml

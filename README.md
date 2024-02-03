@@ -120,6 +120,7 @@ Usage: noir <flags>
     --list-techs                     Show all technologies
 
   Config:
+    --config-file ./config.yaml      Specify the path to a configuration file in YAML format
     --concurrency 100                Set concurrency
 
   Others:

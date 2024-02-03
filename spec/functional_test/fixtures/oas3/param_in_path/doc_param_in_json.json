@@ -1,0 +1,44 @@
+{
+    "openapi": "3.0.0",
+    "info": {
+      "title": "Gem Store API",
+      "version": "1.0.0",
+      "description": "Sample API for managing pets in a Gem store."
+    },
+    "paths": {
+      "/gems_json": {
+        "get": {
+          "summary": "Get a list of pets"
+        },
+        "post": {
+          "summary": "Add a new pet"
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "cookie",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    }
+  }
