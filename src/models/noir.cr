@@ -96,8 +96,7 @@ class NoirRunner
 
   def optimize_endpoints
     @logger.system "Optimizing endpoints."
-    tmp = [] of Endpoint
-    duplicate = [] of String
+    final = [] of Endpoint
 
     @endpoints.each do |endpoint|
       tiny_tmp = endpoint
@@ -113,13 +112,23 @@ class NoirRunner
         end
       end
 
-      if endpoint.url != "" && !duplicate.includes?(endpoint.method + endpoint.url)
-        tmp << tiny_tmp
-        duplicate << endpoint.method + endpoint.url
+      if tiny_tmp.url != ""
+        is_new = true
+        final.each do |dup|
+          if dup.method == tiny_tmp.method && dup.url == tiny_tmp.url
+            is_new = false
+            tiny_tmp.params.each do |param|
+              dup.params << param
+            end
+          end
+        end
+        if is_new || final.size == 0
+          final << tiny_tmp
+        end
       end
     end
 
-    @endpoints = tmp
+    @endpoints = final
   end
 
   def combine_url_and_endpoints
