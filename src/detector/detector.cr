@@ -12,12 +12,32 @@ end
 def detect_techs(base_path : String, options : Hash(Symbol, String), logger : NoirLogger)
   techs = [] of String
   detector_list = [] of Detector
+
+  # Define detectors
   defind_detectors([
-    DetectorCrystalKemal, DetectorCrystalLucky, DetectorGoEcho, DetectorJavaJsp, DetectorJavaSpring, DetectorJsExpress,
-    DetectorPhpPure, DetectorPythonDjango, DetectorPythonFlask, DetectorPythonFastAPI,
-    DetectorRubyRails, DetectorRubySinatra, DetectorRubyHanami, DetectorOas2, DetectorOas3, DetectorRAML,
-    DetectorGoGin, DetectorKotlinSpring, DetectorJavaArmeria, DetectorCSharpAspNetMvc,
-    DetectorRustAxum, DetectorElixirPhoenix, DetectorGoFiber,
+    DetectorCSharpAspNetMvc,
+    DetectorCrystalKemal,
+    DetectorCrystalLucky,
+    DetectorElixirPhoenix,
+    DetectorGoEcho,
+    DetectorGoFiber,
+    DetectorGoGin,
+    DetectorJavaArmeria,
+    DetectorJavaJsp,
+    DetectorJavaSpring,
+    DetectorJsExpress,
+    DetectorKotlinSpring,
+    DetectorOas2,
+    DetectorOas3,
+    DetectorPhpPure,
+    DetectorPythonDjango,
+    DetectorPythonFastAPI,
+    DetectorPythonFlask,
+    DetectorRAML,
+    DetectorRubyHanami,
+    DetectorRubyRails,
+    DetectorRubySinatra,
+    DetectorRustAxum,
   ])
 
   channel = Channel(String).new
