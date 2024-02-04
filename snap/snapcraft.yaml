@@ -1,0 +1,31 @@
+name: noir
+base: core22
+version: 0.12.2
+summary: Attack surface detector that identifies endpoints by static analysis.
+description: |
+  Noir is your ally in the quest for digital fortification. 
+  A cutting-edge attack surface detector, it unveils hidden endpoints through meticulous static analysis.
+
+grade: stable # must be 'stable' to release into candidate/stable channels
+confinement: devmode # use 'strict' once you have the right plugs and slots
+license: MIT
+
+apps:
+  noir:
+    command: bin/noir
+
+parts:
+  noir:
+    source: ./
+    plugin: dump
+    override-build: |
+      snapcraftctl build
+      shards install
+      shards build --release
+    build-packages:
+      - crystal
+      - libssl-dev
+      - libxml2-dev
+    stage-packages:
+      - libssl1.1
+      - libxml2
