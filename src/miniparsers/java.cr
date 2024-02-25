@@ -40,22 +40,35 @@ class JavaParser
 
   def parse_formal_parameters(tokens : Array(Token), cursor : Int32)
     lparen_count = 0
-    rparan_count = 0
+    rparen_count = 0
+    lbrace_count = 0
+    rbrace_count = 0    
     parameters = Array(Array(Token)).new
     parameter_token = Array(Token).new
     while cursor < tokens.size
       token = tokens[cursor]
       if token.type == :LPAREN
         lparen_count += 1
-      elsif token.type == :COMMA
+        if lparen_count > 1
+          parameter_token << token
+        end
+      elsif token.type == :LBRACE
+        lbrace_count += 1
+        parameter_token << token
+      elsif token.type == :RBRACE
+        rbrace_count += 1
+        parameter_token << token
+      elsif lbrace_count == rbrace_count && lparen_count - 1 == rparen_count && token.type == :COMMA
         parameters << parameter_token
         parameter_token = Array(Token).new
       elsif lparen_count > 0
         if token.type == :RPAREN
-          rparan_count += 1
-          if lparen_count == rparan_count
+          rparen_count += 1
+          if lparen_count == rparen_count
             parameters << parameter_token
             break
+          else
+            parameter_token << token
           end
         else
           unless token.type == :WHITESPACE || token.type == :TAB || token.type == :NEWLINE
@@ -228,79 +241,16 @@ class JavaParser
 
     methods
   end
-
-  def parse_methods22(class_body_tokens : Array(Token))
-    methods = Array(Array(Token)).new
-    method_tokens = Array(Token).new
-
-    lbrace_count = rbrace_count = 0    
-    lparen_count = rparen_count = 0
-
-    method_sequence = 0
-    enter_class_body = false    
-    class_body_tokens.each_index do |index|
-      token = class_body_tokens[index]
-      if enter_class_body
-        if method_sequence != 2
-          if token.type == :RPAREN && method_sequence == 0            
-            method_sequence = 1            
-          elsif token.type == :LBRACE && method_sequence == 1
-            method_sequence = 2
-            lbrace_count = 1            
-            rbrace_count = lparen_count = rparen_count = 0
-
-            previous_index = index - 1
-            while 0 < previous_index
-              previous_token = class_body_tokens[previous_index]
-              if previous_token.type == :LPAREN
-                lparen_count += 1
-              elsif previous_token.type == :RPAREN
-                rparen_count += 1
-              end
-              if lparen_count == rparen_count && previous_token.type == :NEWLINE
-                break                
-              end
-              previous_index -= 1
-            end
-
-            method_tokens = class_body_tokens[previous_index+1..index]                  
-          elsif token.type == :WHITESPACE || token.type == :TAB || token.type == :NEWLINE
-            next
-          else
-            method_tokens.clear
-            method_sequence = 0
-          end
-        else
-          if token.type == :LBRACE
-            lbrace_count += 1
-          elsif token.type == :RBRACE
-            rbrace_count += 1
-          end
-
-          method_tokens << token
-          if lbrace_count == rbrace_count
-            methods << method_tokens
-            method_sequence = 0
-            method_tokens = Array(Token).new
-          end
-        end
-      elsif token.type == :NEWLINE
-        enter_class_body = true
-      end 
-    end
-
-    methods
-  end
   
   def print_tokens(tokens : Array(Token), id = "default")
-    puts("================ #{id} ===================")
+    puts("\n================ #{id} ===================")
     tokens.each do |token|
       print(token.value)
       if id == "error"
         print("(#{token.type})")
       end
     end
-    puts("\n===========================================")
+    puts
   end
 end
 
