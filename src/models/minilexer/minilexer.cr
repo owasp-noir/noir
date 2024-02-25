@@ -7,15 +7,34 @@ class MiniLexer
     @tokens = [] of Token
     @position = 0
     @input = ""
-    @line = 1
+    @pos_line_array = Array(Tuple(Int32, Int32)).new
   end
 
   def mode=(mode)
     @mode = mode
   end
 
+  def line() : Int    
+    pos_index = 0
+    line_index = 1
+    i = @pos_line_array.size - 1
+    while 0 < i
+      pos = @pos_line_array[i][pos_index]
+      line = @pos_line_array[i][line_index]
+      if pos < @position
+        return line + @input[pos+1..@position].count("\n")
+      end
+      i -= 1
+    end
+
+   line = @input[0..@position].count("\n") + 1
+   @pos_line_array << Tuple.new(@position, line)
+
+   line
+  end
+
   def <<(t :  Tuple(Symbol, String))
-    @tokens << Token.new(t[0], t[1], @tokens.size, @position, @line)
+    @tokens << Token.new(t[0], t[1], @tokens.size, @position, line())
   end
 
   def tokenize(@input : String) : Array(Token)

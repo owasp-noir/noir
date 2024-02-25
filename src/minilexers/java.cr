@@ -166,7 +166,7 @@ Letter = /[a-zA-Z$_]|[^[:ascii:]]/
 
 class JavaLexer < MiniLexer
   def initialize
-    super
+    super    
   end
 
   def tokenize(@input : String) : Array(Token)
@@ -175,35 +175,60 @@ class JavaLexer < MiniLexer
 
   def tokenize_logic(@input : String) : Array(Token)
     while @position < @input.size
-      skip_whitespace_and_comments
-  
+      before_skip_position = -1
+      while before_skip_position < @position
+        before_skip_position = @position
+        skip_whitespace_and_comments
+      end
+
       case @input[@position]
       when '0'..'9'
+        t = 1
         match_number
       when 'a'..'z', 'A'..'Z', '$', '_'
+        t = 2
         match_identifier_or_keyword
-      when "'"
+      when '\''
+        t = 3
         match_char_literal
       when '"'
+        t = 4
         match_string_literal_or_text_block
       else
+        t = 5
         match_symbol_or_operator
       end
     end
-  
+      
     @tokens
   end
 
   def skip_whitespace_and_comments
-    if match = @input.match(/^([ \t\r\n\x0C]+)/, @position)
-      @position += match[0].size
-    elsif match = @input.match(/^\/\*.*?\*\//m, @position)
-      @position += match[0].size
-    elsif match = @input.match(/^\/\/[^\r\n]*/, @position)
-      @position += match[0].size
+    c = @input[@position]
+    if c == '\r' || c == '\t'
+      @position += 1
+    elsif @position != @input.size - 1
+      if c == '/' && @input[@position + 1] == '*'
+        @position += 2
+        while @position < @input.size
+          if @input[@position] == '*' && @input[@position + 1] == '/'
+            @position += 2
+            break
+          end
+          @position += 1
+        end
+      elsif c == '/' && @input[@position + 1] == '/'
+        @position += 2
+        while @position < @input.size
+          if @input[@position] == '\n'
+            @position += 1
+            break
+          end
+          @position += 1
+        end
+      end
     end
   end
-
 
   def match_number
     if (match = @input.match(/(0[xX][0-9a-fA-F](_?[0-9a-fA-F])*[lL]?|\d(_?\d)*(\.\d(_?\d)*)?([eE][+-]?\d(_?\d)*)?[fFdD]?)/, @position))
@@ -216,7 +241,7 @@ class JavaLexer < MiniLexer
         else # /^[\d.]/ 
           Tuple.new(:DECIMAL_LITERAL, literal)
       end
-    
+          
       @position += literal.size
     end
   end
@@ -295,14 +320,21 @@ class JavaLexer < MiniLexer
 
       self << Tuple.new(type, match[0])
       @position += match[0].size
+    else
+      self << Tuple.new(:IDENTIFIER, @input[@position].to_s)
+      @position += 1
     end
   end
   
 
   def match_char_literal
-    if match = @input.match(/'([^'\\\r\n]|\\['"\\bfnrt]|\\u[0-9a-fA-F]{4}|\\[^'"\r\n])*'/, @position)
+    if match = @input.match(/'([^'\\\r\n]|\\['"\\bfnrt]|\\u[0-9a-fA-F]{4}|\\[^'\r\n])*'/, @position)
       self << Tuple.new(:CHAR_LITERAL, match[0])
       @position += match[0].size
+    else
+      # impossible to reach here
+      self << Tuple.new(:IDENTIFIER, @input[@position].to_s)
+      @position += 1
     end
   end
   
@@ -312,7 +344,11 @@ class JavaLexer < MiniLexer
       @position += match[0].size
     elsif match = @input.match(/"[^"\\\r\n]*(\\["\\bfnrt][^"\\\r\n]*)*"/, @position)
       self << Tuple.new(:STRING_LITERAL, match[0])
-      @position += match[0].size
+      @position += match[0].size    
+    else
+      # impossible to reach here
+      self << Tuple.new(:IDENTIFIER, @input[@position].to_s)
+      @position += 1
     end
   end
 
@@ -322,12 +358,13 @@ class JavaLexer < MiniLexer
     when ')' then self << Tuple.new(:RPAREN, ")")
     when ' ' then self << Tuple.new(:WHITESPACE, " ")
     when '.' then self << Tuple.new(:DOT, ".")
+    when ',' then self << Tuple.new(:COMMA, ",")
     when '@' then self << Tuple.new(:AT, "@")
     when '{' then self << Tuple.new(:LBRACE, "{")
     when '}' then self << Tuple.new(:RBRACE, "}")
+    when '\t' then self << Tuple.new(:TAB, "\t")
     when '\n' then
       self << Tuple.new(:NEWLINE, "\n")
-      @line += 1
     else
       self << Tuple.new(:IDENTIFIER, @input[@position].to_s)
     end

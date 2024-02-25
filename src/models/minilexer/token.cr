@@ -15,6 +15,8 @@ class Token
   def to_s
     if @value == "\n"
       @value = "\\n"
+    elsif @value == "\t"
+      @value = "\\t"
     end
     "#{@type} '#{@value}'"
   end

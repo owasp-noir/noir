@@ -7,7 +7,7 @@ import org.springframework.c.d.e.*;
 public class ItemController {
 
     @GetMapping("/{id}")
-    public Item getItem(@PathVariable Long id) {
+    public Item getItem(@PathVariable Long id) throws ItemNotFoundException {
     }
 
     @PostMapping
