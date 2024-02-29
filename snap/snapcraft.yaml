@@ -33,6 +33,7 @@ parts:
       - libyaml-dev
       - libpcre2-dev
       - libevent-dev
+      - libgmp-dev
     stage-packages:
       - libssl1.1
       - libxml2
