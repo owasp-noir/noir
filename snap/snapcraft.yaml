@@ -1,5 +1,5 @@
 name: noir
-base: core22
+base: core20
 version: 0.12.2
 summary: Attack surface detector that identifies endpoints by static analysis.
 description: |
@@ -17,13 +17,15 @@ apps:
 parts:
   noir:
     source: ./
-    plugin: dump
+    plugin: nil #crystal
+    #crystal-channel: latest/stable
     override-build: |
-      snapcraftctl build
+      sudo snap install crystal --classic
+      snapcraftctl pull
       shards install
       shards build --release
+      snapcraftctl build
     build-packages:
-      - crystal
       - libssl-dev
       - libxml2-dev
     stage-packages:
