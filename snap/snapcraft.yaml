@@ -29,6 +29,9 @@ parts:
       - git
       - libssl-dev
       - libxml2-dev
+      - libz
+      - libyaml
+      - libpcre2-8
     stage-packages:
       - libssl1.1
       - libxml2
