@@ -31,7 +31,7 @@ parts:
       - libxml2-dev
       - libz-dev
       - libyaml-dev
-      - libpcre2-8
+      - libpcre2-dev
     stage-packages:
       - libssl1.1
       - libxml2
