@@ -24,6 +24,7 @@ parts:
       snapcraftctl pull
       shards install
       shards build --release
+      cp ./bin/noir $SNAPCRAFT_PART_INSTALL/
       snapcraftctl build
     build-packages:
       - git
