@@ -38,3 +38,4 @@ parts:
     stage-packages:
       - libssl1.1
       - libxml2
+      - libevent-2.1-7
