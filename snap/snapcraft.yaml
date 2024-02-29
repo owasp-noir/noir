@@ -12,7 +12,7 @@ license: MIT
 
 apps:
   noir:
-    command: bin/noir
+    command: noir
 
 parts:
   noir:
