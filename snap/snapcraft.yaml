@@ -26,6 +26,7 @@ parts:
       shards build --release
       snapcraftctl build
     build-packages:
+      - git
       - libssl-dev
       - libxml2-dev
     stage-packages:
