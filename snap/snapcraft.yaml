@@ -20,7 +20,7 @@ parts:
     plugin: nil #crystal
     #crystal-channel: latest/stable
     override-build: |
-      sudo snap install crystal --classic
+      curl -fsSL https://crystal-lang.org/install.sh | sudo bash
       snapcraftctl pull
       shards install
       shards build --release
