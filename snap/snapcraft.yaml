@@ -32,6 +32,7 @@ parts:
       - libz-dev
       - libyaml-dev
       - libpcre2-dev
+      - libevent-dev
     stage-packages:
       - libssl1.1
       - libxml2
