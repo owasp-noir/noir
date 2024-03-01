@@ -14,9 +14,10 @@ extected_endpoints = [
     Param.new("User-Agent", "", "header"),
   ]),
   Endpoint.new("/public/secret.html", "GET"),
+  Endpoint.new("/group/users", "GET"),
 ]
 
 FunctionalTester.new("fixtures/go_gin/", {
   :techs     => 1,
-  :endpoints => 4,
+  :endpoints => 5,
 }, extected_endpoints).test_all
