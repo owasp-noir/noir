@@ -26,7 +26,18 @@ class Deliver
         if header.includes? ":"
           @logger.debug "Adding '#{header}' to headers."
           splited = header.split(":")
-          @headers[splited[0]] = splited[1].gsub(/\s/, "")
+          value = ""
+          begin
+            if splited[1][0].to_s == " "
+              value = splited[1][1..-1].to_s
+            else
+              value = splited[1].to_s
+            end
+          rescue
+            value = splited[1].to_s
+          end
+
+          @headers[splited[0]] = value
         end
       end
       @logger.info_sub "#{@headers.size} headers added."
