@@ -18,6 +18,12 @@ describe "Initialize" do
     object.headers["X-API-Key"].should eq("abcdssss")
   end
 
+  it "Deliver with headers (bearer case)" do
+    options[:send_with_headers] = "Authorization: Bearer gAAAAABl3qwaQqol243Np"
+    object = Deliver.new options
+    object.headers["Authorization"].should eq("Bearer gAAAAABl3qwaQqol243Np")
+  end
+
   it "Deliver with matchers" do
     options[:use_matchers] = "/admin"
     object = Deliver.new options
