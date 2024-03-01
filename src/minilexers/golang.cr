@@ -9,14 +9,10 @@ class GolangLexer < MiniLexer
     # Add custom initial state
   end
 
-  def tokenize_logic
-    # Add logic for each state
-
-    # **********************
-    # e.g
-    # results = [] of Token
-    # your logic here
+  def tokenize_logic(input : String) : Array(Token)
+    results = [] of Token
+    
     # results << Token.new(:identifier, "foo", 3)
-    # results
+    results
   end
 end
