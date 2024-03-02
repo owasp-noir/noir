@@ -180,6 +180,7 @@ class JavaLexer < MiniLexer
         before_skip_position = @position
         skip_whitespace_and_comments
       end
+      break if @position == @input.size
 
       case @input[@position]
       when '0'..'9'
@@ -235,14 +236,21 @@ class JavaLexer < MiniLexer
       literal = match[0]
       self << case literal
         when /^0[xX]/
+          @position += literal.size
           Tuple.new(:HEX_LITERAL, literal)
         when /^0/
+          @position += literal.size
           Tuple.new(:OCT_LITERAL, literal)
-        else # /^[\d.]/ 
+        when /^[\d.]/
+          @position += literal.size
           Tuple.new(:DECIMAL_LITERAL, literal)
+        else
+          @position += 1
+          Tuple.new(:IDENTIFIER, @input[@position].to_s)
       end
-          
-      @position += literal.size
+    else
+      self << Tuple.new(:IDENTIFIER, @input[@position].to_s)
+      @position += 1
     end
   end
 

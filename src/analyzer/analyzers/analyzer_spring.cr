@@ -13,7 +13,7 @@ class AnalyzerSpring < Analyzer
       next if File.directory?(path)
 
       url = ""
-      if File.exists?(path) && (path.ends_with?(".java") || path.ends_with?(".kt"))
+      if File.exists?(path) && (path.ends_with?(".java"))
         content = File.read(path, encoding: "utf-8", invalid: :skip)
 
         lexer = JavaLexer.new
@@ -29,8 +29,9 @@ class AnalyzerSpring < Analyzer
 
         # Spring MVC Router (Controller)
         if has_spring_web_bind_package_been_import
-          parser.@classes_tokens.each do |class_tokens|
+          parser.@classes.each do |class_model|
             # Parse the base url of the class
+            class_tokens = class_model.@tokens
             class_annotations = parser.parse_annotations(tokens, class_tokens[0].index)
             class_annotations.each do |class_annotation|
               if class_annotation[1].value == "RequestMapping"
@@ -45,67 +46,79 @@ class AnalyzerSpring < Analyzer
             end
             
             # Parse the methods of the class
-            parser.parse_methods(class_tokens).each do |method_tokens|                
+            class_model.@methods.each do |method_tokens|                
               # Parse the method annotations
               method_annotations = parser.parse_annotations(tokens, method_tokens[0].index)
-              method_annotations.each do |method_annotation_tokens|
+              method_annotations.each do |method_annotation_tokens| # multiline annotations
                 url_paths = Array(String).new
                 annotation_name_token = method_annotation_tokens[1]
-                # If the method is annotated with @RequestMapping
-                if annotation_name_token.value == "RequestMapping"
-                  if tokens[annotation_name_token.index + 1].type == :LPAREN
-                    url_paths = get_mapping_path(parser, tokens, method_annotation_tokens[1].index)
-                  else
-                    url_paths = [""]
-                  end                                    
 
-                  line = annotation_name_token.line
-                  parameters = get_endpoint_parameters(parser, tokens, method_tokens[0].index)
-                  details = Details.new(PathInfo.new(path, line))
-
-                  # Parse the method parameter (method = "GET" or "POST" or "PUT" or "DELETE" or "PATCH")
-                  method_flag = false
+                # Spring MVC Decorator
+                if annotation_name_token.value.ends_with? "Mapping"
+                  method = nil
+                  parameter_type = nil
+                  default_value = nil
                   annotation_parameters = parser.parse_formal_parameters(tokens, annotation_name_token.index)
                   annotation_parameters.each do |annotation_parameter_tokens|
                     if annotation_parameter_tokens.size > 2
-                      if annotation_parameter_tokens[0].value == "method"
-                        method = annotation_parameter_tokens[-1].value
-                        method_flag = true
-                        url_paths.each do |url_path|
-                          @result << Endpoint.new("#{url}#{url_path}", method, parameters, details)                          
+                      annotation_parameter_key = annotation_parameter_tokens[0].value
+                      annotation_parameter_value = annotation_parameter_tokens[-1].value
+                      if annotation_parameter_key == "method"
+                        method = annotation_parameter_value
+                      elsif annotation_parameter_key == "consumes"
+                        if annotation_parameter_value.ends_with? "APPLICATION_FORM_URLENCODED_VALUE"
+                          parameter_type = "form"
+                        elsif annotation_parameter_value.ends_with?("APPLICATION_JSON_VALUE")
+                          parameter_type = "json"
                         end
+                      end
+                    end
+                  end
+
+                  if annotation_name_token.value == "RequestMapping"
+                    if tokens[annotation_name_token.index + 1].type == :LPAREN
+                      url_paths = get_mapping_path(parser, tokens, method_annotation_tokens[1].index)
+                    else
+                      url_paths = [""]
+                    end
+
+                    line = annotation_name_token.line
+                    parameters = get_endpoint_parameters(parser, tokens, method_tokens[0].index, parameter_type)
+                    details = Details.new(PathInfo.new(path, line))
+
+                    if method.nil?
+                       # If the method is not annotated with @RequestMapping, then 5 methods are allowed
+                      ["GET", "POST", "PUT", "DELETE", "PATCH"].each do |method|
+                        url_paths.each do |url_path|
+                          @result << Endpoint.new("#{url}#{url_path}", method, parameters, details)
+                        end
+                      end
+                    else
+                      url_paths.each do |url_path|
+                        @result << Endpoint.new("#{url}#{url_path}", method, parameters, details)                          
+                      end
+                    end
+                  else
+                    ["GetMapping", "PostMapping", "PutMapping", "DeleteMapping", "PatchMapping"].each do |method_mapping|
+                      if annotation_name_token.value == method_mapping
+                        line = annotation_name_token.line
+                        method = method_mapping[0..-8].upcase
+                        parameters = get_endpoint_parameters(parser, tokens, method_tokens[0].index, parameter_type)
+                        
+                        # Parse the path paremeter
+                        if tokens[annotation_name_token.index + 1].type == :LPAREN
+                          url_paths = get_mapping_path(parser, tokens, annotation_name_token.index)
+                        else
+                          # If the path parameter is not specified, then the path is ""
+                          url_paths = [""]
+                        end
+
+                        details = Details.new(PathInfo.new(path, line))
+                        url_paths.each do |url_path|
+                          @result << Endpoint.new("#{url}#{url_path}", method, parameters, details)
+                        end
+
                         break
-                      end
-                    end
-                  end
-
-                  # If the method is not annotated with @RequestMapping, then 5 methods are allowed
-                  unless method_flag
-                    ["GET", "POST", "PUT", "DELETE", "PATCH"].each do |method|
-                      url_paths.each do |url_path|
-                        @result << Endpoint.new("#{url}#{url_path}", method, parameters, details)
-                      end
-                    end
-                  end
-                else
-                  # If the method is annotated with @GetMapping, @PostMapping, @PutMapping, @DeleteMapping, @PatchMapping
-                  ["GetMapping", "PostMapping", "PutMapping", "DeleteMapping", "PatchMapping"].each do |method_mapping|
-                    if annotation_name_token.value == method_mapping
-                      line = annotation_name_token.line
-                      method = method_mapping[0..-8].upcase
-                      parameters = get_endpoint_parameters(parser, tokens, method_tokens[0].index)
-                      
-                      # Parse the path paremeter
-                      if tokens[annotation_name_token.index + 1].type == :LPAREN
-                        url_paths = get_mapping_path(parser, tokens, annotation_name_token.index)
-                      else
-                        # If the path parameter is not specified, then the path is ""
-                        url_paths = [""]
-                      end
-
-                      details = Details.new(PathInfo.new(path, line))
-                      url_paths.each do |url_path|
-                        @result << Endpoint.new("#{url}#{url_path}", method, parameters, details)
                       end
                     end
                   end
@@ -177,18 +190,18 @@ class AnalyzerSpring < Analyzer
     url_paths
   end
 
-  def get_endpoint_parameters(parser : JavaParser, tokens : Array(Token), method_token_index : Int32) : Array(Param)
-    endpoint_parameters = Array(Param).new                   
+  def get_endpoint_parameters(parser : JavaParser, tokens : Array(Token), method_token_index : Int32, parameter_type : String|Nil) : Array(Param)
+    endpoint_parameters = Array(Param).new
     parser.parse_formal_parameters(tokens, method_token_index).each do |formal_parameter_tokens|
-      next if formal_parameter_tokens.size == 0
-
-      parameter_type = nil
+      next if formal_parameter_tokens.size == 0      
       if formal_parameter_tokens[-1].type == :IDENTIFIER
         if formal_parameter_tokens[0].type == :AT
           if formal_parameter_tokens[1].value == "PathVariable"
             next
           elsif formal_parameter_tokens[1].value == "RequestBody"
-            parameter_type = "form"
+            if parameter_type.nil?
+              parameter_type = "json"
+            end
           elsif formal_parameter_tokens[1].value == "RequestParam"
             parameter_type = "query"
           else
@@ -197,17 +210,38 @@ class AnalyzerSpring < Analyzer
         end
         
         if !parameter_type.nil?
-          parameter_name = formal_parameter_tokens[-1].value # case of "@RequestParam String a"
+          default_value = ""
+          # @RequestParam(@RequestParam long time) -> time
+          parameter_name = formal_parameter_tokens[-1].value          
           if formal_parameter_tokens[-1].type != IDENTIFIER
-            if formal_parameter_tokens[2].type == :LPAREN && formal_parameter_tokens[3].type == :STRING_LITERAL
-              parameter_name_token = formal_parameter_tokens[3] # case of "@RequestParam("a") String a"
-              parameter_name = parameter_name_token.value[1..-2]                               
+            if formal_parameter_tokens[2].type == :LPAREN
+              request_parameters = parser.parse_formal_parameters(tokens, formal_parameter_tokens[2].index)
+              request_parameters.each do |request_parameter_tokens|
+                parser.print_tokens request_parameter_tokens
+                if request_parameter_tokens.size > 2
+                  request_param_name = request_parameter_tokens[0].value
+                  request_param_value = request_parameter_tokens[-1].value
+
+                  if request_param_name == "value"
+                    # @RequestParam(value = "name")
+                    parameter_name = request_param_value[1..-2]
+                  elsif request_param_name == "defaultValue"
+                    # @RequestParam(defaultValue = "defaultValue")
+                    default_value = request_param_value[1..-2]
+                  end
+                end
+              end
+              if formal_parameter_tokens[3].type == :STRING_LITERAL
+                 # @RequestParam("name") -> name
+                parameter_name_token = formal_parameter_tokens[3]
+                parameter_name = parameter_name_token.value[1..-2]
+              end
             end
           end
 
-          endpoint_parameters << Param.new(parameter_name, "", parameter_type)                              
+          endpoint_parameters << Param.new(parameter_name, default_value, parameter_type)                              
         end
-      end                          
+      end
     end
 
     endpoint_parameters

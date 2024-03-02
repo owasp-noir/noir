@@ -5,12 +5,15 @@ class JavaParser
   def initialize
     @import_statements = Array(String).new
     @classes_tokens = Array(Array(Token)).new
-    @class_annotation = Array(Token).new    
+    @classes = Array(ClassModel).new
   end
 
   def parse(tokens : Array(Token))    
     parse_import_statements(tokens)
     parse_classes(tokens)
+    @classes_tokens.each do |class_tokens|
+      @classes << ClassModel.new(self, class_tokens)
+    end
   end
 
   def parse_import_statements(tokens : Array(Token))
@@ -158,6 +161,18 @@ class JavaParser
     end
   end
 
+  def get_class_name(tokens : Array(Token))
+    tokens.each_with_index do |token, index|
+      if token.index != 0
+        if tokens[index - 1].type == :CLASS
+          return token.value
+        end
+      end
+    end
+
+    return ""
+  end
+
   def parse_methods(class_body_tokens : Array(Token))
     # 1. Skip first line (class declaration)
     # 2. Search ":RPAREN :LBRACE" or ":RPAREN throws :IDENTIFIER :LBRACE" pattern (method body entry point)
@@ -251,6 +266,18 @@ class JavaParser
       end
     end
     puts
+  end
+end
+
+class ClassModel
+  @parser : JavaParser
+  @name : String
+  @methods : Array(Array(Token))
+  @tokens : Array(Token)
+
+  def initialize(@parser : JavaParser, @tokens : Array(Token))
+    @name = @parser.get_class_name(@tokens)
+    @methods = @parser.parse_methods(@tokens)
   end
 end
 
