@@ -11,7 +11,7 @@ class GolangLexer < MiniLexer
 
   def tokenize_logic(input : String) : Array(Token)
     results = [] of Token
-    
+
     # results << Token.new(:identifier, "foo", 3)
     results
   end
