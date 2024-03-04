@@ -14,7 +14,7 @@ class MiniLexer
     @mode = mode
   end
 
-  def line() : Int    
+  def line : Int
     pos_index = 0
     line_index = 1
     i = @pos_line_array.size - 1
@@ -22,18 +22,18 @@ class MiniLexer
       pos = @pos_line_array[i][pos_index]
       line = @pos_line_array[i][line_index]
       if pos < @position
-        return line + @input[pos+1..@position].count("\n")
+        return line + @input[pos + 1..@position].count("\n")
       end
       i -= 1
     end
 
-   line = @input[0..@position].count("\n") + 1
-   @pos_line_array << Tuple.new(@position, line)
+    line = @input[0..@position].count("\n") + 1
+    @pos_line_array << Tuple.new(@position, line)
 
-   line
+    line
   end
 
-  def <<(t :  Tuple(Symbol, String))
+  def <<(t : Tuple(Symbol, String))
     @tokens << Token.new(t[0], t[1], @tokens.size, @position, line())
   end
 
@@ -56,14 +56,14 @@ class MiniLexer
     @tokens.select { |token| token.type == token_type }
   end
 
-  def trace()    
+  def trace
     line_number = 1
     source_line = ""
     lines = @input.split "\n"
     puts "line size: #{lines.size}, token number: #{tokens.size}"
-    @tokens.each do |token|      
+    @tokens.each do |token|
       if token.line == line_number
-        puts "\nLine #{line_number}: " + lines[line_number-1]
+        puts "\nLine #{line_number}: " + lines[line_number - 1]
         line_number += 1
       end
       puts token.to_s

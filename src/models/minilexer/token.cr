@@ -3,7 +3,7 @@ class Token
   property value : String
   property index : Int32
   property position : Int32
-  property line : Int32  
+  property line : Int32
 
   def initialize(@type, @value, @index, @position, @line)
   end

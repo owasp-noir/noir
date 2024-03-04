@@ -1,3 +1,4 @@
+package com.test;
 import org.springframework.web.bind.annotation.*;
 import a.b.c.bind.annotation.*;
 import org.springframework.c.d.e.*;
@@ -24,5 +25,26 @@ public class ItemController {
 
     @GetMapping("/json/{id}", produces = [MediaType.APPLICATION_JSON_VALUE])
     public void getItemJson(){       
+    }
+}
+
+class Item {
+    int id;
+    String name;
+
+    public void setId(int _id) {
+        id = _id;
+    }
+
+    public int getId() {
+        return id;
+    }
+
+    public void setName(String _name) {
+        name = _name;
+    }
+
+    public String getName() {
+        return name;
     }
 }

@@ -15,9 +15,9 @@ def initialize_analyzers(logger : NoirLogger)
   analyzers["go_gin"] = ->analyzer_go_gin(Hash(Symbol, String))
   analyzers["java_armeria"] = ->analyzer_armeria(Hash(Symbol, String))
   analyzers["java_jsp"] = ->analyzer_jsp(Hash(Symbol, String))
-  analyzers["java_spring"] = ->analyzer_spring(Hash(Symbol, String))
+  analyzers["java_spring"] = ->analyzer_java_spring(Hash(Symbol, String))
   analyzers["js_express"] = ->analyzer_express(Hash(Symbol, String))
-  analyzers["kotlin_spring"] = ->analyzer_spring(Hash(Symbol, String))
+  analyzers["kotlin_spring"] = ->analyzer_kotlin_spring(Hash(Symbol, String))
   analyzers["oas2"] = ->analyzer_oas2(Hash(Symbol, String))
   analyzers["oas3"] = ->analyzer_oas3(Hash(Symbol, String))
   analyzers["php_pure"] = ->analyzer_php_pure(Hash(Symbol, String))
@@ -50,10 +50,6 @@ def analysis_endpoints(options : Hash(Symbol, String), techs, logger : NoirLogge
 
   logger.system "Analysis Started"
   logger.info_sub "Code Analyzer: #{techs.size} in use"
-
-  if (techs.includes? "java_spring") && (techs.includes? "kotlin_spring")
-    techs.delete("kotlin_spring")
-  end
 
   techs.each do |tech|
     if analyzer.has_key?(tech)
