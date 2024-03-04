@@ -14,11 +14,11 @@ class AnalyzerJavaSpring < Analyzer
       url = ""
       if File.exists?(path) && path.ends_with?(".java")
         content = File.read(path, encoding: "utf-8", invalid: :skip)
-        
+
         # Spring MVC Router (Controller)
         spring_web_bind_package = "org.springframework.web.bind.annotation."
         has_spring_web_bind_package_been_import = content.includes?(spring_web_bind_package)
-        if has_spring_web_bind_package_been_import          
+        if has_spring_web_bind_package_been_import
           if parser_map.has_key?(path)
             parser = parser_map[path]
             tokens = parser.tokens
@@ -93,13 +93,13 @@ class AnalyzerJavaSpring < Analyzer
               end
 
               package_map[package_directory] = package_class_map
-            end            
+            end
           end
 
-          class_map = package_class_map.merge(import_map)          
+          class_map = package_class_map.merge(import_map)
           parser.classes.each do |class_model|
-            class_annotation = class_model.annotations["RequestMapping"]?            
-            if !class_annotation.nil?              
+            class_annotation = class_model.annotations["RequestMapping"]?
+            if !class_annotation.nil?
               next if class_annotation.params.size == 0
               class_path_token = class_annotation.params[0][-1]
               if class_path_token.type == :STRING_LITERAL
