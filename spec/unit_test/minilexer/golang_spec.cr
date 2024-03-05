@@ -31,5 +31,18 @@ describe "tokenize" do
     output[0].type.should eq(:newline)
     output[1].type.should eq(:code)
     output[2].type.should eq(:string)
+    output[3].type.should eq(:code)
+    output[4].type.should eq(:newline)
+    output[5].type.should eq(:newline)
+    output[6].type.should eq(:code)
+    output[7].type.should eq(:string)
+    output[8].type.should eq(:code)
+    output[9].type.should eq(:newline)
+    output[10].type.should eq(:code)
+    output[11].type.should eq(:string)
+    output[12].type.should eq(:code)
+    output[13].type.should eq(:newline)
+    output[14].type.should eq(:code)
+    output[15].type.should eq(:newline)
   end
 end
