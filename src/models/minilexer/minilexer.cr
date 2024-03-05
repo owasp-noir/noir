@@ -58,7 +58,7 @@ class MiniLexer
 
   def trace
     line_number = 1
-    source_line = ""
+    # source_line = ""
     lines = @input.split "\n"
     puts "line size: #{lines.size}, token number: #{tokens.size}"
     @tokens.each do |token|
