@@ -5,6 +5,11 @@ class Token
   property position : Int32
   property line : Int32
 
+  def initialize(@type, @value, @index)
+    @position = 0
+    @line = 0
+  end
+
   def initialize(@type, @value, @index, @position, @line)
   end
 
