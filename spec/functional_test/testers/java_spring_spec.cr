@@ -16,12 +16,21 @@ extected_endpoints = [
   # ItemController.java
   Endpoint.new("/items/{id}", "GET"),
   Endpoint.new("/items/json/{id}", "GET"),
-  Endpoint.new("/items", "POST"),
-  Endpoint.new("/items/update/{id}", "PUT"),
+  Endpoint.new("/items", "POST", [Param.new("id", "", "form"), Param.new("name", "", "form")]),
+  Endpoint.new("/items/update/{id}", "PUT", [Param.new("id", "", "json"), Param.new("name", "", "json")]),
   Endpoint.new("/items/delete/{id}", "DELETE"),
+  Endpoint.new("/greet", "GET", [
+    Param.new("name", "", "query"),
+    Param.new("header", "", "header"),
+  ]),
+  Endpoint.new("/greet2", "GET", [
+    Param.new("myname", "", "query"),
+    Param.new("b", "", "query"),
+    Param.new("name", "", "query"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/java_spring/", {
   :techs     => 1,
-  :endpoints => 15,
+  :endpoints => 17,
 }, extected_endpoints).test_all
