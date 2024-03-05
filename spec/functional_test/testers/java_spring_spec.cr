@@ -21,9 +21,12 @@ extected_endpoints = [
   Endpoint.new("/items/delete/{id}", "DELETE"),
   Endpoint.new("/greet", "GET", [
     Param.new("name", "", "query"),
+    Param.new("header", "", "header"),
   ]),
   Endpoint.new("/greet2", "GET", [
     Param.new("myname", "", "query"),
+    Param.new("b", "", "query"),
+    Param.new("name", "", "query"),
   ]),
 ]
 

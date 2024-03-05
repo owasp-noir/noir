@@ -49,7 +49,7 @@ class AnalyzerJavaSpring < Analyzer
                   end
 
                   _parser.classes.each do |package_class|
-                    import_map.put_if_absent(package_class.name, package_class)
+                    import_map[package_class.name] = package_class
                   end
                 end
               end
@@ -61,12 +61,12 @@ class AnalyzerJavaSpring < Analyzer
                 _parser = get_parser(source_path, _content)
                 parser_map[source_path.to_s] = _parser
                 _parser.classes.each do |package_class|
-                  import_map.put_if_absent(package_class.name, package_class)
+                  import_map[package_class.name] = package_class
                 end
               else
                 _parser = parser_map[source_path.to_s]
                 _parser.classes.each do |package_class|
-                  import_map.put_if_absent(package_class.name, package_class)
+                  import_map[package_class.name] = package_class
                 end
               end
             end
@@ -85,11 +85,11 @@ class AnalyzerJavaSpring < Analyzer
               end
 
               _parser.classes.each do |package_class|
-                package_class_map.put_if_absent(package_class.name, package_class)
+                package_class_map[package_class.name] = package_class
               end
 
               parser.classes.each do |package_class|
-                package_class_map.put_if_absent(package_class.name, package_class)
+                package_class_map[package_class.name] = package_class
               end
 
               package_map[package_directory] = package_class_map
@@ -147,14 +147,14 @@ class AnalyzerJavaSpring < Analyzer
                     if request_method.nil?
                       # If the method is not annotated with @RequestMapping, then 5 methods are allowed
                       ["GET", "POST", "PUT", "DELETE", "PATCH"].each do |_request_method|
-                        parameters = get_endpoint_parameters(parser, _request_method, method.params, parameter_format, class_map)
+                        parameters = get_endpoint_parameters(parser, _request_method, method, parameter_format, class_map)
                         url_paths.each do |url_path|
                           @result << Endpoint.new("#{url}#{url_path}", _request_method, parameters, details)
                         end
                       end
                     else
                       url_paths.each do |url_path|
-                        parameters = get_endpoint_parameters(parser, request_method, method.params, parameter_format, class_map)
+                        parameters = get_endpoint_parameters(parser, request_method, method, parameter_format, class_map)
                         @result << Endpoint.new("#{url}#{url_path}", request_method, parameters, details)
                       end
                     end
@@ -168,7 +168,7 @@ class AnalyzerJavaSpring < Analyzer
                       if parameter_format.nil? && request_method == "POST"
                         parameter_format = "form"
                       end
-                      parameters = get_endpoint_parameters(parser, request_method, method.params, parameter_format, class_map)
+                      parameters = get_endpoint_parameters(parser, request_method, method, parameter_format, class_map)
 
                       url_paths = [""]
                       if method_annotation.params.size > 0
@@ -248,10 +248,9 @@ class AnalyzerJavaSpring < Analyzer
     url_paths
   end
 
-  def get_endpoint_parameters(parser : JavaParser, request_method : String, method_params : Array(Array(Token)), parameter_format : String | Nil, package_class_map : Hash(String, ClassModel)) : Array(Param)
+  def get_endpoint_parameters(parser : JavaParser, request_method : String, method : MethodModel, parameter_format : String | Nil, package_class_map : Hash(String, ClassModel)) : Array(Param)
     endpoint_parameters = Array(Param).new
-
-    method_params.each do |method_param_tokens|
+    method.params.each do |method_param_tokens|
       next if method_param_tokens.size == 0
       if method_param_tokens[-1].type == :IDENTIFIER
         if method_param_tokens[0].type == :AT
@@ -263,6 +262,8 @@ class AnalyzerJavaSpring < Analyzer
             end
           elsif method_param_tokens[1].value == "RequestParam"
             parameter_format = "query"
+          elsif method_param_tokens[1].value == "RequestHeader"
+            parameter_format = "header"
           end
         end
 
@@ -298,10 +299,48 @@ class AnalyzerJavaSpring < Analyzer
           end
         end
 
+        argument_name = method_param_tokens[-1].value
         parameter_type = method_param_tokens[-2].value
         if ["long", "int", "integer", "char", "boolean", "string", "multipartfile"].index(parameter_type.downcase)
           param_default_value = default_value.nil? ? "" : default_value
           endpoint_parameters << Param.new(parameter_name, param_default_value, parameter_format)
+        elsif parameter_type == "HttpServletRequest"
+          i = 0
+          while i < method.body.size - 6
+            if [:TAB, :WHITESPACE, :NEWLINE].index(method.body[i].type)
+              i += 1
+              next
+            end
+
+            next if method.body[i].type == :WHITESPACE
+            next if method.body[i].type == :NEWLINE
+
+            if method.body[i].type == :IDENTIFIER && method.body[i].value == argument_name
+              if method.body[i + 1].type == :DOT
+                if method.body[i + 2].type == :IDENTIFIER && method.body[i + 3].type == :LPAREN
+                  servlet_request_method_name = method.body[i + 2].value
+                  if method.body[i + 4].type == :STRING_LITERAL
+                    parameter_name = method.body[i + 4].value[1..-2]
+                    if servlet_request_method_name == "getParameter"
+                      unless endpoint_parameters.any? { |param| param.name == parameter_name }
+                        endpoint_parameters << Param.new(parameter_name, "", parameter_format)
+                      end
+                      i += 6
+                      next
+                    elsif servlet_request_method_name == "getHeader"
+                      unless endpoint_parameters.any? { |param| param.name == parameter_name }
+                        endpoint_parameters << Param.new(parameter_name, "", "header")
+                      end
+                      i += 6
+                      next
+                    end
+                  end
+                end
+              end
+            end
+
+            i += 1
+          end
         else
           # custom class"
           if package_class_map.has_key?(parameter_type)

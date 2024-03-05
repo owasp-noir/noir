@@ -355,7 +355,7 @@ class JavaParser
 
               field.has_getter = has_getter
               field.has_setter = has_setter
-              fields.put_if_absent(field.name, field)
+              fields[field.name] = field
             end
 
             break
@@ -383,6 +383,7 @@ class JavaParser
     enter_class_body = false
     enter_method_body = false
     method_name_index = -1
+    method_body_index = -1
     class_tokens.each_index do |index|
       token = class_tokens[index]
       if token.type == :NEWLINE && !enter_class_body
@@ -396,7 +397,7 @@ class JavaParser
           lbrace_count = 1
           rbrace_count = 0
           lparen_count = rparen_count = 0
-
+          method_body_index = index
           previous_token_index = index - 1
           has_exception = false
           while 0 < previous_token_index
@@ -448,7 +449,9 @@ class JavaParser
           if lbrace_count == rbrace_count
             annotations = parse_annotations(class_tokens, method_name_index)
             if !method_name.nil?
-              methods[method_name] = MethodModel.new(method_name, parse_formal_parameters(class_tokens, method_name_index + 1), annotations, method_tokens)
+              method_params = parse_formal_parameters(class_tokens, method_name_index + 1)
+              method_body = class_tokens[method_body_index + 1..index - 1]
+              methods[method_name] = MethodModel.new(method_name, method_params, annotations, method_tokens, method_body)
             end
 
             # reset
@@ -508,8 +511,9 @@ class MethodModel
   property params : Array(Array(Token))
   property annotations : Hash(String, AnnotationModel)
   property tokens : Array(Token)
+  property body : Array(Token)
 
-  def initialize(@name, @params, @annotations, @tokens)
+  def initialize(@name, @params, @annotations, @tokens, @body)
   end
 end
 

@@ -1,3 +1,4 @@
+package com.test;
 import javax.servlet.http.HttpServletRequest;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -11,6 +12,11 @@ public class MyController {
         if (name == null || name.isEmpty()) {
             name = "World";
         }
-        return "Hello, " + name + "!";
+
+        String header = request.getHeader("header");
+        if (header == null || header.isEmpty()) {
+            header = "!";
+        }
+        return "Hello, " + name + header;
     }
 }
