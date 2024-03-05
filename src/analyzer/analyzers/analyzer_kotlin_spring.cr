@@ -1,6 +1,6 @@
 require "../../models/analyzer"
 
-class AnalyzerSpring < Analyzer
+class AnalyzerKotlinSpring < Analyzer
   REGEX_CLASS_DEFINITION  = /^(((public|private|protected|default)\s+)|^)class\s+/
   REGEX_ROUTER_CODE_BLOCK = /route\(\)?.*?\);/m
   REGEX_ROUTE_CODE_LINE   = /((?:andRoute|route)\s*\(|\.)\s*(GET|POST|DELETE|PUT)\(\s*"([^"]*)/
@@ -12,7 +12,7 @@ class AnalyzerSpring < Analyzer
         next if File.directory?(path)
 
         url = ""
-        if File.exists?(path) && (path.ends_with?(".java") || path.ends_with?(".kt"))
+        if File.exists?(path) && path.ends_with?(".kt")
           content = File.read(path, encoding: "utf-8", invalid: :skip)
           last_endpoint = Endpoint.new("", "")
 
@@ -242,7 +242,7 @@ class AnalyzerSpring < Analyzer
   end
 end
 
-def analyzer_spring(options : Hash(Symbol, String))
-  instance = AnalyzerSpring.new(options)
+def analyzer_kotlin_spring(options : Hash(Symbol, String))
+  instance = AnalyzerKotlinSpring.new(options)
   instance.analyze
 end

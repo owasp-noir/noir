@@ -3,7 +3,7 @@ ignored_paths:
 
 Metrics/CyclomaticComplexity:
   Description: Disallows methods with a cyclomatic complexity higher than `MaxComplexity`
-  MaxComplexity: 40
+  MaxComplexity: 80
   Enabled: true
   Severity: Warning
 

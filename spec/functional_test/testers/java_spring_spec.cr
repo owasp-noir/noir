@@ -16,8 +16,8 @@ extected_endpoints = [
   # ItemController.java
   Endpoint.new("/items/{id}", "GET"),
   Endpoint.new("/items/json/{id}", "GET"),
-  Endpoint.new("/items", "POST"),
-  Endpoint.new("/items/update/{id}", "PUT"),
+  Endpoint.new("/items", "POST", [Param.new("id", "", "form"), Param.new("name", "", "form")]),
+  Endpoint.new("/items/update/{id}", "PUT", [Param.new("id", "", "json"), Param.new("name", "", "json")]),
   Endpoint.new("/items/delete/{id}", "DELETE"),
   Endpoint.new("/greet", "GET", [
     Param.new("name", "", "query"),

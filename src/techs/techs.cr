@@ -1,99 +1,59 @@
 module NoirTechs
   TECHS = {
     :crystal_kemal => {
-      :language  => "Crystal",
       :framework => "Kemal",
+      :language  => "Crystal",
       :similar   => ["kemal", "crystal-kemal", "crystal_kemal"],
     },
     :cs_aspnet_mvc => {
-      :language  => "C#",
       :framework => "ASP.NET MVC",
+      :language  => "C#",
       :similar   => ["asp.net mvc", "cs-aspnet-mvc", "cs_aspnet_mvc", "c# asp.net mvc", "c#-asp.net-mvc", "c#_aspnet_mvc"],
     },
+    :elixir_phoenix => {
+      :framework => "Phoenix",
+      :language  => "Elixir",
+      :similar   => ["phoenix", "elixir-phoenix", "elixir_phoenix"],
+    },
     :go_echo => {
-      :language  => "Go",
       :framework => "Echo",
+      :language  => "Go",
       :similar   => ["echo", "go-echo", "go_echo"],
     },
-    :go_gin => {
-      :language  => "Go",
-      :framework => "Gin",
-      :similar   => ["gin", "go-gin", "go_gin"],
-    },
     :go_fiber => {
-      :language  => "Go",
       :framework => "Fiber",
+      :language  => "Go",
       :similar   => ["fiber", "go-fiber", "go_fiber"],
     },
-    :java_jsp => {
+    :go_gin => {
+      :framework => "Gin",
+      :language  => "Go",
+      :similar   => ["gin", "go-gin", "go_gin"],
+    },
+    :java_armeria => {
+      :framework => "Armeria",
       :language  => "Java",
+      :similar   => ["armeria", "java-armeria", "java_armeria"],
+    },
+    :java_jsp => {
       :framework => "JSP",
+      :language  => "Java",
       :similar   => ["jsp", "java-jsp", "java_jsp"],
     },
     :java_spring => {
-      :language  => "Java",
       :framework => "Spring",
+      :language  => "Java",
       :similar   => ["spring", "java-spring", "java_spring"],
     },
-    :java_armeria => {
-      :language  => "Java",
-      :framework => "Armeria",
-      :similar   => ["armeria", "java-armeria", "java_armeria"],
-    },
-    :kotlin_spring => {
-      :language  => "Kotlin",
-      :framework => "Spring",
-      :similar   => ["spring", "kotlin-spring", "kotlin_spring"],
-    },
     :js_express => {
-      :language  => "JavaScript",
       :framework => "Express",
+      :language  => "JavaScript",
       :similar   => ["express", "js-express", "js_express"],
     },
-    :php_pure => {
-      :language  => "PHP",
-      :framework => "",
-      :similar   => ["php", "php-pure", "php_pure"],
-    },
-    :python_django => {
-      :language  => "Python",
-      :framework => "Django",
-      :similar   => ["django", "python-django", "python_django"],
-    },
-    :python_flask => {
-      :language  => "Python",
-      :framework => "Flask",
-      :similar   => ["flask", "python-flask", "python_flask"],
-    },
-    :python_fastapi => {
-      :language  => "Python",
-      :framework => "FastAPI",
-      :similar   => ["fastapi", "python-fastapi", "python_fastapi"],
-    },
-    :ruby_rails => {
-      :language  => "Ruby",
-      :framework => "Rails",
-      :similar   => ["rails", "ruby-rails", "ruby_rails"],
-    },
-    :ruby_sinatra => {
-      :language  => "Ruby",
-      :framework => "Sinatra",
-      :similar   => ["sinatra", "ruby-sinatra", "ruby_sinatra"],
-    },
-    :ruby_hanami => {
-      :language  => "Ruby",
-      :framework => "Hanami",
-      :similar   => ["hanami", "ruby-hanami", "ruby_hanami"],
-    },
-    :rust_axum => {
-      :language  => "Rust",
-      :framework => "Axum",
-      :similar   => ["axum", "rust-axum", "rust_axum"],
-    },
-    :elixir_phoenix => {
-      :language  => "Elixir",
-      :framework => "Phoenix",
-      :similar   => ["phoenix", "elixir-phoenix", "elixir_phoenix"],
+    :kotlin_spring => {
+      :framework => "Spring",
+      :language  => "Kotlin",
+      :similar   => ["spring", "kotlin-spring", "kotlin_spring"],
     },
     :oas2 => {
       :format  => ["JSON", "YAML"],
@@ -103,9 +63,49 @@ module NoirTechs
       :format  => ["JSON", "YAML"],
       :similar => ["oas 3.0", "oas_3_0"],
     },
+    :php_pure => {
+      :framework => "",
+      :language  => "PHP",
+      :similar   => ["php", "php-pure", "php_pure"],
+    },
+    :python_django => {
+      :framework => "Django",
+      :language  => "Python",
+      :similar   => ["django", "python-django", "python_django"],
+    },
+    :python_fastapi => {
+      :framework => "FastAPI",
+      :language  => "Python",
+      :similar   => ["fastapi", "python-fastapi", "python_fastapi"],
+    },
+    :python_flask => {
+      :framework => "Flask",
+      :language  => "Python",
+      :similar   => ["flask", "python-flask", "python_flask"],
+    },
     :raml => {
       :format  => ["YAML"],
       :similar => ["raml"],
+    },
+    :ruby_hanami => {
+      :framework => "Hanami",
+      :language  => "Ruby",
+      :similar   => ["hanami", "ruby-hanami", "ruby_hanami"],
+    },
+    :ruby_rails => {
+      :framework => "Rails",
+      :language  => "Ruby",
+      :similar   => ["rails", "ruby-rails", "ruby_rails"],
+    },
+    :ruby_sinatra => {
+      :framework => "Sinatra",
+      :language  => "Ruby",
+      :similar   => ["sinatra", "ruby-sinatra", "ruby_sinatra"],
+    },
+    :rust_axum => {
+      :framework => "Axum",
+      :language  => "Rust",
+      :similar   => ["axum", "rust-axum", "rust_axum"],
     },
   }
 

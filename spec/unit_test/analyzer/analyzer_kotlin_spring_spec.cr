@@ -1,9 +1,9 @@
-require "../../../src/analyzer/analyzers/analyzer_spring.cr"
+require "../../../src/analyzer/analyzers/analyzer_kotlin_spring.cr"
 require "../../../src/options"
 
 describe "mapping_to_path" do
   options = default_options()
-  instance = AnalyzerSpring.new(options)
+  instance = AnalyzerKotlinSpring.new(options)
 
   it "mapping_to_path - GET" do
     instance.mapping_to_path("@GetMapping(\"/abcd\")").should eq(["/abcd"])
@@ -72,7 +72,7 @@ end
 
 describe "utils func" do
   options = default_options()
-  instance = AnalyzerSpring.new(options)
+  instance = AnalyzerKotlinSpring.new(options)
 
   it "is_bracket - true" do
     instance.is_bracket("{abcd=1234}").should eq(true)
