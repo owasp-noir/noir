@@ -122,13 +122,13 @@ class AnalyzerKotlinSpring < Analyzer
   end
 
   def line_to_param(line : String) : Param
-    if line.includes? "getParameter("
-      param = line.split("getParameter(")[1].split(")")[0].gsub("\"", "").gsub("'", "")
+    if line.includes? "getParameter(\""
+      param = line.split("getParameter(\"")[1].split("\"")[0]
       return Param.new(param, "", "query")
     end
 
-    if line.includes? "@RequestParam("
-      param = line.split("@RequestParam(")[1].split(")")[0].gsub("\"", "").gsub("'", "")
+    if line.includes? "@RequestParam(\""
+      param = line.split("@RequestParam(\"")[1].split("\"")[0]
       return Param.new(param, "", "query")
     end
 
