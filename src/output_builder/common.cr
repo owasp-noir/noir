@@ -38,7 +38,7 @@ class OutputBuilderCommon < OutputBuilder
             if code_path.line.nil?
               r_buffer += "\n  ○ file: #{code_path.path}"
             else
-              r_buffer += "\n  ○ file: #{code_path.path}##{code_path.line}"
+              r_buffer += "\n  ○ file: #{code_path.path} (line #{code_path.line})"
             end
           end
         end
