@@ -28,6 +28,11 @@ func main() {
 		// Websocket logic
 	}))
 
+	mygroup := app.Group("/admin")
+	mygroup.Get("/users", func(c *fiber.Ctx) error {
+		return c.SendString(msg) // => ✋ register
+	})
+
 	app.Static("/", "/public")
 
 	log.Fatal(app.Listen(":3000"))
