@@ -4,6 +4,8 @@ class AnalyzerGoFiber < Analyzer
   def analyze
     # Source Analysis
     public_dirs = [] of (Hash(String, String))
+    groups = [] of Hash(String, String)
+
     begin
       Dir.glob("#{base_path}/**/*") do |path|
         next if File.directory?(path)
@@ -12,8 +14,41 @@ class AnalyzerGoFiber < Analyzer
             last_endpoint = Endpoint.new("", "")
             file.each_line.with_index do |line, index|
               details = Details.new(PathInfo.new(path, index + 1))
+              lexer = GolangLexer.new
+
+              if line.includes?(".Group(")
+                map = lexer.tokenize(line)
+                before = Token.new(:unknown, "", 0)
+                group_name = ""
+                group_path = ""
+                map.each do |token|
+                  if token.type == :assign
+                    group_name = before.value.to_s.gsub(":", "").gsub(/\s/, "")
+                  end
+
+                  if token.type == :string
+                    group_path = token.value.to_s
+                    groups.each do |group|
+                      group.each do |key, value|
+                        if before.value.to_s.includes? key
+                          group_path = value + group_path
+                        end
+                      end
+                    end
+                  end
+
+                  before = token
+                end
+
+                if group_name.size > 0 && group_path.size > 0
+                  groups << {
+                    group_name => group_path,
+                  }
+                end
+              end
+
               if line.includes?(".Get(") || line.includes?(".Post(") || line.includes?(".Put(") || line.includes?(".Delete(")
-                get_route_path(line).tap do |route_path|
+                get_route_path(line, groups).tap do |route_path|
                   if route_path.size > 0
                     new_endpoint = Endpoint.new("#{route_path}", line.split(".")[1].split("(")[0].upcase, details)
                     if line.includes?("websocket.New(")
@@ -137,14 +172,25 @@ class AnalyzerGoFiber < Analyzer
     }
   end
 
-  def get_route_path(line : String) : String
-    first = line.strip.split("(")
-    if first.size > 1
-      second = first[1].split(",")
-      if second.size > 1
-        route_path = second[0].gsub("\"", "")
-        return route_path
+  def get_route_path(line : String, groups : Array(Hash(String, String))) : String
+    lexer = GolangLexer.new
+    map = lexer.tokenize(line)
+    before = Token.new(:unknown, "", 0)
+    map.each do |token|
+      if token.type == :string
+        final_path = token.value.to_s
+        groups.each do |group|
+          group.each do |key, value|
+            if before.value.to_s.includes? key
+              final_path = value + final_path
+            end
+          end
+        end
+
+        return final_path
       end
+
+      before = token
     end
 
     ""

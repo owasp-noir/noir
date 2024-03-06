@@ -17,9 +17,11 @@ extected_endpoints = [
   Endpoint.new("/public/secret.html", "GET"),
   Endpoint.new("/public/mob.txt", "GET"),
   Endpoint.new("/public/coffee.txt", "GET"),
+  Endpoint.new("/admin/users", "GET"),
+  Endpoint.new("/admin/v1/migration", "GET"),
 ]
 
 FunctionalTester.new("fixtures/go_echo/", {
   :techs     => 1,
-  :endpoints => 7,
+  :endpoints => 9,
 }, extected_endpoints).test_all

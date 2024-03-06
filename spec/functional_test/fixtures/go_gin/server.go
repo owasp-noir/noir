@@ -27,6 +27,16 @@ func main() {
 		c.String(http.StatusOK, "Submitted data: Username=%s, Password=%s, userAgent=%s", username, password, userAgent)
 	})
 
+	users := r.Group("/group")
+	users.GET("/users", func(c *gin.Context) {
+		c.JSON(http.StatusOK, "users")
+	})
+
+	v1 := users.Group("/v1")
+	v1.GET("/migration", func(c *gin.Context) {
+		c.JSON(http.StatusOK, "users")
+	})
+
 	r.Static("/public", "public")
 	r.Run() // listen and serve on 0.0.0.0:8080 (for windows "localhost:8080")
 }

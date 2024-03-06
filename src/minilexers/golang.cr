@@ -25,6 +25,13 @@ class GolangLexer < MiniLexer
           results << Token.new(@identifier, @buffer, index)
           @in_double_quote = true
           @identifier = :string
+          @buffer = ""
+        end
+      when 61 # assign
+        if @buffer != "" && !@in_double_quote
+          results << Token.new(@identifier, @buffer, index)
+          results << Token.new(:assign, "=", index)
+          @buffer = ""
         end
       when 10 # newline
         if @buffer != ""
