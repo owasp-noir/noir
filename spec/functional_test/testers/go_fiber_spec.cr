@@ -13,9 +13,10 @@ extected_endpoints = [
   Endpoint.new("/secret.html", "GET"),
   Endpoint.new("/ws", "GET"),
   Endpoint.new("/admin/users", "GET"),
+  Endpoint.new("/admin/v1/migration", "GET"),
 ]
 
 FunctionalTester.new("fixtures/go_fiber/", {
   :techs     => 1,
-  :endpoints => 5,
+  :endpoints => 6,
 }, extected_endpoints).test_all

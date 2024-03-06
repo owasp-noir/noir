@@ -15,9 +15,10 @@ extected_endpoints = [
   ]),
   Endpoint.new("/public/secret.html", "GET"),
   Endpoint.new("/group/users", "GET"),
+  Endpoint.new("/group/v1/migration", "GET"),
 ]
 
 FunctionalTester.new("fixtures/go_gin/", {
   :techs     => 1,
-  :endpoints => 5,
+  :endpoints => 6,
 }, extected_endpoints).test_all

@@ -32,6 +32,11 @@ func main() {
 		c.JSON(http.StatusOK, "users")
 	})
 
+	v1 := users.Group("/v1")
+	v1.GET("/migration", func(c *gin.Context) {
+		c.JSON(http.StatusOK, "users")
+	})
+
 	r.Static("/public", "public")
 	r.Run() // listen and serve on 0.0.0.0:8080 (for windows "localhost:8080")
 }

@@ -28,6 +28,13 @@ class AnalyzerGoGin < Analyzer
 
                   if token.type == :string
                     group_path = token.value.to_s
+                    groups.each do |group|
+                      group.each do |key, value|
+                        if before.value.to_s.includes? key
+                          group_path = value + group_path
+                        end
+                      end
+                    end
                   end
 
                   before = token
