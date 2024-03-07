@@ -58,10 +58,19 @@
 
 ## Installation
 ### Homebrew (macOS)
+
 ```bash
 brew install noir
 
 # https://formulae.brew.sh/formula/noir
+```
+
+### Snapcraft (linux)
+
+```bash
+sudo snap install noir
+
+# https://snapcraft.io/noir
 ```
 
 ### From Sources
