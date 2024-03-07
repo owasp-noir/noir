@@ -1,6 +1,6 @@
 name: noir
 base: core20
-version: 0.12.2
+version: 0.13.0
 summary: Attack surface detector that identifies endpoints by static analysis.
 description: |
   Noir is your ally in the quest for digital fortification. 
