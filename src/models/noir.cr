@@ -118,7 +118,10 @@ class NoirRunner
           if dup.method == tiny_tmp.method && dup.url == tiny_tmp.url
             is_new = false
             tiny_tmp.params.each do |param|
-              dup.params << param
+              existing_param = dup.params.find { |p| p.name == param.name }
+              unless existing_param
+                dup.params << param
+              end
             end
           end
         end

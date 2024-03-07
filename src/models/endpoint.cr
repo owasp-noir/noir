@@ -79,6 +79,12 @@ struct Details
   def add_path(code_path : PathInfo)
     @code_paths << code_path
   end
+
+  def ==(other : Details) : Bool
+    return false if @code_paths.size != other.code_paths.size
+    return false unless @code_paths.all? { |path| other.code_paths.any? { |other_path| path == other_path } }
+    true
+  end
 end
 
 struct PathInfo
@@ -91,6 +97,10 @@ struct PathInfo
   end
 
   def initialize(@path : String, @line : Int32 | Nil)
+  end
+
+  def ==(other : PathInfo) : Bool
+    @path == other.path && @line == other.line
   end
 end
 

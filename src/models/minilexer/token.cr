@@ -1,9 +1,16 @@
 class Token
   property type : Symbol
   property value : String
-  property position : Int64
+  property index : Int32
+  property position : Int32
+  property line : Int32
 
-  def initialize(@type, @value, @position)
+  def initialize(@type, @value, @index)
+    @position = 0
+    @line = 0
+  end
+
+  def initialize(@type, @value, @index, @position, @line)
   end
 
   def is?(type)
@@ -11,6 +18,11 @@ class Token
   end
 
   def to_s
-    "#{@type} #{@value}"
+    if @value == "\n"
+      @value = "\\n"
+    elsif @value == "\t"
+      @value = "\\t"
+    end
+    "#{@type} '#{@value}'"
   end
 end

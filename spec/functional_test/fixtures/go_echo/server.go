@@ -25,6 +25,16 @@ func main() {
 		_ = c.FormValue("name")
 		return c.String(http.StatusOK, "Hello, Pet!")
 	})
+	mygroup := e.Group("/admin")
+	mygroup.GET("/users", func(c echo.Context) error {
+		return c.String(http.StatusOK, "Hello, Pet!")
+	})
+
+	v1 := mygroup.Group("/v1")
+	v1.GET("/migration", func(c echo.Context) error {
+		return c.String(http.StatusOK, "Hello, Pet!")
+	})
+
 	e.Static("/public", "public")
 	e.Static("/public", "./public2")
 	e.Static("/public", "/public3")
