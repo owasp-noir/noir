@@ -28,6 +28,7 @@ parts:
       snapcraftctl build
     build-packages:
       - git
+      - curl
       - libssl-dev
       - libxml2-dev
       - libz-dev
