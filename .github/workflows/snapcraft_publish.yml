@@ -20,7 +20,6 @@ jobs:
 
       - uses: diddlesnaps/snapcraft-multiarch-action@v1
         with:
-          path: stores/snapcraft/stable
           architecture: ${{ matrix.platform }}
         id: build
 
