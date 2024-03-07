@@ -22,7 +22,7 @@ jobs:
       matrix:
         platform:
         - amd64
-        - arm64
+        #- arm64
     steps:
       - name: Check out Git repository
         uses: actions/checkout@v3
