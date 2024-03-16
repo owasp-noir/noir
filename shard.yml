@@ -12,6 +12,8 @@ targets:
 dependencies:
   crest:
     github: mamantoha/crest
+  har:
+    github: NeuraLegion/har
 
 crystal: 1.8.2
 

@@ -5,6 +5,11 @@ module NoirTechs
       :language  => "Crystal",
       :similar   => ["kemal", "crystal-kemal", "crystal_kemal"],
     },
+    :crystal_lucky => {
+      :framework => "Lucky",
+      :language  => "Crystal",
+      :similar   => ["lucky", "crystal-lucky", "crystal_lucky"],
+    },
     :cs_aspnet_mvc => {
       :framework => "ASP.NET MVC",
       :language  => "C#",
@@ -29,6 +34,10 @@ module NoirTechs
       :framework => "Gin",
       :language  => "Go",
       :similar   => ["gin", "go-gin", "go_gin"],
+    },
+    :har => {
+      :format  => ["JSON"],
+      :similar => ["har"],
     },
     :java_armeria => {
       :framework => "Armeria",

@@ -22,6 +22,7 @@ def detect_techs(base_path : String, options : Hash(Symbol, String), logger : No
     DetectorGoEcho,
     DetectorGoFiber,
     DetectorGoGin,
+    DetectorHar,
     DetectorJavaArmeria,
     DetectorJavaJsp,
     DetectorJavaSpring,
