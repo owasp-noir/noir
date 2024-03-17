@@ -14,4 +14,6 @@ ws "/socket" do |socket|
   socket.send "Hello from Kemal!"
 end
 
+public_folder "custom_public"
+
 Kemal.run
