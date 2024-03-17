@@ -128,4 +128,8 @@ class FunctionalTester
   def app
     @app
   end
+
+  def set_url(url)
+    @app.options[:url] = url
+  end
 end

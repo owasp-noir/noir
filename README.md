@@ -55,6 +55,7 @@
 | OAS 3.0                | JSON    | ✅  | ✅     | ✅    | ✅     | X  |
 | OAS 3.0                | YAML    | ✅  | ✅     | ✅    | ✅     | X  |
 | RAML                   | YAML    | ✅  | ✅     | ✅    | ✅     | X  |
+| HAR                    | JSON    | ✅  | ✅     | ✅    | ✅     | X  |
 
 ## Installation
 ### Homebrew (macOS)
