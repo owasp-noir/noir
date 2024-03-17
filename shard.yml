@@ -15,6 +15,6 @@ dependencies:
   har:
     github: NeuraLegion/har
 
-crystal: 1.8.2
+crystal: ~> 1.10
 
 license: MIT
