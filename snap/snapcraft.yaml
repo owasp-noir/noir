@@ -23,7 +23,7 @@ parts:
       curl -fsSL https://crystal-lang.org/install.sh | sudo bash
       snapcraftctl pull
       shards install
-      shards build --release
+      shards build --release --no-debug --production
       cp ./bin/noir $SNAPCRAFT_PART_INSTALL/
       snapcraftctl build
     build-packages:
