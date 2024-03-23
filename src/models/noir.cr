@@ -92,7 +92,9 @@ class NoirRunner
     @endpoints = analysis_endpoints options, @techs, @logger
     optimize_endpoints
     combine_url_and_endpoints
-    run_tagger @endpoints, @options
+    if @options[:tagger] == "yes"
+      run_tagger @endpoints, @options
+    end
     deliver
   end
 
