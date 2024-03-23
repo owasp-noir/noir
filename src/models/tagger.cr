@@ -1,6 +1,6 @@
 require "./logger"
 
-class Tager
+class Tagger
   @logger : NoirLogger
   @options : Hash(Symbol, String)
   @is_debug : Bool
