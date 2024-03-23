@@ -37,7 +37,7 @@ struct Endpoint
     @protocol = protocol
   end
 
-  def set_tag(tag : Tag)
+  def add_tag(tag : Tag)
     @tags << tag
   end
 
@@ -70,7 +70,7 @@ struct Param
     @tags = [] of Tag
   end
 
-  def set_tag(tag : Tag)
+  def add_tag(tag : Tag)
     @tags << tag
   end
 end
