@@ -128,8 +128,8 @@ end
 struct Tag
   include JSON::Serializable
   include YAML::Serializable
-  property name, description
+  property name, description, tagger
 
-  def initialize(@name : String, @description : String)
+  def initialize(@name : String, @description : String, @tagger : String)
   end
 end
