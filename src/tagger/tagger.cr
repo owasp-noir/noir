@@ -10,15 +10,15 @@ end
 
 module NoirTaggers
   HasTaggers = {
-    :hunt => {
-      :name  => "HuntParam Tagger",
-      :desc  => "Identifies common parameters vulnerable to certain vulnerability classes",
-      :class => HuntParamTagger,
+    hunt: {
+      name: "HuntParam Tagger",
+      desc: "Identifies common parameters vulnerable to certain vulnerability classes",
+      runner: HuntParamTagger,
     },
-    :oauth => {
-      :name  => "OAuth Tagger",
-      :desc  => "Identifies OAuth endpoints",
-      :class => OAuthTagger,
+    oauth: {
+      name: "OAuth Tagger",
+      desc: "Identifies OAuth endpoints",
+      runner: OAuthTagger,
     },
   }
 
@@ -31,15 +31,12 @@ module NoirTaggers
 
     # Define taggers by creating instances
     # Assuming HuntParamTagger is defined and is the only tagger
-    define_taggers(HuntParamTagger)
-    define_taggers(OAuthTagger)
-    # HasTaggers.each_value do |tagger|
-    #  if tagger[:class].class.to_s == "Class"
-    # instance = tagger[:class].new(options)
-    # tagger_list << instance
-    #  end
-    # end
-    # Error: wrong number of arguments for 'String#new' (given 1, expected 0) ??
+    HasTaggers.each_value do |tagger|
+      if tagger[:runner].class.to_s == "Class"
+        instance = tagger[:runner].new(options)
+        tagger_list << instance
+      end
+    end
 
     # Parsing use_taggers
     use_taggers_arr = use_taggers.split(",")
