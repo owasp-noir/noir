@@ -1,7 +1,24 @@
 <div align="center">
   <img src="https://github.com/noir-cr/noir/assets/13212227/8c4470fe-c8f4-4060-9f12-b038ad211913" alt="" width="500px;">
-  <p>Noir is an attack surface detector that identifies endpoints by static analysis.</p>
+  <p>Attack surface detector that identifies endpoints by static analysis.</p>
 </div>
+
+<p align="center">
+<a href="https://github.com/noir-cr/noir/blob/main/CONTRIBUTING.md">
+<img src="https://img.shields.io/badge/CONTRIBUTIONS-WELCOME-000000?style=for-the-badge&labelColor=black"></a>
+<a href="https://github.com/noir-cr/noir/releases">
+<img src="https://img.shields.io/github/v/release/noir-cr/noir?style=for-the-badge&color=black&labelColor=black&logo=web"></a>
+<a href="https://crystal-lang.org">
+<img src="https://img.shields.io/badge/Crystal-000000?style=for-the-badge&logo=crystal&logoColor=white"></a>
+</p>
+
+<p align="center">
+  <a href="#key-features">Key Features</a> •
+  <a href="#available-support-scope">Available Support Scope</a> •
+  <a href="#installation">Installation</a> •
+  <a href="#usage">Usage</a> •
+  <a href="#contributing">Contributing</a>
+</p>
 
 ## Key Features
 - Automatically identify language and framework from source code.
@@ -10,7 +27,10 @@
 - That provides structured data such as JSON and YAML for identified Attack Surfaces to enable seamless interaction with other tools. Also provides command line samples to easily integrate and collaborate with other tools, such as curls or httpie.
 
 ## Available Support Scope
-### Endpoint's Entities
+
+<details>
+  <summary>Endpoint's Entities</summary>
+
 - Path
 - Method
 - Param
@@ -19,7 +39,10 @@
 - Protocol (e.g ws)
 - Details (e.g The origin of the endpoint)
 
-### Languages and Frameworks
+</details>
+
+<details>
+  <summary>Languages and Frameworks</summary>
 
 | Language | Framework   | URL | Method | Param | Header | Cookie | WS |
 |----------|-------------|-----|--------|-------|--------|--------|----|
@@ -45,8 +68,10 @@
 | C#       | ASP.NET MVC | ✅   | X     | X     | X      | X      | X  |
 | JS       | Next        | X    | X     | X     | X      | X      | X  |
 
+</details>
 
-### Specification
+<details>
+  <summary>Specification</summary>
 
 | Specification          | Format  | URL | Method | Param | Header | WS |
 |------------------------|---------|-----|--------|-------|--------|----|
@@ -55,6 +80,9 @@
 | OAS 3.0                | JSON    | ✅  | ✅     | ✅    | ✅     | X  |
 | OAS 3.0                | YAML    | ✅  | ✅     | ✅    | ✅     | X  |
 | RAML                   | YAML    | ✅  | ✅     | ✅    | ✅     | X  |
+| HAR                    | JSON    | ✅  | ✅     | ✅    | ✅     | X  |
+
+</details>
 
 ## Installation
 ### Homebrew (macOS)
@@ -115,6 +143,11 @@ Usage: noir <flags>
     --no-color                       Disable color output
     --no-log                         Displaying only the results
 
+  Tagger:
+    -T, --use-all-taggers            Activates all taggers for full analysis coverage
+    --use-taggers VALUES             Activates specific taggers (e.g., --use-taggers hunt,etc)
+    --list-taggers                   Lists all available taggers
+
   Deliver:
     --send-req                       Send results to a web request
     --send-proxy http://proxy..      Send results to a web request via an HTTP proxy
@@ -140,54 +173,54 @@ Usage: noir <flags>
 
 Example
 ```bash
-noir -b . -u https://testapp.internal.domains
+noir -b . -u https://testapp.internal.domains -T
 ```
 
-![](https://github.com/noir-cr/noir/assets/13212227/40d09acf-e250-4ea9-a84b-d9251a2d5147)
+![](https://github.com/noir-cr/noir/assets/13212227/4e69da04-d585-4745-9cc7-ef6e69e193b0)
 
 JSON Result
 ```
-noir -b . -u https://testapp.internal.domains -f json
+noir -b . -u https://testapp.internal.domains -f json -T
 ```
 
 ```json
-[
-  ...
-  {
-    "headers": [],
+{
+    "url": "https://testapp.internal.domains/query",
     "method": "POST",
     "params": [
       {
-        "name": "article_slug",
-        "param_type": "json",
-        "value": ""
-      },
-      {
-        "name": "X-API-KEY",
-        "value":"",
-        "param_type":"header"
-      },
-      {
-        "name": "auth",
+        "name": "my_auth",
+        "value": "",
         "param_type": "cookie",
-        "value": ""
+        "tags": []
+      },
+      {
+        "name": "query",
+        "value": "",
+        "param_type": "form",
+        "tags": [
+          {
+            "name": "sqli",
+            "description": "This parameter may be vulnerable to SQL Injection attacks.",
+            "tagger": "Hunt"
+          }
+        ]
       }
     ],
-    "protocol": "http",
-    "url": "https://testapp.internal.domains/comments",
     "details": {
       "code_paths": [
         {
-          "path": "app_source/testapp.cr",
-          "line": 3
+          "path": "spec/functional_test/fixtures/crystal_kemal/src/testapp.cr",
+          "line": 8
         }
       ]
-    }
+    },
+    "protocol": "http",
+    "tags": []
   }
-]
 ```
 
-### Contributing
+## Contributing
 Noir is open-source project and made it with ❤️ 
 if you want contribute this project, please see [CONTRIBUTING.md](./CONTRIBUTING.md) and Pull-Request with cool your contents.
 

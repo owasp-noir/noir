@@ -38,6 +38,7 @@ class OutputBuilder
     final_body = ""
     final_headers = [] of String
     final_cookies = [] of String
+    final_tags = [] of String
     is_json = false
     first_query = true
     first_form = true
@@ -73,6 +74,12 @@ class OutputBuilder
         if param.param_type == "json"
           is_json = true
         end
+
+        if param.tags.size > 0
+          param.tags.each do |tag|
+            final_tags << tag.name
+          end
+        end
       end
 
       if is_json
@@ -88,13 +95,19 @@ class OutputBuilder
       end
     end
 
-    @logger.debug "Baked endpoint #{final_url} with #{final_body} body and #{final_headers.size} headers."
+    @logger.debug "Baked endpoints"
+    @logger.debug " + Final URL: #{final_url}"
+    @logger.debug " + Body: #{final_body}"
+    @logger.debug " + Headers: #{final_headers}"
+    @logger.debug " + Cookies: #{final_cookies}"
+    @logger.debug " + Tags: #{final_tags}"
 
     {
       url:       final_url,
       body:      final_body,
       header:    final_headers,
       cookie:    final_cookies,
+      tags:      final_tags.uniq,
       body_type: is_json ? "json" : "form",
     }
   end

@@ -7,9 +7,16 @@ extected_endpoints = [
     Param.new("query", "", "form"),
     Param.new("my_auth", "", "cookie"),
   ]),
+  Endpoint.new("/token", "GET", [
+    Param.new("grant_type", "", "form"),
+    Param.new("redirect_url", "", "form"),
+    Param.new("client_id", "", "form"),
+  ]),
+  Endpoint.new("/1.html", "GET"),
+  Endpoint.new("/2.html", "GET"),
 ]
 
 FunctionalTester.new("fixtures/crystal_kemal/", {
   :techs     => 1,
-  :endpoints => 3,
+  :endpoints => 6,
 }, extected_endpoints).test_all

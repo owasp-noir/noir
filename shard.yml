@@ -1,5 +1,5 @@
 name: noir
-version: 0.13.0
+version: 0.14.0
 
 authors:
   - hahwul <hahwul@gmail.com>
@@ -12,7 +12,9 @@ targets:
 dependencies:
   crest:
     github: mamantoha/crest
+  har:
+    github: NeuraLegion/har
 
-crystal: 1.8.2
+crystal: ~> 1.10
 
 license: MIT

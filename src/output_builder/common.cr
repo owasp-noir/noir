@@ -31,6 +31,16 @@ class OutputBuilderCommon < OutputBuilder
         r_buffer += "\n  ○ body: #{r_body}"
       end
 
+      tags = baked[:tags]
+      endpoint.tags.each do |tag|
+        tags << tag.name.to_s
+      end
+
+      if tags.size > 0
+        r_tags = tags.join(" ").colorize(:light_magenta).toggle(@is_color)
+        r_buffer += "\n  ○ tags: #{r_tags}"
+      end
+
       if @options[:include_path] == "yes"
         details = endpoint.details
         if details.code_paths && details.code_paths.size > 0

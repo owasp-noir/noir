@@ -1,10 +1,10 @@
 name: noir
 base: core20
-version: 0.13.0
+version: 0.14.0
 summary: Attack surface detector that identifies endpoints by static analysis.
 description: |
-  Noir is your ally in the quest for digital fortification. 
-  A cutting-edge attack surface detector, it unveils hidden endpoints through meticulous static analysis.
+  Noir is an open-source project specializing in identifying attack surfaces for enhanced whitebox security testing and security pipeline. 
+  This includes the capability to discover API endpoints, web endpoints, and other potential entry points within source code for thorough security analysis.
 
 grade: stable # must be 'stable' to release into candidate/stable channels
 confinement: strict # use 'strict' once you have the right plugs and slots
@@ -23,7 +23,7 @@ parts:
       curl -fsSL https://crystal-lang.org/install.sh | sudo bash
       snapcraftctl pull
       shards install
-      shards build --release
+      shards build --release --no-debug --production
       cp ./bin/noir $SNAPCRAFT_PART_INSTALL/
       snapcraftctl build
     build-packages:

@@ -19,6 +19,8 @@ def default_options
     :url               => "",
     :use_filters       => "",
     :use_matchers      => "",
+    :all_taggers       => "no",
+    :use_taggers       => "",
   }
 
   noir_options

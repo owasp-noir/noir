@@ -6,7 +6,7 @@ require "./options.cr"
 require "./techs/techs.cr"
 
 module Noir
-  VERSION = "0.13.0"
+  VERSION = "0.14.0"
 end
 
 noir_options = default_options()
@@ -31,6 +31,21 @@ OptionParser.parse do |parser|
   end
   parser.on "--no-log", "Displaying only the results" do
     noir_options[:nolog] = "yes"
+  end
+
+  parser.separator "\n  Tagger:".colorize(:blue)
+  parser.on "-T", "--use-all-taggers", "Activates all taggers for full analysis coverage" { |_| noir_options[:all_taggers] = "yes" }
+  parser.on "--use-taggers VALUES", "Activates specific taggers (e.g., --use-taggers hunt,oauth)" { |var| noir_options[:use_taggers] = var }
+  parser.on "--list-taggers", "Lists all available taggers" do
+    puts "Available taggers:"
+    techs = NoirTaggers.get_taggers
+    techs.each do |tagger, value|
+      puts "  #{tagger.to_s.colorize(:green)}"
+      value.each do |k, v|
+        puts "    #{k.to_s.colorize(:blue)}: #{v}"
+      end
+    end
+    exit
   end
 
   parser.separator "\n  Deliver:".colorize(:blue)

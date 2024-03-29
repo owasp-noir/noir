@@ -2,6 +2,10 @@ require "../../models/analyzer"
 
 class AnalyzerCrystalKemal < Analyzer
   def analyze
+    # Variables
+    is_public = true
+    public_folders = [] of String
+
     # Source Analysis
     begin
       Dir.glob("#{@base_path}/**/*") do |path|
@@ -24,12 +28,54 @@ class AnalyzerCrystalKemal < Analyzer
                   last_endpoint.push_param(param)
                 end
               end
+
+              if line.includes? "serve_static false" || "serve_static(false)"
+                is_public = false
+              end
+
+              if line.includes? "public_folder"
+                begin
+                  splited = line.split("public_folder")
+                  public_folder = ""
+
+                  if splited.size > 1
+                    public_folder = splited[1].gsub("(", "").gsub(")", "").gsub(" ", "").gsub("\"", "").gsub("'", "")
+                    if public_folder != ""
+                      public_folders << public_folder
+                    end
+                  end
+                rescue
+                end
+              end
             end
           end
         end
       end
     rescue e
       logger.debug e
+    end
+
+    # Public Dir Analysis
+    if is_public
+      begin
+        Dir.glob("#{@base_path}/public/**/*") do |file|
+          next if File.directory?(file)
+          real_path = "#{@base_path}/public/".gsub(/\/+/, '/')
+          relative_path = file.sub(real_path, "")
+          @result << Endpoint.new("/#{relative_path}", "GET")
+        end
+
+        public_folders.each do |folder|
+          Dir.glob("#{@base_path}/#{folder}/**/*") do |file|
+            next if File.directory?(file)
+            relative_path = get_relative_path(@base_path, file)
+            relative_path = get_relative_path(folder, relative_path)
+            @result << Endpoint.new("/#{relative_path}", "GET")
+          end
+        end
+      rescue e
+        logger.debug e
+      end
     end
 
     result
