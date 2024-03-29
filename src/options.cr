@@ -19,7 +19,7 @@ def default_options
     :url               => "",
     :use_filters       => "",
     :use_matchers      => "",
-    :tagger            => "no",
+    :all_taggers       => "no",
     :use_taggers       => "",
   }
 

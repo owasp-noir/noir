@@ -33,6 +33,11 @@ class HuntParamTagger < Tagger
     },
   }
 
+  def initialize(options : Hash(Symbol, String))
+    super
+    @name = "hunt"
+  end
+
   def perform(endpoints : Array(Endpoint))
     tagger = {} of String => Hash(String, Array(String) | String)
     TAG_DEFINITIONS.each do |key, value|
