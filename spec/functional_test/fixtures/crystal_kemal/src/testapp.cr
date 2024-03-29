@@ -10,6 +10,12 @@ post "/query" do
   env.params.body["query"].as(String)
 end
 
+post "/token" do
+  env.params.body["client_id"].as(String)
+  env.params.body["redirect_url"].as(String)
+  env.params.body["grant_type"].as(String)
+end
+
 ws "/socket" do |socket|
   socket.send "Hello from Kemal!"
 end
