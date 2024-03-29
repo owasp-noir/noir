@@ -38,6 +38,7 @@ class OutputBuilder
     final_body = ""
     final_headers = [] of String
     final_cookies = [] of String
+    final_tags = [] of String
     is_json = false
     first_query = true
     first_form = true
@@ -73,6 +74,12 @@ class OutputBuilder
         if param.param_type == "json"
           is_json = true
         end
+
+        if param.tags.size > 0
+          param.tags.each do |tag|
+            final_tags << tag.name
+          end
+        end
       end
 
       if is_json
@@ -95,6 +102,7 @@ class OutputBuilder
       body:      final_body,
       header:    final_headers,
       cookie:    final_cookies,
+      tags:      final_tags.uniq,
       body_type: is_json ? "json" : "form",
     }
   end

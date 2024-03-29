@@ -116,6 +116,11 @@ Usage: noir <flags>
     --no-color                       Disable color output
     --no-log                         Displaying only the results
 
+  Tagger:
+    -T, --use-all-taggers            Activates all taggers for full analysis coverage
+    --use-taggers VALUES             Activates specific taggers (e.g., --use-taggers hunt,etc)
+    --list-taggers                   Lists all available taggers
+
   Deliver:
     --send-req                       Send results to a web request
     --send-proxy http://proxy..      Send results to a web request via an HTTP proxy
