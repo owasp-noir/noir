@@ -97,8 +97,12 @@ class NoirRunner
     if @options[:all_taggers] == "yes"
       @logger.info "Running all taggers."
       NoirTaggers.run_tagger @endpoints, @options, "all"
-    else
-      @options[:use_taggers] != ""
+      if @is_debug
+        NoirTaggers.get_taggers.each do |tagger|
+          @logger.debug "Tagger: #{tagger}"
+        end
+      end
+    elsif @options[:use_taggers] != ""
       @logger.info "Running #{@options[:use_taggers]} taggers."
       NoirTaggers.run_tagger @endpoints, @options, @options[:use_taggers]
     end
