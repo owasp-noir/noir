@@ -2,7 +2,7 @@ require "../../models/tagger"
 require "../../models/endpoint"
 
 class OAuthTagger < Tagger
-  WORDS = ["grant_type", "code", "redirect_uri", "client_id", "client_secret"]
+  WORDS = ["grant_type", "code", "redirect_uri", "redirect_url", "client_id", "client_secret"]
 
   def initialize(options : Hash(Symbol, String))
     super
@@ -17,8 +17,12 @@ class OAuthTagger < Tagger
         tmp_params.push param.name.to_s
       end
 
+      words_set = Set.new(WORDS)
+      tmp_params_set = Set.new(tmp_params)
+      intersection = words_set & tmp_params_set
+
       # Check that at least three parameters match.
-      check = (WORDS & tmp_params).size >= 3
+      check = intersection.size.to_i >= 3
 
       if check
         tag = Tag.new("oauth", "Suspected OAuth endpoint for granting 3rd party access.", "Oauth")

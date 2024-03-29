@@ -7,7 +7,7 @@ extected_endpoints = [
     Param.new("query", "", "form"),
     Param.new("my_auth", "", "cookie"),
   ]),
-  Endpoint.new("/token", "POST", [
+  Endpoint.new("/token", "GET", [
     Param.new("grant_type", "", "form"),
     Param.new("redirect_url", "", "form"),
     Param.new("client_id", "", "form"),
