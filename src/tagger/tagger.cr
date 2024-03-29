@@ -15,6 +15,11 @@ module NoirTaggers
       :desc  => "Identifies common parameters vulnerable to certain vulnerability classes",
       :class => HuntParamTagger,
     },
+    :oauth => {
+      :name  => "OAuth Tagger",
+      :desc  => "Identifies OAuth endpoints",
+      :class => OAuthTagger,
+    },
   }
 
   def self.get_taggers
@@ -27,6 +32,14 @@ module NoirTaggers
     # Define taggers by creating instances
     # Assuming HuntParamTagger is defined and is the only tagger
     define_taggers(HuntParamTagger)
+    define_taggers(OAuthTagger)
+    # HasTaggers.each_value do |tagger|
+    #  if tagger[:class].class.to_s == "Class"
+    # instance = tagger[:class].new(options)
+    # tagger_list << instance
+    #  end
+    # end
+    # Error: wrong number of arguments for 'String#new' (given 1, expected 0) ??
 
     # Parsing use_taggers
     use_taggers_arr = use_taggers.split(",")

@@ -35,7 +35,7 @@ OptionParser.parse do |parser|
 
   parser.separator "\n  Tagger:".colorize(:blue)
   parser.on "-T", "--use-all-taggers", "Activates all taggers for full analysis coverage" { |_| noir_options[:all_taggers] = "yes" }
-  parser.on "--use-taggers VALUES", "Activates specific taggers (e.g., --use-taggers hunt,etc)" { |var| noir_options[:use_taggers] = var }
+  parser.on "--use-taggers VALUES", "Activates specific taggers (e.g., --use-taggers hunt,oauth)" { |var| noir_options[:use_taggers] = var }
   parser.on "--list-taggers", "Lists all available taggers" do
     puts "Available taggers:"
     techs = NoirTaggers.get_taggers
