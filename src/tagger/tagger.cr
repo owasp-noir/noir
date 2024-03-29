@@ -11,13 +11,13 @@ end
 module NoirTaggers
   HasTaggers = {
     hunt: {
-      name: "HuntParam Tagger",
-      desc: "Identifies common parameters vulnerable to certain vulnerability classes",
+      name:   "HuntParam Tagger",
+      desc:   "Identifies common parameters vulnerable to certain vulnerability classes",
       runner: HuntParamTagger,
     },
     oauth: {
-      name: "OAuth Tagger",
-      desc: "Identifies OAuth endpoints",
+      name:   "OAuth Tagger",
+      desc:   "Identifies OAuth endpoints",
       runner: OAuthTagger,
     },
   }
