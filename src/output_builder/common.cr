@@ -31,8 +31,13 @@ class OutputBuilderCommon < OutputBuilder
         r_buffer += "\n  ○ body: #{r_body}"
       end
 
-      if baked[:tags].size > 0
-        r_tags = baked[:tags].join(" ").colorize(:light_magenta).toggle(@is_color)
+      tags = baked[:tags]
+      endpoint.tags.each do |tag|
+        tags << tag.name.to_s
+      end
+
+      if tags.size > 0
+        r_tags = tags.join(" ").colorize(:light_magenta).toggle(@is_color)
         r_buffer += "\n  ○ tags: #{r_tags}"
       end
 
