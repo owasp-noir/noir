@@ -16,7 +16,7 @@ describe "Init" do
         Param.new("role", "", "cookie"),
       ]),
     ]
-    run_tagger(extected_endpoints, noir_options)
+    NoirTaggers.run_tagger(extected_endpoints, noir_options, "all")
     extected_endpoints.each do |endpoint|
       endpoint.params.each do |param|
         case param.name
