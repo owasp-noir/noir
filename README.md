@@ -146,51 +146,51 @@ Usage: noir <flags>
 
 Example
 ```bash
-noir -b . -u https://testapp.internal.domains
+noir -b . -u https://testapp.internal.domains -T
 ```
 
-![](https://github.com/noir-cr/noir/assets/13212227/40d09acf-e250-4ea9-a84b-d9251a2d5147)
+![](https://github.com/noir-cr/noir/assets/13212227/4e69da04-d585-4745-9cc7-ef6e69e193b0)
 
 JSON Result
 ```
-noir -b . -u https://testapp.internal.domains -f json
+noir -b . -u https://testapp.internal.domains -f json -T
 ```
 
 ```json
-[
-  ...
-  {
-    "headers": [],
+{
+    "url": "https://testapp.internal.domains/query",
     "method": "POST",
     "params": [
       {
-        "name": "article_slug",
-        "param_type": "json",
-        "value": ""
-      },
-      {
-        "name": "X-API-KEY",
-        "value":"",
-        "param_type":"header"
-      },
-      {
-        "name": "auth",
+        "name": "my_auth",
+        "value": "",
         "param_type": "cookie",
-        "value": ""
+        "tags": []
+      },
+      {
+        "name": "query",
+        "value": "",
+        "param_type": "form",
+        "tags": [
+          {
+            "name": "sqli",
+            "description": "This parameter may be vulnerable to SQL Injection attacks.",
+            "tagger": "Hunt"
+          }
+        ]
       }
     ],
-    "protocol": "http",
-    "url": "https://testapp.internal.domains/comments",
     "details": {
       "code_paths": [
         {
-          "path": "app_source/testapp.cr",
-          "line": 3
+          "path": "spec/functional_test/fixtures/crystal_kemal/src/testapp.cr",
+          "line": 8
         }
       ]
-    }
+    },
+    "protocol": "http",
+    "tags": []
   }
-]
 ```
 
 ### Contributing
