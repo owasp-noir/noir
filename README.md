@@ -1,7 +1,21 @@
 <div align="center">
   <img src="https://github.com/noir-cr/noir/assets/13212227/8c4470fe-c8f4-4060-9f12-b038ad211913" alt="" width="500px;">
-  <p>Noir is an attack surface detector that identifies endpoints by static analysis.</p>
+  <p>Attack surface detector that identifies endpoints by static analysis.</p>
 </div>
+
+<p align="center">
+<img src="https://img.shields.io/badge/CONTRIBUTIONS-WELCOME-000000?style=for-the-badge&labelColor=black">
+<img src="https://img.shields.io/github/v/release/noir-cr/noir?style=for-the-badge&color=black&labelColor=black&logo=web">
+<img src="https://img.shields.io/badge/Crystal-000000?style=for-the-badge&logo=crystal&logoColor=white">
+</p>
+
+<p align="center">
+  <a href="#key-features">Key Features</a> •
+  <a href="#available-support-scope">Available Support Scope</a> •
+  <a href="#installation">Installation</a> •
+  <a href="#usage">Usage</a> •
+  <a href="#contributing">Contributing</a>
+</p>
 
 ## Key Features
 - Automatically identify language and framework from source code.
@@ -10,7 +24,10 @@
 - That provides structured data such as JSON and YAML for identified Attack Surfaces to enable seamless interaction with other tools. Also provides command line samples to easily integrate and collaborate with other tools, such as curls or httpie.
 
 ## Available Support Scope
-### Endpoint's Entities
+
+<details>
+  <summary>Endpoint's Entities</summary>
+
 - Path
 - Method
 - Param
@@ -19,7 +36,10 @@
 - Protocol (e.g ws)
 - Details (e.g The origin of the endpoint)
 
-### Languages and Frameworks
+</details>
+
+<details>
+  <summary>Languages and Frameworks</summary>
 
 | Language | Framework   | URL | Method | Param | Header | Cookie | WS |
 |----------|-------------|-----|--------|-------|--------|--------|----|
@@ -45,8 +65,10 @@
 | C#       | ASP.NET MVC | ✅   | X     | X     | X      | X      | X  |
 | JS       | Next        | X    | X     | X     | X      | X      | X  |
 
+</details>
 
-### Specification
+<details>
+  <summary>Specification</summary>
 
 | Specification          | Format  | URL | Method | Param | Header | WS |
 |------------------------|---------|-----|--------|-------|--------|----|
@@ -56,6 +78,8 @@
 | OAS 3.0                | YAML    | ✅  | ✅     | ✅    | ✅     | X  |
 | RAML                   | YAML    | ✅  | ✅     | ✅    | ✅     | X  |
 | HAR                    | JSON    | ✅  | ✅     | ✅    | ✅     | X  |
+
+</details>
 
 ## Installation
 ### Homebrew (macOS)
@@ -193,7 +217,7 @@ noir -b . -u https://testapp.internal.domains -f json -T
   }
 ```
 
-### Contributing
+## Contributing
 Noir is open-source project and made it with ❤️ 
 if you want contribute this project, please see [CONTRIBUTING.md](./CONTRIBUTING.md) and Pull-Request with cool your contents.
 
