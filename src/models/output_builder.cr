@@ -95,7 +95,12 @@ class OutputBuilder
       end
     end
 
-    @logger.debug "Baked endpoint #{final_url} with #{final_body} body and #{final_headers.size} headers."
+    @logger.debug "Baked endpoints"
+    @logger.debug " + Final URL: #{final_url}"
+    @logger.debug " + Body: #{final_body}"
+    @logger.debug " + Headers: #{final_headers}"
+    @logger.debug " + Cookies: #{final_cookies}"
+    @logger.debug " + Tags: #{final_tags}"
 
     {
       url:       final_url,

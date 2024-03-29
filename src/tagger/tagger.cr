@@ -1,13 +1,6 @@
 require "./taggers/*"
 require "../models/tagger"
 
-macro define_taggers(*taggers)
-  {% for tagger in taggers %}
-    instance = {{tagger}}.new(options)
-    tagger_list << instance
-  {% end %}
-end
-
 module NoirTaggers
   HasTaggers = {
     hunt: {
