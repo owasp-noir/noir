@@ -59,6 +59,11 @@ module NoirTechs
       :language  => "JavaScript",
       :similar   => ["express", "js-express", "js_express"],
     },
+    :js_restify => {
+      :framework => "Restify",
+      :language  => "JavaScript",
+      :similar   => ["restify", "js-restify"],
+    },
     :kotlin_spring => {
       :framework => "Spring",
       :language  => "Kotlin",
