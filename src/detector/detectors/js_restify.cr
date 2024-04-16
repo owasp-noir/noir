@@ -6,6 +6,10 @@ class DetectorJsRestify < Detector
       true
     elsif (filename.includes? ".js") && (file_contents.includes? "require(\"restify\")")
       true
+    elsif (filename.includes? ".ts") && (file_contents.includes? "server")
+        true
+    elsif (filename.includes? ".ts") && (file_contents.includes? "require(\"restify\")")
+      true
     else
       false
     end
