@@ -43,6 +43,12 @@ class OutputBuilder
     first_query = true
     first_form = true
 
+    if final_url.starts_with?("//")
+      if final_url[2] != ':'
+        final_url = final_url[1..]
+      end
+    end
+
     if !params.nil?
       params.each do |param|
         if param.param_type == "query"
