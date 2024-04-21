@@ -244,13 +244,13 @@ class AnalyzerJavaSpring < Analyzer
   end
 
   def find_base_path(current_path : String, base_paths : Hash(String, String))
-    base_paths.keys.sort_by(&.size).reverse.each do |path|
+    base_paths.keys.sort_by!(&.size).reverse!.each do |path|
       if current_path.starts_with?(path)
         return base_paths[path]
       end
     end
 
-    return ""
+    ""
   end
 
   def get_mapping_path(parser : JavaParser, tokens : Array(Token), method_params : Array(Array(Token)))
