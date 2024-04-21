@@ -63,6 +63,7 @@
 | Java     | Spring      | ✅   | ✅    | X     | X      | X      | X  |
 | Kotlin   | Spring      | ✅   | ✅    | ✅    | X      | X      | X  |
 | JS       | Express     | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
+| JS       | Restify     | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
 | Rust     | Axum        | ✅   | ✅    | X     | X      | X      | X  |
 | Elixir   | Phoenix     | ✅   | ✅    | X     | X      | X      | ✅ |
 | C#       | ASP.NET MVC | ✅   | X     | X     | X      | X      | X  |
