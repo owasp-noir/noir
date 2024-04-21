@@ -27,6 +27,7 @@ def detect_techs(base_path : String, options : Hash(Symbol, String), logger : No
     DetectorJavaJsp,
     DetectorJavaSpring,
     DetectorJsExpress,
+    DetectorJsRestify,
     DetectorKotlinSpring,
     DetectorOas2,
     DetectorOas3,
