@@ -1,5 +1,4 @@
 require "./logger"
-require "./code_block"
 require "./endpoint"
 
 class Analyzer
