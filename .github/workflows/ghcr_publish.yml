@@ -1,25 +1,20 @@
+---
 name: GHCR Publish
-
 # This workflow uses actions that are not certified by GitHub.
 # They are provided by a third-party and are governed by
 # separate terms of service, privacy policy, and support
 # documentation.
-
 on:
   push:
-    branches: [ "main" , "dev" ]
-    tags: [ 'v*.*.*' ]
-
+    branches: [main, dev]
+    tags: [v*.*.*]
 env:
   # Use docker.io for Docker Hub if empty
   REGISTRY: ghcr.io
   # github.repository as <account>/<repo>
   IMAGE_NAME: ${{ github.repository }}
-
-
 jobs:
   build:
-
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -27,7 +22,6 @@ jobs:
       # This is used to complete the identity challenge
       # with sigstore/fulcio when running outside of PRs.
       id-token: write
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -38,7 +32,7 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: sigstore/cosign-installer@v3.1.1
         with:
-          cosign-release: 'v2.1.1'
+          cosign-release: v2.1.1
 
       # Using QEME for multiple platforms
       # https://github.com/docker/build-push-action?tab=readme-ov-file#usage

@@ -1,58 +1,39 @@
-
+---
 🔬 analyzer:
-- changed-files:
-  - any-glob-to-any-file: 
-    - src/analyzer/**
-    - src/models/analyzer.cr
-
+  - changed-files:
+      - any-glob-to-any-file: [src/analyzer/**, src/models/analyzer.cr]
 💌 deliver:
-- changed-files:
-  - any-glob-to-any-file: 
-    - src/deliver/**
-    - src/models/deliver.cr
-
+  - changed-files:
+      - any-glob-to-any-file: [src/deliver/**, src/models/deliver.cr]
 🔎 detector:
-- changed-files:
-  - any-glob-to-any-file: 
-    - src/detector/**
-    - src/models/detector.cr
-
+  - changed-files:
+      - any-glob-to-any-file: [src/detector/**, src/models/detector.cr]
 🥢 mini-lexer:
-- changed-files:
-  - any-glob-to-any-file: 
-    - src/minilexers/**
-    - src/models/minilexer/**
-
+  - changed-files:
+      - any-glob-to-any-file: [src/minilexers/**, src/models/minilexer/**]
 📦 output-builder:
-- changed-files:
-  - any-glob-to-any-file: 
-    - src/output_builder/**
-    - src/models/output_builder.cr
-
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/output_builder/**
+          - src/models/output_builder.cr
 🏷️ tagger:
-- changed-files:
-  - any-glob-to-any-file: 
-    - src/taggers/**
-    - src/models/tag.cr
-
+  - changed-files:
+      - any-glob-to-any-file: [src/taggers/**, src/models/tag.cr]
 💊 spec:
-- changed-files:
-  - any-glob-to-any-file: spec/**
-
+  - changed-files:
+      - any-glob-to-any-file: spec/**
 🦺 github-action:
-- changed-files:
-  - any-glob-to-any-file: .github/workflows/**
-
+  - changed-files:
+      - any-glob-to-any-file: .github/workflows/**
 📑 documentation:
-- changed-files:
-  - any-glob-to-any-file: docs/**
-
+  - changed-files:
+      - any-glob-to-any-file: docs/**
 ⚙️ options:
-- changed-files:
-  - any-glob-to-any-file: src/options.cr
-
+  - changed-files:
+      - any-glob-to-any-file: src/options.cr
 🛥️ workflow:
-- changed-files:
-  - any-glob-to-any-file: 
-    - .github/workflows/**
-    - .github/labeler.yml
+  - changed-files:
+      - any-glob-to-any-file: [.github/workflows/**, .github/labeler.yml]
+🐳 docker:
+  - changed-files:
+      - any-glob-to-any-file: Dockerfile
