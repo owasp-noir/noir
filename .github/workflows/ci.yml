@@ -1,10 +1,10 @@
 ---
-name: Crystal CI
+name: CI
 on:
   pull_request_target:
     branches: [main, dev]
 jobs:
-  build-noir:
+  build-crystal:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -20,6 +20,9 @@ jobs:
         run: shards build
   build-docker:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [linux/amd64, linux/arm64]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -45,7 +48,7 @@ jobs:
           push: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          platforms: linux/amd64, linux/arm64
+          platforms: ${{ matrix.arch }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
   lint:
