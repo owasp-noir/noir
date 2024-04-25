@@ -4,20 +4,59 @@ on:
   pull_request_target:
     branches: [main, dev]
 jobs:
-  build:
+  build-noir:
     runs-on: ubuntu-latest
     strategy:
         matrix:
           crystal-version: ['1.10.1', '1.11.2', '1.12.1']
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: MeilCli/setup-crystal-action@v4
         with:
           crystal_version: ${{ matrix.crystal-version }}
+
       - name: Install dependencies
         run: shards install
+
       - name: Build
         run: shards build
+
+  build-docker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install cosign
+        if: github.event_name != 'pull_request'
+        uses: sigstore/cosign-installer@v3.1.1
+        with:
+          cosign-release: 'v2.1.1'
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Setup Docker buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+
+      - name: Build Docker image
+        id: build-and-push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64, linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   lint:
     runs-on: ubuntu-latest
     container:
@@ -29,6 +68,7 @@ jobs:
         uses: crystal-ameba/github-action@v0.8.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
   tests:
     runs-on: ubuntu-latest
     container:
