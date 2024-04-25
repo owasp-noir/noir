@@ -1,18 +1,16 @@
+---
 name: Snapcraft tab Publish
-
 on:
   release:
     types: [published]
-    
   workflow_dispatch:
     inputs:
       logLevel:
-        description: 'Log level'     
+        description: Log level
         required: true
-        default: 'warning'
+        default: warning
       tags:
-        description: 'Test scenario tags'
-    
+        description: Test scenario tags
 jobs:
   snapcraft-releaser:
     runs-on: ubuntu-latest
@@ -21,21 +19,18 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-        - amd64
+          - amd64
         #- arm64
     steps:
       - name: Check out Git repository
         uses: actions/checkout@v3
-
       - uses: diddlesnaps/snapcraft-multiarch-action@v1
         with:
           architecture: ${{ matrix.platform }}
         id: build
-
       - uses: diddlesnaps/snapcraft-review-action@v1
         with:
           snap: ${{ steps.build.outputs.snap }}
-
       - uses: snapcore/action-publish@master
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAP_STORE_LOGIN }}
