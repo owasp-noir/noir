@@ -1,5 +1,5 @@
 # BUILDER
-FROM 84codes/crystal:latest-alpine As builder
+FROM crystallang/crystal:latest-alpine As builder
 
 WORKDIR /noir
 COPY . .

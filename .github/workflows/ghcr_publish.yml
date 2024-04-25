@@ -7,10 +7,10 @@ name: GHCR Publish
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main" , "dev" ]
     tags: [ 'v*.*.*' ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main" , "dev" ]
 
 env:
   # Use docker.io for Docker Hub if empty
@@ -71,8 +71,9 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          push: ${{ github.event_name != 'pull_request' }}
+          push: ${{ github.event_name != 'pull_request' && github.ref != 'refs/heads/dev' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64, linux/arm64
           cache-from: type=gha
           cache-to: type=gha,mode=max
