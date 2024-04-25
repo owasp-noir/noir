@@ -16,6 +16,9 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [linux/amd64, linux/arm64]
     permissions:
       contents: read
       packages: write
@@ -71,6 +74,6 @@ jobs:
           push: ${{ github.event_name != 'pull_request' && github.ref != 'refs/heads/dev' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          platforms: linux/amd64, linux/arm64
+          platforms: ${{ matrix.arch }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
