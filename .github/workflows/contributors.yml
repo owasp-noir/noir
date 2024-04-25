@@ -2,7 +2,7 @@
 name: Contributors
 on:
   push:
-    branches: [main, dev]
+    branches: [main]
   workflow_dispatch:
     inputs:
       logLevel:
