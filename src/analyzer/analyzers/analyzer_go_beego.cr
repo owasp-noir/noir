@@ -68,7 +68,7 @@ class AnalyzerGoBeego < Analyzer
               end
 
               ["GetString", "GetStrings", "GetInt", "GetInt8", "GetUint8", "GetInt16", "GetUint16", "GetInt32", "GetUint32",
-              "GetInt64", "GetUint64", "GetBool", "GetFloat"].each do |pattern|
+               "GetInt64", "GetUint64", "GetBool", "GetFloat"].each do |pattern|
                 match = line.match(/#{pattern}\(\"(.*)\"\)/)
                 if match
                   param_name = match[1]
@@ -91,7 +91,6 @@ class AnalyzerGoBeego < Analyzer
                   last_endpoint.params << Param.new(cookie_name, "", "cookie")
                 end
               end
-
             end
           end
         end
@@ -119,7 +118,6 @@ class AnalyzerGoBeego < Analyzer
 
     result
   end
-
 
   def get_route_path(line : String, groups : Array(Hash(String, String))) : String
     lexer = GolangLexer.new

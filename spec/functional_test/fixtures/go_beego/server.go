@@ -14,6 +14,8 @@ func main() {
 	})
 
 	web.Post("/alice", func(ctx *context.Context) {
+		ctx.GetCookie("auth")
+		ctx.GetStrings("query")
 		ctx.Output.Body([]byte("bob"))
 	})
 }
