@@ -126,6 +126,11 @@ module NoirTechs
       :language  => "Rust",
       :similar   => ["axum", "rust-axum", "rust_axum"],
     },
+    :rust_rocket => {
+      :framework => "Rocket",
+      :language  => "Rust",
+      :similar   => ["rocket", "rust-rocket", "rust_rocket"],
+    },
   }
 
   def self.get_techs

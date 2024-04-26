@@ -41,6 +41,7 @@ def detect_techs(base_path : String, options : Hash(Symbol, String), logger : No
     DetectorRubyRails,
     DetectorRubySinatra,
     DetectorRustAxum,
+    DetectorRustRocket,
   ])
 
   channel = Channel(String).new
