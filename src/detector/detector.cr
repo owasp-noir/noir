@@ -19,6 +19,7 @@ def detect_techs(base_path : String, options : Hash(Symbol, String), logger : No
     DetectorCrystalKemal,
     DetectorCrystalLucky,
     DetectorElixirPhoenix,
+    DetectorGoBeego,
     DetectorGoEcho,
     DetectorGoFiber,
     DetectorGoGin,
