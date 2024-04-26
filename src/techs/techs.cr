@@ -20,6 +20,11 @@ module NoirTechs
       :language  => "Elixir",
       :similar   => ["phoenix", "elixir-phoenix", "elixir_phoenix"],
     },
+    :go_beego => {
+      :framework => "Beego",
+      :language  => "Go",
+      :similar   => ["beego", "go-beego", "go_beego"],
+    },
     :go_echo => {
       :framework => "Echo",
       :language  => "Go",
