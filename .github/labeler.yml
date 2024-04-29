@@ -27,7 +27,7 @@
       - any-glob-to-any-file: .github/workflows/**
 📑 documentation:
   - changed-files:
-      - any-glob-to-any-file: docs/**
+      - any-glob-to-any-file: [docs/**, README.md, CODE_OF_CONDUCT.md, CONTRIBUTING.md, LICENSE.md, SECURITY.md]
 ⚙️ options:
   - changed-files:
       - any-glob-to-any-file: src/options.cr
