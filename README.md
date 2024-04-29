@@ -48,6 +48,7 @@
 |----------|-------------|-----|--------|-------|--------|--------|----|
 | Crystal  | Kemal       | ✅   | ✅    | ✅    | ✅     | ✅     | ✅ |
 | Crystal  | Lucky       | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
+| Go       | Beego       | ✅   | ✅    | X     | X      | X      | X  |
 | Go       | Echo        | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
 | Go       | Gin         | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
 | Go       | Fiber       | ✅   | ✅    | ✅    | ✅     | ✅     | ✅ |
@@ -65,6 +66,7 @@
 | JS       | Express     | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
 | JS       | Restify     | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
 | Rust     | Axum        | ✅   | ✅    | X     | X      | X      | X  |
+| Rust     | Rocket      | ✅   | ✅    | X     | X      | X      | X  |
 | Elixir   | Phoenix     | ✅   | ✅    | X     | X      | X      | ✅ |
 | C#       | ASP.NET MVC | ✅   | X     | X     | X      | X      | X  |
 | JS       | Next        | X    | X     | X     | X      | X      | X  |
