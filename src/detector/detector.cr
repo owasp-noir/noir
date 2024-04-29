@@ -19,6 +19,7 @@ def detect_techs(base_path : String, options : Hash(Symbol, String), logger : No
     DetectorCrystalKemal,
     DetectorCrystalLucky,
     DetectorElixirPhoenix,
+    DetectorGoBeego,
     DetectorGoEcho,
     DetectorGoFiber,
     DetectorGoGin,
@@ -27,6 +28,7 @@ def detect_techs(base_path : String, options : Hash(Symbol, String), logger : No
     DetectorJavaJsp,
     DetectorJavaSpring,
     DetectorJsExpress,
+    DetectorJsRestify,
     DetectorKotlinSpring,
     DetectorOas2,
     DetectorOas3,
@@ -39,6 +41,7 @@ def detect_techs(base_path : String, options : Hash(Symbol, String), logger : No
     DetectorRubyRails,
     DetectorRubySinatra,
     DetectorRustAxum,
+    DetectorRustRocket,
   ])
 
   channel = Channel(String).new

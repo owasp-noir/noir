@@ -26,6 +26,10 @@ public class ItemController {
     @GetMapping("/json/{id}", produces = [MediaType.APPLICATION_JSON_VALUE])
     public void getItemJson(){       
     }
+
+    @RequestMapping("/multiple/methods", method = {RequestMethod.GET, RequestMethod.POST})
+    public void multipleMethods(){       
+    }
 }
 
 class Item {

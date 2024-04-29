@@ -78,7 +78,7 @@ class FunctionalTester
         key = endpoint.method.to_s + "::" + endpoint.url.to_s
         found_endpoint = find_endpoint key
         if found_endpoint.nil?
-          it "endpoint [#{key}] not founded" do
+          it "endpoint [#{key}] not found" do
             false.should eq true
           end
         else

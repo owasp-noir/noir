@@ -9,10 +9,27 @@ class AnalyzerJavaSpring < Analyzer
   def analyze
     parser_map = Hash(String, JavaParser).new
     package_map = Hash(String, Hash(String, ClassModel)).new
+    webflux_base_path_map = Hash(String, String).new
     Dir.glob("#{@base_path}/**/*") do |path|
-      next if File.directory?(path)
+      if File.directory?(path)
+        if path.ends_with?("/src")
+          config_path = File.join(path, "main/resources/application.yml")
+          if File.exists?(config_path)
+            config = YAML.parse(File.read(config_path)) rescue nil
+            if config && (spring = config["spring"]?) && (webflux = spring["webflux"]?)
+              webflux_base_path = webflux["base-path"]?
+              if webflux_base_path
+                webflux_base_path_map[path] = webflux_base_path.as_s
+              end
+            end
+          end
+        end
+
+        next
+      end
       url = ""
       if File.exists?(path) && path.ends_with?(".java")
+        webflux_base_path = find_base_path(path, webflux_base_path_map)
         content = File.read(path, encoding: "utf-8", invalid: :skip)
 
         # Spring MVC Router (Controller)
@@ -44,6 +61,7 @@ class AnalyzerJavaSpring < Analyzer
                   next if path == _path
                   if !parser_map.has_key?(_path)
                     _parser = get_parser(Path.new(_path))
+                    parser_map[_path] = _parser
                   else
                     _parser = parser_map[_path]
                   end
@@ -115,7 +133,7 @@ class AnalyzerJavaSpring < Analyzer
                 url_paths = Array(String).new
 
                 # Spring MVC Decorator
-                request_method = nil
+                request_methods = Array(String).new
                 if method_annotation.name.ends_with? "Mapping"
                   parameter_format = nil
                   annotation_parameters = method_annotation.params
@@ -124,7 +142,20 @@ class AnalyzerJavaSpring < Analyzer
                       annotation_parameter_key = annotation_parameter_tokens[0].value
                       annotation_parameter_value = annotation_parameter_tokens[-1].value
                       if annotation_parameter_key == "method"
-                        request_method = annotation_parameter_value
+                        if annotation_parameter_value == "}"
+                          # multiple method
+                          annotation_parameter_tokens.reverse_each do |token|
+                            break if token.value == "method"
+                            next if token.type == :LBRACE || token.type == :RBRACE
+                            next if token.type == :DOT
+                            known_methods = ["GET", "POST", "PUT", "DELETE", "PATCH"]
+                            if known_methods.includes?(token.value)
+                              request_methods.push(token.value)
+                            end
+                          end
+                        else
+                          request_methods.push(annotation_parameter_value)
+                        end
                       elsif annotation_parameter_key == "consumes"
                         if annotation_parameter_value.ends_with? "APPLICATION_FORM_URLENCODED_VALUE"
                           parameter_format = "form"
@@ -133,6 +164,10 @@ class AnalyzerJavaSpring < Analyzer
                         end
                       end
                     end
+                  end
+
+                  if webflux_base_path.ends_with?("/") && url.starts_with?("/")
+                    webflux_base_path = webflux_base_path[..-2]
                   end
 
                   if method_annotation.name == "RequestMapping"
@@ -144,18 +179,20 @@ class AnalyzerJavaSpring < Analyzer
                     line = method_annotation.tokens[0].line
                     details = Details.new(PathInfo.new(path, line))
 
-                    if request_method.nil?
+                    if request_methods.empty?
                       # If the method is not annotated with @RequestMapping, then 5 methods are allowed
                       ["GET", "POST", "PUT", "DELETE", "PATCH"].each do |_request_method|
                         parameters = get_endpoint_parameters(parser, _request_method, method, parameter_format, class_map)
                         url_paths.each do |url_path|
-                          @result << Endpoint.new("#{url}#{url_path}", _request_method, parameters, details)
+                          @result << Endpoint.new("#{webflux_base_path}#{url}#{url_path}", _request_method, parameters, details)
                         end
                       end
                     else
                       url_paths.each do |url_path|
-                        parameters = get_endpoint_parameters(parser, request_method, method, parameter_format, class_map)
-                        @result << Endpoint.new("#{url}#{url_path}", request_method, parameters, details)
+                        request_methods.each do |request_method|
+                          parameters = get_endpoint_parameters(parser, request_method, method, parameter_format, class_map)
+                          @result << Endpoint.new("#{webflux_base_path}#{url}#{url_path}", request_method, parameters, details)
+                        end
                       end
                     end
                     break
@@ -177,7 +214,7 @@ class AnalyzerJavaSpring < Analyzer
 
                       details = Details.new(PathInfo.new(path, line))
                       url_paths.each do |url_path|
-                        @result << Endpoint.new("#{url}#{url_path}", request_method, parameters, details)
+                        @result << Endpoint.new("#{webflux_base_path}#{url}#{url_path}", request_method, parameters, details)
                       end
                       break
                     end
@@ -204,6 +241,16 @@ class AnalyzerJavaSpring < Analyzer
     Fiber.yield
 
     @result
+  end
+
+  def find_base_path(current_path : String, base_paths : Hash(String, String))
+    base_paths.keys.sort_by!(&.size).reverse!.each do |path|
+      if current_path.starts_with?(path)
+        return base_paths[path]
+      end
+    end
+
+    ""
   end
 
   def get_mapping_path(parser : JavaParser, tokens : Array(Token), method_params : Array(Array(Token)))
