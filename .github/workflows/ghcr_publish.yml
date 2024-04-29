@@ -8,6 +8,8 @@ on:
   push:
     branches: [main, dev]
     tags: [v*.*.*]
+  release:
+    types: [published]
 env:
   # Use docker.io for Docker Hub if empty
   REGISTRY: ghcr.io
