@@ -13,6 +13,21 @@ module NoirTaggers
       desc:   "Identifies OAuth endpoints",
       runner: OAuthTagger,
     },
+    cors: {
+      name:   "CORS Tagger",
+      desc:   "Identifies CORS endpoints",
+      runner: CorsTagger,
+    },
+    soap: {
+      name:   "SOAP Tagger",
+      desc:   "Identifies SOAP endpoints",
+      runner: SoapTagger,
+    },
+    websocket: {
+      name:   "Websocket Tagger",
+      desc:   "Identifies Websocket endpoints",
+      runner: WebsocketTagger,
+    },
   }
 
   def self.get_taggers
