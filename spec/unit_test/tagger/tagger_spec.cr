@@ -21,14 +21,17 @@ describe "Tagger" do
       endpoint.params.each do |param|
         case param.name
         when "query"
+          param.tags.empty?.should be_false
           param.tags.each do |tag|
             tag.name.should eq("sqli")
           end
         when "url"
+          param.tags.empty?.should be_false
           param.tags.each do |tag|
             tag.name.should eq("ssrf")
           end
         when "role"
+          param.tags.empty?.should be_false
           param.tags.each do |tag|
             tag.name.should eq("sqli")
           end
@@ -48,8 +51,75 @@ describe "Tagger" do
     ]
     NoirTaggers.run_tagger(extected_endpoints, noir_options, "oauth")
     extected_endpoints.each do |endpoint|
+      endpoint.tags.empty?.should be_false
       endpoint.tags.each do |tag|
         tag.name.should eq("oauth")
+      end
+    end
+  end
+
+  it "cors_tagger" do
+    noir_options = default_options()
+    extected_endpoints = [
+      Endpoint.new("/api/me", "GET", [
+        Param.new("q", "", "query"),
+        Param.new("Origin", "", "header"),
+      ]),
+    ]
+    NoirTaggers.run_tagger(extected_endpoints, noir_options, "cors")
+    extected_endpoints.each do |endpoint|
+      endpoint.tags.empty?.should be_false
+      endpoint.tags.each do |tag|
+        tag.name.should eq("cors")
+      end
+    end
+  end
+
+  it "soap_tagger" do
+    noir_options = default_options()
+    extected_endpoints = [
+      Endpoint.new("/api/me", "GET", [
+        Param.new("SOAPAction", "", "header"),
+      ]),
+    ]
+    NoirTaggers.run_tagger(extected_endpoints, noir_options, "soap")
+    extected_endpoints.each do |endpoint|
+      endpoint.tags.empty?.should be_false
+      endpoint.tags.each do |tag|
+        tag.name.should eq("soap")
+      end
+    end
+  end
+
+  it "websocket_tagger_1" do
+    noir_options = default_options()
+    extected_endpoints = [
+      Endpoint.new("/ws", "GET", [
+        Param.new("sec-websocket-version", "", "header"),
+        Param.new("Sec-WebSocket-Key", "", "header"),
+      ]),
+    ]
+    NoirTaggers.run_tagger(extected_endpoints, noir_options, "websocket")
+    extected_endpoints.each do |endpoint|
+      endpoint.tags.empty?.should be_false
+      endpoint.tags.each do |tag|
+        tag.name.should eq("websocket")
+      end
+    end
+  end
+
+  it "websocket_tagger_2" do
+    noir_options = default_options()
+    e = Endpoint.new("/ws", "GET")
+    e.set_protocol("ws")
+
+    extected_endpoints = [e]
+
+    NoirTaggers.run_tagger(extected_endpoints, noir_options, "websocket")
+    extected_endpoints.each do |endpoint|
+      endpoint.tags.empty?.should be_false
+      endpoint.tags.each do |tag|
+        tag.name.should eq("websocket")
       end
     end
   end
