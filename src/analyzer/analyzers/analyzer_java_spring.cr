@@ -5,6 +5,7 @@ require "../../miniparsers/java"
 class AnalyzerJavaSpring < Analyzer
   REGEX_ROUTER_CODE_BLOCK = /route\(\)?.*?\);/m
   REGEX_ROUTE_CODE_LINE   = /((?:andRoute|route)\s*\(|\.)\s*(GET|POST|DELETE|PUT)\(\s*"([^"]*)/
+  FILE_CONTENT_CACHE = Hash(String, String).new 
 
   def analyze
     parser_map = Hash(String, JavaParser).new
@@ -31,6 +32,7 @@ class AnalyzerJavaSpring < Analyzer
       if File.exists?(path) && path.ends_with?(".java")
         webflux_base_path = find_base_path(path, webflux_base_path_map)
         content = File.read(path, encoding: "utf-8", invalid: :skip)
+        FILE_CONTENT_CACHE[path] = content
 
         # Spring MVC Router (Controller)
         spring_web_bind_package = "org.springframework.web.bind.annotation."
@@ -75,8 +77,7 @@ class AnalyzerJavaSpring < Analyzer
               source_path = root_source_directory.join(import_path + ".java")
               next if source_path.dirname == package_directory || !File.exists?(source_path)
               if !parser_map.has_key?(source_path.to_s)
-                _content = File.read(source_path.to_s, encoding: "utf-8", invalid: :skip)
-                _parser = get_parser(source_path, _content)
+                _parser = get_parser(source_path)
                 parser_map[source_path.to_s] = _parser
                 _parser.classes.each do |package_class|
                   import_map[package_class.name] = package_class
@@ -243,6 +244,21 @@ class AnalyzerJavaSpring < Analyzer
     @result
   end
 
+  def get_parser(path : Path, content : String = "")
+    if content == ""
+      if FILE_CONTENT_CACHE.has_key?(path.to_s)
+        content = FILE_CONTENT_CACHE[path.to_s]
+      else
+        content = File.read(path, encoding: "utf-8", invalid: :skip)
+      end
+    end
+
+    lexer = JavaLexer.new
+    tokens = lexer.tokenize(content)
+    parser = JavaParser.new(path.to_s, tokens)
+    parser
+  end
+
   def find_base_path(current_path : String, base_paths : Hash(String, String))
     base_paths.keys.sort_by!(&.size).reverse!.each do |path|
       if current_path.starts_with?(path)
@@ -405,16 +421,6 @@ class AnalyzerJavaSpring < Analyzer
 
     endpoint_parameters
   end
-end
-
-def get_parser(path : Path, content : String = "")
-  if content == ""
-    content = File.read(path, encoding: "utf-8", invalid: :skip)
-  end
-  lexer = JavaLexer.new
-  tokens = lexer.tokenize(content)
-  parser = JavaParser.new(path.to_s, tokens)
-  parser
 end
 
 def analyzer_java_spring(options : Hash(Symbol, String))
