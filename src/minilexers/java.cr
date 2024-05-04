@@ -174,11 +174,11 @@ class JavaLexer < MiniLexer
   end
 
   def tokenize_logic(@input : String) : Array(Token)
+    after_skip = -1
     while @position < @input.size
-      before_skip_position = -1
-      while before_skip_position < @position
+      while @position != after_skip
         skip_whitespace_and_comments
-        before_skip_position = @position
+        after_skip = @position
       end
       break if @position == @input.size
 
@@ -372,9 +372,10 @@ class JavaLexer < MiniLexer
         Tuple.new(:ASSIGN, "=")
       end
     when '\t' then self << Tuple.new(:TAB, "\t")
-    when ' '  then self << Tuple.new(:WHITESPACE, " ")
     when '\n'
       self << Tuple.new(:NEWLINE, "\n")
+    when ' '
+      # Skipping whitespace for efficiency
     else
       self << Tuple.new(:UNKNOWN, @input[@position].to_s)
     end

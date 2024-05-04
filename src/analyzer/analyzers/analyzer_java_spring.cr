@@ -5,7 +5,7 @@ require "../../miniparsers/java"
 class AnalyzerJavaSpring < Analyzer
   REGEX_ROUTER_CODE_BLOCK = /route\(\)?.*?\);/m
   REGEX_ROUTE_CODE_LINE   = /((?:andRoute|route)\s*\(|\.)\s*(GET|POST|DELETE|PUT)\(\s*"([^"]*)/
-  FILE_CONTENT_CACHE = Hash(String, String).new 
+  FILE_CONTENT_CACHE = Hash(String, String).new
 
   def analyze
     parser_map = Hash(String, JavaParser).new
@@ -379,12 +379,11 @@ class AnalyzerJavaSpring < Analyzer
         elsif parameter_type == "HttpServletRequest"
           i = 0
           while i < method.body.size - 6
-            if [:TAB, :WHITESPACE, :NEWLINE].index(method.body[i].type)
+            if [:TAB, :NEWLINE].index(method.body[i].type)
               i += 1
               next
             end
 
-            next if method.body[i].type == :WHITESPACE
             next if method.body[i].type == :NEWLINE
 
             if method.body[i].type == :IDENTIFIER && method.body[i].value == argument_name
