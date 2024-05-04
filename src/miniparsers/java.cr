@@ -67,23 +67,30 @@ class JavaParser
   def parse_import_statements(tokens : Array(Token))
     import_tokens = tokens.select { |token| token.type == :IMPORT }
     import_tokens.each do |import_token|
-      next_token_index = import_token.index + 2
+      next_token_index = import_token.index + 1
       next_token = tokens[next_token_index]
 
-      if next_token && next_token.type == :IDENTIFIER
-        import_statement = next_token.value
-        next_token_index += 1
-
-        while next_token_index < tokens.size && tokens[next_token_index].type == :DOT
+      if next_token
+        if next_token.type == :STATIC
           next_token_index += 1
-          identifier_token = tokens[next_token_index]
-          break if !identifier_token || identifier_token.type != :IDENTIFIER
-
-          import_statement += ".#{identifier_token.value}"
-          next_token_index += 1
+          next_token = tokens[next_token_index]
         end
+        if next_token.type == :IDENTIFIER
+          import_statement = next_token.value
+          next_token_index += 1
 
-        @import_statements << import_statement
+          while next_token_index < tokens.size && tokens[next_token_index].type == :DOT
+            next_token_index += 1
+            identifier_token = tokens[next_token_index]
+            break if !identifier_token
+            break if identifier_token.type != :IDENTIFIER && identifier_token.value != "*"
+
+            import_statement += ".#{identifier_token.value}"
+            next_token_index += 1
+          end
+
+          @import_statements << import_statement
+        end
       end
     end
   end
