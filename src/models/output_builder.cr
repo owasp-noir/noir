@@ -44,7 +44,7 @@ class OutputBuilder
     first_form = true
 
     if final_url.starts_with?("//")
-      if final_url[2] != ':'
+      if final_url.size != 2 && final_url[2] != ':'
         final_url = final_url[1..]
       end
     end
