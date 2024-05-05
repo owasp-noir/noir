@@ -19,6 +19,17 @@ class KotlinLexer < MiniLexer
     "crossinline" => :CROSSINLINE, "reified" => :REIFIED
   }
 
+  ANNOTATIONS = {
+    "@field"     => :FIELD,
+    "@property"  => :PROPERTY,
+    "@get"       => :GET,
+    "@set"       => :SET,
+    "@receiver"  => :RECEIVER,
+    "@param"     => :PARAM,
+    "@setparam"  => :SETPARAM,
+    "@delegate"  => :DELEGATE
+  }
+
   PUNCTUATION = {
     '.' => :DOT, ',' => :COMMA, '(' => :LPAREN, ')' => :RPAREN, 
     '{' => :LBRACE, '}' => :RBRACE, '[' => :LBRACK, ']' => :RBRACK, 
@@ -55,8 +66,10 @@ class KotlinLexer < MiniLexer
       case @input[@position]
       when '0'..'9'
         match_number
-      when 'a'..'z', 'A'..'Z', '_', '@'
+      when 'a'..'z', 'A'..'Z', '_'
         match_identifier_or_keyword
+      when '@'
+        match_annotation
       when '"', '\''
         match_string_or_char_literal
       when '.', ',', '(', ')', '{', '}', '[', ']', ';', '?', ':'
@@ -74,7 +87,7 @@ class KotlinLexer < MiniLexer
   private def skip_whitespace_and_comments
     while @position < @input.size
       case @input[@position]
-      when ' ', '\t', '\r', '\n'
+      when ' ', '\t', '\r'
         @position += 1
       when '/'
         if @position + 1 < @input.size
@@ -119,9 +132,19 @@ class KotlinLexer < MiniLexer
   end
 
   private def match_identifier_or_keyword
-    if match = @input.match(/[a-zA-Z_@][a-zA-Z0-9_]*|`[^`]+`/, @position)
-      keyword = match[0].sub(/^@/, "").downcase
-      type = KEYWORDS[keyword]? || :IDENTIFIER
+    if match = @input.match(/[a-zA-Z_][a-zA-Z0-9_]*|`[^`]+`/, @position)
+      type = KEYWORDS[match[0]]? || :IDENTIFIER
+      self << Tuple.new(type, match[0])
+      @position += match[0].size
+    else
+      self << Tuple.new(:UNKNOWN, @input[@position])
+      @position += 1
+    end
+  end
+
+  private def match_annotation
+    if match = @input.match(/\@[a-zA-Z_][a-zA-Z0-9_]*|`[^`]+`/, @position)
+      type = KotlinLexer::ANNOTATIONS[match[0]]? || :ANNOTATION
       self << Tuple.new(type, match[0])
       @position += match[0].size
     else
