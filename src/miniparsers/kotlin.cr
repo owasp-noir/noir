@@ -23,16 +23,6 @@ class KotlinParser
       name_token = get_class_name(class_tokens)
       next if name_token.nil?
       methods = parse_methods(class_tokens)
-      #methods.each_key do |method_name|
-      #  methods[method_name].params.each_with_index do |param_tokens, index|
-      #    print_tokens param_tokens, "#{method_name} #{index}st param"
-      #  end
-      #
-      #  methods[method_name].annotations.each_key do |annotation_name|
-      #    annotation_model = methods[method_name].annotations[annotation_name]
-      #    print_tokens annotation_model.tokens, "#{annotation_name} annotation"
-      #  end
-      #end
       annotations = parse_annotations(class_tokens[0].index)
       fields = parse_class_fields(name_token.index)
       @classes << ClassModel.new(annotations, name_token.value, fields, methods, class_tokens)
@@ -187,9 +177,9 @@ class KotlinParser
         # :NEWLINE         public class Controller(type param)
         annotation_token_index = cursor + 1
         is_annotation = while annotation_token_index < last_newline_index
-          if @tokens[annotation_token_index].type == :LABEL_REFERENCE
+          if @tokens[annotation_token_index].type == :ANNOTATION
             break true
-          elsif !KotlinLexer::ANNOTATIONS[@tokens[annotation_token_index].value]?
+          elsif !(KotlinLexer::ANNOTATIONS[@tokens[annotation_token_index].value]?.nil?)
             break true
           elsif @tokens[annotation_token_index].type == :TAB || @tokens[annotation_token_index].type == :NEWLINE
             annotation_token_index += 1
@@ -205,6 +195,7 @@ class KotlinParser
           annotation_tokens[annotation_name] = AnnotationModel.new(annotation_name, annotation_params, @tokens[annotation_token_index..last_newline_index - 1])
           skip_line = 1
           last_newline_index = cursor
+          is_annotation = false
         else
           break
         end
@@ -217,30 +208,71 @@ class KotlinParser
   end
 
   def parse_classes(tokens : Array(Token))
-    start_token_parse = false
-    class_body = Array(Token).new
+    start_class = false
+    start_body_token = false
+    has_class_body = false
+    class_tokens = Array(Token).new
 
-    lbrace = rbrace = 0
-    tokens.each do |token|
-      if !start_token_parse && token.type == :CLASS
-        start_token_parse = true
-        class_body = Array(Token).new
-        lbrace = rbrace = 0
+    nesting = 0
+    index = 0
+    while index < tokens.size
+      token = tokens[index]
+      if start_class
+        class_tokens << token
       end
 
-      if start_token_parse
-        if token.type == :LBRACE
-          lbrace += 1
-        elsif token.type == :RBRACE
-          rbrace += 1
+      case token.type
+      when :CLASS
+        if tokens[index+1].type == :IDENTIFIER
+          start_class = true
+          nesting = 0
+          class_tokens = Array(Token).new
+          class_tokens << token
         end
+      when :LPAREN, :LBRACE
+        nesting += 1
+      when :RPAREN, :RBRACE
+        nesting -= 1
+        if nesting == 0
+          if has_class_body
+            @classes_tokens << class_tokens
+            start_class = false
+            has_class_body = false
+          else 
+            if start_class
+              body_index = index + 1
+              skip_type_identifier = false
+              has_class_body = while body_index < tokens.size
+                body_token = tokens[body_index]
+                if body_token.type == :TAB || body_token.type == :NEWLINE
+                  body_index += 1
+                elsif skip_type_identifier
+                  if body_token.type != :IDENTIFIER
+                    break false
+                  else
+                    body_index += 1
+                    skip_type_identifier = false
+                  end
+                elsif body_token.type == :COLON
+                  body_index += 1
+                  skip_type_identifier = true
+                elsif body_token.type == :LBRACE
+                  break true
+                else
+                  break false
+                end
+              end
 
-        class_body << token
-        if lbrace > 0 && lbrace == rbrace
-          @classes_tokens << class_body
-          start_token_parse = false
+              if !has_class_body
+                @classes_tokens << class_tokens
+                start_class = false
+              end
+            end
+          end
         end
       end
+
+      index += 1
     end
   end
 
@@ -264,36 +296,40 @@ class KotlinParser
     params = parse_formal_parameters(class_start_index + 1)
     params.each do |param|
       init_value = ""
-      val_index = -1
-      assign_index = param.index { |token| token.type == :ASSIGN }
-      if assign_index.nil? && param[-2].type == :COLON
+      val_or_var_index = nil
+      has_init_value = param[-2].type == :ASSIGN
+      if !has_init_value && param[-2].type == :COLON
         field_type = param[-1].value
         field_name = param[-3].value
-        val_index = -4
-      elsif assign_index && param[assign_index-2].type != :COLON
-        field_type = param[assign_index-1].value
-        field_name = param[assign_index-3].value
-        init_value = param[assign_index+1].value
-        val_index = assign_index - 4
+        val_or_var_index = -4
+      elsif has_init_value && param[-4].type == :COLON
+        field_type = param[-3].value
+        field_name = param[-5].value
+        init_value = param[-1].value
+        val_or_var_index = -6
+      else
+        break
+      end
+
+      val_or_var_token = param[val_or_var_index]?
+      if !val_or_var_token.nil?
+        val_or_var = val_or_var_token.value
+        break if val_or_var != "val" && val_or_var != "var"
       else
         break
       end
 
       modifier = "public"
-      if val_index > 0
-        val_or_var = param[val_index].value
-        if [:PRIVATE, :PUBLIC, :PROTECTED, :INTERNAL].index(param[val_index-1].type)
-          modifier = param[0].value
-        end  
-      elsif val_index == 0
-        val_or_var = param[val_index].value
-      else
-        break
+      modifier_token = param[val_or_var_index-1]?
+      if modifier_token
+        if [:PRIVATE, :PUBLIC, :PROTECTED, :INTERNAL].index(modifier_token.type)
+          modifier = modifier_token.value
+        end
       end
-      
+
       fields[field_name] = FieldModel.new(modifier, val_or_var, field_type, field_name, init_value)
     end
-  
+
     fields
   end
 
@@ -342,6 +378,33 @@ class KotlinParser
         print("#{token.value}(#{token.type})")
       end
     end
+  end
+
+  def trace()
+      @classes.each do |_class|
+        _class.annotations.each_key do |annotation_name|
+          annotation_model =  _class.annotations[annotation_name]
+          print_tokens annotation_model.tokens, "#{_class.name} annotation"
+        end
+
+        puts("\n================ class #{_class.name} ==================")
+
+        _class.fields.each_key do |field_name|
+          field = _class.fields[field_name]
+          puts("[Field] #{field.access_modifier} #{field.val_or_var} #{field.name}: #{field.type} = #{field.init_value}")
+        end
+
+        _class.methods.each_key do |method_name|
+          _class.methods[method_name].params.each_with_index do |param_tokens, index|
+            print_tokens param_tokens, "#{method_name} #{index}st param"
+          end
+        
+          _class.methods[method_name].annotations.each_key do |annotation_name|
+            annotation_model = _class.methods[method_name].annotations[annotation_name]
+            print_tokens annotation_model.tokens, "#{method_name} method annotation"
+          end
+        end
+      end
   end
 
   class AnnotationModel
