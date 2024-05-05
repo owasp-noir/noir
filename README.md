@@ -88,7 +88,7 @@
 </details>
 
 ## Installation
-### Homebrew (macOS)
+### Homebrew
 
 ```bash
 brew install noir
@@ -96,7 +96,7 @@ brew install noir
 # https://formulae.brew.sh/formula/noir
 ```
 
-### Snapcraft (linux)
+### Snapcraft
 
 ```bash
 sudo snap install noir
@@ -125,10 +125,14 @@ cp ./bin/noir /usr/bin/
 
 ### Docker (GHCR)
 ```bash
-docker pull ghcr.io/noir-cr/noir:latest
+docker pull ghcr.io/noir-cr/noir:main
 ```
 
 ## Usage
+```bash
+noir -h 
+```
+
 ```
 Usage: noir <flags>
   Basic:
