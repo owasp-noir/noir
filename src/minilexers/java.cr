@@ -356,14 +356,14 @@ class JavaLexer < MiniLexer
 
   def match_other
     case @input[@position]
-    when '('  then self << Tuple.new(:LPAREN, "(")
-    when ')'  then self << Tuple.new(:RPAREN, ")")
-    when '.'  then self << Tuple.new(:DOT, ".")
-    when ','  then self << Tuple.new(:COMMA, ",")
-    when '@'  then self << Tuple.new(:AT, "@")
-    when '{'  then self << Tuple.new(:LBRACE, "{")
-    when '}'  then self << Tuple.new(:RBRACE, "}")
-    when ';'  then self << Tuple.new(:SEMI, ";")
+    when '(' then self << Tuple.new(:LPAREN, "(")
+    when ')' then self << Tuple.new(:RPAREN, ")")
+    when '.' then self << Tuple.new(:DOT, ".")
+    when ',' then self << Tuple.new(:COMMA, ",")
+    when '@' then self << Tuple.new(:AT, "@")
+    when '{' then self << Tuple.new(:LBRACE, "{")
+    when '}' then self << Tuple.new(:RBRACE, "}")
+    when ';' then self << Tuple.new(:SEMI, ";")
     when '='
       if @input[@position + 1] == '='
         @position += 1
