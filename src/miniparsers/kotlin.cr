@@ -48,7 +48,7 @@ class KotlinParser
         i = index + 1
         package_name = ""
         while i < tokens.size
-          if tokens[i].type != :SEMI
+          if tokens[i].type != :NEWLINE
             if tokens[i].type == :IDENTIFIER || tokens[i].type == :DOT
               package_name += tokens[i].value
             end
@@ -223,7 +223,7 @@ class KotlinParser
 
       case token.type
       when :CLASS
-        if tokens[index+1].type == :IDENTIFIER
+        if tokens[index+1].type == :IDENTIFIER && !start_class
           start_class = true
           nesting = 0
           class_tokens = Array(Token).new
