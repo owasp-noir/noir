@@ -154,22 +154,47 @@ class KotlinLexer < MiniLexer
   end
 
   private def match_string_or_char_literal
-    if @input[@position] == '"'
-      if match = @input.match(/"""[^"]*"""/, @position)  # Multiline string literals
-        self << Tuple.new(:TEXT_BLOCK, match[0])
-        @position += match[0].size
-      elsif match = @input.match(/"[^"]*"/, @position)
-        self << Tuple.new(:STRING_LITERAL, match[0])
-        @position += match[0].size
+    s = @input[@position].to_s
+    
+    text_block_literal =  "\"\"\""
+    if @position < @input.size-3 && @input[@position..@position+2] == text_block_literal
+      s = text_block_literal
+      @position += 3
+      while @position < @input.size - 3
+        s += @input[@position]
+        if @input[@position..@position+2] == text_block_literal
+          s += "\"\""
+          break
+        end
+        @position += 1
       end
-    elsif @input[@position] == '\''
-      if match = @input.match(/'[^']*'/, @position)
-        self << Tuple.new(:CHAR_LITERAL, match[0])
-        @position += match[0].size
+
+      if s.starts_with?(text_block_literal) && s.ends_with?(text_block_literal)
+        self << Tuple.new(:TEXT_BLOCK, s)
+        @position += 3
+        return
       end
     else
-      self << Tuple.new(:UNKNOWN, @input[@position])
       @position += 1
+      is_backslash_char = false
+      while @position < @input.size
+        s += @input[@position]
+        break if !is_backslash_char && @input[@position] == s[0]
+        is_backslash_char = s[0] == '\\'
+        @position += 1
+      end
+
+      if s.size > 1
+        if s[0] == '\'' && s[-1] == '\''
+          self << Tuple.new(:CHAR_LITERAL, s)
+          @position += 1
+          return
+        elsif s[0] == '"' && s[-1] == '"'
+          self << Tuple.new(:STRING_LITERAL, s)
+          @position += 1
+          return
+        end
+      end
     end
   end
 
