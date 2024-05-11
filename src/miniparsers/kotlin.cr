@@ -295,37 +295,36 @@ class KotlinParser
     fields = Hash(String, FieldModel).new
     params = parse_formal_parameters(class_start_index + 1)
     params.each do |param|
-      init_value = ""
-      val_or_var_index = nil
-      has_init_value = param[-2].type == :ASSIGN
-      if !has_init_value && param[-2].type == :COLON
-        field_type = param[-1].value
-        field_name = param[-3].value
-        val_or_var_index = -4
-      elsif has_init_value && param[-4].type == :COLON
-        field_type = param[-3].value
-        field_name = param[-5].value
-        init_value = param[-1].value
-        val_or_var_index = -6
-      else
-        break
-      end
-
-      val_or_var_token = param[val_or_var_index]?
-      if !val_or_var_token.nil?
-        val_or_var = val_or_var_token.value
-        break if val_or_var != "val" && val_or_var != "var"
-      else
-        break
-      end
-
       modifier = "public"
-      modifier_token = param[val_or_var_index-1]?
-      if modifier_token
-        if [:PRIVATE, :PUBLIC, :PROTECTED, :INTERNAL].index(modifier_token.type)
-          modifier = modifier_token.value
+      val_or_var = nil
+      field_type = nil
+      field_name = nil
+      has_type = false
+      has_init_value = false
+      init_value = ""
+    
+      param.each do |param_token|
+        token_value = param_token.value
+        token_type = param_token.type
+        if token_value == "open"
+          next
+        elsif [:PRIVATE, :PUBLIC, :PROTECTED, :INTERNAL].index(token_type)
+          modifier = token_value
+        elsif token_value == "val" || token_value == "var"
+          val_or_var = token_value
+        elsif !val_or_var.nil? && field_name.nil?
+          field_name = token_value
+        elsif has_init_value
+          init_value += token_value
+        elsif token_type == :ASSIGN
+          has_init_value = true
+        elsif has_type && field_type.nil?
+          field_type = token_value
+        elsif token_type == :COLON
+          has_type = true
         end
       end
+      next if val_or_var.nil? || field_type.nil? || field_name.nil?
 
       fields[field_name] = FieldModel.new(modifier, val_or_var, field_type, field_name, init_value)
     end
