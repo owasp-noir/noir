@@ -2,38 +2,38 @@ require "../models/minilexer/*"
 
 class KotlinLexer < MiniLexer
   KEYWORDS = {
-    "file" => :FILE, "package" => :PACKAGE, "import" => :IMPORT, "class" => :CLASS, 
-    "interface" => :INTERFACE, "fun" => :FUN, "object" => :OBJECT, "val" => :VAL, 
-    "var" => :VAR, "typealias" => :TYPE_ALIAS, "constructor" => :CONSTRUCTOR, "by" => :BY, 
-    "companion" => :COMPANION, "init" => :INIT, "this" => :THIS, "super" => :SUPER, 
-    "typeof" => :TYPEOF, "where" => :WHERE, "if" => :IF, "else" => :ELSE, "when" => :WHEN, 
-    "try" => :TRY, "catch" => :CATCH, "finally" => :FINALLY, "for" => :FOR, "do" => :DO, 
-    "while" => :WHILE, "throw" => :THROW, "return" => :RETURN, "continue" => :CONTINUE, 
-    "break" => :BREAK, "as" => :AS, "is" => :IS, "in" => :IN, "out" => :OUT, 
-    "public" => :PUBLIC, "private" => :PRIVATE, "protected" => :PROTECTED, "internal" => :INTERNAL, 
-    "enum" => :ENUM, "sealed" => :SEALED, "annotation" => :ANNOTATION, "data" => :DATA, 
-    "inner" => :INNER, "tailrec" => :TAILREC, "operator" => :OPERATOR, "inline" => :INLINE, 
-    "infix" => :INFIX, "external" => :EXTERNAL, "suspend" => :SUSPEND, "override" => :OVERRIDE, 
-    "abstract" => :ABSTRACT, "final" => :FINAL, "open" => :OPEN, "const" => :CONST, 
-    "lateinit" => :LATEINIT, "vararg" => :VARARG, "noinline" => :NOINLINE, 
-    "crossinline" => :CROSSINLINE, "reified" => :REIFIED
+    "file" => :FILE, "package" => :PACKAGE, "import" => :IMPORT, "class" => :CLASS,
+    "interface" => :INTERFACE, "fun" => :FUN, "object" => :OBJECT, "val" => :VAL,
+    "var" => :VAR, "typealias" => :TYPE_ALIAS, "constructor" => :CONSTRUCTOR, "by" => :BY,
+    "companion" => :COMPANION, "init" => :INIT, "this" => :THIS, "super" => :SUPER,
+    "typeof" => :TYPEOF, "where" => :WHERE, "if" => :IF, "else" => :ELSE, "when" => :WHEN,
+    "try" => :TRY, "catch" => :CATCH, "finally" => :FINALLY, "for" => :FOR, "do" => :DO,
+    "while" => :WHILE, "throw" => :THROW, "return" => :RETURN, "continue" => :CONTINUE,
+    "break" => :BREAK, "as" => :AS, "is" => :IS, "in" => :IN, "out" => :OUT,
+    "public" => :PUBLIC, "private" => :PRIVATE, "protected" => :PROTECTED, "internal" => :INTERNAL,
+    "enum" => :ENUM, "sealed" => :SEALED, "annotation" => :ANNOTATION, "data" => :DATA,
+    "inner" => :INNER, "tailrec" => :TAILREC, "operator" => :OPERATOR, "inline" => :INLINE,
+    "infix" => :INFIX, "external" => :EXTERNAL, "suspend" => :SUSPEND, "override" => :OVERRIDE,
+    "abstract" => :ABSTRACT, "final" => :FINAL, "open" => :OPEN, "const" => :CONST,
+    "lateinit" => :LATEINIT, "vararg" => :VARARG, "noinline" => :NOINLINE,
+    "crossinline" => :CROSSINLINE, "reified" => :REIFIED,
   }
 
   ANNOTATIONS = {
-    "@field"     => :FIELD,
-    "@property"  => :PROPERTY,
-    "@get"       => :GET,
-    "@set"       => :SET,
-    "@receiver"  => :RECEIVER,
-    "@param"     => :PARAM,
-    "@setparam"  => :SETPARAM,
-    "@delegate"  => :DELEGATE
+    "@field"    => :FIELD,
+    "@property" => :PROPERTY,
+    "@get"      => :GET,
+    "@set"      => :SET,
+    "@receiver" => :RECEIVER,
+    "@param"    => :PARAM,
+    "@setparam" => :SETPARAM,
+    "@delegate" => :DELEGATE,
   }
 
   PUNCTUATION = {
-    '.' => :DOT, ',' => :COMMA, '(' => :LPAREN, ')' => :RPAREN, 
-    '{' => :LBRACE, '}' => :RBRACE, '[' => :LBRACK, ']' => :RBRACK, 
-    ';' => :SEMI, ':' => :COLON, '?' => :QUESTION
+    '.' => :DOT, ',' => :COMMA, '(' => :LPAREN, ')' => :RPAREN,
+    '{' => :LBRACE, '}' => :RBRACE, '[' => :LBRACK, ']' => :RBRACK,
+    ';' => :SEMI, ':' => :COLON, '?' => :QUESTION,
   }
 
   OPERATORS = {
@@ -43,7 +43,7 @@ class KotlinLexer < MiniLexer
     "++" => :INC, "--" => :DEC, "+=" => :ADD_ASSIGN, "-=" => :SUB_ASSIGN,
     "*=" => :MUL_ASSIGN, "/=" => :DIV_ASSIGN, "%=" => :MOD_ASSIGN,
     '&' => :BITAND, '|' => :BITOR, '^' => :CARET, '~' => :TILDE,
-    "->" => :ARROW, "=>" => :DOUBLE_ARROW, "?:" => :ELVIS
+    "->" => :ARROW, "=>" => :DOUBLE_ARROW, "?:" => :ELVIS,
   }
 
   def initialize
@@ -155,14 +155,14 @@ class KotlinLexer < MiniLexer
 
   private def match_string_or_char_literal
     s = @input[@position].to_s
-    
-    text_block_literal =  "\"\"\""
-    if @position < @input.size-3 && @input[@position..@position+2] == text_block_literal
+
+    text_block_literal = "\"\"\""
+    if @position < @input.size - 3 && @input[@position..@position + 2] == text_block_literal
       s = text_block_literal
       @position += 3
       while @position < @input.size - 3
         s += @input[@position]
-        if @input[@position..@position+2] == text_block_literal
+        if @input[@position..@position + 2] == text_block_literal
           s += "\"\""
           break
         end
@@ -207,8 +207,8 @@ class KotlinLexer < MiniLexer
 
   private def match_operator
     # Match longer operators first by checking next characters
-    if @position + 1 < @input.size && OPERATORS.has_key?(@input[@position..@position+1])
-      op = @input[@position..@position+1]
+    if @position + 1 < @input.size && OPERATORS.has_key?(@input[@position..@position + 1])
+      op = @input[@position..@position + 1]
       @position += 2
     elsif OPERATORS.has_key?(@input[@position])
       op = @input[@position]

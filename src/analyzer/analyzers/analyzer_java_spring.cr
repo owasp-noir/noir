@@ -5,7 +5,7 @@ require "../../miniparsers/java"
 class AnalyzerJavaSpring < Analyzer
   REGEX_ROUTER_CODE_BLOCK = /route\(\)?.*?\);/m
   REGEX_ROUTE_CODE_LINE   = /((?:andRoute|route)\s*\(|\.)\s*(GET|POST|DELETE|PUT)\(\s*"([^"]*)/
-  FILE_CONTENT_CACHE = Hash(String, String).new
+  FILE_CONTENT_CACHE      = Hash(String, String).new
 
   def analyze
     parser_map = Hash(String, JavaParser).new
@@ -31,7 +31,7 @@ class AnalyzerJavaSpring < Analyzer
               end
             rescue e
               next
-            end            
+            end
           end
         end
       elsif File.exists?(path) && path.ends_with?(".java")

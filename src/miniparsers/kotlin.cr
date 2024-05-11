@@ -226,7 +226,6 @@ class KotlinParser
 
   def parse_classes(tokens : Array(Token))
     start_class = false
-    start_body_token = false
     has_class_body = false
     class_tokens = Array(Token).new
 
@@ -240,7 +239,7 @@ class KotlinParser
 
       case token.type
       when :CLASS
-        if tokens[index+1].type == :IDENTIFIER && !start_class
+        if tokens[index + 1].type == :IDENTIFIER && !start_class
           start_class = true
           nesting = 0
           class_tokens = Array(Token).new
@@ -255,7 +254,7 @@ class KotlinParser
             @classes_tokens << class_tokens
             start_class = false
             has_class_body = false
-          else 
+          else
             if start_class
               body_index = index + 1
               skip_type_identifier = false
@@ -319,7 +318,7 @@ class KotlinParser
       has_type = false
       has_init_value = false
       init_value = ""
-    
+
       param.each do |param_token|
         token_value = param_token.value
         token_type = param_token.type
@@ -356,10 +355,9 @@ class KotlinParser
     current_annotations = {} of String => AnnotationModel
     method_start_index = nil
     param_start_index = nil
-    method_body_index = nil
     method_name = ""
     nesting = 0
-  
+
     class_tokens.each_with_index do |token, index|
       if token.type == :FUN
         param_start_index = nil
@@ -371,7 +369,7 @@ class KotlinParser
         method_name = class_tokens[index + 1].value if class_tokens[index + 1].type == :IDENTIFIER
         method_start_index = index
 
-        current_params = parse_formal_parameters(token.index+2)
+        current_params = parse_formal_parameters(token.index + 2)
         methods[method_name] = MethodModel.new(method_name, current_params, current_annotations)
       end
     end
@@ -396,62 +394,61 @@ class KotlinParser
     end
   end
 
-  def trace()
-      @classes.each do |_class|
-        _class.annotations.each_key do |annotation_name|
-          annotation_model =  _class.annotations[annotation_name]
-          print_tokens annotation_model.tokens, "#{_class.name} annotation"
+  def trace
+    @classes.each do |_class|
+      _class.annotations.each_key do |annotation_name|
+        annotation_model = _class.annotations[annotation_name]
+        print_tokens annotation_model.tokens, "#{_class.name} annotation"
+      end
+
+      puts("\n================ class #{_class.name} ==================")
+      _class.fields.each_key do |field_name|
+        field = _class.fields[field_name]
+        puts("[Field] #{field.access_modifier} #{field.val_or_var} #{field.name}: #{field.type} = #{field.init_value}")
+      end
+
+      _class.methods.each_key do |method_name|
+        _class.methods[method_name].params.each_with_index do |param_tokens, index|
+          print_tokens param_tokens, "#{method_name} #{index}st param"
         end
 
-        puts("\n================ class #{_class.name} ==================")
-
-        _class.fields.each_key do |field_name|
-          field = _class.fields[field_name]
-          puts("[Field] #{field.access_modifier} #{field.val_or_var} #{field.name}: #{field.type} = #{field.init_value}")
-        end
-
-        _class.methods.each_key do |method_name|
-          _class.methods[method_name].params.each_with_index do |param_tokens, index|
-            print_tokens param_tokens, "#{method_name} #{index}st param"
-          end
-        
-          _class.methods[method_name].annotations.each_key do |annotation_name|
-            annotation_model = _class.methods[method_name].annotations[annotation_name]
-            print_tokens annotation_model.tokens, "#{method_name} method annotation"
-          end
+        _class.methods[method_name].annotations.each_key do |annotation_name|
+          annotation_model = _class.methods[method_name].annotations[annotation_name]
+          print_tokens annotation_model.tokens, "#{method_name} method annotation"
         end
       end
+    end
   end
 
   class AnnotationModel
     property name : String
     property params : Array(Array(Token))
     property tokens : Array(Token)
-  
+
     def initialize(@name : String, @params : Array(Array(Token)), @tokens : Array(Token))
     end
   end
-  
+
   class ClassModel
     property name : String
     property methods : Hash(String, MethodModel)
     property fields : Hash(String, FieldModel)
     property annotations : Hash(String, AnnotationModel)
     property tokens : Array(Token)
-  
+
     def initialize(@annotations, @name, @fields, @methods, @tokens : Array(Token))
     end
   end
-  
+
   class MethodModel
     property name : String
     property params : Array(Array(Token))
     property annotations : Hash(String, AnnotationModel)
-  
+
     def initialize(@name, @params, @annotations)
     end
   end
-  
+
   class FieldModel
     property access_modifier : String
     property type : String
@@ -460,44 +457,44 @@ class KotlinParser
     property init_value : String
     property? has_getter : Bool
     property? has_setter : Bool
-  
+
     def initialize(@access_modifier, @val_or_var, @type, @name, @init_value)
       # [access_modifier] [static] [final] type name [= initial value] ;
       @has_getter = true
       @has_setter = val_or_var == "var"
     end
-  
+
     def has_getter=(value : Bool)
       @has_getter = value
     end
-  
+
     def has_setter=(value : Bool)
       @has_setter = value
     end
-  
+
     def to_s
       l = @access_modifier + " "
       if @is_static
         l += "static "
       end
-  
+
       if @is_final
         l += "final "
       end
-  
+
       l += "#{@type} #{@name}"
       if @init_value != ""
         l += " = \"#{@init_value}\""
       end
-  
+
       if @has_getter
         l += " (has_getter)"
       end
       if @has_setter
         l += " (has_setter)"
       end
-  
+
       l
     end
-  end  
+  end
 end

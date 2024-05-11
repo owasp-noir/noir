@@ -5,8 +5,8 @@ require "../../miniparsers/kotlin"
 class AnalyzerKotlinSpring < Analyzer
   REGEX_ROUTER_CODE_BLOCK = /route\(\)?.*?\);/m
   REGEX_ROUTE_CODE_LINE   = /((?:andRoute|route)\s*\(|\.)\s*(GET|POST|DELETE|PUT)\(\s*"([^"]*)/
-  FILE_CONTENT_CACHE = Hash(String, String).new
-  EXTENSION = ".kt"
+  FILE_CONTENT_CACHE      = Hash(String, String).new
+  EXTENSION               = ".kt"
 
   def analyze
     parser_map = Hash(String, KotlinParser).new
@@ -32,7 +32,7 @@ class AnalyzerKotlinSpring < Analyzer
               end
             rescue e
               next
-            end            
+            end
           end
         end
       elsif File.exists?(path) && path.ends_with?(EXTENSION)
@@ -67,7 +67,7 @@ class AnalyzerKotlinSpring < Analyzer
             if import_path.ends_with?("/*")
               import_directory = root_source_directory.join(import_path[..-3])
               if Dir.exists?(import_directory)
-                Dir.glob("#{import_directory}/*"+EXTENSION) do |_path|
+                Dir.glob("#{import_directory}/*" + EXTENSION) do |_path|
                   next if path == _path
                   if !parser_map.has_key?(_path)
                     _parser = create_parser(Path.new(_path))
@@ -103,7 +103,7 @@ class AnalyzerKotlinSpring < Analyzer
           package_class_map = package_map[package_directory]?
           if package_class_map.nil?
             package_class_map = Hash(String, KotlinParser::ClassModel).new
-            Dir.glob("#{package_directory}/*"+EXTENSION) do |_path|
+            Dir.glob("#{package_directory}/*" + EXTENSION) do |_path|
               next if path == _path
               if !parser_map.has_key?(_path)
                 _parser = create_parser(Path.new(_path))
@@ -122,7 +122,6 @@ class AnalyzerKotlinSpring < Analyzer
               package_map[package_directory] = package_class_map
             end
           end
-          
 
           # Extract URL mappings and methods from Spring MVC annotated classes
           class_map = package_class_map.merge(import_map)
@@ -374,7 +373,6 @@ class AnalyzerKotlinSpring < Analyzer
           end
         end
 
-        argument_name = method_param_tokens[-1].value
         parameter_type = method_param_tokens[-2].value
         if ["long", "int", "integer", "char", "boolean", "string", "multipartfile"].index(parameter_type.downcase)
           param_default_value = default_value.nil? ? "" : default_value
