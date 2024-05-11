@@ -13,12 +13,13 @@ noir_options = default_options()
 banner()
 
 OptionParser.parse do |parser|
-  parser.banner = "Usage: noir <flags>"
-  parser.separator "  Basic:".colorize(:blue)
+  parser.banner = "USAGE: noir <flags>\n"
+  parser.separator "FLAGS:"
+  parser.separator "  BASE:".colorize(:blue)
   parser.on "-b PATH", "--base-path ./app", "(Required) Set base path" { |var| noir_options[:base] = var }
   parser.on "-u URL", "--url http://..", "Set base url for endpoints" { |var| noir_options[:url] = var }
 
-  parser.separator "\n  Output:".colorize(:blue)
+  parser.separator "\n  OUTPUT:".colorize(:blue)
 
   parser.on "-f FORMAT", "--format json", "Set output format\n  * plain yaml json jsonl markdown-table\n  * curl httpie oas2 oas3\n  * only-url only-param only-header only-cookie" { |var| noir_options[:format] = var }
   parser.on "-o PATH", "--output out.txt", "Write result to file" { |var| noir_options[:output] = var }
@@ -33,7 +34,7 @@ OptionParser.parse do |parser|
     noir_options[:nolog] = "yes"
   end
 
-  parser.separator "\n  Tagger:".colorize(:blue)
+  parser.separator "\n  TAGGER:".colorize(:blue)
   parser.on "-T", "--use-all-taggers", "Activates all taggers for full analysis coverage" { |_| noir_options[:all_taggers] = "yes" }
   parser.on "--use-taggers VALUES", "Activates specific taggers (e.g., --use-taggers hunt,oauth)" { |var| noir_options[:use_taggers] = var }
   parser.on "--list-taggers", "Lists all available taggers" do
@@ -48,7 +49,7 @@ OptionParser.parse do |parser|
     exit
   end
 
-  parser.separator "\n  Deliver:".colorize(:blue)
+  parser.separator "\n  DELIVER:".colorize(:blue)
   parser.on "--send-req", "Send results to a web request" { |_| noir_options[:send_req] = "yes" }
   parser.on "--send-proxy http://proxy..", "Send results to a web request via an HTTP proxy" { |var| noir_options[:send_proxy] = var }
   parser.on "--send-es http://es..", "Send results to Elasticsearch" { |var| noir_options[:send_es] = var }
@@ -62,7 +63,7 @@ OptionParser.parse do |parser|
     noir_options[:use_filters] += "#{var}::NOIR::FILTER::SPLIT::"
   end
 
-  parser.separator "\n  Technologies:".colorize(:blue)
+  parser.separator "\n  TECHNOLOGIES:".colorize(:blue)
   parser.on "-t TECHS", "--techs rails,php", "Specify the technologies to use" { |var| noir_options[:techs] = var }
   parser.on "--exclude-techs rails,php", "Specify the technologies to be excluded" { |var| noir_options[:exclude_techs] = var }
   parser.on "--list-techs", "Show all technologies" do
@@ -77,11 +78,11 @@ OptionParser.parse do |parser|
     exit
   end
 
-  parser.separator "\n  Config:".colorize(:blue)
+  parser.separator "\n  CONFIG:".colorize(:blue)
   parser.on "--config-file ./config.yaml", "Specify the path to a configuration file in YAML format" { |var| noir_options[:config_file] = var }
   parser.on "--concurrency 100", "Set concurrency" { |var| noir_options[:concurrency] = var }
 
-  parser.separator "\n  Others:".colorize(:blue)
+  parser.separator "\n  OTHERS:".colorize(:blue)
   parser.on "-d", "--debug", "Show debug messages" do
     noir_options[:debug] = "yes"
   end
@@ -91,6 +92,18 @@ OptionParser.parse do |parser|
   end
   parser.on "-h", "--help", "Show help" do
     puts parser
+    puts ""
+    puts "EXAMPLES:"
+    puts "  Basic run of noir:".colorize(:green)
+    puts "      $ noir -b ."
+    puts "  Running noir targeting a specific URL and forwarding results through a proxy:".colorize(:green)
+    puts "      $ noir -b . -u http://example.com"
+    puts "      $ noir -b . -u http://example.com --send-proxy http://localhost:8090"
+    puts "  Running noir for detailed analysis:".colorize(:green)
+    puts "      $ noir -b . -T --include-path"
+    puts "  Running noir with output limited to JSON or YAML format, without logs:".colorize(:green)
+    puts "      $ noir -b . -f json --no-log"
+    puts "      $ noir -b . -f yaml --no-log"
     exit
   end
   parser.invalid_option do |flag|
