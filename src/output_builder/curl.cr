@@ -12,14 +12,14 @@ class OutputBuilderCurl < OutputBuilder
         if baked[:body_type] == "json"
           cmd += " -H \"Content-Type:application/json\""
         end
+      end
 
-        baked[:header].each do |header|
-          cmd += " -H \"#{header}\""
-        end
+      baked[:header].each do |header|
+        cmd += " -H \"#{header}\""
+      end
 
-        baked[:cookie].each do |cookie|
-          cmd += " --cookie \"#{cookie}\""
-        end
+      baked[:cookie].each do |cookie|
+        cmd += " --cookie \"#{cookie}\""
       end
 
       ob_puts cmd
