@@ -270,7 +270,6 @@ class AnalyzerKotlinSpring < Analyzer
     lexer = KotlinLexer.new
     tokens = lexer.tokenize(content)
     parser = KotlinParser.new(path.to_s, tokens)
-    parser.trace
     parser
   end
 

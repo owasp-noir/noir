@@ -161,9 +161,9 @@ class KotlinParser
   def parse_annotations(declare_token_index : Int32)
     skip_line = 0
     annotation_tokens = Hash(String, AnnotationModel).new
-
     cursor = declare_token_index - 1
     last_newline_index = -1
+    nesting = 0
     while cursor > 0
       if @tokens[cursor].type == :NEWLINE
         skip_line += 1
@@ -173,17 +173,34 @@ class KotlinParser
       end
 
       if skip_line == 2
-        # :NEWLINE(cursor) @RequestMapping
-        # :NEWLINE         public class Controller(type param)
         annotation_token_index = cursor + 1
         is_annotation = while annotation_token_index < last_newline_index
           if @tokens[annotation_token_index].type == :ANNOTATION
+            # :NEWLINE(cursor) @RequestMapping
+            # :NEWLINE         public class Controller(type param)
             break true
           elsif !(KotlinLexer::ANNOTATIONS[@tokens[annotation_token_index].value]?.nil?)
             break true
           elsif @tokens[annotation_token_index].type == :TAB || @tokens[annotation_token_index].type == :NEWLINE
             annotation_token_index += 1
             next
+          elsif @tokens[annotation_token_index].type == :RPAREN
+            # :NEWLINE @RequestMapping(a,
+            # :NEWLINE b)
+            # :NEWLINE public class Controller(type param)
+            nesting -= 1
+            i = annotation_token_index - 1
+            while 1 < i
+              if @tokens[i].type == :LPAREN
+                nesting += 1
+              elsif @tokens[i].type == :RPAREN
+                nesting -= 1
+              elsif nesting == 0
+                annotation_token_index = i - 1
+                break @tokens[annotation_token_index].type == :ANNOTATION
+              end
+              i -= 1
+            end
           else
             break false
           end
