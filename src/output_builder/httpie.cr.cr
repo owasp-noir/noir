@@ -12,13 +12,14 @@ class OutputBuilderHttpie < OutputBuilder
         if baked[:body_type] == "json"
           cmd += " \"Content-Type:application/json\""
         end
-        baked[:header].each do |header|
-          cmd += " \"#{header}\""
-        end
+      end
 
-        baked[:cookie].each do |cookie|
-          cmd += " \"Cookie: #{cookie}\""
-        end
+      baked[:header].each do |header|
+        cmd += " \"#{header}\""
+      end
+
+      baked[:cookie].each do |cookie|
+        cmd += " \"Cookie: #{cookie}\""
       end
 
       ob_puts cmd

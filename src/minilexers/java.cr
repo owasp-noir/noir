@@ -174,11 +174,11 @@ class JavaLexer < MiniLexer
   end
 
   def tokenize_logic(@input : String) : Array(Token)
+    after_skip = -1
     while @position < @input.size
-      before_skip_position = -1
-      while before_skip_position < @position
+      while @position != after_skip
         skip_whitespace_and_comments
-        before_skip_position = @position
+        after_skip = @position
       end
       break if @position == @input.size
 
@@ -192,7 +192,7 @@ class JavaLexer < MiniLexer
       when '"'
         match_string_literal_or_text_block
       else
-        match_symbol_or_operator
+        match_other
       end
     end
 
@@ -335,7 +335,7 @@ class JavaLexer < MiniLexer
       @position += match[0].size
     else
       # impossible to reach here
-      self << Tuple.new(:IDENTIFIER, @input[@position].to_s)
+      self << Tuple.new(:UNKNOWN, @input[@position].to_s)
       @position += 1
     end
   end
@@ -349,28 +349,35 @@ class JavaLexer < MiniLexer
       @position += match[0].size
     else
       # impossible to reach here
-      self << Tuple.new(:IDENTIFIER, @input[@position].to_s)
+      self << Tuple.new(:UNKNOWN, @input[@position].to_s)
       @position += 1
     end
   end
 
-  def match_symbol_or_operator
+  def match_other
     case @input[@position]
-    when '('  then self << Tuple.new(:LPAREN, "(")
-    when ')'  then self << Tuple.new(:RPAREN, ")")
-    when ' '  then self << Tuple.new(:WHITESPACE, " ")
-    when '.'  then self << Tuple.new(:DOT, ".")
-    when ','  then self << Tuple.new(:COMMA, ",")
-    when '@'  then self << Tuple.new(:AT, "@")
-    when '{'  then self << Tuple.new(:LBRACE, "{")
-    when '}'  then self << Tuple.new(:RBRACE, "}")
+    when '(' then self << Tuple.new(:LPAREN, "(")
+    when ')' then self << Tuple.new(:RPAREN, ")")
+    when '.' then self << Tuple.new(:DOT, ".")
+    when ',' then self << Tuple.new(:COMMA, ",")
+    when '@' then self << Tuple.new(:AT, "@")
+    when '{' then self << Tuple.new(:LBRACE, "{")
+    when '}' then self << Tuple.new(:RBRACE, "}")
+    when ';' then self << Tuple.new(:SEMI, ";")
+    when '='
+      if @input[@position + 1] == '='
+        @position += 1
+        Tuple.new(:EQUAL, "==")
+      else
+        Tuple.new(:ASSIGN, "=")
+      end
     when '\t' then self << Tuple.new(:TAB, "\t")
-    when ';'  then self << Tuple.new(:SEMI, ";")
-    when '='  then self << Tuple.new(:ASSIGN, "=")
     when '\n'
       self << Tuple.new(:NEWLINE, "\n")
+    when ' '
+      # Skipping whitespace for efficiency
     else
-      self << Tuple.new(:IDENTIFIER, @input[@position].to_s)
+      self << Tuple.new(:UNKNOWN, @input[@position].to_s)
     end
     @position += 1
   end

@@ -88,7 +88,7 @@
 </details>
 
 ## Installation
-### Homebrew (macOS)
+### Homebrew
 
 ```bash
 brew install noir
@@ -96,7 +96,7 @@ brew install noir
 # https://formulae.brew.sh/formula/noir
 ```
 
-### Snapcraft (linux)
+### Snapcraft
 
 ```bash
 sudo snap install noir
@@ -125,17 +125,23 @@ cp ./bin/noir /usr/bin/
 
 ### Docker (GHCR)
 ```bash
-docker pull ghcr.io/noir-cr/noir:latest
+docker pull ghcr.io/noir-cr/noir:main
 ```
 
 ## Usage
+```bash
+noir -h 
 ```
-Usage: noir <flags>
-  Basic:
+
+```
+USAGE: noir <flags>
+
+FLAGS:
+  BASE:
     -b PATH, --base-path ./app       (Required) Set base path
     -u URL, --url http://..          Set base url for endpoints
 
-  Output:
+  OUTPUT:
     -f FORMAT, --format json         Set output format
                                        * plain yaml json jsonl markdown-table
                                        * curl httpie oas2 oas3
@@ -146,12 +152,12 @@ Usage: noir <flags>
     --no-color                       Disable color output
     --no-log                         Displaying only the results
 
-  Tagger:
+  TAGGER:
     -T, --use-all-taggers            Activates all taggers for full analysis coverage
-    --use-taggers VALUES             Activates specific taggers (e.g., --use-taggers hunt,etc)
+    --use-taggers VALUES             Activates specific taggers (e.g., --use-taggers hunt,oauth)
     --list-taggers                   Lists all available taggers
 
-  Deliver:
+  DELIVER:
     --send-req                       Send results to a web request
     --send-proxy http://proxy..      Send results to a web request via an HTTP proxy
     --send-es http://es..            Send results to Elasticsearch
@@ -159,16 +165,16 @@ Usage: noir <flags>
     --use-matchers string            Send URLs that match specific conditions to the Deliver
     --use-filters string             Exclude URLs that match specified conditions and send the rest to Deliver
 
-  Technologies:
+  TECHNOLOGIES:
     -t TECHS, --techs rails,php      Specify the technologies to use
     --exclude-techs rails,php        Specify the technologies to be excluded
     --list-techs                     Show all technologies
 
-  Config:
+  CONFIG:
     --config-file ./config.yaml      Specify the path to a configuration file in YAML format
     --concurrency 100                Set concurrency
 
-  Others:
+  OTHERS:
     -d, --debug                      Show debug messages
     -v, --version                    Show version
     -h, --help                       Show help

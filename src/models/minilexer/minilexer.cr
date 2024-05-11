@@ -37,6 +37,14 @@ class MiniLexer
     @tokens << Token.new(t[0], t[1], @tokens.size, @position, line())
   end
 
+  def <<(t : Tuple(Symbol, Char))
+    @tokens << Token.new(t[0], t[1].to_s, @tokens.size, @position, line())
+  end
+
+  def <<(t : Tuple(Symbol, Char | String))
+    @tokens << Token.new(t[0], t[1].to_s, @tokens.size, @position, line())
+  end
+
   def tokenize(@input : String) : Array(Token)
     results = tokenize_logic(input)
 
@@ -57,14 +65,13 @@ class MiniLexer
   end
 
   def trace
-    line_number = 1
-    # source_line = ""
+    line_number = -1
     lines = @input.split "\n"
     puts "line size: #{lines.size}, token number: #{tokens.size}"
     @tokens.each do |token|
-      if token.line == line_number
-        puts "\nLine #{line_number}: " + lines[line_number - 1]
-        line_number += 1
+      if line_number <= token.line
+        puts "\nLine #{token.line}: " + lines[token.line - 1]
+        line_number = token.line + 1
       end
       puts token.to_s
     end

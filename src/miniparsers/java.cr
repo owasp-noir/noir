@@ -67,23 +67,30 @@ class JavaParser
   def parse_import_statements(tokens : Array(Token))
     import_tokens = tokens.select { |token| token.type == :IMPORT }
     import_tokens.each do |import_token|
-      next_token_index = import_token.index + 2
+      next_token_index = import_token.index + 1
       next_token = tokens[next_token_index]
 
-      if next_token && next_token.type == :IDENTIFIER
-        import_statement = next_token.value
-        next_token_index += 1
-
-        while next_token_index < tokens.size && tokens[next_token_index].type == :DOT
+      if next_token
+        if next_token.type == :STATIC
           next_token_index += 1
-          identifier_token = tokens[next_token_index]
-          break if !identifier_token || identifier_token.type != :IDENTIFIER
-
-          import_statement += ".#{identifier_token.value}"
-          next_token_index += 1
+          next_token = tokens[next_token_index]
         end
+        if next_token.type == :IDENTIFIER
+          import_statement = next_token.value
+          next_token_index += 1
 
-        @import_statements << import_statement
+          while next_token_index < tokens.size && tokens[next_token_index].type == :DOT
+            next_token_index += 1
+            identifier_token = tokens[next_token_index]
+            break if !identifier_token
+            break if identifier_token.type != :IDENTIFIER && identifier_token.value != "*"
+
+            import_statement += ".#{identifier_token.value}"
+            next_token_index += 1
+          end
+
+          @import_statements << import_statement
+        end
       end
     end
   end
@@ -98,9 +105,7 @@ class JavaParser
     return parameters if tokens.size <= param_start_index
 
     while param_start_index < tokens.size
-      if tokens[param_start_index].type == :WHITESPACE
-        param_start_index += 1
-      elsif tokens[param_start_index].type == :TAB
+      if tokens[param_start_index].type == :TAB
         param_start_index += 1
       elsif tokens[param_start_index].type == :NEWLINE
         param_start_index += 1
@@ -138,7 +143,7 @@ class JavaParser
             parameter_token << token
           end
         else
-          unless token.type == :WHITESPACE || token.type == :TAB || token.type == :NEWLINE
+          unless token.type == :TAB || token.type == :NEWLINE
             parameter_token << token
           end
         end
@@ -171,7 +176,7 @@ class JavaParser
         starts_with_at = while annotation_token_index < last_newline_index
           if tokens[annotation_token_index].type == :AT
             break true
-          elsif tokens[annotation_token_index].type == :WHITESPACE || tokens[annotation_token_index].type == :TAB || tokens[annotation_token_index].type == :WHITESPACE
+          elsif tokens[annotation_token_index].type == :TAB
             annotation_token_index += 1
             next
           else
@@ -202,7 +207,7 @@ class JavaParser
 
     lbrace = rbrace = 0
     tokens.each do |token|
-      if !start_token_parse && token.type == :CLASS && tokens[token.index + 1].type == :WHITESPACE
+      if !start_token_parse && token.type == :CLASS
         start_token_parse = true
         class_body = Array(Token).new
         lbrace = rbrace = 0
@@ -292,7 +297,7 @@ class JavaParser
 
             line_tokens = Array(Token).new
             class_tokens[field_index + 1..semi_index - 1].each do |line_token|
-              next if line_token.type == :WHITESPACE || line_token.type == :TAB
+              next if line_token.type == :TAB
               line_tokens << line_token
             end
 
@@ -427,7 +432,7 @@ class JavaParser
               end
 
               break
-            elsif previous_token.type == :WHITESPACE || previous_token.type == :TAB || previous_token.type == :NEWLINE
+            elsif previous_token.type == :TAB || previous_token.type == :NEWLINE
               previous_token_index -= 1
               next
             elsif has_exception
