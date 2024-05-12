@@ -194,7 +194,7 @@ class AnalyzerKotlinSpring < Analyzer
                     if request_methods.empty?
                       # Handle default HTTP methods if no specific method is annotated
                       ["GET", "POST", "PUT", "DELETE", "PATCH"].each do |_request_method|
-                        parameters = get_endpoint_parameters(parser, _request_method, method, parameter_format, class_map)
+                        parameters = get_endpoint_parameters(parser, method, parameter_format, class_map)
                         url_paths.each do |url_path|
                           @result << Endpoint.new("#{webflux_base_path}#{url}#{url_path}", _request_method, parameters, details)
                         end
@@ -203,7 +203,7 @@ class AnalyzerKotlinSpring < Analyzer
                       # Create endpoints for annotated HTTP methods
                       url_paths.each do |url_path|
                         request_methods.each do |request_method|
-                          parameters = get_endpoint_parameters(parser, request_method, method, parameter_format, class_map)
+                          parameters = get_endpoint_parameters(parser, method, parameter_format, class_map)
                           @result << Endpoint.new("#{webflux_base_path}#{url}#{url_path}", request_method, parameters, details)
                         end
                       end
@@ -219,7 +219,7 @@ class AnalyzerKotlinSpring < Analyzer
                       if parameter_format.nil? && request_method == "POST"
                         parameter_format = "form"
                       end
-                      parameters = get_endpoint_parameters(parser, request_method, method, parameter_format, class_map)
+                      parameters = get_endpoint_parameters(parser, method, parameter_format, class_map)
 
                       url_paths = [""]
                       if method_annotation.params.size > 0
@@ -323,69 +323,91 @@ class AnalyzerKotlinSpring < Analyzer
     url_paths
   end
 
-  def get_endpoint_parameters(parser : KotlinParser, request_method : String, method : KotlinParser::MethodModel, parameter_format : String | Nil, package_class_map : Hash(String, KotlinParser::ClassModel)) : Array(Param)
+  def get_endpoint_parameters(parser : KotlinParser, method : KotlinParser::MethodModel, parameter_format : String | Nil, package_class_map : Hash(String, KotlinParser::ClassModel)) : Array(Param)
     endpoint_parameters = Array(Param).new
-    method.params.each do |method_param_tokens|
-      next if method_param_tokens.size == 0
-      if method_param_tokens[-1].type == :IDENTIFIER
-        if method_param_tokens[0].type == :AT
-          if method_param_tokens[1].value == "PathVariable"
-            next
-          elsif method_param_tokens[1].value == "RequestBody"
-            if parameter_format.nil?
-              parameter_format = "json"
-            end
-          elsif method_param_tokens[1].value == "RequestParam"
-            parameter_format = "query"
-          elsif method_param_tokens[1].value == "RequestHeader"
-            parameter_format = "header"
-          end
-        end
+    method.params.each do |tokens|
+      next if tokens.size < 4
 
+      i = 0
+      while i < tokens.size - 1 && tokens[i + 1].type == :ANNOTATION
+        i += 1
+      end
+
+      token = tokens[i]
+      next if token.type != :ANNOTATION
+
+      name = token.value
+      if name == "@RequestBody"
         if parameter_format.nil?
-          parameter_format = "query"
+          parameter_format = "json"
         end
+      elsif name == "@RequestParam"
+        parameter_format = "query"
+      elsif name == "@RequestHeader"
+        parameter_format = "header"
+      elsif name == "@PathVariable"
+        next
+      else
+        next
+      end
 
-        default_value = nil
-        # Extract parameter name directly if not an identifier
-        parameter_name = method_param_tokens[-1].value
-        if method_param_tokens.size > 2
-          if method_param_tokens[2].type == :LPAREN
-            request_parameters = parser.parse_formal_parameters(method_param_tokens[2].index)
-            request_parameters.each do |request_parameter_tokens|
-              if request_parameter_tokens.size > 2
-                request_param_name = request_parameter_tokens[0].value
-                request_param_value = request_parameter_tokens[-1].value
+      if parameter_format.nil?
+        parameter_format = "query"
+      end
 
-                # Extract 'name' from @RequestParam(value/defaultValue = "name")
-                if request_param_name == "value"
-                  parameter_name = request_param_value[1..-2]
-                elsif request_param_name == "defaultValue"
-                  default_value = request_param_value[1..-2]
-                end
-              end
+      default_value = ""
+      parameter_name = ""
+      parameter_type = nil
+      # Extract the route's parameter name from annotation attributes
+      if tokens[i + 1].type == :LPAREN
+        # Parse formal parameters to get attributes
+        attributes = parser.parse_formal_parameters(tokens[i + 1].index)
+        attributes.each do |attribute_tokens|
+          # Check if the attribute has been assigned a type
+          if attribute_tokens.size > 2
+            attribute_name = attribute_tokens[0].value
+            attribute_value = attribute_tokens[-3].value
+
+            # Extract 'name' from attributes like "@RequestParam(value/defaultValue = "name") name : String"
+            if attribute_name == "value"
+              parameter_name = attribute_value
+            elsif attribute_name == "defaultValue"
+              default_value = attribute_value
             end
-            # Handle direct string literal as parameter name, e.g., @RequestParam("name")
-            if method_param_tokens[3].type == :STRING_LITERAL
-              parameter_name_token = method_param_tokens[3]
-              parameter_name = parameter_name_token.value[1..-2]
-            end
+          else
+            parameter_name = attribute_tokens[0].value
           end
-        end
 
-        parameter_type = method_param_tokens[-2].value
-        if ["long", "int", "integer", "char", "boolean", "string", "multipartfile"].index(parameter_type.downcase)
-          param_default_value = default_value.nil? ? "" : default_value
-          endpoint_parameters << Param.new(parameter_name, param_default_value, parameter_format)
-        else
-          # Map fields of user-defined class to parameters.
-          if package_class_map.has_key?(parameter_type)
-            package_class = package_class_map[parameter_type]
-            package_class.fields.values.each do |field|
-              if field.access_modifier == "public" || field.has_setter?
-                param_default_value = default_value.nil? ? field.init_value : default_value
-                endpoint_parameters << Param.new(field.name, param_default_value, parameter_format)
-              end
+          # Remove double quotes from the attribute value
+          if default_value.size > 2 && default_value[0] == '"' && default_value[-1] == '"'
+            default_value = default_value[1..-2]
+          end
+          if parameter_name.size > 2 && parameter_name[0] == '"' && parameter_name[-1] == '"'
+            parameter_name = parameter_name[1..-2]
+          end
+
+          parameter_type = attribute_tokens[-1].value
+        end
+      else
+        # Extract 'name' from annotation like "@RequestParam name : String"
+        if tokens[-2].type == :COLON && tokens[-3].type == :IDENTIFIER
+          parameter_name = tokens[-3].value
+          parameter_type = tokens[-1].value
+        end
+      end
+      next if parameter_name == "" || parameter_type.nil?
+
+      if ["long", "int", "integer", "char", "boolean", "string", "multipartfile"].index(parameter_type.downcase)
+        param_default_value = default_value.nil? ? "" : default_value
+        endpoint_parameters << Param.new(parameter_name, param_default_value, parameter_format)
+      else
+        # Map fields of user-defined class to parameters.
+        if package_class_map.has_key?(parameter_type)
+          package_class = package_class_map[parameter_type]
+          package_class.fields.values.each do |field|
+            if field.access_modifier == "public" || field.has_setter?
+              param_default_value = default_value.nil? ? field.init_value : default_value
+              endpoint_parameters << Param.new(field.name, param_default_value, parameter_format)
             end
           end
         end
