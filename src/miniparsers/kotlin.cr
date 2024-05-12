@@ -318,11 +318,29 @@ class KotlinParser
       has_type = false
       has_init_value = false
       init_value = ""
+      skip_attributes = false
 
-      param.each do |param_token|
-        token_value = param_token.value
-        token_type = param_token.type
-        if token_value == "open"
+      index = 0
+      nesting = 0
+      token_size = param.size
+      while index < token_size
+        token = param[index]
+        token_value = token.value
+        token_type = token.type
+
+        if token_type == :ANNOTATION
+          skip_attributes = true
+        elsif skip_attributes
+          if token_type == :LPAREN
+            nesting += 1
+          elsif token_type == :RPAREN
+            nesting -= 1
+          end
+
+          if nesting == 0
+            skip_attributes = false
+          end
+        elsif token_value == "open"
           next
         elsif [:PRIVATE, :PUBLIC, :PROTECTED, :INTERNAL].index(token_type)
           modifier = token_value
@@ -339,9 +357,11 @@ class KotlinParser
         elsif token_type == :COLON
           has_type = true
         end
-      end
-      next if val_or_var.nil? || field_type.nil? || field_name.nil?
 
+        index += 1
+      end
+
+      next if val_or_var.nil? || field_type.nil? || field_name.nil?
       fields[field_name] = FieldModel.new(modifier, val_or_var, field_type, field_name, init_value)
     end
 
