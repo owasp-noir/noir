@@ -16,3 +16,7 @@ shards:
     git: https://github.com/mamantoha/http_proxy.git
     version: 0.10.3
 
+  toml:
+    git: https://github.com/crystal-community/toml.cr.git
+    version: 0.8.1+git.commit.030a3866af395bfb9fe2cce234d9b3d0d8f3ad3c
+
