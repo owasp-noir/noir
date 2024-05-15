@@ -14,7 +14,11 @@ class DetectorJekyll < Detector
           else
             locator.push("jekyll-basepath", yaml["baseurl"].to_s)
           end
+        else
+          locator.push("jekyll-basepath", "/")
         end
+
+        locator.push("jekyll-config", filename)
       rescue
       end
     end

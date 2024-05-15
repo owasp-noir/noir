@@ -33,6 +33,7 @@ def initialize_analyzers(logger : NoirLogger)
   analyzers["ruby_sinatra"] = ->analyzer_ruby_sinatra(Hash(Symbol, String))
   analyzers["rust_axum"] = ->analyzer_rust_axum(Hash(Symbol, String))
   analyzers["rust_rocket"] = ->analyzer_rust_rocket(Hash(Symbol, String))
+  analyzers["jekyll"] = ->analyzer_jekyll(Hash(Symbol, String))
 
   logger.info_sub "#{analyzers.size} Analyzers initialized"
   logger.debug "Analyzers:"
