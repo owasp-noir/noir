@@ -21,6 +21,7 @@ def default_options
     :use_matchers      => "",
     :all_taggers       => "no",
     :use_taggers       => "",
+    :diff              => "",
   }
 
   noir_options
@@ -35,6 +36,7 @@ def run_options_parser
     parser.separator "  BASE:".colorize(:blue)
     parser.on "-b PATH", "--base-path ./app", "(Required) Set base path" { |var| noir_options[:base] = var }
     parser.on "-u URL", "--url http://..", "Set base url for endpoints" { |var| noir_options[:url] = var }
+    parser.on "--diff-path ./app_old", "Set sub path for diff" { |var| noir_options[:diff] = var }
 
     parser.separator "\n  OUTPUT:".colorize(:blue)
 

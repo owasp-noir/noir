@@ -9,9 +9,13 @@ module Noir
   VERSION = "0.15.1"
 end
 
+# Print banner
 banner()
+
+# Run options parser
 noir_options = run_options_parser()
 
+# Check base path
 if noir_options[:base] == ""
   STDERR.puts "ERROR: Base path is required."
   STDERR.puts "Please use -b or --base-path to set base path."
@@ -19,6 +23,7 @@ if noir_options[:base] == ""
   exit(1)
 end
 
+# Run Noir
 app = NoirRunner.new noir_options
 app.logger.debug("Start Debug mode")
 app.logger.debug("Noir version: #{Noir::VERSION}")
