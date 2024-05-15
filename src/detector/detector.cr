@@ -1,4 +1,4 @@
-require "./detectors/*"
+require "./detectors/**"
 require "../models/detector"
 
 macro defind_detectors(detectors)
@@ -42,6 +42,8 @@ def detect_techs(base_path : String, options : Hash(Symbol, String), logger : No
     DetectorRubySinatra,
     DetectorRustAxum,
     DetectorRustRocket,
+    DetectorJekyll,
+    DetectorHugo,
   ])
 
   channel = Channel(String).new
