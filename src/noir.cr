@@ -37,26 +37,37 @@ app.options.each do |k, v|
   app.logger.debug_sub "#{k}: #{v}"
 end
 
-app.logger.system "Detecting technologies to base directory."
-app.detect
+if noir_options[:diff] != ""
+  # Run Diff mode
+  diff_options = noir_options
+  diff_options[:base] = noir_options[:diff]
 
-if app.techs.size == 0
-  app.logger.info "No technologies detected."
-  if app.options[:url] != ""
-    app.logger.system "Start file-based analysis as the -u flag has been used."
-  else
-    exit(0)
-  end
+  app_diff = NoirRunner.new diff_options
+  # TODO
+
 else
-  app.logger.info "Detected #{app.techs.size} technologies."
-  app.techs.each do |tech|
-    app.logger.info_sub "#{tech}"
+  # Run Default mode
+  app.logger.system "Detecting technologies to base directory."
+  app.detect
+
+  if app.techs.size == 0
+    app.logger.info "No technologies detected."
+    if app.options[:url] != ""
+      app.logger.system "Start file-based analysis as the -u flag has been used."
+    else
+      exit(0)
+    end
+  else
+    app.logger.info "Detected #{app.techs.size} technologies."
+    app.techs.each do |tech|
+      app.logger.info_sub "#{tech}"
+    end
+    app.logger.system "Start code analysis based on the detected technology."
   end
-  app.logger.system "Start code analysis based on the detected technology."
+
+  app.analyze
+  app.logger.info "Finally identified #{app.endpoints.size} endpoints."
+
+  app.logger.system "Generating Report."
+  app.report
 end
-
-app.analyze
-app.logger.info "Finally identified #{app.endpoints.size} endpoints."
-
-app.logger.system "Generating Report."
-app.report
