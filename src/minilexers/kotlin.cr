@@ -132,7 +132,7 @@ class KotlinLexer < MiniLexer
   end
 
   private def match_identifier_or_keyword
-    if match = @input.match(/[a-zA-Z_][a-zA-Z0-9_]*|`[^`]+`/, @position)
+    if match = @input.match(/[a-zA-Z_][a-zA-Z0-9_]*/, @position)
       type = KEYWORDS[match[0]]? || :IDENTIFIER
       self << Tuple.new(type, match[0])
       @position += match[0].size
@@ -143,7 +143,7 @@ class KotlinLexer < MiniLexer
   end
 
   private def match_annotation
-    if match = @input.match(/\@[a-zA-Z_][a-zA-Z0-9_]*|`[^`]+`/, @position)
+    if match = @input.match(/\@[a-zA-Z_][a-zA-Z0-9_]*/, @position)
       type = KotlinLexer::ANNOTATIONS[match[0]]? || :ANNOTATION
       self << Tuple.new(type, match[0])
       @position += match[0].size
@@ -229,9 +229,22 @@ class KotlinLexer < MiniLexer
 
   def match_other
     case @input[@position]
-    when '\t' then self << Tuple.new(:TAB, "\t")
+    when '<'
+      self << Tuple.new(:LANGLE, '<')
+    when '>'
+      self << Tuple.new(:RANGLE, '>')
+    when '['
+      self << Tuple.new(:LSQUARE, '[')
+    when ']'
+      self << Tuple.new(:RSQUARE, ']')
+    when '?'
+      self << Tuple.new(:QUESTION, '?')
+    when '\t'
+      self << Tuple.new(:TAB, "\t")
     when '\n'
       self << Tuple.new(:NEWLINE, "\n")
+    when '@'
+      self << Tuple.new(:AT, '@')
     when ' '
       # Skipping whitespace for efficiency
     else

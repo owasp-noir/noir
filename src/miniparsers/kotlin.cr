@@ -1,6 +1,17 @@
 require "../minilexers/kotlin"
 require "../models/minilexer/token"
 
+BRACKET_PAIRS = {
+  :LPAREN => :RPAREN,
+  :RBRACE => :LBRACE,
+  :LSQUARE => :RSQUARE,
+  :LANGLE => :RANGLE,
+  :RPAREN => :LPAREN,
+  :LBRACE => :RBRACE,
+  :RSQUARE => :LSQUARE,
+  :RANGLE => :LANGLE
+}
+
 class KotlinParser
   property classes_tokens : Array(Array(Token))
   property classes : Array(ClassModel)
@@ -23,7 +34,7 @@ class KotlinParser
       name_token = get_class_name(class_tokens)
       next if name_token.nil?
       methods = parse_methods(class_tokens)
-      annotations = parse_annotations(class_tokens[0].index)
+      annotations = parse_annotations_backwards(class_tokens[0].index)
       fields = parse_class_fields(name_token.index)
       @classes << ClassModel.new(annotations, name_token.value, fields, methods, class_tokens)
     end
@@ -96,132 +107,217 @@ class KotlinParser
     end
   end
 
-  def parse_formal_parameters(param_start_index : Int32)
-    lparen_count = 0
-    rparen_count = 0
-    lbrace_count = 0
-    rbrace_count = 0
-    parameters = Array(Array(Token)).new
-    parameter = Array(Token).new
-    return parameters if @tokens.size <= param_start_index
+  def find_bracket_partner(param_start_index : Int32)
+    token = @tokens[param_start_index]
+    next_direction = true
+    open_bracket = token.type
+    close_bracket = BRACKET_PAIRS[token.type]?
+    return nil if close_bracket.nil?
 
-    while param_start_index < @tokens.size
-      if @tokens[param_start_index].type == :TAB
-        param_start_index += 1
-      elsif @tokens[param_start_index].type == :NEWLINE
-        param_start_index += 1
-      elsif @tokens[param_start_index].type == :LPAREN
-        break
-      else
-        return parameters
-      end
+    if [:RPAREN, :RBRACE, :RSQUARE, :RANGLE].index(token.type)
+      next_direction = false
+      open_bracket = BRACKET_PAIRS[token.type]?
+      close_bracket = token.type
     end
 
-    cursor = param_start_index
-    while cursor < @tokens.size
-      token = @tokens[cursor]
-      if token.type == :LPAREN
-        lparen_count += 1
-        if lparen_count > 1
-          parameter << token
+    if next_direction
+      nesting = 1
+      index = param_start_index + 1
+      while index < @tokens.size
+        token = @tokens[index]
+        if token.type == open_bracket
+          nesting += 1
+        elsif token.type == close_bracket
+          nesting -= 1
+          if nesting == 0
+            return index
+          end
         end
-      elsif token.type == :LBRACE
-        lbrace_count += 1
-        parameter << token
-      elsif token.type == :RBRACE
-        rbrace_count += 1
-        parameter << token
-      elsif lbrace_count == rbrace_count && lparen_count - 1 == rparen_count && token.type == :COMMA
+
+        index += 1
+      end
+    else
+      nesting = -1
+      index = param_start_index - 1
+      while index >= 0
+        token = @tokens[index]
+        if token.type == open_bracket
+          nesting += 1
+          if nesting == 0
+            return index
+          end
+        elsif token.type == close_bracket
+          nesting -= 1
+        end
+
+        index -= 1
+      end
+    end
+  end
+
+  def parse_formal_parameters(param_start_index : Int32)
+    parameters = Array(Array(Token)).new
+    partner_index = find_bracket_partner(param_start_index)
+    if partner_index.nil?
+      return parameters
+    end
+
+    parameter = Array(Token).new
+    start_index = param_start_index + 1
+    end_index = partner_index - 1
+    if start_index > end_index
+      start_index, end_index = end_index, start_index
+    end
+
+    while start_index <= end_index
+      token = @tokens[start_index]
+      if token.type == :COMMA
         parameters << parameter
         parameter = Array(Token).new
-      elsif lparen_count > 0
-        if token.type == :RPAREN
-          rparen_count += 1
-          if lparen_count == rparen_count
-            if parameter.size != 0
-              parameters << parameter
-            end
-            break
-          else
-            parameter << token
-          end
-        else
-          unless token.type == :TAB || token.type == :NEWLINE
-            parameter << token
-          end
-        end
+      elsif token.type != :TAB && token.type != :NEWLINE
+        parameter << token
       end
 
-      cursor += 1
+      start_index += 1
+    end
+
+    if parameter.size > 0
+      parameters << parameter
     end
 
     parameters
   end
 
-  def parse_annotations(declare_token_index : Int32)
-    skip_line = 0
-    annotation_tokens = Hash(String, AnnotationModel).new
-    cursor = declare_token_index - 1
-    last_newline_index = -1
-    nesting = 0
-    while cursor > 0
-      if @tokens[cursor].type == :NEWLINE
-        skip_line += 1
-        if skip_line == 1
-          last_newline_index = cursor
-        end
-      end
+  def find_annotation_end(start_index)
+    if @tokens[start_index] != :ANNOTATION
+      return nil
+    end
+    
+    annotation_token = @tokens[start_index]
+    annotation_name = annotation_token.value
+    if ["@field", "@file", "@property", "@get", "@set", "@receiver", "@param", "@setparam", "@delegate"].index(annotation_name)
+      # annotationUseSiteTarget NL* COLON NL* unescapedAnnotation
+      # annotationUseSiteTarget COLON LSQUARE unescapedAnnotation+ RSQUARE
+      index = start_index + 1
+      while index < @tokens.size
+        token = @tokens[index]
+        token_value = token.value
+        token_type = token.type
 
-      if skip_line == 2
-        annotation_token_index = cursor + 1
-        is_annotation = while annotation_token_index < last_newline_index
-          if @tokens[annotation_token_index].type == :ANNOTATION
-            # :NEWLINE(cursor) @RequestMapping
-            # :NEWLINE         public class Controller(type param)
-            break true
-          elsif !(KotlinLexer::ANNOTATIONS[@tokens[annotation_token_index].value]?.nil?)
-            break true
-          elsif @tokens[annotation_token_index].type == :TAB || @tokens[annotation_token_index].type == :NEWLINE
-            annotation_token_index += 1
-            next
-          elsif @tokens[annotation_token_index].type == :RPAREN
-            # :NEWLINE @RequestMapping(a,
-            # :NEWLINE b)
-            # :NEWLINE public class Controller(type param)
-            nesting -= 1
-            i = annotation_token_index - 1
-            while 1 < i
-              if @tokens[i].type == :LPAREN
-                nesting += 1
-              elsif @tokens[i].type == :RPAREN
-                nesting -= 1
-              elsif nesting == 0
-                annotation_token_index = i - 1
-                break @tokens[annotation_token_index].type == :ANNOTATION
-              end
-              i -= 1
-            end
-          else
-            break false
+        if token_type == :NEWLINE
+          index += 1
+        elsif token_type == :COLON
+          index += 1
+        elsif token_type == :IDENTIFIER
+          index += 1
+        elsif token_type == :LANGLE
+          # typeArguments
+          index = find_bracket_partner(index) + 1
+          if @tokens[index].type == :QUEST
+            index += 1
           end
-        end
-
-        if is_annotation
-          annotation_name = @tokens[annotation_token_index].value
-          annotation_params = parse_formal_parameters(annotation_token_index + 1)
-          annotation_tokens[annotation_name] = AnnotationModel.new(annotation_name, annotation_params, @tokens[annotation_token_index..last_newline_index - 1])
-          skip_line = 1
-          last_newline_index = cursor
-          is_annotation = false
+        elsif token_type == :LPAREN || token_type == :LSQUARE
+          # valueArguments, arrayAccess
+          index = find_bracket_partner(index) + 1
         else
-          break
+          return nil
         end
       end
 
+      return index
+    elsif annotation_name.start_with?("@")
+      # LabelReference (NL* DOT NL* simpleIdentifier)* (NL* typeArguments)? (NL* valueArguments)?
+      # AT LSQUARE unescapedAnnotation+ RSQUARE
+      index = start_index + 1
+      while index < @tokens.size
+        token = @tokens[index]
+        token_value = token.value
+        token_type = token.type
+
+        if token_type == :NEWLINE
+          index += 1
+        elsif token_type == :DOT
+          index += 1
+        elsif token_type == :IDENTIFIER
+          index += 1
+        elsif token_type == :LANGLE
+          # typeArguments
+          index = find_bracket_partner(index) + 1
+          if @tokens[index].type == :QUEST
+            index += 1
+          end
+        elsif token_type == :LPAREN || token_type == :LSQUARE
+          # valueArguments, arrayAccess
+          index = find_bracket_partner(index) + 1
+        else
+          return nil
+        end
+      end
+    end
+
+    return index
+  end
+
+  def find_annotation_start(end_index)
+    return nil unless end_index < @tokens.size && end_index >= 0
+    cursor = end_index - 1
+  
+    while cursor >= 0
+      token = @tokens[cursor]
+      token_type = token.type
+      token_value = token.value
+  
+      # Assume the presence of a utility method `is_annotation_token?` to determine if a token marks an annotation start
+      return cursor if token_type == :ANNOTATION && is_annotation_start?(token_value)
+  
+      case token_type
+      when :NEWLINE, :DOT, :IDENTIFIER, :COLON, :TAB
+        cursor -= 1
+      when :RANGLE, :RPAREN, :RSQUARE
+        # If encountering a closing bracket, find its partner opening bracket
+        partner = find_bracket_partner(cursor)
+        return nil unless partner
+        cursor = partner - 1
+      else
+        return nil
+      end
+    end
+  
+    nil
+  end
+
+  def is_annotation_start?(annotation_name)
+    [
+      "@field", "@file", "@property", "@get", "@set", "@receiver", 
+      "@param", "@setparam", "@delegate"
+    ].includes?(annotation_name) || annotation_name.starts_with?("@")
+  end
+
+  def parse_annotations_backwards(backward_index)
+    annotation_model_map = Hash(String, AnnotationModel).new
+    cursor = backward_index - 1
+    declard_type = @tokens[backward_index].type
+    while cursor > 0 && @tokens[cursor].type != :NEWLINE
       cursor -= 1
     end
 
-    annotation_tokens
+    annotation_start_index = find_annotation_start(cursor)
+    while !annotation_start_index.nil?
+      annotation_token = @tokens[annotation_start_index]
+      annotation_name = annotation_token.value
+      annotation_end = cursor
+      while annotation_end > 0 && @tokens[annotation_end].type == :NEWLINE
+        annotation_end -= 1
+      end
+      annotation_params = [] of Array(Token)
+      if @tokens[annotation_start_index+1].type == :LPAREN
+        annotation_params = parse_formal_parameters(annotation_start_index + 1)
+      end
+      annotation_model_map[annotation_name] = AnnotationModel.new(annotation_name, annotation_params, @tokens[annotation_start_index..annotation_end])
+      annotation_start_index = find_annotation_start(annotation_start_index)
+    end
+
+    return annotation_model_map
   end
 
   def parse_classes(tokens : Array(Token))
@@ -310,8 +406,9 @@ class KotlinParser
   def parse_class_fields(class_start_index)
     fields = Hash(String, FieldModel).new
     params = parse_formal_parameters(class_start_index + 1)
+    class_name = @tokens[class_start_index].value
     params.each do |param|
-      modifier = "public"
+      access_modifier = "public"
       val_or_var = nil
       field_type = nil
       field_name = nil
@@ -343,7 +440,7 @@ class KotlinParser
         elsif token_value == "open"
           next
         elsif [:PRIVATE, :PUBLIC, :PROTECTED, :INTERNAL].index(token_type)
-          modifier = token_value
+          access_modifier = token_value
         elsif token_value == "val" || token_value == "var"
           val_or_var = token_value
         elsif !val_or_var.nil? && field_name.nil?
@@ -362,7 +459,7 @@ class KotlinParser
       end
 
       next if val_or_var.nil? || field_type.nil? || field_name.nil?
-      fields[field_name] = FieldModel.new(modifier, val_or_var, field_type, field_name, init_value)
+      fields[field_name] = FieldModel.new(access_modifier, val_or_var, field_type, field_name, init_value)
     end
 
     fields
@@ -385,7 +482,7 @@ class KotlinParser
         current_params = [] of Array(Token)
         nesting = 0
 
-        current_annotations = parse_annotations(token.index)
+        current_annotations = parse_annotations_backwards(token.index)
         method_name = class_tokens[index + 1].value if class_tokens[index + 1].type == :IDENTIFIER
         method_start_index = index
 

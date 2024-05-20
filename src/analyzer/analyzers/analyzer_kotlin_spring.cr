@@ -355,7 +355,7 @@ class AnalyzerKotlinSpring < Analyzer
         parameter_format = "query"
       end
 
-      default_value = ""
+      default_value = nil
       parameter_name = ""
       parameter_type = nil
       # Extract the route's parameter name from annotation attributes
@@ -366,7 +366,7 @@ class AnalyzerKotlinSpring < Analyzer
           # Check if the attribute has been assigned a type
           if attribute_tokens.size > 2
             attribute_name = attribute_tokens[0].value
-            attribute_value = attribute_tokens[-3].value
+            attribute_value = attribute_tokens[2].value
 
             # Extract 'name' from attributes like "@RequestParam(value/defaultValue = "name") name : String"
             if attribute_name == "value"
@@ -375,26 +375,34 @@ class AnalyzerKotlinSpring < Analyzer
               default_value = attribute_value
             end
           else
+            # Extract 'name' from attributes like "@RequestParam("name") name : String"
             parameter_name = attribute_tokens[0].value
           end
 
           # Remove double quotes from the attribute value
-          if default_value.size > 2 && default_value[0] == '"' && default_value[-1] == '"'
-            default_value = default_value[1..-2]
+          if !default_value.nil? && default_value.size > 1
+            if default_value[0] == '"' && default_value[-1] == '"'
+              default_value = default_value[1..-2]
+            end
           end
-          if parameter_name.size > 2 && parameter_name[0] == '"' && parameter_name[-1] == '"'
-            parameter_name = parameter_name[1..-2]
+          if !parameter_name.nil? && parameter_name.size > 1
+            if parameter_name[0] == '"' && parameter_name[-1] == '"'
+              parameter_name = parameter_name[1..-2]
+            end
           end
 
           parameter_type = attribute_tokens[-1].value
         end
-      else
+      end
+
+      if parameter_name == ""
         # Extract 'name' from annotation like "@RequestParam name : String"
         if tokens[-2].type == :COLON && tokens[-3].type == :IDENTIFIER
           parameter_name = tokens[-3].value
           parameter_type = tokens[-1].value
         end
       end
+
       next if parameter_name == "" || parameter_type.nil?
 
       if ["long", "int", "integer", "char", "boolean", "string", "multipartfile"].index(parameter_type.downcase)

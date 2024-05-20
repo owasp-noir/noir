@@ -76,7 +76,7 @@ class UserController(
   }
 
   @GetMapping
-  @PreAuthorize("hasRole('$ROLE_ADMIN')")
+  @PreAuthorize("hasRole('$ROLE_ADMI N')")
   fun getAll(): List<UserDto> =
     userRepository.findAll().map { it.toDto() }
 
