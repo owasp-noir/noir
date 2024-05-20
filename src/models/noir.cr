@@ -201,17 +201,18 @@ class NoirRunner
   end
 
   def diff_report(diff_app)
+    builder = OutputBuilderDiff.new @options
+
     case options[:format]
     when "yaml"
-      # TODO
+      builder.print_yaml @endpoints, diff_app
     when "json"
-      # TODO
+      builder.print_json @endpoints, diff_app
     else
       # Print default output
       report()
 
       # Print diff output
-      builder = OutputBuilderDiff.new @options
       builder.print @endpoints, diff_app
     end
   end
