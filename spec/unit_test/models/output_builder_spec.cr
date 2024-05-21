@@ -67,3 +67,20 @@ describe "Initialize" do
     object.output_file.should eq("output.json")
   end
 end
+
+describe OutputBuilderDiff do
+  options = default_options
+  options[:base] = "noir"
+  options[:format] = "json"
+
+  it "calculates the diff correctly" do
+    old_endpoints = [Endpoint.new("GET", "/old")]
+    new_endpoints = [Endpoint.new("GET", "/new")]
+    builder = OutputBuilderDiff.new options
+
+    result = builder.diff(new_endpoints, old_endpoints)
+
+    result[:added].should eq [Endpoint.new("GET", "/new")]
+    result[:removed].should eq [Endpoint.new("GET", "/old")]
+  end
+end

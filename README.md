@@ -165,6 +165,9 @@ FLAGS:
     --use-matchers string            Send URLs that match specific conditions to the Deliver
     --use-filters string             Exclude URLs that match specified conditions and send the rest to Deliver
 
+  DIFF:
+    --diff-path ./app2               Specify the path to the old version of the source code for comparison
+
   TECHNOLOGIES:
     -t TECHS, --techs rails,php      Specify the technologies to use
     --exclude-techs rails,php        Specify the technologies to be excluded

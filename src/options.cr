@@ -21,6 +21,7 @@ def default_options
     :use_matchers      => "",
     :all_taggers       => "no",
     :use_taggers       => "",
+    :diff              => "",
   }
 
   noir_options
@@ -37,7 +38,6 @@ def run_options_parser
     parser.on "-u URL", "--url http://..", "Set base url for endpoints" { |var| noir_options[:url] = var }
 
     parser.separator "\n  OUTPUT:".colorize(:blue)
-
     parser.on "-f FORMAT", "--format json", "Set output format\n  * plain yaml json jsonl markdown-table\n  * curl httpie oas2 oas3\n  * only-url only-param only-header only-cookie" { |var| noir_options[:format] = var }
     parser.on "-o PATH", "--output out.txt", "Write result to file" { |var| noir_options[:output] = var }
     parser.on "--set-pvalue VALUE", "Specifies the value of the identified parameter" { |var| noir_options[:set_pvalue] = var }
@@ -79,6 +79,9 @@ def run_options_parser
     parser.on "--use-filters string", "Exclude URLs that match specified conditions and send the rest to Deliver" do |var|
       noir_options[:use_filters] += "#{var}::NOIR::FILTER::SPLIT::"
     end
+
+    parser.separator "\n  DIFF:".colorize(:blue)
+    parser.on "--diff-path ./app2", "Specify the path to the old version of the source code for comparison" { |var| noir_options[:diff] = var }
 
     parser.separator "\n  TECHNOLOGIES:".colorize(:blue)
     parser.on "-t TECHS", "--techs rails,php", "Specify the technologies to use" { |var| noir_options[:techs] = var }

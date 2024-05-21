@@ -9,9 +9,13 @@ module Noir
   VERSION = "0.15.1"
 end
 
+# Print banner
 banner()
+
+# Run options parser
 noir_options = run_options_parser()
 
+# Check base path
 if noir_options[:base] == ""
   STDERR.puts "ERROR: Base path is required."
   STDERR.puts "Please use -b or --base-path to set base path."
@@ -19,6 +23,7 @@ if noir_options[:base] == ""
   exit(1)
 end
 
+# Run Noir
 app = NoirRunner.new noir_options
 app.logger.debug("Start Debug mode")
 app.logger.debug("Noir version: #{Noir::VERSION}")
@@ -32,6 +37,18 @@ app.options.each do |k, v|
   app.logger.debug_sub "#{k}: #{v}"
 end
 
+app_diff = nil
+if noir_options[:diff] != ""
+  # Diff mode
+  diff_options = noir_options.dup
+  diff_options[:base] = noir_options[:diff].to_s
+  diff_options[:nolog] = "yes"
+
+  app_diff = NoirRunner.new diff_options
+  app.logger.system "Running Noir with Diff mode."
+end
+
+# Run Default mode
 app.logger.system "Detecting technologies to base directory."
 app.detect
 
@@ -53,5 +70,16 @@ end
 app.analyze
 app.logger.info "Finally identified #{app.endpoints.size} endpoints."
 
-app.logger.system "Generating Report."
-app.report
+if app_diff.nil?
+  app.logger.system "Generating Report."
+  app.report
+else
+  app.logger.system "Diffing base and diff codebases."
+  locator = CodeLocator.instance
+  locator.clear_all
+  app_diff.detect
+  app_diff.analyze
+
+  app.logger.system "Generating Diff Report."
+  app.diff_report(app_diff)
+end
