@@ -107,7 +107,8 @@ def run_options_parser
       noir_options[:debug] = "yes"
     end
     parser.on "-v", "--version", "Show version" do
-      puts Noir::VERSION
+      puts "Noir Version: #{Noir::VERSION}"
+      puts "Build Info: #{Crystal::DESCRIPTION}"
       exit
     end
     parser.on "-h", "--help", "Show help" do
