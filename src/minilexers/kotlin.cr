@@ -32,13 +32,13 @@ class KotlinLexer < MiniLexer
 
   PUNCTUATION = {
     '.' => :DOT, ',' => :COMMA, '(' => :LPAREN, ')' => :RPAREN,
-    '{' => :LBRACE, '}' => :RBRACE, '[' => :LBRACK, ']' => :RBRACK,
+    '{' => :LCURL, '}' => :RCURL, '[' => :LSQUARE, ']' => :RSQUARE,
     ';' => :SEMI, ':' => :COLON, '?' => :QUESTION,
   }
 
   OPERATORS = {
     '+' => :ADD, '-' => :SUB, '*' => :MULT, '/' => :DIV, '%' => :MOD,
-    '=' => :ASSIGN, "==" => :EQUAL, "!=" => :NOTEQUAL, '>' => :GT, '<' => :LT,
+    '=' => :ASSIGN, "==" => :EQUAL, "!=" => :NOTEQUAL, '>' => :RANGLE, '<' => :LANGLE,
     ">=" => :GE, "<=" => :LE, "&&" => :AND, "||" => :OR, '!' => :BANG,
     "++" => :INC, "--" => :DEC, "+=" => :ADD_ASSIGN, "-=" => :SUB_ASSIGN,
     "*=" => :MUL_ASSIGN, "/=" => :DIV_ASSIGN, "%=" => :MOD_ASSIGN,
@@ -229,16 +229,6 @@ class KotlinLexer < MiniLexer
 
   def match_other
     case @input[@position]
-    when '<'
-      self << Tuple.new(:LANGLE, '<')
-    when '>'
-      self << Tuple.new(:RANGLE, '>')
-    when '['
-      self << Tuple.new(:LSQUARE, '[')
-    when ']'
-      self << Tuple.new(:RSQUARE, ']')
-    when '?'
-      self << Tuple.new(:QUESTION, '?')
     when '\t'
       self << Tuple.new(:TAB, "\t")
     when '\n'

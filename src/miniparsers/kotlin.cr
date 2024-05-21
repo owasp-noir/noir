@@ -3,13 +3,13 @@ require "../models/minilexer/token"
 
 BRACKET_PAIRS = {
   :LPAREN => :RPAREN,
-  :RBRACE => :LBRACE,
   :LSQUARE => :RSQUARE,
   :LANGLE => :RANGLE,
+  :LCURL => :RCURL,
   :RPAREN => :LPAREN,
-  :LBRACE => :RBRACE,
   :RSQUARE => :LSQUARE,
-  :RANGLE => :LANGLE
+  :RANGLE => :LANGLE,
+  :RCURL => :LCURL
 }
 
 class KotlinParser
@@ -35,7 +35,8 @@ class KotlinParser
       next if name_token.nil?
       methods = parse_methods(class_tokens)
       annotations = parse_annotations_backwards(class_tokens[0].index)
-      fields = parse_class_fields(name_token.index)
+      fields = parse_class_parameters(name_token.index)
+      parse_fields_from_class_body(name_token.index, fields)
       @classes << ClassModel.new(annotations, name_token.value, fields, methods, class_tokens)
     end
   end
@@ -114,7 +115,7 @@ class KotlinParser
     close_bracket = BRACKET_PAIRS[token.type]?
     return nil if close_bracket.nil?
 
-    if [:RPAREN, :RBRACE, :RSQUARE, :RANGLE].index(token.type)
+    if [:RPAREN, :RCURL, :RSQUARE, :RANGLE].index(token.type)
       next_direction = false
       open_bracket = BRACKET_PAIRS[token.type]?
       close_bracket = token.type
@@ -158,7 +159,7 @@ class KotlinParser
   def parse_formal_parameters(param_start_index : Int32)
     parameters = Array(Array(Token)).new
     partner_index = find_bracket_partner(param_start_index)
-    if partner_index.nil?
+    if partner_index.nil? || @tokens[param_start_index].type != :LPAREN
       return parameters
     end
 
@@ -171,7 +172,15 @@ class KotlinParser
 
     while start_index <= end_index
       token = @tokens[start_index]
-      if token.type == :COMMA
+      if token.type == :LPAREN || token.type == :LANGLE
+        partner_index = find_bracket_partner(start_index)
+        if !partner_index.nil?
+          (start_index..partner_index).each do |i|
+            parameter << @tokens[i]
+          end
+          start_index = partner_index
+        end
+      elsif token.type == :COMMA
         parameters << parameter
         parameter = Array(Token).new
       elsif token.type != :TAB && token.type != :NEWLINE
@@ -189,10 +198,10 @@ class KotlinParser
   end
 
   def find_annotation_end(start_index)
-    if @tokens[start_index] != :ANNOTATION
+    if @tokens[start_index].type != :ANNOTATION
       return nil
     end
-    
+
     annotation_token = @tokens[start_index]
     annotation_name = annotation_token.value
     if ["@field", "@file", "@property", "@get", "@set", "@receiver", "@param", "@setparam", "@delegate"].index(annotation_name)
@@ -212,20 +221,29 @@ class KotlinParser
           index += 1
         elsif token_type == :LANGLE
           # typeArguments
-          index = find_bracket_partner(index) + 1
+          index = find_bracket_partner(index)
+          return nil if index.nil?
+
+          index += 1
           if @tokens[index].type == :QUEST
             index += 1
           end
         elsif token_type == :LPAREN || token_type == :LSQUARE
           # valueArguments, arrayAccess
-          index = find_bracket_partner(index) + 1
+          index = find_bracket_partner(index)
+          return nil if index.nil?
+          index += 1
         else
-          return nil
+          index = index - 1
+          while index > 0 && @tokens[index].type == :NEWLINE
+            index -= 1
+          end
+          return index
         end
       end
 
       return index
-    elsif annotation_name.start_with?("@")
+    elsif annotation_name.starts_with?("@")
       # LabelReference (NL* DOT NL* simpleIdentifier)* (NL* typeArguments)? (NL* valueArguments)?
       # AT LSQUARE unescapedAnnotation+ RSQUARE
       index = start_index + 1
@@ -242,15 +260,24 @@ class KotlinParser
           index += 1
         elsif token_type == :LANGLE
           # typeArguments
-          index = find_bracket_partner(index) + 1
+          index = find_bracket_partner(index)
+          return nil if index.nil?
+
+          index += 1
           if @tokens[index].type == :QUEST
             index += 1
           end
         elsif token_type == :LPAREN || token_type == :LSQUARE
           # valueArguments, arrayAccess
-          index = find_bracket_partner(index) + 1
+          index = find_bracket_partner(index)
+          return nil if index.nil?
+          index += 1
         else
-          return nil
+          index = index - 1
+          while index > 0 && @tokens[index].type == :NEWLINE
+            index -= 1
+          end
+          return index
         end
       end
     end
@@ -271,7 +298,7 @@ class KotlinParser
       return cursor if token_type == :ANNOTATION && is_annotation_start?(token_value)
   
       case token_type
-      when :NEWLINE, :DOT, :IDENTIFIER, :COLON, :TAB
+      when :NEWLINE, :DOT, :IDENTIFIER, :COLON, :TAB, :ASSIGN
         cursor -= 1
       when :RANGLE, :RPAREN, :RSQUARE
         # If encountering a closing bracket, find its partner opening bracket
@@ -341,9 +368,9 @@ class KotlinParser
           class_tokens = Array(Token).new
           class_tokens << token
         end
-      when :LPAREN, :LBRACE
+      when :LPAREN, :LCURL
         nesting += 1
-      when :RPAREN, :RBRACE
+      when :RPAREN, :RCURL
         nesting -= 1
         if nesting == 0
           if has_class_body
@@ -368,7 +395,7 @@ class KotlinParser
                 elsif body_token.type == :COLON
                   body_index += 1
                   skip_type_identifier = true
-                elsif body_token.type == :LBRACE
+                elsif body_token.type == :LCURL
                   break true
                 else
                   break false
@@ -403,19 +430,121 @@ class KotlinParser
     nil
   end
 
-  def parse_class_fields(class_start_index)
-    fields = Hash(String, FieldModel).new
-    params = parse_formal_parameters(class_start_index + 1)
+  def is_modifier(token)
+    token_value = token.value
+    token_type = token.type
+    if token_type == :NEWLINE
+      return true
+    elsif ["enum", "sealed", "annotation", "data", "inner"].index(token_value)
+      # classModifier
+      return true
+    elsif ["override", "lateinit"].index(token_value)
+      # memberModifier
+      return true
+    elsif ["public", "protected", "private", "internal"].index(token_value)
+      # visibilityModifier
+      return true
+    elsif ["in", "out"].index(token_value)
+      # varianceModifier
+      return true
+    elsif ["tailrec", "operator", "infix", "inline", "external", "suspend"].index(token_value)
+      # functionModifier
+      return true
+    elsif ["const"].index(token_value)
+      # propertyModifier
+      return true
+    elsif ["abstract", "final", "open"].index(token_value)
+      # inheritanceModifier
+      return true
+    elsif ["vararg", "noinline", "crossinline"].index(token_value)
+      # parameterModifier
+      return true
+    elsif ["reified"].index(token_value)
+      # typeParameterModifier
+      return true
+    else
+      return false
+    end
+  end
+
+  macro reset_fields
+    val_or_var = nil
+    parameter_type = nil
+    parameter_name = nil
+    colon = false
+    has_assignment = false
+    expression = ""
+    access_modifier = nil
+  end
+
+  macro skip_newline
+    while index < @tokens.size && @tokens[index].type == :NEWLINE
+      index += 1
+    end
+  end
+
+  macro skip_type_parameters
+    skip_newline
+    if index < @tokens.size && @tokens[index].type == :LANGLE
+      partner = find_bracket_partner(index)
+      if partner
+        index = partner + 1
+      end
+    end
+  end
+
+  macro skip_modifier_list
+    skip_newline
+    while index < @tokens.size
+      if @tokens[index].type == :ANNOTATION || @tokens[index].type == :AT
+        eindex = find_annotation_end(index)
+        index += eindex ? (eindex - index) : 0
+      elsif is_modifier(@tokens[index])
+        index += 1
+      else
+        break
+      end
+    end
+  end
+
+  macro skip_constructor
+    skip_newline
+    if index < @tokens.size && @tokens[index].type == :CONSTRUCTOR
+      index += 1
+    end
+  end
+
+  macro skip_primary_constructor
+    skip_newline
+    if index < @tokens.size && @tokens[index].type == :LPAREN
+      partner = find_bracket_partner(index)
+      if partner
+        index = partner + 1
+      end
+    end
+  end
+
+  def parse_class_parameters(class_start_index)
+    # classDeclaration : modifierList? (CLASS | INTERFACE) NL* simpleIdentifier (NL* typeParameters)? ( NL* primaryConstructor )?
     class_name = @tokens[class_start_index].value
+    fields = Hash(String, FieldModel).new
+    index = class_start_index + 1
+    skip_type_parameters
+    # primaryConstructor : modifierList? (CONSTRUCTOR NL*)? classParameters
+    skip_modifier_list
+    skip_constructor
+    skip_newline
+  
+    params = parse_formal_parameters(index)
     params.each do |param|
       access_modifier = "public"
       val_or_var = nil
-      field_type = nil
-      field_name = nil
-      has_type = false
-      has_init_value = false
-      init_value = ""
-      skip_attributes = false
+      parameter_type = nil
+      parameter_name = nil
+      colon = false
+      has_assignment = false
+      expression = ""
+      access_modifier = nil
 
       index = 0
       nesting = 0
@@ -424,45 +553,153 @@ class KotlinParser
         token = param[index]
         token_value = token.value
         token_type = token.type
-
-        if token_type == :ANNOTATION
-          skip_attributes = true
-        elsif skip_attributes
-          if token_type == :LPAREN
-            nesting += 1
-          elsif token_type == :RPAREN
-            nesting -= 1
+    
+        if is_modifier(token)
+          reset_fields
+          case token_type
+          when :PRIVATE, :PUBLIC, :PROTECTED, :INTERNAL
+            access_modifier = token_value
           end
-
-          if nesting == 0
-            skip_attributes = false
-          end
-        elsif token_value == "open"
-          next
-        elsif [:PRIVATE, :PUBLIC, :PROTECTED, :INTERNAL].index(token_type)
-          access_modifier = token_value
-        elsif token_value == "val" || token_value == "var"
-          val_or_var = token_value
-        elsif !val_or_var.nil? && field_name.nil?
-          field_name = token_value
-        elsif has_init_value
-          init_value += token_value
-        elsif token_type == :ASSIGN
-          has_init_value = true
-        elsif has_type && field_type.nil?
-          field_type = token_value
-        elsif token_type == :COLON
-          has_type = true
+          index += 1
         end
-
+  
+        case token_type
+        when :ANNOTATION
+          reset_fields
+          eindex = find_annotation_end(token.index)
+          index += eindex ? (eindex - token.index) : 0
+        when :COLON
+          colon = true
+        when :ASSIGN
+          has_assignment = true
+        else
+          if token_value == "val" || token_value == "var"
+            val_or_var = token_value
+          elsif !val_or_var.nil? && parameter_name.nil?
+            parameter_name = token_value
+          elsif has_assignment
+            expression += token_value
+          elsif colon && parameter_type.nil?
+            parameter_type = token_value
+          end
+        end
+    
         index += 1
       end
-
-      next if val_or_var.nil? || field_type.nil? || field_name.nil?
-      fields[field_name] = FieldModel.new(access_modifier, val_or_var, field_type, field_name, init_value)
+    
+      unless val_or_var.nil? || parameter_type.nil? || parameter_name.nil?
+        if access_modifier.nil?
+          access_modifier = "public"
+        end
+        fields[parameter_name] = FieldModel.new(access_modifier, val_or_var, parameter_type, parameter_name, expression)
+      end
     end
 
     fields
+  end
+
+  def parse_fields_from_class_body(class_start_index, fields : Hash(String, FieldModel))
+    # classDeclaration : modifierList? (CLASS | INTERFACE) NL* simpleIdentifier (NL* typeParameters)? ( NL* primaryConstructor )?
+    #                    (NL* COLON NL* delegationSpecifiers)? (NL* typeConstraints)? ( NL* classBody | NL* enumClassBody )?
+    class_name = @tokens[class_start_index].value
+    fields = Hash(String, FieldModel).new
+    index = class_start_index + 1
+    skip_type_parameters
+    skip_modifier_list
+    skip_constructor
+    skip_primary_constructor
+    skip_newline
+    return if @tokens.size <= index
+
+    # Currently, parsing 'delegationSpecifiers' is not supported.
+    return if @tokens[index].type == :COLON
+
+    # Currently, parsing 'typeConstraints' is not supported.
+    return if @tokens[index].type == :WHERE
+
+    # Don't parse classBody if it doesn't exist.
+    return if @tokens[index].type != :LCURL
+
+    end_index = find_bracket_partner(index)
+    if end_index.nil?
+      return
+    end
+
+    #propertyDeclaration
+    #: modifierList? (VAL | VAR) (NL* typeParameters)? (NL* type NL* DOT)? (
+    #    NL* (multiVariableDeclaration | variableDeclaration)
+    #) (NL* typeConstraints)? (NL* (BY | ASSIGNMENT) NL* expression)? (
+    #    NL* getter (semi setter)?
+    #    | NL* setter (semi getter)?
+    #)?
+    #;
+    val_or_var = nil
+    parameter_type = nil
+    parameter_name = nil
+    colon = false
+    has_assignment = false
+    expression = ""
+    access_modifier = nil
+    while index < end_index
+      token = @tokens[index]
+      if is_modifier(token)
+        case token.type
+        when :PRIVATE, :PUBLIC, :PROTECTED, :INTERNAL
+          access_modifier = token.value
+        end
+      else
+        case token.type
+        when :ANNOTATION
+          eindex = find_annotation_end(token.index)
+          index += eindex ? (eindex - token.index) : 0
+        when :VAL, :VAR
+          val_or_var = token.value
+          parameter_type = nil
+          parameter_name = nil
+        when :ASSIGN
+          has_assignment = true
+        when :FUN
+          break
+        else
+          if val_or_var 
+            skip_type_parameters
+            if token.type == :IDENTIFIER
+              parameter_name = token.value
+
+              if index+2 < end_index
+                if @tokens[index+1].type == :COLON
+                  parameter_type = @tokens[index+2].value
+                  index += 1
+                end
+              end
+            elsif token.type == :DOT
+              # Currently, parsing '(NL* type NL* DOT)?' is not supported.
+              reset_fields
+            elsif token.type == :LPAREN
+              # Currently, parsing 'multiVariableDeclaration' is not supported.
+              reset_fields
+            end
+          else
+            reset_fields
+          end
+        end
+  
+        unless val_or_var.nil? || parameter_name.nil?
+          if access_modifier.nil?
+            access_modifier = "public"
+          end
+
+          if parameter_type.nil?
+            parameter_type = "Any"
+          end
+
+          fields[parameter_name] = FieldModel.new(access_modifier, val_or_var, parameter_type, parameter_name, "")
+          reset_fields
+        end
+      end
+
+      index += 1
+    end
   end
 
   def parse_methods(class_tokens : Array(Token))

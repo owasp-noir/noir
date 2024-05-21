@@ -107,6 +107,7 @@ class AnalyzerKotlinSpring < Analyzer
               next if path == _path
               if !parser_map.has_key?(_path)
                 _parser = create_parser(Path.new(_path))
+                parser_map[_path] = _parser
               else
                 _parser = parser_map[_path]
               end
@@ -370,6 +371,8 @@ class AnalyzerKotlinSpring < Analyzer
 
             # Extract 'name' from attributes like "@RequestParam(value/defaultValue = "name") name : String"
             if attribute_name == "value"
+              parameter_name = attribute_value
+            elsif attribute_name == "name"
               parameter_name = attribute_value
             elsif attribute_name == "defaultValue"
               default_value = attribute_value
