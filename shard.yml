@@ -1,21 +1,25 @@
+# Project Metadata
 name: noir
 version: 0.15.1
-
 authors:
   - hahwul <hahwul@gmail.com>
   - ksg97031 <ksg97031@gmail.com>
+description: Attack surface detector that identifies endpoints by static analysis
+repository: https://github.com/noir-cr/noir
+license: MIT
 
+# Crystal version requirement
+crystal: ~> 1.10
+
+# Build Targets
 targets:
   noir:
     main: src/noir.cr
 
+# Project Dependencies
 dependencies:
   crest:
     github: mamantoha/crest
     version: ~> 1.3.13
   har:
     github: NeuraLegion/har
-
-crystal: ~> 1.10
-
-license: MIT
