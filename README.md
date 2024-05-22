@@ -177,9 +177,12 @@ FLAGS:
     --config-file ./config.yaml      Specify the path to a configuration file in YAML format
     --concurrency 100                Set concurrency
 
-  OTHERS:
+  DEBUG:
     -d, --debug                      Show debug messages
     -v, --version                    Show version
+    --build-info                     Show version and Build info
+
+  OTHERS:
     -h, --help                       Show help
 ```
 
