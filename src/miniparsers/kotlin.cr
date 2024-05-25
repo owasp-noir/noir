@@ -320,8 +320,7 @@ class KotlinParser
     has_class_body = false
     class_tokens = Array(Token).new
 
-    paren_nesting = 0
-    lcurl_nesting = 0
+    paren_nesting, lcurl_nesting = 0, 0
     while index < tokens.size
       token = tokens[index]
       class_tokens << token if start_class
@@ -330,8 +329,7 @@ class KotlinParser
       when :CLASS
         if tokens[index + 1].type == :IDENTIFIER && !start_class
           start_class = true
-          lcurl_nesting = 0
-          paren_nesting = 0
+          lcurl_nesting, paren_nesting = 0, 0
           class_tokens = Array(Token).new
           class_tokens << token
         elsif start_class
@@ -342,49 +340,25 @@ class KotlinParser
         paren_nesting += 1
       when :LCURL
         lcurl_nesting += 1
+        if start_class && lcurl_nesting == 1 && paren_nesting == 0
+          has_class_body = true
+        end
       when :RPAREN
         paren_nesting -= 1
       when :RCURL
         lcurl_nesting -= 1
-        if paren_nesting == 0 && lcurl_nesting == 0
-          if has_class_body
-            @classes_tokens << class_tokens
-            start_class = false
-            has_class_body = false
-          else
-            if start_class
-              body_index = index + 1
-              skip_type_identifier = false
-              has_class_body = while body_index < tokens.size
-                body_token = tokens[body_index]
-                if body_token.type == :TAB || body_token.type == :NEWLINE
-                  body_index += 1
-                elsif skip_type_identifier
-                  if body_token.type != :IDENTIFIER
-                    break false
-                  else
-                    body_index += 1
-                    skip_type_identifier = false
-                  end
-                elsif body_token.type == :COLON
-                  body_index += 1
-                  skip_type_identifier = true
-                elsif body_token.type == :LCURL
-                  break true
-                else
-                  break false
-                end
-              end
-
-              if !has_class_body
-                @classes_tokens << class_tokens
-                start_class = false
-              end
-            end
-          end
+        if lcurl_nesting == 0 && start_class && has_class_body
+          @classes_tokens << class_tokens
+          start_class = false
+          has_class_body = false
+          class_tokens = Array(Token).new
         end
       end
       index += 1
+    end
+
+    if class_tokens.size > 0 && lcurl_nesting == 0 && paren_nesting == 0
+      @classes_tokens << class_tokens
     end
   end
 
@@ -496,6 +470,7 @@ class KotlinParser
     skip_constructor
     skip_newline
 
+    return fields if @tokens.size <= index
     params = parse_formal_parameters(index)
     params.each do |param|
       access_modifier = "public"

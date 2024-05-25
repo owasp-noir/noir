@@ -72,7 +72,6 @@ class AnalyzerKotlinSpring < Analyzer
 
     class_map = package_class_map.merge(import_map)
     parser.classes.each { |source_class| class_map[source_class.name] = source_class }
-
     process_class_annotations(path, parser, class_map, webflux_base_path_map[path]? || "")
   end
 
@@ -122,7 +121,6 @@ class AnalyzerKotlinSpring < Analyzer
   private def process_single_import(root_source_directory : Path, import_path : String, package_directory : Path, parser_map : Hash(String, KotlinParser), import_map : Hash(String, KotlinParser::ClassModel))
     source_path = root_source_directory.join("#{import_path}.#{KOTLIN_EXTENSION}")
     return if source_path.dirname == package_directory || !File.exists?(source_path)
-
     # TODO: Be aware that the import file location might differ from the actual file system path.
     parser = parser_map[source_path.to_s]? || create_parser(source_path)
     parser_map[source_path.to_s] ||= parser
