@@ -25,5 +25,5 @@ class UserController(private val repository: UserRepository) {
 	fun findAll() = repository.findAll()
 
 	@GetMapping("/{login}")
-	fun findOne(@PathVariable login: String) = repository.findByLogin(login) ?: throw ResponseStatusException(NOT_FOUND, "This user does not exist")
+	fun findOne(@PathVariable login: String, @CookieValue(name = "lorem", defaultValue = "lorem") lorem: String) = repository.findByLogin(login) ?: throw ResponseStatusException(NOT_FOUND, "This user does not exist ($lorem ipsum)")
 }

@@ -390,6 +390,8 @@ class AnalyzerKotlinSpring < Analyzer
       "query"
     when "@RequestHeader"
       "header"
+    when "@CookieValue"
+      "cookie"
     when "@PathVariable"
       nil
     when "@ModelAttribute"

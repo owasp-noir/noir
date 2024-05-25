@@ -4,7 +4,7 @@ extected_endpoints = [
   Endpoint.new("/api/article/", "GET"),
   Endpoint.new("/api/article/{slug}", "GET"),
   Endpoint.new("/api/user/", "GET"),
-  Endpoint.new("/api/user/{login}", "GET"),
+  Endpoint.new("/api/user/{login}", "GET", [Param.new("lorem", "ipsum", "cookie")]),
   Endpoint.new("/v1", "GET", [Param.new("version", "1", "query")]),
   Endpoint.new("/v2", "GET", [Param.new("version", "2", "query")]),
   Endpoint.new("/version2", "GET", [Param.new("version", "2", "query")]),
