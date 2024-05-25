@@ -70,6 +70,10 @@ struct Param
     @tags = [] of Tag
   end
 
+  def ==(other : Param) : Bool
+    @name == other.name && @value == other.value && @param_type == other.param_type
+  end
+
   def add_tag(tag : Tag)
     @tags << tag
   end
