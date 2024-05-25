@@ -39,7 +39,7 @@ class KotlinParser
       methods = parse_methods(class_tokens)
       annotations = parse_annotations_backwards(class_tokens[0].index)
       fields = parse_class_parameters(name_token.index)
-      parse_fields_from_class_body(name_token.index, fields)
+      parse_fields_from_class_body(name_token.index, fields, methods)
       @classes << ClassModel.new(modifiers, annotations, name_token.value, fields, methods, class_tokens)
     end
   end
@@ -264,8 +264,7 @@ class KotlinParser
       token = @tokens[cursor]
       token_type = token.type
       token_value = token.value
-
-      return cursor if token_type == :ANNOTATION && annotation_start?(token_value)
+      return cursor if token_type == :ANNOTATION || annotation_start?(token_value)
 
       case token_type
       when :NEWLINE, :DOT, :IDENTIFIER, :COLON, :TAB, :ASSIGN
@@ -285,7 +284,7 @@ class KotlinParser
   def annotation_start?(annotation_name)
     [
       "@field", "@file", "@property", "@get", "@set", "@receiver",
-      "@param", "@setparam", "@delegate"
+      "@param", "@setparam", "@delegate",
     ].includes?(annotation_name) || annotation_name.starts_with?("@")
   end
 
@@ -316,13 +315,13 @@ class KotlinParser
   end
 
   # Parse class declarations from the tokens
-  def parse_classes(tokens : Array(Token))
+  def parse_classes(tokens : Array(Token), index = 0)
     start_class = false
     has_class_body = false
     class_tokens = Array(Token).new
 
-    nesting = 0
-    index = 0
+    paren_nesting = 0
+    lcurl_nesting = 0
     while index < tokens.size
       token = tokens[index]
       class_tokens << token if start_class
@@ -331,15 +330,23 @@ class KotlinParser
       when :CLASS
         if tokens[index + 1].type == :IDENTIFIER && !start_class
           start_class = true
-          nesting = 0
+          lcurl_nesting = 0
+          paren_nesting = 0
           class_tokens = Array(Token).new
           class_tokens << token
+        elsif start_class
+          # Recursively parse nested classes
+          parse_classes(tokens, index)
         end
-      when :LPAREN, :LCURL
-        nesting += 1
-      when :RPAREN, :RCURL
-        nesting -= 1
-        if nesting == 0
+      when :LPAREN
+        paren_nesting += 1
+      when :LCURL
+        lcurl_nesting += 1
+      when :RPAREN
+        paren_nesting -= 1
+      when :RCURL
+        lcurl_nesting -= 1
+        if paren_nesting == 0 && lcurl_nesting == 0
           if has_class_body
             @classes_tokens << class_tokens
             start_class = false
@@ -398,7 +405,7 @@ class KotlinParser
     has_token = false
     tokens.each do |token|
       if token.index != 0
-        if token.type == :CLASS
+        if token.type == :CLASS || token.value == "record"
           has_token = true
         elsif has_token && token.type == :IDENTIFIER
           return token
@@ -456,7 +463,7 @@ class KotlinParser
     while index < @tokens.size
       if @tokens[index].type == :ANNOTATION || @tokens[index].type == :AT
         eindex = find_annotation_end(index)
-        index += eindex ? (eindex - index) : 0
+        index += eindex ? (eindex - index) + 1: 1
       elsif modifier?(@tokens[index])
         index += 1
       else
@@ -542,13 +549,14 @@ class KotlinParser
       unless val_or_var.nil? || parameter_type.nil? || parameter_name.nil?
         access_modifier ||= "public"
         fields[parameter_name] = FieldModel.new(access_modifier, val_or_var, parameter_type, parameter_name, expression)
+        reset_fields
       end
     end
     fields
   end
 
   # Parse fields from the class body
-  def parse_fields_from_class_body(class_start_index, fields : Hash(String, FieldModel))
+  def parse_fields_from_class_body(class_start_index, fields : Hash(String, FieldModel), methods : Hash(String, MethodModel))
     index = class_start_index + 1
     skip_type_parameters
     skip_modifier_list
@@ -566,7 +574,6 @@ class KotlinParser
     val_or_var = nil
     parameter_type = nil
     parameter_name = nil
-    colon = false
     has_assignment = false
     expression = ""
     access_modifier = nil
@@ -612,6 +619,16 @@ class KotlinParser
           access_modifier ||= "public"
           parameter_type ||= "Any"
           fields[parameter_name] = FieldModel.new(access_modifier, val_or_var, parameter_type, parameter_name, "")
+
+          if parameter_name.size > 1
+            camel_case_name = parameter_name[0].upcase + parameter_name[1..-1]
+            if methods.has_key?("get" + camel_case_name)
+              fields[parameter_name].has_getter = true
+            end
+            if methods.has_key?("set" + camel_case_name)
+              fields[parameter_name].has_setter = true
+            end
+          end
           reset_fields
         end
       end
@@ -628,14 +645,12 @@ class KotlinParser
     method_start_index = nil
     param_start_index = nil
     method_name = ""
-    nesting = 0
 
     class_tokens.each_with_index do |token, index|
       if token.type == :FUN
         param_start_index = nil
         param = Array(Token).new
         current_params = [] of Array(Token)
-        nesting = 0
 
         current_annotations = parse_annotations_backwards(token.index)
         method_name = class_tokens[index + 1].value if class_tokens[index + 1].type == :IDENTIFIER

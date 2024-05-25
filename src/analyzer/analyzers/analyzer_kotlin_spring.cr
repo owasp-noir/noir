@@ -72,6 +72,7 @@ class AnalyzerKotlinSpring < Analyzer
 
     class_map = package_class_map.merge(import_map)
     parser.classes.each { |source_class| class_map[source_class.name] = source_class }
+
     process_class_annotations(path, parser, class_map, webflux_base_path_map[path]? || "")
   end
 
@@ -99,6 +100,7 @@ class AnalyzerKotlinSpring < Analyzer
         process_single_import(root_source_directory, import_path, package_directory, parser_map, import_map)
       end
     end
+
     import_map
   end
 
@@ -107,9 +109,10 @@ class AnalyzerKotlinSpring < Analyzer
     import_directory = root_source_directory.join(import_path[0..-3])
     return unless Dir.exists?(import_directory)
 
+    # TODO: Be aware that the import file location might differ from the actual file system path.
     Dir.glob("#{import_directory}/*.#{KOTLIN_EXTENSION}") do |path|
       next if path == current_path
-      parser = parser_map[path] || create_parser(Path.new(path))
+      parser = parser_map[path]? || create_parser(Path.new(path))
       parser_map[path] ||= parser
       parser.classes.each { |package_class| import_map[package_class.name] = package_class }
     end
@@ -120,6 +123,7 @@ class AnalyzerKotlinSpring < Analyzer
     source_path = root_source_directory.join("#{import_path}.#{KOTLIN_EXTENSION}")
     return if source_path.dirname == package_directory || !File.exists?(source_path)
 
+    # TODO: Be aware that the import file location might differ from the actual file system path.
     parser = parser_map[source_path.to_s]? || create_parser(source_path)
     parser_map[source_path.to_s] ||= parser
     parser.classes.each { |package_class| import_map[package_class.name] = package_class }
@@ -151,6 +155,7 @@ class AnalyzerKotlinSpring < Analyzer
 
   # Extract URL from class annotation
   private def extract_url_from_annotation(annotation_model : KotlinParser::AnnotationModel) : String
+    return "" if annotation_model.params.empty?
     url_token = annotation_model.params[0][-1]
     url = url_token.type == :STRING_LITERAL ? url_token.value[1..-2] : ""
     url.ends_with?("*") ? url[0..-2] : url
@@ -161,77 +166,92 @@ class AnalyzerKotlinSpring < Analyzer
     method.annotations.values.each do |method_annotation|
       next unless method_annotation.name.ends_with?("Mapping")
 
-      request_methods, parameter_format, params = extract_request_methods_and_format(parser, method_annotation)
+      request_optional, parameter_format = extract_request_methods_and_format(parser, method_annotation)
       url_paths = method_annotation.name.starts_with?("@") ? extract_mapping_paths(parser, method_annotation) : [""]
       details = Details.new(PathInfo.new(path, method_annotation.tokens[0].line))
+      url_paths += request_optional["values"]
+      url_paths += request_optional["paths"]
 
-      create_endpoints(webflux_base_path, url, url_paths, request_methods, parser, method, parameter_format, class_map, details, params)
+      create_endpoints(webflux_base_path, url, url_paths, request_optional, parser, method, parameter_format, class_map, details)
     end
   end
 
   # Extract HTTP methods and parameter format from annotation
-  private def extract_request_methods_and_format(parser : KotlinParser, annotation_model : KotlinParser::AnnotationModel) : Tuple(Array(String), String | Nil, Array(String))
-    request_methods = Array(String).new
+  private def extract_request_methods_and_format(parser : KotlinParser, annotation_model : KotlinParser::AnnotationModel) : Tuple(Hash(String, Array(String)), String | Nil)
     parameter_format = nil
-    params = Array(String).new
+    request_optional = Hash(String, Array(String)).new
+    request_optional["methods"] = Array(String).new
+    request_optional["params"] = Array(String).new
+    request_optional["headers"] = Array(String).new
+    request_optional["values"] = Array(String).new
+    request_optional["paths"] = Array(String).new
 
     annotation_model.params.each do |tokens|
-      tokens.each_with_index do |token, index|
-        case token.value
-        when "method"
-          request_methods.concat(extract_http_methods(tokens, index))
-        when "consumes"
-          parameter_format = extract_parameter_format(tokens[index + 2].value)
-        when "params"
-          if tokens[index+2]? && tokens[index+2].value == "["
-            parser.parse_formal_parameters(tokens[index+2].index).each do |param_tokens|
-              if param_tokens.size > 0 && param_tokens[0].type == :STRING_LITERAL && param_tokens[0].value.size > 1
-                params << param_tokens[0].value[1..-2]
-              end
+      next if tokens.size < 3
+      next if tokens[2].value != "[" && tokens[2].value != "arrayOf"
+      bracket_index = tokens[2].value != "arrayOf" ? tokens[2].index : tokens[2].index + 1
+
+      case tokens[0].value
+      when "method"
+        parser.parse_formal_parameters(bracket_index).each do |param_tokens|
+          method_index = param_tokens[0].value != "RequestMethod" ? 0 : 2
+          request_optional["methods"] << param_tokens[method_index].value
+        end
+      when "consumes"
+        parser.parse_formal_parameters(bracket_index).each do |param_tokens|
+          if param_tokens.size > 0 && param_tokens[0].type == :STRING_LITERAL && param_tokens[0].value.size > 1
+            if param_tokens.size > 0 && param_tokens[0].type == :STRING_LITERAL && param_tokens[0].value.size > 1
+              parameter_format = case param_tokens[0].value[1..-2].upcase
+                                 when "APPLICATION/X-WWW-FORM-URLENCODED"
+                                   "form"
+                                 when "APPLICATION/JSON"
+                                   "json"
+                                 else
+                                   nil
+                                 end
+              break
             end
-          elsif tokens[index+2].type == :STRING_LITERAL && tokens[index+2].value.size > 1
-            params << tokens[index+2].value[1..-2]
+          end
+        end
+      when "params"
+        parser.parse_formal_parameters(bracket_index).each do |param_tokens|
+          if param_tokens.size > 0 && param_tokens[0].type == :STRING_LITERAL && param_tokens[0].value.size > 1
+            request_optional["params"] << param_tokens[0].value[1..-2]
+          end
+        end
+      when "headers"
+        parser.parse_formal_parameters(bracket_index).each do |param_tokens|
+          if param_tokens.size > 0 && param_tokens[0].type == :STRING_LITERAL && param_tokens[0].value.size > 0
+            request_optional["headers"] << param_tokens[0].value[1..-2]
+          end
+        end
+      when "value"
+        parser.parse_formal_parameters(bracket_index).each do |param_tokens|
+          if param_tokens.size > 0 && param_tokens[0].type == :STRING_LITERAL && param_tokens[0].value.size > 0
+            request_optional["values"] << param_tokens[0].value[1..-2]
+          end
+        end
+      when "path"
+        parser.parse_formal_parameters(bracket_index).each do |param_tokens|
+          if param_tokens.size > 0 && param_tokens[0].type == :STRING_LITERAL && param_tokens[0].value.size > 0
+            request_optional["paths"] << param_tokens[0].value[1..-2]
           end
         end
       end
     end
 
-    if request_methods.empty?
+    if request_optional["methods"].empty?
       if annotation_model.name == "@RequestMapping"
-        request_methods.concat(HTTP_METHODS)
+        # Default to all HTTP methods if no method is specified
+        request_optional["methods"].concat(HTTP_METHODS)
       else
+        # Extract HTTP method from annotation name
         http_method = HTTP_METHODS.find { |method| annotation_model.name.upcase == "@#{method}MAPPING" }
-        request_methods.push(http_method) if http_method
+        request_optional["methods"].push(http_method) if http_method
       end
     end
 
-    {request_methods, parameter_format, params}
-  end
-
-  # Extract HTTP methods from annotation parameters
-  private def extract_http_methods(tokens : Array(Token), index : Int32) : Array(String)
-    methods = Array(String).new
-    if tokens[index + 2].value == "}"
-      tokens.reverse_each do |token|
-        break if token.value == "method"
-        methods.push(token.value) if HTTP_METHODS.includes?(token.value.upcase)
-      end
-    else
-      methods.push(tokens[index + 2].value)
-    end
-    methods
-  end
-
-  # Determine parameter format from consumes value
-  private def extract_parameter_format(consumes_value : String) : String | Nil
-    case consumes_value
-    when /APPLICATION_FORM_URLENCODED_VALUE/
-      "form"
-    when /APPLICATION_JSON_VALUE/
-      "json"
-    else
-      nil
-    end
+    {request_optional, parameter_format}
   end
 
   # Extract URL mapping paths from annotation parameters
@@ -241,22 +261,41 @@ class AnalyzerKotlinSpring < Analyzer
   end
 
   # Create endpoints for the extracted HTTP methods and paths
-  private def create_endpoints(webflux_base_path : String, url : String, url_paths : Array(String), request_methods : Array(String), parser : KotlinParser, method : KotlinParser::MethodModel, parameter_format : String | Nil, class_map : Hash(String, KotlinParser::ClassModel), details : Details, params : Array(String))
+  private def create_endpoints(webflux_base_path : String, url : String, url_paths : Array(String), request_optional : Hash(String, Array(String)), parser : KotlinParser, method : KotlinParser::MethodModel, parameter_format : String | Nil, class_map : Hash(String, KotlinParser::ClassModel), details : Details)
     webflux_base_path = webflux_base_path.chomp("/") if webflux_base_path.ends_with?("/")
     url_paths.each do |url_path|
       full_url = "#{webflux_base_path}#{url}#{url_path}"
-      request_methods.each do |request_method|
+      request_optional["methods"].each do |request_method|
         parameter_format = case request_method
-                            when "POST", "PUT", "DELETE"
-                              "form" if parameter_format.nil?
-                            when "GET"
-                              "query" if parameter_format.nil?
-                            end
+                           when "POST", "PUT", "DELETE"
+                             "form" if parameter_format.nil?
+                           when "GET"
+                             "query" if parameter_format.nil?
+                           end
         parameters = get_endpoint_parameters(parser, method, parameter_format, class_map)
-        params.each do |param|
+        request_optional["params"].each do |param|
           parameter_format = "query" if parameter_format.nil?
-          if parameters.find { |p| p.name == param }.nil?
-            parameters << Param.new(param, "", parameter_format)
+          param, default_value = if param.includes?("=")
+                                   param.split("=")
+                                 else
+                                   [param, ""]
+                                 end
+          new_param_obj = Param.new(param, default_value, parameter_format)
+          if parameters.find { |param_obj| param_obj == new_param_obj }.nil?
+            parameters << new_param_obj
+          end
+        end
+
+        request_optional["headers"].each do |header|
+          parameter_format = "header"
+          param, default_value = if header.includes?("=")
+                                   header.split("=")
+                                 else
+                                   [header, ""]
+                                 end
+          new_param_obj = Param.new(param, default_value, parameter_format)
+          if parameters.find { |param_obj| param_obj == new_param_obj }.nil?
+            parameters << new_param_obj
           end
         end
         @result << Endpoint.new(full_url, request_method, parameters, details)
@@ -276,7 +315,7 @@ class AnalyzerKotlinSpring < Analyzer
       while i > 0
         parameter_token = path_parameter_tokens[i]
         case parameter_token.type
-        when :LBRACE
+        when :LCURL
           break
         when :COMMA
           i -= 1
@@ -297,17 +336,17 @@ class AnalyzerKotlinSpring < Analyzer
   private def get_endpoint_parameters(parser : KotlinParser, method : KotlinParser::MethodModel, parameter_format : String | Nil, package_class_map : Hash(String, KotlinParser::ClassModel)) : Array(Param)
     endpoint_parameters = Array(Param).new
     method.params.each do |tokens|
-      next if tokens.size < 4
+      next if tokens.size < 3
 
       i = 0
       while i < tokens.size
-        case tokens[i+1].type
+        case tokens[i + 1].type
         when :ANNOTATION
           i += 1
         when :LPAREN
-          rparen = parser.find_bracket_partner(tokens[i+1].index)
-          if rparen && tokens[i+(rparen - tokens[i+1].index)+2].type == :ANNOTATION
-            i += rparen - tokens[i+1].index + 2
+          rparen = parser.find_bracket_partner(tokens[i + 1].index)
+          if rparen && tokens[i + (rparen - tokens[i + 1].index) + 2].type == :ANNOTATION
+            i += rparen - tokens[i + 1].index + 2
           else
             break
           end
@@ -317,20 +356,26 @@ class AnalyzerKotlinSpring < Analyzer
       end
 
       token = tokens[i]
-      next if token.type != :ANNOTATION
-
-      name = token.value
-      parameter_format = get_parameter_format(name, parameter_format)
-      next if parameter_format.nil?
-
-      default_value, parameter_name, parameter_type = extract_parameter_details(tokens, parser, i)
-      next if parameter_name.empty? || parameter_type.nil?
-
-      if ["long", "int", "integer", "char", "boolean", "string", "multipartfile"].includes?(parameter_type.downcase)
-        param_default_value = default_value.nil? ? "" : default_value
-        endpoint_parameters << Param.new(parameter_name, param_default_value, parameter_format)
+      parameter_index = tokens[-1].value != "?" ? -1 : -2
+      if tokens[parameter_index].value == "Pageable"
+        next if parameter_format.nil?
+        endpoint_parameters << Param.new("page", "", parameter_format)
+        endpoint_parameters << Param.new("size", "", parameter_format)
+        endpoint_parameters << Param.new("sort", "", parameter_format)
       else
-        add_user_defined_class_params(package_class_map, parameter_type, default_value, parameter_name, parameter_format, endpoint_parameters)
+        name = token.value
+        parameter_format = get_parameter_format(name, parameter_format)
+        next if parameter_format.nil?
+
+        default_value, parameter_name, parameter_type = extract_parameter_details(tokens, parser, i)
+        next if parameter_name.empty? || parameter_type.nil?
+
+        param_default_value = default_value.nil? ? "" : default_value
+        if ["long", "int", "integer", "char", "boolean", "string", "multipartfile"].includes?(parameter_type.downcase)
+          endpoint_parameters << Param.new(parameter_name, param_default_value, parameter_format)
+        else
+          add_user_defined_class_params(package_class_map, parameter_type, default_value, parameter_name, parameter_format, endpoint_parameters)
+        end
       end
     end
     endpoint_parameters
@@ -378,17 +423,18 @@ class AnalyzerKotlinSpring < Analyzer
       end
     end
 
-    if tokens[-2].type == :COLON
+    colon_index = tokens[-1].value == "?" ? -3 : -2
+    if tokens[colon_index].type == :COLON
       parameter_name = tokens[-3].value if parameter_name.empty? && tokens[-3].type == :IDENTIFIER
       parameter_type = tokens[-1].type == :QUEST ? tokens[-2].value : tokens[-1].value if tokens[-1].type == :IDENTIFIER
-    elsif tokens[-1].type == :RANGLE
+    elsif tokens[colon_index + 1].type == :RANGLE
       parameter_type = tokens[-2].value
       parameter_name = tokens[-6].value if tokens[-5].type == :COLON
     end
 
     default_value = default_value[1..-2] if default_value.size > 1 && default_value[0] == '"' && default_value[-1] == '"'
     parameter_name = parameter_name[1..-2] if parameter_name.size > 1 && parameter_name[0] == '"' && parameter_name[-1] == '"'
-  
+
     {default_value, parameter_name, parameter_type}
   end
 
@@ -401,9 +447,13 @@ class AnalyzerKotlinSpring < Analyzer
         endpoint_parameters << Param.new(parameter_name, param_default_value, parameter_format)
       else
         package_class.fields.values.each do |field|
-          if field.access_modifier == "public" || field.has_setter?
-            param_default_value = default_value.nil? ? field.init_value : default_value
-            endpoint_parameters << Param.new(field.name, param_default_value, parameter_format)
+          if package_class_map.has_key?(field.type) && parameter_type != field.type
+            add_user_defined_class_params(package_class_map, field.type, field.init_value, field.name, parameter_format, endpoint_parameters)
+          else
+            if field.access_modifier == "public" || field.has_setter?
+              param_default_value = default_value.nil? ? field.init_value : default_value
+              endpoint_parameters << Param.new(field.name, param_default_value, parameter_format)
+            end
           end
         end
       end
