@@ -199,8 +199,8 @@ class AnalyzerKotlinSpring < Analyzer
         end
       when "consumes"
         parser.parse_formal_parameters(bracket_index).each do |param_tokens|
-          if param_tokens.size > 0 && param_tokens[0].type == :STRING_LITERAL && param_tokens[0].value.size > 1
-            if param_tokens.size > 0 && param_tokens[0].type == :STRING_LITERAL && param_tokens[0].value.size > 1
+          if param_tokens.size > 0 && param_tokens[0].type == :STRING_LITERAL
+            if param_tokens.size > 0 && param_tokens[0].type == :STRING_LITERAL
               parameter_format = case param_tokens[0].value[1..-2].upcase
                                  when "APPLICATION/X-WWW-FORM-URLENCODED"
                                    "form"
@@ -215,25 +215,25 @@ class AnalyzerKotlinSpring < Analyzer
         end
       when "params"
         parser.parse_formal_parameters(bracket_index).each do |param_tokens|
-          if param_tokens.size > 0 && param_tokens[0].type == :STRING_LITERAL && param_tokens[0].value.size > 1
+          if param_tokens.size > 0 && param_tokens[0].type == :STRING_LITERAL
             request_optional["params"] << param_tokens[0].value[1..-2]
           end
         end
       when "headers"
         parser.parse_formal_parameters(bracket_index).each do |param_tokens|
-          if param_tokens.size > 0 && param_tokens[0].type == :STRING_LITERAL && param_tokens[0].value.size > 0
+          if param_tokens.size > 0 && param_tokens[0].type == :STRING_LITERAL
             request_optional["headers"] << param_tokens[0].value[1..-2]
           end
         end
       when "value"
         parser.parse_formal_parameters(bracket_index).each do |param_tokens|
-          if param_tokens.size > 0 && param_tokens[0].type == :STRING_LITERAL && param_tokens[0].value.size > 0
+          if param_tokens.size > 0 && param_tokens[0].type == :STRING_LITERAL
             request_optional["values"] << param_tokens[0].value[1..-2]
           end
         end
       when "path"
         parser.parse_formal_parameters(bracket_index).each do |param_tokens|
-          if param_tokens.size > 0 && param_tokens[0].type == :STRING_LITERAL && param_tokens[0].value.size > 0
+          if param_tokens.size > 0 && param_tokens[0].type == :STRING_LITERAL
             request_optional["paths"] << param_tokens[0].value[1..-2]
           end
         end
