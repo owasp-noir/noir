@@ -105,6 +105,7 @@ class AnalyzerJavaSpring < Analyzer
               next if path == _path
               if !parser_map.has_key?(_path)
                 _parser = create_parser(Path.new(_path))
+                parser_map[_path] = _parser
               else
                 _parser = parser_map[_path]
               end
@@ -355,8 +356,10 @@ class AnalyzerJavaSpring < Analyzer
                 request_param_name = request_parameter_tokens[0].value
                 request_param_value = request_parameter_tokens[-1].value
 
-                # Extract 'name' from @RequestParam(value/defaultValue = "name")
+                # Extract 'name' from @RequestParam(value/defaultValue/name = "name")
                 if request_param_name == "value"
+                  parameter_name = request_param_value[1..-2]
+                elsif request_param_name == "name"
                   parameter_name = request_param_value[1..-2]
                 elsif request_param_name == "defaultValue"
                   default_value = request_param_value[1..-2]

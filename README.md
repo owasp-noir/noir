@@ -61,8 +61,8 @@
 | Php      |             | ✅   | ✅    | ✅    | ✅     | X      | X  |
 | Java     | Jsp         | ✅   | ✅    | ✅    | X      | X      | X  |
 | Java     | Armeria     | ✅   | ✅    | X     | X      | X      | X  |
-| Java     | Spring      | ✅   | ✅    | X     | X      | X      | X  |
-| Kotlin   | Spring      | ✅   | ✅    | ✅    | X      | X      | X  |
+| Java     | Spring      | ✅   | ✅    | ✅    | ✅     | X      | X  |
+| Kotlin   | Spring      | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
 | JS       | Express     | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
 | JS       | Restify     | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
 | Rust     | Axum        | ✅   | ✅    | X     | X      | X      | X  |
