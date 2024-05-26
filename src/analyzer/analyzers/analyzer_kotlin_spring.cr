@@ -260,44 +260,56 @@ class AnalyzerKotlinSpring < Analyzer
 
   # Create endpoints for the extracted HTTP methods and paths
   private def create_endpoints(webflux_base_path : String, url : String, url_paths : Array(String), request_optional : Hash(String, Array(String)), parser : KotlinParser, method : KotlinParser::MethodModel, parameter_format : String | Nil, class_map : Hash(String, KotlinParser::ClassModel), details : Details)
-    webflux_base_path = webflux_base_path.chomp("/") if webflux_base_path.ends_with?("/")
+    # Remove trailing slash from base path if it exists
+    webflux_base_path.chomp("/") if webflux_base_path.ends_with?("/") && url.starts_with?("/")
+
+    # Iterate over each URL path to create full URLs
     url_paths.each do |url_path|
       full_url = "#{webflux_base_path}#{url}#{url_path}"
-      request_optional["methods"].each do |request_method|
-        parameter_format = case request_method
-                           when "POST", "PUT", "DELETE"
-                             "form" if parameter_format.nil?
-                           when "GET"
-                             "query" if parameter_format.nil?
-                           end
-        parameters = get_endpoint_parameters(parser, method, parameter_format, class_map)
-        request_optional["params"].each do |param|
-          parameter_format = "query" if parameter_format.nil?
-          param, default_value = if param.includes?("=")
-                                   param.split("=")
-                                 else
-                                   [param, ""]
-                                 end
-          new_param_obj = Param.new(param, default_value, parameter_format)
-          if parameters.find { |param_obj| param_obj == new_param_obj }.nil?
-            parameters << new_param_obj
-          end
-        end
 
-        request_optional["headers"].each do |header|
-          parameter_format = "header"
-          param, default_value = if header.includes?("=")
-                                   header.split("=")
-                                 else
-                                   [header, ""]
-                                 end
-          new_param_obj = Param.new(param, default_value, parameter_format)
-          if parameters.find { |param_obj| param_obj == new_param_obj }.nil?
-            parameters << new_param_obj
-          end
-        end
+      # Iterate over each request method to create endpoints
+      request_optional["methods"].each do |request_method|
+        # Determine parameter format if not specified
+        parameter_format ||= determine_parameter_format(request_method)
+
+        # Get parameters for the endpoint
+        parameters = get_endpoint_parameters(parser, method, parameter_format, class_map)
+
+        # Add query or form parameters
+        add_params(parameters, request_optional["params"], parameter_format)
+
+        # Add header parameters
+        add_params(parameters, request_optional["headers"], "header")
+
+        # Create and store the endpoint
         @result << Endpoint.new(full_url, request_method, parameters, details)
       end
+    end
+  end
+
+  # Determine the parameter format based on the request method
+  private def determine_parameter_format(request_method)
+    case request_method
+    when "POST", "PUT", "DELETE", "PATCH"
+      "form"
+    when "GET"
+      "query"
+    else
+      nil
+    end
+  end
+
+  # Add parameters to the parameters array
+  # params: Array of parameter strings
+  # default_format: Default format for the parameters (query, form, header)
+  private def add_params(parameters, params, default_format)
+    params.each do |param|
+      format = default_format || "query"
+      param, default_value = param.includes?("=") ? param.split("=") : [param, ""]
+      new_param_obj = Param.new(param, default_value, format)
+
+      # Add parameter if it doesn't already exist in the parameters array
+      parameters << new_param_obj unless parameters.includes?(new_param_obj)
     end
   end
 
