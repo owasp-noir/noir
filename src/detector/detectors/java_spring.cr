@@ -2,7 +2,9 @@ require "../../models/detector"
 
 class DetectorJavaSpring < Detector
   def detect(filename : String, file_contents : String) : Bool
-    if (filename.ends_with? ".java") && (file_contents.includes? "org.springframework")
+    if (filename.ends_with? "build.gradle") && (file_contents.includes? "org.springframework")
+      return true
+    elsif (filename.ends_with? "pom.xml") && (file_contents.includes? "org.springframework")
       return true
     end
 
