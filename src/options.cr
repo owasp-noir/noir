@@ -102,7 +102,7 @@ def run_options_parser
     parser.on "--config-file ./config.yaml", "Specify the path to a configuration file in YAML format" { |var| noir_options[:config_file] = var }
     parser.on "--concurrency 100", "Set concurrency" { |var| noir_options[:concurrency] = var }
 
-    parser.separator "\n  OTHERS:".colorize(:blue)
+    parser.separator "\n  DEBUG:".colorize(:blue)
     parser.on "-d", "--debug", "Show debug messages" do
       noir_options[:debug] = "yes"
     end
@@ -110,6 +110,11 @@ def run_options_parser
       puts Noir::VERSION
       exit
     end
+    parser.on "--build-info", "Show version and Build info" do
+      puts Crystal::DESCRIPTION
+      exit
+    end
+    parser.separator "\n  OTHERS:".colorize(:blue)
     parser.on "-h", "--help", "Show help" do
       puts parser
       puts ""
