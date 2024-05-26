@@ -1,6 +1,7 @@
 require "../../models/analyzer"
 require "../../minilexers/kotlin"
 require "../../miniparsers/kotlin"
+require "../../utils/utils.cr"
 
 class AnalyzerKotlinSpring < Analyzer
   REGEX_ROUTER_CODE_BLOCK = /route\(\)?.*?\);/m
@@ -50,6 +51,20 @@ class AnalyzerKotlinSpring < Analyzer
           # Handle parsing errors if necessary
         end
       end
+
+      application_properties_path = File.join(path, "main/resources/application.properties")
+      if File.exists?(application_properties_path)
+        begin
+          properties = File.read(application_properties_path)
+          base_path = properties.match(/spring\.webflux\.base-path\s*=\s*(.*)/)
+          if base_path
+            webflux_base_path = base_path[1]
+            webflux_base_path_map[path] = webflux_base_path if webflux_base_path
+          end
+        rescue e
+          # Handle parsing errors if necessary
+        end
+      end
     end
   end
 
@@ -72,7 +87,10 @@ class AnalyzerKotlinSpring < Analyzer
 
     class_map = package_class_map.merge(import_map)
     parser.classes.each { |source_class| class_map[source_class.name] = source_class }
-    process_class_annotations(path, parser, class_map, webflux_base_path_map[path]? || "")
+
+    match = webflux_base_path_map.find { |base_path, _| path.starts_with?(base_path) }
+    webflux_base_path = match ? match.last : ""
+    process_class_annotations(path, parser, class_map, webflux_base_path)
   end
 
   # Fetch content of a file and cache it
@@ -260,12 +278,9 @@ class AnalyzerKotlinSpring < Analyzer
 
   # Create endpoints for the extracted HTTP methods and paths
   private def create_endpoints(webflux_base_path : String, url : String, url_paths : Array(String), request_optional : Hash(String, Array(String)), parser : KotlinParser, method : KotlinParser::MethodModel, parameter_format : String | Nil, class_map : Hash(String, KotlinParser::ClassModel), details : Details)
-    # Remove trailing slash from base path if it exists
-    webflux_base_path.chomp("/") if webflux_base_path.ends_with?("/") && url.starts_with?("/")
-
     # Iterate over each URL path to create full URLs
     url_paths.each do |url_path|
-      full_url = "#{webflux_base_path}#{url}#{url_path}"
+      full_url = join_path(webflux_base_path, url, url_path)
 
       # Iterate over each request method to create endpoints
       request_optional["methods"].each do |request_method|
