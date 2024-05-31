@@ -176,7 +176,7 @@ FLAGS:
   CONFIG:
     --config-file ./config.yaml      Specify the path to a configuration file in YAML format
     --concurrency 100                Set concurrency
-    --generate-zsh-completion        Generate Zsh completion script
+    --generate-completion zsh        Generate Zsh/Bash completion script
 
   DEBUG:
     -d, --debug                      Show debug messages
