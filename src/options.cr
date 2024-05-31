@@ -1,3 +1,5 @@
+require "./completions.cr"
+
 def default_options
   noir_options = {
     :base              => "",
@@ -101,6 +103,12 @@ def run_options_parser
     parser.separator "\n  CONFIG:".colorize(:blue)
     parser.on "--config-file ./config.yaml", "Specify the path to a configuration file in YAML format" { |var| noir_options[:config_file] = var }
     parser.on "--concurrency 100", "Set concurrency" { |var| noir_options[:concurrency] = var }
+    parser.on "--generate-zsh-completion", "Generate Zsh completion script" do
+      puts generate_zsh_completion_script
+      puts "\n"
+      puts "> Instructions: Copy the above content and save it in the zsh-completion directory as _noir.".colorize(:yellow)
+      exit
+    end
 
     parser.separator "\n  DEBUG:".colorize(:blue)
     parser.on "-d", "--debug", "Show debug messages" do
