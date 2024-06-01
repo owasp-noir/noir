@@ -108,7 +108,11 @@ def run_options_parser
       when "zsh"
         puts generate_zsh_completion_script
         puts "\n"
-        puts "> Instructions: Copy the above content and save it in the zsh-completion directory as _noir.".colorize(:yellow)
+        puts "> Instructions: Copy the content above and save it in the zsh-completion directory as _noir".colorize(:yellow)
+      when "bash"
+        puts generate_bash_completion_script
+        puts "\n"
+        puts "> Instructions: Copy the content above and save it in the .bashrc file as noir.".colorize(:yellow)
       else
         puts "ERROR: Invalid completion type."
         puts "e.g., noir --generate-completion zsh"
