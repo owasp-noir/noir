@@ -32,3 +32,61 @@ def generate_zsh_completion_script
         '-h[Show help]'
     SCRIPT
 end
+
+def generate_bash_completion_script
+  <<-SCRIPT
+        _noir_completions() {
+            local cur prev opts
+            COMPREPLY=()
+            cur="${COMP_WORDS[COMP_CWORD]}"
+            prev="${COMP_WORDS[COMP_CWORD-1]}"
+            opts="
+                -b --base-path
+                -u --url
+                -f --format
+                -o --output
+                --set-pvalue
+                --include-path
+                --no-color
+                --no-log
+                -T --use-all-taggers
+                --use-taggers
+                --list-taggers
+                --send-req
+                --send-proxy
+                --send-es
+                --with-headers
+                --use-matchers
+                --use-filters
+                --diff-path
+                -t --techs
+                --exclude-techs
+                --list-techs
+                --config-file
+                --concurrency
+                -d --debug
+                -v --version
+                --build-info
+                -h --help
+            "
+
+            case "${prev}" in
+                -f|--format)
+                    COMPREPLY=( $(compgen -W "plain yaml json jsonl markdown-table curl httpie oas2 oas3 only-url only-param only-header only-cookie" -- "${cur}") )
+                    return 0
+                    ;;
+                --send-proxy|--send-es|--with-headers|--use-matchers|--use-filters|--diff-path|--config-file|--set-pvalue|--techs|--exclude-techs|-o|-b|-u)
+                    COMPREPLY=( $(compgen -f -- "${cur}") )
+                    return 0
+                    ;;
+                *)
+                    ;;
+            esac
+
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+        }
+
+        complete -F _noir_completions noir
+    SCRIPT
+end
