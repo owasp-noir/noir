@@ -1,7 +1,8 @@
 require "../../../src/detector/detectors/*"
 
 describe "Detect Java Armeria" do
-  options = default_options()
+  config_init = ConfigInitializer.new
+  options = config_init.default_options
   instance = DetectorJavaArmeria.new options
 
   it "pom.xml" do

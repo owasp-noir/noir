@@ -283,7 +283,7 @@ class AnalyzerOAS3 < Analyzer
   end
 end
 
-def analyzer_oas3(options : Hash(Symbol, String))
+def analyzer_oas3(options : Hash(String, String))
   instance = AnalyzerOAS3.new(options)
   instance.analyze
 end

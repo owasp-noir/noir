@@ -1,7 +1,8 @@
 require "../../../src/detector/detectors/*"
 
 describe "Detect Python Django" do
-  options = default_options()
+  config_init = ConfigInitializer.new
+  options = config_init.default_options
   instance = DetectorPythonDjango.new options
 
   it "settings.py" do

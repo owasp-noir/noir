@@ -1,7 +1,8 @@
 require "../../../src/detector/detectors/*"
 
 describe "Detect Java Spring" do
-  options = default_options()
+  config_init = ConfigInitializer.new
+  options = config_init.default_options
   instance = DetectorJavaSpring.new options
 
   it "test.java" do

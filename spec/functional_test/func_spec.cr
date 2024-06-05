@@ -15,9 +15,10 @@ class FunctionalTester
   @path : String
 
   def initialize(@path, expected_count, expected_endpoints)
-    noir_options = default_options()
-    noir_options[:base] = "./spec/functional_test/#{@path}"
-    noir_options[:nolog] = "yes"
+    config_init = ConfigInitializer.new
+    noir_options = config_init.default_options
+    noir_options["base"] = "./spec/functional_test/#{@path}"
+    noir_options["nolog"] = "yes"
 
     if !expected_count.nil?
       @expected_count = expected_count
@@ -130,6 +131,6 @@ class FunctionalTester
   end
 
   def set_url(url)
-    @app.options[:url] = url
+    @app.options["url"] = url
   end
 end

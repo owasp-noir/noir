@@ -1,7 +1,8 @@
 require "../../../src/detector/detectors/*"
 
 describe "Detect RAML" do
-  options = default_options()
+  config_init = ConfigInitializer.new
+  options = config_init.default_options
   instance = DetectorRAML.new options
 
   it "raml" do

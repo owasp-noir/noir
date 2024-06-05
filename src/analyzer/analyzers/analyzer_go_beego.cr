@@ -144,7 +144,7 @@ class AnalyzerGoBeego < Analyzer
   end
 end
 
-def analyzer_go_beego(options : Hash(Symbol, String))
+def analyzer_go_beego(options : Hash(String, String))
   instance = AnalyzerGoBeego.new(options)
   instance.analyze
 end

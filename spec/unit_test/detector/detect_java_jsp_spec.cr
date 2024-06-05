@@ -1,7 +1,8 @@
 require "../../../src/detector/detectors/*"
 
 describe "Detect Java JSP" do
-  options = default_options()
+  config_init = ConfigInitializer.new
+  options = config_init.default_options
   instance = DetectorJavaJsp.new options
 
   it "case1" do

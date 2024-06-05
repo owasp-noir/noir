@@ -135,7 +135,7 @@ class AnalyzerCrystalLucky < Analyzer
   end
 end
 
-def analyzer_crystal_lucky(options : Hash(Symbol, String))
+def analyzer_crystal_lucky(options : Hash(String, String))
   instance = AnalyzerCrystalLucky.new(options)
   instance.analyze
 end

@@ -1,7 +1,8 @@
 require "../../../src/detector/detectors/*"
 
 describe "Detect Php Pure" do
-  options = default_options()
+  config_init = ConfigInitializer.new
+  options = config_init.default_options
   instance = DetectorPhpPure.new options
 
   it "detect_php 1" do

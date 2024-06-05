@@ -4,7 +4,7 @@ require "../../models/endpoint"
 class CorsTagger < Tagger
   WORDS = ["origin", "access-control-allow-origin", "access-control-request-method"]
 
-  def initialize(options : Hash(Symbol, String))
+  def initialize(options : Hash(String, String))
     super
     @name = "cors"
   end

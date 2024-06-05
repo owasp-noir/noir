@@ -260,7 +260,7 @@ class AnalyzerFlask < AnalyzerPython
   end
 end
 
-def analyzer_flask(options : Hash(Symbol, String))
+def analyzer_flask(options : Hash(String, String))
   instance = AnalyzerFlask.new(options)
   instance.analyze
 end
