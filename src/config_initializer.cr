@@ -24,14 +24,8 @@ class ConfigInitializer
     # Create the directory if it doesn't exist
     Dir.mkdir(@config_dir) unless Dir.exists?(@config_dir)
 
-    # Get the default options
-    options = default_options
-
-    # Convert the options to a YAML string
-    yaml_string = options.to_yaml
-
     # Create the config file if it doesn't exist
-    File.write(@config_file, yaml_string) unless File.exists?(@config_file)
+    File.write(@config_file, generate_config_file) unless File.exists?(@config_file)
   rescue e : Exception
     puts "Failed to create config directory or file: #{e.message}"
     puts "Using default config."
@@ -83,5 +77,84 @@ class ConfigInitializer
     }
 
     noir_options
+  end
+
+  def generate_config_file
+    content = <<-CONTENT
+    ---
+    # Noir configuration file
+    # This file is used to store the configuration options for Noir.
+    # You can edit this file to change the configuration options.
+    # ************************************************************** 
+
+    # Base directory for the application
+    # base: ""
+
+    # Whether to use color in the output
+    # color: "yes"
+
+    # The configuration file to use
+    # config_file: ""
+
+    # The number of concurrent operations to perform
+    # concurrency: "100"
+
+    # Whether to enable debug mode
+    # debug: "no"
+
+    # Technologies to exclude
+    # exclude_techs: ""
+
+    # The format to use for the output
+    # format: plain
+
+    # Whether to include the path in the output
+    # include_path: "no"
+
+    # Whether to disable logging
+    # nolog: "no"
+
+    # The output file to write to
+    # output: ""
+
+    # The Elasticsearch server to send data to
+    # send_es: ""
+
+    # The proxy server to use
+    # send_proxy: ""
+
+    # Whether to send a request
+    # send_req: "no"
+
+    # Whether to send headers with the request
+    # send_with_headers: ""
+
+    # The value to set for pvalue
+    # set_pvalue: ""
+
+    # The technologies to use
+    # techs: ""
+
+    # The URL to use
+    # url: ""
+
+    # Whether to use filters
+    # use_filters: ""
+
+    # Whether to use matchers
+    # use_matchers: ""
+
+    # Whether to use all taggers
+    # all_taggers: "no"
+
+    # The taggers to use
+    # use_taggers: ""
+
+    # The diff file to use
+    # diff: ""
+    
+    CONTENT
+
+    content
   end
 end
