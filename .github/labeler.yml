@@ -40,6 +40,9 @@
 ⚙️ options:
   - changed-files:
       - any-glob-to-any-file: src/options.cr
+⛱️ config:
+  - changed-files:
+      - any-glob-to-any-file: [src/completions.cr, src/config_initializer.cr]
 🛥️ workflow:
   - changed-files:
       - any-glob-to-any-file: [.github/workflows/**, .github/labeler.yml]
