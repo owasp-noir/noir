@@ -7,12 +7,18 @@ class ConfigInitializer
   @default_config : Hash(String, String) = {"key" => "default_value"} # Replace with your default config
 
   def initialize
-    # Define the config directory and file based on the OS
-    {% if flag?(:windows) %}
-      @config_dir = "#{ENV["APPDATA"]}\\noir"
-    {% else %}
-      @config_dir = "#{ENV["HOME"]}/.config/noir"
-    {% end %}
+    # Define the config directory and file based on ENV variables
+    if ENV.has_key? "NOIR_HOME"
+      @config_dir = ENV["NOIR_HOME"]
+    else
+      # Define the config directory and file based on the OS
+      {% if flag?(:windows) %}
+        @config_dir = "#{ENV["APPDATA"]}\\noir"
+      {% else %}
+        @config_dir = "#{ENV["HOME"]}/.config/noir"
+      {% end %}
+    end
+
     @config_file = File.join(@config_dir, "config.yaml")
 
     # Expand the path (in case of '~')
@@ -85,7 +91,7 @@ class ConfigInitializer
     # Noir configuration file
     # This file is used to store the configuration options for Noir.
     # You can edit this file to change the configuration options.
-    # ************************************************************** 
+    # **************************************************************
 
     # Base directory for the application
     # base: ""
@@ -152,7 +158,7 @@ class ConfigInitializer
 
     # The diff file to use
     # diff: ""
-    
+
     CONTENT
 
     content
