@@ -94,70 +94,70 @@ class ConfigInitializer
     # **************************************************************
 
     # Base directory for the application
-    # base: ""
+    base: ""
 
     # Whether to use color in the output
-    # color: "yes"
+    color: "yes"
 
     # The configuration file to use
-    # config_file: ""
+    config_file: ""
 
     # The number of concurrent operations to perform
-    # concurrency: "100"
+    concurrency: "100"
 
     # Whether to enable debug mode
-    # debug: "no"
+    debug: "no"
 
     # Technologies to exclude
-    # exclude_techs: ""
+    exclude_techs: ""
 
     # The format to use for the output
-    # format: plain
+    format: plain
 
     # Whether to include the path in the output
-    # include_path: "no"
+    include_path: "no"
 
     # Whether to disable logging
-    # nolog: "no"
+    nolog: "no"
 
     # The output file to write to
-    # output: ""
+    output: ""
 
     # The Elasticsearch server to send data to
-    # send_es: ""
+    send_es: ""
 
     # The proxy server to use
-    # send_proxy: ""
+    send_proxy: ""
 
     # Whether to send a request
-    # send_req: "no"
+    send_req: "no"
 
     # Whether to send headers with the request
-    # send_with_headers: ""
+    send_with_headers: ""
 
     # The value to set for pvalue
-    # set_pvalue: ""
+    set_pvalue: ""
 
     # The technologies to use
-    # techs: ""
+    techs: ""
 
     # The URL to use
-    # url: ""
+    url: ""
 
     # Whether to use filters
-    # use_filters: ""
+    use_filters: ""
 
     # Whether to use matchers
-    # use_matchers: ""
+    use_matchers: ""
 
     # Whether to use all taggers
-    # all_taggers: "no"
+    all_taggers: "no"
 
     # The taggers to use
-    # use_taggers: ""
+    use_taggers: ""
 
     # The diff file to use
-    # diff: ""
+    diff: ""
 
     CONTENT
 
