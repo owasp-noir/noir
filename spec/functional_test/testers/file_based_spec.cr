@@ -15,5 +15,5 @@ tester = FunctionalTester.new("fixtures/file_based/", {
   :endpoints => 7,
 }, extected_endpoints)
 
-tester.app.options[:url] = "https://www.hahwul.com"
+tester.app.options["url"] = "https://www.hahwul.com"
 tester.test_all

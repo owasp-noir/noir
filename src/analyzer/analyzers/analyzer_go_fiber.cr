@@ -197,7 +197,7 @@ class AnalyzerGoFiber < Analyzer
   end
 end
 
-def analyzer_go_fiber(options : Hash(Symbol, String))
+def analyzer_go_fiber(options : Hash(String, String))
   instance = AnalyzerGoFiber.new(options)
   instance.analyze
 end

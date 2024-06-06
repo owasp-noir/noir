@@ -345,7 +345,7 @@ class Router
   end
 end
 
-def analyzer_fastapi(options : Hash(Symbol, String))
+def analyzer_fastapi(options : Hash(String, String))
   instance = AnalyzerFastAPI.new(options)
   instance.analyze
 end

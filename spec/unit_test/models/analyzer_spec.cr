@@ -2,8 +2,9 @@ require "../../../src/models/analyzer.cr"
 require "../../../src/options.cr"
 
 describe "Initialize Analyzer" do
-  options = default_options
-  options[:base] = "noir"
+  config_init = ConfigInitializer.new
+  options = config_init.default_options
+  options["base"] = "noir"
   object = Analyzer.new(options)
 
   it "getter - url" do
@@ -21,8 +22,9 @@ describe "Initialize Analyzer" do
 end
 
 describe "Initialize FileAnalyzer" do
-  options = default_options
-  options[:base] = "noir"
+  config_init = ConfigInitializer.new
+  options = config_init.default_options
+  options["base"] = "noir"
   object = FileAnalyzer.new(options)
 
   it "getter - url" do

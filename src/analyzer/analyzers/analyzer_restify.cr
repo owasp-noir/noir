@@ -105,7 +105,7 @@ class AnalyzerRestify < Analyzer
   end
 end
 
-def analyzer_restify(options : Hash(Symbol, String))
+def analyzer_restify(options : Hash(String, String))
   instance = AnalyzerRestify.new(options)
   instance.analyze
 end

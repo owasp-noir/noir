@@ -16,7 +16,7 @@ banner()
 noir_options = run_options_parser()
 
 # Check base path
-if noir_options[:base] == ""
+if noir_options["base"] == ""
   STDERR.puts "ERROR: Base path is required."
   STDERR.puts "Please use -b or --base-path to set base path."
   STDERR.puts "If you need help, use -h or --help."
@@ -38,11 +38,11 @@ app.options.each do |k, v|
 end
 
 app_diff = nil
-if noir_options[:diff] != ""
+if noir_options["diff"] != ""
   # Diff mode
   diff_options = noir_options.dup
-  diff_options[:base] = noir_options[:diff].to_s
-  diff_options[:nolog] = "yes"
+  diff_options["base"] = noir_options["diff"].to_s
+  diff_options["nolog"] = "yes"
 
   app_diff = NoirRunner.new diff_options
   app.logger.system "Running Noir with Diff mode."
@@ -54,7 +54,7 @@ app.detect
 
 if app.techs.size == 0
   app.logger.info "No technologies detected."
-  if app.options[:url] != ""
+  if app.options["url"] != ""
     app.logger.system "Start file-based analysis as the -u flag has been used."
   else
     exit(0)

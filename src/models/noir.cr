@@ -9,7 +9,7 @@ require "../utils/string_extension.cr"
 require "json"
 
 class NoirRunner
-  @options : Hash(Symbol, String)
+  @options : Hash(String, String)
   @techs : Array(String)
   @endpoints : Array(Endpoint)
   @logger : NoirLogger
@@ -34,7 +34,7 @@ class NoirRunner
 
   def initialize(options)
     @options = options
-    @config_file = @options[:config_file]
+    @config_file = @options["config_file"]
 
     if @config_file != ""
       config = YAML.parse(File.read(@config_file))
@@ -54,18 +54,18 @@ class NoirRunner
 
     @techs = [] of String
     @endpoints = [] of Endpoint
-    @send_proxy = @options[:send_proxy]
-    @send_req = @options[:send_req]
-    @send_es = @options[:send_es]
-    @is_debug = str_to_bool(@options[:debug])
-    @is_color = str_to_bool(@options[:color])
-    @is_log = str_to_bool(@options[:nolog])
-    @concurrency = @options[:concurrency].to_i
+    @send_proxy = @options["send_proxy"]
+    @send_req = @options["send_req"]
+    @send_es = @options["send_es"]
+    @is_debug = str_to_bool(@options["debug"])
+    @is_color = str_to_bool(@options["color"])
+    @is_log = str_to_bool(@options["nolog"])
+    @concurrency = @options["concurrency"].to_i
 
     @logger = NoirLogger.new @is_debug, @is_color, @is_log
 
-    if @options[:techs].size > 0
-      techs_tmp = @options[:techs].split(",")
+    if @options["techs"].size > 0
+      techs_tmp = @options["techs"].split(",")
       @logger.info "Setting #{techs_tmp.size} techs from command line."
       techs_tmp.each do |tech|
         @techs << NoirTechs.similar_to_tech(tech)
@@ -79,7 +79,7 @@ class NoirRunner
   end
 
   def detect
-    detected_techs = detect_techs options[:base], options, @logger
+    detected_techs = detect_techs options["base"], options, @logger
     @techs += detected_techs
     if @is_debug
       @logger.debug("CodeLocator Table:")
@@ -94,7 +94,7 @@ class NoirRunner
     combine_url_and_endpoints
 
     # Run tagger
-    if @options[:all_taggers] == "yes"
+    if @options["all_taggers"] == "yes"
       @logger.info "Running all taggers."
       NoirTaggers.run_tagger @endpoints, @options, "all"
       if @is_debug
@@ -102,9 +102,9 @@ class NoirRunner
           @logger.debug "Tagger: #{tagger}"
         end
       end
-    elsif @options[:use_taggers] != ""
-      @logger.info "Running #{@options[:use_taggers]} taggers."
-      NoirTaggers.run_tagger @endpoints, @options, @options[:use_taggers]
+    elsif @options["use_taggers"] != ""
+      @logger.info "Running #{@options["use_taggers"]} taggers."
+      NoirTaggers.run_tagger @endpoints, @options, @options["use_taggers"]
     end
 
     # Run deliver
@@ -121,8 +121,8 @@ class NoirRunner
         tiny_tmp.params = [] of Param
         endpoint.params.each do |param|
           if !param.name.includes? " "
-            if @options[:set_pvalue] != ""
-              param.value = @options[:set_pvalue]
+            if @options["set_pvalue"] != ""
+              param.value = @options["set_pvalue"]
             end
             tiny_tmp.params << param
           end
@@ -153,7 +153,7 @@ class NoirRunner
 
   def combine_url_and_endpoints
     tmp = [] of Endpoint
-    target_url = @options[:url]
+    target_url = @options["url"]
 
     if target_url != ""
       @logger.system "Combining url and endpoints."
@@ -203,7 +203,7 @@ class NoirRunner
   def diff_report(diff_app)
     builder = OutputBuilderDiff.new @options
 
-    case options[:format]
+    case options["format"]
     when "yaml"
       builder.print_yaml @endpoints, diff_app
     when "json"
@@ -218,7 +218,7 @@ class NoirRunner
   end
 
   def report
-    case options[:format]
+    case options["format"]
     when "yaml"
       puts @endpoints.to_yaml
     when "json"

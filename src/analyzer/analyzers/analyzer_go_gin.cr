@@ -188,7 +188,7 @@ class AnalyzerGoGin < Analyzer
   end
 end
 
-def analyzer_go_gin(options : Hash(Symbol, String))
+def analyzer_go_gin(options : Hash(String, String))
   instance = AnalyzerGoGin.new(options)
   instance.analyze
 end

@@ -2,7 +2,8 @@ require "../../../src/detector/detectors/*"
 require "../../../src/models/code_locator"
 
 describe "Detect OAS 2.0(Swagger) Docs" do
-  options = default_options()
+  config_init = ConfigInitializer.new
+  options = config_init.default_options
   instance = DetectorOas2.new options
 
   it "json format" do

@@ -363,7 +363,7 @@ class AnalyzerDjango < AnalyzerPython
   end
 end
 
-def analyzer_django(options : Hash(Symbol, String))
+def analyzer_django(options : Hash(String, String))
   instance = AnalyzerDjango.new(options)
   instance.analyze
 end

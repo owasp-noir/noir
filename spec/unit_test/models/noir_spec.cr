@@ -3,21 +3,23 @@ require "../../../src/options.cr"
 require "../../../src/models/endpoint.cr"
 
 describe "Initialize" do
-  options = default_options
-  options[:base] = "noir"
+  config_init = ConfigInitializer.new
+  options = config_init.default_options
+  options["base"] = "noir"
   runner = NoirRunner.new(options)
 
   it "getter - options" do
     tmp_options = runner.options
-    tmp_options[:base].should eq(options[:base])
+    tmp_options["base"].should eq(options["base"])
   end
 end
 
 describe "Methods" do
-  options = default_options
-  options[:base] = "noir"
-  options[:url] = "https://www.hahwul.com"
-  options[:nolog] = "yes"
+  config_init = ConfigInitializer.new
+  options = config_init.default_options
+  options["base"] = "noir"
+  options["url"] = "https://www.hahwul.com"
+  options["nolog"] = "yes"
   runner = NoirRunner.new(options)
 
   runner.endpoints << Endpoint.new("/abcd", "GET")

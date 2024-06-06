@@ -62,7 +62,7 @@ class AnalyzerHar < Analyzer
   end
 end
 
-def analyzer_har(options : Hash(Symbol, String))
+def analyzer_har(options : Hash(String, String))
   instance = AnalyzerHar.new(options)
   instance.analyze
 end

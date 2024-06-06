@@ -256,7 +256,7 @@ class AnalyzerRubyRails < Analyzer
   end
 end
 
-def analyzer_ruby_rails(options : Hash(Symbol, String))
+def analyzer_ruby_rails(options : Hash(String, String))
   instance = AnalyzerRubyRails.new(options)
   instance.analyze
 end

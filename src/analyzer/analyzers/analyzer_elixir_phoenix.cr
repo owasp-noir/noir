@@ -61,7 +61,7 @@ class AnalyzerElixirPhoenix < Analyzer
   end
 end
 
-def analyzer_elixir_phoenix(options : Hash(Symbol, String))
+def analyzer_elixir_phoenix(options : Hash(String, String))
   instance = AnalyzerElixirPhoenix.new(options)
   instance.analyze
 end
