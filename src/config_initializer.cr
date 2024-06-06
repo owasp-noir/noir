@@ -92,6 +92,8 @@ class ConfigInitializer
     # Noir configuration file
     # This file is used to store the configuration options for Noir.
     # You can edit this file to change the configuration options.
+
+    # Config values are defaults; CLI options take precedence.
     # **************************************************************
 
     # Base directory for the application
@@ -125,15 +127,18 @@ class ConfigInitializer
     output: "#{options["output"]}"
 
     # The Elasticsearch server to send data to
+    # e.g http://localhost:9200
     send_es: "#{options["send_es"]}"
 
     # The proxy server to use
+    # e.g http://localhost:8080
     send_proxy: "#{options["send_proxy"]}"
 
     # Whether to send a request
     send_req: "#{options["send_req"]}"
 
     # Whether to send headers with the request
+    # e.g "Authorization: Bearer token"
     send_with_headers: "#{options["send_with_headers"]}"
 
     # The value to set for pvalue
@@ -155,6 +160,8 @@ class ConfigInitializer
     all_taggers: "#{options["all_taggers"]}"
 
     # The taggers to use
+    # e.g "tagger1,tagger2"
+    # To see the list of all taggers, please use the noir command with --list-taggers
     use_taggers: "#{options["use_taggers"]}"
 
     # The diff file to use
