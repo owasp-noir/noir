@@ -86,78 +86,86 @@ class ConfigInitializer
   end
 
   def generate_config_file
+    options = default_options
     content = <<-CONTENT
     ---
     # Noir configuration file
     # This file is used to store the configuration options for Noir.
     # You can edit this file to change the configuration options.
+
+    # Config values are defaults; CLI options take precedence.
     # **************************************************************
 
     # Base directory for the application
-    base: ""
+    base: "#{options["base"]}"
 
     # Whether to use color in the output
-    color: "yes"
+    color: "#{options["color"]}"
 
     # The configuration file to use
-    config_file: ""
+    config_file: "#{options["config_file"]}"
 
     # The number of concurrent operations to perform
-    concurrency: "100"
+    concurrency: "#{options["concurrency"]}"
 
     # Whether to enable debug mode
-    debug: "no"
+    debug: "#{options["debug"]}"
 
     # Technologies to exclude
-    exclude_techs: ""
+    exclude_techs: "#{options["exclude_techs"]}"
 
     # The format to use for the output
-    format: plain
+    format: "#{options["format"]}"
 
     # Whether to include the path in the output
-    include_path: "no"
+    include_path: "#{options["include_path"]}"
 
     # Whether to disable logging
-    nolog: "no"
+    nolog: "#{options["nolog"]}"
 
     # The output file to write to
-    output: ""
+    output: "#{options["output"]}"
 
     # The Elasticsearch server to send data to
-    send_es: ""
+    # e.g http://localhost:9200
+    send_es: "#{options["send_es"]}"
 
     # The proxy server to use
-    send_proxy: ""
+    # e.g http://localhost:8080
+    send_proxy: "#{options["send_proxy"]}"
 
     # Whether to send a request
-    send_req: "no"
+    send_req: "#{options["send_req"]}"
 
     # Whether to send headers with the request
-    send_with_headers: ""
+    # e.g "Authorization: Bearer token"
+    send_with_headers: "#{options["send_with_headers"]}"
 
     # The value to set for pvalue
-    set_pvalue: ""
+    set_pvalue: "#{options["set_pvalue"]}"
 
     # The technologies to use
-    techs: ""
+    techs: "#{options["techs"]}"
 
     # The URL to use
-    url: ""
+    url: "#{options["url"]}"
 
     # Whether to use filters
-    use_filters: ""
+    use_filters: "#{options["use_filters"]}"
 
     # Whether to use matchers
-    use_matchers: ""
+    use_matchers: "#{options["use_matchers"]}"
 
     # Whether to use all taggers
-    all_taggers: "no"
+    all_taggers: "#{options["all_taggers"]}"
 
     # The taggers to use
-    use_taggers: ""
+    # e.g "tagger1,tagger2"
+    # To see the list of all taggers, please use the noir command with --list-taggers
+    use_taggers: "#{options["use_taggers"]}"
 
     # The diff file to use
-    diff: ""
+    diff: "#{options["diff"]}"
 
     CONTENT
 
