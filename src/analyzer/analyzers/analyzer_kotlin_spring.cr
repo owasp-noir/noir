@@ -1,6 +1,7 @@
 require "../../models/analyzer"
 require "../../minilexers/kotlin"
 require "../../miniparsers/kotlin"
+require "../../utils/utils.cr"
 
 class AnalyzerKotlinSpring < Analyzer
   REGEX_ROUTER_CODE_BLOCK = /route\(\)?.*?\);/m
@@ -50,6 +51,20 @@ class AnalyzerKotlinSpring < Analyzer
           # Handle parsing errors if necessary
         end
       end
+
+      application_properties_path = File.join(path, "main/resources/application.properties")
+      if File.exists?(application_properties_path)
+        begin
+          properties = File.read(application_properties_path)
+          base_path = properties.match(/spring\.webflux\.base-path\s*=\s*(.*)/)
+          if base_path
+            webflux_base_path = base_path[1]
+            webflux_base_path_map[path] = webflux_base_path if webflux_base_path
+          end
+        rescue e
+          # Handle parsing errors if necessary
+        end
+      end
     end
   end
 
@@ -72,7 +87,10 @@ class AnalyzerKotlinSpring < Analyzer
 
     class_map = package_class_map.merge(import_map)
     parser.classes.each { |source_class| class_map[source_class.name] = source_class }
-    process_class_annotations(path, parser, class_map, webflux_base_path_map[path]? || "")
+
+    match = webflux_base_path_map.find { |base_path, _| path.starts_with?(base_path) }
+    webflux_base_path = match ? match.last : ""
+    process_class_annotations(path, parser, class_map, webflux_base_path)
   end
 
   # Fetch content of a file and cache it
@@ -260,44 +278,53 @@ class AnalyzerKotlinSpring < Analyzer
 
   # Create endpoints for the extracted HTTP methods and paths
   private def create_endpoints(webflux_base_path : String, url : String, url_paths : Array(String), request_optional : Hash(String, Array(String)), parser : KotlinParser, method : KotlinParser::MethodModel, parameter_format : String | Nil, class_map : Hash(String, KotlinParser::ClassModel), details : Details)
-    webflux_base_path = webflux_base_path.chomp("/") if webflux_base_path.ends_with?("/")
+    # Iterate over each URL path to create full URLs
     url_paths.each do |url_path|
-      full_url = "#{webflux_base_path}#{url}#{url_path}"
-      request_optional["methods"].each do |request_method|
-        parameter_format = case request_method
-                           when "POST", "PUT", "DELETE"
-                             "form" if parameter_format.nil?
-                           when "GET"
-                             "query" if parameter_format.nil?
-                           end
-        parameters = get_endpoint_parameters(parser, method, parameter_format, class_map)
-        request_optional["params"].each do |param|
-          parameter_format = "query" if parameter_format.nil?
-          param, default_value = if param.includes?("=")
-                                   param.split("=")
-                                 else
-                                   [param, ""]
-                                 end
-          new_param_obj = Param.new(param, default_value, parameter_format)
-          if parameters.find { |param_obj| param_obj == new_param_obj }.nil?
-            parameters << new_param_obj
-          end
-        end
+      full_url = join_path(webflux_base_path, url, url_path)
 
-        request_optional["headers"].each do |header|
-          parameter_format = "header"
-          param, default_value = if header.includes?("=")
-                                   header.split("=")
-                                 else
-                                   [header, ""]
-                                 end
-          new_param_obj = Param.new(param, default_value, parameter_format)
-          if parameters.find { |param_obj| param_obj == new_param_obj }.nil?
-            parameters << new_param_obj
-          end
-        end
+      # Iterate over each request method to create endpoints
+      request_optional["methods"].each do |request_method|
+        # Determine parameter format if not specified
+        parameter_format ||= determine_parameter_format(request_method)
+
+        # Get parameters for the endpoint
+        parameters = get_endpoint_parameters(parser, method, parameter_format, class_map)
+
+        # Add query or form parameters
+        add_params(parameters, request_optional["params"], parameter_format)
+
+        # Add header parameters
+        add_params(parameters, request_optional["headers"], "header")
+
+        # Create and store the endpoint
         @result << Endpoint.new(full_url, request_method, parameters, details)
       end
+    end
+  end
+
+  # Determine the parameter format based on the request method
+  private def determine_parameter_format(request_method)
+    case request_method
+    when "POST", "PUT", "DELETE", "PATCH"
+      "form"
+    when "GET"
+      "query"
+    else
+      nil
+    end
+  end
+
+  # Add parameters to the parameters array
+  # params: Array of parameter strings
+  # default_format: Default format for the parameters (query, form, header)
+  private def add_params(parameters, params, default_format)
+    params.each do |param|
+      format = default_format || "query"
+      param, default_value = param.includes?("=") ? param.split("=") : [param, ""]
+      new_param_obj = Param.new(param, default_value, format)
+
+      # Add parameter if it doesn't already exist in the parameters array
+      parameters << new_param_obj unless parameters.includes?(new_param_obj)
     end
   end
 
@@ -462,7 +489,7 @@ class AnalyzerKotlinSpring < Analyzer
 end
 
 # Function to instantiate and run the AnalyzerKotlinSpring
-def analyzer_kotlin_spring(options : Hash(Symbol, String))
+def analyzer_kotlin_spring(options : Hash(String, String))
   instance = AnalyzerKotlinSpring.new(options)
   instance.analyze
 end

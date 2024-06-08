@@ -33,7 +33,7 @@ class HuntParamTagger < Tagger
     },
   }
 
-  def initialize(options : Hash(Symbol, String))
+  def initialize(options : Hash(String, String))
     super
     @name = "hunt"
   end

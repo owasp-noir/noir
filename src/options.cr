@@ -1,59 +1,35 @@
-def default_options
-  noir_options = {
-    :base              => "",
-    :color             => "yes",
-    :config_file       => "",
-    :concurrency       => "100",
-    :debug             => "no",
-    :exclude_techs     => "",
-    :format            => "plain",
-    :include_path      => "no",
-    :nolog             => "no",
-    :output            => "",
-    :send_es           => "",
-    :send_proxy        => "",
-    :send_req          => "no",
-    :send_with_headers => "",
-    :set_pvalue        => "",
-    :techs             => "",
-    :url               => "",
-    :use_filters       => "",
-    :use_matchers      => "",
-    :all_taggers       => "no",
-    :use_taggers       => "",
-    :diff              => "",
-  }
-
-  noir_options
-end
+require "./completions.cr"
+require "./config_initializer.cr"
 
 def run_options_parser
-  noir_options = default_options()
+  # Check config file
+  config_init = ConfigInitializer.new
+  noir_options = config_init.read_config
 
   OptionParser.parse do |parser|
     parser.banner = "USAGE: noir <flags>\n"
     parser.separator "FLAGS:"
     parser.separator "  BASE:".colorize(:blue)
-    parser.on "-b PATH", "--base-path ./app", "(Required) Set base path" { |var| noir_options[:base] = var }
-    parser.on "-u URL", "--url http://..", "Set base url for endpoints" { |var| noir_options[:url] = var }
+    parser.on "-b PATH", "--base-path ./app", "(Required) Set base path" { |var| noir_options["base"] = var }
+    parser.on "-u URL", "--url http://..", "Set base url for endpoints" { |var| noir_options["url"] = var }
 
     parser.separator "\n  OUTPUT:".colorize(:blue)
-    parser.on "-f FORMAT", "--format json", "Set output format\n  * plain yaml json jsonl markdown-table\n  * curl httpie oas2 oas3\n  * only-url only-param only-header only-cookie" { |var| noir_options[:format] = var }
-    parser.on "-o PATH", "--output out.txt", "Write result to file" { |var| noir_options[:output] = var }
-    parser.on "--set-pvalue VALUE", "Specifies the value of the identified parameter" { |var| noir_options[:set_pvalue] = var }
+    parser.on "-f FORMAT", "--format json", "Set output format\n  * plain yaml json jsonl markdown-table\n  * curl httpie oas2 oas3\n  * only-url only-param only-header only-cookie" { |var| noir_options["format"] = var }
+    parser.on "-o PATH", "--output out.txt", "Write result to file" { |var| noir_options["output"] = var }
+    parser.on "--set-pvalue VALUE", "Specifies the value of the identified parameter" { |var| noir_options["set_pvalue"] = var }
     parser.on "--include-path", "Include file path in the plain result" do
-      noir_options[:include_path] = "yes"
+      noir_options["include_path"] = "yes"
     end
     parser.on "--no-color", "Disable color output" do
-      noir_options[:color] = "no"
+      noir_options["color"] = "no"
     end
     parser.on "--no-log", "Displaying only the results" do
-      noir_options[:nolog] = "yes"
+      noir_options["nolog"] = "yes"
     end
 
     parser.separator "\n  TAGGER:".colorize(:blue)
-    parser.on "-T", "--use-all-taggers", "Activates all taggers for full analysis coverage" { |_| noir_options[:all_taggers] = "yes" }
-    parser.on "--use-taggers VALUES", "Activates specific taggers (e.g., --use-taggers hunt,oauth)" { |var| noir_options[:use_taggers] = var }
+    parser.on "-T", "--use-all-taggers", "Activates all taggers for full analysis coverage" { |_| noir_options["all_taggers"] = "yes" }
+    parser.on "--use-taggers VALUES", "Activates specific taggers (e.g., --use-taggers hunt,oauth)" { |var| noir_options["use_taggers"] = var }
     parser.on "--list-taggers", "Lists all available taggers" do
       puts "Available taggers:"
       techs = NoirTaggers.get_taggers
@@ -67,25 +43,25 @@ def run_options_parser
     end
 
     parser.separator "\n  DELIVER:".colorize(:blue)
-    parser.on "--send-req", "Send results to a web request" { |_| noir_options[:send_req] = "yes" }
-    parser.on "--send-proxy http://proxy..", "Send results to a web request via an HTTP proxy" { |var| noir_options[:send_proxy] = var }
-    parser.on "--send-es http://es..", "Send results to Elasticsearch" { |var| noir_options[:send_es] = var }
+    parser.on "--send-req", "Send results to a web request" { |_| noir_options["send_req"] = "yes" }
+    parser.on "--send-proxy http://proxy..", "Send results to a web request via an HTTP proxy" { |var| noir_options["send_proxy"] = var }
+    parser.on "--send-es http://es..", "Send results to Elasticsearch" { |var| noir_options["send_es"] = var }
     parser.on "--with-headers X-Header:Value", "Add custom headers to be included in the delivery" do |var|
-      noir_options[:send_with_headers] += "#{var}::NOIR::HEADERS::SPLIT::"
+      noir_options["send_with_headers"] += "#{var}::NOIR::HEADERS::SPLIT::"
     end
     parser.on "--use-matchers string", "Send URLs that match specific conditions to the Deliver" do |var|
-      noir_options[:use_matchers] += "#{var}::NOIR::MATCHER::SPLIT::"
+      noir_options["use_matchers"] += "#{var}::NOIR::MATCHER::SPLIT::"
     end
     parser.on "--use-filters string", "Exclude URLs that match specified conditions and send the rest to Deliver" do |var|
-      noir_options[:use_filters] += "#{var}::NOIR::FILTER::SPLIT::"
+      noir_options["use_filters"] += "#{var}::NOIR::FILTER::SPLIT::"
     end
 
     parser.separator "\n  DIFF:".colorize(:blue)
-    parser.on "--diff-path ./app2", "Specify the path to the old version of the source code for comparison" { |var| noir_options[:diff] = var }
+    parser.on "--diff-path ./app2", "Specify the path to the old version of the source code for comparison" { |var| noir_options["diff"] = var }
 
     parser.separator "\n  TECHNOLOGIES:".colorize(:blue)
-    parser.on "-t TECHS", "--techs rails,php", "Specify the technologies to use" { |var| noir_options[:techs] = var }
-    parser.on "--exclude-techs rails,php", "Specify the technologies to be excluded" { |var| noir_options[:exclude_techs] = var }
+    parser.on "-t TECHS", "--techs rails,php", "Specify the technologies to use" { |var| noir_options["techs"] = var }
+    parser.on "--exclude-techs rails,php", "Specify the technologies to be excluded" { |var| noir_options["exclude_techs"] = var }
     parser.on "--list-techs", "Show all technologies" do
       puts "Available technologies:"
       techs = NoirTechs.get_techs
@@ -99,12 +75,30 @@ def run_options_parser
     end
 
     parser.separator "\n  CONFIG:".colorize(:blue)
-    parser.on "--config-file ./config.yaml", "Specify the path to a configuration file in YAML format" { |var| noir_options[:config_file] = var }
-    parser.on "--concurrency 100", "Set concurrency" { |var| noir_options[:concurrency] = var }
+    parser.on "--config-file ./config.yaml", "Specify the path to a configuration file in YAML format" { |var| noir_options["config_file"] = var }
+    parser.on "--concurrency 100", "Set concurrency" { |var| noir_options["concurrency"] = var }
+    parser.on "--generate-completion zsh", "Generate Zsh/Bash completion script" do |var|
+      case var
+      when "zsh"
+        puts generate_zsh_completion_script
+        puts "\n"
+        puts "> Instructions: Copy the content above and save it in the zsh-completion directory as _noir".colorize(:yellow)
+      when "bash"
+        puts generate_bash_completion_script
+        puts "\n"
+        puts "> Instructions: Copy the content above and save it in the .bashrc file as noir.".colorize(:yellow)
+      else
+        puts "ERROR: Invalid completion type."
+        puts "e.g., noir --generate-completion zsh"
+        puts "e.g., noir --generate-completion bash"
+      end
+
+      exit
+    end
 
     parser.separator "\n  DEBUG:".colorize(:blue)
     parser.on "-d", "--debug", "Show debug messages" do
-      noir_options[:debug] = "yes"
+      noir_options["debug"] = "yes"
     end
     parser.on "-v", "--version", "Show version" do
       puts Noir::VERSION

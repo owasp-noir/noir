@@ -67,7 +67,7 @@ class AnalyzerPhpPure < Analyzer
   end
 end
 
-def analyzer_php_pure(options : Hash(Symbol, String))
+def analyzer_php_pure(options : Hash(String, String))
   instance = AnalyzerPhpPure.new(options)
   instance.analyze
 end

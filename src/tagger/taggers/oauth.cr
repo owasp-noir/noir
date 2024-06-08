@@ -4,7 +4,7 @@ require "../../models/endpoint"
 class OAuthTagger < Tagger
   WORDS = ["grant_type", "code", "redirect_uri", "redirect_url", "client_id", "client_secret"]
 
-  def initialize(options : Hash(Symbol, String))
+  def initialize(options : Hash(String, String))
     super
     @name = "oauth"
   end

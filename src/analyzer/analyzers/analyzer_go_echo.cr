@@ -186,7 +186,7 @@ class AnalyzerGoEcho < Analyzer
   end
 end
 
-def analyzer_go_echo(options : Hash(Symbol, String))
+def analyzer_go_echo(options : Hash(String, String))
   instance = AnalyzerGoEcho.new(options)
   instance.analyze
 end

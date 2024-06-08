@@ -18,6 +18,12 @@ def get_relative_path(base_path : String, path : String)
   relative_path
 end
 
+def join_path(*segments : String) : String
+  path = segments.reject(&.empty?).map(&.chomp("/").lstrip("/")).join("/")
+  path = "/#{path}" unless path.starts_with?("/")
+  path
+end
+
 def str_to_bool(str)
   if str == "yes"
     return true

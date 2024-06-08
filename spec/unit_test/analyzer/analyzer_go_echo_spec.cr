@@ -2,7 +2,8 @@ require "../../../src/analyzer/analyzers/analyzer_go_echo.cr"
 require "../../../src/options"
 
 describe "analyzer_go_echo" do
-  options = default_options()
+  config_init = ConfigInitializer.new
+  options = config_init.default_options
   instance = AnalyzerGoEcho.new(options)
   groups = [] of Hash(String, String)
 

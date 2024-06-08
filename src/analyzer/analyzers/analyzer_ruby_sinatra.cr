@@ -111,7 +111,7 @@ class AnalyzerRubySinatra < Analyzer
   end
 end
 
-def analyzer_ruby_sinatra(options : Hash(Symbol, String))
+def analyzer_ruby_sinatra(options : Hash(String, String))
   instance = AnalyzerRubySinatra.new(options)
   instance.analyze
 end

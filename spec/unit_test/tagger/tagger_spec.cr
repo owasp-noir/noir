@@ -2,7 +2,8 @@ require "../../../src/tagger/tagger"
 
 describe "Tagger" do
   it "hunt_tagger" do
-    noir_options = default_options()
+    config_init = ConfigInitializer.new
+    noir_options = config_init.default_options
     extected_endpoints = [
       Endpoint.new("/api/me", "GET", [
         Param.new("q", "", "query"),
@@ -41,7 +42,8 @@ describe "Tagger" do
   end
 
   it "oauth_tagger" do
-    noir_options = default_options()
+    config_init = ConfigInitializer.new
+    noir_options = config_init.default_options
     extected_endpoints = [
       Endpoint.new("/token", "GET", [
         Param.new("client_id", "", "query"),
@@ -59,7 +61,8 @@ describe "Tagger" do
   end
 
   it "cors_tagger" do
-    noir_options = default_options()
+    config_init = ConfigInitializer.new
+    noir_options = config_init.default_options
     extected_endpoints = [
       Endpoint.new("/api/me", "GET", [
         Param.new("q", "", "query"),
@@ -76,7 +79,8 @@ describe "Tagger" do
   end
 
   it "soap_tagger" do
-    noir_options = default_options()
+    config_init = ConfigInitializer.new
+    noir_options = config_init.default_options
     extected_endpoints = [
       Endpoint.new("/api/me", "GET", [
         Param.new("SOAPAction", "", "header"),
@@ -92,7 +96,8 @@ describe "Tagger" do
   end
 
   it "websocket_tagger_1" do
-    noir_options = default_options()
+    config_init = ConfigInitializer.new
+    noir_options = config_init.default_options
     extected_endpoints = [
       Endpoint.new("/ws", "GET", [
         Param.new("sec-websocket-version", "", "header"),
@@ -109,7 +114,8 @@ describe "Tagger" do
   end
 
   it "websocket_tagger_2" do
-    noir_options = default_options()
+    config_init = ConfigInitializer.new
+    noir_options = config_init.default_options
     e = Endpoint.new("/ws", "GET")
     e.set_protocol("ws")
 

@@ -4,7 +4,7 @@ require "../../models/endpoint"
 class WebsocketTagger < Tagger
   WORDS = ["sec-websocket-key", "sec-websocket-accept", "sec-websocket-version"]
 
-  def initialize(options : Hash(Symbol, String))
+  def initialize(options : Hash(String, String))
     super
     @name = "websocket"
   end

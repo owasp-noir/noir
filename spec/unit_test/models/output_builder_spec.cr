@@ -2,10 +2,11 @@ require "../../../src/models/output_builder.cr"
 require "../../../src/options.cr"
 
 describe "Initialize" do
-  options = default_options
-  options[:base] = "noir"
-  options[:format] = "json"
-  options[:output] = "output.json"
+  config_init = ConfigInitializer.new
+  options = config_init.default_options
+  options["base"] = "noir"
+  options["format"] = "json"
+  options["output"] = "output.json"
 
   it "OutputBuilder" do
     object = OutputBuilder.new options
@@ -69,9 +70,10 @@ describe "Initialize" do
 end
 
 describe OutputBuilderDiff do
-  options = default_options
-  options[:base] = "noir"
-  options[:format] = "json"
+  config_init = ConfigInitializer.new
+  options = config_init.default_options
+  options["base"] = "noir"
+  options["format"] = "json"
 
   it "calculates the diff correctly" do
     old_endpoints = [Endpoint.new("GET", "/old")]

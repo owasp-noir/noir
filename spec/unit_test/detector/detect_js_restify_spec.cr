@@ -1,7 +1,8 @@
 require "../../../src/detector/detectors/*"
 
 describe "Detect JS Restify" do
-  options = default_options()
+  config_init = ConfigInitializer.new
+  options = config_init.default_options
   instance = DetectorJsRestify.new options
 
   it "require_single_quot" do

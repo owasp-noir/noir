@@ -2,7 +2,8 @@ require "../../../src/detector/detectors/*"
 require "../../../src/models/code_locator"
 
 describe "Detect OAS 3.0 Docs" do
-  options = default_options()
+  config_init = ConfigInitializer.new
+  options = config_init.default_options
   instance = DetectorOas3.new options
 
   it "json format" do
