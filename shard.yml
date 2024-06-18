@@ -5,7 +5,7 @@ authors:
   - hahwul <hahwul@gmail.com>
   - ksg97031 <ksg97031@gmail.com>
 description: Attack surface detector that identifies endpoints by static analysis
-repository: https://github.com/noir-cr/noir
+repository: https://github.com/owasp-noir/noir
 license: MIT
 
 # Crystal version requirement
