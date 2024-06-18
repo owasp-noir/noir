@@ -1,13 +1,13 @@
 <div align="center">
-  <img src="https://github.com/noir-cr/noir/assets/13212227/8c4470fe-c8f4-4060-9f12-b038ad211913" alt="" width="500px;">
+  <img src="https://github.com/owasp-noir/noir/assets/13212227/8c4470fe-c8f4-4060-9f12-b038ad211913" alt="" width="500px;">
   <p>Attack surface detector that identifies endpoints by static analysis.</p>
 </div>
 
 <p align="center">
-<a href="https://github.com/noir-cr/noir/blob/main/CONTRIBUTING.md">
+<a href="https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md">
 <img src="https://img.shields.io/badge/CONTRIBUTIONS-WELCOME-000000?style=for-the-badge&labelColor=black"></a>
-<a href="https://github.com/noir-cr/noir/releases">
-<img src="https://img.shields.io/github/v/release/noir-cr/noir?style=for-the-badge&color=black&labelColor=black&logo=web"></a>
+<a href="https://github.com/owasp-noir/noir/releases">
+<img src="https://img.shields.io/github/v/release/owasp-noir/noir?style=for-the-badge&color=black&labelColor=black&logo=web"></a>
 <a href="https://crystal-lang.org">
 <img src="https://img.shields.io/badge/Crystal-000000?style=for-the-badge&logo=crystal&logoColor=white"></a>
 <a href="https://owasp.org/www-project-noir/">
@@ -112,7 +112,7 @@ sudo snap install noir
 # https://crystal-lang.org/install/
 
 # Clone this repo
-git clone https://github.com/noir-cr/noir
+git clone https://github.com/owasp-noir/noir
 cd noir
 
 # Install Dependencies
@@ -127,7 +127,7 @@ cp ./bin/noir /usr/bin/
 
 ### Docker (GHCR)
 ```bash
-docker pull ghcr.io/noir-cr/noir:main
+docker pull ghcr.io/owasp-noir/noir:main
 ```
 
 ## Usage
@@ -194,7 +194,7 @@ Example
 noir -b . -u https://testapp.internal.domains -T
 ```
 
-![](https://github.com/noir-cr/noir/assets/13212227/4e69da04-d585-4745-9cc7-ef6e69e193b0)
+![](https://github.com/owasp-noir/noir/assets/13212227/4e69da04-d585-4745-9cc7-ef6e69e193b0)
 
 JSON Result
 ```
