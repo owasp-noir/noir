@@ -11,7 +11,7 @@ jobs:
       - name: Release Noir to Homebrew tap
         uses: Justintime50/homebrew-releaser@v1
         with:
-          homebrew_owner: noir-cr
+          homebrew_owner: owasp-noir
           homebrew_tap: homebrew-noir
           formula_folder: Formula
           github_token: ${{ secrets.NOIR_PUBLISH_TOKEN }}
