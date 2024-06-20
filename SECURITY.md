@@ -6,8 +6,8 @@ Found a security issue? Let us know so we can fix it.
 
 ### How to Report
 
-* **For general security concerns**, please open a [GitHub issue](https://github.com/noir-cr/noir/issues). Use the `🛡️ security` label and describe the issue in as much detail as you can. This helps us to understand and address the problem more effectively.
-* **For sensitive matters**, we encourage you to directly email the [noir team members](https://github.com/orgs/noir-cr/people). Handling these issues discreetly is vital for everyone's safety.
+* **For general security concerns**, please open a [GitHub issue](https://github.com/owasp-noir/noir/issues). Use the `🛡️ security` label and describe the issue in as much detail as you can. This helps us to understand and address the problem more effectively.
+* **For sensitive matters**, we encourage you to directly email the [noir team members](https://github.com/orgs/owasp-noir/people). Handling these issues discreetly is vital for everyone's safety.
 
 ### Our Team
 
