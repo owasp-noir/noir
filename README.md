@@ -1,5 +1,9 @@
 <div align="center">
-  <img src="https://github.com/owasp-noir/noir/assets/13212227/8c4470fe-c8f4-4060-9f12-b038ad211913" alt="" width="500px;">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://github.com/owasp-noir/noir/assets/13212227/04aee7d0-c224-481b-8d79-2dbdcf3ad84b" width="500px;">
+    <source media="(prefers-color-scheme: light)" srcset="https://github.com/owasp-noir/noir/assets/13212227/0577860e-3d7e-4294-8f1f-dc7b87ce2b2b" width="500px;">
+    <img alt="OWASP Noir Logo" src="https://github.com/owasp-noir/noir/assets/13212227/04aee7d0-c224-481b-8d79-2dbdcf3ad84b" width="500px;">
+  </picture>
   <p>Attack surface detector that identifies endpoints by static analysis.</p>
 </div>
 
