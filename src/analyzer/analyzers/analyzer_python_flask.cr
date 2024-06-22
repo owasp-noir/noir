@@ -2,8 +2,8 @@ require "../../models/analyzer"
 require "./analyzer_python"
 
 class AnalyzerFlask < AnalyzerPython
-  # https://stackoverflow.com/a/16664376
-  # https://tedboy.github.io/flask/generated/generated/flask.Request.html
+  # Reference: https://stackoverflow.com/a/16664376
+  # Reference: https://tedboy.github.io/flask/generated/generated/flask.Request.html
   REQUEST_PARAM_FIELD_MAP = {
     "data"    => {["POST", "PUT", "PATCH", "DELETE"], "form"},
     "args"    => {["GET"], "query"},
@@ -24,47 +24,39 @@ class AnalyzerFlask < AnalyzerPython
   }
 
   def analyze
-    blueprint_prefix_map = {} of String => String
+    blueprint_prefix_map = Hash(String, String).new
 
     begin
+      # Iterate through all Python files in the base path
       Dir.glob("#{base_path}/**/*.py") do |path|
         next if File.directory?(path)
         File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
           file.each_line.with_index do |line, index|
-            # [TODO] We should be cautious about instance replace with other variable
-            match = line.match /(#{REGEX_PYTHON_VARIABLE_NAME})\s*=\s*Flask\s*\(/
+            # Identify Flask instance assignments
+            match = line.match /(#{PYTHON_VAR_NAME_REGEX})\s*=\s*Flask\s*\(/
             if !match.nil?
               flask_instance_name = match[1]
-              if !blueprint_prefix_map.has_key? flask_instance_name
-                blueprint_prefix_map[flask_instance_name] = ""
-              end
+              blueprint_prefix_map[flask_instance_name] ||= ""
             end
 
             # Common flask instance name
-            if !blueprint_prefix_map.has_key? "app"
-              blueprint_prefix_map["app"] = ""
-            end
+            blueprint_prefix_map["app"] ||= ""
 
-            # https://flask.palletsprojects.com/en/2.3.x/tutorial/views/
-            match = line.match /(#{REGEX_PYTHON_VARIABLE_NAME})\s*=\s*Blueprint\s*\(/
+            # Identify Blueprint instance assignments
+            match = line.match /(#{PYTHON_VAR_NAME_REGEX})\s*=\s*Blueprint\s*\(/
             if !match.nil?
               prefix = ""
               blueprint_instance_name = match[1]
               param_codes = line.split("Blueprint", 2)[1]
-              prefix_match = param_codes.match /url_prefix\s=\s['"](['"]*)['"]/
+              prefix_match = param_codes.match /url_prefix\s*=\s*['"]([^'"]*)['"]/
               if !prefix_match.nil? && prefix_match.size == 2
                 prefix = prefix_match[1]
               end
 
-              if !blueprint_prefix_map.has_key? blueprint_instance_name
-                blueprint_prefix_map[blueprint_instance_name] = prefix
-              end
+              blueprint_prefix_map[blueprint_instance_name] ||= prefix
             end
 
-            # [TODO] We're not concerned with nesting blueprints at the moment
-            # https://flask.palletsprojects.com/en/2.3.x/blueprints/#nesting-blueprints
-
-            # [Temporary Addition] register_view
+            # Temporary Addition: register_view
             blueprint_prefix_map.each do |blueprint_name, blueprint_prefix|
               register_views_match = line.match /#{blueprint_name},\s*routes\s*=\s*(.*)\)/
               if !register_views_match.nil?
@@ -72,11 +64,9 @@ class AnalyzerFlask < AnalyzerPython
                 route_paths.scan /['"]([^'"]*)['"]/ do |path_str_match|
                   if !path_str_match.nil? && path_str_match.size == 2
                     route_path = path_str_match[1]
-                    # [TODO] Parse methods from reference views
+                    # Parse methods from reference views (TODO)
                     route_url = "#{blueprint_prefix}#{route_path}"
-                    if !route_url.starts_with? "/"
-                      route_url = "/#{route_url}"
-                    end
+                    route_url = "/#{route_url}" unless route_url.starts_with?("/")
                     details = Details.new(PathInfo.new(path, index + 1))
                     result << Endpoint.new(route_url, "GET", details)
                   end
@@ -86,11 +76,12 @@ class AnalyzerFlask < AnalyzerPython
           end
         end
       end
-    rescue e
-      logger.debug e
+    rescue e : Exception
+      logger.debug e.message
     end
 
     begin
+      # Process each Python file in the base path
       Dir.glob("#{base_path}/**/*.py") do |path|
         next if File.directory?(path)
         source = File.read(path, encoding: "utf-8", invalid: :skip)
@@ -100,13 +91,13 @@ class AnalyzerFlask < AnalyzerPython
         while line_index < lines.size
           line = lines[line_index]
           blueprint_prefix_map.each do |flask_instance_name, prefix|
-            # https://flask.palletsprojects.com/en/2.3.x/quickstart/#http-methods
+            # Identify Flask route decorators
             line.scan(/@#{flask_instance_name}\.route\([rf]?['"]([^'"]*)['"](.*)/) do |match|
               if match.size > 0
                 route_path = match[1]
                 extra_params = match[2]
 
-                # Pass decorator lines
+                # Skip decorator lines
                 codeline_index = line_index
                 while codeline_index < lines.size
                   decorator_match = lines[codeline_index].match /\s*@/
@@ -114,14 +105,12 @@ class AnalyzerFlask < AnalyzerPython
                     codeline_index += 1
                     next
                   end
-
                   break
                 end
 
-                codeblock = parse_function_or_class(lines[codeline_index..].join("\n"))
+                codeblock = parse_code_block(lines[codeline_index..].join("\n"))
                 next if codeblock.nil?
-                codeblock_lines = codeblock.split("\n")
-                codeblock_lines = codeblock_lines[1..]
+                codeblock_lines = codeblock.split("\n")[1..]
 
                 get_endpoints(route_path, extra_params, codeblock_lines, prefix).each do |endpoint|
                   details = Details.new(PathInfo.new(path, line_index + 1))
@@ -134,28 +123,29 @@ class AnalyzerFlask < AnalyzerPython
           line_index += 1
         end
       end
-    rescue e
-      logger.debug e
+    rescue e : Exception
+      logger.debug e.message
     end
     Fiber.yield
 
     result
   end
 
+  # Extracts endpoint information from the given route and code block
   def get_endpoints(route_path : String, extra_params : String, codeblock_lines : Array(String), prefix : String)
     endpoints = [] of Endpoint
     suspicious_http_methods = [] of String
     suspicious_params = [] of Param
 
-    if (!prefix.ends_with? "/") && (!route_path.starts_with? "/")
+    if !prefix.ends_with?("/") && !route_path.starts_with?("/")
       prefix = "#{prefix}/"
     end
 
-    # Parse declared methods
+    # Parse declared methods from route decorator
     methods_match = extra_params.match /methods\s*=\s*(.*)/
     if !methods_match.nil? && methods_match.size == 2
       declare_methods = methods_match[1].downcase
-      HTTP_METHOD_NAMES.each do |method_name|
+      HTTP_METHODS.each do |method_name|
         if declare_methods.includes? method_name
           suspicious_http_methods << method_name.upcase
         end
@@ -210,14 +200,12 @@ class AnalyzerFlask < AnalyzerPython
     end
 
     suspicious_http_methods.uniq.each do |http_method_name|
-      if (!prefix.ends_with? "/") && (!route_path.starts_with? "/")
+      if !prefix.ends_with?("/") && !route_path.starts_with?("/")
         prefix = "#{prefix}/"
       end
 
       route_url = "#{prefix}#{route_path}"
-      if !route_url.starts_with? "/"
-        route_url = "/#{route_url}"
-      end
+      route_url = "/#{route_url}" unless route_url.starts_with?("/")
 
       params = get_filtered_params(http_method_name, suspicious_params)
       endpoints << Endpoint.new(route_url, http_method_name, params)
@@ -226,8 +214,9 @@ class AnalyzerFlask < AnalyzerPython
     endpoints
   end
 
-  def get_filtered_params(method : String, params : Array(Param))
-    # [TODO] Split to other module (duplicated method with analyzer_django)
+  # Filters the parameters based on the HTTP method
+  def get_filtered_params(method : String, params : Array(Param)) : Array(Param)
+    # Split to other module (duplicated method with analyzer_django)
     filtered_params = Array(Param).new
     upper_method = method.upcase
 
@@ -260,7 +249,8 @@ class AnalyzerFlask < AnalyzerPython
   end
 end
 
-def analyzer_flask(options : Hash(String, String))
+# Analyzer function for Flask
+def analyzer_python_flask(options : Hash(String, String))
   instance = AnalyzerFlask.new(options)
   instance.analyze
 end
