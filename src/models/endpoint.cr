@@ -50,12 +50,32 @@ struct Endpoint
     params_hash["query"] = {} of String => String
     params_hash["json"] = {} of String => String
     params_hash["form"] = {} of String => String
+    params_hash["header"] = {} of String => String
+    params_hash["cookie"] = {} of String => String
 
     @params.each do |param|
       params_hash[param.param_type][param.name] = param.value
     end
 
     params_hash
+  end
+
+  def ==(other : Endpoint) : Bool
+    return false unless @url == other.url
+    return false unless @method == other.method
+
+    self_params = params_to_hash
+    other_params = other.params_to_hash
+
+    # Ensure both hashes have the same set of keys before comparing values
+    common_keys = self_params.keys & other_params.keys
+    return false unless common_keys.size == self_params.keys.size && common_keys.size == other_params.keys.size
+
+    common_keys.each do |key|
+      return false unless self_params[key] == other_params[key]
+    end
+
+    true
   end
 end
 
