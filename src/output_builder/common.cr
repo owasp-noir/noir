@@ -20,7 +20,7 @@ class OutputBuilderCommon < OutputBuilder
       r_headers = baked[:header].join(" ").colorize(:light_green).toggle(@is_color)
       r_cookies = baked[:cookie].join(";").colorize(:light_green).toggle(@is_color)
       r_ws = ""
-      r_buffer = "#{r_method} #{r_url}"
+      r_buffer = "\n#{r_method} #{r_url}"
 
       if endpoint.protocol == "ws"
         r_ws = "[websocket]".colorize(:light_red).toggle(@is_color)
