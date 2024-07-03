@@ -6,7 +6,16 @@ class OutputBuilderCommon < OutputBuilder
     endpoints.each do |endpoint|
       baked = bake_endpoint(endpoint.url, endpoint.params)
 
-      r_method = endpoint.method.colorize(:light_blue).toggle(@is_color)
+      r_method_color = case endpoint.method
+                       when "GET"    then :green
+                       when "POST"   then :blue
+                       when "PUT"    then Colorize::Color256.new(208)
+                       when "PATCH"  then Colorize::Color256.new(208)
+                       when "DELETE" then :red
+                       else               :default
+                       end
+
+      r_method = endpoint.method.colorize(r_method_color).toggle(@is_color)
       r_url = baked[:url].colorize(:light_yellow).toggle(@is_color)
       r_headers = baked[:header].join(" ").colorize(:light_green).toggle(@is_color)
       r_cookies = baked[:cookie].join(";").colorize(:light_green).toggle(@is_color)
