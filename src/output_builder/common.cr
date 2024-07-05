@@ -6,12 +6,19 @@ class OutputBuilderCommon < OutputBuilder
     endpoints.each do |endpoint|
       baked = bake_endpoint(endpoint.url, endpoint.params)
 
-      r_method = endpoint.method.colorize(:light_blue).toggle(@is_color)
+      r_method_color = case endpoint.method
+                       when "GET"    then :green
+                       when "POST"   then :blue
+                       when "PUT"    then Colorize::Color256.new(208)
+                       when "PATCH"  then Colorize::Color256.new(208)
+                       when "DELETE" then :red
+                       else               :default
+                       end
+
+      r_method = endpoint.method.colorize(r_method_color).toggle(@is_color)
       r_url = baked[:url].colorize(:light_yellow).toggle(@is_color)
-      r_headers = baked[:header].join(" ").colorize(:light_green).toggle(@is_color)
-      r_cookies = baked[:cookie].join(";").colorize(:light_green).toggle(@is_color)
       r_ws = ""
-      r_buffer = "#{r_method} #{r_url}"
+      r_buffer = "\n#{r_method} #{r_url}"
 
       if endpoint.protocol == "ws"
         r_ws = "[websocket]".colorize(:light_red).toggle(@is_color)
@@ -19,11 +26,21 @@ class OutputBuilderCommon < OutputBuilder
       end
 
       if baked[:header].size > 0
-        r_buffer += "\n  ○ headers: #{r_headers}"
+        r_buffer += "\n  ○ headers: "
+        baked[:header].each_with_index do |header, index|
+          prefix = index == baked[:header].size - 1 ? "└── " : "├── "
+          r_header = "#{prefix}#{header}".colorize(:light_green).toggle(@is_color)
+          r_buffer += "\n    #{r_header}"
+        end
       end
 
       if baked[:cookie].size > 0
-        r_buffer += "\n  ○ cookies: #{r_cookies}"
+        r_buffer += "\n  ○ cookies: "
+        baked[:cookie].each_with_index do |cookie, index|
+          prefix = index == baked[:cookie].size - 1 ? "└── " : "├── "
+          r_cookie = "#{prefix}#{cookie}".colorize(:light_green).toggle(@is_color)
+          r_buffer += "\n    #{r_cookie}"
+        end
       end
 
       if baked[:body] != ""

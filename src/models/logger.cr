@@ -8,7 +8,7 @@ class NoirLogger
   end
 
   def puts(message)
-    puts message
+    STDOUT.puts message
   end
 
   def system(message)

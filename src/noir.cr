@@ -60,11 +60,17 @@ if app.techs.size == 0
     exit(0)
   end
 else
-  app.logger.info "Detected #{app.techs.size} technologies."
-  app.techs.each do |tech|
-    app.logger.info_sub "#{tech}"
+  if app.techs.size > 0
+    app.logger.info "Detected #{app.techs.size} technologies."
+    app.techs.each_with_index do |tech, index|
+      if index < app.techs.size - 1
+        app.logger.info_sub "├── #{tech}"
+      else
+        app.logger.info_sub "└── #{tech}"
+      end
+    end
+    app.logger.system "Start code analysis based on the detected technology."
   end
-  app.logger.system "Start code analysis based on the detected technology."
 end
 
 app.analyze
