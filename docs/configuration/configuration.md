@@ -1,7 +1,7 @@
 ---
 title: Configuration
 has_children: false
-nav_order: 6
+nav_order: 4
 permalink: /configuration
 layout: page
 ---
