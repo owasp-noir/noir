@@ -6,6 +6,9 @@ nav_order: 3
 layout: page
 ---
 
+{% include toc.md %}
+
+## Usage
 ```bash
 noir -b <BASE_PATH> -f <FORMAT>
 

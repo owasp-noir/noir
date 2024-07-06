@@ -6,6 +6,10 @@ nav_order: 5
 layout: page
 ---
 
+{% include toc.md %}
+
+## Usage
+
 ```bash
 noir -b <BASE_PATH> --send-proxy <PROXY_URL>
 
