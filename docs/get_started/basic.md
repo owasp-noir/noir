@@ -14,3 +14,5 @@ noir -b <BASE_PATH>
 # noir -b .
 # noir -b ./app_directory
 ```
+
+![](/images/get_started/basic.png)
