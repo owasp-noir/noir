@@ -1,6 +1,6 @@
 title: OWASP Noir
 description: Attack surface detector that identifies endpoints by static analysis
-theme: just-the-docs
+remote-theme: just-the-docs
 logo: "/images/owasp-noir-black.png"
 favicon_ico: "/images/favicon.ico"
 url: https://owasp-noir.github.io/noir/
