@@ -3,8 +3,11 @@ title: Installation
 parent: Get Started
 has_children: false
 nav_order: 1
+toc: true
 layout: page
 ---
+
+{% include toc.md %}
 
 ## Installation
 ### Homebrew
