@@ -1,20 +1,11 @@
 ---
-title: Basic
-parent: Usage
+title: Output Handling
+parent: Get Started
 has_children: false
-nav_order: 1
+nav_order: 3
 layout: page
 ---
 
-## Basic Run
-```bash
-noir -b <BASE_PATH>
-
-# noir -b .
-# noir -b ./app_directory
-```
-
-## Formatting
 ```bash
 noir -b <BASE_PATH> -f <FORMAT>
 
