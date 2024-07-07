@@ -56,6 +56,12 @@ shards build --release --no-debug
 cp ./bin/noir /usr/bin/
 ```
 
+### Docker (GHCR)
+
+```bash
+docker pull ghcr.io/owasp-noir/noir:main
+```
+
 ## Run noir
 
 ```bash
