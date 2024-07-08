@@ -1,7 +1,7 @@
 ---
 title: Use Deliver
 has_children: false
-nav_order: 5
+nav_order: 2
 layout: page
 ---
 
