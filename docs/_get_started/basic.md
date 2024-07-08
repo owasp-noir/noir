@@ -1,6 +1,5 @@
 ---
 title: Basic
-parent: Get Started
 has_children: false
 nav_order: 2
 layout: page

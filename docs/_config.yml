@@ -16,3 +16,19 @@ gh_edit_repository: "https://github.com/owasp-noir/noir" # the github URL for yo
 gh_edit_branch: "dev" # the branch that your docs is served from
 gh_edit_source: docs # the source that your files originate from
 gh_edit_view_mode: "tree" # "tree" or "edit" if you want the user to jump into the editor immediately
+
+# Collection settings
+collections:
+  get_started:
+    permalink: "/:collection/:path/"
+    output: true
+  advanced:
+    permalink: "/:collection/:path/"
+    output: true
+
+just_the_docs:
+  collections:
+    get_started:
+      name: Get Started
+    advanced:
+      name: Advanced

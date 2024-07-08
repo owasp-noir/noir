@@ -1,6 +1,5 @@
 ---
 title: Use Tagger
-parent: Get Started
 has_children: false
 nav_order: 4
 layout: page

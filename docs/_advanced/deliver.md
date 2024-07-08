@@ -1,6 +1,5 @@
 ---
 title: Use Deliver
-parent: Get Started
 has_children: false
 nav_order: 5
 layout: page
