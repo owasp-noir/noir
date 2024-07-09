@@ -2,7 +2,7 @@
 title: Tech Commands
 parent: Supported
 has_children: false
-nav_order: 1
+nav_order: 4
 layout: page
 ---
 
