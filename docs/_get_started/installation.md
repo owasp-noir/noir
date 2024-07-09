@@ -25,5 +25,5 @@ sudo snap install noir
 ## Docker (GHCR)
 
 ```bash
-docker pull ghcr.io/owasp-noir/noir:main
+docker pull ghcr.io/owasp-noir/noir:latest
 ```
