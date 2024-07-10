@@ -60,3 +60,15 @@ ameba --fix
 - noir.cr: Main file and command-line parser.
 
 Feel free to reach out to us if you have any questions or need further assistance!
+
+## Documents contributing
+
+Please note that [our web page](https://owasp-noir.github.io/noir/) operates based on the dev branch. If you make any changes, kindly send a Pull Request (PR) to the dev branch. 
+
+To ensure a smooth integration of your contributions, please follow these steps:
+
+* Fork the repository and create your feature branch from dev.
+* Make your changes, ensuring they are thoroughly tested.
+* Submit your PR to the dev branch for review.
+
+By doing so, you'll help us keep our project up-to-date and well-organized. Your efforts are greatly appreciated, and we're excited to see what you'll bring to the project!
