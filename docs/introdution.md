@@ -35,6 +35,6 @@ flowchart LR
     Deliver --> OutputBuilder
     Tagger --> OutputBuilder
     Analyzers --> OutputBuilder
-    OutputBuilder --> Output
+    OutputBuilder --> Endpoints
 
 ```
