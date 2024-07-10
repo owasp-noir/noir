@@ -32,3 +32,6 @@ just_the_docs:
       name: Get Started
     advanced:
       name: Advanced
+
+mermaid:
+  version: "9.1.3"
