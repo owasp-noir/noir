@@ -8,7 +8,7 @@ nav_order: 1
 ## What is noir?
 Noir is an open-source project specializing in identifying attack surfaces for enhanced whitebox security testing and security pipeline. This includes the capability to discover API endpoints, web endpoints, and other potential entry points within source code for thorough security analysis.
 
-![](/images/noir-usage.jpg)
+![](../images/noir-usage.jpg)
 
 ## How it works?
 
