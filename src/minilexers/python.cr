@@ -175,9 +175,9 @@ class PythonLexer < MiniLexer
 
     private def match_string
         c = @input[@position]
-        if c == '"' && @input[@position..@position+3] == "\"\"\""
+        if c == '"' && @input[@position...@position+3] == "\"\"\""
             match_multiline_string
-        elsif c == '\'' && @input[@position..@position+3] == "'''"
+        elsif c == '\'' && @input[@position...@position+3] == "'''"
             match_multiline_string
         else
             start_pos = @position
@@ -227,13 +227,15 @@ class PythonLexer < MiniLexer
     private def match_other
         start_pos = @position
         if match = IDENTIFIER.match(@input[@position..])
-            token_type = KEYWORDS.includes?(match[0]) ? :KEYWORD : :IDENTIFIER
-            @position += match[0].size
+            token_type = KEYWORDS.has_key?(match[0]) ? :KEYWORD : :IDENTIFIER
             self << Tuple.new(token_type, match[0])
+            @position += match[0].size
         else
             token_type = :UNKNOWN
+            if @input[@position] != ' ' # Skip whitespace
+                self << Tuple.new(:UNKNOWN, @input[@position])
+            end
             @position += 1
-            self << Tuple.new(:UNKNOWN, @input[start_pos])
         end
     end
 end

@@ -70,17 +70,19 @@ class MiniLexer
   def trace
     line_number = -1
     lines = @input.split "\n"
-    puts "line size: #{lines.size}, token number: #{tokens.size}"
+    puts "Line Size: #{lines.size}, Token Count: #{tokens.size}"
     @tokens.each do |token|
-      if line_number <= token.line
-        puts "\nLine #{token.line}: " + lines[token.line - 1]
-        line_number = token.line + 1
+      if line_number != token.line
+        line_number = token.line
+        puts "\nLine #{token.line}: " + lines[line_number - 1]
+        next if token.type == :NEWLINE # Skip newline token
       end
+
       puts token.to_s
     end
   end
 
-  def shell
+  def start_repl
     loop do
       print ">> "
       input = gets
