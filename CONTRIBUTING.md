@@ -13,7 +13,24 @@ Thank you for considering contributing to our project! Here are some guidelines 
 4. Completion
 - That's it! You're done. Await feedback and further instructions from the maintainers.
 
-![](https://github.com/hahwul/noir/assets/13212227/23989dab-6b4d-4f18-904f-7f5cfd172b04)
+```mermaid
+graph TD
+    subgraph Forked Branches
+        fork1["forked branch 1"]
+        fork2["forked branch 2"]
+        fork3["forked branch 3"]
+    end
+    fork1 --> dev["dev branch"]
+    fork2 --> dev
+    fork3 --> dev
+    
+    dev --> main["main branch"]
+    dev --> deployments["documentation deployments (https://owasp-noir.github.io)"]
+
+    main -->|release| homebrew["homebrew"]
+    main -->|release| snapcraft["snapcraft"]
+    main -->|release| docker["docker (ghcr)"]
+```
 
 ## 🛠️ Building and Testing
 ### Clone and Install Dependencies
