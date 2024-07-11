@@ -50,6 +50,9 @@ class MiniLexer
 
     if @mode == :persistent
       @tokens = @tokens + results
+    else
+      @position = 0
+      @pos_line_array.clear
     end
 
     results
@@ -74,6 +77,18 @@ class MiniLexer
         line_number = token.line + 1
       end
       puts token.to_s
+    end
+  end
+
+  def shell
+    loop do
+      print ">> "
+      input = gets
+      break if input.nil?
+      input = input.chomp
+      break if input == "exit"
+      tokenize(input)
+      trace
     end
   end
 end
