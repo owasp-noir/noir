@@ -5,14 +5,18 @@ nav_order: 4
 layout: page
 ---
 
+Diff mode is a feature that analyzes and compares two source code paths using noir, enabling you to identify newly added, modified, or removed APIs. The base path specified with the `-b` flag serves as the reference point, while the source input provided with the `--diff-path` flag is used for comparison.
+
 ```bash
-noir -b <BASE_PATH> --diff-paht <OLD_APP>
+noir -b <BASE_PATH> --diff-path <OLD_APP>
 
 #  DIFF:
 #    --diff-path ./app2    Specify the path to the old version of the source code for comparison
 ```
 
 ## Plain output 
+
+In plain output, changes to the APIs are briefly summarized. 
 
 ```
 [*] ============== DIFF ==============
@@ -26,7 +30,9 @@ noir -b <BASE_PATH> --diff-paht <OLD_APP>
 [I] Removed: /posts/1 DELETE
 ```
 
-## JSON
+## JSON & YAML
+
+In contrast, detailed information is provided in JSON or YAML output. (with `-f=json` or `-f=yaml` )
 
 ```json
 {
@@ -111,3 +117,5 @@ noir -b <BASE_PATH> --diff-paht <OLD_APP>
   "changed": []
 }
 ```
+
+By utilizing this feature, you can build a more efficient pipeline, such as configuring DAST scans to target only added or modified APIs.
