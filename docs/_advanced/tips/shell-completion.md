@@ -2,7 +2,7 @@
 title: Shell Completion
 parent: Tips
 has_children: false
-nav_order: 1
+nav_order: 2
 layout: page
 ---
 
