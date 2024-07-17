@@ -35,3 +35,10 @@ just_the_docs:
 
 mermaid:
   version: "10.9.1"
+
+# Security.txt
+security_txt:
+  comment: If you find any security issues on this site, please contact me!
+  contact: https://github.com/owasp-noir/noir/security
+  canonical: https://owasp-noir.github.io/noir/.well-known/security.txt
+  preferred_languages: "en, ko"
