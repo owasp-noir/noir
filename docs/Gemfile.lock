@@ -39,6 +39,8 @@ GEM
       jekyll (>= 3.7, < 5.0)
     jekyll-sass-converter (3.0.0)
       sass-embedded (~> 1.54)
+    jekyll-securitytxt (1.0.1)
+      jekyll
     jekyll-seo-tag (2.8.0)
       jekyll (>= 3.8, < 5.0)
     jekyll-watch (2.2.1)
@@ -84,6 +86,7 @@ PLATFORMS
 
 DEPENDENCIES
   jekyll (~> 4.3.3)
+  jekyll-securitytxt
   just-the-docs
 
 BUNDLED WITH
