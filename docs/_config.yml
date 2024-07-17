@@ -40,5 +40,5 @@ mermaid:
 security_txt:
   comment: If you find any security issues on this site, please contact me!
   contact: https://github.com/owasp-noir/noir/security
-  canonical: https://owasp-noir.github.io/noir/.well-known/security.txt
+  canonical: https://owasp-noir.github.io/.well-known/security.txt
   preferred_languages: "en, ko"
