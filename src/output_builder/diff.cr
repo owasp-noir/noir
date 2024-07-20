@@ -48,16 +48,12 @@ class OutputBuilderDiff < OutputBuilder
   end
 
   def print_json(endpoints : Array(Endpoint), diff_app : NoirRunner)
-    @logger.system "============== DIFF (JSON) =============="
     result = diff(endpoints, diff_app.endpoints)
-
-    puts result.to_json
+    @logger.puts "\n" + result.to_json
   end
 
   def print_yaml(endpoints : Array(Endpoint), diff_app : NoirRunner)
-    @logger.system "============== DIFF (YAML) =============="
     result = diff(endpoints, diff_app.endpoints)
-
-    puts result.to_yaml
+    @logger.puts "\n" + result.to_yaml
   end
 end
