@@ -209,9 +209,6 @@ class NoirRunner
     when "json"
       builder.print_json @endpoints, diff_app
     else
-      # Print default output
-      report()
-
       # Print diff output
       builder.print @endpoints, diff_app
     end

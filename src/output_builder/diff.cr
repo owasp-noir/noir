@@ -1,4 +1,5 @@
 require "../models/output_builder"
+require "./diff"
 require "../models/endpoint"
 
 require "json"
@@ -28,19 +29,21 @@ class OutputBuilderDiff < OutputBuilder
   end
 
   def print(endpoints : Array(Endpoint), diff_app : NoirRunner)
-    @logger.system "============== DIFF =============="
     result = diff(endpoints, diff_app.endpoints)
 
-    result[:added].each do |endpoint|
-      @logger.info "Added: #{endpoint.url} #{endpoint.method}"
+    if result[:added].size > 0
+      @logger.puts "============== Added ================"
+      OutputBuilderCommon.new(@options).print(result[:added])
     end
 
-    result[:removed].each do |endpoint|
-      @logger.info "Removed: #{endpoint.url} #{endpoint.method}"
+    if result[:removed].size > 0
+      @logger.puts "\n============== Removed =============="
+      OutputBuilderCommon.new(@options).print(result[:removed])
     end
 
-    result[:changed].each do |endpoint|
-      @logger.info "Changed: #{endpoint.url} #{endpoint.method}"
+    if result[:changed].size > 0
+      @logger.puts "\n============== Changed =============="
+      OutputBuilderCommon.new(@options).print(result[:changed])
     end
   end
 
