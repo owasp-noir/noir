@@ -16,7 +16,7 @@ class NoirLogger
       return
     end
 
-    prefix = "[*]".colorize(:light_cyan).toggle(@color_mode)
+    prefix = "⚙︎".colorize(:light_cyan).toggle(@color_mode)
     STDERR.puts "#{prefix} #{message}"
   end
 
@@ -25,7 +25,7 @@ class NoirLogger
       return
     end
 
-    prefix = "[I]".colorize(:light_blue).toggle(@color_mode)
+    prefix = "✓".colorize(:light_blue).toggle(@color_mode)
     STDERR.puts "#{prefix} #{message}"
   end
 
@@ -34,7 +34,7 @@ class NoirLogger
       return
     end
 
-    STDERR.puts "    " + message
+    STDERR.puts "  " + message
   end
 
   def debug(message)
@@ -43,7 +43,7 @@ class NoirLogger
     end
 
     if @debug
-      prefix = "[D]".colorize(:dark_gray).toggle(@color_mode)
+      prefix = "❏".colorize(:dark_gray).toggle(@color_mode)
       STDERR.puts "#{prefix} #{message}"
     end
   end
@@ -56,5 +56,10 @@ class NoirLogger
     if @debug
       STDERR.puts "    " + message.to_s
     end
+  end
+
+  def error(message)
+    prefix = "✗".colorize(:red).toggle(@color_mode)
+    STDERR.puts "#{prefix} #{message}"
   end
 end
