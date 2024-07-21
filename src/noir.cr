@@ -25,6 +25,8 @@ end
 
 # Run Noir
 app = NoirRunner.new noir_options
+start_time = Time.monotonic
+
 app.logger.debug("Start Debug mode")
 app.logger.debug("Noir version: #{Noir::VERSION}")
 app.logger.debug("Noir options from arguments:")
@@ -75,6 +77,13 @@ end
 
 app.analyze
 app.logger.info "Finally identified #{app.endpoints.size} endpoints."
+
+# Check and print scan time
+end_time = Time.monotonic
+elapsed_time = end_time - start_time
+
+app.logger.system "Scan completed in #{elapsed_time.total_milliseconds.round} ms."
+
 
 if app_diff.nil?
   app.logger.system "Generating Report."
