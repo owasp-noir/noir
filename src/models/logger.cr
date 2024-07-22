@@ -64,7 +64,7 @@ class NoirLogger
     end
 
     if @debug
-      STDERR.puts "    " + message.to_s
+      STDERR.puts "  " + message.to_s
     end
   end
 
