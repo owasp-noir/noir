@@ -49,7 +49,7 @@ def analysis_endpoints(options : Hash(String, String), techs, logger : NoirLogge
 
   analyzer = initialize_analyzers logger
   if options["url"] != ""
-    logger.sub "File analyzer initialized and #{file_analyzer.hooks_count} hooks loaded"
+    logger.sub "➔ File analyzer initialized and #{file_analyzer.hooks_count} hooks loaded"
   end
 
   logger.system "Analysis Started"
@@ -58,7 +58,7 @@ def analysis_endpoints(options : Hash(String, String), techs, logger : NoirLogge
   techs.each do |tech|
     if analyzer.has_key?(tech)
       if NoirTechs.similar_to_tech(options["exclude_techs"]).includes?(tech)
-        logger.sub "Skipping #{tech} analysis"
+        logger.sub "➔ Skipping #{tech} analysis"
         next
       end
       result = result + analyzer[tech].call(options)
@@ -66,7 +66,7 @@ def analysis_endpoints(options : Hash(String, String), techs, logger : NoirLogge
   end
 
   if options["url"] != ""
-    logger.sub "File-based Analyzer: #{file_analyzer.hooks_count} hook in use"
+    logger.sub "➔ File-based Analyzer: #{file_analyzer.hooks_count} hook in use"
     result = result + file_analyzer.analyze
   end
 
