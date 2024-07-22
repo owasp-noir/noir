@@ -34,7 +34,7 @@ def initialize_analyzers(logger : NoirLogger)
   analyzers["rust_axum"] = ->analyzer_rust_axum(Hash(String, String))
   analyzers["rust_rocket"] = ->analyzer_rust_rocket(Hash(String, String))
 
-  logger.info_sub "#{analyzers.size} Analyzers initialized"
+  logger.info "#{analyzers.size} Analyzers initialized"
   logger.debug "Analyzers:"
   analyzers.each do |key, _|
     logger.debug_sub "#{key} initialized"
@@ -49,16 +49,16 @@ def analysis_endpoints(options : Hash(String, String), techs, logger : NoirLogge
 
   analyzer = initialize_analyzers logger
   if options["url"] != ""
-    logger.info_sub "File analyzer initialized and #{file_analyzer.hooks_count} hooks loaded"
+    logger.sub "File analyzer initialized and #{file_analyzer.hooks_count} hooks loaded"
   end
 
   logger.system "Analysis Started"
-  logger.info_sub "Code Analyzer: #{techs.size} in use"
+  logger.sub "➔ Code Analyzer: #{techs.size} in use"
 
   techs.each do |tech|
     if analyzer.has_key?(tech)
       if NoirTechs.similar_to_tech(options["exclude_techs"]).includes?(tech)
-        logger.info_sub "Skipping #{tech} analysis"
+        logger.sub "Skipping #{tech} analysis"
         next
       end
       result = result + analyzer[tech].call(options)
@@ -66,10 +66,10 @@ def analysis_endpoints(options : Hash(String, String), techs, logger : NoirLogge
   end
 
   if options["url"] != ""
-    logger.info_sub "File-based Analyzer: #{file_analyzer.hooks_count} hook in use"
+    logger.sub "File-based Analyzer: #{file_analyzer.hooks_count} hook in use"
     result = result + file_analyzer.analyze
   end
 
-  logger.info_sub "Found #{result.size} endpoints"
+  logger.sub "➔ Found #{result.size} endpoints"
   result
 end

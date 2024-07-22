@@ -29,12 +29,22 @@ class NoirLogger
     STDERR.puts "#{prefix} #{message}"
   end
 
-  def info_sub(message)
+  def sub(message)
     if @no_log
       return
     end
 
     STDERR.puts "  " + message
+  end
+
+  def warning(message)
+    prefix = "⚠︎".colorize(:yellow).toggle(@color_mode)
+    STDERR.puts "#{prefix} #{message}"
+  end
+
+  def error(message)
+    prefix = "✗".colorize(:red).toggle(@color_mode)
+    STDERR.puts "#{prefix} #{message}"
   end
 
   def debug(message)
@@ -56,10 +66,5 @@ class NoirLogger
     if @debug
       STDERR.puts "    " + message.to_s
     end
-  end
-
-  def error(message)
-    prefix = "✗".colorize(:red).toggle(@color_mode)
-    STDERR.puts "#{prefix} #{message}"
   end
 end

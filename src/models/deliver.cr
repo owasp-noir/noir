@@ -40,7 +40,7 @@ class Deliver
           @headers[splited[0]] = value
         end
       end
-      @logger.info_sub "#{@headers.size} headers added."
+      @logger.sub "#{@headers.size} headers added."
     end
 
     @matchers = options["use_matchers"].split("::NOIR::MATCHER::SPLIT::")
