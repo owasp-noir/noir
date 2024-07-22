@@ -56,7 +56,8 @@ app.detect
 
 if app.techs.size == 0
   app.logger.warning "No technologies detected."
-  app.logger.sub "If you know the technology, use the -t flag to specify it."
+  app.logger.sub "➔ If you know the technology, use the -t flag to specify it."
+  app.logger.sub "➔ Please check tech lists using the --list-techs flag."
   if app.options["url"] != ""
     app.logger.system "Start file-based analysis as the -u flag has been used."
   else
