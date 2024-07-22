@@ -11,21 +11,21 @@ class NoirLogger
     STDOUT.puts message
   end
 
-  def system(message)
-    if @no_log
-      return
-    end
-
-    prefix = "⚙︎".colorize(:light_cyan).toggle(@color_mode)
-    STDERR.puts "#{prefix} #{message}"
-  end
-
   def info(message)
     if @no_log
       return
     end
 
-    prefix = "✓".colorize(:light_blue).toggle(@color_mode)
+    prefix = "⚑".colorize(:light_cyan).toggle(@color_mode)
+    STDERR.puts "#{prefix} #{message}"
+  end
+
+  def success(message)
+    if @no_log
+      return
+    end
+
+    prefix = "✔".colorize(:green).toggle(@color_mode)
     STDERR.puts "#{prefix} #{message}"
   end
 
@@ -38,12 +38,12 @@ class NoirLogger
   end
 
   def warning(message)
-    prefix = "⚠︎".colorize(:yellow).toggle(@color_mode)
+    prefix = "▲".colorize(:yellow).toggle(@color_mode)
     STDERR.puts "#{prefix} #{message}"
   end
 
   def error(message)
-    prefix = "✗".colorize(:red).toggle(@color_mode)
+    prefix = "✖︎".colorize(:red).toggle(@color_mode)
     STDERR.puts "#{prefix} #{message}"
   end
 
@@ -66,5 +66,11 @@ class NoirLogger
     if @debug
       STDERR.puts "    " + message.to_s
     end
+  end
+
+  def fatal(message)
+    prefix = "☠".colorize(:red).toggle(@color_mode)
+    STDERR.puts "#{prefix} #{message}"
+    exit(1)
   end
 end
