@@ -34,7 +34,7 @@ def initialize_analyzers(logger : NoirLogger)
   analyzers["rust_axum"] = ->analyzer_rust_axum(Hash(String, String))
   analyzers["rust_rocket"] = ->analyzer_rust_rocket(Hash(String, String))
 
-  logger.info "#{analyzers.size} Analyzers initialized"
+  logger.success "#{analyzers.size} Analyzers initialized"
   logger.debug "Analyzers:"
   analyzers.each do |key, _|
     logger.debug_sub "#{key} initialized"
@@ -45,14 +45,14 @@ end
 def analysis_endpoints(options : Hash(String, String), techs, logger : NoirLogger)
   result = [] of Endpoint
   file_analyzer = FileAnalyzer.new options
-  logger.system "Initializing analyzers"
+  logger.info "Initializing analyzers"
 
   analyzer = initialize_analyzers logger
   if options["url"] != ""
     logger.sub "➔ File analyzer initialized and #{file_analyzer.hooks_count} hooks loaded"
   end
 
-  logger.system "Analysis Started"
+  logger.info "Analysis Started"
   logger.sub "➔ Code Analyzer: #{techs.size} in use"
 
   techs.each do |tech|

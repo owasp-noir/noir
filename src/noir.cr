@@ -47,11 +47,11 @@ if noir_options["diff"] != ""
   diff_options["nolog"] = "yes"
 
   app_diff = NoirRunner.new diff_options
-  app.logger.system "Running Noir with Diff mode."
+  app.logger.info "Running Noir with Diff mode."
 end
 
 # Run Default mode
-app.logger.system "Detecting technologies to base directory."
+app.logger.info "Detecting technologies to base directory."
 app.detect
 
 if app.techs.size == 0
@@ -59,13 +59,13 @@ if app.techs.size == 0
   app.logger.sub "➔ If you know the technology, use the -t flag to specify it."
   app.logger.sub "➔ Please check tech lists using the --list-techs flag."
   if app.options["url"] != ""
-    app.logger.system "Start file-based analysis as the -u flag has been used."
+    app.logger.info "Start file-based analysis as the -u flag has been used."
   else
     exit(0)
   end
 else
   if app.techs.size > 0
-    app.logger.info "Detected #{app.techs.size} technologies."
+    app.logger.success "Detected #{app.techs.size} technologies."
     app.techs.each_with_index do |tech, index|
       if index < app.techs.size - 1
         app.logger.sub "├── #{tech}"
@@ -73,29 +73,29 @@ else
         app.logger.sub "└── #{tech}"
       end
     end
-    app.logger.system "Start code analysis based on the detected technology."
+    app.logger.info "Start code analysis based on the detected technology."
   end
 end
 
 app.analyze
-app.logger.info "Finally identified #{app.endpoints.size} endpoints."
+app.logger.success "Finally identified #{app.endpoints.size} endpoints."
 
 # Check and print scan time
 end_time = Time.monotonic
 elapsed_time = end_time - start_time
 
-app.logger.system "Scan completed in #{elapsed_time.total_milliseconds.round} ms."
+app.logger.info "Scan completed in #{elapsed_time.total_milliseconds.round} ms."
 
 if app_diff.nil?
-  app.logger.system "Generating Report."
+  app.logger.info "Generating Report."
   app.report
 else
-  app.logger.system "Diffing base and diff codebases."
+  app.logger.info "Diffing base and diff codebases."
   locator = CodeLocator.instance
   locator.clear_all
   app_diff.detect
   app_diff.analyze
 
-  app.logger.system "Generating Diff Report."
+  app.logger.info "Generating Diff Report."
   app.diff_report(app_diff)
 end

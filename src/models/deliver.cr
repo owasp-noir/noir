@@ -21,7 +21,7 @@ class Deliver
 
     if options["send_with_headers"] != ""
       headers_tmp = options["send_with_headers"].split("::NOIR::HEADERS::SPLIT::")
-      @logger.system "Setting headers from command line."
+      @logger.info "Setting headers from command line."
       headers_tmp.each do |header|
         if header.includes? ":"
           @logger.debug "Adding '#{header}' to headers."
@@ -46,13 +46,13 @@ class Deliver
     @matchers = options["use_matchers"].split("::NOIR::MATCHER::SPLIT::")
     @matchers.delete("")
     if @matchers.size > 0
-      @logger.system "#{@matchers.size} matchers added."
+      @logger.info "#{@matchers.size} matchers added."
     end
 
     @filters = options["use_filters"].split("::NOIR::FILTER::SPLIT::")
     @filters.delete("")
     if @filters.size > 0
-      @logger.system "#{@filters.size} filters added."
+      @logger.info "#{@filters.size} filters added."
     end
   end
 
@@ -62,12 +62,12 @@ class Deliver
     @logger.debug "Filters: #{@filters}"
 
     if @matchers.size > 0
-      @logger.system "Applying matchers"
+      @logger.info "Applying matchers"
       result = apply_matchers(endpoints)
     end
 
     if @filters.size > 0
-      @logger.system "Applying filters"
+      @logger.info "Applying filters"
       result = apply_filters(endpoints)
     end
 
