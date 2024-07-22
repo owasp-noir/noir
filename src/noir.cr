@@ -17,7 +17,7 @@ noir_options = run_options_parser()
 
 # Check base path
 if noir_options["base"] == ""
-  STDERR.puts "ERROR: Base path is required."
+  STDERR.puts "ERROR: Base path is required.".colorize(:yellow)
   STDERR.puts "Please use -b or --base-path to set base path."
   STDERR.puts "If you need help, use -h or --help."
   exit(1)
@@ -55,7 +55,8 @@ app.logger.system "Detecting technologies to base directory."
 app.detect
 
 if app.techs.size == 0
-  app.logger.info "No technologies detected."
+  app.logger.warning "No technologies detected."
+  app.logger.sub "If you know the technology, use the -t flag to specify it."
   if app.options["url"] != ""
     app.logger.system "Start file-based analysis as the -u flag has been used."
   else
@@ -66,9 +67,9 @@ else
     app.logger.info "Detected #{app.techs.size} technologies."
     app.techs.each_with_index do |tech, index|
       if index < app.techs.size - 1
-        app.logger.info_sub "├── #{tech}"
+        app.logger.sub "├── #{tech}"
       else
-        app.logger.info_sub "└── #{tech}"
+        app.logger.sub "└── #{tech}"
       end
     end
     app.logger.system "Start code analysis based on the detected technology."
@@ -83,7 +84,6 @@ end_time = Time.monotonic
 elapsed_time = end_time - start_time
 
 app.logger.system "Scan completed in #{elapsed_time.total_milliseconds.round} ms."
-
 
 if app_diff.nil?
   app.logger.system "Generating Report."
