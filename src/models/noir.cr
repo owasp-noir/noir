@@ -250,6 +250,9 @@ class NoirRunner
     when "only-cookie"
       builder = OutputBuilderOnlyCookie.new @options
       builder.print @endpoints
+    when "only-tag"
+      builder = OutputBuilderOnlyTag.new @options
+      builder.print @endpoints
     else
       builder = OutputBuilderCommon.new @options
       builder.print @endpoints
