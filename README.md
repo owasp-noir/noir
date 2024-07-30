@@ -145,10 +145,10 @@ noir -h
 
 Example
 ```bash
-noir -b . -u https://testapp.internal.domains -T
+noir -b <source_dir>
 ```
 
-![](https://github.com/owasp-noir/noir/assets/13212227/4e69da04-d585-4745-9cc7-ef6e69e193b0)
+![](/docs/images/get_started/basic.png)
 
 JSON Result
 ```
