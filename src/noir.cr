@@ -6,7 +6,7 @@ require "./options.cr"
 require "./techs/techs.cr"
 
 module Noir
-  VERSION = "0.16.1"
+  VERSION = "0.17.0"
 end
 
 # Print banner
