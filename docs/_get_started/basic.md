@@ -42,7 +42,7 @@ FLAGS:
     -f FORMAT, --format json         Set output format
                                        * plain yaml json jsonl markdown-table
                                        * curl httpie oas2 oas3
-                                       * only-url only-param only-header only-cookie
+                                       * only-url only-param only-header only-cookie only-tag
     -o PATH, --output out.txt        Write result to file
     --set-pvalue VALUE               Specifies the value of the identified parameter
     --include-path                   Include file path in the plain result
