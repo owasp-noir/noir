@@ -66,7 +66,7 @@ class NoirRunner
 
     if @options["techs"].size > 0
       techs_tmp = @options["techs"].split(",")
-      @logger.info "Setting #{techs_tmp.size} techs from command line."
+      @logger.success "Setting #{techs_tmp.size} techs from command line."
       techs_tmp.each do |tech|
         @techs << NoirTechs.similar_to_tech(tech)
         @logger.debug "Added #{tech} to techs."
@@ -95,7 +95,7 @@ class NoirRunner
 
     # Run tagger
     if @options["all_taggers"] == "yes"
-      @logger.info "Running all taggers."
+      @logger.success "Running all taggers."
       NoirTaggers.run_tagger @endpoints, @options, "all"
       if @is_debug
         NoirTaggers.get_taggers.each do |tagger|
@@ -103,7 +103,7 @@ class NoirRunner
         end
       end
     elsif @options["use_taggers"] != ""
-      @logger.info "Running #{@options["use_taggers"]} taggers."
+      @logger.success "Running #{@options["use_taggers"]} taggers."
       NoirTaggers.run_tagger @endpoints, @options, @options["use_taggers"]
     end
 
@@ -112,7 +112,7 @@ class NoirRunner
   end
 
   def optimize_endpoints
-    @logger.system "Optimizing endpoints."
+    @logger.info "Optimizing endpoints."
     final = [] of Endpoint
 
     @endpoints.each do |endpoint|
@@ -156,7 +156,7 @@ class NoirRunner
     target_url = @options["url"]
 
     if target_url != ""
-      @logger.system "Combining url and endpoints."
+      @logger.info "Combining url and endpoints."
       @endpoints.each do |endpoint|
         tmp_endpoint = endpoint
         if tmp_endpoint.url.includes? target_url
@@ -182,19 +182,19 @@ class NoirRunner
 
   def deliver
     if @send_proxy != ""
-      @logger.system "Sending requests with proxy #{@send_proxy}."
+      @logger.info "Sending requests with proxy #{@send_proxy}."
       deliver = SendWithProxy.new(@options)
       deliver.run(@endpoints)
     end
 
     if @send_req != "no"
-      @logger.system "Sending requests without proxy."
+      @logger.info "Sending requests without proxy."
       deliver = SendReq.new(@options)
       deliver.run(@endpoints)
     end
 
     if @send_es != ""
-      @logger.system "Sending requests to Elasticsearch."
+      @logger.info "Sending requests to Elasticsearch."
       deliver = SendElasticSearch.new(@options)
       deliver.run(@endpoints, @send_es)
     end
@@ -209,9 +209,6 @@ class NoirRunner
     when "json"
       builder.print_json @endpoints, diff_app
     else
-      # Print default output
-      report()
-
       # Print diff output
       builder.print @endpoints, diff_app
     end
@@ -252,6 +249,9 @@ class NoirRunner
       builder.print @endpoints
     when "only-cookie"
       builder = OutputBuilderOnlyCookie.new @options
+      builder.print @endpoints
+    when "only-tag"
+      builder = OutputBuilderOnlyTag.new @options
       builder.print @endpoints
     else
       builder = OutputBuilderCommon.new @options

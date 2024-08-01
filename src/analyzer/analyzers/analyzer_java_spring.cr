@@ -30,7 +30,21 @@ class AnalyzerJavaSpring < Analyzer
                 webflux_base_path_map[path] = webflux_base_path.as_s
               end
             rescue e
-              next
+              # Handle parsing errors if necessary
+            end
+          end
+
+          application_properties_path = File.join(path, "main/resources/application.properties")
+          if File.exists?(application_properties_path)
+            begin
+              properties = File.read(application_properties_path)
+              base_path = properties.match(/spring\.webflux\.base-path\s*=\s*(.*)/)
+              if base_path
+                webflux_base_path = base_path[1]
+                webflux_base_path_map[path] = webflux_base_path if webflux_base_path
+              end
+            rescue e
+              # Handle parsing errors if necessary
             end
           end
         end

@@ -227,7 +227,7 @@ class JavaLexer < MiniLexer
   end
 
   def match_number
-    if match = @input.match(/0[xX][0-9a-fA-F](_?[0-9a-fA-F])*[lL]?|\d(_?\d)*(\.\d(_?\d)*)?([eE][+-]?\d(_?\d)*)?[fFdD]?/, @position)
+    if match = @input.match(/0[xX][0-9a-fA-F](_?[0-9a-fA-F])*[lL]?|\d(_?\d)*(\.\d(_?\d)*)?([eE][+-]?\d(_?\d)*)?[fFdD]?/, @position, options: :anchored)
       literal = match[0]
       self << case literal
       when /^0[xX]/
@@ -250,7 +250,7 @@ class JavaLexer < MiniLexer
   end
 
   def match_identifier_or_keyword
-    if match = @input.match(/[a-zA-Z$_][a-zA-Z\d$_]*/, @position)
+    if match = @input.match(/[a-zA-Z$_][a-zA-Z\d$_]*/, @position, options: :anchored)
       type = case match[0]
              when ABSTRACT     then :ABSTRACT
              when ASSERT       then :ASSERT
@@ -330,7 +330,7 @@ class JavaLexer < MiniLexer
   end
 
   def match_char_literal
-    if match = @input.match(/'([^'\\\r\n]|\\['"\\bfnrt]|\\u[0-9a-fA-F]{4}|\\[^'\r\n])*'/, @position)
+    if match = @input.match(/'([^'\\\r\n]|\\['"\\bfnrt]|\\u[0-9a-fA-F]{4}|\\[^'\r\n])*'/, @position, options: :anchored)
       self << Tuple.new(:CHAR_LITERAL, match[0])
       @position += match[0].size
     else
@@ -341,10 +341,10 @@ class JavaLexer < MiniLexer
   end
 
   def match_string_literal_or_text_block
-    if match = @input.match(/"""[ \t]*[\r\n](.|\\["\\bfnrt])*?[\r\n][ \t]*"""/, @position)
+    if match = @input.match(/"""[ \t]*[\r\n](.|\\["\\bfnrt])*?[\r\n][ \t]*"""/, @position, options: :anchored)
       self << Tuple.new(:TEXT_BLOCK, match[0])
       @position += match[0].size
-    elsif match = @input.match(/"[^"\\\r\n]*(\\["\\bfnrt][^"\\\r\n]*)*"/, @position)
+    elsif match = @input.match(/"[^"\\\r\n]*(\\["\\bfnrt][^"\\\r\n]*)*"/, @position, options: :anchored)
       self << Tuple.new(:STRING_LITERAL, match[0])
       @position += match[0].size
     else

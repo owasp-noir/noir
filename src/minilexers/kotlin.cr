@@ -121,7 +121,7 @@ class KotlinLexer < MiniLexer
   end
 
   private def match_number
-    if match = @input.match(/\d+(_\d+)*\.?\d*([eE][+-]?\d+)?/, @position)
+    if match = @input.match(/\d+(_\d+)*\.?\d*([eE][+-]?\d+)?/, @position, options: :anchored)
       type = match[0].includes?('.') ? :FLOAT_LITERAL : :INTEGER_LITERAL
       self << Tuple.new(type, match[0])
       @position += match[0].size
@@ -132,7 +132,7 @@ class KotlinLexer < MiniLexer
   end
 
   private def match_identifier_or_keyword
-    if match = @input.match(/[a-zA-Z_][a-zA-Z0-9_]*/, @position)
+    if match = @input.match(/[a-zA-Z_][a-zA-Z0-9_]*/, @position, options: :anchored)
       type = KEYWORDS[match[0]]? || :IDENTIFIER
       self << Tuple.new(type, match[0])
       @position += match[0].size
@@ -143,7 +143,7 @@ class KotlinLexer < MiniLexer
   end
 
   private def match_annotation
-    if match = @input.match(/\@[a-zA-Z_][a-zA-Z0-9_]*/, @position)
+    if match = @input.match(/\@[a-zA-Z_][a-zA-Z0-9_]*/, @position, options: :anchored)
       type = KotlinLexer::ANNOTATIONS[match[0]]? || :ANNOTATION
       self << Tuple.new(type, match[0])
       @position += match[0].size

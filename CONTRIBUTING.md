@@ -13,7 +13,24 @@ Thank you for considering contributing to our project! Here are some guidelines 
 4. Completion
 - That's it! You're done. Await feedback and further instructions from the maintainers.
 
-![](https://github.com/hahwul/noir/assets/13212227/23989dab-6b4d-4f18-904f-7f5cfd172b04)
+```mermaid
+graph TD
+    subgraph Forked Branches
+        fork1["forked branch 1"]
+        fork2["forked branch 2"]
+        fork3["forked branch 3"]
+    end
+    fork1 --> dev["dev branch"]
+    fork2 --> dev
+    fork3 --> dev
+    
+    dev --> main["main branch"]
+    dev --> deployments["documentation deployments (https://owasp-noir.github.io)"]
+
+    main -->|release| homebrew["homebrew"]
+    main -->|release| snapcraft["snapcraft"]
+    main -->|release| docker["docker (ghcr)"]
+```
 
 ## 🛠️ Building and Testing
 ### Clone and Install Dependencies
@@ -60,3 +77,15 @@ ameba --fix
 - noir.cr: Main file and command-line parser.
 
 Feel free to reach out to us if you have any questions or need further assistance!
+
+## Documents contributing
+
+Please note that [our web page](https://owasp-noir.github.io/noir/) operates based on the dev branch. If you make any changes, kindly send a Pull Request (PR) to the dev branch. 
+
+To ensure a smooth integration of your contributions, please follow these steps:
+
+* Fork the repository and create your feature branch from dev.
+* Make your changes, ensuring they are thoroughly tested.
+* Submit your PR to the dev branch for review.
+
+By doing so, you'll help us keep our project up-to-date and well-organized. Your efforts are greatly appreciated, and we're excited to see what you'll bring to the project!

@@ -1,7 +1,10 @@
-/docs/
 /lib/
 /bin/
 /.shards/
 *.dwarf
 .DS_Store
 .vscode
+
+# Ignore the public directory for Jekyll
+/docs/_site/
+/docs/.jekyll-cache/

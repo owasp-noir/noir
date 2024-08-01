@@ -3,10 +3,15 @@ require "./analyzer_python"
 require "json"
 
 class AnalyzerDjango < AnalyzerPython
+  # Base path for the Django project
   @django_base_path : String = ""
-  REGEX_ROOT_URLCONF      = /\s*ROOT_URLCONF\s*=\s*r?['"]([^'"\\]*)['"]/
-  REGEX_ROUTE_MAPPING     = /(?:url|path|register)\s*\(\s*r?['"]([^"']*)['"][^,]*,\s*([^),]*)/
-  REGEX_INCLUDE_URLS      = /include\s*\(\s*r?['"]([^'"\\]*)['"]/
+
+  # Regular expressions for extracting Django URL configurations
+  REGEX_ROOT_URLCONF  = /\s*ROOT_URLCONF\s*=\s*r?['"]([^'"\\]*)['"]/
+  REGEX_ROUTE_MAPPING = /(?:url|path|register)\s*\(\s*r?['"]([^"']*)['"][^,]*,\s*([^),]*)/
+  REGEX_INCLUDE_URLS  = /include\s*\(\s*r?['"]([^'"\\]*)['"]/
+
+  # Map request parameters to their respective fields
   REQUEST_PARAM_FIELD_MAP = {
     "GET"     => {["GET"], "query"},
     "POST"    => {["POST"], "form"},
@@ -14,6 +19,8 @@ class AnalyzerDjango < AnalyzerPython
     "META"    => {nil, "header"},
     "data"    => {["POST", "PUT", "PATCH"], "form"},
   }
+
+  # Map request parameter types to HTTP methods
   REQUEST_PARAM_TYPE_MAP = {
     "query"  => nil,
     "form"   => ["GET", "POST", "PUT", "PATCH"],
@@ -22,32 +29,33 @@ class AnalyzerDjango < AnalyzerPython
   }
 
   def analyze
-    result = [] of Endpoint
+    endpoints = [] of Endpoint
 
-    # Django urls
-    root_django_urls_list = search_root_django_urls_list()
+    # Find root Django URL configurations
+    root_django_urls_list = find_root_django_urls()
     root_django_urls_list.each do |root_django_urls|
       @django_base_path = root_django_urls.basepath
-      get_endpoints(root_django_urls).each do |endpoint|
-        result << endpoint
+      extract_endpoints(root_django_urls).each do |endpoint|
+        endpoints << endpoint
       end
     end
 
-    # Static files
+    # Find static files
     begin
       Dir.glob("#{@base_path}/static/**/*") do |file|
         next if File.directory?(file)
         relative_path = file.sub("#{@base_path}/static/", "")
-        @result << Endpoint.new("/#{relative_path}", "GET")
+        endpoints << Endpoint.new("/#{relative_path}", "GET")
       end
     rescue e
       logger.debug e
     end
 
-    result
+    endpoints
   end
 
-  def search_root_django_urls_list : Array(DjangoUrls)
+  # Find all root Django URLs
+  def find_root_django_urls : Array(DjangoUrls)
     root_django_urls_list = [] of DjangoUrls
 
     search_dir = @base_path
@@ -82,12 +90,8 @@ class AnalyzerDjango < AnalyzerPython
     root_django_urls_list.uniq
   end
 
-  module PackageType
-    FILE = 0
-    CODE = 1
-  end
-
-  def get_endpoints(django_urls : DjangoUrls) : Array(Endpoint)
+  # Extract endpoints from a Django URL configuration file
+  def extract_endpoints(django_urls : DjangoUrls) : Array(Endpoint)
     endpoints = [] of Endpoint
     url_base_path = File.dirname(django_urls.filepath)
 
@@ -95,7 +99,7 @@ class AnalyzerDjango < AnalyzerPython
     content = file.gets_to_end
     package_map = find_imported_modules(@django_base_path, url_base_path, content)
 
-    # [Temporary Fix] Parse only the string after "urlpatterns = ["
+    # Temporary fix to parse only the string after "urlpatterns = ["
     keywords = ["urlpatterns", "=", "["]
     keywords.each do |keyword|
       if !content.includes? keyword
@@ -105,7 +109,7 @@ class AnalyzerDjango < AnalyzerPython
       content = content.split(keyword, 2)[1]
     end
 
-    # [TODO] Parse correct urlpatterns from variable concatenation case"
+    # TODO: Parse correct urlpatterns from variable concatenation case
     content.scan(REGEX_ROUTE_MAPPING) do |route_match|
       next if route_match.size != 3
       route = route_match[1]
@@ -114,14 +118,14 @@ class AnalyzerDjango < AnalyzerPython
       url = "/#{django_urls.prefix}/#{route}".gsub(/\/+/, "/")
       new_django_urls = nil
       view.scan(REGEX_INCLUDE_URLS) do |include_pattern_match|
-        # Detect new url configs
+        # Detect new URL configurations
         next if include_pattern_match.size != 2
         new_route_path = "#{@django_base_path}/#{include_pattern_match[1].gsub(".", "/")}.py"
 
         if File.exists?(new_route_path)
           new_django_urls = DjangoUrls.new("#{django_urls.prefix}#{route}", new_route_path, django_urls.basepath)
           details = Details.new(PathInfo.new(new_route_path))
-          get_endpoints(new_django_urls).each do |endpoint|
+          extract_endpoints(new_django_urls).each do |endpoint|
             endpoint.set_details(details)
             endpoints << endpoint
           end
@@ -150,13 +154,12 @@ class AnalyzerDjango < AnalyzerPython
         end
 
         if filepath != ""
-          get_endpoint_from_files(url, filepath, function_or_class_name).each do |endpoint|
+          extract_endpoints_from_file(url, filepath, function_or_class_name).each do |endpoint|
             endpoint.set_details(details)
             endpoints << endpoint
           end
         else
           # By default, Django allows requests with methods other than GET as well
-          # Prevent this flow, we need to improve trace code of 'get_endpoint_from_files()
           endpoints << Endpoint.new(url, "GET", details)
         end
       end
@@ -165,7 +168,8 @@ class AnalyzerDjango < AnalyzerPython
     endpoints
   end
 
-  def get_endpoint_from_files(url : String, filepath : String, function_or_class_name : String)
+  # Extract endpoints from a given file
+  def extract_endpoints_from_file(url : String, filepath : String, function_or_class_name : String)
     endpoints = Array(Endpoint).new
     suspicious_http_methods = ["GET"]
     suspicious_params = Array(Param).new
@@ -176,14 +180,13 @@ class AnalyzerDjango < AnalyzerPython
     # Function Based View
     function_start_index = content.index /def\s+#{function_or_class_name}\s*\(/
     if !function_start_index.nil?
-      function_codeblock = parse_function_or_class(content[function_start_index..])
+      function_codeblock = parse_code_block(content[function_start_index..])
       if !function_codeblock.nil?
         lines = function_codeblock.split "\n"
         function_define_line = lines[0]
         lines = lines[1..]
 
-        # Verify if the decorator line contains an HTTP method, for instance:
-        # '@api_view(['POST'])', '@require_POST', '@require_http_methods(["GET", "POST"])'
+        # Check if the decorator line contains an HTTP method
         index = content_lines.index(function_define_line)
         if !index.nil?
           while index > 0
@@ -191,7 +194,7 @@ class AnalyzerDjango < AnalyzerPython
 
             preceding_definition = content_lines[index]
             if preceding_definition.size > 0 && preceding_definition[0] == '@'
-              HTTP_METHOD_NAMES.each do |http_method_name|
+              HTTP_METHODS.each do |http_method_name|
                 method_name_match = preceding_definition.downcase.match /[^a-zA-Z0-9](#{http_method_name})[^a-zA-Z0-9]/
                 if !method_name_match.nil?
                   suspicious_http_methods << http_method_name.upcase
@@ -207,7 +210,7 @@ class AnalyzerDjango < AnalyzerPython
           # Check if line has 'request.method == "GET"' similar pattern
           if line.includes? "request.method"
             suspicious_code = line.split("request.method")[1].strip
-            HTTP_METHOD_NAMES.each do |http_method_name|
+            HTTP_METHODS.each do |http_method_name|
               method_name_match = suspicious_code.downcase.match /['"](#{http_method_name})['"]/
               if !method_name_match.nil?
                 suspicious_http_methods << http_method_name.upcase
@@ -215,13 +218,13 @@ class AnalyzerDjango < AnalyzerPython
             end
           end
 
-          parse_params_in_codeline(line, suspicious_http_methods).each do |param|
+          extract_params_from_line(line, suspicious_http_methods).each do |param|
             suspicious_params << param
           end
         end
 
         suspicious_http_methods.uniq.each do |http_method_name|
-          endpoints << Endpoint.new(url, http_method_name, get_filtered_params(http_method_name, suspicious_params))
+          endpoints << Endpoint.new(url, http_method_name, filter_params(http_method_name, suspicious_params))
         end
 
         return endpoints
@@ -229,18 +232,16 @@ class AnalyzerDjango < AnalyzerPython
     end
 
     # Class Based View
-    regex_http_method_names = HTTP_METHOD_NAMES.join "|"
+    regext_http_methods = HTTP_METHODS.join "|"
     class_start_index = content.index /class\s+#{function_or_class_name}\s*[\(:]/
     if !class_start_index.nil?
-      class_codeblock = parse_function_or_class(content[class_start_index..])
+      class_codeblock = parse_code_block(content[class_start_index..])
       if !class_codeblock.nil?
         lines = class_codeblock.split "\n"
         class_define_line = lines[0]
         lines = lines[1..]
 
-        # [TODO] Create a graph and use Django internal views
-        # Suspicious implicit class name for this class
-        # https://github.com/django/django/blob/main/django/views/generic/edit.py
+        # Determine implicit HTTP methods based on class name
         if class_define_line.includes? "Form"
           suspicious_http_methods << "GET"
           suspicious_http_methods << "POST"
@@ -253,36 +254,37 @@ class AnalyzerDjango < AnalyzerPython
           suspicious_http_methods << "POST"
         end
 
-        # Check http methods (django.views.View)
+        # Check HTTP methods in class methods
         lines.each do |line|
-          method_function_match = line.match(/\s+def\s+(#{regex_http_method_names})\s*\(/)
+          method_function_match = line.match(/\s+def\s+(#{regext_http_methods})\s*\(/)
           if !method_function_match.nil?
             suspicious_http_methods << method_function_match[1].upcase
           end
 
-          parse_params_in_codeline(line, suspicious_http_methods).each do |param|
+          extract_params_from_line(line, suspicious_http_methods).each do |param|
             suspicious_params << param
           end
         end
 
         suspicious_http_methods.uniq.each do |http_method_name|
-          endpoints << Endpoint.new(url, http_method_name, get_filtered_params(http_method_name, suspicious_params))
+          endpoints << Endpoint.new(url, http_method_name, filter_params(http_method_name, suspicious_params))
         end
 
         return endpoints
       end
     end
 
-    # GET is default http method
+    # Default to GET method
     [Endpoint.new(url, "GET")]
   end
 
-  def parse_params_in_codeline(line : String, endpoint_methods : Array(String))
+  # Extract parameters from a line of code
+  def extract_params_from_line(line : String, endpoint_methods : Array(String))
     suspicious_params = Array(Param).new
 
     if line.includes? "request."
       REQUEST_PARAM_FIELD_MAP.each do |field_name, tuple|
-        field_methods, noir_param_type = tuple
+        field_methods, param_type = tuple
         matches = line.scan(/request\.#{field_name}\[[rf]?['"]([^'"]*)['"]\]/)
         if matches.size == 0
           matches = line.scan(/request\.#{field_name}\.get\([rf]?['"]([^'"]*)['"]/)
@@ -298,7 +300,7 @@ class AnalyzerDjango < AnalyzerPython
               end
             end
 
-            # If it receives a specific parameter, it is considered to allow the method.
+            # If a specific parameter is found, allow the corresponding methods
             if !field_methods.nil?
               field_methods.each do |field_method|
                 if !endpoint_methods.includes? field_method
@@ -307,7 +309,7 @@ class AnalyzerDjango < AnalyzerPython
               end
             end
 
-            suspicious_params << Param.new(param_name, "", noir_param_type)
+            suspicious_params << Param.new(param_name, "", param_type)
           end
         end
       end
@@ -330,62 +332,69 @@ class AnalyzerDjango < AnalyzerPython
     suspicious_params
   end
 
-  def get_filtered_params(method : String, params : Array(Param))
+  # Filter parameters based on HTTP method
+  def filter_params(method : String, params : Array(Param))
     filtered_params = Array(Param).new
     upper_method = method.upcase
 
     params.each do |param|
-      is_support_param = false
+      is_supported_param = false
       support_methods = REQUEST_PARAM_TYPE_MAP.fetch(param.param_type, nil)
       if !support_methods.nil?
         support_methods.each do |support_method|
           if upper_method == support_method.upcase
-            is_support_param = true
+            is_supported_param = true
           end
         end
       else
-        is_support_param = true
+        is_supported_param = true
       end
 
       filtered_params.each do |filtered_param|
         if filtered_param.name == param.name && filtered_param.param_type == param.param_type
-          is_support_param = false
+          is_supported_param = false
           break
         end
       end
 
-      if is_support_param
+      if is_supported_param
         filtered_params << param
       end
     end
 
     filtered_params
   end
+
+  module PackageType
+    FILE = 0
+    CODE = 1
+  end
+
+  struct DjangoUrls
+    include JSON::Serializable
+    property prefix, filepath, basepath
+
+    def initialize(@prefix : String, @filepath : String, @basepath : String)
+      if !File.directory? @basepath
+        raise "The basepath for DjangoUrls (#{@basepath}) does not exist or is not a directory."
+      end
+    end
+  end
+
+  struct DjangoView
+    include JSON::Serializable
+    property prefix, filepath, name
+
+    def initialize(@prefix : String, @filepath : String, @name : String)
+      if !File.directory? @filepath
+        raise "The filepath for DjangoView (#{@filepath}) does not exist."
+      end
+    end
+  end
 end
 
-def analyzer_django(options : Hash(String, String))
+# Main function to analyze a Django project
+def analyzer_python_django(options : Hash(String, String))
   instance = AnalyzerDjango.new(options)
   instance.analyze
-end
-
-struct DjangoUrls
-  include JSON::Serializable
-  property prefix, filepath, basepath
-
-  def initialize(@prefix : String, @filepath : String, @basepath : String)
-    if !File.directory? @basepath
-      raise "The basepath for DjangoUrls (#{@basepath}) does not exist or is not a directory."
-    end
-  end
-end
-
-struct DjangoView
-  include JSON::Serializable
-  property prefix, filepath, name
-
-  def initialize(@prefix : String, @filepath : String, @name : String)
-    if !File.directory? @filepath
-      raise "The filepath for DjangoView (#{@filepath}) does not exist."
-    end
-  end
 end

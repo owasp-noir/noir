@@ -6,7 +6,7 @@ require "./options.cr"
 require "./techs/techs.cr"
 
 module Noir
-  VERSION = "0.16.1"
+  VERSION = "0.17.0"
 end
 
 # Print banner
@@ -17,7 +17,7 @@ noir_options = run_options_parser()
 
 # Check base path
 if noir_options["base"] == ""
-  STDERR.puts "ERROR: Base path is required."
+  STDERR.puts "ERROR: Base path is required.".colorize(:yellow)
   STDERR.puts "Please use -b or --base-path to set base path."
   STDERR.puts "If you need help, use -h or --help."
   exit(1)
@@ -25,6 +25,8 @@ end
 
 # Run Noir
 app = NoirRunner.new noir_options
+start_time = Time.monotonic
+
 app.logger.debug("Start Debug mode")
 app.logger.debug("Noir version: #{Noir::VERSION}")
 app.logger.debug("Noir options from arguments:")
@@ -45,41 +47,55 @@ if noir_options["diff"] != ""
   diff_options["nolog"] = "yes"
 
   app_diff = NoirRunner.new diff_options
-  app.logger.system "Running Noir with Diff mode."
+  app.logger.info "Running Noir with Diff mode."
 end
 
 # Run Default mode
-app.logger.system "Detecting technologies to base directory."
+app.logger.info "Detecting technologies to base directory."
 app.detect
 
 if app.techs.size == 0
-  app.logger.info "No technologies detected."
+  app.logger.warning "No technologies detected."
+  app.logger.sub "➔ If you know the technology, use the -t flag to specify it."
+  app.logger.sub "➔ Please check tech lists using the --list-techs flag."
   if app.options["url"] != ""
-    app.logger.system "Start file-based analysis as the -u flag has been used."
+    app.logger.info "Start file-based analysis as the -u flag has been used."
   else
     exit(0)
   end
 else
-  app.logger.info "Detected #{app.techs.size} technologies."
-  app.techs.each do |tech|
-    app.logger.info_sub "#{tech}"
+  if app.techs.size > 0
+    app.logger.success "Detected #{app.techs.size} technologies."
+    app.techs.each_with_index do |tech, index|
+      if index < app.techs.size - 1
+        app.logger.sub "├── #{tech}"
+      else
+        app.logger.sub "└── #{tech}"
+      end
+    end
+    app.logger.info "Start code analysis based on the detected technology."
   end
-  app.logger.system "Start code analysis based on the detected technology."
 end
 
 app.analyze
-app.logger.info "Finally identified #{app.endpoints.size} endpoints."
+app.logger.success "Finally identified #{app.endpoints.size} endpoints."
+
+# Check and print scan time
+end_time = Time.monotonic
+elapsed_time = end_time - start_time
+
+app.logger.info "Scan completed in #{elapsed_time.total_milliseconds.round} ms."
 
 if app_diff.nil?
-  app.logger.system "Generating Report."
+  app.logger.info "Generating Report."
   app.report
 else
-  app.logger.system "Diffing base and diff codebases."
+  app.logger.info "Diffing base and diff codebases."
   locator = CodeLocator.instance
   locator.clear_all
   app_diff.detect
   app_diff.analyze
 
-  app.logger.system "Generating Diff Report."
+  app.logger.info "Generating Diff Report."
   app.diff_report(app_diff)
 end

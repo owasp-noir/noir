@@ -1,0 +1,44 @@
+title: OWASP Noir
+description: Attack surface detector that identifies endpoints by static analysis
+theme: just-the-docs
+logo: "/images/owasp-noir-black.png"
+favicon_ico: "/images/favicon.ico"
+url: https://owasp-noir.github.io/noir/
+
+aux_links:
+  Github: https://github.com/owasp-noir/noir
+  OWASP: https://owasp.org/www-project-noir/
+
+# Footer "Edit this page on GitHub" link text
+gh_edit_link: true # show or hide edit this page link
+gh_edit_link_text: "Edit this page on GitHub."
+gh_edit_repository: "https://github.com/owasp-noir/noir" # the github URL for your repo
+gh_edit_branch: "dev" # the branch that your docs is served from
+gh_edit_source: docs # the source that your files originate from
+gh_edit_view_mode: "tree" # "tree" or "edit" if you want the user to jump into the editor immediately
+
+# Collection settings
+collections:
+  get_started:
+    permalink: "/:collection/:path/"
+    output: true
+  advanced:
+    permalink: "/:collection/:path/"
+    output: true
+
+just_the_docs:
+  collections:
+    get_started:
+      name: Get Started
+    advanced:
+      name: Advanced
+
+mermaid:
+  version: "10.9.1"
+
+# Security.txt
+security_txt:
+  comment: If you find any security issues on this site, please contact me!
+  contact: https://github.com/owasp-noir/noir/security
+  canonical: https://owasp-noir.github.io/.well-known/security.txt
+  preferred_languages: "en, ko"
