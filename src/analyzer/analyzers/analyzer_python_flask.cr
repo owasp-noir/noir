@@ -1,4 +1,6 @@
 require "../../models/analyzer"
+require "../../minilexers/python"
+require "../../miniparsers/python"
 require "./analyzer_python"
 
 class AnalyzerFlask < AnalyzerPython
@@ -23,24 +25,30 @@ class AnalyzerFlask < AnalyzerPython
     "header" => nil,
   }
 
+  FILE_CONTENT_CACHE = Hash(String, String).new
+  PARSER_MAP = Hash(String, PythonParser).new
+
   def analyze
+    flask_instance_map = Hash(String, String).new
     blueprint_prefix_map = Hash(String, String).new
+    api_instance_map = Hash(String, String).new
 
     begin
       # Iterate through all Python files in the base path
       Dir.glob("#{base_path}/**/*.py") do |path|
         next if File.directory?(path)
+
         File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
           file.each_line.with_index do |line, index|
             # Identify Flask instance assignments
             match = line.match /(#{PYTHON_VAR_NAME_REGEX})\s*=\s*Flask\s*\(/
             if !match.nil?
               flask_instance_name = match[1]
-              blueprint_prefix_map[flask_instance_name] ||= ""
+              flask_instance_map[flask_instance_name] ||= ""
             end
 
             # Common flask instance name
-            blueprint_prefix_map["app"] ||= ""
+            flask_instance_map["app"] ||= ""
 
             # Identify Blueprint instance assignments
             match = line.match /(#{PYTHON_VAR_NAME_REGEX})\s*=\s*Blueprint\s*\(/
@@ -54,6 +62,33 @@ class AnalyzerFlask < AnalyzerPython
               end
 
               blueprint_prefix_map[blueprint_instance_name] ||= prefix
+            end
+
+            # Api Blueprint
+            blueprint_prefix_map.each do |blueprint_instance_name, prefix|
+              match = line.match /(#{PYTHON_VAR_NAME_REGEX})\s*=\s*(flask_restx.)?Api\s*\(\s*#{blueprint_instance_name}/
+              if !match.nil?
+                api_instance_name = match[1]
+                api_instance_map[api_instance_name] ||= prefix
+              end
+            end
+
+            # Api Namespace
+            api_instance_map.each do |api_instance_name, prefix|
+              match = line.match /(#{api_instance_name})\.add_namespace\s*\(\s*(#{PYTHON_VAR_NAME_REGEX})/
+              if !match.nil?
+                parser = get_parser(path)
+                if parser.@global_variables.has_key?(match[2])
+                  gv = parser.@global_variables[match[2]]
+                  if gv.type == "Namespace"
+                    namespace = gv.value.split("Namespace(", 2)[1].split(",")[0].split(")")[0].strip
+                    if (namespace.starts_with?("'") || namespace.starts_with?('"')) && namespace[0] == namespace[-1]
+                      namespace = namespace[1..-2]
+                      flask_instance_map[gv.name] = File.join(prefix, namespace)
+                    end
+                  end
+                end
+              end
             end
 
             # Temporary Addition: register_view
@@ -77,7 +112,7 @@ class AnalyzerFlask < AnalyzerPython
         end
       end
     rescue e : Exception
-      logger.debug e.message
+      puts e.message
     end
 
     begin
@@ -90,7 +125,7 @@ class AnalyzerFlask < AnalyzerPython
         line_index = 0
         while line_index < lines.size
           line = lines[line_index]
-          blueprint_prefix_map.each do |flask_instance_name, prefix|
+          flask_instance_map.each do |flask_instance_name, prefix|
             # Identify Flask route decorators
             line.scan(/@#{flask_instance_name}\.route\([rf]?['"]([^'"]*)['"](.*)/) do |match|
               if match.size > 0
@@ -130,6 +165,25 @@ class AnalyzerFlask < AnalyzerPython
 
     result
   end
+
+  # Fetch content of a file and cache it
+  private def fetch_file_content(path : String) : String
+    FILE_CONTENT_CACHE[path] ||= File.read(path, encoding: "utf-8", invalid: :skip)
+  end
+  
+  # Create a Kotlin parser for a given path and content
+  def create_parser(path : String, content : String = "") : PythonParser
+    content = fetch_file_content(path) if content.empty?
+    lexer = PythonLexer.new
+    tokens = lexer.tokenize(content)
+    PythonParser.new(path, tokens, PARSER_MAP)
+  end
+
+  # Get a parser for a given path
+  def get_parser(path : String, content : String = "") : PythonParser
+    PARSER_MAP[path] ||= create_parser(path, content)
+    return PARSER_MAP[path]
+  end  
 
   # Extracts endpoint information from the given route and code block
   def get_endpoints(route_path : String, extra_params : String, codeblock_lines : Array(String), prefix : String)
