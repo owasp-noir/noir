@@ -230,13 +230,11 @@ class PythonLexer < MiniLexer
     end
     
     private def match_other
-        start_pos = @position
         if match = IDENTIFIER.match(@input[@position..])
             token_type = KEYWORDS.has_key?(match[0]) ? KEYWORDS[match[0]] : :IDENTIFIER
             self << Tuple.new(token_type, match[0])
             @position += match[0].size
         else
-            token_type = :UNKNOWN
             if @input[@position] != ' ' # Skip whitespace
                 self << Tuple.new(:UNKNOWN, @input[@position])
             end
