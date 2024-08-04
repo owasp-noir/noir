@@ -4,7 +4,7 @@ from typing_extensions import Annotated
 from fastapi.responses import JSONResponse
 from fastapi import FastAPI, Path, Query, status, Body, Header, Cookie, Depends, Request, Response, APIRouter
 
-api = APIRouter()
+api : APIRouter = APIRouter()
 
 @api.get("/query/param-required/int")
 def get_query_param_required_type(query: int = Query()):

@@ -4,7 +4,7 @@ from typing import FrozenSet, Optional
 from fastapi import FastAPI, Path, Query
 from api import api
 
-app = FastAPI()
+app : FastAPI = FastAPI()
 app.include_router(api, prefix="/api")
 
 @app.get("/main")

@@ -15,7 +15,7 @@ class AnalyzerFastAPI < AnalyzerPython
         source = File.read(path, encoding: "utf-8", invalid: :skip)
 
         source.each_line do |line|
-          match = line.match /(#{PYTHON_VAR_NAME_REGEX})\s*=\s*FastAPI\s*\(/
+          match = line.match /(#{PYTHON_VAR_NAME_REGEX})\s*(?::\s*#{PYTHON_VAR_NAME_REGEX})?\s*=\s*FastAPI\s*\(/
           if !match.nil?
             fastapi_instance_name = match[1]
             unless include_router_map.has_key?(fastapi_instance_name)
@@ -29,7 +29,7 @@ class AnalyzerFastAPI < AnalyzerPython
           end
 
           # https://fastapi.tiangolo.com/tutorial/bigger-applications/
-          match = line.match /(#{PYTHON_VAR_NAME_REGEX})\s*=\s*APIRouter\s*\(/
+          match = line.match /(#{PYTHON_VAR_NAME_REGEX})\s*(?::\s*#{PYTHON_VAR_NAME_REGEX})?\s*=\s*APIRouter\s*\(/
           if !match.nil?
             prefix = ""
             router_instance_name = match[1]
@@ -280,7 +280,7 @@ class AnalyzerFastAPI < AnalyzerPython
     if param.type == "Request"
       # Parse JSON variable names
       codelines.each do |codeline|
-        match = codeline.match /(#{PYTHON_VAR_NAME_REGEX}).*=\s*(await\s*){0,1}#{param.name}.json\(\)/
+        match = codeline.match /(#{PYTHON_VAR_NAME_REGEX})\s*(?::\s*#{PYTHON_VAR_NAME_REGEX})?\s*=\s*(await\s*){0,1}#{param.name}.json\(\)/
         json_variable_names << match[1] if !match.nil? && !json_variable_names.includes?(match[1])
       end
 
