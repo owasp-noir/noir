@@ -14,13 +14,14 @@ class PythonParser
             @basedir = File.dirname(@basedir)
         end
 
+        @debug = false
         @visited << path
         parse
     end
 
     def parse
-        parse_import_statements(@tokens)
-        parse_global_variables(@tokens)
+        parse_import_statements(@tokens)        
+        parse_global_variables()
     end
 
     # Create a parser for the given path
@@ -46,7 +47,6 @@ class PythonParser
         parser
     end
 
-    # Parse import statements
     def parse_import_statements(tokens : Array(Token))
         import_statements = Array(Array(String)).new
         index = 0
@@ -58,6 +58,7 @@ class PythonParser
             end
 
             from_strings = Array(String).new
+            sindex = index
             if tokens[index].type == :FROM
                 index += 1
                 while tokens[index].type != :IMPORT && tokens[index].type != :EOF
@@ -131,19 +132,35 @@ class PythonParser
 
             index += 1
         end
-
+        
         import_statements.each do |import_statement|
+            @debug = false
+            if import_statement.size == 2
+                if import_statement[0] == "." && import_statement[1] == "models"
+                    @debug = true
+                end
+            end
+            
             name = import_statement[-1]
+
+            # Check if the name has an alias
             as_name = nil
             if name.includes?(" as ")
-                name, as_name = name.split(" as ")
-                import_statement[-1] = name
+                name, as_name = name.split(" as ") # Set as_name
+                import_statement[-1] = name # Remove the alias part
             end
-
+            
             path = nil
             pypath = nil
-            import_file = false
+            remain_import_parts = false
             package_dir = @basedir
+            if import_statement[0] == "."
+                package_dir = File.dirname(@path)
+                import_statement.shift
+            end
+            if import_statement.size == 2 && import_statement[0] == "models"
+                @debug=true
+            end
             import_statement.each_with_index do |import_part, index|
                 path = File.join(package_dir, import_part)
                 # Order of checking is important
@@ -151,14 +168,14 @@ class PythonParser
                     package_dir = path
                 elsif File.exists?(path + ".py")
                     pypath = path + ".py"
-                    if index == import_statement.size - 1
-                        import_file = true
+                    if index != import_statement.size - 1
+                        remain_import_parts = true
                     end
                     break
                 elsif package_dir != @basedir && File.exists?(File.join(package_dir, "__init__.py"))
                     pypath = File.join(package_dir, "__init__.py")
-                    if index == import_statement.size - 1
-                        import_file = true
+                    if index != import_statement.size - 1
+                        remain_import_parts = true
                     end
                     break
                 else
@@ -167,11 +184,8 @@ class PythonParser
                 end
             end
 
-            if as_name.nil?
-                as_name = name
-                @import_statements[name] = ImportModel.new(name, pypath, as_name)
-            else
-                @import_statements[as_name] = ImportModel.new(name, pypath, as_name)
+            unless as_name.nil?
+                name = as_name
             end
 
             unless pypath.nil?
@@ -183,22 +197,19 @@ class PythonParser
                     @global_variables.merge!(parser.@global_variables)
                 else
                     parser = get_parser(Path.new(pypath))
-                    if import_file && !pypath.ends_with?("__init__.py")
+                    if !remain_import_parts && !pypath.ends_with?("__init__.py")                       
                         parser.@global_variables.each do |key, value|
-                            @global_variables["#{as_name}.#{key}"] = value
+                            @global_variables["#{name}.#{key}"] = value
                         end
-                    else
-                        if parser.@global_variables.has_key?(name)
-                            @global_variables["#{as_name}"] = parser.@global_variables[name]
-                        end
+                    elsif parser.@global_variables.has_key?(name)
+                        @global_variables[name] = parser.@global_variables[name]                        
                     end
                 end
             end
         end
     end
 
-    # Parse global variables
-    def parse_global_variables(tokens : Array(Token))
+    def parse_global_variables()
         index = 0
         while index < tokens.size
             if (index == 0 || tokens[index - 1].type == :NEWLINE) && index+3 < tokens.size
@@ -211,8 +222,16 @@ class PythonParser
                     name = tokens[index].value
                     t = extract_assign_data(index+2)
                     type, value = t[0], t[1]
-                    if tokens[index+2].type == :IDENTIFIER && tokens[index+3].type == :LPAREN
-                        type = tokens[index+2].value
+                    # Check if the type is a direct function or class, then get the name of the function or class
+                    if type.nil? && tokens[index+2].type == :IDENTIFIER                        
+                        _type = ""
+                        while tokens[index+2].type == :IDENTIFIER || tokens[index+2].type == :DOT
+                            _type += tokens[index+2].value
+                            index += 1
+                        end
+                        if tokens[index+2].type == :LPAREN
+                            type = _type
+                        end                        
                     end
                 else
                     index += 1
@@ -243,25 +262,34 @@ class PythonParser
         @tokens[index].value
     end
 
-    # Extract the assignment data
     def extract_assign_data(index) : Tuple(String | Nil, String)
         rawdata = ""
-        type = nil
+        variable_type = nil # unknown
         sindex = index
+        lparen = 0
         while index < @tokens.size
             token_type = @tokens[index].type
             token_value = @tokens[index].value
-            if token_type == :NEWLINE
-                return Tuple.new(type, rawdata.strip)
+            if token_type == :LPAREN
+                lparen += 1
+                rawdata += token_value
+            elsif lparen > 0
+                rawdata += token_value
+                if token_type == :RPAREN
+                    lparen -= 1
+                    if lparen == 0                  
+                        break
+                    end
+                end
+            elsif token_type == :NEWLINE
+                break
             elsif token_type == :COMMENT
                 index += 1
                 next
             elsif sindex == index
+                # Start of the assignment
                 if token_type == :STRING || token_type == :FSTRING
                     return Tuple.new("str", normallize(index))
-                elsif @global_variables.has_key?(token_value)
-                    gv = @global_variables[token_value]
-                    return Tuple.new(gv.type, gv.value)
                 else
                     rawdata += token_value
                 end
@@ -271,7 +299,27 @@ class PythonParser
             index += 1
         end
 
-        Tuple.new(type, rawdata.strip)
+        rawdata = rawdata.strip
+        if @global_variables.has_key?(rawdata)
+            # Check if the rawdata is a global variable
+            gv = @global_variables[token_value]
+            return Tuple.new(gv.type, gv.value)
+        end
+        
+        # Check if the rawdata is an instance variable
+        instance_parts = rawdata.split(".")
+        if instance_parts.size > 1
+            instance = instance_parts[0]
+            if @global_variables.has_key?(instance)
+                gv = @global_variables[instance]
+                gv_type = gv.type
+                if gv_type
+                    variable_type = gv_type + "." + instance_parts[1].split("(")[0]
+                end
+            end
+        end
+
+        Tuple.new(variable_type, rawdata)
     end
 
     def print_line(index)
@@ -281,6 +329,12 @@ class PythonParser
             index += 1
         end
         puts ""
+    end
+
+    def debug_print(s)
+        if @debug
+            puts s
+        end
     end
 
     # Class to model annotations
