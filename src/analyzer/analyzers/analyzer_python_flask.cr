@@ -37,11 +37,13 @@ class AnalyzerFlask < AnalyzerPython
       # Iterate through all Python files in the base path
       Dir.glob("#{base_path}/**/*.py") do |path|
         next if File.directory?(path)
-
         File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-          file.each_line.with_index do |line, index|
+          source = file.gets_to_end
+          next unless source.includes?("flask")
+          source.each_line.with_index do |line, index|
+            line = line.gsub(" ", "")
             # Identify Flask instance assignments
-            match = line.match /(#{PYTHON_VAR_NAME_REGEX})\s*(?::\s*#{PYTHON_VAR_NAME_REGEX})?\s*=\s*Flask\s*\(/
+            match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=Flask\(/
             if !match.nil?
               flask_instance_name = match[1]
               flask_instance_map[flask_instance_name] ||= ""
@@ -51,12 +53,12 @@ class AnalyzerFlask < AnalyzerPython
             flask_instance_map["app"] ||= ""
 
             # Identify Blueprint instance assignments
-            match = line.match /(#{PYTHON_VAR_NAME_REGEX})\s*(?::\s*#{PYTHON_VAR_NAME_REGEX})?\s*=\s*Blueprint\s*\(/
+            match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=Blueprint\(/
             if !match.nil?
               prefix = ""
               blueprint_instance_name = match[1]
               param_codes = line.split("Blueprint", 2)[1]
-              prefix_match = param_codes.match /url_prefix\s*=\s*['"]([^'"]*)['"]/
+              prefix_match = param_codes.match /url_prefix=['"]([^'"]*)['"]/
               if !prefix_match.nil? && prefix_match.size == 2
                 prefix = prefix_match[1]
               end
@@ -66,7 +68,7 @@ class AnalyzerFlask < AnalyzerPython
 
             # Api Blueprint
             blueprint_prefix_map.each do |blueprint_instance_name, prefix|
-              match = line.match /(#{PYTHON_VAR_NAME_REGEX})\s*(?::\s*#{PYTHON_VAR_NAME_REGEX})?\s*=\s*(flask_restx.)?Api\s*\(\s*#{blueprint_instance_name}/
+              match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(flask_restx.)?Api\((app=)?#{blueprint_instance_name}/
               if !match.nil?
                 api_instance_name = match[1]
                 api_instance_map[api_instance_name] ||= prefix
@@ -75,13 +77,19 @@ class AnalyzerFlask < AnalyzerPython
 
             # Api Namespace
             api_instance_map.each do |api_instance_name, prefix|
-              match = line.match /(#{api_instance_name})\.add_namespace\s*\(\s*(#{PYTHON_VAR_NAME_REGEX})/
+              match = line.match /(#{api_instance_name})\.add_namespace\((#{PYTHON_VAR_NAME_REGEX})/
               if !match.nil?
                 parser = get_parser(path)
                 if parser.@global_variables.has_key?(match[2])
                   gv = parser.@global_variables[match[2]]
                   if gv.type == "Namespace"
-                    namespace = gv.value.split("Namespace(", 2)[1].split(",")[0].split(")")[0].strip
+                    namespace = gv.value.split("Namespace(", 2)[1]
+                    unless namespace.includes?("path=")
+                      namespace = namespace.split(",")[0].split(")")[0].strip
+                    else
+                      namespace = namespace.split("path=")[1].split(")")[0].split(",")[0]
+                    end
+
                     if (namespace.starts_with?("'") || namespace.starts_with?('"')) && namespace[0] == namespace[-1]
                       namespace = namespace[1..-2]
                       flask_instance_map[gv.name] = File.join(prefix, namespace)
@@ -93,7 +101,7 @@ class AnalyzerFlask < AnalyzerPython
 
             # Temporary Addition: register_view
             blueprint_prefix_map.each do |blueprint_name, blueprint_prefix|
-              register_views_match = line.match /#{blueprint_name},\s*routes\s*=\s*(.*)\)/
+              register_views_match = line.match /#{blueprint_name},routes=(.*)\)/
               if !register_views_match.nil?
                 route_paths = register_views_match[1]
                 route_paths.scan /['"]([^'"]*)['"]/ do |path_str_match|
@@ -120,6 +128,7 @@ class AnalyzerFlask < AnalyzerPython
       Dir.glob("#{base_path}/**/*.py") do |path|
         next if File.directory?(path)
         source = File.read(path, encoding: "utf-8", invalid: :skip)
+        next unless source.includes?("flask")
         lines = source.split "\n"
 
         line_index = 0
@@ -159,7 +168,7 @@ class AnalyzerFlask < AnalyzerPython
         end
       end
     rescue e : Exception
-      logger.debug e.message
+      puts e.message
     end
     Fiber.yield
 
