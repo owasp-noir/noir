@@ -68,7 +68,7 @@ class AnalyzerFlask < AnalyzerPython
 
             # Api Blueprint
             blueprint_prefix_map.each do |blueprint_instance_name, prefix|
-              match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:flask_restx.)?Api\((app=)?#{blueprint_instance_name}/
+              match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:flask_restx\.)?Api\((app=)?#{blueprint_instance_name}/
               if !match.nil?
                 api_instance_name = match[1]
                 api_instance_map[api_instance_name] ||= prefix
