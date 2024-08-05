@@ -16,7 +16,7 @@ class AnalyzerFastAPI < AnalyzerPython
 
         source.each_line do |line|
           line = line.gsub(" ", "")
-          match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=FastAPI\(/
+          match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:fastapi\.)?FastAPI\(/
           if !match.nil?
             fastapi_instance_name = match[1]
             unless include_router_map.has_key?(fastapi_instance_name)
@@ -30,7 +30,7 @@ class AnalyzerFastAPI < AnalyzerPython
           end
 
           # https://fastapi.tiangolo.com/tutorial/bigger-applications/
-          match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=APIRouter\(/
+          match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:fastapi\.)?APIRouter\(/
           if !match.nil?
             prefix = ""
             router_instance_name = match[1]

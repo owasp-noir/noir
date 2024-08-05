@@ -43,7 +43,7 @@ class AnalyzerFlask < AnalyzerPython
           source.each_line.with_index do |line, index|
             line = line.gsub(" ", "")
             # Identify Flask instance assignments
-            match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=Flask\(/
+            match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:flask\.)?Flask\(/
             if !match.nil?
               flask_instance_name = match[1]
               flask_instance_map[flask_instance_name] ||= ""
@@ -53,7 +53,7 @@ class AnalyzerFlask < AnalyzerPython
             flask_instance_map["app"] ||= ""
 
             # Identify Blueprint instance assignments
-            match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=Blueprint\(/
+            match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:flask\.)?Blueprint\(/
             if !match.nil?
               prefix = ""
               blueprint_instance_name = match[1]
@@ -68,7 +68,7 @@ class AnalyzerFlask < AnalyzerPython
 
             # Api Blueprint
             blueprint_prefix_map.each do |blueprint_instance_name, prefix|
-              match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(flask_restx.)?Api\((app=)?#{blueprint_instance_name}/
+              match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:flask_restx.)?Api\((app=)?#{blueprint_instance_name}/
               if !match.nil?
                 api_instance_name = match[1]
                 api_instance_map[api_instance_name] ||= prefix
