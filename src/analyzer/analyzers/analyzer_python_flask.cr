@@ -84,10 +84,10 @@ class AnalyzerFlask < AnalyzerPython
                   gv = parser.@global_variables[match[2]]
                   if gv.type == "Namespace"
                     namespace = gv.value.split("Namespace(", 2)[1]
-                    unless namespace.includes?("path=")
-                      namespace = namespace.split(",")[0].split(")")[0].strip
-                    else
+                    if namespace.includes?("path=")
                       namespace = namespace.split("path=")[1].split(")")[0].split(",")[0]
+                    else
+                      namespace = namespace.split(",")[0].split(")")[0].strip                      
                     end
 
                     if (namespace.starts_with?("'") || namespace.starts_with?('"')) && namespace[0] == namespace[-1]
@@ -179,7 +179,7 @@ class AnalyzerFlask < AnalyzerPython
   private def fetch_file_content(path : String) : String
     FILE_CONTENT_CACHE[path] ||= File.read(path, encoding: "utf-8", invalid: :skip)
   end
-  
+
   # Create a Kotlin parser for a given path and content
   def create_parser(path : String, content : String = "") : PythonParser
     content = fetch_file_content(path) if content.empty?
@@ -191,8 +191,8 @@ class AnalyzerFlask < AnalyzerPython
   # Get a parser for a given path
   def get_parser(path : String, content : String = "") : PythonParser
     PARSER_MAP[path] ||= create_parser(path, content)
-    return PARSER_MAP[path]
-  end  
+    PARSER_MAP[path]
+  end
 
   # Extracts endpoint information from the given route and code block
   def get_endpoints(route_path : String, extra_params : String, codeblock_lines : Array(String), prefix : String)

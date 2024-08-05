@@ -9,7 +9,7 @@ class PythonParser
         @import_statements = Hash(String, ImportModel).new
         @global_variables = Hash(String, GlobalVariables).new
         @basedir = File.dirname(@path)
-        @is_package_file = File.exists?(File.dirname(@path) + "/__init__.py")        
+        @is_package_file = File.exists?(File.dirname(@path) + "/__init__.py")
         while @basedir != "" && File.exists?(@basedir + "/__init__.py")
             @basedir = File.dirname(@basedir)
         end
@@ -18,15 +18,15 @@ class PythonParser
         parse
     end
 
-    def parse        
+    def parse
         parse_import_statements(@tokens)
         parse_global_variables(@tokens)
     end
 
     # Create a parser for the given path
     def create_parser(path : Path, content : String = "") : PythonParser
-        if content == ""            
-            content = File.read(path, encoding: "utf-8", invalid: :skip)            
+        if content == ""
+            content = File.read(path, encoding: "utf-8", invalid: :skip)
         end
 
         lexer = PythonLexer.new
@@ -43,7 +43,7 @@ class PythonParser
 
         parser = create_parser(path)
         @parser_map[path.to_s] = parser
-        return parser
+        parser
     end
 
     # Parse import statements
@@ -56,7 +56,7 @@ class PythonParser
                 index += 1
                 next
             end
-            
+
             from_strings = Array(String).new
             if tokens[index].type == :FROM
                 index += 1
@@ -71,7 +71,7 @@ class PythonParser
                             if index + 1 < tokens.size && tokens[index+1].type == :DOT
                                 from_strings << ".."
                                 index += 2
-                            else                                
+                            else
                                 from_strings << "."
                                 index += 1
                             end
@@ -91,7 +91,7 @@ class PythonParser
                     if tokens[index].type == :COMMA
                         import_strings = from_strings.dup
                         index += 1
-                        next                    
+                        next
                     elsif tokens[index].type == :DOT
                         index += 1
                         next
@@ -102,14 +102,14 @@ class PythonParser
                         index += 1
                         next
                     end
-                    
+
                     # Check if the import statement has an alias
                     import_name = tokens[index].value
                     if tokens[index + 1].type != :EOF && tokens[index + 1].type == :AS
                         as_name = tokens[index+2].value
                         index += 2
                         import_strings << import_name + " as " + as_name
-                        if from_strings.size > 0                            
+                        if from_strings.size > 0
                             import_statements << import_strings
                         end
                     else
@@ -126,7 +126,7 @@ class PythonParser
                 if from_strings.size == 0
                     # No from statement, so add the import statement
                     import_statements << import_strings
-                end                                
+                end
             end
 
             index += 1
@@ -138,15 +138,15 @@ class PythonParser
             if name.includes?(" as ")
                 name, as_name = name.split(" as ")
                 import_statement[-1] = name
-            end            
-            
+            end
+
             path = nil
             pypath = nil
             import_file = false
             package_dir = @basedir
             import_statement.each_with_index do |import_part, index|
                 path = File.join(package_dir, import_part)
-                # Order of checking is important                
+                # Order of checking is important
                 if File.directory?(path)
                     package_dir = path
                 elsif File.exists?(path + ".py")
@@ -177,7 +177,7 @@ class PythonParser
             unless pypath.nil?
                 if @visited.includes?(pypath)
                     next
-                end                
+                end
                 if name == "*"
                     parser = get_parser(Path.new(pypath))
                     @global_variables.merge!(parser.@global_variables)
@@ -201,8 +201,8 @@ class PythonParser
     def parse_global_variables(tokens : Array(Token))
         index = 0
         while index < tokens.size
-            if (index == 0 || tokens[index - 1].type == :NEWLINE) && index+3 < tokens.size   
-                type = nil             
+            if (index == 0 || tokens[index - 1].type == :NEWLINE) && index+3 < tokens.size
+                type = nil
                 if tokens[index].type == :IDENTIFIER && tokens[index+1].type == :COLON && tokens[index+3].type == :ASSIGN
                     name = tokens[index].value
                     type = tokens[index+2].value
@@ -240,7 +240,7 @@ class PythonParser
             return str
         end
 
-        return @tokens[index].value
+        @tokens[index].value
     end
 
     # Extract the assignment data
@@ -256,7 +256,7 @@ class PythonParser
             elsif token_type == :COMMENT
                 index += 1
                 next
-            elsif sindex == index 
+            elsif sindex == index
                 if token_type == :STRING || token_type == :FSTRING
                     return Tuple.new("str", normallize(index))
                 elsif @global_variables.has_key?(token_value)
@@ -270,8 +270,8 @@ class PythonParser
             end
             index += 1
         end
-        
-        return Tuple.new(type, rawdata.strip)
+
+        Tuple.new(type, rawdata.strip)
     end
 
     def print_line(index)
