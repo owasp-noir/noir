@@ -27,151 +27,209 @@ class AnalyzerFlask < AnalyzerPython
 
   FILE_CONTENT_CACHE = Hash(String, String).new
   PARSER_MAP = Hash(String, PythonParser).new
+  ROUTER_MAP = Hash(String, Array(Tuple(Int32, String, String, String))).new
 
   def analyze
     flask_instance_map = Hash(String, String).new
+    flask_instance_map["app"] ||= ""  # Common flask instance name
     blueprint_prefix_map = Hash(String, String).new
     api_instance_map = Hash(String, String).new
 
-    begin
-      # Iterate through all Python files in the base path
-      Dir.glob("#{base_path}/**/*.py") do |path|
-        next if File.directory?(path)
-        File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-          source = file.gets_to_end
-          next unless source.includes?("flask")
-          source.each_line.with_index do |line, index|
-            line = line.gsub(" ", "")
-            # Identify Flask instance assignments
-            match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:flask\.)?Flask\(/
+    # Iterate through all Python files in the base path
+    Dir.glob("#{base_path}/**/*.py") do |path|
+      next if File.directory?(path)
+      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
+        lines = file.each_line.to_a
+        next unless lines.any?(&.includes?("flask"))
+        lines.each_with_index do |line, index|
+          line = line.gsub(" ", "")
+          # Identify Flask instance assignments
+          match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:flask\.)?Flask\(/
+          if !match.nil?
+            flask_instance_name = match[1]
+            flask_instance_map[flask_instance_name] ||= ""
+          end
+
+          # Identify Blueprint instance assignments
+          match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:flask\.)?Blueprint\(/
+          if !match.nil?
+            prefix = ""
+            blueprint_instance_name = match[1]
+            param_codes = line.split("Blueprint", 2)[1]
+            prefix_match = param_codes.match /url_prefix=['"]([^'"]*)['"]/
+            if !prefix_match.nil? && prefix_match.size == 2
+              prefix = prefix_match[1]
+            end
+
+            blueprint_prefix_map[blueprint_instance_name] ||= prefix
+          end
+
+          # Api Blueprint
+          blueprint_prefix_map.each do |blueprint_instance_name, prefix|
+            match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:flask_restx\.)?Api\((app=)?#{blueprint_instance_name}/
             if !match.nil?
-              flask_instance_name = match[1]
-              flask_instance_map[flask_instance_name] ||= ""
+              api_instance_name = match[1]
+              api_instance_map[api_instance_name] ||= prefix
             end
+          end
 
-            # Common flask instance name
-            flask_instance_map["app"] ||= ""
-
-            # Identify Blueprint instance assignments
-            match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:flask\.)?Blueprint\(/
+          # Api Namespace
+          api_instance_map.each do |api_instance_name, prefix|
+            match = line.match /(#{api_instance_name})\.add_namespace\((#{PYTHON_VAR_NAME_REGEX})/
             if !match.nil?
-              prefix = ""
-              blueprint_instance_name = match[1]
-              param_codes = line.split("Blueprint", 2)[1]
-              prefix_match = param_codes.match /url_prefix=['"]([^'"]*)['"]/
-              if !prefix_match.nil? && prefix_match.size == 2
-                prefix = prefix_match[1]
-              end
-
-              blueprint_prefix_map[blueprint_instance_name] ||= prefix
-            end
-
-            # Api Blueprint
-            blueprint_prefix_map.each do |blueprint_instance_name, prefix|
-              match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:flask_restx\.)?Api\((app=)?#{blueprint_instance_name}/
-              if !match.nil?
-                api_instance_name = match[1]
-                api_instance_map[api_instance_name] ||= prefix
-              end
-            end
-
-            # Api Namespace
-            api_instance_map.each do |api_instance_name, prefix|
-              match = line.match /(#{api_instance_name})\.add_namespace\((#{PYTHON_VAR_NAME_REGEX})/
-              if !match.nil?
-                parser = get_parser(path)
-                if parser.@global_variables.has_key?(match[2])
-                  gv = parser.@global_variables[match[2]]
-                  if gv.type == "Namespace"
-                    namespace = gv.value.split("Namespace(", 2)[1]
-                    if namespace.includes?("path=")
-                      namespace = namespace.split("path=")[1].split(")")[0].split(",")[0]
-                    else
-                      namespace = namespace.split(",")[0].split(")")[0].strip                      
-                    end
-
-                    if (namespace.starts_with?("'") || namespace.starts_with?('"')) && namespace[0] == namespace[-1]
-                      namespace = namespace[1..-2]
-                      flask_instance_map[gv.name] = File.join(prefix, namespace)
-                    end
+              parser = get_parser(path)
+              if parser.@global_variables.has_key?(match[2])
+                gv = parser.@global_variables[match[2]]
+                if gv.type == "Namespace"
+                  namespace = gv.value.split("Namespace(", 2)[1]
+                  if namespace.includes?("path=")
+                    namespace = namespace.split("path=")[1].split(")")[0].split(",")[0]
+                  else
+                    namespace = namespace.split(",")[0].split(")")[0].strip                      
                   end
-                end
-              end
-            end
 
-            # Temporary Addition: register_view
-            blueprint_prefix_map.each do |blueprint_name, blueprint_prefix|
-              register_views_match = line.match /#{blueprint_name},routes=(.*)\)/
-              if !register_views_match.nil?
-                route_paths = register_views_match[1]
-                route_paths.scan /['"]([^'"]*)['"]/ do |path_str_match|
-                  if !path_str_match.nil? && path_str_match.size == 2
-                    route_path = path_str_match[1]
-                    # Parse methods from reference views (TODO)
-                    route_url = "#{blueprint_prefix}#{route_path}"
-                    route_url = "/#{route_url}" unless route_url.starts_with?("/")
-                    details = Details.new(PathInfo.new(path, index + 1))
-                    result << Endpoint.new(route_url, "GET", details)
+                  if (namespace.starts_with?("'") || namespace.starts_with?('"')) && namespace[0] == namespace[-1]
+                    namespace = namespace[1..-2]
+                    flask_instance_map[gv.name] = File.join(prefix, namespace)
                   end
                 end
               end
             end
           end
-        end
-      end
-    rescue e : Exception
-      puts e.message
-    end
 
-    begin
-      # Process each Python file in the base path
-      Dir.glob("#{base_path}/**/*.py") do |path|
-        next if File.directory?(path)
-        source = File.read(path, encoding: "utf-8", invalid: :skip)
-        next unless source.includes?("flask")
-        lines = source.split "\n"
-
-        line_index = 0
-        while line_index < lines.size
-          line = lines[line_index]
-          flask_instance_map.each do |flask_instance_name, prefix|
-            # Identify Flask route decorators
-            line.scan(/@#{flask_instance_name}\.route\([rf]?['"]([^'"]*)['"](.*)/) do |match|
-              if match.size > 0
-                route_path = match[1]
-                extra_params = match[2]
-
-                # Skip decorator lines
-                codeline_index = line_index
-                while codeline_index < lines.size
-                  decorator_match = lines[codeline_index].match /\s*@/
-                  if !decorator_match.nil?
-                    codeline_index += 1
-                    next
-                  end
-                  break
-                end
-
-                codeblock = parse_code_block(lines[codeline_index..].join("\n"))
-                next if codeblock.nil?
-                codeblock_lines = codeblock.split("\n")[1..]
-
-                get_endpoints(route_path, extra_params, codeblock_lines, prefix).each do |endpoint|
-                  details = Details.new(PathInfo.new(path, line_index + 1))
-                  endpoint.set_details(details)
-                  result << endpoint
+          # Temporary Addition: register_view
+          blueprint_prefix_map.each do |blueprint_name, blueprint_prefix|
+            register_views_match = line.match /#{blueprint_name},routes=(.*)\)/
+            if !register_views_match.nil?
+              route_paths = register_views_match[1]
+              route_paths.scan /['"]([^'"]*)['"]/ do |path_str_match|
+                if !path_str_match.nil? && path_str_match.size == 2
+                  route_path = path_str_match[1]
+                  # Parse methods from reference views (TODO)
+                  route_url = "#{blueprint_prefix}#{route_path}"
+                  route_url = "/#{route_url}" unless route_url.starts_with?("/")
+                  details = Details.new(PathInfo.new(path, index + 1))
+                  result << Endpoint.new(route_url, "GET", details)
                 end
               end
             end
           end
-          line_index += 1
+
+          # Identify Flask route decorators
+          line.scan(/@(#{PYTHON_VAR_NAME_REGEX})\.route\([rf]?['"]([^'"]*)['"](.*)/) do |match|
+            if match.size > 0
+              variable_name = match[1]
+              route_path = match[2]
+              extra_params = match[3]
+              router_info = Tuple(Int32, String, String, String).new(index, path, route_path, extra_params)
+              ROUTER_MAP[variable_name] ||= [] of Tuple(Int32, String, String, String)
+              ROUTER_MAP[variable_name] << router_info
+            end
+          end
         end
       end
-    rescue e : Exception
-      puts e.message
     end
+
+    # For each Flask instance, parse the routes
+    flask_instance_map.each do |flask_instance_name, prefix|
+      if ROUTER_MAP.has_key?(flask_instance_name)
+        ROUTER_MAP[flask_instance_name].each do |router_info|
+          line_index, path, route_path, extra_params = router_info
+          lines = fetch_file_content(path).lines
+          
+          params = [] of Param
+          codeline_index = line_index + 1
+          while codeline_index < lines.size
+            decorator_match = lines[codeline_index].match /\s*@/
+            if decorator_match.nil?
+              break
+            end
+            
+            match = lines[codeline_index].match /\s*@.+\.expect\((.+)\)/
+            if !match.nil?                
+              parser = get_parser(path)                
+              if parser.@global_variables.has_key?(match[1])
+                gv = parser.@global_variables[match[1]]\
+                # Parse model fields
+                if gv.type == "Namespace.model"
+                  model = gv.value.split("model(", 2)[1]
+                  parameter_dict_literal = model.split("{",1)[-1]                  
+                  
+                  # Should be refactor code below
+                  pos = 0
+                  field_pos_list = [] of Tuple(Int32, Int32)
+                  while (match = /['"]([^'"]*)['"]:\s*fields\./.match(parameter_dict_literal[pos..-1]))
+                    pos += match.end
+                    match_begin = match.begin
+                    match_end = match.end
+                    if field_pos_list.size > 0
+                      previous_field_end_pos = field_pos_list[-1][1]
+                      match_begin += previous_field_end_pos
+                      match_end += previous_field_end_pos
+                    end
+                    field_pos_list << Tuple.new(match_begin, match_end)
+                  end
+
+                  # Parse field name and default value from model
+                  field_pos_list.each_with_index do |field_pos, index|
+                    field_begin_pos = field_pos[0]
+                    field_end_pos = -1
+                    if field_pos_list.size != 0 && index != field_pos_list.size - 1
+                      next_field_start_pos = field_pos_list[index + 1][0]
+                      field_end_pos += next_field_start_pos + field_pos[1]
+                    end
+
+                    field_literal = parameter_dict_literal[field_begin_pos..field_end_pos]                    
+                    field_key_literal, field_value_literal = field_literal.split(":", 2)
+                    field_key = field_key_literal.strip[1..-2]
+                    default_value = ""
+                    default_assign_match = /default=(.+)/.match(field_value_literal)
+                    if default_assign_match
+                      rindex = default_assign_match[1].rindex(",")
+                      if rindex.nil?
+                        rindex = default_assign_match[1].rindex(")")
+                      end
+                      unless rindex.nil?
+                        default_value = default_assign_match[1][..rindex-1].strip
+                        if default_value[0] == "'" || default_value[0] == '"'
+                          default_value = default_value[1..-2]
+                        end
+                      end
+                    end
+
+                    params << Param.new(field_key, default_value, "query")
+                  end
+                end
+              end
+            end
+
+            codeline_index += 1
+          end
+
+          codeblock = parse_code_block(lines[codeline_index..].join("\n"))
+          next if codeblock.nil?
+          codeblock_lines = codeblock.split("\n")[1..]
+
+          get_endpoints(route_path, extra_params, codeblock_lines, prefix).each do |endpoint|
+            details = Details.new(PathInfo.new(path, line_index + 1))
+            endpoint.set_details(details)
+            if params.size > 0                            
+              params.each do |param|
+                # Change the param type to form if the endpoint method is POST
+                if endpoint.method == "POST"
+                  endpoint.push_param(Param.new(param.name, param.value, "form"))
+                else
+                  endpoint.push_param(Param.new(param.name, param.value, "query"))
+                end
+              end
+            end
+            result << endpoint
+          end
+        end
+      end
+    end
+
     Fiber.yield
-
     result
   end
 
@@ -180,7 +238,7 @@ class AnalyzerFlask < AnalyzerPython
     FILE_CONTENT_CACHE[path] ||= File.read(path, encoding: "utf-8", invalid: :skip)
   end
 
-  # Create a Kotlin parser for a given path and content
+  # Create a Python parser for a given path and content
   def create_parser(path : String, content : String = "") : PythonParser
     content = fetch_file_content(path) if content.empty?
     lexer = PythonLexer.new
@@ -200,6 +258,8 @@ class AnalyzerFlask < AnalyzerPython
     suspicious_http_methods = [] of String
     suspicious_params = [] of Param
 
+    puts "========CODEBLOCK======="
+    puts codeblock_lines.join("\n")
     if !prefix.ends_with?("/") && !route_path.starts_with?("/")
       prefix = "#{prefix}/"
     end
