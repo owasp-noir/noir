@@ -85,7 +85,7 @@ class AnalyzerFlask < AnalyzerPython
                   if namespace.includes?("path=")
                     namespace = namespace.split("path=")[1].split(")")[0].split(",")[0]
                   else
-                    namespace = namespace.split(",")[0].split(")")[0].strip                      
+                    namespace = namespace.split(",")[0].split(")")[0].strip
                   end
 
                   if (namespace.starts_with?("'") || namespace.starts_with?('"')) && namespace[0] == namespace[-1]
@@ -136,94 +136,68 @@ class AnalyzerFlask < AnalyzerPython
         ROUTER_MAP[flask_instance_name].each do |router_info|
           line_index, path, route_path, extra_params = router_info
           lines = fetch_file_content(path).lines
-          
-          params = [] of Param
-          codeline_index = line_index + 1
-          while codeline_index < lines.size
-            decorator_match = lines[codeline_index].match /\s*@/
-            if decorator_match.nil?
-              break
+          expect_params, next_line_index = extract_params_from_decorator(path, lines, line_index)
+
+          is_class_router = false
+          unless lines[next_line_index].lstrip.starts_with?("def ")
+            if lines[next_line_index].lstrip.starts_with?("class ")
+              is_class_router = true
+            else
+              next # Skip if not a function and not a class
             end
-            
-            match = lines[codeline_index].match /\s*@.+\.expect\((.+)\)/
-            if !match.nil?                
-              parser = get_parser(path)                
-              if parser.@global_variables.has_key?(match[1])
-                gv = parser.@global_variables[match[1]]\
-                # Parse model fields
-                if gv.type == "Namespace.model"
-                  model = gv.value.split("model(", 2)[1]
-                  parameter_dict_literal = model.split("{",1)[-1]                  
-                  
-                  # Should be refactor code below
-                  pos = 0
-                  field_pos_list = [] of Tuple(Int32, Int32)
-                  while (match = /['"]([^'"]*)['"]:\s*fields\./.match(parameter_dict_literal[pos..-1]))
-                    pos += match.end
-                    match_begin = match.begin
-                    match_end = match.end
-                    if field_pos_list.size > 0
-                      previous_field_end_pos = field_pos_list[-1][1]
-                      match_begin += previous_field_end_pos
-                      match_end += previous_field_end_pos
-                    end
-                    field_pos_list << Tuple.new(match_begin, match_end)
-                  end
-
-                  # Parse field name and default value from model
-                  field_pos_list.each_with_index do |field_pos, index|
-                    field_begin_pos = field_pos[0]
-                    field_end_pos = -1
-                    if field_pos_list.size != 0 && index != field_pos_list.size - 1
-                      next_field_start_pos = field_pos_list[index + 1][0]
-                      field_end_pos += next_field_start_pos + field_pos[1]
-                    end
-
-                    field_literal = parameter_dict_literal[field_begin_pos..field_end_pos]                    
-                    field_key_literal, field_value_literal = field_literal.split(":", 2)
-                    field_key = field_key_literal.strip[1..-2]
-                    default_value = ""
-                    default_assign_match = /default=(.+)/.match(field_value_literal)
-                    if default_assign_match
-                      rindex = default_assign_match[1].rindex(",")
-                      if rindex.nil?
-                        rindex = default_assign_match[1].rindex(")")
-                      end
-                      unless rindex.nil?
-                        default_value = default_assign_match[1][..rindex-1].strip
-                        if default_value[0] == "'" || default_value[0] == '"'
-                          default_value = default_value[1..-2]
-                        end
-                      end
-                    end
-
-                    params << Param.new(field_key, default_value, "query")
-                  end
-                end
-              end
-            end
-
-            codeline_index += 1
           end
 
-          codeblock = parse_code_block(lines[codeline_index..].join("\n"))
-          next if codeblock.nil?
-          codeblock_lines = codeblock.split("\n")[1..]
+          next_line_index += 1
+          function_name_locations = Array(Tuple(Int32, String)).new
+          while next_line_index < lines.size
+              def_match = lines[next_line_index].match /\s*def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/
+              if def_match
+                function_name_locations << Tuple.new(next_line_index, def_match[1])
+                break unless is_class_router # Stop when the first function is found
+              end
 
-          get_endpoints(route_path, extra_params, codeblock_lines, prefix).each do |endpoint|
-            details = Details.new(PathInfo.new(path, line_index + 1))
-            endpoint.set_details(details)
-            if params.size > 0                            
-              params.each do |param|
-                # Change the param type to form if the endpoint method is POST
-                if endpoint.method == "POST"
-                  endpoint.push_param(Param.new(param.name, param.value, "form"))
-                else
-                  endpoint.push_param(Param.new(param.name, param.value, "query"))
+              # Stop when the next class definition is found
+              if is_class_router
+                if lines[next_line_index].lstrip.starts_with?("class ")
+                  break
                 end
               end
+
+              next_line_index += 1
+          end
+
+          function_name_locations.each do |line_index, function_name|
+            if is_class_router
+              # Replace the class expect params with the function expect params
+              def_expect_params, _ = extract_params_from_decorator(path, lines, line_index, :up)
+              if def_expect_params.size > 0
+                expect_params = def_expect_params
+              end
             end
-            result << endpoint
+            
+            codeblock = parse_code_block(lines[line_index..])
+            next if codeblock.nil?
+            codeblock_lines = codeblock.split("\n")
+
+            # Get the HTTP method from the function name when it is not specified in the route decorator
+            method = HTTP_METHODS.find { |http_method| function_name.downcase == http_method.downcase } || "GET"
+            get_endpoints(method, route_path, extra_params, codeblock_lines, prefix).each do |endpoint|
+              details = Details.new(PathInfo.new(path, line_index + 1))
+              endpoint.set_details(details)
+
+              # Add expect params as endpoint params
+              if expect_params.size > 0
+                expect_params.each do |param|
+                  # Change the param type to form if the endpoint method is POST
+                  if endpoint.method == "GET"
+                    endpoint.push_param(Param.new(param.name, param.value, "query"))
+                  else
+                    endpoint.push_param(Param.new(param.name, param.value, "form"))                    
+                  end
+                end
+              end
+              result << endpoint
+            end
           end
         end
       end
@@ -253,13 +227,11 @@ class AnalyzerFlask < AnalyzerPython
   end
 
   # Extracts endpoint information from the given route and code block
-  def get_endpoints(route_path : String, extra_params : String, codeblock_lines : Array(String), prefix : String)
+  def get_endpoints(method : String, route_path : String, extra_params : String, codeblock_lines : Array(String), prefix : String)
     endpoints = [] of Endpoint
-    suspicious_http_methods = [] of String
+    methods = [] of String
     suspicious_params = [] of Param
 
-    puts "========CODEBLOCK======="
-    puts codeblock_lines.join("\n")
     if !prefix.ends_with?("/") && !route_path.starts_with?("/")
       prefix = "#{prefix}/"
     end
@@ -270,11 +242,11 @@ class AnalyzerFlask < AnalyzerPython
       declare_methods = methods_match[1].downcase
       HTTP_METHODS.each do |method_name|
         if declare_methods.includes? method_name
-          suspicious_http_methods << method_name.upcase
+          methods << method_name.upcase
         end
       end
     else
-      suspicious_http_methods << "GET"
+      methods << method.upcase
     end
 
     json_variable_names = [] of String
@@ -322,7 +294,7 @@ class AnalyzerFlask < AnalyzerPython
       end
     end
 
-    suspicious_http_methods.uniq.each do |http_method_name|
+    methods.uniq.each do |http_method_name|
       if !prefix.ends_with?("/") && !route_path.starts_with?("/")
         prefix = "#{prefix}/"
       end
@@ -370,6 +342,73 @@ class AnalyzerFlask < AnalyzerPython
 
     filtered_params
   end
+
+  # Extracts parameters from the decorator
+  def extract_params_from_decorator(path : String, lines : Array(String), line_index : Int32, direction : Symbol = :down) : Tuple(Array(Param), Int32)
+    params = [] of Param
+    codeline_index = (direction == :down) ? line_index + 1 : line_index - 1
+
+    # Iterate through the lines until the decorator ends
+    while (direction == :down && codeline_index < lines.size) || (direction == :up && codeline_index >= 0)
+      decorator_match = lines[codeline_index].match /\s*@/
+      break if decorator_match.nil?
+
+      # Extract parameters from the expect decorator
+      # https://flask-restx.readthedocs.io/en/latest/swagger.html#the-api-expect-decorator
+      expect_match = lines[codeline_index].match /\s*@.+\.expect\((.+)\)/
+      if !expect_match.nil?
+        parser = get_parser(path)
+        if parser.@global_variables.has_key?(expect_match[1])
+          gv = parser.@global_variables[expect_match[1]]
+
+
+          if gv.type == "Namespace.model"
+            model = gv.value.split("model(", 2)[1]
+            parameter_dict_literal = model.split("{", 1)[-1]
+
+            field_pos_list = [] of Tuple(Int32, Int32)
+            parameter_dict_literal.scan(/['"]([^'"]*)['"]:\s*fields\./) do |match|
+              match_begin = match.begin(0)
+              match_end = match.end(0)
+              field_pos_list << Tuple.new(match_begin, match_end)
+            end
+
+            field_pos_list.each_with_index do |field_pos, index|
+              field_begin_pos = field_pos[0]
+              field_end_pos = -1
+              if field_pos_list.size != 0 && index != field_pos_list.size - 1
+                next_field_start_pos = field_pos_list[index + 1][0]
+                field_end_pos += next_field_start_pos + field_pos[1]
+              end
+
+              field_literal = parameter_dict_literal[field_begin_pos..field_end_pos]
+              field_key_literal, field_value_literal = field_literal.split(":", 2)
+              field_key = field_key_literal.strip[1..-2]
+              default_value = ""
+              default_assign_match = /default=(.+)/.match(field_value_literal)
+              if default_assign_match
+                rindex = default_assign_match[1].rindex(",")
+                rindex = default_assign_match[1].rindex(")") if rindex.nil?
+                unless rindex.nil?
+                  default_value = default_assign_match[1][..rindex-1].strip
+                  if default_value[0] == "'" || default_value[0] == '"'
+                    default_value = default_value[1..-2]
+                  end
+                end
+              end
+
+              params << Param.new(field_key, default_value, "query")
+            end
+          end
+        end
+      end
+
+      codeline_index += (direction == :down ? 1 : -1)
+    end
+
+    return params, codeline_index
+  end
+
 end
 
 # Analyzer function for Flask
