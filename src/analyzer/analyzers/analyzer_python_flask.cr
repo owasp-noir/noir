@@ -64,7 +64,16 @@ class AnalyzerFlask < AnalyzerPython
             blueprint_prefix_map[blueprint_instance_name] ||= prefix
           end
 
-          # Api Blueprint
+          # Api from flask instance
+          flask_instance_map.each do |flask_instance_name, prefix|
+            match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:flask_restx\.)?Api\((app=)?#{flask_instance_name}/
+            if !match.nil?
+              api_instance_name = match[1]
+              api_instance_map[api_instance_name] ||= prefix
+            end
+          end
+
+          # Api from blueprint instance
           blueprint_prefix_map.each do |blueprint_instance_name, prefix|
             match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:flask_restx\.)?Api\((app=)?#{blueprint_instance_name}/
             if !match.nil?
@@ -131,6 +140,7 @@ class AnalyzerFlask < AnalyzerPython
     end
 
     # For each Flask instance, parse the routes
+    flask_instance_map = flask_instance_map.merge(api_instance_map)
     flask_instance_map.each do |flask_instance_name, prefix|
       if ROUTER_MAP.has_key?(flask_instance_name)
         ROUTER_MAP[flask_instance_name].each do |router_info|
@@ -139,8 +149,10 @@ class AnalyzerFlask < AnalyzerPython
           expect_params, next_line_index = extract_params_from_decorator(path, lines, line_index)
 
           is_class_router = false
+          indent = lines[line_index].index("def") || 0
           unless lines[next_line_index].lstrip.starts_with?("def ")
             if lines[next_line_index].lstrip.starts_with?("class ")
+              indent = lines[line_index].index("class") || 0
               is_class_router = true
             else
               next # Skip if not a function and not a class
@@ -150,16 +162,21 @@ class AnalyzerFlask < AnalyzerPython
           next_line_index += 1
           function_name_locations = Array(Tuple(Int32, String)).new
           while next_line_index < lines.size
-              def_match = lines[next_line_index].match /\s*def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/
+              def_match = lines[next_line_index].match /(\s*)def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/
               if def_match
-                function_name_locations << Tuple.new(next_line_index, def_match[1])
-                break unless is_class_router # Stop when the first function is found
+                # Stop when the indentation is less than or equal to the class indentation
+                break if is_class_router && def_match[1].size <= indent
+
+                # Stop when the first function is found
+                function_name_locations << Tuple.new(next_line_index, def_match[2])
+                break unless is_class_router
               end
 
               # Stop when the next class definition is found
               if is_class_router
-                if lines[next_line_index].lstrip.starts_with?("class ")
-                  break
+                class_match = lines[next_line_index].match /(\s*)class\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*/
+                if class_match
+                  break if class_match[1].size <= indent                  
                 end
               end
 
@@ -174,7 +191,7 @@ class AnalyzerFlask < AnalyzerPython
                 expect_params = def_expect_params
               end
             end
-            
+
             codeblock = parse_code_block(lines[line_index..])
             next if codeblock.nil?
             codeblock_lines = codeblock.split("\n")
@@ -192,7 +209,7 @@ class AnalyzerFlask < AnalyzerPython
                   if endpoint.method == "GET"
                     endpoint.push_param(Param.new(param.name, param.value, "query"))
                   else
-                    endpoint.push_param(Param.new(param.name, param.value, "form"))                    
+                    endpoint.push_param(Param.new(param.name, param.value, "form"))
                   end
                 end
               end
@@ -355,13 +372,11 @@ class AnalyzerFlask < AnalyzerPython
 
       # Extract parameters from the expect decorator
       # https://flask-restx.readthedocs.io/en/latest/swagger.html#the-api-expect-decorator
-      expect_match = lines[codeline_index].match /\s*@.+\.expect\((.+)\)/
+      expect_match = lines[codeline_index].match /\s*@.+\.expect\(\s*(#{PYTHON_VAR_NAME_REGEX})/
       if !expect_match.nil?
         parser = get_parser(path)
         if parser.@global_variables.has_key?(expect_match[1])
           gv = parser.@global_variables[expect_match[1]]
-
-
           if gv.type == "Namespace.model"
             model = gv.value.split("model(", 2)[1]
             parameter_dict_literal = model.split("{", 1)[-1]
