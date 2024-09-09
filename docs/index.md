@@ -11,3 +11,5 @@ OWASP Noir is an open-source project, specializing in identifying attack surface
 [Get started now](./get_started/installation/){: .btn .btn-blue }
 [View it on Github](https://github.com/owasp-noir/noir){: .btn }
 [View it on OWASP Project](https://owasp.org/www-project-noir){: .btn }
+
+![](./images/illust.jpg)
