@@ -26,12 +26,12 @@ class AnalyzerFlask < AnalyzerPython
   }
 
   FILE_CONTENT_CACHE = Hash(String, String).new
-  PARSER_MAP = Hash(String, PythonParser).new
-  ROUTER_MAP = Hash(String, Array(Tuple(Int32, String, String, String))).new
+  PARSER_MAP         = Hash(String, PythonParser).new
+  ROUTER_MAP         = Hash(String, Array(Tuple(Int32, String, String, String))).new
 
   def analyze
     flask_instance_map = Hash(String, String).new
-    flask_instance_map["app"] ||= ""  # Common flask instance name
+    flask_instance_map["app"] ||= "" # Common flask instance name
     blueprint_prefix_map = Hash(String, String).new
     api_instance_map = Hash(String, String).new
 
@@ -65,25 +65,25 @@ class AnalyzerFlask < AnalyzerPython
           end
 
           # Api from flask instance
-          flask_instance_map.each do |flask_instance_name, prefix|
-            match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:flask_restx\.)?Api\((app=)?#{flask_instance_name}/
+          flask_instance_map.each do |_flask_instance_name, _prefix|
+            match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:flask_restx\.)?Api\((app=)?#{_flask_instance_name}/
             if !match.nil?
               api_instance_name = match[1]
-              api_instance_map[api_instance_name] ||= prefix
+              api_instance_map[api_instance_name] ||= _prefix
             end
           end
 
           # Api from blueprint instance
-          blueprint_prefix_map.each do |blueprint_instance_name, prefix|
-            match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:flask_restx\.)?Api\((app=)?#{blueprint_instance_name}/
+          blueprint_prefix_map.each do |_blueprint_instance_name, _prefix|
+            match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:flask_restx\.)?Api\((app=)?#{_blueprint_instance_name}/
             if !match.nil?
               api_instance_name = match[1]
-              api_instance_map[api_instance_name] ||= prefix
+              api_instance_map[api_instance_name] ||= _prefix
             end
           end
 
           # Api Namespace
-          api_instance_map.each do |api_instance_name, prefix|
+          api_instance_map.each do |api_instance_name, _prefix|
             match = line.match /(#{api_instance_name})\.add_namespace\((#{PYTHON_VAR_NAME_REGEX})/
             if !match.nil?
               parser = get_parser(path)
@@ -99,7 +99,7 @@ class AnalyzerFlask < AnalyzerPython
 
                   if (namespace.starts_with?("'") || namespace.starts_with?('"')) && namespace[0] == namespace[-1]
                     namespace = namespace[1..-2]
-                    flask_instance_map[gv.name] = File.join(prefix, namespace)
+                    flask_instance_map[gv.name] = File.join(_prefix, namespace)
                   end
                 end
               end
@@ -125,11 +125,11 @@ class AnalyzerFlask < AnalyzerPython
           end
 
           # Identify Flask route decorators
-          line.scan(/@(#{PYTHON_VAR_NAME_REGEX})\.route\([rf]?['"]([^'"]*)['"](.*)/) do |match|
-            if match.size > 0
-              variable_name = match[1]
-              route_path = match[2]
-              extra_params = match[3]
+          line.scan(/@(#{PYTHON_VAR_NAME_REGEX})\.route\([rf]?['"]([^'"]*)['"](.*)/) do |_match|
+            if _match.size > 0
+              variable_name = _match[1]
+              route_path = _match[2]
+              extra_params = _match[3]
               router_info = Tuple(Int32, String, String, String).new(index, path, route_path, extra_params)
               ROUTER_MAP[variable_name] ||= [] of Tuple(Int32, String, String, String)
               ROUTER_MAP[variable_name] << router_info
@@ -162,45 +162,45 @@ class AnalyzerFlask < AnalyzerPython
           next_line_index += 1
           function_name_locations = Array(Tuple(Int32, String)).new
           while next_line_index < lines.size
-              def_match = lines[next_line_index].match /(\s*)def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/
-              if def_match
-                # Stop when the indentation is less than or equal to the class indentation
-                break if is_class_router && def_match[1].size <= indent
+            def_match = lines[next_line_index].match /(\s*)def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/
+            if def_match
+              # Stop when the indentation is less than or equal to the class indentation
+              break if is_class_router && def_match[1].size <= indent
 
-                # Stop when the first function is found
-                function_name_locations << Tuple.new(next_line_index, def_match[2])
-                break unless is_class_router
+              # Stop when the first function is found
+              function_name_locations << Tuple.new(next_line_index, def_match[2])
+              break unless is_class_router
+            end
+
+            # Stop when the next class definition is found
+            if is_class_router
+              class_match = lines[next_line_index].match /(\s*)class\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*/
+              if class_match
+                break if class_match[1].size <= indent
               end
+            end
 
-              # Stop when the next class definition is found
-              if is_class_router
-                class_match = lines[next_line_index].match /(\s*)class\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*/
-                if class_match
-                  break if class_match[1].size <= indent                  
-                end
-              end
-
-              next_line_index += 1
+            next_line_index += 1
           end
 
-          function_name_locations.each do |line_index, function_name|
+          function_name_locations.each do |_line_index, function_name|
             if is_class_router
               # Replace the class expect params with the function expect params
-              def_expect_params, _ = extract_params_from_decorator(path, lines, line_index, :up)
+              def_expect_params, _ = extract_params_from_decorator(path, lines, _line_index, :up)
               if def_expect_params.size > 0
                 expect_params = def_expect_params
               end
             end
 
-            codeblock = parse_code_block(lines[line_index..])
+            codeblock = parse_code_block(lines[_line_index..])
             next if codeblock.nil?
             codeblock_lines = codeblock.split("\n")
 
             # Get the HTTP method from the function name when it is not specified in the route decorator
             method = HTTP_METHODS.find { |http_method| function_name.downcase == http_method.downcase } || "GET"
             get_endpoints(method, route_path, extra_params, codeblock_lines, prefix).each do |endpoint|
-              details = Details.new(PathInfo.new(path, line_index + 1))
-              endpoint.set_details(details)
+              details = Details.new(PathInfo.new(path, _line_index + 1))
+              endpoint.details = details
 
               # Add expect params as endpoint params
               if expect_params.size > 0
@@ -405,7 +405,7 @@ class AnalyzerFlask < AnalyzerPython
                 rindex = default_assign_match[1].rindex(",")
                 rindex = default_assign_match[1].rindex(")") if rindex.nil?
                 unless rindex.nil?
-                  default_value = default_assign_match[1][..rindex-1].strip
+                  default_value = default_assign_match[1][..rindex - 1].strip
                   if default_value[0] == "'" || default_value[0] == '"'
                     default_value = default_value[1..-2]
                   end
@@ -423,7 +423,6 @@ class AnalyzerFlask < AnalyzerPython
 
     return params, codeline_index
   end
-
 end
 
 # Analyzer function for Flask
