@@ -5,7 +5,7 @@ class PythonParser
   property tokens : Array(Token)
   property path : String
 
-  def initialize(@path : String, @tokens : Array(Token), @parser_map : Hash(String, PythonParser), @visited : Array(String) = Array(String).new)
+  def initialize(@path : String, @tokens : Array(Token), @parsers : Hash(String, PythonParser), @visited : Array(String) = Array(String).new)
     @import_statements = Hash(String, ImportModel).new
     @global_variables = Hash(String, GlobalVariables).new
     @basedir = File.dirname(@path)
@@ -32,18 +32,18 @@ class PythonParser
 
     lexer = PythonLexer.new
     tokens = lexer.tokenize(content)
-    parser = PythonParser.new(path.to_s, tokens, @parser_map, @visited.dup)
+    parser = PythonParser.new(path.to_s, tokens, @parsers, @visited.dup)
     parser
   end
 
   # Get the parser for the given path
   def get_parser(path : Path) : PythonParser
-    if @parser_map.has_key?(path.to_s)
-      return @parser_map[path.to_s]
+    if @parsers.has_key?(path.to_s)
+      return @parsers[path.to_s]
     end
 
     parser = create_parser(path)
-    @parser_map[path.to_s] = parser
+    @parsers[path.to_s] = parser
     parser
   end
 
@@ -183,10 +183,6 @@ class PythonParser
         end
       end
 
-      unless as_name.nil?
-        name = as_name
-      end
-
       unless pypath.nil?
         if @visited.includes?(pypath)
           next
@@ -201,7 +197,9 @@ class PythonParser
               @global_variables["#{name}.#{key}"] = value
             end
           elsif parser.@global_variables.has_key?(name)
-            @global_variables[name] = parser.@global_variables[name]
+            @global_variables[as_name.nil? ? name : as_name] = parser.@global_variables[name]
+          elsif remain_import_parts
+            @global_variables[as_name.nil? ? name : as_name] = GlobalVariables.new(name, nil, pypath)
           end
         end
       end
