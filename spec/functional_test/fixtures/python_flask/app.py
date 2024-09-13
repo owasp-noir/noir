@@ -6,7 +6,7 @@ from database import db_session
 from models import User
 from utils import get_hash
 
-app = Flask(__name__)
+app:Flask = Flask(__name__)
 app.secret_key = "dd2e7b987b357908fac0118ecdf0d3d2cae7b5a635f802d6" # random generate
 
 @app.teardown_appcontext

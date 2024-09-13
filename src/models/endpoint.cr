@@ -94,6 +94,10 @@ struct Param
     @name == other.name && @value == other.value && @param_type == other.param_type
   end
 
+  def param_type=(value : String)
+    @param_type = value
+  end
+
   def add_tag(tag : Tag)
     @tags << tag
   end
