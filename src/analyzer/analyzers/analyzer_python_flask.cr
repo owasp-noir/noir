@@ -477,9 +477,12 @@ class AnalyzerFlask < AnalyzerPython
         end
 
         # Clean up the namespace string by removing surrounding quotes
-        if (namespace.starts_with?("'") || namespace.starts_with?('"')) && namespace[0] == namespace[-1]
-          namespace = namespace[1..-2]
-          # Update the prefix with the new namespace path
+        if (namespace.starts_with?("'") || namespace.starts_with?("\""))
+          namespace = namespace[1..]          
+          _prefix = File.join(_prefix, namespace)
+        end
+        if (namespace.ends_with?("'") || namespace.ends_with?("\""))
+          namespace = namespace[..-2]
           _prefix = File.join(_prefix, namespace)
         end
       end
