@@ -25,7 +25,7 @@ class AnalyzerFlask < AnalyzerPython
     "header" => nil,
   }
 
-  @fileContentCache = Hash(String, String).new
+  @file_content_cache = Hash(String, String).new
   @parsers = Hash(String, PythonParser).new
   @routes = Hash(String, Array(Tuple(Int32, String, String, String))).new
 
@@ -172,7 +172,7 @@ class AnalyzerFlask < AnalyzerPython
                   register_blueprint[gv.path][blueprint_name] = url_prefix_match[1]
                 end
               end
-            end           
+            end
           end
 
           # Identify Flask route decorators
@@ -193,7 +193,7 @@ class AnalyzerFlask < AnalyzerPython
     # Update the API instances with the blueprint prefixes
     register_blueprint.each do |path, blueprint_info|
       blueprint_info.each do |blueprint_name, blueprint_prefix|
-        if path_api_instances.has_key?(path)          
+        if path_api_instances.has_key?(path)
           api_instances = path_api_instances[path]
           if api_instances.has_key?(blueprint_name)
             api_instances[blueprint_name] = File.join(blueprint_prefix, api_instances[blueprint_name])
@@ -293,7 +293,7 @@ class AnalyzerFlask < AnalyzerPython
 
   # Fetch content of a file and cache it
   private def fetch_file_content(path : String) : String
-    @fileContentCache[path] ||= File.read(path, encoding: "utf-8", invalid: :skip)
+    @file_content_cache[path] ||= File.read(path, encoding: "utf-8", invalid: :skip)
   end
 
   # Create a Python parser for a given path and content
@@ -504,11 +504,11 @@ class AnalyzerFlask < AnalyzerPython
         end
 
         # Clean up the namespace string by removing surrounding quotes
-        if (namespace.starts_with?("'") || namespace.starts_with?("\""))
-          namespace = namespace[1..]                    
+        if namespace.starts_with?("'") || namespace.starts_with?("\"")
+          namespace = namespace[1..]
         end
-        if (namespace.ends_with?("'") || namespace.ends_with?("\""))
-          namespace = namespace[..-2]          
+        if namespace.ends_with?("'") || namespace.ends_with?("\"")
+          namespace = namespace[..-2]
         end
 
         _prefix = File.join(_prefix, namespace)
