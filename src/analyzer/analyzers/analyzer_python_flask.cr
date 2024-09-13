@@ -57,7 +57,8 @@ class AnalyzerFlask < AnalyzerPython
     flask_instances = Hash(String, String).new
     flask_instances["app"] ||= "" # Common flask instance name
     blueprint_prefixes = Hash(String, String).new
-    file_api_instances = Hash(String, Hash(String, String)).new
+    path_api_instances = Hash(String, Hash(String, String)).new
+    register_blueprint = Hash(String, Hash(String, String)).new
 
     # Get Python files sorted in depth order
     python_files = find_python_files_in_depth_order(base_path)
@@ -69,7 +70,7 @@ class AnalyzerFlask < AnalyzerPython
         lines = file.each_line.to_a
         next unless lines.any?(&.includes?("flask"))
         api_instances = Hash(String, String).new
-        file_api_instances[path] = api_instances
+        path_api_instances[path] = api_instances
 
         lines.each_with_index do |line, line_index|
           line = line.gsub(" ", "") # remove spaces for easier regex matching
@@ -87,12 +88,13 @@ class AnalyzerFlask < AnalyzerPython
             prefix = ""
             blueprint_instance_name = blueprint_match[1]
             param_codes = line.split("Blueprint", 2)[1]
-            prefix_match = param_codes.match /url_prefix=['"]([^'"]*)['"]/
+            prefix_match = param_codes.match /url_prefix=[rf]?['"]([^'"]*)['"]/
             if !prefix_match.nil? && prefix_match.size == 2
               prefix = prefix_match[1]
             end
 
             blueprint_prefixes[blueprint_instance_name] ||= prefix
+            api_instances[blueprint_instance_name] ||= prefix
           end
 
           # Identify Api instance assignments
@@ -156,6 +158,23 @@ class AnalyzerFlask < AnalyzerPython
             end
           end
 
+          # Identify Blueprint registration
+          register_blueprint_match = line.match /(#{PYTHON_VAR_NAME_REGEX})\.register_blueprint\((#{DOT_NATION})/
+          if register_blueprint_match
+            url_prefix_match = line.match /url_prefix=[rf]?['"]([^'"]*)['"]/
+            if url_prefix_match
+              blueprint_name = register_blueprint_match[2]
+              parser = get_parser(path)
+              if parser.@global_variables.has_key?(blueprint_name)
+                gv = parser.@global_variables[blueprint_name]
+                if gv.type == "Blueprint"
+                  register_blueprint[gv.path] ||= Hash(String, String).new
+                  register_blueprint[gv.path][blueprint_name] = url_prefix_match[1]
+                end
+              end
+            end           
+          end
+
           # Identify Flask route decorators
           line.scan(/@(#{PYTHON_VAR_NAME_REGEX})\.route\([rf]?['"]([^'"]*)['"](.*)/) do |_match|
             if _match.size > 0
@@ -171,13 +190,25 @@ class AnalyzerFlask < AnalyzerPython
       end
     end
 
+    # Update the API instances with the blueprint prefixes
+    register_blueprint.each do |path, blueprint_info|
+      blueprint_info.each do |blueprint_name, blueprint_prefix|
+        if path_api_instances.has_key?(path)          
+          api_instances = path_api_instances[path]
+          if api_instances.has_key?(blueprint_name)
+            api_instances[blueprint_name] = File.join(blueprint_prefix, api_instances[blueprint_name])
+          end
+        end
+      end
+    end
+
     # Iterate through the routes and extract endpoints
     @routes.each do |router_name, router_info_list|
       router_info_list.each do |router_info|
         line_index, path, route_path, extra_params = router_info
         lines = fetch_file_content(path).lines
         expect_params, class_def_index = extract_params_from_decorator(path, lines, line_index)
-        api_instances = file_api_instances[path]
+        api_instances = path_api_instances[path]
         if api_instances.has_key?(router_name)
           prefix = api_instances[router_name]
         else
@@ -236,7 +267,7 @@ class AnalyzerFlask < AnalyzerPython
           # Get the HTTP method from the function name when it is not specified in the route decorator
           method = HTTP_METHODS.find { |http_method| _function_name.downcase == http_method.downcase } || "GET"
           get_endpoints(method, route_path, extra_params, codeblock_lines, prefix).each do |endpoint|
-            details = Details.new(PathInfo.new(path, line_index))
+            details = Details.new(PathInfo.new(path, line_index + 1))
             endpoint.details = details
 
             # Add expect params as endpoint params
@@ -348,15 +379,11 @@ class AnalyzerFlask < AnalyzerPython
     end
 
     methods.uniq.each do |http_method_name|
-      if !prefix.ends_with?("/") && !route_path.starts_with?("/")
-        prefix = "#{prefix}/"
-      end
-
       route_url = "#{prefix}#{route_path}"
       route_url = "/#{route_url}" unless route_url.starts_with?("/")
 
       params = get_filtered_params(http_method_name, suspicious_params)
-      endpoints << Endpoint.new(route_url, http_method_name, params)
+      endpoints << Endpoint.new(route_url.gsub("//", "/"), http_method_name, params)
     end
 
     endpoints
@@ -408,7 +435,7 @@ class AnalyzerFlask < AnalyzerPython
 
       # Extract parameters from the expect decorator
       # https://flask-restx.readthedocs.io/en/latest/swagger.html#the-api-expect-decorator
-      expect_match = lines[codeline_index].match /\s*@.+\.expect\(\s*(#{PYTHON_VAR_NAME_REGEX})/
+      expect_match = lines[codeline_index].match /\s*@.+\.expect\(\s*(#{DOT_NATION})/
       if !expect_match.nil?
         parser = get_parser(path)
         if parser.@global_variables.has_key?(expect_match[1])
@@ -478,13 +505,13 @@ class AnalyzerFlask < AnalyzerPython
 
         # Clean up the namespace string by removing surrounding quotes
         if (namespace.starts_with?("'") || namespace.starts_with?("\""))
-          namespace = namespace[1..]          
-          _prefix = File.join(_prefix, namespace)
+          namespace = namespace[1..]                    
         end
         if (namespace.ends_with?("'") || namespace.ends_with?("\""))
-          namespace = namespace[..-2]
-          _prefix = File.join(_prefix, namespace)
+          namespace = namespace[..-2]          
         end
+
+        _prefix = File.join(_prefix, namespace)
       end
     end
     _prefix

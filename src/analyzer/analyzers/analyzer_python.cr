@@ -8,6 +8,8 @@ class AnalyzerPython < Analyzer
   INDENTATION_SIZE = 4
   # Regex for valid Python variable names
   PYTHON_VAR_NAME_REGEX = /[a-zA-Z_][a-zA-Z0-9_]*/
+  # Regex for valid Python module names
+  DOT_NATION = /[a-zA-Z_][a-zA-Z0-9_.]*/
 
   # Parses the definition of a function from the source lines starting at a given index
   def parse_function_def(source_lines : Array(String), start_index : Int32) : FunctionDefinition | Nil
