@@ -101,6 +101,9 @@ class PythonParser
           elsif tokens[index].type == :RPAREN
             index += 1
             next
+          elsif tokens[index].type == :COMMENT
+            index += 1
+            next
           end
 
           # Check if the import statement has an alias
@@ -193,13 +196,13 @@ class PythonParser
         else
           parser = get_parser(Path.new(pypath))
           if !remain_import_parts && !pypath.ends_with?("__init__.py")
+            # import all global variables
             parser.@global_variables.each do |key, value|
               @global_variables["#{name}.#{key}"] = value
             end
           elsif parser.@global_variables.has_key?(name)
+            # import specific global variable
             @global_variables[as_name.nil? ? name : as_name] = parser.@global_variables[name]
-          elsif remain_import_parts
-            @global_variables[as_name.nil? ? name : as_name] = GlobalVariables.new(name, nil, pypath)
           end
         end
       end
@@ -235,7 +238,7 @@ class PythonParser
           next
         end
 
-        @global_variables[name] = GlobalVariables.new(name, type, value)
+        @global_variables[name] = GlobalVariables.new(name, type, value, path)
       end
       index += 1
     end
@@ -358,15 +361,16 @@ class PythonParser
     property name : String
     property type : String | Nil
     property value : String
+    property path : String
 
-    def initialize(@name : String, @type : String | Nil, @value : String)
+    def initialize(@name : String, @type : String | Nil, @value : String, @path : String)
     end
 
     def to_s
       if @type.nil?
-        "#{@name} = #{@value}"
+        "#{@name} = #{@value} (#{path})"
       else
-        "#{@name} : #{@type} = #{@value}"
+        "#{@name} : #{@type} = #{@value} (#{path})"
       end
     end
   end
