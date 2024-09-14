@@ -29,29 +29,6 @@ class AnalyzerFlask < AnalyzerPython
   @parsers = Hash(String, PythonParser).new
   @routes = Hash(String, Array(Tuple(Int32, String, String, String))).new
 
-  # Recursively search directories and collect files in depth order
-  def find_python_files_in_depth_order(base_path : String, files : Array(String) = Array(String).new, current_depth : Int32 = 0)
-    # Get the list of files and directories in the current directory
-    entries = Dir.entries(base_path).select { |e| e != "." && e != ".." }
-
-    # Add Python files from the current directory
-    entries.each do |entry|
-      path = "#{base_path}/#{entry}"
-      if File.file?(path) && path.ends_with?(".py")
-        files << path
-      end
-    end
-
-    # Recursively explore subdirectories
-    entries.each do |entry|
-      path = "#{base_path}/#{entry}"
-      if File.directory?(path)
-        find_python_files_in_depth_order(path, files, current_depth + 1)
-      end
-    end
-
-    files
-  end
 
   def analyze
     flask_instances = Hash(String, String).new
@@ -60,11 +37,8 @@ class AnalyzerFlask < AnalyzerPython
     path_api_instances = Hash(String, Hash(String, String)).new
     register_blueprint = Hash(String, Hash(String, String)).new
 
-    # Get Python files sorted in depth order
-    python_files = find_python_files_in_depth_order(base_path)
-
     # Iterate through all Python files in the base path
-    python_files.each do |path|
+    Dir.glob("#{base_path}/**/*.py") do |path|
       next if File.directory?(path)
       File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
         lines = file.each_line.to_a
