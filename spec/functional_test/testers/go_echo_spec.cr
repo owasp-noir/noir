@@ -23,5 +23,5 @@ extected_endpoints = [
 
 FunctionalTester.new("fixtures/go_echo/", {
   :techs     => 1,
-  :endpoints => 9,
+  :endpoints => extected_endpoints.size,
 }, extected_endpoints).test_all

@@ -2,6 +2,7 @@ require "../func_spec.cr"
 
 extected_endpoints = [
   Endpoint.new("/users/{userId}", "GET", [
+    Param.new("userId", "", "path"),
     Param.new("userId", "", "query"),
     Param.new("Authorization", "", "header"),
   ]),
@@ -13,5 +14,5 @@ extected_endpoints = [
 
 FunctionalTester.new("fixtures/raml/", {
   :techs     => 1,
-  :endpoints => 2,
+  :endpoints => extected_endpoints.size,
 }, extected_endpoints).test_all

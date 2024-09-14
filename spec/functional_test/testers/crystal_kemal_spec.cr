@@ -18,5 +18,5 @@ extected_endpoints = [
 
 FunctionalTester.new("fixtures/crystal_kemal/", {
   :techs     => 1,
-  :endpoints => 6,
+  :endpoints => extected_endpoints.size,
 }, extected_endpoints).test_all
