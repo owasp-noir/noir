@@ -13,5 +13,5 @@ extected_endpoints = [
 
 FunctionalTester.new("fixtures/elixir_phoenix/", {
   :techs     => 1,
-  :endpoints => 8,
+  :endpoints => extected_endpoints.size,
 }, extected_endpoints).test_all

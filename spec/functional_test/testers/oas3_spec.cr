@@ -9,8 +9,9 @@ extected_endpoints = [
   Endpoint.new("/pets", "POST", [
     Param.new("name", "", "json"),
   ]),
-  Endpoint.new("/pets/{petId}", "GET"),
+  Endpoint.new("/pets/{petId}", "GET", [Param.new("petId", "", "path")]),
   Endpoint.new("/pets/{petId}", "PUT", [
+    Param.new("petId", "", "path"),
     Param.new("breed", "", "json"),
     Param.new("name", "", "json"),
   ]),
@@ -18,7 +19,7 @@ extected_endpoints = [
 
 FunctionalTester.new("fixtures/oas3/common/", {
   :techs     => 1,
-  :endpoints => 4,
+  :endpoints => extected_endpoints.size,
 }, extected_endpoints).test_all
 
 FunctionalTester.new("fixtures/oas3/no_servers/", {

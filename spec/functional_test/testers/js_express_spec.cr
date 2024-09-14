@@ -13,5 +13,5 @@ extected_endpoints = [
 
 FunctionalTester.new("fixtures/js_express/", {
   :techs     => 1,
-  :endpoints => 2,
+  :endpoints => extected_endpoints.size,
 }, extected_endpoints).test_all

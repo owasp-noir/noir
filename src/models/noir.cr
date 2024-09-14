@@ -92,6 +92,7 @@ class NoirRunner
     @endpoints = analysis_endpoints options, @techs, @logger
     optimize_endpoints
     combine_url_and_endpoints
+    add_path_parameters
 
     # Run tagger
     if @options["all_taggers"] == "yes"
@@ -178,6 +179,46 @@ class NoirRunner
 
       @endpoints = tmp
     end
+  end
+
+  def add_path_parameters
+    @logger.info "Adding path parameters by URL"
+    final = [] of Endpoint
+
+    @endpoints.each do |endpoint|
+      new_endpoint = endpoint
+
+      scans = endpoint.url.scan(/\/\{([^}]+)\}/).flatten
+      scans.each do |match|
+        param = match[1].split(":")[-1]
+        if @options["set_pvalue"] != ""
+          new_endpoint.url = new_endpoint.url.gsub("{#{param}}", @options["set_pvalue"])
+        end
+        new_endpoint.params << Param.new(param, "", "path")
+      end
+
+      scans = endpoint.url.scan(/\/:([^\/]+)/).flatten
+      scans.each do |match|
+        param = match[1].split(":")[-1]
+        if @options["set_pvalue"] != ""
+          new_endpoint.url = new_endpoint.url.gsub(":#{match[1]}", @options["set_pvalue"])
+        end
+        new_endpoint.params << Param.new(param, "", "path")
+      end
+
+      scans = endpoint.url.scan(/\/<([^>]+)>/).flatten
+      scans.each do |match|
+        param = match[1].split(":")[-1]
+        if @options["set_pvalue"] != ""
+          new_endpoint.url = new_endpoint.url.gsub("<#{match[1]}>", @options["set_pvalue"])
+        end
+        new_endpoint.params << Param.new(param, "", "path")
+      end
+
+      final << new_endpoint
+    end
+
+    @endpoints = final
   end
 
   def deliver

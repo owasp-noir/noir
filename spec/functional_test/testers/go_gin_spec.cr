@@ -20,5 +20,5 @@ extected_endpoints = [
 
 FunctionalTester.new("fixtures/go_gin/", {
   :techs     => 1,
-  :endpoints => 6,
+  :endpoints => extected_endpoints.size,
 }, extected_endpoints).test_all

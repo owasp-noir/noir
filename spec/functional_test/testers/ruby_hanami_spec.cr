@@ -2,14 +2,14 @@ require "../func_spec.cr"
 
 extected_endpoints = [
   Endpoint.new("/books", "GET"),
-  Endpoint.new("/books/:id", "GET"),
+  Endpoint.new("/books/:id", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/books/new", "GET"),
   Endpoint.new("/books", "POST"),
-  Endpoint.new("/books/:id", "PATCH"),
-  Endpoint.new("/books/:id", "DELETE"),
+  Endpoint.new("/books/:id", "PATCH", [Param.new("id", "", "path")]),
+  Endpoint.new("/books/:id", "DELETE", [Param.new("id", "", "path")]),
 ]
 
 FunctionalTester.new("fixtures/ruby_hanami/", {
   :techs     => 1,
-  :endpoints => 6,
+  :endpoints => extected_endpoints.size,
 }, extected_endpoints).test_all

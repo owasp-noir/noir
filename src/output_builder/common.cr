@@ -43,6 +43,11 @@ class OutputBuilderCommon < OutputBuilder
         end
       end
 
+      if baked[:path_param].size > 0
+        r_path_param = baked[:path_param].join(", ").colorize(:cyan).toggle(@is_color)
+        r_buffer += "\n  ○ path: #{r_path_param}"
+      end
+
       if baked[:body] != ""
         r_body = baked[:body].colorize(:cyan).toggle(@is_color)
         r_buffer += "\n  ○ body: #{r_body}"
