@@ -363,13 +363,17 @@ class JavaLexer < MiniLexer
     when '@' then self << Tuple.new(:AT, "@")
     when '{' then self << Tuple.new(:LBRACE, "{")
     when '}' then self << Tuple.new(:RBRACE, "}")
+    when '[' then self << Tuple.new(:LBRACK, "[")
+    when ']' then self << Tuple.new(:RBRACK, "]")
+    when '<' then self << Tuple.new(:LT, "<")
+    when '>' then self << Tuple.new(:GT, ">")
     when ';' then self << Tuple.new(:SEMI, ";")
     when '='
       if @input[@position + 1] == '='
         @position += 1
-        Tuple.new(:EQUAL, "==")
+        self << Tuple.new(:EQUAL, "==")
       else
-        Tuple.new(:ASSIGN, "=")
+        self << Tuple.new(:ASSIGN, "=")
       end
     when '\t' then self << Tuple.new(:TAB, "\t")
     when '\n'

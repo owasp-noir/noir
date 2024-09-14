@@ -27,8 +27,20 @@ public class ItemController {
     public void getItemJson(){       
     }
 
+    @RequestMapping("/requestmap/put", method = RequestMethod.PUT)
+    public void requestGet(){       
+    }
+
+    @RequestMapping("/requestmap/delete",method={RequestMethod.DELETE})
+    public void requestDelete(){       
+    }
+
     @RequestMapping("/multiple/methods", method = {RequestMethod.GET, RequestMethod.POST})
     public void multipleMethods(){       
+    }
+
+    @RequestMapping("/multiple/methods2", method = [RequestMethod.GET, RequestMethod.POST])
+    public void multipleMethods2(){       
     }
 }
 

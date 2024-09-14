@@ -19,8 +19,12 @@ extected_endpoints = [
   Endpoint.new("/items", "POST", [Param.new("id", "", "form"), Param.new("name", "", "form")]),
   Endpoint.new("/items/update/{id}", "PUT", [Param.new("id", "", "json"), Param.new("name", "", "json")]),
   Endpoint.new("/items/delete/{id}", "DELETE"),
+  Endpoint.new("/items/requestmap/put", "PUT"),
+  Endpoint.new("/items/requestmap/delete", "DELETE"),
   Endpoint.new("/items/multiple/methods", "GET"),
   Endpoint.new("/items/multiple/methods", "POST"),
+  Endpoint.new("/items/multiple/methods2", "GET"),
+  Endpoint.new("/items/multiple/methods2", "POST"),
   Endpoint.new("/greet", "GET", [
     Param.new("name", "", "query"),
     Param.new("header", "", "header"),
@@ -34,5 +38,5 @@ extected_endpoints = [
 
 FunctionalTester.new("fixtures/java_spring/", {
   :techs     => 1,
-  :endpoints => 19,
+  :endpoints => extected_endpoints.size,
 }, extected_endpoints).test_all

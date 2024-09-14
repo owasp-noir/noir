@@ -165,12 +165,11 @@ class AnalyzerJavaSpring < Analyzer
                       annotation_parameter_key = annotation_parameter_tokens[0].value
                       annotation_parameter_value = annotation_parameter_tokens[-1].value
                       if annotation_parameter_key == "method"
-                        if annotation_parameter_value == "}"
+                        if ["}", "]"].includes?(annotation_parameter_value)
                           # Handle methods declared with multiple HTTP verbs
                           annotation_parameter_tokens.reverse_each do |token|
                             break if token.value == "method"
-                            next if token.type == :LBRACE || token.type == :RBRACE
-                            next if token.type == :DOT
+                            next if [:LBRACE, :RBRACE, :LBRACK, :RBRACK, :COMMA, :DOT].includes?(token.type)
                             http_methods = ["GET", "POST", "PUT", "DELETE", "PATCH"]
                             if http_methods.includes?(token.value)
                               request_methods.push(token.value)

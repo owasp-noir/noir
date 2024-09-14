@@ -96,27 +96,28 @@ class JavaParser
   end
 
   def parse_formal_parameters(tokens : Array(Token), param_start_index : Int32)
-    lparen_count = 0
-    rparen_count = 0
-    lbrace_count = 0
-    rbrace_count = 0
     parameters = Array(Array(Token)).new
-    parameter_token = Array(Token).new
     return parameters if tokens.size <= param_start_index
 
-    while param_start_index < tokens.size
-      if tokens[param_start_index].type == :TAB
-        param_start_index += 1
-      elsif tokens[param_start_index].type == :NEWLINE
-        param_start_index += 1
-      elsif tokens[param_start_index].type == :LPAREN
+    lparen_index = param_start_index
+    while lparen_index < tokens.size
+      if tokens[lparen_index].type == :TAB
+        lparen_index += 1
+      elsif tokens[lparen_index].type == :NEWLINE
+        lparen_index += 1
+      elsif tokens[lparen_index].type == :LPAREN
         break
       else
+        # No parameters or wrong index was given
         return parameters
       end
     end
 
-    cursor = param_start_index
+    # Parse the formal parameters between ( and )
+    lparen_count = 0
+    other_open_count = 0
+    cursor = lparen_index
+    parameter_token = Array(Token).new # Add this line to declare the parameter_token variable
     while cursor < tokens.size
       token = tokens[cursor]
       if token.type == :LPAREN
@@ -124,26 +125,25 @@ class JavaParser
         if lparen_count > 1
           parameter_token << token
         end
-      elsif token.type == :LBRACE
-        lbrace_count += 1
+      elsif token.type == :LBRACE || token.type == :LBRACK || token.type == :LT
+        other_open_count += 1
         parameter_token << token
-      elsif token.type == :RBRACE
-        rbrace_count += 1
+      elsif token.type == :RBRACE || token.type == :RBRACK || token.type == :GT
+        other_open_count -= 1
         parameter_token << token
-      elsif lbrace_count == rbrace_count && lparen_count - 1 == rparen_count && token.type == :COMMA
+      elsif token.type == :COMMA && other_open_count == 0 && lparen_count == 1
         parameters << parameter_token
         parameter_token = Array(Token).new
-      elsif lparen_count > 0
-        if token.type == :RPAREN
-          rparen_count += 1
-          if lparen_count == rparen_count
-            parameters << parameter_token
-            break
-          else
-            parameter_token << token
-          end
+      else
+        if token.type != :RPAREN
+          next if token.type == :TAB || token.type == :NEWLINE # Skip TAB and NEWLINE tokens
+          parameter_token << token                             # Add token to the parameter token list
         else
-          unless token.type == :TAB || token.type == :NEWLINE
+          lparen_count -= 1
+          if lparen_count == 0
+            parameters << parameter_token
+            break # End of the formal parameters
+          else
             parameter_token << token
           end
         end
