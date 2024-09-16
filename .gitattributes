@@ -1,2 +1,4 @@
 * linguist-vendored
 *.cr linguist-vendored=false
+*.rb linguist-vendored=false
+Rakefile linguist-vendored=false
