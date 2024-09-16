@@ -29,7 +29,6 @@ class AnalyzerFlask < AnalyzerPython
   @parsers = Hash(String, PythonParser).new
   @routes = Hash(String, Array(Tuple(Int32, String, String, String))).new
 
-
   def analyze
     flask_instances = Hash(String, String).new
     flask_instances["app"] ||= "" # Common flask instance name

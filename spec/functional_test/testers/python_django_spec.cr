@@ -3,35 +3,35 @@ require "../func_spec.cr"
 extected_endpoints = [
   Endpoint.new("/", "GET"),
   Endpoint.new("/page/<int:page>/", "GET", [
-    Param.new("page", "", "path")
+    Param.new("page", "", "path"),
   ]),
   Endpoint.new("/article/<int:year>/<int:month>/<int:day>/<int:article_id>.html", "GET", [
     Param.new("year", "", "path"),
     Param.new("month", "", "path"),
     Param.new("day", "", "path"),
     Param.new("article_id", "", "path"),
-    Param.new("comment_page", "", "query")
+    Param.new("comment_page", "", "query"),
   ]),
   Endpoint.new("/category/<slug:category_name>.html", "GET", [
-    Param.new("category_name", "", "path")
+    Param.new("category_name", "", "path"),
   ]),
   Endpoint.new("/category/<slug:category_name>/<int:page>.html", "GET", [
     Param.new("category_name", "", "path"),
-    Param.new("page", "", "path")
+    Param.new("page", "", "path"),
   ]),
   Endpoint.new("/author/<author_name>.html", "GET", [
-    Param.new("author_name", "", "path")
+    Param.new("author_name", "", "path"),
   ]),
   Endpoint.new("/author/<author_name>/<int:page>.html", "GET", [
     Param.new("author_name", "", "path"),
-    Param.new("page", "", "path")
+    Param.new("page", "", "path"),
   ]),
   Endpoint.new("/tag/<slug:tag_name>.html", "GET", [
-    Param.new("tag_name", "", "path")
+    Param.new("tag_name", "", "path"),
   ]),
   Endpoint.new("/tag/<slug:tag_name>/<int:page>.html", "GET", [
     Param.new("tag_name", "", "path"),
-    Param.new("page", "", "path")
+    Param.new("page", "", "path"),
   ]),
   Endpoint.new("/archives.html", "GET"),
   Endpoint.new("/links.html", "GET"),

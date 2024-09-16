@@ -1,8 +1,8 @@
 require "../func_spec.cr"
 
 extected_endpoints = [
-  Endpoint.new("/Open/Callback/{appId}", "GET",  [
-    Param.new("appId", "", "path"),    
+  Endpoint.new("/Open/Callback/{appId}", "GET", [
+    Param.new("appId", "", "path"),
   ]),
   Endpoint.new("/data/default", "GET"),
 ]

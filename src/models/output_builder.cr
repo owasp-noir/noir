@@ -121,7 +121,7 @@ class OutputBuilder
       header:     final_headers,
       cookie:     final_cookies,
       tags:       final_tags.uniq,
-      body_type: is_json ? "json" : "form",
+      body_type:  is_json ? "json" : "form",
     }
   end
 
