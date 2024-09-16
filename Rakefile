@@ -18,6 +18,13 @@ namespace :docs do
     end
   end
 
+  desc "Generate usage documentation"
+  task :generate_usage do
+    output = `./bin/noir -h`
+    cleaned_output = output.gsub(/\e\[[0-9;]*m/, '') # Remove ANSI color codes
+    File.write('docs/_includes/usage.md', cleaned_output)
+  end
+
   def within_docs_directory
     Dir.chdir('docs') do
       yield
