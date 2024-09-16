@@ -30,3 +30,18 @@ namespace :docs do
     exit 1
   end
 end
+
+namespace :lint do
+  desc "Format the code using crystal tool format"
+  task :format do
+    sh 'crystal tool format'
+  end
+
+  desc "Lint the code using ameba"
+  task :ameba do
+    sh 'ameba'
+  end
+
+  desc "Run all linting tasks"
+  task :all => [:format, :ameba]
+end

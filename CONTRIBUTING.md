@@ -65,6 +65,12 @@ ameba --fix
 # https://github.com/crystal-ameba/ameba#installation
 ```
 
+or 
+
+```bash
+rake lint:all
+```
+
 ## 🧭 Code structure
 
 - spec: 
