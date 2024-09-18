@@ -155,9 +155,9 @@ class ConfigInitializer
     # Whether to send a request
     send_req: "#{options["send_req"]}"
 
-    # Whether to send headers with the request
+    # Whether to send headers with the request (Array of strings)
     # e.g "Authorization: Bearer token"
-    send_with_headers: "#{options["send_with_headers"]}"
+    send_with_headers: 
 
     # The value to set for pvalue
     set_pvalue: "#{options["set_pvalue"]}"
@@ -168,11 +168,11 @@ class ConfigInitializer
     # The URL to use
     url: "#{options["url"]}"
 
-    # Whether to use filters
-    use_filters: "#{options["use_filters"]}"
+    # Whether to use filters (Array of strings)
+    use_filters: 
 
-    # Whether to use matchers
-    use_matchers: "#{options["use_matchers"]}"
+    # Whether to use matchers (Array of strings)
+    use_matchers: 
 
     # Whether to use all taggers
     all_taggers: "#{options["all_taggers"]}"

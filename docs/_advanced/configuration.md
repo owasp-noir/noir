@@ -67,7 +67,9 @@ send_proxy: ""
 send_req: false
 
 # Whether to send headers with the request
-send_with_headers: ""
+send_with_headers: 
+    - "Authorization: ABCD1234"
+    - "X-API-Key: ABCD1234"
 
 # The value to set for pvalue
 set_pvalue: ""
@@ -79,10 +81,12 @@ techs: ""
 url: ""
 
 # Whether to use filters
-use_filters: ""
+use_filters: 
+    - "/admin"
 
 # Whether to use matchers
-use_matchers: ""
+use_matchers: 
+    - "/user"
 
 # Whether to use all taggers
 all_taggers: false
