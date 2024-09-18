@@ -2,6 +2,15 @@ require "./completions.cr"
 require "./config_initializer.cr"
 require "yaml"
 
+macro append_to_yaml_array(hash, key, value)
+  tmp = [] of YAML::Any
+  {{hash.id}}[{{key.stringify}}].as_a.each do |item|
+    tmp << item
+  end
+  tmp << YAML::Any.new({{value}})
+  {{hash.id}}[{{key.stringify}}] = YAML::Any.new(tmp)
+end
+
 def run_options_parser
   # Check config file
   config_init = ConfigInitializer.new
@@ -48,13 +57,13 @@ def run_options_parser
     parser.on "--send-proxy http://proxy..", "Send results to a web request via an HTTP proxy" { |var| noir_options["send_proxy"] = YAML::Any.new(var) }
     parser.on "--send-es http://es..", "Send results to Elasticsearch" { |var| noir_options["send_es"] = YAML::Any.new(var) }
     parser.on "--with-headers X-Header:Value", "Add custom headers to be included in the delivery" do |var|
-      noir_options["send_with_headers"] = YAML::Any.new("#{var}::NOIR::HEADERS::SPLIT::")
+      append_to_yaml_array(noir_options, send_with_headers, var)
     end
     parser.on "--use-matchers string", "Send URLs that match specific conditions to the Deliver" do |var|
-      noir_options["use_matchers"] = YAML::Any.new("#{var}::NOIR::MATCHER::SPLIT::")
+      append_to_yaml_array(noir_options, use_matchers, var)
     end
     parser.on "--use-filters string", "Exclude URLs that match specified conditions and send the rest to Deliver" do |var|
-      noir_options["use_filters"] = YAML::Any.new("#{var}::NOIR::FILTER::SPLIT::")
+      append_to_yaml_array(noir_options, use_filters, var)
     end
 
     parser.separator "\n  DIFF:".colorize(:blue)

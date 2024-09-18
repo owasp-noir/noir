@@ -46,13 +46,22 @@ class ConfigInitializer
       parsed_yaml = YAML.parse(File.read(@config_file)).as_h
       symbolized_hash = parsed_yaml.transform_keys(&.to_s)
       # stringlized_hash = symbolized_hash.transform_values(&.to_s)
-      
-      # Transform specific keys from "yes"/"no" to true/false for old version noir
+
+      # Transform specific keys from "yes"/"no" to true/false for old version noir config
       ["color", "debug", "include_path", "nolog", "send_req", "all_taggers"].each do |key|
         if symbolized_hash[key] == "yes"
           symbolized_hash[key] = YAML::Any.new(true)
         elsif symbolized_hash[key] == "no"
           symbolized_hash[key] = YAML::Any.new(false)
+        end
+      end
+
+      # Transform specific keys from "" to [""] or ["value"] for old version noir config
+      ["send_with_headers", "use_filters", "use_matchers"].each do |key|
+        if symbolized_hash[key] == ""
+          symbolized_hash[key] = YAML::Any.new([] of YAML::Any)
+        elsif symbolized_hash[key].is_a?(String)
+          symbolized_hash[key] = YAML::Any.new([YAML::Any.new(symbolized_hash[key].to_s)])
         end
       end
 
@@ -80,12 +89,12 @@ class ConfigInitializer
       "send_es"           => YAML::Any.new(""),
       "send_proxy"        => YAML::Any.new(""),
       "send_req"          => YAML::Any.new(false),
-      "send_with_headers" => YAML::Any.new(""),
+      "send_with_headers" => YAML::Any.new([] of YAML::Any),
       "set_pvalue"        => YAML::Any.new(""),
       "techs"             => YAML::Any.new(""),
       "url"               => YAML::Any.new(""),
-      "use_filters"       => YAML::Any.new(""),
-      "use_matchers"      => YAML::Any.new(""),
+      "use_filters"       => YAML::Any.new([] of YAML::Any),
+      "use_matchers"      => YAML::Any.new([] of YAML::Any),
       "all_taggers"       => YAML::Any.new(false),
       "use_taggers"       => YAML::Any.new(""),
       "diff"              => YAML::Any.new(""),

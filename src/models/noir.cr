@@ -40,7 +40,7 @@ class NoirRunner
     if @config_file != ""
       config = YAML.parse(File.read(@config_file)).as_h
       symbolized_hash = config.transform_keys(&.to_s)
-      @options = @options.merge(symbolized_hash) { |key, old_val, new_val| new_val }
+      @options = @options.merge(symbolized_hash) { |_, _, new_val| new_val }
     end
 
     @techs = [] of String
