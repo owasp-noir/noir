@@ -29,23 +29,23 @@ def run_options_parser
     parser.on "--set-pvalue VALUE", "Specifies the value of the identified parameter for all types" do |var|
       append_to_yaml_array(noir_options, set_pvalue, var)
     end
-    
+
     parser.on "--set-pvalue-header VALUE", "Specifies the value of the identified parameter for headers" do |var|
       append_to_yaml_array(noir_options, set_pvalue_header, var)
     end
-    
+
     parser.on "--set-pvalue-cookie VALUE", "Specifies the value of the identified parameter for cookies" do |var|
       append_to_yaml_array(noir_options, set_pvalue_cookie, var)
     end
-    
+
     parser.on "--set-pvalue-query VALUE", "Specifies the value of the identified parameter for query parameters" do |var|
       append_to_yaml_array(noir_options, set_pvalue_query, var)
     end
-    
+
     parser.on "--set-pvalue-form VALUE", "Specifies the value of the identified parameter for form data" do |var|
       append_to_yaml_array(noir_options, set_pvalue_form, var)
     end
-    
+
     parser.on "--set-pvalue-json VALUE", "Specifies the value of the identified parameter for JSON data" do |var|
       append_to_yaml_array(noir_options, set_pvalue_json, var)
     end

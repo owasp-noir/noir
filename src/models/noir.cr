@@ -144,7 +144,7 @@ class NoirRunner
   def apply_pvalue(param_type, param_name, param_value) : String
     case param_type
     when "query"
-      pvalue_target = @options["set_pvalue_query"]  
+      pvalue_target = @options["set_pvalue_query"]
     when "json"
       pvalue_target = @options["set_pvalue_json"]
     when "form"
@@ -156,10 +156,15 @@ class NoirRunner
     when "path"
       pvalue_target = @options["set_pvalue_path"]
     else
-      pvalue_target = @options["set_pvalue"]
+      pvalue_target = YAML::Any.new([] of YAML::Any)
     end
 
-    pvalue_target.as_a.each do |pvalue|
+    # Merge with @options["set_pvalue"]
+    merged_pvalue_target = [] of YAML::Any
+    merged_pvalue_target.concat(pvalue_target.as_a)
+    merged_pvalue_target.concat(@options["set_pvalue"].as_a)
+
+    merged_pvalue_target.each do |pvalue|
       if pvalue.to_s.includes? "="
         splited = pvalue.to_s.split("=")
         if splited[0] == param_name
@@ -170,12 +175,12 @@ class NoirRunner
         if splited[0] == param_name
           return splited[1].to_s
         end
-      else 
+      else
         return pvalue.to_s
       end
     end
 
-    return param_value.to_s
+    param_value.to_s
   end
 
   def combine_url_and_endpoints
@@ -217,26 +222,31 @@ class NoirRunner
       scans = endpoint.url.scan(/\/\{([^}]+)\}/).flatten
       scans.each do |match|
         param = match[1].split(":")[-1]
-        if @options["set_pvalue"] != ""
-          new_endpoint.url = new_endpoint.url.gsub("{#{param}}", @options["set_pvalue"])
+        new_value = apply_pvalue("path", param, "")
+        if new_value != ""
+          new_endpoint.url = new_endpoint.url.gsub("{#{param}}", new_value)
         end
+
         new_endpoint.params << Param.new(param, "", "path")
       end
 
       scans = endpoint.url.scan(/\/:([^\/]+)/).flatten
       scans.each do |match|
         param = match[1].split(":")[-1]
-        if @options["set_pvalue"] != ""
-          new_endpoint.url = new_endpoint.url.gsub(":#{match[1]}", @options["set_pvalue"])
+        new_value = apply_pvalue("path", param, "")
+        if new_value != ""
+          new_endpoint.url = new_endpoint.url.gsub(":#{match[1]}", new_value)
         end
+
         new_endpoint.params << Param.new(param, "", "path")
       end
 
       scans = endpoint.url.scan(/\/<([^>]+)>/).flatten
       scans.each do |match|
         param = match[1].split(":")[-1]
-        if @options["set_pvalue"] != ""
-          new_endpoint.url = new_endpoint.url.gsub("<#{match[1]}>", @options["set_pvalue"])
+        new_value = apply_pvalue("path", param, "")
+        if new_value != ""
+          new_endpoint.url = new_endpoint.url.gsub("<#{match[1]}>", new_value)
         end
         new_endpoint.params << Param.new(param, "", "path")
       end
