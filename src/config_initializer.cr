@@ -65,7 +65,15 @@ class ConfigInitializer
         end
       end
 
-      symbolized_hash
+      # Transform specific keys from "" to [] of YAML::Any for old version noir config
+      ["set_pvalue"].each do |key|
+        if symbolized_hash[key] == ""
+          symbolized_hash[key] = YAML::Any.new([] of YAML::Any)
+        end
+      end
+
+      final_options = default_options.merge(symbolized_hash) { |_, _, new_val| new_val }
+      final_options
     rescue e : Exception
       puts "Failed to read config file: #{e.message}"
       puts "Using default config."
@@ -90,7 +98,13 @@ class ConfigInitializer
       "send_proxy"        => YAML::Any.new(""),
       "send_req"          => YAML::Any.new(false),
       "send_with_headers" => YAML::Any.new([] of YAML::Any),
-      "set_pvalue"        => YAML::Any.new(""),
+      "set_pvalue"        => YAML::Any.new([] of YAML::Any),
+      "set_pvalue_header"        => YAML::Any.new([] of YAML::Any),
+      "set_pvalue_cookie"        => YAML::Any.new([] of YAML::Any),
+      "set_pvalue_query"        => YAML::Any.new([] of YAML::Any),
+      "set_pvalue_form"        => YAML::Any.new([] of YAML::Any),
+      "set_pvalue_json"        => YAML::Any.new([] of YAML::Any),
+      "set_pvalue_path"        => YAML::Any.new([] of YAML::Any),
       "techs"             => YAML::Any.new(""),
       "url"               => YAML::Any.new(""),
       "use_filters"       => YAML::Any.new([] of YAML::Any),
@@ -159,8 +173,14 @@ class ConfigInitializer
     # e.g "Authorization: Bearer token"
     send_with_headers:
 
-    # The value to set for pvalue
-    set_pvalue: "#{options["set_pvalue"]}"
+    # The value to set for pvalue (Array of strings)
+    set_pvalue:
+    set_pvalue_header:
+    set_pvalue_cookie:
+    set_pvalue_query:
+    set_pvalue_form:
+    set_pvalue_json:
+    set_pvalue_path:
 
     # The technologies to use
     techs: "#{options["techs"]}"

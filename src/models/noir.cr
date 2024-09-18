@@ -113,9 +113,7 @@ class NoirRunner
         tiny_tmp.params = [] of Param
         endpoint.params.each do |param|
           if !param.name.includes? " "
-            if @options["set_pvalue"] != ""
-              param.value = @options["set_pvalue"].to_s
-            end
+            param.value = apply_pvalue(param.param_type, param.name, param.value).to_s
             tiny_tmp.params << param
           end
         end
@@ -141,6 +139,43 @@ class NoirRunner
     end
 
     @endpoints = final
+  end
+
+  def apply_pvalue(param_type, param_name, param_value) : String
+    case param_type
+    when "query"
+      pvalue_target = @options["set_pvalue_query"]  
+    when "json"
+      pvalue_target = @options["set_pvalue_json"]
+    when "form"
+      pvalue_target = @options["set_pvalue_form"]
+    when "header"
+      pvalue_target = @options["set_pvalue_header"]
+    when "cookie"
+      pvalue_target = @options["set_pvalue_cookie"]
+    when "path"
+      pvalue_target = @options["set_pvalue_path"]
+    else
+      pvalue_target = @options["set_pvalue"]
+    end
+
+    pvalue_target.as_a.each do |pvalue|
+      if pvalue.to_s.includes? "="
+        splited = pvalue.to_s.split("=")
+        if splited[0] == param_name
+          return splited[1].to_s
+        end
+      elsif pvalue.to_s.includes? ":"
+        splited = pvalue.to_s.split(":")
+        if splited[0] == param_name
+          return splited[1].to_s
+        end
+      else 
+        return pvalue.to_s
+      end
+    end
+
+    return param_value.to_s
   end
 
   def combine_url_and_endpoints

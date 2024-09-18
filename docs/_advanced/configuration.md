@@ -72,7 +72,13 @@ send_with_headers:
     - "X-API-Key: ABCD1234"
 
 # The value to set for pvalue
-set_pvalue: ""
+set_pvalue:
+set_pvalue_header:
+set_pvalue_cookie:
+set_pvalue_query:
+set_pvalue_form:
+set_pvalue_json: 
+set_pvalue_path:
 
 # The technologies to use
 techs: ""

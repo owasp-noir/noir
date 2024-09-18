@@ -26,7 +26,34 @@ def run_options_parser
     parser.separator "\n  OUTPUT:".colorize(:blue)
     parser.on "-f FORMAT", "--format json", "Set output format\n  * plain yaml json jsonl markdown-table\n  * curl httpie oas2 oas3\n  * only-url only-param only-header only-cookie only-tag" { |var| noir_options["format"] = YAML::Any.new(var) }
     parser.on "-o PATH", "--output out.txt", "Write result to file" { |var| noir_options["output"] = YAML::Any.new(var) }
-    parser.on "--set-pvalue VALUE", "Specifies the value of the identified parameter" { |var| noir_options["set_pvalue"] = YAML::Any.new(var) }
+    parser.on "--set-pvalue VALUE", "Specifies the value of the identified parameter for all types" do |var|
+      append_to_yaml_array(noir_options, set_pvalue, var)
+    end
+    
+    parser.on "--set-pvalue-header VALUE", "Specifies the value of the identified parameter for headers" do |var|
+      append_to_yaml_array(noir_options, set_pvalue_header, var)
+    end
+    
+    parser.on "--set-pvalue-cookie VALUE", "Specifies the value of the identified parameter for cookies" do |var|
+      append_to_yaml_array(noir_options, set_pvalue_cookie, var)
+    end
+    
+    parser.on "--set-pvalue-query VALUE", "Specifies the value of the identified parameter for query parameters" do |var|
+      append_to_yaml_array(noir_options, set_pvalue_query, var)
+    end
+    
+    parser.on "--set-pvalue-form VALUE", "Specifies the value of the identified parameter for form data" do |var|
+      append_to_yaml_array(noir_options, set_pvalue_form, var)
+    end
+    
+    parser.on "--set-pvalue-json VALUE", "Specifies the value of the identified parameter for JSON data" do |var|
+      append_to_yaml_array(noir_options, set_pvalue_json, var)
+    end
+
+    parser.on "--set-pvalue-path VALUE", "Specifies the value of the identified parameter for Path parameters" do |var|
+      append_to_yaml_array(noir_options, set_pvalue_path, var)
+    end
+
     parser.on "--include-path", "Include file path in the plain result" do
       noir_options["include_path"] = YAML::Any.new(true)
     end
