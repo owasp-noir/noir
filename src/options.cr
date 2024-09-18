@@ -50,7 +50,7 @@ def run_options_parser
       append_to_yaml_array(noir_options, set_pvalue_json, var)
     end
 
-    parser.on "--set-pvalue-path VALUE", "Specifies the value of the identified parameter for Path parameters" do |var|
+    parser.on "--set-pvalue-path VALUE", "Specifies the value of the identified parameter for path parameters" do |var|
       append_to_yaml_array(noir_options, set_pvalue_path, var)
     end
 
