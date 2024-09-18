@@ -1,5 +1,6 @@
 require "./detectors/*"
 require "../models/detector"
+require "yaml"
 
 macro defind_detectors(detectors)
   {% for detector, index in detectors %}
@@ -9,7 +10,7 @@ macro defind_detectors(detectors)
   {% end %}
 end
 
-def detect_techs(base_path : String, options : Hash(String, String), logger : NoirLogger)
+def detect_techs(base_path : String, options : Hash(String, YAML::Any), logger : NoirLogger)
   techs = [] of String
   detector_list = [] of Detector
 
@@ -51,7 +52,7 @@ def detect_techs(base_path : String, options : Hash(String, String), logger : No
     end
   end
 
-  options["concurrency"].to_i.times do
+  options["concurrency"].to_s.to_i.times do
     spawn do
       loop do
         begin

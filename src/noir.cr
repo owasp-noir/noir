@@ -43,8 +43,8 @@ app_diff = nil
 if noir_options["diff"] != ""
   # Diff mode
   diff_options = noir_options.dup
-  diff_options["base"] = noir_options["diff"].to_s
-  diff_options["nolog"] = "yes"
+  diff_options["base"] = noir_options["diff"]
+  diff_options["nolog"] = YAML::Any.new(false)
 
   app_diff = NoirRunner.new diff_options
   app.logger.info "Running Noir with Diff mode."

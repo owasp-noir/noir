@@ -16,7 +16,7 @@ class HuntParamTagger < Tagger
       "description" => "This parameter may be vulnerable to SQL Injection attacks.",
     },
     "idor" => {
-      "words"       => ["id", "user", "account", "number", "order", "no", "doc", "key", "email", "group", "profile", "edit", "report"],
+      "words"       => ["id", "user", "account", "number", "order", "false", "doc", "key", "email", "group", "profile", "edit", "report"],
       "description" => "This parameter may be vulnerable to Insecure Direct Object Reference (IDOR) attacks.",
     },
     "file-inclusion" => {
@@ -33,7 +33,7 @@ class HuntParamTagger < Tagger
     },
   }
 
-  def initialize(options : Hash(String, String))
+  def initialize(options : Hash(String, YAML::Any))
     super
     @name = "hunt"
   end

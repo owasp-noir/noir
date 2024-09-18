@@ -489,7 +489,7 @@ class AnalyzerKotlinSpring < Analyzer
 end
 
 # Function to instantiate and run the AnalyzerKotlinSpring
-def analyzer_kotlin_spring(options : Hash(String, String))
+def analyzer_kotlin_spring(options : Hash(String, YAML::Any))
   instance = AnalyzerKotlinSpring.new(options)
   instance.analyze
 end

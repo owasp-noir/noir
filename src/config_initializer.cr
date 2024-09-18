@@ -4,7 +4,7 @@ require "yaml"
 class ConfigInitializer
   @config_dir : String
   @config_file : String
-  @default_config : Hash(String, String) = {"key" => "default_value"} # Replace with your default config
+  @default_config : Hash(String, YAML::Any) = {"key" => YAML::Any.new("default_value")} # Replace with your default config
 
   def initialize
     # Define the config directory and file based on ENV variables
@@ -45,9 +45,9 @@ class ConfigInitializer
     begin
       parsed_yaml = YAML.parse(File.read(@config_file)).as_h
       symbolized_hash = parsed_yaml.transform_keys(&.to_s)
-      stringlized_hash = symbolized_hash.transform_values(&.to_s)
+      # stringlized_hash = symbolized_hash.transform_values(&.to_s)
 
-      stringlized_hash
+      symbolized_hash
     rescue e : Exception
       puts "Failed to read config file: #{e.message}"
       puts "Using default config."
@@ -58,28 +58,28 @@ class ConfigInitializer
 
   def default_options
     noir_options = {
-      "base"              => "",
-      "color"             => "yes",
-      "config_file"       => "",
-      "concurrency"       => "100",
-      "debug"             => "no",
-      "exclude_techs"     => "",
-      "format"            => "plain",
-      "include_path"      => "no",
-      "nolog"             => "no",
-      "output"            => "",
-      "send_es"           => "",
-      "send_proxy"        => "",
-      "send_req"          => "no",
-      "send_with_headers" => "",
-      "set_pvalue"        => "",
-      "techs"             => "",
-      "url"               => "",
-      "use_filters"       => "",
-      "use_matchers"      => "",
-      "all_taggers"       => "no",
-      "use_taggers"       => "",
-      "diff"              => "",
+      "base"              => YAML::Any.new(""),
+      "color"             => YAML::Any.new(true),
+      "config_file"       => YAML::Any.new(""),
+      "concurrency"       => YAML::Any.new("100"),
+      "debug"             => YAML::Any.new(false),
+      "exclude_techs"     => YAML::Any.new(""),
+      "format"            => YAML::Any.new("plain"),
+      "include_path"      => YAML::Any.new(false),
+      "nolog"             => YAML::Any.new(false),
+      "output"            => YAML::Any.new(""),
+      "send_es"           => YAML::Any.new(""),
+      "send_proxy"        => YAML::Any.new(""),
+      "send_req"          => YAML::Any.new(false),
+      "send_with_headers" => YAML::Any.new(""),
+      "set_pvalue"        => YAML::Any.new(""),
+      "techs"             => YAML::Any.new(""),
+      "url"               => YAML::Any.new(""),
+      "use_filters"       => YAML::Any.new(""),
+      "use_matchers"      => YAML::Any.new(""),
+      "all_taggers"       => YAML::Any.new(false),
+      "use_taggers"       => YAML::Any.new(""),
+      "diff"              => YAML::Any.new(""),
     }
 
     noir_options

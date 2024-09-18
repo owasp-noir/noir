@@ -256,7 +256,7 @@ class AnalyzerRubyRails < Analyzer
   end
 end
 
-def analyzer_ruby_rails(options : Hash(String, String))
+def analyzer_ruby_rails(options : Hash(String, YAML::Any))
   instance = AnalyzerRubyRails.new(options)
   instance.analyze
 end

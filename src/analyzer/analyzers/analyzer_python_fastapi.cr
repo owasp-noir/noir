@@ -320,7 +320,7 @@ class Router
 end
 
 # Analyzer function for FastAPI
-def analyzer_python_fastapi(options : Hash(String, String))
+def analyzer_python_fastapi(options : Hash(String, YAML::Any))
   instance = AnalyzerFastAPI.new(options)
   instance.analyze
 end

@@ -45,7 +45,7 @@ class AnalyzerCsAspNetMvc < Analyzer
   end
 end
 
-def analyzer_cs_aspnet_mvc(options : Hash(String, String))
+def analyzer_cs_aspnet_mvc(options : Hash(String, YAML::Any))
   instance = AnalyzerCsAspNetMvc.new(options)
   instance.analyze
 end

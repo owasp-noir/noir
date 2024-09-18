@@ -6,7 +6,7 @@ describe "Initialize" do
   options = config_init.default_options
   options["base"] = "noir"
   options["send_proxy"] = "http://localhost:8090"
-  options["nolog"] = "yes"
+  options["nolog"] = true
 
   it "Deliver" do
     object = Deliver.new options

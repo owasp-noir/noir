@@ -26,7 +26,7 @@ class AnalyzerExample < Analyzer
   end
 end
 
-def analyzer_example(options : Hash(String, String))
+def analyzer_example(options : Hash(String, YAML::Any))
   instance = AnalyzerExample.new(options)
   instance.analyze
 end

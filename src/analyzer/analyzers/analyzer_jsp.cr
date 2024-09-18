@@ -51,7 +51,7 @@ class AnalyzerJsp < Analyzer
   end
 end
 
-def analyzer_jsp(options : Hash(String, String))
+def analyzer_jsp(options : Hash(String, YAML::Any))
   instance = AnalyzerJsp.new(options)
   instance.analyze
 end

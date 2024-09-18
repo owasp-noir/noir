@@ -2,7 +2,7 @@ require "./logger"
 
 class Deliver
   @logger : NoirLogger
-  @options : Hash(String, String)
+  @options : Hash(String, YAML::Any)
   @is_debug : Bool
   @is_color : Bool
   @is_log : Bool
@@ -11,16 +11,16 @@ class Deliver
   @matchers : Array(String) = [] of String
   @filters : Array(String) = [] of String
 
-  def initialize(options : Hash(String, String))
+  def initialize(options : Hash(String, YAML::Any))
     @options = options
     @is_debug = str_to_bool(options["debug"])
     @is_color = str_to_bool(options["color"])
     @is_log = str_to_bool(options["nolog"])
-    @proxy = options["send_proxy"]
+    @proxy = options["send_proxy"].to_s
     @logger = NoirLogger.new @is_debug, @is_color, @is_log
 
     if options["send_with_headers"] != ""
-      headers_tmp = options["send_with_headers"].split("::NOIR::HEADERS::SPLIT::")
+      headers_tmp = options["send_with_headers"].to_s.split("::NOIR::HEADERS::SPLIT::")
       @logger.info "Setting headers from command line."
       headers_tmp.each do |header|
         if header.includes? ":"
@@ -43,13 +43,13 @@ class Deliver
       @logger.sub "➔ #{@headers.size} headers added."
     end
 
-    @matchers = options["use_matchers"].split("::NOIR::MATCHER::SPLIT::")
+    @matchers = options["use_matchers"].to_s.split("::NOIR::MATCHER::SPLIT::")
     @matchers.delete("")
     if @matchers.size > 0
       @logger.info "#{@matchers.size} matchers added."
     end
 
-    @filters = options["use_filters"].split("::NOIR::FILTER::SPLIT::")
+    @filters = options["use_filters"].to_s.split("::NOIR::FILTER::SPLIT::")
     @filters.delete("")
     if @filters.size > 0
       @logger.info "#{@filters.size} filters added."

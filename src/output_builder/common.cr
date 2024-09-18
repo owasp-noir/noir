@@ -63,7 +63,7 @@ class OutputBuilderCommon < OutputBuilder
         r_buffer += "\n  ○ tags: #{r_tags}"
       end
 
-      if @options["include_path"] == "yes"
+      if @options["include_path"] == true
         details = endpoint.details
         if details.code_paths && details.code_paths.size > 0
           details.code_paths.each do |code_path|

@@ -44,7 +44,7 @@ class AnalyzerRustAxum < Analyzer
   end
 end
 
-def analyzer_rust_axum(options : Hash(String, String))
+def analyzer_rust_axum(options : Hash(String, YAML::Any))
   instance = AnalyzerRustAxum.new(options)
   instance.analyze
 end

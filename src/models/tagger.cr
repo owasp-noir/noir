@@ -2,13 +2,13 @@ require "./logger"
 
 class Tagger
   @logger : NoirLogger
-  @options : Hash(String, String)
+  @options : Hash(String, YAML::Any)
   @is_debug : Bool
   @is_color : Bool
   @is_log : Bool
   @name : String
 
-  def initialize(options : Hash(String, String))
+  def initialize(options : Hash(String, YAML::Any))
     @is_debug = str_to_bool(options["debug"])
     @options = options
     @is_color = str_to_bool(options["color"])

@@ -18,7 +18,7 @@ class FunctionalTester
     config_init = ConfigInitializer.new
     noir_options = config_init.default_options
     noir_options["base"] = "./spec/functional_test/#{@path}"
-    noir_options["nolog"] = "yes"
+    noir_options["nolog"] = true
 
     if !expected_count.nil?
       @expected_count = expected_count

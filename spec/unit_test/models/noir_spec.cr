@@ -19,7 +19,7 @@ describe "Methods" do
   options = config_init.default_options
   options["base"] = "noir"
   options["url"] = "https://www.hahwul.com"
-  options["nolog"] = "yes"
+  options["nolog"] = true
   runner = NoirRunner.new(options)
 
   runner.endpoints << Endpoint.new("/abcd", "GET")

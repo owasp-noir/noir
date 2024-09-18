@@ -63,7 +63,7 @@ class AnalyzerArmeria < Analyzer
   end
 end
 
-def analyzer_armeria(options : Hash(String, String))
+def analyzer_armeria(options : Hash(String, YAML::Any))
   instance = AnalyzerArmeria.new(options)
   instance.analyze
 end

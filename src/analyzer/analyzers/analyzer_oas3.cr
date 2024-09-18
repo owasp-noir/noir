@@ -283,7 +283,7 @@ class AnalyzerOAS3 < Analyzer
   end
 end
 
-def analyzer_oas3(options : Hash(String, String))
+def analyzer_oas3(options : Hash(String, YAML::Any))
   instance = AnalyzerOAS3.new(options)
   instance.analyze
 end
