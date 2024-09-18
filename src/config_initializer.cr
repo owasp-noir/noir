@@ -46,6 +46,15 @@ class ConfigInitializer
       parsed_yaml = YAML.parse(File.read(@config_file)).as_h
       symbolized_hash = parsed_yaml.transform_keys(&.to_s)
       # stringlized_hash = symbolized_hash.transform_values(&.to_s)
+      
+      # Transform specific keys from "yes"/"no" to true/false for old version noir
+      ["color", "debug", "include_path", "nolog", "send_req", "all_taggers"].each do |key|
+        if symbolized_hash[key] == "yes"
+          symbolized_hash[key] = YAML::Any.new(true)
+        elsif symbolized_hash[key] == "no"
+          symbolized_hash[key] = YAML::Any.new(false)
+        end
+      end
 
       symbolized_hash
     rescue e : Exception
