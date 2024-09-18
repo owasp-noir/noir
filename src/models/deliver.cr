@@ -2,7 +2,7 @@ require "./logger"
 
 class Deliver
   @logger : NoirLogger
-  @options : Hash(String, String)
+  @options : Hash(String, YAML::Any)
   @is_debug : Bool
   @is_color : Bool
   @is_log : Bool
@@ -11,45 +11,43 @@ class Deliver
   @matchers : Array(String) = [] of String
   @filters : Array(String) = [] of String
 
-  def initialize(options : Hash(String, String))
+  def initialize(options : Hash(String, YAML::Any))
     @options = options
     @is_debug = str_to_bool(options["debug"])
     @is_color = str_to_bool(options["color"])
     @is_log = str_to_bool(options["nolog"])
-    @proxy = options["send_proxy"]
+    @proxy = options["send_proxy"].to_s
     @logger = NoirLogger.new @is_debug, @is_color, @is_log
 
-    if options["send_with_headers"] != ""
-      headers_tmp = options["send_with_headers"].split("::NOIR::HEADERS::SPLIT::")
-      @logger.info "Setting headers from command line."
-      headers_tmp.each do |header|
-        if header.includes? ":"
-          @logger.debug "Adding '#{header}' to headers."
-          splited = header.split(":")
-          value = ""
-          begin
-            if splited[1][0].to_s == " "
-              value = splited[1][1..-1].to_s
-            else
-              value = splited[1].to_s
-            end
-          rescue
+    options["send_with_headers"].as_a.each do |set_header|
+      if set_header.to_s.includes? ":"
+        splited = set_header.to_s.split(":")
+        value = ""
+        begin
+          if splited[1][0].to_s == " "
+            value = splited[1][1..-1].to_s
+          else
             value = splited[1].to_s
           end
-
-          @headers[splited[0]] = value
+        rescue
+          value = splited[1].to_s
         end
+
+        @headers[splited[0]] = value
       end
-      @logger.sub "➔ #{@headers.size} headers added."
     end
 
-    @matchers = options["use_matchers"].split("::NOIR::MATCHER::SPLIT::")
+    options["use_matchers"].as_a.each do |matcher|
+      @matchers << matcher.to_s
+    end
     @matchers.delete("")
     if @matchers.size > 0
       @logger.info "#{@matchers.size} matchers added."
     end
 
-    @filters = options["use_filters"].split("::NOIR::FILTER::SPLIT::")
+    options["use_filters"].as_a.each do |filter|
+      @filters << filter.to_s
+    end
     @filters.delete("")
     if @filters.size > 0
       @logger.info "#{@filters.size} filters added."

@@ -170,7 +170,7 @@ class AnalyzerCrystalKemal < Analyzer
   end
 end
 
-def analyzer_crystal_kemal(options : Hash(String, String))
+def analyzer_crystal_kemal(options : Hash(String, YAML::Any))
   instance = AnalyzerCrystalKemal.new(options)
   instance.analyze
 end

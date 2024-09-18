@@ -31,7 +31,7 @@ layout: page
 base: ""
 
 # Whether to use color in the output
-color: "yes"
+color: true
 
 # The configuration file to use
 config_file: ""
@@ -40,7 +40,7 @@ config_file: ""
 concurrency: "100"
 
 # Whether to enable debug mode
-debug: "no"
+debug: false
 
 # Technologies to exclude
 exclude_techs: ""
@@ -49,10 +49,10 @@ exclude_techs: ""
 format: "plain"
 
 # Whether to include the path in the output
-include_path: "no"
+include_path: false
 
 # Whether to disable logging
-nolog: "no"
+nolog: false
 
 # The output file to write to
 output: ""
@@ -64,10 +64,12 @@ send_es: ""
 send_proxy: ""
 
 # Whether to send a request
-send_req: "no"
+send_req: false
 
 # Whether to send headers with the request
-send_with_headers: ""
+send_with_headers: 
+    - "Authorization: ABCD1234"
+    - "X-API-Key: ABCD1234"
 
 # The value to set for pvalue
 set_pvalue: ""
@@ -79,13 +81,15 @@ techs: ""
 url: ""
 
 # Whether to use filters
-use_filters: ""
+use_filters: 
+    - "/admin"
 
 # Whether to use matchers
-use_matchers: ""
+use_matchers: 
+    - "/user"
 
 # Whether to use all taggers
-all_taggers: "no"
+all_taggers: false
 
 # The taggers to use
 use_taggers: ""

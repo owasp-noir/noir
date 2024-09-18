@@ -4,7 +4,7 @@ require "yaml"
 class ConfigInitializer
   @config_dir : String
   @config_file : String
-  @default_config : Hash(String, String) = {"key" => "default_value"} # Replace with your default config
+  @default_config : Hash(String, YAML::Any) = {"key" => YAML::Any.new("default_value")} # Replace with your default config
 
   def initialize
     # Define the config directory and file based on ENV variables
@@ -45,9 +45,27 @@ class ConfigInitializer
     begin
       parsed_yaml = YAML.parse(File.read(@config_file)).as_h
       symbolized_hash = parsed_yaml.transform_keys(&.to_s)
-      stringlized_hash = symbolized_hash.transform_values(&.to_s)
+      # stringlized_hash = symbolized_hash.transform_values(&.to_s)
 
-      stringlized_hash
+      # Transform specific keys from "yes"/"no" to true/false for old version noir config
+      ["color", "debug", "include_path", "nolog", "send_req", "all_taggers"].each do |key|
+        if symbolized_hash[key] == "yes"
+          symbolized_hash[key] = YAML::Any.new(true)
+        elsif symbolized_hash[key] == "no"
+          symbolized_hash[key] = YAML::Any.new(false)
+        end
+      end
+
+      # Transform specific keys from "" to [""] or ["value"] for old version noir config
+      ["send_with_headers", "use_filters", "use_matchers"].each do |key|
+        if symbolized_hash[key] == ""
+          symbolized_hash[key] = YAML::Any.new([] of YAML::Any)
+        elsif symbolized_hash[key].is_a?(String)
+          symbolized_hash[key] = YAML::Any.new([YAML::Any.new(symbolized_hash[key].to_s)])
+        end
+      end
+
+      symbolized_hash
     rescue e : Exception
       puts "Failed to read config file: #{e.message}"
       puts "Using default config."
@@ -58,28 +76,28 @@ class ConfigInitializer
 
   def default_options
     noir_options = {
-      "base"              => "",
-      "color"             => "yes",
-      "config_file"       => "",
-      "concurrency"       => "100",
-      "debug"             => "no",
-      "exclude_techs"     => "",
-      "format"            => "plain",
-      "include_path"      => "no",
-      "nolog"             => "no",
-      "output"            => "",
-      "send_es"           => "",
-      "send_proxy"        => "",
-      "send_req"          => "no",
-      "send_with_headers" => "",
-      "set_pvalue"        => "",
-      "techs"             => "",
-      "url"               => "",
-      "use_filters"       => "",
-      "use_matchers"      => "",
-      "all_taggers"       => "no",
-      "use_taggers"       => "",
-      "diff"              => "",
+      "base"              => YAML::Any.new(""),
+      "color"             => YAML::Any.new(true),
+      "config_file"       => YAML::Any.new(""),
+      "concurrency"       => YAML::Any.new("100"),
+      "debug"             => YAML::Any.new(false),
+      "exclude_techs"     => YAML::Any.new(""),
+      "format"            => YAML::Any.new("plain"),
+      "include_path"      => YAML::Any.new(false),
+      "nolog"             => YAML::Any.new(false),
+      "output"            => YAML::Any.new(""),
+      "send_es"           => YAML::Any.new(""),
+      "send_proxy"        => YAML::Any.new(""),
+      "send_req"          => YAML::Any.new(false),
+      "send_with_headers" => YAML::Any.new([] of YAML::Any),
+      "set_pvalue"        => YAML::Any.new(""),
+      "techs"             => YAML::Any.new(""),
+      "url"               => YAML::Any.new(""),
+      "use_filters"       => YAML::Any.new([] of YAML::Any),
+      "use_matchers"      => YAML::Any.new([] of YAML::Any),
+      "all_taggers"       => YAML::Any.new(false),
+      "use_taggers"       => YAML::Any.new(""),
+      "diff"              => YAML::Any.new(""),
     }
 
     noir_options
@@ -137,9 +155,9 @@ class ConfigInitializer
     # Whether to send a request
     send_req: "#{options["send_req"]}"
 
-    # Whether to send headers with the request
+    # Whether to send headers with the request (Array of strings)
     # e.g "Authorization: Bearer token"
-    send_with_headers: "#{options["send_with_headers"]}"
+    send_with_headers:
 
     # The value to set for pvalue
     set_pvalue: "#{options["set_pvalue"]}"
@@ -150,11 +168,11 @@ class ConfigInitializer
     # The URL to use
     url: "#{options["url"]}"
 
-    # Whether to use filters
-    use_filters: "#{options["use_filters"]}"
+    # Whether to use filters (Array of strings)
+    use_filters:
 
-    # Whether to use matchers
-    use_matchers: "#{options["use_matchers"]}"
+    # Whether to use matchers (Array of strings)
+    use_matchers:
 
     # Whether to use all taggers
     all_taggers: "#{options["all_taggers"]}"

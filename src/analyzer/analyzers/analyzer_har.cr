@@ -62,7 +62,7 @@ class AnalyzerHar < Analyzer
   end
 end
 
-def analyzer_har(options : Hash(String, String))
+def analyzer_har(options : Hash(String, YAML::Any))
   instance = AnalyzerHar.new(options)
   instance.analyze
 end

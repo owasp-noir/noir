@@ -186,7 +186,7 @@ class AnalyzerGoEcho < Analyzer
   end
 end
 
-def analyzer_go_echo(options : Hash(String, String))
+def analyzer_go_echo(options : Hash(String, YAML::Any))
   instance = AnalyzerGoEcho.new(options)
   instance.analyze
 end

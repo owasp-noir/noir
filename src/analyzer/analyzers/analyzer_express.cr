@@ -105,7 +105,7 @@ class AnalyzerExpress < Analyzer
   end
 end
 
-def analyzer_express(options : Hash(String, String))
+def analyzer_express(options : Hash(String, YAML::Any))
   instance = AnalyzerExpress.new(options)
   instance.analyze
 end

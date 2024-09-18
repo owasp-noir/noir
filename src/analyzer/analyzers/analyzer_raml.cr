@@ -65,7 +65,7 @@ class AnalyzerRAML < Analyzer
   end
 end
 
-def analyzer_raml(options : Hash(String, String))
+def analyzer_raml(options : Hash(String, YAML::Any))
   instance = AnalyzerRAML.new(options)
   instance.analyze
 end

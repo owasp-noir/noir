@@ -2,18 +2,18 @@ require "./logger"
 
 class OutputBuilder
   @logger : NoirLogger
-  @options : Hash(String, String)
+  @options : Hash(String, YAML::Any)
   @is_debug : Bool
   @is_color : Bool
   @is_log : Bool
   @output_file : String
 
-  def initialize(options : Hash(String, String))
+  def initialize(options : Hash(String, YAML::Any))
     @is_debug = str_to_bool(options["debug"])
     @options = options
     @is_color = str_to_bool(options["color"])
     @is_log = str_to_bool(options["nolog"])
-    @output_file = options["output"]
+    @output_file = options["output"].to_s
 
     @logger = NoirLogger.new @is_debug, @is_color, @is_log
   end

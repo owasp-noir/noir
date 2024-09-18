@@ -492,7 +492,7 @@ class AnalyzerFlask < AnalyzerPython
 end
 
 # Analyzer function for Flask
-def analyzer_python_flask(options : Hash(String, String))
+def analyzer_python_flask(options : Hash(String, YAML::Any))
   instance = AnalyzerFlask.new(options)
   instance.analyze
 end

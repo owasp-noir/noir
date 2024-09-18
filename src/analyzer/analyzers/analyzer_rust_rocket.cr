@@ -45,7 +45,7 @@ class AnalyzerRustRocket < Analyzer
   end
 end
 
-def analyzer_rust_rocket(options : Hash(String, String))
+def analyzer_rust_rocket(options : Hash(String, YAML::Any))
   instance = AnalyzerRustRocket.new(options)
   instance.analyze
 end

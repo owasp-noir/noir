@@ -61,7 +61,7 @@ class AnalyzerElixirPhoenix < Analyzer
   end
 end
 
-def analyzer_elixir_phoenix(options : Hash(String, String))
+def analyzer_elixir_phoenix(options : Hash(String, YAML::Any))
   instance = AnalyzerElixirPhoenix.new(options)
   instance.analyze
 end

@@ -69,7 +69,7 @@ class AnalyzerRubyHanami < Analyzer
   end
 end
 
-def analyzer_ruby_hanami(options : Hash(String, String))
+def analyzer_ruby_hanami(options : Hash(String, YAML::Any))
   instance = AnalyzerRubyHanami.new(options)
   instance.analyze
 end

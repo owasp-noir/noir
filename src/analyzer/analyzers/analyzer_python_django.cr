@@ -394,7 +394,7 @@ class AnalyzerDjango < AnalyzerPython
 end
 
 # Main function to analyze a Django project
-def analyzer_python_django(options : Hash(String, String))
+def analyzer_python_django(options : Hash(String, YAML::Any))
   instance = AnalyzerDjango.new(options)
   instance.analyze
 end

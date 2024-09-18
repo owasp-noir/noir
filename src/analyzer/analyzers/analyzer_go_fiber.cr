@@ -197,7 +197,7 @@ class AnalyzerGoFiber < Analyzer
   end
 end
 
-def analyzer_go_fiber(options : Hash(String, String))
+def analyzer_go_fiber(options : Hash(String, YAML::Any))
   instance = AnalyzerGoFiber.new(options)
   instance.analyze
 end

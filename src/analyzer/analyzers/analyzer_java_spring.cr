@@ -447,7 +447,7 @@ class AnalyzerJavaSpring < Analyzer
   end
 end
 
-def analyzer_java_spring(options : Hash(String, String))
+def analyzer_java_spring(options : Hash(String, YAML::Any))
   instance = AnalyzerJavaSpring.new(options)
   instance.analyze
 end

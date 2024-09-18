@@ -25,7 +25,7 @@ def join_path(*segments : String) : String
 end
 
 def str_to_bool(str)
-  if str == "yes"
+  if str == true
     return true
   end
 
