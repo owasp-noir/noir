@@ -19,37 +19,35 @@ class Deliver
     @proxy = options["send_proxy"].to_s
     @logger = NoirLogger.new @is_debug, @is_color, @is_log
 
-    if options["send_with_headers"] != ""
-      headers_tmp = options["send_with_headers"].to_s.split("::NOIR::HEADERS::SPLIT::")
-      @logger.info "Setting headers from command line."
-      headers_tmp.each do |header|
-        if header.includes? ":"
-          @logger.debug "Adding '#{header}' to headers."
-          splited = header.split(":")
-          value = ""
-          begin
-            if splited[1][0].to_s == " "
-              value = splited[1][1..-1].to_s
-            else
-              value = splited[1].to_s
-            end
-          rescue
+    options["send_with_headers"].as_a.each do |set_header|
+      if set_header.to_s.includes? ":"
+        splited = set_header.to_s.split(":")
+        value = ""
+        begin
+          if splited[1][0].to_s == " "
+            value = splited[1][1..-1].to_s
+          else
             value = splited[1].to_s
           end
-
-          @headers[splited[0]] = value
+        rescue
+          value = splited[1].to_s
         end
+
+        @headers[splited[0]] = value
       end
-      @logger.sub "➔ #{@headers.size} headers added."
     end
 
-    @matchers = options["use_matchers"].to_s.split("::NOIR::MATCHER::SPLIT::")
+    options["use_matchers"].as_a.each do |matcher|
+      @matchers << matcher.to_s
+    end
     @matchers.delete("")
     if @matchers.size > 0
       @logger.info "#{@matchers.size} matchers added."
     end
 
-    @filters = options["use_filters"].to_s.split("::NOIR::FILTER::SPLIT::")
+    options["use_filters"].as_a.each do |filter|
+      @filters << filter.to_s
+    end
     @filters.delete("")
     if @filters.size > 0
       @logger.info "#{@filters.size} filters added."

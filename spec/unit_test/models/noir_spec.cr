@@ -5,7 +5,7 @@ require "../../../src/models/endpoint.cr"
 describe "Initialize" do
   config_init = ConfigInitializer.new
   options = config_init.default_options
-  options["base"] = "noir"
+  options["base"] = YAML::Any.new("noir")
   runner = NoirRunner.new(options)
 
   it "getter - options" do
@@ -17,9 +17,9 @@ end
 describe "Methods" do
   config_init = ConfigInitializer.new
   options = config_init.default_options
-  options["base"] = "noir"
-  options["url"] = "https://www.hahwul.com"
-  options["nolog"] = true
+  options["base"] = YAML::Any.new("noir")
+  options["url"] = YAML::Any.new("https://www.hahwul.com")
+  options["nolog"] = YAML::Any.new(true)
   runner = NoirRunner.new(options)
 
   runner.endpoints << Endpoint.new("/abcd", "GET")

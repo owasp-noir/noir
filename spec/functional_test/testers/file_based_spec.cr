@@ -15,5 +15,5 @@ tester = FunctionalTester.new("fixtures/file_based/", {
   :endpoints => extected_endpoints.size,
 }, extected_endpoints)
 
-tester.app.options["url"] = "https://www.hahwul.com"
+tester.app.options["url"] = YAML::Any.new("https://www.hahwul.com")
 tester.test_all

@@ -17,8 +17,8 @@ class FunctionalTester
   def initialize(@path, expected_count, expected_endpoints)
     config_init = ConfigInitializer.new
     noir_options = config_init.default_options
-    noir_options["base"] = "./spec/functional_test/#{@path}"
-    noir_options["nolog"] = true
+    noir_options["base"] = YAML::Any.new("./spec/functional_test/#{@path}")
+    noir_options["nolog"] = YAML::Any.new(true)
 
     if !expected_count.nil?
       @expected_count = expected_count
@@ -131,6 +131,6 @@ class FunctionalTester
   end
 
   def set_url(url)
-    @app.options["url"] = url
+    @app.options["url"] = YAML::Any.new(url)
   end
 end
