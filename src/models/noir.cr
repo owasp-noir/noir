@@ -165,18 +165,24 @@ class NoirRunner
     merged_pvalue_target.concat(@options["set_pvalue"].as_a)
 
     merged_pvalue_target.each do |pvalue|
-      if pvalue.to_s.includes? "="
-        splited = pvalue.to_s.split("=")
-        if splited[0] == param_name
-          return splited[1].to_s
-        end
-      elsif pvalue.to_s.includes? ":"
-        splited = pvalue.to_s.split(":")
-        if splited[0] == param_name
-          return splited[1].to_s
+      pvalue_str = pvalue.to_s
+      if pvalue_str.includes?("=") || pvalue_str.includes?(":")
+        first_equal = pvalue_str.index("=")
+        first_colon = pvalue_str.index(":")
+
+        if first_equal && (!first_colon || first_equal < first_colon)
+          splited = pvalue_str.split("=", 2)
+          if splited[0] == param_name || splited[0] == "*"
+            return splited[1].to_s
+          end
+        elsif first_colon
+          splited = pvalue_str.split(":", 2)
+          if splited[0] == param_name || splited[0] == "*"
+            return splited[1].to_s
+          end
         end
       else
-        return pvalue.to_s
+        return pvalue_str
       end
     end
 
