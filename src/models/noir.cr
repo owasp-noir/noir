@@ -15,7 +15,7 @@ class NoirRunner
   @endpoints : Array(Endpoint)
   @logger : NoirLogger
   @send_proxy : String
-  @send_req : String
+  @send_req : Bool
   @send_es : String
   @is_debug : Bool
   @is_color : Bool
@@ -46,11 +46,11 @@ class NoirRunner
     @techs = [] of String
     @endpoints = [] of Endpoint
     @send_proxy = @options["send_proxy"].to_s
-    @send_req = @options["send_req"].to_s
+    @send_req = any_to_bool(@options["send_req"])
     @send_es = @options["send_es"].to_s
-    @is_debug = str_to_bool(@options["debug"])
-    @is_color = str_to_bool(@options["color"])
-    @is_log = str_to_bool(@options["nolog"])
+    @is_debug = any_to_bool(@options["debug"])
+    @is_color = any_to_bool(@options["color"])
+    @is_log = any_to_bool(@options["nolog"])
     @concurrency = @options["concurrency"].to_s.to_i
 
     @logger = NoirLogger.new @is_debug, @is_color, @is_log
@@ -86,7 +86,7 @@ class NoirRunner
     add_path_parameters
 
     # Run tagger
-    if @options["all_taggers"] == true
+    if any_to_bool(@options["all_taggers"]) == true
       @logger.success "Running all taggers."
       NoirTaggers.run_tagger @endpoints, @options, "all"
       if @is_debug

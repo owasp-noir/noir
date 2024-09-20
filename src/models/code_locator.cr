@@ -10,9 +10,9 @@ class CodeLocator
 
   def initialize
     options = {"debug" => "true", "color" => "true", "nolog" => "false"}
-    @is_debug = str_to_bool(options["debug"])
-    @is_color = str_to_bool(options["color"])
-    @is_log = str_to_bool(options["nolog"])
+    @is_debug = any_to_bool(options["debug"])
+    @is_color = any_to_bool(options["color"])
+    @is_log = any_to_bool(options["nolog"])
     @logger = NoirLogger.new(@is_debug, @is_color, @is_log)
 
     @s_map = Hash(String, String).new

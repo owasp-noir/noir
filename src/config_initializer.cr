@@ -45,7 +45,6 @@ class ConfigInitializer
     begin
       parsed_yaml = YAML.parse(File.read(@config_file)).as_h
       symbolized_hash = parsed_yaml.transform_keys(&.to_s)
-      # stringlized_hash = symbolized_hash.transform_values(&.to_s)
 
       # Transform specific keys from "yes"/"no" to true/false for old version noir config
       ["color", "debug", "include_path", "nolog", "send_req", "all_taggers"].each do |key|
@@ -57,18 +56,22 @@ class ConfigInitializer
       end
 
       # Transform specific keys from "" to [""] or ["value"] for old version noir config
-      ["send_with_headers", "use_filters", "use_matchers"].each do |key|
-        if symbolized_hash[key] == ""
+      [
+        "send_with_headers", "use_filters", "use_matchers",
+        "set_pvalue", "set_pvalue_header", "set_pvalue_cookie",
+        "set_pvalue_query", "set_pvalue_form", "set_pvalue_json", "set_pvalue_path",
+      ].each do |key|
+        if symbolized_hash[key].to_s == ""
+          # If empty
           symbolized_hash[key] = YAML::Any.new([] of YAML::Any)
-        elsif symbolized_hash[key].is_a?(String)
-          symbolized_hash[key] = YAML::Any.new([YAML::Any.new(symbolized_hash[key].to_s)])
-        end
-      end
-
-      # Transform specific keys from "" to [] of YAML::Any for old version noir config
-      ["set_pvalue"].each do |key|
-        if symbolized_hash[key] == ""
-          symbolized_hash[key] = YAML::Any.new([] of YAML::Any)
+        else
+          begin
+            # If array
+            symbolized_hash[key].as_a
+          rescue
+            # If string
+            symbolized_hash[key] = YAML::Any.new([YAML::Any.new(symbolized_hash[key].to_s)])
+          end
         end
       end
 
@@ -132,7 +135,7 @@ class ConfigInitializer
     base: "#{options["base"]}"
 
     # Whether to use color in the output
-    color: "#{options["color"]}"
+    color: #{options["color"]}
 
     # The configuration file to use
     config_file: "#{options["config_file"]}"
@@ -141,7 +144,7 @@ class ConfigInitializer
     concurrency: "#{options["concurrency"]}"
 
     # Whether to enable debug mode
-    debug: "#{options["debug"]}"
+    debug: #{options["debug"]}
 
     # Technologies to exclude
     exclude_techs: "#{options["exclude_techs"]}"
@@ -153,7 +156,7 @@ class ConfigInitializer
     include_path: "#{options["include_path"]}"
 
     # Whether to disable logging
-    nolog: "#{options["nolog"]}"
+    nolog: #{options["nolog"]}
 
     # The output file to write to
     output: "#{options["output"]}"
@@ -167,7 +170,7 @@ class ConfigInitializer
     send_proxy: "#{options["send_proxy"]}"
 
     # Whether to send a request
-    send_req: "#{options["send_req"]}"
+    send_req: #{options["send_req"]}
 
     # Whether to send headers with the request (Array of strings)
     # e.g "Authorization: Bearer token"
@@ -195,7 +198,7 @@ class ConfigInitializer
     use_matchers:
 
     # Whether to use all taggers
-    all_taggers: "#{options["all_taggers"]}"
+    all_taggers: #{options["all_taggers"]}
 
     # The taggers to use
     # e.g "tagger1,tagger2"
