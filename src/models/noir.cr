@@ -15,7 +15,7 @@ class NoirRunner
   @endpoints : Array(Endpoint)
   @logger : NoirLogger
   @send_proxy : String
-  @send_req : String
+  @send_req : Bool
   @send_es : String
   @is_debug : Bool
   @is_color : Bool
@@ -46,11 +46,11 @@ class NoirRunner
     @techs = [] of String
     @endpoints = [] of Endpoint
     @send_proxy = @options["send_proxy"].to_s
-    @send_req = @options["send_req"].to_s
+    @send_req = any_to_bool(@options["send_req"])
     @send_es = @options["send_es"].to_s
-    @is_debug = str_to_bool(@options["debug"])
-    @is_color = str_to_bool(@options["color"])
-    @is_log = str_to_bool(@options["nolog"])
+    @is_debug = any_to_bool(@options["debug"])
+    @is_color = any_to_bool(@options["color"])
+    @is_log = any_to_bool(@options["nolog"])
     @concurrency = @options["concurrency"].to_s.to_i
 
     @logger = NoirLogger.new @is_debug, @is_color, @is_log
@@ -86,7 +86,7 @@ class NoirRunner
     add_path_parameters
 
     # Run tagger
-    if @options["all_taggers"] == true
+    if any_to_bool(@options["all_taggers"]) == true
       @logger.success "Running all taggers."
       NoirTaggers.run_tagger @endpoints, @options, "all"
       if @is_debug
@@ -113,9 +113,7 @@ class NoirRunner
         tiny_tmp.params = [] of Param
         endpoint.params.each do |param|
           if !param.name.includes? " "
-            if @options["set_pvalue"] != ""
-              param.value = @options["set_pvalue"].to_s
-            end
+            param.value = apply_pvalue(param.param_type, param.name, param.value).to_s
             tiny_tmp.params << param
           end
         end
@@ -141,6 +139,54 @@ class NoirRunner
     end
 
     @endpoints = final
+  end
+
+  def apply_pvalue(param_type, param_name, param_value) : String
+    case param_type
+    when "query"
+      pvalue_target = @options["set_pvalue_query"]
+    when "json"
+      pvalue_target = @options["set_pvalue_json"]
+    when "form"
+      pvalue_target = @options["set_pvalue_form"]
+    when "header"
+      pvalue_target = @options["set_pvalue_header"]
+    when "cookie"
+      pvalue_target = @options["set_pvalue_cookie"]
+    when "path"
+      pvalue_target = @options["set_pvalue_path"]
+    else
+      pvalue_target = YAML::Any.new([] of YAML::Any)
+    end
+
+    # Merge with @options["set_pvalue"]
+    merged_pvalue_target = [] of YAML::Any
+    merged_pvalue_target.concat(pvalue_target.as_a)
+    merged_pvalue_target.concat(@options["set_pvalue"].as_a)
+
+    merged_pvalue_target.each do |pvalue|
+      pvalue_str = pvalue.to_s
+      if pvalue_str.includes?("=") || pvalue_str.includes?(":")
+        first_equal = pvalue_str.index("=")
+        first_colon = pvalue_str.index(":")
+
+        if first_equal && (!first_colon || first_equal < first_colon)
+          splited = pvalue_str.split("=", 2)
+          if splited[0] == param_name || splited[0] == "*"
+            return splited[1].to_s
+          end
+        elsif first_colon
+          splited = pvalue_str.split(":", 2)
+          if splited[0] == param_name || splited[0] == "*"
+            return splited[1].to_s
+          end
+        end
+      else
+        return pvalue_str
+      end
+    end
+
+    param_value.to_s
   end
 
   def combine_url_and_endpoints
@@ -182,26 +228,31 @@ class NoirRunner
       scans = endpoint.url.scan(/\/\{([^}]+)\}/).flatten
       scans.each do |match|
         param = match[1].split(":")[-1]
-        if @options["set_pvalue"] != ""
-          new_endpoint.url = new_endpoint.url.gsub("{#{param}}", @options["set_pvalue"])
+        new_value = apply_pvalue("path", param, "")
+        if new_value != ""
+          new_endpoint.url = new_endpoint.url.gsub("{#{param}}", new_value)
         end
+
         new_endpoint.params << Param.new(param, "", "path")
       end
 
       scans = endpoint.url.scan(/\/:([^\/]+)/).flatten
       scans.each do |match|
         param = match[1].split(":")[-1]
-        if @options["set_pvalue"] != ""
-          new_endpoint.url = new_endpoint.url.gsub(":#{match[1]}", @options["set_pvalue"])
+        new_value = apply_pvalue("path", param, "")
+        if new_value != ""
+          new_endpoint.url = new_endpoint.url.gsub(":#{match[1]}", new_value)
         end
+
         new_endpoint.params << Param.new(param, "", "path")
       end
 
       scans = endpoint.url.scan(/\/<([^>]+)>/).flatten
       scans.each do |match|
         param = match[1].split(":")[-1]
-        if @options["set_pvalue"] != ""
-          new_endpoint.url = new_endpoint.url.gsub("<#{match[1]}>", @options["set_pvalue"])
+        new_value = apply_pvalue("path", param, "")
+        if new_value != ""
+          new_endpoint.url = new_endpoint.url.gsub("<#{match[1]}>", new_value)
         end
         new_endpoint.params << Param.new(param, "", "path")
       end

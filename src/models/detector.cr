@@ -10,9 +10,9 @@ class Detector
   @base_path : String
 
   def initialize(options : Hash(String, YAML::Any))
-    @is_debug = str_to_bool(options["debug"])
-    @is_color = str_to_bool(options["color"])
-    @is_log = str_to_bool(options["nolog"])
+    @is_debug = any_to_bool(options["debug"])
+    @is_color = any_to_bool(options["color"])
+    @is_log = any_to_bool(options["nolog"])
     @name = ""
     @base_path = options["base"].to_s
 

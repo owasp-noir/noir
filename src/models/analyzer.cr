@@ -17,9 +17,9 @@ class Analyzer
     @url = options["url"].to_s
     @result = [] of Endpoint
     @endpoint_references = [] of EndpointReference
-    @is_debug = str_to_bool(options["debug"])
-    @is_color = str_to_bool(options["color"])
-    @is_log = str_to_bool(options["nolog"])
+    @is_debug = any_to_bool(options["debug"])
+    @is_color = any_to_bool(options["color"])
+    @is_log = any_to_bool(options["nolog"])
     @options = options
 
     @logger = NoirLogger.new @is_debug, @is_color, @is_log

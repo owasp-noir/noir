@@ -45,7 +45,6 @@ class ConfigInitializer
     begin
       parsed_yaml = YAML.parse(File.read(@config_file)).as_h
       symbolized_hash = parsed_yaml.transform_keys(&.to_s)
-      # stringlized_hash = symbolized_hash.transform_values(&.to_s)
 
       # Transform specific keys from "yes"/"no" to true/false for old version noir config
       ["color", "debug", "include_path", "nolog", "send_req", "all_taggers"].each do |key|
@@ -56,16 +55,28 @@ class ConfigInitializer
         end
       end
 
-      # Transform specific keys from "" to [""] or ["value"] for old version noir config
-      ["send_with_headers", "use_filters", "use_matchers"].each do |key|
-        if symbolized_hash[key] == ""
+      # Transform specific keys for array and string config values
+      [
+        "send_with_headers", "use_filters", "use_matchers",
+        "set_pvalue", "set_pvalue_header", "set_pvalue_cookie",
+        "set_pvalue_query", "set_pvalue_form", "set_pvalue_json", "set_pvalue_path",
+      ].each do |key|
+        if symbolized_hash[key].to_s == ""
+          # If the value is an empty string, initialize it as an empty array of YAML::Any
           symbolized_hash[key] = YAML::Any.new([] of YAML::Any)
-        elsif symbolized_hash[key].is_a?(String)
-          symbolized_hash[key] = YAML::Any.new([YAML::Any.new(symbolized_hash[key].to_s)])
+        else
+          begin
+            # If the value is already an array, ensure it is treated as an array of YAML::Any
+            symbolized_hash[key].as_a
+          rescue
+            # If the value is a string, wrap it in an array of YAML::Any
+            symbolized_hash[key] = YAML::Any.new([YAML::Any.new(symbolized_hash[key].to_s)])
+          end
         end
       end
 
-      symbolized_hash
+      final_options = default_options.merge(symbolized_hash) { |_, _, new_val| new_val }
+      final_options
     rescue e : Exception
       puts "Failed to read config file: #{e.message}"
       puts "Using default config."
@@ -90,7 +101,13 @@ class ConfigInitializer
       "send_proxy"        => YAML::Any.new(""),
       "send_req"          => YAML::Any.new(false),
       "send_with_headers" => YAML::Any.new([] of YAML::Any),
-      "set_pvalue"        => YAML::Any.new(""),
+      "set_pvalue"        => YAML::Any.new([] of YAML::Any),
+      "set_pvalue_header" => YAML::Any.new([] of YAML::Any),
+      "set_pvalue_cookie" => YAML::Any.new([] of YAML::Any),
+      "set_pvalue_query"  => YAML::Any.new([] of YAML::Any),
+      "set_pvalue_form"   => YAML::Any.new([] of YAML::Any),
+      "set_pvalue_json"   => YAML::Any.new([] of YAML::Any),
+      "set_pvalue_path"   => YAML::Any.new([] of YAML::Any),
       "techs"             => YAML::Any.new(""),
       "url"               => YAML::Any.new(""),
       "use_filters"       => YAML::Any.new([] of YAML::Any),
@@ -118,7 +135,7 @@ class ConfigInitializer
     base: "#{options["base"]}"
 
     # Whether to use color in the output
-    color: "#{options["color"]}"
+    color: #{options["color"]}
 
     # The configuration file to use
     config_file: "#{options["config_file"]}"
@@ -127,7 +144,7 @@ class ConfigInitializer
     concurrency: "#{options["concurrency"]}"
 
     # Whether to enable debug mode
-    debug: "#{options["debug"]}"
+    debug: #{options["debug"]}
 
     # Technologies to exclude
     exclude_techs: "#{options["exclude_techs"]}"
@@ -136,10 +153,10 @@ class ConfigInitializer
     format: "#{options["format"]}"
 
     # Whether to include the path in the output
-    include_path: "#{options["include_path"]}"
+    include_path: #{options["include_path"]}
 
     # Whether to disable logging
-    nolog: "#{options["nolog"]}"
+    nolog: #{options["nolog"]}
 
     # The output file to write to
     output: "#{options["output"]}"
@@ -153,14 +170,20 @@ class ConfigInitializer
     send_proxy: "#{options["send_proxy"]}"
 
     # Whether to send a request
-    send_req: "#{options["send_req"]}"
+    send_req: #{options["send_req"]}
 
     # Whether to send headers with the request (Array of strings)
     # e.g "Authorization: Bearer token"
     send_with_headers:
 
-    # The value to set for pvalue
-    set_pvalue: "#{options["set_pvalue"]}"
+    # The value to set for pvalue (Array of strings)
+    set_pvalue:
+    set_pvalue_header:
+    set_pvalue_cookie:
+    set_pvalue_query:
+    set_pvalue_form:
+    set_pvalue_json:
+    set_pvalue_path:
 
     # The technologies to use
     techs: "#{options["techs"]}"
@@ -175,7 +198,7 @@ class ConfigInitializer
     use_matchers:
 
     # Whether to use all taggers
-    all_taggers: "#{options["all_taggers"]}"
+    all_taggers: #{options["all_taggers"]}
 
     # The taggers to use
     # e.g "tagger1,tagger2"
