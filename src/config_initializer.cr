@@ -153,7 +153,7 @@ class ConfigInitializer
     format: "#{options["format"]}"
 
     # Whether to include the path in the output
-    include_path: "#{options["include_path"]}"
+    include_path: #{options["include_path"]}
 
     # Whether to disable logging
     nolog: #{options["nolog"]}
