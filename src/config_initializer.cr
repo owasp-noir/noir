@@ -55,21 +55,21 @@ class ConfigInitializer
         end
       end
 
-      # Transform specific keys from "" to [""] or ["value"] for old version noir config
+      # Transform specific keys for array and string config values
       [
         "send_with_headers", "use_filters", "use_matchers",
         "set_pvalue", "set_pvalue_header", "set_pvalue_cookie",
         "set_pvalue_query", "set_pvalue_form", "set_pvalue_json", "set_pvalue_path",
       ].each do |key|
         if symbolized_hash[key].to_s == ""
-          # If empty
+          # If the value is an empty string, initialize it as an empty array of YAML::Any
           symbolized_hash[key] = YAML::Any.new([] of YAML::Any)
         else
           begin
-            # If array
+            # If the value is already an array, ensure it is treated as an array of YAML::Any
             symbolized_hash[key].as_a
           rescue
-            # If string
+            # If the value is a string, wrap it in an array of YAML::Any
             symbolized_hash[key] = YAML::Any.new([YAML::Any.new(symbolized_hash[key].to_s)])
           end
         end
