@@ -232,10 +232,10 @@ class NoirRunner
 
       scans = endpoint.url.scan(/\/\{([^}]+)\}/).flatten
       scans.each do |match|
-        param = match[1].split(":")[-1]
+        param = match[1].split(":")[0]
         new_value = apply_pvalue("path", param, "")
         if new_value != ""
-          new_endpoint.url = new_endpoint.url.gsub("{#{param}}", new_value)
+          new_endpoint.url = new_endpoint.url.gsub("{#{match[1]}}", new_value)
         end
 
         new_endpoint.params << Param.new(param, "", "path")
@@ -243,13 +243,12 @@ class NoirRunner
 
       scans = endpoint.url.scan(/\/:([^\/]+)/).flatten
       scans.each do |match|
-        param = match[1].split(":")[-1]
-        new_value = apply_pvalue("path", param, "")
+        new_value = apply_pvalue("path", match[1], "")
         if new_value != ""
           new_endpoint.url = new_endpoint.url.gsub(":#{match[1]}", new_value)
         end
 
-        new_endpoint.params << Param.new(param, "", "path")
+        new_endpoint.params << Param.new(match[1], "", "path")
       end
 
       scans = endpoint.url.scan(/\/<([^>]+)>/).flatten
