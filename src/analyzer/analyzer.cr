@@ -1,38 +1,49 @@
-require "./analyzers/*"
+require "./analyzers/**"
 require "./analyzers/file_analyzers/*"
+
+macro define_analyzers(analyzers)
+  {% for analyzer in analyzers %}
+    analyzers[{{analyzer[0].id.stringify}}] = ->(options : Hash(String, YAML::Any)) do
+      instance = Analyzer::{{analyzer[1].id}}.new(options)
+      instance.analyze
+    end
+  {% end %}
+end
 
 def initialize_analyzers(logger : NoirLogger)
   # Initializing analyzers
   analyzers = {} of String => Proc(Hash(String, YAML::Any), Array(Endpoint))
 
   # Mapping analyzers to their respective functions
-  analyzers["c#-aspnet-mvc"] = ->analyzer_cs_aspnet_mvc(Hash(String, YAML::Any))
-  analyzers["crystal_kemal"] = ->analyzer_crystal_kemal(Hash(String, YAML::Any))
-  analyzers["crystal_lucky"] = ->analyzer_crystal_lucky(Hash(String, YAML::Any))
-  analyzers["elixir_phoenix"] = ->analyzer_elixir_phoenix(Hash(String, YAML::Any))
-  analyzers["go_beego"] = ->analyzer_go_beego(Hash(String, YAML::Any))
-  analyzers["go_echo"] = ->analyzer_go_echo(Hash(String, YAML::Any))
-  analyzers["go_fiber"] = ->analyzer_go_fiber(Hash(String, YAML::Any))
-  analyzers["go_gin"] = ->analyzer_go_gin(Hash(String, YAML::Any))
-  analyzers["har"] = ->analyzer_har(Hash(String, YAML::Any))
-  analyzers["java_armeria"] = ->analyzer_armeria(Hash(String, YAML::Any))
-  analyzers["java_jsp"] = ->analyzer_jsp(Hash(String, YAML::Any))
-  analyzers["java_spring"] = ->analyzer_java_spring(Hash(String, YAML::Any))
-  analyzers["js_express"] = ->analyzer_express(Hash(String, YAML::Any))
-  analyzers["js_restify"] = ->analyzer_restify(Hash(String, YAML::Any))
-  analyzers["kotlin_spring"] = ->analyzer_kotlin_spring(Hash(String, YAML::Any))
-  analyzers["oas2"] = ->analyzer_oas2(Hash(String, YAML::Any))
-  analyzers["oas3"] = ->analyzer_oas3(Hash(String, YAML::Any))
-  analyzers["php_pure"] = ->analyzer_php_pure(Hash(String, YAML::Any))
-  analyzers["python_django"] = ->analyzer_python_django(Hash(String, YAML::Any))
-  analyzers["python_fastapi"] = ->analyzer_python_fastapi(Hash(String, YAML::Any))
-  analyzers["python_flask"] = ->analyzer_python_flask(Hash(String, YAML::Any))
-  analyzers["raml"] = ->analyzer_raml(Hash(String, YAML::Any))
-  analyzers["ruby_hanami"] = ->analyzer_ruby_hanami(Hash(String, YAML::Any))
-  analyzers["ruby_rails"] = ->analyzer_ruby_rails(Hash(String, YAML::Any))
-  analyzers["ruby_sinatra"] = ->analyzer_ruby_sinatra(Hash(String, YAML::Any))
-  analyzers["rust_axum"] = ->analyzer_rust_axum(Hash(String, YAML::Any))
-  analyzers["rust_rocket"] = ->analyzer_rust_rocket(Hash(String, YAML::Any))
+  define_analyzers([
+    {"c#-aspnet-mvc", CSharp::AspNetMvc},
+    {"crystal_kemal", Crystal::Kemal},
+    {"crystal_lucky", Crystal::Lucky},
+    {"elixir_phoenix", Elixir::Phoenix},
+    {"go_beego", Go::Beego},
+    {"go_echo", Go::Echo},
+    {"go_fiber", Go::Fiber},
+    {"go_gin", Go::Gin},
+    {"har", Specification::Har},
+    {"java_armeria", Java::Armeria},
+    {"java_jsp", Java::Jsp},
+    {"java_spring", Java::Spring},
+    {"js_express", Javascript::Express},
+    {"js_restify", Javascript::Restify},
+    {"kotlin_spring", Kotlin::Spring},
+    {"oas2", Specification::Oas2},
+    {"oas3", Specification::Oas3},
+    {"php_pure", Php::Php},
+    {"python_django", Python::Django},
+    {"python_fastapi", Python::FastAPI},
+    {"python_flask", Python::Flask},
+    {"raml", Specification::RAML},
+    {"ruby_hanami", Ruby::Hanami},
+    {"ruby_rails", Ruby::Rails},
+    {"ruby_sinatra", Ruby::Sinatra},
+    {"rust_axum", Rust::Axum},
+    {"rust_rocket", Rust::Rocket},
+  ])
 
   logger.success "#{analyzers.size} Analyzers initialized"
   logger.debug "Analyzers:"
