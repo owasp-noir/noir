@@ -76,7 +76,7 @@ class OutputBuilderCommon < OutputBuilder
         end
       end
 
-      if any_to_bool(@options["show_status"]) == true
+      if any_to_bool(@options["show_status"]) == true || @options["exclude_status"] != ""
         r_status = endpoint.details.status_code.to_s.colorize(:light_yellow).toggle(@is_color)
         r_buffer += "\n  ○ status: #{r_status}"
       end

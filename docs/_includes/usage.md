@@ -19,6 +19,7 @@ FLAGS:
     --set-pvalue-json VALUE          Specifies the value of the identified parameter for JSON data
     --set-pvalue-path VALUE          Specifies the value of the identified parameter for path parameters
     --show-status                    Display HTTP status codes for discovered endpoints
+    --exclude-status                 Exclude specific HTTP status code
     --include-path                   Include file path in the plain result
     --no-color                       Disable color output
     --no-log                         Displaying only the results

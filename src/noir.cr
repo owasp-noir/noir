@@ -31,6 +31,14 @@ if noir_options["show_status"] == true && noir_options["url"] == ""
   exit(1)
 end
 
+# Check URL
+if noir_options["exclude_status"] != "" && noir_options["url"] == ""
+  STDERR.puts "ERROR: --exclude-status requires -u or --url flag.".colorize(:yellow)
+  STDERR.puts "Please use -u or --url to set the URL."
+  STDERR.puts "If you need help, use -h or --help."
+  exit(1)
+end
+
 # Run Noir
 app = NoirRunner.new noir_options
 start_time = Time.monotonic

@@ -86,7 +86,7 @@ class NoirRunner
     add_path_parameters
 
     # Set status code
-    if any_to_bool(@options["show_status"]) == true
+    if any_to_bool(@options["show_status"]) == true || any_to_bool(@options["exclude_status"]) != ""
       update_status_codes
     end
 
@@ -271,6 +271,19 @@ class NoirRunner
     @logger.info "Updating status codes."
     final = [] of Endpoint
 
+    exclude_status = [] of Int32
+    @options["exclude_status"].to_s.split(",").each do |code|
+      if code.size > 0
+        begin
+          exclude_status << code.strip.to_i
+        rescue
+          @logger.error "Invalid --exclude-status option: '#{code}'"
+          @logger.error "Please use comma separated numbers."
+          exit(1)
+        end
+      end
+    end
+
     @endpoints.each do |endpoint|
       begin
         if endpoint.params.size > 0
@@ -296,7 +309,9 @@ class NoirRunner
             read_timeout: 5.second
           )
           endpoint.details.status_code = response.status_code
-          final << endpoint
+          unless exclude_status.includes?(response.status_code)
+            final << endpoint
+          end
         else
           response = Crest::Request.execute(
             method: get_symbol(endpoint.method),
@@ -307,7 +322,9 @@ class NoirRunner
             read_timeout: 5.second
           )
           endpoint.details.status_code = response.status_code
-          final << endpoint
+          unless exclude_status.includes?(response.status_code)
+            final << endpoint
+          end
         end
       rescue e
         @logger.error "Failed to get status code for #{endpoint.url} (#{e.message})."

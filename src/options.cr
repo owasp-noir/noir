@@ -58,6 +58,8 @@ def run_options_parser
       noir_options["show_status"] = YAML::Any.new(true)
     end
 
+    parser.on "--exclude-status 404,500", "Exclude specific HTTP status codes" { |var| noir_options["exclude_status"] = YAML::Any.new(var) }
+
     parser.on "--include-path", "Include file path in the plain result" do
       noir_options["include_path"] = YAML::Any.new(true)
     end
@@ -65,6 +67,7 @@ def run_options_parser
     parser.on "--no-color", "Disable color output" do
       noir_options["color"] = YAML::Any.new(false)
     end
+
     parser.on "--no-log", "Displaying only the results" do
       noir_options["nolog"] = YAML::Any.new(true)
     end

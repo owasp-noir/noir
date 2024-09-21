@@ -54,6 +54,9 @@ format: "plain"
 # Whether to display HTTP status codes in the output
 show_status: "false"
 
+# Whether to exclude HTTP status codes from the output
+exclude_status: ""
+
 # Whether to include the path in the output
 include_path: "false"
 
