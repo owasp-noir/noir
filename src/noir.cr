@@ -24,7 +24,7 @@ if noir_options["base"] == ""
 end
 
 # Check URL
-if noir_options["show_status"] && noir_options["url"] == ""
+if noir_options["show_status"] == true && noir_options["url"] == ""
   STDERR.puts "ERROR: --show-status requires -u or --url flag.".colorize(:yellow)
   STDERR.puts "Please use -u or --url to set the URL."
   STDERR.puts "If you need help, use -h or --help."
