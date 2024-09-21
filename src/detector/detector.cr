@@ -1,10 +1,10 @@
-require "./detectors/*"
+require "./detectors/**"
 require "../models/detector"
 require "yaml"
 
 macro defind_detectors(detectors)
   {% for detector, index in detectors %}
-    instance = {{detector}}.new(options)
+    instance = Detector::{{detector}}.new(options)
     instance.set_name
     detector_list << instance
   {% end %}
@@ -16,33 +16,33 @@ def detect_techs(base_path : String, options : Hash(String, YAML::Any), logger :
 
   # Define detectors
   defind_detectors([
-    DetectorCSharpAspNetMvc,
-    DetectorCrystalKemal,
-    DetectorCrystalLucky,
-    DetectorElixirPhoenix,
-    DetectorGoBeego,
-    DetectorGoEcho,
-    DetectorGoFiber,
-    DetectorGoGin,
-    DetectorHar,
-    DetectorJavaArmeria,
-    DetectorJavaJsp,
-    DetectorJavaSpring,
-    DetectorJsExpress,
-    DetectorJsRestify,
-    DetectorKotlinSpring,
-    DetectorOas2,
-    DetectorOas3,
-    DetectorPhpPure,
-    DetectorPythonDjango,
-    DetectorPythonFastAPI,
-    DetectorPythonFlask,
-    DetectorRAML,
-    DetectorRubyHanami,
-    DetectorRubyRails,
-    DetectorRubySinatra,
-    DetectorRustAxum,
-    DetectorRustRocket,
+    CSharp::AspNetMvc,
+    Crystal::Kemal,
+    Crystal::Lucky,
+    Elixir::Phoenix,
+    Go::Beego,
+    Go::Echo,
+    Go::Fiber,
+    Go::Gin,
+    Specification::Har,
+    Java::Armeria,
+    Java::Jsp,
+    Java::Spring,
+    Javascript::Express,
+    Javascript::Restify,
+    Kotlin::Spring,
+    Specification::Oas2,
+    Specification::Oas3,
+    Php::Php,
+    Python::Django,
+    Python::FastAPI,
+    Python::Flask,
+    Specification::RAML,
+    Ruby::Hanami,
+    Ruby::Rails,
+    Ruby::Sinatra,
+    Rust::Axum,
+    Rust::Rocket,
   ])
 
   channel = Channel(String).new
