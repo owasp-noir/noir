@@ -69,7 +69,7 @@ def run_options_parser
     parser.on "--use-taggers VALUES", "Activates specific taggers (e.g., --use-taggers hunt,oauth)" { |var| noir_options["use_taggers"] = YAML::Any.new(var) }
     parser.on "--list-taggers", "Lists all available taggers" do
       puts "Available taggers:"
-      techs = NoirTaggers.get_taggers
+      techs = NoirTaggers.taggers
       techs.each do |tagger, value|
         puts "  #{tagger.to_s.colorize(:green)}"
         value.each do |k, v|
@@ -101,7 +101,7 @@ def run_options_parser
     parser.on "--exclude-techs rails,php", "Specify the technologies to be excluded" { |var| noir_options["exclude_techs"] = YAML::Any.new(var) }
     parser.on "--list-techs", "Show all technologies" do
       puts "Available technologies:"
-      techs = NoirTechs.get_techs
+      techs = NoirTechs.techs
       techs.each do |tech, value|
         puts "  #{tech.to_s.colorize(:green)}"
         value.each do |k, v|

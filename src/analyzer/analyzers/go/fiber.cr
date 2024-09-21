@@ -53,7 +53,7 @@ module Analyzer::Go
                     if route_path.size > 0
                       new_endpoint = Endpoint.new("#{route_path}", line.split(".")[1].split("(")[0].upcase, details)
                       if line.includes?("websocket.New(")
-                        new_endpoint.set_protocol("ws")
+                        new_endpoint.protocol = "ws"
                       end
                       result << new_endpoint
                       last_endpoint = new_endpoint

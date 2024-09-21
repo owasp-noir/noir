@@ -30,7 +30,7 @@ module NoirTaggers
     },
   }
 
-  def self.get_taggers
+  def self.taggers
     HasTaggers
   end
 

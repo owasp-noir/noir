@@ -30,10 +30,10 @@ struct Endpoint
     @tags = [] of Tag
   end
 
-  def set_details(@details : Details)
+  def details=(@details : Details)
   end
 
-  def set_protocol(protocol : String)
+  def protocol=(protocol : String)
     @protocol = protocol
   end
 

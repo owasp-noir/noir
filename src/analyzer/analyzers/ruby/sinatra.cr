@@ -14,7 +14,7 @@ module Analyzer::Ruby
                 endpoint = line_to_endpoint(line)
                 if endpoint.method != ""
                   details = Details.new(PathInfo.new(path, index + 1))
-                  endpoint.set_details(details)
+                  endpoint.details = details
                   @result << endpoint
                   last_endpoint = endpoint
                 end

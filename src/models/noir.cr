@@ -90,7 +90,7 @@ class NoirRunner
       @logger.success "Running all taggers."
       NoirTaggers.run_tagger @endpoints, @options, "all"
       if @is_debug
-        NoirTaggers.get_taggers.each do |tagger|
+        NoirTaggers.taggers.each do |tagger|
           @logger.debug "Tagger: #{tagger}"
         end
       end
@@ -125,7 +125,7 @@ class NoirRunner
           if dup.method == tiny_tmp.method && dup.url == tiny_tmp.url
             is_new = false
             tiny_tmp.params.each do |param|
-              existing_param = dup.params.find { |p| p.name == param.name }
+              existing_param = dup.params.find { |dup_param| dup_param.name == param.name }
               unless existing_param
                 dup.params << param
               end

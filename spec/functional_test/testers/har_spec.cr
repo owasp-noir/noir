@@ -15,5 +15,5 @@ instance = FunctionalTester.new("fixtures/har/", {
   :endpoints => extected_endpoints.size,
 }, extected_endpoints)
 
-instance.set_url "https://www.hahwul.com"
+instance.url = "https://www.hahwul.com"
 instance.test_all

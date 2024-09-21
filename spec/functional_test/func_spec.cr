@@ -130,7 +130,7 @@ class FunctionalTester
     @app
   end
 
-  def set_url(url)
+  def url=(url)
     @app.options["url"] = YAML::Any.new(url)
   end
 end
