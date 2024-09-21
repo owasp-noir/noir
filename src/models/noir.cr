@@ -5,7 +5,7 @@ require "../deliver/*"
 require "../output_builder/*"
 require "./endpoint.cr"
 require "./logger.cr"
-require "../utils/string_extension.cr"
+require "../utils/*"
 require "json"
 require "yaml"
 
