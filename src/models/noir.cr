@@ -272,15 +272,9 @@ class NoirRunner
     final = [] of Endpoint
 
     exclude_status = [] of Int32
-    @options["exclude_status"].to_s.split(",").each do |code|
-      if code.size > 0
-        begin
-          exclude_status << code.strip.to_i
-        rescue
-          @logger.error "Invalid --exclude-status option: '#{code}'"
-          @logger.error "Please use comma separated numbers."
-          exit(1)
-        end
+    if @options["exclude_status"].to_s != ""
+      @options["exclude_status"].to_s.split(",").each do |code|
+        exclude_status << code.strip.to_i
       end
     end
 
