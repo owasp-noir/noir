@@ -54,9 +54,14 @@ def run_options_parser
       append_to_yaml_array(noir_options, set_pvalue_path, var)
     end
 
+    parser.on "--show-status", "Display HTTP status codes for discovered endpoints" do
+      noir_options["show_status"] = YAML::Any.new(true)
+    end
+
     parser.on "--include-path", "Include file path in the plain result" do
       noir_options["include_path"] = YAML::Any.new(true)
     end
+
     parser.on "--no-color", "Disable color output" do
       noir_options["color"] = YAML::Any.new(false)
     end

@@ -85,6 +85,11 @@ class NoirRunner
     combine_url_and_endpoints
     add_path_parameters
 
+    # Set status code
+    if any_to_bool(@options["show_status"]) == true
+      update_status_codes
+    end
+
     # Run tagger
     if any_to_bool(@options["all_taggers"]) == true
       @logger.success "Running all taggers."
@@ -219,7 +224,7 @@ class NoirRunner
   end
 
   def add_path_parameters
-    @logger.info "Adding path parameters by URL"
+    @logger.info "Adding path parameters by URL."
     final = [] of Endpoint
 
     @endpoints.each do |endpoint|
@@ -258,6 +263,57 @@ class NoirRunner
       end
 
       final << new_endpoint
+    end
+
+    @endpoints = final
+  end
+
+  def update_status_codes
+    @logger.info "Updating status codes."
+    final = [] of Endpoint
+
+    @endpoints.each do |endpoint|
+      begin
+        if endpoint.params.size > 0
+          endpoint_hash = endpoint.params_to_hash
+          body = {} of String => String
+          is_json = false
+          if endpoint_hash["json"].size > 0
+            is_json = true
+            body = endpoint_hash["json"]
+          else
+            body = endpoint_hash["form"]
+          end
+
+          response = Crest::Request.execute(
+            method: get_symbol(endpoint.method),
+            url: endpoint.url,
+            tls: OpenSSL::SSL::Context::Client.insecure,
+            user_agent: "Noir/#{Noir::VERSION}",
+            params: endpoint_hash["query"],
+            form: body,
+            json: is_json,
+            handle_errors: false,
+            read_timeout: 5.second
+          )
+          endpoint.details.status_code = response.status_code
+          final << endpoint
+        else
+          response = Crest::Request.execute(
+            method: get_symbol(endpoint.method),
+            url: endpoint.url,
+            tls: OpenSSL::SSL::Context::Client.insecure,
+            user_agent: "Noir/#{Noir::VERSION}",
+            handle_errors: false,
+            read_timeout: 5.second
+          )
+          endpoint.details.status_code = response.status_code
+          final << endpoint
+        end
+      rescue e
+        @logger.error "Failed to get status code for #{endpoint.url} (#{e.message})."
+        final << endpoint
+      end
     end
 
     @endpoints = final
