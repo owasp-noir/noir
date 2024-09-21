@@ -18,7 +18,7 @@ module Analyzer::Crystal
                 endpoint = line_to_endpoint(line)
                 if endpoint.method != ""
                   details = Details.new(PathInfo.new(path, index + 1))
-                  endpoint.set_details(details)
+                  endpoint.details = details
                   result << endpoint
                   last_endpoint = endpoint
                 end
@@ -162,7 +162,7 @@ module Analyzer::Crystal
       content.scan(/ws\s+['"](.+?)['"]/) do |match|
         if match.size > 1
           endpoint = Endpoint.new("#{match[1]}", "GET")
-          endpoint.set_protocol("ws")
+          endpoint.protocol = "ws"
           return endpoint
         end
       end

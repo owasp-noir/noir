@@ -12,7 +12,7 @@ class AnalyzerExample < Analyzer
               # For example (Add endpoint to result)
               # endpoint = Endpoint.new("/", "GET")
               # details = Details.new(PathInfo.new(path, index + 1))
-              # endpoint.set_details(details)
+              # endpoint.details=details
               # @result << endpoint
             end
           end

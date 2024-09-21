@@ -48,9 +48,9 @@ module Analyzer::Specification
                 end
 
                 details = Details.new(PathInfo.new(har_file, 0))
-                endpoint.set_details(details)
+                endpoint.details = details
                 if is_websocket
-                  endpoint.set_protocol "ws"
+                  endpoint.protocol = "ws"
                 end
                 @result << endpoint
               end

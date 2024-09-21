@@ -127,7 +127,7 @@ module Analyzer::Python
             new_django_urls = DjangoUrls.new("#{django_urls.prefix}#{route}", new_route_path, django_urls.basepath)
             details = Details.new(PathInfo.new(new_route_path))
             extract_endpoints(new_django_urls).each do |endpoint|
-              endpoint.set_details(details)
+              endpoint.details = details
               endpoints << endpoint
             end
           end
@@ -156,7 +156,7 @@ module Analyzer::Python
 
           if filepath != ""
             extract_endpoints_from_file(url, filepath, function_or_class_name).each do |endpoint|
-              endpoint.set_details(details)
+              endpoint.details = details
               endpoints << endpoint
             end
           else

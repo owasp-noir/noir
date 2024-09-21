@@ -14,7 +14,7 @@ module Analyzer::Elixir
                 endpoints.each do |endpoint|
                   if endpoint.method != ""
                     details = Details.new(PathInfo.new(path, index + 1))
-                    endpoint.set_details(details)
+                    endpoint.details = details
                     @result << endpoint
                   end
                 end
@@ -54,7 +54,7 @@ module Analyzer::Elixir
 
       line.scan(/socket\s+['"](.+?)['"]\s*,\s*(.+?)\s*/) do |match|
         tmp = Endpoint.new("#{match[1]}", "GET")
-        tmp.set_protocol("ws")
+        tmp.protocol = "ws"
         endpoints << tmp
       end
 

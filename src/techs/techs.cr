@@ -474,7 +474,7 @@ module NoirTechs
     },
   }
 
-  def self.get_techs
+  def self.techs
     TECHS
   end
 
