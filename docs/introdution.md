@@ -6,9 +6,14 @@ nav_order: 1
 ---
 
 ## What is noir?
-Noir is an open-source project specializing in identifying attack surfaces for enhanced whitebox security testing and security pipeline. This includes the capability to discover API endpoints, web endpoints, and other potential entry points within source code for thorough security analysis.
+
+Noir is an open-source project dedicated to identifying attack surfaces, enhancing whitebox security testing, and optimizing security pipelines. It excels at discovering API endpoints, web endpoints, and other potential entry points within source code for comprehensive security analysis.
 
 ![](../images/noir-usage.jpg)
+
+This tool was developed using [Crystal](https://crystal-lang.org). Initially started as hahwul's personal project[^1] in August 2023, it became an OWASP project in June 2024, co-led by [hahwul](https://github.com/hahwul) and [ksg](https://github.com/ksg97031).
+
+[^1]: [Hello Noir 👋🏼](https://www.hahwul.com/2023/08/03/hello-noir/)
 
 ## How it works?
 
@@ -50,3 +55,7 @@ We believe every contribution counts and appreciate the time and effort you put 
 To get started, simply follow the guidelines in the [Contribute Guide](https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md). It's full of helpful tips and instructions to make your first contribution smooth and enjoyable.
 
 Happy contributing!
+
+## Help and feedback
+
+We always welcome feedback. Please share your thoughts, suggestions, or report any issues via the GitHub [discussions](https://github.com/orgs/owasp-noir/discussions) or [issues](https://github.com/owasp-noir/noir/issues) page.
