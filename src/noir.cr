@@ -23,33 +23,33 @@ if noir_options["base"] == ""
   exit(1)
 end
 
-if noir_options["url"] != "" && noir_options["url"].to_s.starts_with?("http") == false
-  STDERR.puts "ERROR: Invalid URL format: '#{noir_options["url"]}' (missing HTTP protocol).".colorize(:yellow)
+if noir_options["url"] != "" && !noir_options["url"].to_s.includes?("://")
+  STDERR.puts "WARNING: The protocol (http or https) is missing in the URL '#{noir_options["url"]}'.".colorize(Colorize::Color256.new(208))
   noir_options["url"] = YAML::Any.new("http://#{noir_options["url"]}")
 end
 
 # Check URL
-if noir_options["show_status"] == true && noir_options["url"] == ""
-  STDERR.puts "ERROR: --show-status requires -u or --url flag.".colorize(:yellow)
+if noir_options["status_codes"] == true && noir_options["url"] == ""
+  STDERR.puts "ERROR: The --status-codes option requires the -u or --url flag to be specified.".colorize(:yellow)
   STDERR.puts "Please use -u or --url to set the URL."
   STDERR.puts "If you need help, use -h or --help."
   exit(1)
 end
 
 # Check URL
-if noir_options["exclude_status"] != ""
+if noir_options["exclude_codes"] != ""
   if noir_options["url"] == ""
-    STDERR.puts "ERROR: --exclude-status requires -u or --url flag.".colorize(:yellow)
+    STDERR.puts "ERROR: The --exclude-codes option requires the -u or --url flag to be specified.".colorize(:yellow)
     STDERR.puts "Please use -u or --url to set the URL."
     STDERR.puts "If you need help, use -h or --help."
     exit(1)
   end
 
-  noir_options["exclude_status"].to_s.split(",").each do |code|
+  noir_options["exclude_codes"].to_s.split(",").each do |code|
     begin
       code.strip.to_i
     rescue
-      STDERR.puts "ERROR: Invalid --exclude-status option: '#{code}'".colorize(:yellow)
+      STDERR.puts "ERROR: Invalid --exclude-codes option: '#{code}'".colorize(:yellow)
       STDERR.puts "Please use comma-separated numbers."
       exit(1)
     end

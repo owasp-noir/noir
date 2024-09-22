@@ -86,7 +86,7 @@ class NoirRunner
     add_path_parameters
 
     # Set status code
-    if any_to_bool(@options["show_status"]) == true || any_to_bool(@options["exclude_status"]) != ""
+    if any_to_bool(@options["status_codes"]) == true || any_to_bool(@options["exclude_codes"]) != ""
       update_status_codes
     end
 
@@ -271,10 +271,10 @@ class NoirRunner
     @logger.info "Updating status codes."
     final = [] of Endpoint
 
-    exclude_status = [] of Int32
-    if @options["exclude_status"].to_s != ""
-      @options["exclude_status"].to_s.split(",").each do |code|
-        exclude_status << code.strip.to_i
+    exclude_codes = [] of Int32
+    if @options["exclude_codes"].to_s != ""
+      @options["exclude_codes"].to_s.split(",").each do |code|
+        exclude_codes << code.strip.to_i
       end
     end
 
@@ -303,7 +303,7 @@ class NoirRunner
             read_timeout: 5.second
           )
           endpoint.details.status_code = response.status_code
-          unless exclude_status.includes?(response.status_code)
+          unless exclude_codes.includes?(response.status_code)
             final << endpoint
           end
         else
@@ -316,7 +316,7 @@ class NoirRunner
             read_timeout: 5.second
           )
           endpoint.details.status_code = response.status_code
-          unless exclude_status.includes?(response.status_code)
+          unless exclude_codes.includes?(response.status_code)
             final << endpoint
           end
         end

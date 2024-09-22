@@ -14,8 +14,8 @@ def generate_zsh_completion_script
         '--set-pvalue-form[Specifies the value of the identified parameter for form data]:value:' \\
         '--set-pvalue-json[Specifies the value of the identified parameter for JSON data]:value:' \\
         '--set-pvalue-path[Specifies the value of the identified parameter for path parameters]:value:' \\
-        '--show-status[Display HTTP status codes for discovered endpoints]' \\
-        '--exclude-status[Exclude specific HTTP status codes from the results]:status:' \\
+        '--status-codes[Display HTTP status codes for discovered endpoints]' \\
+        '--exclude-codes[Exclude specific HTTP response codes (comma-separated)]:status:' \\
         '--include-path[Include file path in the plain result]' \\
         '--no-color[Disable color output]' \\
         '--no-log[Displaying only the results]' \\
@@ -60,8 +60,8 @@ def generate_bash_completion_script
                 --set-pvalue-form
                 --set-pvalue-json
                 --set-pvalue-path
-                --show-status
-                --exclude-status
+                --status-codes
+                --exclude-codes
                 --include-path
                 --no-color
                 --no-log

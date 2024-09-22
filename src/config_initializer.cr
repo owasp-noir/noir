@@ -47,10 +47,8 @@ class ConfigInitializer
       symbolized_hash = parsed_yaml.transform_keys(&.to_s)
 
       # Transform specific keys from "yes"/"no" to true/false for old version noir config
-      ["color", "debug", "show_status", "exclude_status", "include_path", "nolog", "send_req", "all_taggers"].each do |key|
-        if !symbolized_hash.has_key?(key)
-          symbolized_hash[key] = default_options[key]
-        elsif symbolized_hash[key] == "yes"
+      ["color", "debug", "include_path", "nolog", "send_req", "all_taggers"].each do |key|
+        if symbolized_hash[key] == "yes"
           symbolized_hash[key] = YAML::Any.new(true)
         elsif symbolized_hash[key] == "no"
           symbolized_hash[key] = YAML::Any.new(false)
@@ -63,9 +61,7 @@ class ConfigInitializer
         "set_pvalue", "set_pvalue_header", "set_pvalue_cookie",
         "set_pvalue_query", "set_pvalue_form", "set_pvalue_json", "set_pvalue_path",
       ].each do |key|
-        if !symbolized_hash.has_key?(key)
-          symbolized_hash[key] = default_options[key]
-        elsif symbolized_hash[key].to_s == ""
+        if symbolized_hash[key].to_s == ""
           # If the value is an empty string, initialize it as an empty array of YAML::Any
           symbolized_hash[key] = YAML::Any.new([] of YAML::Any)
         else
@@ -98,8 +94,8 @@ class ConfigInitializer
       "debug"             => YAML::Any.new(false),
       "exclude_techs"     => YAML::Any.new(""),
       "format"            => YAML::Any.new("plain"),
-      "show_status"       => YAML::Any.new(false),
-      "exclude_status"    => YAML::Any.new(""),
+      "status_codes"      => YAML::Any.new(false),
+      "exclude_codes"     => YAML::Any.new(""),
       "include_path"      => YAML::Any.new(false),
       "nolog"             => YAML::Any.new(false),
       "output"            => YAML::Any.new(""),

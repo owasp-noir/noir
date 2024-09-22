@@ -20,6 +20,25 @@ class OutputBuilderCommon < OutputBuilder
       r_ws = ""
       r_buffer = "\n#{r_method} #{r_url}"
 
+      if any_to_bool(@options["status_codes"]) == true || @options["exclude_codes"] != ""
+        status_color = :light_green
+        status_code = endpoint.details.status_code
+        if status_code
+          if status_code >= 500
+            status_color = :light_magenta
+          elsif status_code >= 400
+            status_color = :light_red
+          elsif status_code >= 300
+            status_color = :cyan
+          end
+        else
+          status_code = "error"
+          status_color = :light_red
+        end
+
+        r_buffer += " [#{status_code}]".to_s.colorize(status_color).toggle(@is_color).to_s
+      end
+
       if endpoint.protocol == "ws"
         r_ws = "[websocket]".colorize(:light_red).toggle(@is_color)
         r_buffer += " #{r_ws}"
@@ -74,11 +93,6 @@ class OutputBuilderCommon < OutputBuilder
             end
           end
         end
-      end
-
-      if any_to_bool(@options["show_status"]) == true || @options["exclude_status"] != ""
-        r_status = endpoint.details.status_code.to_s.colorize(:light_yellow).toggle(@is_color)
-        r_buffer += "\n  ○ status: #{r_status}"
       end
 
       ob_puts r_buffer

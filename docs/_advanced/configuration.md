@@ -52,10 +52,10 @@ exclude_techs: ""
 format: "plain"
 
 # Whether to display HTTP status codes in the output
-show_status: "false"
+status_codes: "false"
 
 # Whether to exclude HTTP status codes from the output
-exclude_status: ""
+exclude_codes: ""
 
 # Whether to include the path in the output
 include_path: "false"

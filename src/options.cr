@@ -54,11 +54,11 @@ def run_options_parser
       append_to_yaml_array(noir_options, set_pvalue_path, var)
     end
 
-    parser.on "--show-status", "Display HTTP status codes for discovered endpoints" do
-      noir_options["show_status"] = YAML::Any.new(true)
+    parser.on "--status-codes", "Display HTTP status codes for discovered endpoints" do
+      noir_options["status_codes"] = YAML::Any.new(true)
     end
 
-    parser.on "--exclude-status 404,500", "Exclude specific HTTP status codes" { |var| noir_options["exclude_status"] = YAML::Any.new(var) }
+    parser.on "--exclude-codes 404,500", "Exclude specific HTTP response codes (comma-separated)" { |var| noir_options["exclude_codes"] = YAML::Any.new(var) }
 
     parser.on "--include-path", "Include file path in the plain result" do
       noir_options["include_path"] = YAML::Any.new(true)
@@ -133,7 +133,7 @@ def run_options_parser
         puts "\n"
         puts "> Instructions: Copy the content above and save it in the .bashrc file as noir.".colorize(:yellow)
       else
-        puts "ERROR: Invalid completion type."
+        puts "ERROR: Invalid completion type.".colorize(:yellow)
         puts "e.g., noir --generate-completion zsh"
         puts "e.g., noir --generate-completion bash"
       end
@@ -171,12 +171,12 @@ def run_options_parser
       exit
     end
     parser.invalid_option do |flag|
-      STDERR.puts "ERROR: #{flag} is not a valid option."
+      STDERR.puts "ERROR: #{flag} is not a valid option.".colorize(:yellow)
       STDERR.puts parser
       exit(1)
     end
     parser.missing_option do |flag|
-      STDERR.puts "ERROR: #{flag} is missing an argument."
+      STDERR.puts "ERROR: #{flag} is missing an argument.".colorize(:yellow)
       exit(1)
     end
   end
