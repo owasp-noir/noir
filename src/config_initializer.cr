@@ -94,6 +94,8 @@ class ConfigInitializer
       "debug"             => YAML::Any.new(false),
       "exclude_techs"     => YAML::Any.new(""),
       "format"            => YAML::Any.new("plain"),
+      "status_codes"      => YAML::Any.new(false),
+      "exclude_codes"     => YAML::Any.new(""),
       "include_path"      => YAML::Any.new(false),
       "nolog"             => YAML::Any.new(false),
       "output"            => YAML::Any.new(""),

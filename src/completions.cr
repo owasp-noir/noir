@@ -8,6 +8,14 @@ def generate_zsh_completion_script
         '-f[Set output format]:format:(plain yaml json jsonl markdown-table curl httpie oas2 oas3 only-url only-param only-header only-cookie)' \\
         '-o[Write result to file]:path:_files' \\
         '--set-pvalue[Specifies the value of the identified parameter]:value:' \\
+        '--set-pvalue-header[Specifies the value of the identified parameter for headers]:value:' \\
+        '--set-pvalue-cookie[Specifies the value of the identified parameter for cookies]:value:' \\
+        '--set-pvalue-query[Specifies the value of the identified parameter for query parameters]:value:' \\
+        '--set-pvalue-form[Specifies the value of the identified parameter for form data]:value:' \\
+        '--set-pvalue-json[Specifies the value of the identified parameter for JSON data]:value:' \\
+        '--set-pvalue-path[Specifies the value of the identified parameter for path parameters]:value:' \\
+        '--status-codes[Display HTTP status codes for discovered endpoints]' \\
+        '--exclude-codes[Exclude specific HTTP response codes (comma-separated)]:status:' \\
         '--include-path[Include file path in the plain result]' \\
         '--no-color[Disable color output]' \\
         '--no-log[Displaying only the results]' \\
@@ -46,6 +54,14 @@ def generate_bash_completion_script
                 -f --format
                 -o --output
                 --set-pvalue
+                --set-pvalue-header
+                --set-pvalue-cookie
+                --set-pvalue-query
+                --set-pvalue-form
+                --set-pvalue-json
+                --set-pvalue-path
+                --status-codes
+                --exclude-codes
                 --include-path
                 --no-color
                 --no-log

@@ -11,7 +11,15 @@ FLAGS:
                                        * curl httpie oas2 oas3
                                        * only-url only-param only-header only-cookie only-tag
     -o PATH, --output out.txt        Write result to file
-    --set-pvalue VALUE               Specifies the value of the identified parameter
+    --set-pvalue VALUE               Specifies the value of the identified parameter for all types
+    --set-pvalue-header VALUE        Specifies the value of the identified parameter for headers
+    --set-pvalue-cookie VALUE        Specifies the value of the identified parameter for cookies
+    --set-pvalue-query VALUE         Specifies the value of the identified parameter for query parameters
+    --set-pvalue-form VALUE          Specifies the value of the identified parameter for form data
+    --set-pvalue-json VALUE          Specifies the value of the identified parameter for JSON data
+    --set-pvalue-path VALUE          Specifies the value of the identified parameter for path parameters
+    --status-codes                   Display HTTP status codes for discovered endpoints
+    --exclude-codes                  Exclude specific HTTP status code
     --include-path                   Include file path in the plain result
     --no-color                       Disable color output
     --no-log                         Displaying only the results

@@ -23,6 +23,39 @@ if noir_options["base"] == ""
   exit(1)
 end
 
+if noir_options["url"] != "" && !noir_options["url"].to_s.includes?("://")
+  STDERR.puts "WARNING: The protocol (http or https) is missing in the URL '#{noir_options["url"]}'.".colorize(Colorize::Color256.new(208))
+  noir_options["url"] = YAML::Any.new("http://#{noir_options["url"]}")
+end
+
+# Check URL
+if noir_options["status_codes"] == true && noir_options["url"] == ""
+  STDERR.puts "ERROR: The --status-codes option requires the -u or --url flag to be specified.".colorize(:yellow)
+  STDERR.puts "Please use -u or --url to set the URL."
+  STDERR.puts "If you need help, use -h or --help."
+  exit(1)
+end
+
+# Check URL
+if noir_options["exclude_codes"] != ""
+  if noir_options["url"] == ""
+    STDERR.puts "ERROR: The --exclude-codes option requires the -u or --url flag to be specified.".colorize(:yellow)
+    STDERR.puts "Please use -u or --url to set the URL."
+    STDERR.puts "If you need help, use -h or --help."
+    exit(1)
+  end
+
+  noir_options["exclude_codes"].to_s.split(",").each do |code|
+    begin
+      code.strip.to_i
+    rescue
+      STDERR.puts "ERROR: Invalid --exclude-codes option: '#{code}'".colorize(:yellow)
+      STDERR.puts "Please use comma-separated numbers."
+      exit(1)
+    end
+  end
+end
+
 # Run Noir
 app = NoirRunner.new noir_options
 start_time = Time.monotonic

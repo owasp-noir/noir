@@ -85,6 +85,11 @@ class NoirRunner
     combine_url_and_endpoints
     add_path_parameters
 
+    # Set status code
+    if any_to_bool(@options["status_codes"]) == true || any_to_bool(@options["exclude_codes"]) != ""
+      update_status_codes
+    end
+
     # Run tagger
     if any_to_bool(@options["all_taggers"]) == true
       @logger.success "Running all taggers."
@@ -219,7 +224,7 @@ class NoirRunner
   end
 
   def add_path_parameters
-    @logger.info "Adding path parameters by URL"
+    @logger.info "Adding path parameters by URL."
     final = [] of Endpoint
 
     @endpoints.each do |endpoint|
@@ -227,10 +232,10 @@ class NoirRunner
 
       scans = endpoint.url.scan(/\/\{([^}]+)\}/).flatten
       scans.each do |match|
-        param = match[1].split(":")[-1]
+        param = match[1].split(":")[0]
         new_value = apply_pvalue("path", param, "")
         if new_value != ""
-          new_endpoint.url = new_endpoint.url.gsub("{#{param}}", new_value)
+          new_endpoint.url = new_endpoint.url.gsub("{#{match[1]}}", new_value)
         end
 
         new_endpoint.params << Param.new(param, "", "path")
@@ -238,13 +243,12 @@ class NoirRunner
 
       scans = endpoint.url.scan(/\/:([^\/]+)/).flatten
       scans.each do |match|
-        param = match[1].split(":")[-1]
-        new_value = apply_pvalue("path", param, "")
+        new_value = apply_pvalue("path", match[1], "")
         if new_value != ""
           new_endpoint.url = new_endpoint.url.gsub(":#{match[1]}", new_value)
         end
 
-        new_endpoint.params << Param.new(param, "", "path")
+        new_endpoint.params << Param.new(match[1], "", "path")
       end
 
       scans = endpoint.url.scan(/\/<([^>]+)>/).flatten
@@ -258,6 +262,68 @@ class NoirRunner
       end
 
       final << new_endpoint
+    end
+
+    @endpoints = final
+  end
+
+  def update_status_codes
+    @logger.info "Updating status codes."
+    final = [] of Endpoint
+
+    exclude_codes = [] of Int32
+    if @options["exclude_codes"].to_s != ""
+      @options["exclude_codes"].to_s.split(",").each do |code|
+        exclude_codes << code.strip.to_i
+      end
+    end
+
+    @endpoints.each do |endpoint|
+      begin
+        if endpoint.params.size > 0
+          endpoint_hash = endpoint.params_to_hash
+          body = {} of String => String
+          is_json = false
+          if endpoint_hash["json"].size > 0
+            is_json = true
+            body = endpoint_hash["json"]
+          else
+            body = endpoint_hash["form"]
+          end
+
+          response = Crest::Request.execute(
+            method: get_symbol(endpoint.method),
+            url: endpoint.url,
+            tls: OpenSSL::SSL::Context::Client.insecure,
+            user_agent: "Noir/#{Noir::VERSION}",
+            params: endpoint_hash["query"],
+            form: body,
+            json: is_json,
+            handle_errors: false,
+            read_timeout: 5.second
+          )
+          endpoint.details.status_code = response.status_code
+          unless exclude_codes.includes?(response.status_code)
+            final << endpoint
+          end
+        else
+          response = Crest::Request.execute(
+            method: get_symbol(endpoint.method),
+            url: endpoint.url,
+            tls: OpenSSL::SSL::Context::Client.insecure,
+            user_agent: "Noir/#{Noir::VERSION}",
+            handle_errors: false,
+            read_timeout: 5.second
+          )
+          endpoint.details.status_code = response.status_code
+          unless exclude_codes.includes?(response.status_code)
+            final << endpoint
+          end
+        end
+      rescue e
+        @logger.error "Failed to get status code for #{endpoint.url} (#{e.message})."
+        final << endpoint
+      end
     end
 
     @endpoints = final

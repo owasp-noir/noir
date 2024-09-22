@@ -51,6 +51,12 @@ exclude_techs: ""
 # The format to use for the output
 format: "plain"
 
+# Whether to display HTTP status codes in the output
+status_codes: "false"
+
+# Whether to exclude HTTP status codes from the output
+exclude_codes: ""
+
 # Whether to include the path in the output
 include_path: "false"
 
