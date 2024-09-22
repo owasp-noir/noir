@@ -86,7 +86,7 @@ class NoirRunner
     add_path_parameters
 
     # Set status code
-    if any_to_bool(@options["status_codes"]) == true || any_to_bool(@options["exclude_codes"]) != ""
+    if any_to_bool(@options["status_codes"]) == true || @options["exclude_codes"].to_s != ""
       update_status_codes
     end
 
