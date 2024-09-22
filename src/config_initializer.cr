@@ -92,10 +92,9 @@ class ConfigInitializer
       "config_file"       => YAML::Any.new(""),
       "concurrency"       => YAML::Any.new("100"),
       "debug"             => YAML::Any.new(false),
+      "exclude_codes"     => YAML::Any.new(""),
       "exclude_techs"     => YAML::Any.new(""),
       "format"            => YAML::Any.new("plain"),
-      "status_codes"      => YAML::Any.new(false),
-      "exclude_codes"     => YAML::Any.new(""),
       "include_path"      => YAML::Any.new(false),
       "nolog"             => YAML::Any.new(false),
       "output"            => YAML::Any.new(""),
@@ -110,6 +109,7 @@ class ConfigInitializer
       "set_pvalue_form"   => YAML::Any.new([] of YAML::Any),
       "set_pvalue_json"   => YAML::Any.new([] of YAML::Any),
       "set_pvalue_path"   => YAML::Any.new([] of YAML::Any),
+      "status_codes"      => YAML::Any.new(false),
       "techs"             => YAML::Any.new(""),
       "url"               => YAML::Any.new(""),
       "use_filters"       => YAML::Any.new([] of YAML::Any),
@@ -147,6 +147,9 @@ class ConfigInitializer
 
     # Whether to enable debug mode
     debug: #{options["debug"]}
+
+    # The status codes to exclude
+    exclude_codes: "#{options["exclude_codes"]}"
 
     # Technologies to exclude
     exclude_techs: "#{options["exclude_techs"]}"
@@ -186,6 +189,9 @@ class ConfigInitializer
     set_pvalue_form:
     set_pvalue_json:
     set_pvalue_path:
+
+    # The status codes to use
+    status_codes: #{options["status_codes"]}
 
     # The technologies to use
     techs: "#{options["techs"]}"
