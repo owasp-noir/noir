@@ -3,10 +3,7 @@ name: CI
 on:
   pull_request_target:
     branches: [main, dev]
-    paths:
-    - '**/*.cr'
-    - '**/*.yml'
-
+    paths: ['**/*.cr', shard.yml, Dockerfile]
 jobs:
   build-crystal:
     runs-on: ubuntu-latest
