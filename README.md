@@ -26,6 +26,8 @@
   <a href="#contributing">Contributing</a>
 </p>
 
+OWASP Noir is an open-source project specializing in identifying attack surfaces for enhanced whitebox security testing and security pipeline. This includes the capability to discover API endpoints, web endpoints, and other potential entry points within source code for thorough security analysis.
+
 ## Key Features
 
 - Identify API endpoints and parameters from source code.
