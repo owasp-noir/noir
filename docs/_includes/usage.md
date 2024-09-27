@@ -19,7 +19,7 @@ FLAGS:
     --set-pvalue-json VALUE          Specifies the value of the identified parameter for JSON data
     --set-pvalue-path VALUE          Specifies the value of the identified parameter for path parameters
     --status-codes                   Display HTTP status codes for discovered endpoints
-    --exclude-codes                  Exclude specific HTTP status code
+    --exclude-codes 404,500          Exclude specific HTTP response codes (comma-separated)
     --include-path                   Include file path in the plain result
     --no-color                       Disable color output
     --no-log                         Displaying only the results
@@ -48,7 +48,7 @@ FLAGS:
   CONFIG:
     --config-file ./config.yaml      Specify the path to a configuration file in YAML format
     --concurrency 100                Set concurrency
-    --generate-completion zsh        Generate Zsh/Bash completion script
+    --generate-completion zsh        Generate Zsh/Bash/Fish completion script
 
   DEBUG:
     -d, --debug                      Show debug messages

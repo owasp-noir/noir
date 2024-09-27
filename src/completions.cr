@@ -106,3 +106,51 @@ _noir_completions() {
 complete -F _noir_completions noir
 SCRIPT
 end
+
+def generate_fish_completion_script
+  <<-SCRIPT
+function __fish_noir_needs_command
+    set -l cmd (commandline -opc)
+    if test (count $cmd) -eq 1
+        return 0
+    end
+    return 1
+end
+
+complete -c noir -n '__fish_noir_needs_command' -a '-b' -d 'Set base path'
+complete -c noir -n '__fish_noir_needs_command' -a '-u' -d 'Set base URL for endpoints'
+complete -c noir -n '__fish_noir_needs_command' -a '-f' -d 'Set output format'
+complete -c noir -n '__fish_noir_needs_command' -a '-o' -d 'Write result to file'
+complete -c noir -n '__fish_noir_needs_command' -a '--set-pvalue' -d 'Specifies the value of the identified parameter'
+complete -c noir -n '__fish_noir_needs_command' -a '--set-pvalue-header' -d 'Specifies the value of the identified parameter for headers'
+complete -c noir -n '__fish_noir_needs_command' -a '--set-pvalue-cookie' -d 'Specifies the value of the identified parameter for cookies'
+complete -c noir -n '__fish_noir_needs_command' -a '--set-pvalue-query' -d 'Specifies the value of the identified parameter for query parameters'
+complete -c noir -n '__fish_noir_needs_command' -a '--set-pvalue-form' -d 'Specifies the value of the identified parameter for form data'
+complete -c noir -n '__fish_noir_needs_command' -a '--set-pvalue-json' -d 'Specifies the value of the identified parameter for JSON data'
+complete -c noir -n '__fish_noir_needs_command' -a '--set-pvalue-path' -d 'Specifies the value of the identified parameter for path parameters'
+complete -c noir -n '__fish_noir_needs_command' -a '--status-codes' -d 'Display HTTP status codes for discovered endpoints'
+complete -c noir -n '__fish_noir_needs_command' -a '--exclude-codes' -d 'Exclude specific HTTP response codes (comma-separated)'
+complete -c noir -n '__fish_noir_needs_command' -a '--include-path' -d 'Include file path in the plain result'
+complete -c noir -n '__fish_noir_needs_command' -a '--no-color' -d 'Disable color output'
+complete -c noir -n '__fish_noir_needs_command' -a '--no-log' -d 'Displaying only the results'
+complete -c noir -n '__fish_noir_needs_command' -a '-T' -d 'Activates all taggers for full analysis coverage'
+complete -c noir -n '__fish_noir_needs_command' -a '--use-taggers' -d 'Activates specific taggers'
+complete -c noir -n '__fish_noir_needs_command' -a '--list-taggers' -d 'Lists all available taggers'
+complete -c noir -n '__fish_noir_needs_command' -a '--send-req' -d 'Send results to a web request'
+complete -c noir -n '__fish_noir_needs_command' -a '--send-proxy' -d 'Send results to a web request via an HTTP proxy'
+complete -c noir -n '__fish_noir_needs_command' -a '--send-es' -d 'Send results to Elasticsearch'
+complete -c noir -n '__fish_noir_needs_command' -a '--with-headers' -d 'Add custom headers to be included in the delivery'
+complete -c noir -n '__fish_noir_needs_command' -a '--use-matchers' -d 'Send URLs that match specific conditions to the Deliver'
+complete -c noir -n '__fish_noir_needs_command' -a '--use-filters' -d 'Exclude URLs that match specified conditions and send the rest to Deliver'
+complete -c noir -n '__fish_noir_needs_command' -a '--diff-path' -d 'Specify the path to the old version of the source code for comparison'
+complete -c noir -n '__fish_noir_needs_command' -a '-t' -d 'Specify the technologies to use'
+complete -c noir -n '__fish_noir_needs_command' -a '--exclude-techs' -d 'Specify the technologies to be excluded'
+complete -c noir -n '__fish_noir_needs_command' -a '--list-techs' -d 'Show all technologies'
+complete -c noir -n '__fish_noir_needs_command' -a '--config-file' -d 'Specify the path to a configuration file in YAML format'
+complete -c noir -n '__fish_noir_needs_command' -a '--concurrency' -d 'Set concurrency'
+complete -c noir -n '__fish_noir_needs_command' -a '-d' -d 'Show debug messages'
+complete -c noir -n '__fish_noir_needs_command' -a '-v' -d 'Show version'
+complete -c noir -n '__fish_noir_needs_command' -a '--build-info' -d 'Show version and Build info'
+complete -c noir -n '__fish_noir_needs_command' -a '-h' -d 'Show help'
+SCRIPT
+end
