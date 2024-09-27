@@ -122,7 +122,7 @@ def run_options_parser
     parser.separator "\n  CONFIG:".colorize(:blue)
     parser.on "--config-file ./config.yaml", "Specify the path to a configuration file in YAML format" { |var| noir_options["config_file"] = YAML::Any.new(var) }
     parser.on "--concurrency 100", "Set concurrency" { |var| noir_options["concurrency"] = YAML::Any.new(var) }
-    parser.on "--generate-completion zsh", "Generate Zsh/Bash completion script" do |var|
+    parser.on "--generate-completion zsh", "Generate Zsh/Bash/Fish completion script" do |var|
       case var
       when "zsh"
         puts generate_zsh_completion_script
@@ -130,10 +130,14 @@ def run_options_parser
       when "bash"
         puts generate_bash_completion_script
         STDERR.puts "\n> Instructions: Copy the content above and save it in the .bashrc file as noir.".colorize(:yellow)
+      when "fish"
+        puts generate_fish_completion_script
+        STDERR.puts "\n> Instructions: Copy the content above and save it in the fish-completion directory as noir.fish".colorize(:yellow)
       else
         puts "ERROR: Invalid completion type.".colorize(:yellow)
         puts "e.g., noir --generate-completion zsh"
         puts "e.g., noir --generate-completion bash"
+        puts "e.g., noir --generate-completion fish"
       end
 
       exit
