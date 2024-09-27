@@ -19,9 +19,9 @@
 </p>
 
 <p align="center">
-  <a href="#installation">Installation</a> •
   <a href="https://owasp-noir.github.io/noir/">Documentation</a> •
-  <a href="#available-support-scope">Available Support Scope</a> •
+  <a href="https://owasp-noir.github.io/noir/get_started/installation/">Installation</a> •
+  <a href="https://owasp-noir.github.io/noir/supported">Available Support Scope</a> •
   <a href="#usage">Usage</a> •
   <a href="#contributing">Contributing</a>
 </p>
@@ -34,108 +34,6 @@
 - Friendly pipeline & DevOps integration, offering multiple output formats (JSON, YAML, OAS spec) and compatibility with tools like curl and httpie.
 - Friendly Offensive Security Tools integration, allowing usage with tools such as ZAP and Caido, Burpsuite.
 - Generate elegant and clear output results.
-
-## Available Support Scope
-
-<details>
-  <summary>Endpoint's Entities</summary>
-
-- Path
-- Method
-- Param
-- Header
-- Cookie
-- Protocol (e.g ws)
-- Details (e.g The origin of the endpoint)
-
-</details>
-
-<details>
-  <summary>Languages and Frameworks</summary>
-
-| Language | Framework   | URL | Method | Param | Header | Cookie | WS |
-|----------|-------------|-----|--------|-------|--------|--------|----|
-| Crystal  | Kemal       | ✅   | ✅    | ✅    | ✅     | ✅     | ✅ |
-| Crystal  | Lucky       | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
-| Go       | Beego       | ✅   | ✅    | X     | X      | X      | X  |
-| Go       | Echo        | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
-| Go       | Gin         | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
-| Go       | Fiber       | ✅   | ✅    | ✅    | ✅     | ✅     | ✅ |
-| Python   | Django      | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
-| Python   | Flask       | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
-| Python   | FastAPI     | ✅   | ✅    | ✅    | ✅     | ✅     | ✅ |
-| Ruby     | Rails       | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
-| Ruby     | Sinatra     | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
-| Ruby     | Hanami      | ✅   | ✅    | X     | X      | X      | X  |
-| Php      |             | ✅   | ✅    | ✅    | ✅     | X      | X  |
-| Java     | Jsp         | ✅   | ✅    | ✅    | X      | X      | X  |
-| Java     | Armeria     | ✅   | ✅    | X     | X      | X      | X  |
-| Java     | Spring      | ✅   | ✅    | ✅    | ✅     | X      | X  |
-| Kotlin   | Spring      | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
-| JS       | Express     | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
-| JS       | Restify     | ✅   | ✅    | ✅    | ✅     | ✅     | X  |
-| Rust     | Axum        | ✅   | ✅    | X     | X      | X      | X  |
-| Rust     | Rocket      | ✅   | ✅    | X     | X      | X      | X  |
-| Elixir   | Phoenix     | ✅   | ✅    | X     | X      | X      | ✅ |
-| C#       | ASP.NET MVC | ✅   | X     | X     | X      | X      | X  |
-| JS       | Next        | X    | X     | X     | X      | X      | X  |
-
-</details>
-
-<details>
-  <summary>Specification</summary>
-
-| Specification          | Format  | URL | Method | Param | Header | WS |
-|------------------------|---------|-----|--------|-------|--------|----|
-| OAS 2.0 (Swagger 2.0)  | JSON    | ✅  | ✅     | ✅    | ✅     | X  |
-| OAS 2.0 (Swagger 2.0)  | YAML    | ✅  | ✅     | ✅    | ✅     | X  |
-| OAS 3.0                | JSON    | ✅  | ✅     | ✅    | ✅     | X  |
-| OAS 3.0                | YAML    | ✅  | ✅     | ✅    | ✅     | X  |
-| RAML                   | YAML    | ✅  | ✅     | ✅    | ✅     | X  |
-| HAR                    | JSON    | ✅  | ✅     | ✅    | ✅     | X  |
-
-</details>
-
-## Installation
-### Homebrew
-
-```bash
-brew install noir
-
-# https://formulae.brew.sh/formula/noir
-```
-
-### Snapcraft
-
-```bash
-sudo snap install noir
-
-# https://snapcraft.io/noir
-```
-
-### From Sources
-```bash
-# Install Crystal-lang
-# https://crystal-lang.org/install/
-
-# Clone this repo
-git clone https://github.com/owasp-noir/noir
-cd noir
-
-# Install Dependencies
-shards install
-
-# Build
-shards build --release --no-debug
-
-# Copy binary
-cp ./bin/noir /usr/bin/
-```
-
-### Docker (GHCR)
-```bash
-docker pull ghcr.io/owasp-noir/noir:main
-```
 
 ## Usage
 
@@ -156,7 +54,8 @@ noir -b . -u https://testapp.internal.domains -f json -T
 ```
 
 ```json
-{
+[
+  {
     "url": "https://testapp.internal.domains/query",
     "method": "POST",
     "params": [
@@ -182,7 +81,7 @@ noir -b . -u https://testapp.internal.domains -f json -T
     "details": {
       "code_paths": [
         {
-          "path": "spec/functional_test/fixtures/crystal_kemal/src/testapp.cr",
+          "path": "testapp/src/testapp.cr",
           "line": 8
         }
       ]
@@ -190,6 +89,8 @@ noir -b . -u https://testapp.internal.domains -f json -T
     "protocol": "http",
     "tags": []
   }
+  ...
+]
 ```
 
 For more details, please visit our [documentation](https://owasp-noir.github.io/noir/) page.

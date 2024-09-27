@@ -20,7 +20,7 @@ OWASP Noir is an open-source project, specializing in identifying attack surface
 
 Noir is an open-source project dedicated to identifying attack surfaces, enhancing whitebox security testing, and optimizing security pipelines. It excels at discovering API endpoints, web endpoints, and other potential entry points within source code for comprehensive security analysis.
 
-![](../images/noir-usage.jpg)
+![](images/noir-usage.jpg)
 
 This tool was developed using [Crystal](https://crystal-lang.org). Initially started as hahwul's personal project[^1] in August 2023, it became an OWASP project[^2] in June 2024, co-led by [hahwul](https://github.com/hahwul) and [ksg](https://github.com/ksg97031).
 
