@@ -429,6 +429,8 @@ class NoirRunner
       builder.print @endpoints
     else
       builder = OutputBuilderCommon.new @options
+
+      @logger.heading "Endpoint Results:"
       builder.print @endpoints
 
       print_passive_results
@@ -438,7 +440,7 @@ class NoirRunner
   def print_passive_results
     if @passive_results.size > 0
       @logger.puts ""
-      @logger.info "Passive Results:"
+      @logger.heading "Passive Results:"
       builder = OutputBuilderPassiveScan.new @options
       builder.print @passive_results, @logger, @is_color
     end
