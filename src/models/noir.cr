@@ -1,6 +1,7 @@
 require "../detector/detector.cr"
 require "../analyzer/analyzer.cr"
 require "../tagger/tagger.cr"
+require "../passive_scan/rules.cr"
 require "../deliver/*"
 require "../output_builder/*"
 require "./endpoint.cr"
@@ -22,6 +23,7 @@ class NoirRunner
   @is_log : Bool
   @concurrency : Int32
   @config_file : String
+  @noir_home : String
 
   macro define_getter_methods(names)
     {% for name, index in names %}
@@ -36,6 +38,7 @@ class NoirRunner
   def initialize(options)
     @options = options
     @config_file = @options["config_file"].to_s
+    @noir_home = get_home
 
     if @config_file != ""
       config = YAML.parse(File.read(@config_file)).as_h
@@ -61,6 +64,19 @@ class NoirRunner
       techs_tmp.each do |tech|
         @techs << NoirTechs.similar_to_tech(tech)
         @logger.debug "Added #{tech} to techs."
+      end
+    end
+
+    if any_to_bool(@options["passive_scan"])
+      @logger.info "Passive scanner enabled."
+      if @options["passive_scan_path"] != ""
+        @logger.sub "├── Using custom passive rules."
+        @options["passive_scan_path"].as_a.each do | rule_path |
+          NoirPassiveScan.load_rules rule_path.to_s, @logger
+        end
+        NoirPassiveScan.load_rules "#{@noir_home}/passive_rules/", @logger
+      else
+        @logger.sub "├── Using default passive rules."
       end
     end
   end
