@@ -35,6 +35,7 @@ OWASP Noir is an open-source project specializing in identifying attack surfaces
 - Provide analysts with technical information and security issues identified during source code analysis.
 - Friendly pipeline & DevOps integration, offering multiple output formats (JSON, YAML, OAS spec) and compatibility with tools like curl and httpie.
 - Friendly Offensive Security Tools integration, allowing usage with tools such as ZAP and Caido, Burpsuite.
+- Identify security issues within the source code through rule-based passive scanning.
 - Generate elegant and clear output results.
 
 ## Usage
