@@ -221,7 +221,7 @@ class ConfigInitializer
     # The passive rules to use
     # e.g /path/to/rules
     passive: false
-    passive_path: []
+    passive_path: ["#{@config_dir}/passive_rules"]
 
     CONTENT
 
