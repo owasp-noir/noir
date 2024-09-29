@@ -3,6 +3,8 @@ require "yaml"
 
 struct PassiveScan
   struct Info
+    include JSON::Serializable
+    include YAML::Serializable
     property name : String
     property author : Array(YAML::Any)
     property severity : String
@@ -52,13 +54,13 @@ struct PassiveScan
 end
 
 struct PassiveScanResult
-  property id, info, matchers, matchers_condition, category, techs, file_path, line_number, extract
+  include JSON::Serializable
+  include YAML::Serializable
+  property id, info, category, techs, file_path, line_number, extract
 
   def initialize(passive_scan : PassiveScan, file_path : String, line_number : Int32, extract : String)
     @id = passive_scan.id
     @info = passive_scan.info
-    @matchers = passive_scan.matchers
-    @matchers_condition = passive_scan.matchers_condition
     @category = passive_scan.category
     @techs = passive_scan.techs
     @file_path = file_path

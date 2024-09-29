@@ -391,9 +391,9 @@ class NoirRunner
   def report
     case options["format"]
     when "yaml"
-      puts @endpoints.to_yaml
+      puts({"endpoints" => @endpoints, "passive_results" => @passive_results}.to_yaml)
     when "json"
-      puts @endpoints.to_json
+      puts({"endpoints" => @endpoints, "passive_results" => @passive_results}.to_json)
     when "jsonl"
       builder = OutputBuilderJsonl.new @options
       builder.print @endpoints
