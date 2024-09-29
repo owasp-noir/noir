@@ -437,9 +437,10 @@ class NoirRunner
 
   def print_passive_results
     if @passive_results.size > 0
-      @logger.puts "\nPassive Results:"
+      @logger.puts ""
+      @logger.info "Passive Results:"
       builder = OutputBuilderPassiveScan.new @options
-      builder.print @passive_results
+      builder.print @passive_results, @logger, @is_color
     end
   end
 end

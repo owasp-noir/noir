@@ -5,16 +5,11 @@ require "json"
 require "yaml"
 
 class OutputBuilderPassiveScan < OutputBuilder
-  def print(passive_results : Array(PassiveScanResult))
+  def print(passive_results : Array(PassiveScanResult), logger : NoirLogger, is_color : Bool)
     passive_results.each do |result|
-      puts "ID: #{result.id}"
-      puts "Info: #{result.info}"
-      puts "Category: #{result.category}"
-      puts "Techs: #{result.techs.join(", ")}"
-      puts "File Path: #{result.file_path}"
-      puts "Line Number: #{result.line_number}"
-      puts "Extract: #{result.extract}"
-      puts "-" * 40
+      logger.puts "[#{result.id.colorize(:light_blue).toggle(is_color).to_s}][#{result.category.colorize(:light_yellow).toggle(is_color).to_s}] #{result.info.name.colorize(:light_green).toggle(is_color).to_s}"
+      logger.sub "├── extract: #{result.extract}"
+      logger.sub "└── file: #{result.file_path}:#{result.line_number}"
     end
   end
 end
