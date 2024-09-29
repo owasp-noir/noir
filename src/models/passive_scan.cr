@@ -8,7 +8,7 @@ struct PassiveScan
     @id = yaml["id"].to_s
     @info = yaml["info"]
     @matchers = yaml["matchers"]
-    @matchers_condition = yaml["matchers_condition"].to_s
+    @matchers_condition = yaml["matchers-condition"].to_s
     @category = yaml["category"].to_s
     @techs = yaml["techs"]
   end

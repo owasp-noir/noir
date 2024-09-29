@@ -17,7 +17,6 @@ module NoirPassiveScan
         else
           logger.debug_sub "Invalid rule in #{file}"
         end
-        rules << passive_rule
       rescue e : Exception
         # Log or handle the error if deserialization fails
         logger.debug_sub "Failed to load rule from #{file}: #{e.message}"
