@@ -69,14 +69,14 @@ class NoirRunner
 
     if any_to_bool(@options["passive_scan"])
       @logger.info "Passive scanner enabled."
-      if @options["passive_scan_path"] != ""
+      if @options["passive_scan_path"].as_a.size > 0
         @logger.sub "├── Using custom passive rules."
         @options["passive_scan_path"].as_a.each do |rule_path|
           NoirPassiveScan.load_rules rule_path.to_s, @logger
         end
-        NoirPassiveScan.load_rules "#{@noir_home}/passive_rules/", @logger
       else
         @logger.sub "├── Using default passive rules."
+        NoirPassiveScan.load_rules "#{@noir_home}/passive_rules/", @logger
       end
     end
   end
