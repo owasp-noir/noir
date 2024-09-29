@@ -24,6 +24,8 @@ class NoirRunner
   @concurrency : Int32
   @config_file : String
   @noir_home : String
+  @passive_scans : Array(PassiveScan)
+  @passive_results : Array(PassiveScanResult)
 
   macro define_getter_methods(names)
     {% for name, index in names %}
@@ -39,6 +41,8 @@ class NoirRunner
     @options = options
     @config_file = @options["config_file"].to_s
     @noir_home = get_home
+    @passive_scans = [] of PassiveScan
+    @passive_results = [] of PassiveScanResult
 
     if @config_file != ""
       config = YAML.parse(File.read(@config_file)).as_h
@@ -72,11 +76,11 @@ class NoirRunner
       if @options["passive_scan_path"].as_a.size > 0
         @logger.sub "├── Using custom passive rules."
         @options["passive_scan_path"].as_a.each do |rule_path|
-          NoirPassiveScan.load_rules rule_path.to_s, @logger
+          @passive_scans = NoirPassiveScan.load_rules rule_path.to_s, @logger
         end
       else
         @logger.sub "├── Using default passive rules."
-        NoirPassiveScan.load_rules "#{@noir_home}/passive_rules/", @logger
+        @passive_scans = NoirPassiveScan.load_rules "#{@noir_home}/passive_rules/", @logger
       end
     end
   end
@@ -86,12 +90,17 @@ class NoirRunner
   end
 
   def detect
-    detected_techs = detect_techs options["base"].to_s, options, @logger
-    @techs += detected_techs
+    detected_techs = detect_techs options["base"].to_s, options, @passive_scans, @logger
+    @techs = detected_techs[0]
+    @passive_results = detected_techs[1]
+
     if @is_debug
       @logger.debug("CodeLocator Table:")
       locator = CodeLocator.instance
       locator.show_table
+
+      @logger.debug("Detected Techs: #{@techs}")
+      @logger.debug("Passive Results: #{@passive_results}")
     end
   end
 
