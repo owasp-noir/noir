@@ -117,6 +117,8 @@ class ConfigInitializer
       "all_taggers"       => YAML::Any.new(false),
       "use_taggers"       => YAML::Any.new(""),
       "diff"              => YAML::Any.new(""),
+      "passive"           => YAML::Any.new(false),
+      "passive_path"      => YAML::Any.new([] of YAML::Any),
     }
 
     noir_options
@@ -215,6 +217,11 @@ class ConfigInitializer
 
     # The diff file to use
     diff: "#{options["diff"]}"
+
+    # The passive rules to use
+    # e.g /path/to/rules
+    passive: false
+    passive_path: []
 
     CONTENT
 
