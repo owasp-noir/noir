@@ -110,8 +110,8 @@ class ConfigInitializer
       "all_taggers"       => YAML::Any.new(false),
       "use_taggers"       => YAML::Any.new(""),
       "diff"              => YAML::Any.new(""),
-      "passive_scan"           => YAML::Any.new(false),
-      "passive_scan_path"      => YAML::Any.new([] of YAML::Any),
+      "passive_scan"      => YAML::Any.new(false),
+      "passive_scan_path" => YAML::Any.new([] of YAML::Any),
     }
 
     noir_options
