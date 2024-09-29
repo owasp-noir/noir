@@ -40,10 +40,12 @@ flowchart LR
 
     subgraph Detectors
         direction LR
-        Detector1 & Detector2 & Detector3
+        Detector1 & Detector2 & Detector3 --> |Condition| PassiveScan
     end
 
-    Detectors --> Analyzers
+    PassiveScan --> |Results| OutputBuilder
+
+    Detectors --> |Techs| Analyzers
 
     subgraph Analyzers
         direction LR
@@ -54,11 +56,10 @@ flowchart LR
 
     Analyzers --> |Condition| Deliver
     Analyzers --> |Condition| Tagger
-    Deliver --> OutputBuilder
-    Tagger --> OutputBuilder
-    Analyzers --> OutputBuilder
-    OutputBuilder --> Endpoints
-
+    Deliver --> 3rd_party
+    Tagger --> |Tags| OutputBuilder
+    Analyzers --> |Endpoints| OutputBuilder
+    OutputBuilder --> Report
 ```
 
 ## About the project
