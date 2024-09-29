@@ -36,7 +36,7 @@ Noir is composed of several key components: detector, analyzer, deliver, minilex
 
 ```mermaid
 flowchart LR
-    SourceCode --> Detectors
+    SourceCode:::highlight --> Detectors
 
     subgraph Detectors
         direction LR
@@ -59,7 +59,9 @@ flowchart LR
     Deliver --> 3rdParty
     Tagger --> |Tags| OutputBuilder
     Analyzers --> |Endpoints| OutputBuilder
-    OutputBuilder --> Report
+    OutputBuilder --> Report:::highlight
+
+    classDef highlight fill:#f9f,stroke:#333,stroke-width:4px;
 ```
 
 ## About the project
