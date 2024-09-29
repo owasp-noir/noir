@@ -40,9 +40,23 @@ module NoirPassiveScan
   private def self.match_content?(content : String, matcher : PassiveScan::Matcher) : (Array(YAML::Any) | Bool)
     case matcher.type
     when "word"
-      matcher.patterns && matcher.patterns.any? { |pattern| content.includes?(pattern.to_s) }
+      case matcher.condition
+      when "and"
+        matcher.patterns && matcher.patterns.all? { |pattern| content.includes?(pattern.to_s) }
+      when "or"
+        matcher.patterns && matcher.patterns.any? { |pattern| content.includes?(pattern.to_s) }
+      else
+        false
+      end
     when "regex"
-      matcher.patterns && matcher.patterns.any? { |pattern| content.match(Regex.new(pattern.to_s)) }
+      case matcher.condition
+      when "and"
+        matcher.patterns && matcher.patterns.all? { |pattern| content.match(Regex.new(pattern.to_s)) }
+      when "or"
+        matcher.patterns && matcher.patterns.any? { |pattern| content.match(Regex.new(pattern.to_s)) }
+      else
+        false
+      end
     else
       false
     end
