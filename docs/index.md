@@ -56,7 +56,7 @@ flowchart LR
 
     Analyzers --> |Condition| Deliver
     Analyzers --> |Condition| Tagger
-    Deliver --> 3rd_party
+    Deliver --> 3rdParty
     Tagger --> |Tags| OutputBuilder
     Analyzers --> |Endpoints| OutputBuilder
     OutputBuilder --> Report
