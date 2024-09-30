@@ -74,8 +74,8 @@ def run_options_parser
 
     parser.separator "\n  PASSIVE SCAN:".colorize(:blue)
 
-    parser.on "-P", "--passive-scan", "Scans for security issues with rules from the specified path" { |_| noir_options["passive_scan"] = YAML::Any.new(true) }
-    parser.on "--passive-scan-path PATH", "Scans for security issues with rules from the specified path" do |var|
+    parser.on "-P", "--passive-scan", "Perform a passive scan for security issues using rules from the specified path" { |_| noir_options["passive_scan"] = YAML::Any.new(true) }
+    parser.on "--passive-scan-path PATH", "Specify the path for the rules used in the passive security scan" do |var|
       append_to_yaml_array(noir_options, passive_scan_path, var)
     end
 
