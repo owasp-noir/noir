@@ -10,6 +10,7 @@ class OutputBuilderPassiveScan < OutputBuilder
       logger.puts "[#{severity_color(result.info.severity)}][#{result.id.colorize(:light_blue).toggle(is_color)}][#{result.category.colorize(:light_yellow).toggle(is_color)}] #{result.info.name.colorize(:light_green).toggle(is_color)}"
       logger.sub "├── extract: #{result.extract}"
       logger.sub "└── file: #{result.file_path}:#{result.line_number}"
+      logger.puts ""
     end
   end
 
