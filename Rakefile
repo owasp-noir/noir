@@ -46,7 +46,7 @@ namespace :lint do
 
   desc "Lint the code using ameba"
   task :ameba do
-    sh 'ameba'
+    sh 'ameba --fix'
   end
 
   desc "Run all linting tasks"
