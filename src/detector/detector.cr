@@ -1,5 +1,7 @@
 require "./detectors/**"
 require "../models/detector"
+require "../models/passive_scan"
+require "../passive_scan/detect.cr"
 require "yaml"
 
 macro defind_detectors(detectors)
@@ -10,9 +12,11 @@ macro defind_detectors(detectors)
   {% end %}
 end
 
-def detect_techs(base_path : String, options : Hash(String, YAML::Any), logger : NoirLogger)
+def detect_techs(base_path : String, options : Hash(String, YAML::Any), passive_scans : Array(PassiveScan), logger : NoirLogger)
   techs = [] of String
+  passive_result = [] of PassiveScanResult
   detector_list = [] of Detector
+  mutex = Mutex.new
 
   # Define detectors
   defind_detectors([
@@ -66,6 +70,11 @@ def detect_techs(base_path : String, options : Hash(String, YAML::Any), logger :
               techs << detector.name
             end
           end
+
+          results = NoirPassiveScan.detect(file, content, passive_scans, logger)
+          mutex.synchronize do
+            passive_result.concat(results)
+          end
         rescue e : File::NotFoundError
           logger.debug "File not found: #{file}"
         end
@@ -74,5 +83,5 @@ def detect_techs(base_path : String, options : Hash(String, YAML::Any), logger :
   end
 
   Fiber.yield
-  techs.uniq
+  {techs.uniq, passive_result}
 end

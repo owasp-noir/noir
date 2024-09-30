@@ -72,6 +72,13 @@ def run_options_parser
       noir_options["nolog"] = YAML::Any.new(true)
     end
 
+    parser.separator "\n  PASSIVE SCAN:".colorize(:blue)
+
+    parser.on "-P", "--passive-scan", "Scans for security issues with rules from the specified path" { |_| noir_options["passive_scan"] = YAML::Any.new(true) }
+    parser.on "--passive-scan-path PATH", "Scans for security issues with rules from the specified path" do |var|
+      append_to_yaml_array(noir_options, passive_scan_path, var)
+    end
+
     parser.separator "\n  TAGGER:".colorize(:blue)
     parser.on "-T", "--use-all-taggers", "Activates all taggers for full analysis coverage" { |_| noir_options["all_taggers"] = YAML::Any.new(true) }
     parser.on "--use-taggers VALUES", "Activates specific taggers (e.g., --use-taggers hunt,oauth)" { |var| noir_options["use_taggers"] = YAML::Any.new(var) }

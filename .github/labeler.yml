@@ -22,6 +22,9 @@
 🏷️ tagger:
   - changed-files:
       - any-glob-to-any-file: [src/tagger/**, src/models/tag.cr]
+🚔 passive-scan:
+  - changed-files:
+      - any-glob-to-any-file: [src/passive_scan/**, src/models/passive_scan.cr]
 💊 spec:
   - changed-files:
       - any-glob-to-any-file: spec/**

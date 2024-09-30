@@ -29,21 +29,23 @@ This tool was developed using [Crystal](https://crystal-lang.org). Initially sta
 
 ## How it works?
 
-Noir is composed of several key components: detector, analyzer, deliver, minilexer/miniparser[^3], output-builder, and tagger[^4]. These components interact and work together to effectively analyze source code. Through this process, they help identify endpoints, parameters, headers, and more within the source code.
+Noir is composed of several key components: detector, analyzer, deliver, minilexer/miniparser[^3], output-builder, and passive-scan & tagger[^4]. These components interact and work together to effectively analyze source code. Through this process, they help identify endpoints, parameters, headers, and more within the source code.
 
 [^3]: The minilexer and miniparser is a parser and tokenizer used for code analysis to identify various elements within the source code. 
 [^4]: The tagger assigns relevant tags to the identified issues for easier categorization and management.
 
 ```mermaid
 flowchart LR
-    SourceCode --> Detectors
+    SourceCode:::highlight --> Detectors
 
     subgraph Detectors
         direction LR
-        Detector1 & Detector2 & Detector3
+        Detector1 & Detector2 & Detector3 --> |Condition| PassiveScan
     end
 
-    Detectors --> Analyzers
+    PassiveScan --> |Results| OutputBuilder
+
+    Detectors --> |Techs| Analyzers
 
     subgraph Analyzers
         direction LR
@@ -54,11 +56,12 @@ flowchart LR
 
     Analyzers --> |Condition| Deliver
     Analyzers --> |Condition| Tagger
-    Deliver --> OutputBuilder
-    Tagger --> OutputBuilder
-    Analyzers --> OutputBuilder
-    OutputBuilder --> Endpoints
+    Deliver --> 3rdParty
+    Tagger --> |Tags| OutputBuilder
+    Analyzers --> |Endpoints| OutputBuilder
+    OutputBuilder --> Report:::highlight
 
+    classDef highlight fill:#f9f,stroke:#333,stroke-width:4px;
 ```
 
 ## About the project

@@ -1,5 +1,6 @@
 require "file"
 require "yaml"
+require "./utils/home.cr"
 
 class ConfigInitializer
   @config_dir : String
@@ -8,16 +9,7 @@ class ConfigInitializer
 
   def initialize
     # Define the config directory and file based on ENV variables
-    if ENV.has_key? "NOIR_HOME"
-      @config_dir = ENV["NOIR_HOME"]
-    else
-      # Define the config directory and file based on the OS
-      {% if flag?(:windows) %}
-        @config_dir = "#{ENV["APPDATA"]}\\noir"
-      {% else %}
-        @config_dir = "#{ENV["HOME"]}/.config/noir"
-      {% end %}
-    end
+    @config_dir = get_home
 
     @config_file = File.join(@config_dir, "config.yaml")
 
@@ -29,6 +21,7 @@ class ConfigInitializer
   def setup
     # Create the directory if it doesn't exist
     Dir.mkdir(@config_dir) unless Dir.exists?(@config_dir)
+    Dir.mkdir("#{@config_dir}/passive_rules") unless Dir.exists?("#{@config_dir}/passive_rules")
 
     # Create the config file if it doesn't exist
     File.write(@config_file, generate_config_file) unless File.exists?(@config_file)
@@ -117,6 +110,8 @@ class ConfigInitializer
       "all_taggers"       => YAML::Any.new(false),
       "use_taggers"       => YAML::Any.new(""),
       "diff"              => YAML::Any.new(""),
+      "passive_scan"      => YAML::Any.new(false),
+      "passive_scan_path" => YAML::Any.new([] of YAML::Any),
     }
 
     noir_options
@@ -215,6 +210,11 @@ class ConfigInitializer
 
     # The diff file to use
     diff: "#{options["diff"]}"
+
+    # The passive rules to use
+    # e.g /path/to/rules
+    passive_scan: false
+    passive_scan_path: []
 
     CONTENT
 

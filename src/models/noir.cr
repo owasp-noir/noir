@@ -1,6 +1,7 @@
 require "../detector/detector.cr"
 require "../analyzer/analyzer.cr"
 require "../tagger/tagger.cr"
+require "../passive_scan/rules.cr"
 require "../deliver/*"
 require "../output_builder/*"
 require "./endpoint.cr"
@@ -22,6 +23,9 @@ class NoirRunner
   @is_log : Bool
   @concurrency : Int32
   @config_file : String
+  @noir_home : String
+  @passive_scans : Array(PassiveScan)
+  @passive_results : Array(PassiveScanResult)
 
   macro define_getter_methods(names)
     {% for name, index in names %}
@@ -36,6 +40,9 @@ class NoirRunner
   def initialize(options)
     @options = options
     @config_file = @options["config_file"].to_s
+    @noir_home = get_home
+    @passive_scans = [] of PassiveScan
+    @passive_results = [] of PassiveScanResult
 
     if @config_file != ""
       config = YAML.parse(File.read(@config_file)).as_h
@@ -63,6 +70,19 @@ class NoirRunner
         @logger.debug "Added #{tech} to techs."
       end
     end
+
+    if any_to_bool(@options["passive_scan"])
+      @logger.info "Passive scanner enabled."
+      if @options["passive_scan_path"].as_a.size > 0
+        @logger.sub "├── Using custom passive rules."
+        @options["passive_scan_path"].as_a.each do |rule_path|
+          @passive_scans = NoirPassiveScan.load_rules rule_path.to_s, @logger
+        end
+      else
+        @logger.sub "├── Using default passive rules."
+        @passive_scans = NoirPassiveScan.load_rules "#{@noir_home}/passive_rules/", @logger
+      end
+    end
   end
 
   def run
@@ -70,12 +90,17 @@ class NoirRunner
   end
 
   def detect
-    detected_techs = detect_techs options["base"].to_s, options, @logger
-    @techs += detected_techs
+    detected_techs = detect_techs options["base"].to_s, options, @passive_scans, @logger
+    @techs = detected_techs[0]
+    @passive_results = detected_techs[1]
+
     if @is_debug
       @logger.debug("CodeLocator Table:")
       locator = CodeLocator.instance
       locator.show_table
+
+      @logger.debug("Detected Techs: #{@techs}")
+      @logger.debug("Passive Results: #{@passive_results}")
     end
   end
 
@@ -366,9 +391,9 @@ class NoirRunner
   def report
     case options["format"]
     when "yaml"
-      puts @endpoints.to_yaml
+      puts({"endpoints" => @endpoints, "passive_results" => @passive_results}.to_yaml)
     when "json"
-      puts @endpoints.to_json
+      puts({"endpoints" => @endpoints, "passive_results" => @passive_results}.to_json)
     when "jsonl"
       builder = OutputBuilderJsonl.new @options
       builder.print @endpoints
@@ -404,7 +429,20 @@ class NoirRunner
       builder.print @endpoints
     else
       builder = OutputBuilderCommon.new @options
+
+      @logger.heading "Endpoint Results:"
       builder.print @endpoints
+
+      print_passive_results
+    end
+  end
+
+  def print_passive_results
+    if @passive_results.size > 0
+      @logger.puts ""
+      @logger.heading "Passive Results:"
+      builder = OutputBuilderPassiveScan.new @options
+      builder.print @passive_results, @logger, @is_color
     end
   end
 end
