@@ -93,6 +93,10 @@ if app.techs.size == 0
   app.logger.sub "➔ Please check tech lists using the --list-techs flag."
   if app.options["url"] != ""
     app.logger.info "Start file-based analysis as the -u flag has been used."
+  elsif app.passive_results.size > 0
+    app.logger.info "Noir found #{app.passive_results.size} passive results."
+    app.report
+    exit(0)
   else
     exit(0)
   end
