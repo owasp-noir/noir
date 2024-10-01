@@ -11,6 +11,7 @@ noir -b . -f yaml --no-log
 ```
 
 ```yaml
+endpoints:
 - url: /
   method: GET
   params:

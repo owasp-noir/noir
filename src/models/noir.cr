@@ -35,7 +35,7 @@ class NoirRunner
     {% end %}
   end
 
-  define_getter_methods [options, techs, endpoints, logger]
+  define_getter_methods [options, techs, endpoints, logger, passive_results]
 
   def initialize(options)
     @options = options
