@@ -44,3 +44,4 @@ Explanation of Output:
 * File: Indicates the location of the potential security issue within the codebase, pointing to the exact file and line number where the issue was detected.
 
 This output helps developers immediately identify where and what kind of security issues exist in their code, focusing on passive analysis without actively exploiting the vulnerabilities.
+'
