@@ -106,7 +106,6 @@ if you want contribute this project, please see [CONTRIBUTING.md](./CONTRIBUTING
 
 [![](./CONTRIBUTORS.svg)](https://github.com/owasp-noir/noir/graphs/contributors)
 
-## Star History
 
 <a href="https://star-history.com/#owasp-noir/noir&Date">
  <picture>
