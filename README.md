@@ -103,4 +103,4 @@ For more details, please visit our [documentation](https://owasp-noir.github.io/
 Noir is open-source project and made it with ❤️ 
 if you want contribute this project, please see [CONTRIBUTING.md](./CONTRIBUTING.md) and Pull-Request with cool your contents.
 
-![](./CONTRIBUTORS.svg)
+[![](./CONTRIBUTORS.svg)](https://github.com/owasp-noir/noir/graphs/contributors)
