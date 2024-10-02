@@ -105,12 +105,3 @@ Noir is open-source project and made it with ❤️
 if you want contribute this project, please see [CONTRIBUTING.md](./CONTRIBUTING.md) and Pull-Request with cool your contents.
 
 [![](./CONTRIBUTORS.svg)](https://github.com/owasp-noir/noir/graphs/contributors)
-
-
-<a href="https://star-history.com/#owasp-noir/noir&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=owasp-noir/noir&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=owasp-noir/noir&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=owasp-noir/noir&type=Date" />
- </picture>
-</a>
