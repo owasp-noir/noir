@@ -47,6 +47,7 @@ def detect_techs(base_path : String, options : Hash(String, YAML::Any), passive_
     Ruby::Sinatra,
     Rust::Axum,
     Rust::Rocket,
+    Rust::ActixWeb,
   ])
 
   channel = Channel(String).new

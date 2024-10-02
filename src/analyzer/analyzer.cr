@@ -43,6 +43,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"ruby_sinatra", Ruby::Sinatra},
     {"rust_axum", Rust::Axum},
     {"rust_rocket", Rust::Rocket},
+    {"rust_actix_web", Rust::ActixWeb},
   ])
 
   logger.success "#{analyzers.size} Analyzers initialized"
