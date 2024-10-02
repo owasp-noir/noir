@@ -1,0 +1,8 @@
+[package]
+name = "example-hello-world"
+
+[dependencies]
+actix-web = "4.9"
+actix-web-actors = "4.1"
+actix-web-lab = "0.22"
+actix-ws = "0.3"
