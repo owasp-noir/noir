@@ -136,8 +136,11 @@ class JavaParser
         parameter_token = Array(Token).new
       else
         if token.type != :RPAREN
-          next if token.type == :TAB || token.type == :NEWLINE # Skip TAB and NEWLINE tokens
-          parameter_token << token                             # Add token to the parameter token list
+          if token.type == :TAB || token.type == :NEWLINE # Skip TAB and NEWLINE tokens
+            cursor += 1
+            next
+          end
+          parameter_token << token # Add token to the parameter token list
         else
           lparen_count -= 1
           if lparen_count == 0
