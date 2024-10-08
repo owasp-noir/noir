@@ -3,7 +3,7 @@ description: Attack surface detector that identifies endpoints by static analysi
 theme: just-the-docs
 logo: "/images/owasp-noir-black.png"
 favicon_ico: "/images/favicon.ico"
-url: https://owasp-noir.github.io/noir/
+url: https://owasp-noir.github.io/noir
 
 aux_links:
   Github: https://github.com/owasp-noir/noir
