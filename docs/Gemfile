@@ -9,4 +9,5 @@ gem "just-the-docs"
 # Plugins
 group :jekyll_plugins do
   gem "jekyll-securitytxt"
+  gem "jekyll-sitemap"
 end
