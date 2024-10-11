@@ -35,6 +35,7 @@ module Analyzer::Python
       # Find root Django URL configurations
       root_django_urls_list = find_root_django_urls()
       root_django_urls_list.each do |root_django_urls|
+        logger.debug "Found Django URL configurations in #{root_django_urls.filepath}"
         @django_base_path = root_django_urls.basepath
         extract_endpoints(root_django_urls).each do |endpoint|
           endpoints << endpoint
@@ -79,7 +80,7 @@ module Analyzer::Python
                 end
               end
             rescue e : File::NotFoundError
-              @logger.debug "File not found: #{file}"
+              logger.debug "File not found: #{file}"
             end
           end
           Fiber.yield
@@ -93,6 +94,7 @@ module Analyzer::Python
 
     # Extract endpoints from a Django URL configuration file
     def extract_endpoints(django_urls : DjangoUrls) : Array(Endpoint)
+      logger.debug "Extracting endpoints from #{django_urls.filepath}"
       endpoints = [] of Endpoint
       url_base_path = File.dirname(django_urls.filepath)
 
@@ -109,7 +111,7 @@ module Analyzer::Python
 
         content = content.split(keyword, 2)[1]
       end
-
+      
       # TODO: Parse correct urlpatterns from variable concatenation case
       content.scan(REGEX_ROUTE_MAPPING) do |route_match|
         next if route_match.size != 3
@@ -126,9 +128,11 @@ module Analyzer::Python
           if File.exists?(new_route_path)
             new_django_urls = DjangoUrls.new("#{django_urls.prefix}#{route}", new_route_path, django_urls.basepath)
             details = Details.new(PathInfo.new(new_route_path))
-            extract_endpoints(new_django_urls).each do |endpoint|
-              endpoint.details = details
-              endpoints << endpoint
+            if new_django_urls.filepath != django_urls.filepath
+              extract_endpoints(new_django_urls).each do |endpoint|
+                endpoint.details = details
+                endpoints << endpoint
+              end
             end
           end
         end
@@ -171,6 +175,8 @@ module Analyzer::Python
 
     # Extract endpoints from a given file
     def extract_endpoints_from_file(url : ::String, filepath : ::String, function_or_class_name : ::String)
+      @logger.debug "Extracting endpoints from #{filepath}"
+
       endpoints = Array(Endpoint).new
       suspicious_http_methods = ["GET"]
       suspicious_params = Array(Param).new
