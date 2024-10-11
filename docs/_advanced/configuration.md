@@ -22,7 +22,6 @@ layout: page
 
 ```yaml
 ---
----
 # Noir configuration file
 # This file is used to store the configuration options for Noir.
 # You can edit this file to change the configuration options.
