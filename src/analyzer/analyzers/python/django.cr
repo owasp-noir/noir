@@ -66,6 +66,7 @@ module Analyzer::Python
           spawn do
             begin
               next if File.directory?(file)
+              next if file.includes?("/site-packages/")
               if file.ends_with? ".py"
                 content = File.read(file, encoding: "utf-8", invalid: :skip)
                 content.scan(REGEX_ROOT_URLCONF) do |match|
@@ -111,7 +112,7 @@ module Analyzer::Python
 
         content = content.split(keyword, 2)[1]
       end
-      
+
       # TODO: Parse correct urlpatterns from variable concatenation case
       content.scan(REGEX_ROUTE_MAPPING) do |route_match|
         next if route_match.size != 3

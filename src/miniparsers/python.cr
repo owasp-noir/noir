@@ -159,7 +159,7 @@ class PythonParser
         if import_part == ".."
           path = File.dirname(package_dir)
         end
-        
+
         # Order of checking is important
         if File.directory?(path)
           package_dir = path

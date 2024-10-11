@@ -29,7 +29,7 @@ module Analyzer::Python
     @file_content_cache = Hash(::String, ::String).new
     @parsers = Hash(::String, PythonParser).new
     @routes = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String))).new
-    
+
     def analyze
       flask_instances = Hash(::String, ::String).new
       flask_instances["app"] ||= "" # Common flask instance name
@@ -40,8 +40,9 @@ module Analyzer::Python
       # Iterate through all Python files in the base path
       Dir.glob("#{base_path}/**/*.py") do |path|
         next if File.directory?(path)
+        next if path.includes?("/site-packages/")
         @logger.debug "Analyzing #{path}"
-        
+
         File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
           lines = file.each_line.to_a
           next unless lines.any?(&.includes?("flask"))
@@ -281,7 +282,7 @@ module Analyzer::Python
       @logger.debug "Parsing #{path}"
       parser = PythonParser.new(path, tokens, @parsers)
       @logger.debug "Parsed #{path}"
-      return parser
+      parser
     end
 
     # Get a parser for a given path
