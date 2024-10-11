@@ -136,13 +136,6 @@ class PythonParser
     end
 
     import_statements.each do |import_statement|
-      @debug = false
-      if import_statement.size == 2
-        if import_statement[0] == "." && import_statement[1] == "models"
-          @debug = true
-        end
-      end
-
       name = import_statement[-1]
 
       # Check if the name has an alias
@@ -160,11 +153,13 @@ class PythonParser
         package_dir = File.dirname(@path)
         import_statement.shift
       end
-      if import_statement.size == 2 && import_statement[0] == "models"
-        @debug = true
-      end
+
       import_statement.each_with_index do |import_part, _index|
         path = File.join(package_dir, import_part)
+        if import_part == ".."
+          path = File.dirname(package_dir)
+        end
+
         # Order of checking is important
         if File.directory?(path)
           package_dir = path

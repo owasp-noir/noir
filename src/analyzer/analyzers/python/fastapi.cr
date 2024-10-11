@@ -13,6 +13,7 @@ module Analyzer::Python
         # Iterate through all Python files in the base path
         Dir.glob("#{base_path}/**/*.py") do |path|
           next if File.directory?(path)
+          next if path.includes?("/site-packages/")
           source = File.read(path, encoding: "utf-8", invalid: :skip)
 
           source.each_line do |line|

@@ -40,6 +40,9 @@ module Analyzer::Python
       # Iterate through all Python files in the base path
       Dir.glob("#{base_path}/**/*.py") do |path|
         next if File.directory?(path)
+        next if path.includes?("/site-packages/")
+        @logger.debug "Analyzing #{path}"
+
         File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
           lines = file.each_line.to_a
           next unless lines.any?(&.includes?("flask"))
@@ -274,8 +277,12 @@ module Analyzer::Python
     def create_parser(path : ::String, content : ::String = "") : PythonParser
       content = fetch_file_content(path) if content.empty?
       lexer = PythonLexer.new
+      @logger.debug "Tokenizing #{path}"
       tokens = lexer.tokenize(content)
-      PythonParser.new(path, tokens, @parsers)
+      @logger.debug "Parsing #{path}"
+      parser = PythonParser.new(path, tokens, @parsers)
+      @logger.debug "Parsed #{path}"
+      parser
     end
 
     # Get a parser for a given path
