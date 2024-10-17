@@ -297,7 +297,7 @@ class PythonParser
     rawdata = rawdata.strip
     if @global_variables.has_key?(rawdata)
       # Check if the rawdata is a global variable
-      gv = @global_variables[token_value]
+      gv = @global_variables[rawdata]
       return Tuple.new(gv.type, gv.value)
     end
 
