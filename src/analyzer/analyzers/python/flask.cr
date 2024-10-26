@@ -465,7 +465,7 @@ module Analyzer::Python
         codeline_index += (direction == :down ? 1 : -1)
       end
 
-      return params, codeline_index
+      return params, [lines.size - 1, codeline_index].min
     end
 
     # Function to extract namespace from the parser and update the prefix

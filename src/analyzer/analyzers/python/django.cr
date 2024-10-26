@@ -64,7 +64,7 @@ module Analyzer::Python
       begin
         Dir.glob("#{search_dir}/**/*") do |file|
           spawn do
-            begin              
+            begin
               next if File.directory?(file)
               next if file.includes?("/site-packages/")
               if file.ends_with? ".py"
