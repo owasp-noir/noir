@@ -4,9 +4,9 @@ require "../../../src/options.cr"
 describe "Initialize" do
   config_init = ConfigInitializer.new
   options = config_init.default_options
-  options["base"] = "noir"
-  options["format"] = "json"
-  options["output"] = "output.json"
+  options["base"] = YAML::Any.new("noir")
+  options["format"] = YAML::Any.new("json")
+  options["output"] = YAML::Any.new("output.json")
 
   it "OutputBuilder" do
     object = OutputBuilder.new options
@@ -72,8 +72,8 @@ end
 describe OutputBuilderDiff do
   config_init = ConfigInitializer.new
   options = config_init.default_options
-  options["base"] = "noir"
-  options["format"] = "json"
+  options["base"] = YAML::Any.new("noir")
+  options["format"] = YAML::Any.new("json")
 
   it "calculates the diff correctly" do
     old_endpoints = [Endpoint.new("GET", "/old")]

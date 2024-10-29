@@ -24,9 +24,16 @@ def join_path(*segments : String) : String
   path
 end
 
-def str_to_bool(str)
-  if str == "yes"
+def any_to_bool(any) : Bool
+  case any.to_s
+  when "false"
+    return false
+  when "true"
     return true
+  when "yes"
+    return true
+  when "no"
+    return false
   end
 
   false

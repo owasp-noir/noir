@@ -472,9 +472,27 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :rust_actix_web => {
+      :framework => "Actix Web",
+      :language  => "Rust",
+      :similar   => ["actix-web", "actix_web", "rust-actix-web", "rust_actix_web"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
   }
 
-  def self.get_techs
+  def self.techs
     TECHS
   end
 

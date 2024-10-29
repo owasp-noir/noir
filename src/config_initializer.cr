@@ -1,23 +1,15 @@
 require "file"
 require "yaml"
+require "./utils/home.cr"
 
 class ConfigInitializer
   @config_dir : String
   @config_file : String
-  @default_config : Hash(String, String) = {"key" => "default_value"} # Replace with your default config
+  @default_config : Hash(String, YAML::Any) = {"key" => YAML::Any.new("default_value")} # Replace with your default config
 
   def initialize
     # Define the config directory and file based on ENV variables
-    if ENV.has_key? "NOIR_HOME"
-      @config_dir = ENV["NOIR_HOME"]
-    else
-      # Define the config directory and file based on the OS
-      {% if flag?(:windows) %}
-        @config_dir = "#{ENV["APPDATA"]}\\noir"
-      {% else %}
-        @config_dir = "#{ENV["HOME"]}/.config/noir"
-      {% end %}
-    end
+    @config_dir = get_home
 
     @config_file = File.join(@config_dir, "config.yaml")
 
@@ -29,6 +21,7 @@ class ConfigInitializer
   def setup
     # Create the directory if it doesn't exist
     Dir.mkdir(@config_dir) unless Dir.exists?(@config_dir)
+    Dir.mkdir("#{@config_dir}/passive_rules") unless Dir.exists?("#{@config_dir}/passive_rules")
 
     # Create the config file if it doesn't exist
     File.write(@config_file, generate_config_file) unless File.exists?(@config_file)
@@ -45,9 +38,38 @@ class ConfigInitializer
     begin
       parsed_yaml = YAML.parse(File.read(@config_file)).as_h
       symbolized_hash = parsed_yaml.transform_keys(&.to_s)
-      stringlized_hash = symbolized_hash.transform_values(&.to_s)
 
-      stringlized_hash
+      # Transform specific keys from "yes"/"no" to true/false for old version noir config
+      ["color", "debug", "include_path", "nolog", "send_req", "all_taggers"].each do |key|
+        if symbolized_hash[key] == "yes"
+          symbolized_hash[key] = YAML::Any.new(true)
+        elsif symbolized_hash[key] == "no"
+          symbolized_hash[key] = YAML::Any.new(false)
+        end
+      end
+
+      # Transform specific keys for array and string config values
+      [
+        "send_with_headers", "use_filters", "use_matchers",
+        "set_pvalue", "set_pvalue_header", "set_pvalue_cookie",
+        "set_pvalue_query", "set_pvalue_form", "set_pvalue_json", "set_pvalue_path",
+      ].each do |key|
+        if symbolized_hash[key].to_s == ""
+          # If the value is an empty string, initialize it as an empty array of YAML::Any
+          symbolized_hash[key] = YAML::Any.new([] of YAML::Any)
+        else
+          begin
+            # If the value is already an array, ensure it is treated as an array of YAML::Any
+            symbolized_hash[key].as_a
+          rescue
+            # If the value is a string, wrap it in an array of YAML::Any
+            symbolized_hash[key] = YAML::Any.new([YAML::Any.new(symbolized_hash[key].to_s)])
+          end
+        end
+      end
+
+      final_options = default_options.merge(symbolized_hash) { |_, _, new_val| new_val }
+      final_options
     rescue e : Exception
       puts "Failed to read config file: #{e.message}"
       puts "Using default config."
@@ -58,28 +80,38 @@ class ConfigInitializer
 
   def default_options
     noir_options = {
-      "base"              => "",
-      "color"             => "yes",
-      "config_file"       => "",
-      "concurrency"       => "100",
-      "debug"             => "no",
-      "exclude_techs"     => "",
-      "format"            => "plain",
-      "include_path"      => "no",
-      "nolog"             => "no",
-      "output"            => "",
-      "send_es"           => "",
-      "send_proxy"        => "",
-      "send_req"          => "no",
-      "send_with_headers" => "",
-      "set_pvalue"        => "",
-      "techs"             => "",
-      "url"               => "",
-      "use_filters"       => "",
-      "use_matchers"      => "",
-      "all_taggers"       => "no",
-      "use_taggers"       => "",
-      "diff"              => "",
+      "base"              => YAML::Any.new(""),
+      "color"             => YAML::Any.new(true),
+      "config_file"       => YAML::Any.new(""),
+      "concurrency"       => YAML::Any.new("100"),
+      "debug"             => YAML::Any.new(false),
+      "exclude_codes"     => YAML::Any.new(""),
+      "exclude_techs"     => YAML::Any.new(""),
+      "format"            => YAML::Any.new("plain"),
+      "include_path"      => YAML::Any.new(false),
+      "nolog"             => YAML::Any.new(false),
+      "output"            => YAML::Any.new(""),
+      "send_es"           => YAML::Any.new(""),
+      "send_proxy"        => YAML::Any.new(""),
+      "send_req"          => YAML::Any.new(false),
+      "send_with_headers" => YAML::Any.new([] of YAML::Any),
+      "set_pvalue"        => YAML::Any.new([] of YAML::Any),
+      "set_pvalue_header" => YAML::Any.new([] of YAML::Any),
+      "set_pvalue_cookie" => YAML::Any.new([] of YAML::Any),
+      "set_pvalue_query"  => YAML::Any.new([] of YAML::Any),
+      "set_pvalue_form"   => YAML::Any.new([] of YAML::Any),
+      "set_pvalue_json"   => YAML::Any.new([] of YAML::Any),
+      "set_pvalue_path"   => YAML::Any.new([] of YAML::Any),
+      "status_codes"      => YAML::Any.new(false),
+      "techs"             => YAML::Any.new(""),
+      "url"               => YAML::Any.new(""),
+      "use_filters"       => YAML::Any.new([] of YAML::Any),
+      "use_matchers"      => YAML::Any.new([] of YAML::Any),
+      "all_taggers"       => YAML::Any.new(false),
+      "use_taggers"       => YAML::Any.new(""),
+      "diff"              => YAML::Any.new(""),
+      "passive_scan"      => YAML::Any.new(false),
+      "passive_scan_path" => YAML::Any.new([] of YAML::Any),
     }
 
     noir_options
@@ -100,7 +132,7 @@ class ConfigInitializer
     base: "#{options["base"]}"
 
     # Whether to use color in the output
-    color: "#{options["color"]}"
+    color: #{options["color"]}
 
     # The configuration file to use
     config_file: "#{options["config_file"]}"
@@ -109,7 +141,10 @@ class ConfigInitializer
     concurrency: "#{options["concurrency"]}"
 
     # Whether to enable debug mode
-    debug: "#{options["debug"]}"
+    debug: #{options["debug"]}
+
+    # The status codes to exclude
+    exclude_codes: "#{options["exclude_codes"]}"
 
     # Technologies to exclude
     exclude_techs: "#{options["exclude_techs"]}"
@@ -118,10 +153,10 @@ class ConfigInitializer
     format: "#{options["format"]}"
 
     # Whether to include the path in the output
-    include_path: "#{options["include_path"]}"
+    include_path: #{options["include_path"]}
 
     # Whether to disable logging
-    nolog: "#{options["nolog"]}"
+    nolog: #{options["nolog"]}
 
     # The output file to write to
     output: "#{options["output"]}"
@@ -135,14 +170,23 @@ class ConfigInitializer
     send_proxy: "#{options["send_proxy"]}"
 
     # Whether to send a request
-    send_req: "#{options["send_req"]}"
+    send_req: #{options["send_req"]}
 
-    # Whether to send headers with the request
+    # Whether to send headers with the request (Array of strings)
     # e.g "Authorization: Bearer token"
-    send_with_headers: "#{options["send_with_headers"]}"
+    send_with_headers:
 
-    # The value to set for pvalue
-    set_pvalue: "#{options["set_pvalue"]}"
+    # The value to set for pvalue (Array of strings)
+    set_pvalue:
+    set_pvalue_header:
+    set_pvalue_cookie:
+    set_pvalue_query:
+    set_pvalue_form:
+    set_pvalue_json:
+    set_pvalue_path:
+
+    # The status codes to use
+    status_codes: #{options["status_codes"]}
 
     # The technologies to use
     techs: "#{options["techs"]}"
@@ -150,14 +194,14 @@ class ConfigInitializer
     # The URL to use
     url: "#{options["url"]}"
 
-    # Whether to use filters
-    use_filters: "#{options["use_filters"]}"
+    # Whether to use filters (Array of strings)
+    use_filters:
 
-    # Whether to use matchers
-    use_matchers: "#{options["use_matchers"]}"
+    # Whether to use matchers (Array of strings)
+    use_matchers:
 
     # Whether to use all taggers
-    all_taggers: "#{options["all_taggers"]}"
+    all_taggers: #{options["all_taggers"]}
 
     # The taggers to use
     # e.g "tagger1,tagger2"
@@ -166,6 +210,11 @@ class ConfigInitializer
 
     # The diff file to use
     diff: "#{options["diff"]}"
+
+    # The passive rules to use
+    # e.g /path/to/rules
+    passive_scan: false
+    passive_scan_path: []
 
     CONTENT
 

@@ -1,10 +1,10 @@
-require "../../../src/analyzer/analyzers/analyzer_crystal_kemal.cr"
+require "../../../src/analyzer/analyzers/crystal/kemal.cr"
 require "../../../src/options"
 
 describe "mapping_to_path" do
   config_init = ConfigInitializer.new
   options = config_init.default_options
-  instance = AnalyzerCrystalKemal.new(options)
+  instance = Analyzer::Crystal::Kemal.new(options)
 
   it "line_to_param - env.params.query" do
     line = "env.params.query[\"id\"]"

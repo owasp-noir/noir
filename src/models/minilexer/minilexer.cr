@@ -50,6 +50,9 @@ class MiniLexer
 
     if @mode == :persistent
       @tokens = @tokens + results
+    else
+      @position = 0
+      @pos_line_array.clear
     end
 
     results
@@ -67,13 +70,27 @@ class MiniLexer
   def trace
     line_number = -1
     lines = @input.split "\n"
-    puts "line size: #{lines.size}, token number: #{tokens.size}"
+    puts "Line Size: #{lines.size}, Token Count: #{tokens.size}"
     @tokens.each do |token|
-      if line_number <= token.line
-        puts "\nLine #{token.line}: " + lines[token.line - 1]
-        line_number = token.line + 1
+      if line_number != token.line
+        line_number = token.line
+        puts "\nLine #{token.line}: " + lines[line_number - 1]
+        next if token.type == :NEWLINE # Skip newline token
       end
+
       puts token.to_s
+    end
+  end
+
+  def start_repl
+    loop do
+      print ">> "
+      input = gets
+      break if input.nil?
+      input = input.chomp
+      break if input == "exit"
+      tokenize(input)
+      trace
     end
   end
 end

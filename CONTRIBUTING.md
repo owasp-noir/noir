@@ -65,6 +65,12 @@ ameba --fix
 # https://github.com/crystal-ameba/ameba#installation
 ```
 
+or 
+
+```bash
+rake lint:all
+```
+
 ## 🧭 Code structure
 
 - spec: 
@@ -89,3 +95,25 @@ To ensure a smooth integration of your contributions, please follow these steps:
 * Submit your PR to the dev branch for review.
 
 By doing so, you'll help us keep our project up-to-date and well-organized. Your efforts are greatly appreciated, and we're excited to see what you'll bring to the project!
+
+### Setting up the Documentation Site
+
+To set up the documentation site locally, follow these steps:
+
+#### Install Dependencies
+
+We use Rake tasks to manage dependencies. Run the following command to install the necessary dependencies:
+
+```sh
+rake docs:install
+```
+
+#### Serve the Documentation Site
+
+After installing the dependencies, you can serve the documentation site locally using the following Rake task:
+
+```sh
+rake docs:serve
+```
+
+This will start a local server, and you can view the documentation by navigating to http://localhost:4000 in your web browser.

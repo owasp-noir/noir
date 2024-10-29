@@ -2,18 +2,18 @@ require "./logger"
 
 class OutputBuilder
   @logger : NoirLogger
-  @options : Hash(String, String)
+  @options : Hash(String, YAML::Any)
   @is_debug : Bool
   @is_color : Bool
   @is_log : Bool
   @output_file : String
 
-  def initialize(options : Hash(String, String))
-    @is_debug = str_to_bool(options["debug"])
+  def initialize(options : Hash(String, YAML::Any))
+    @is_debug = any_to_bool(options["debug"])
     @options = options
-    @is_color = str_to_bool(options["color"])
-    @is_log = str_to_bool(options["nolog"])
-    @output_file = options["output"]
+    @is_color = any_to_bool(options["color"])
+    @is_log = any_to_bool(options["nolog"])
+    @output_file = options["output"].to_s
 
     @logger = NoirLogger.new @is_debug, @is_color, @is_log
   end
@@ -36,6 +36,7 @@ class OutputBuilder
 
     final_url = url
     final_body = ""
+    final_path_params = [] of String
     final_headers = [] of String
     final_cookies = [] of String
     final_tags = [] of String
@@ -67,6 +68,10 @@ class OutputBuilder
           else
             final_body += "&#{param.name}=#{param.value}"
           end
+        end
+
+        if param.param_type == "path"
+          final_path_params << "#{param.name}"
         end
 
         if param.param_type == "header"
@@ -103,18 +108,20 @@ class OutputBuilder
 
     @logger.debug "Baked endpoints"
     @logger.debug " + Final URL: #{final_url}"
+    @logger.debug " + Path Params: #{final_path_params}"
     @logger.debug " + Body: #{final_body}"
     @logger.debug " + Headers: #{final_headers}"
     @logger.debug " + Cookies: #{final_cookies}"
     @logger.debug " + Tags: #{final_tags}"
 
     {
-      url:       final_url,
-      body:      final_body,
-      header:    final_headers,
-      cookie:    final_cookies,
-      tags:      final_tags.uniq,
-      body_type: is_json ? "json" : "form",
+      url:        final_url,
+      body:       final_body,
+      path_param: final_path_params,
+      header:     final_headers,
+      cookie:     final_cookies,
+      tags:       final_tags.uniq,
+      body_type:  is_json ? "json" : "form",
     }
   end
 

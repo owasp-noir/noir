@@ -30,10 +30,11 @@ struct Endpoint
     @tags = [] of Tag
   end
 
-  def set_details(@details : Details)
+  def details=(details : Details)
+    @details = details
   end
 
-  def set_protocol(protocol : String)
+  def protocol=(protocol : String)
     @protocol = protocol
   end
 
@@ -52,6 +53,7 @@ struct Endpoint
     params_hash["form"] = {} of String => String
     params_hash["header"] = {} of String => String
     params_hash["cookie"] = {} of String => String
+    params_hash["path"] = {} of String => String
 
     @params.each do |param|
       params_hash[param.param_type][param.name] = param.value
@@ -94,6 +96,10 @@ struct Param
     @name == other.name && @value == other.value && @param_type == other.param_type
   end
 
+  def param_type=(value : String)
+    @param_type = value
+  end
+
   def add_tag(tag : Tag)
     @tags << tag
   end
@@ -103,6 +109,7 @@ struct Details
   include JSON::Serializable
   include YAML::Serializable
   property code_paths : Array(PathInfo) = [] of PathInfo
+  property status_code : Int32 | Nil
 
   # + New details types to be added in the future..
 
@@ -117,7 +124,12 @@ struct Details
     @code_paths << code_path
   end
 
+  def status_code=(status_code : Int32)
+    @status_code = status_code
+  end
+
   def ==(other : Details) : Bool
+    return false if @status_code != other.status_code
     return false if @code_paths.size != other.code_paths.size
     return false unless @code_paths.all? { |path| other.code_paths.any? { |other_path| path == other_path } }
     true

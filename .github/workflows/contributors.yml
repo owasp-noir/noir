@@ -16,4 +16,6 @@ jobs:
       - uses: wow-actions/contributors-list@v1
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          round: true
+          round: false
+          includeBots: true
+

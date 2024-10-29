@@ -20,6 +20,25 @@ class OutputBuilderCommon < OutputBuilder
       r_ws = ""
       r_buffer = "\n#{r_method} #{r_url}"
 
+      if any_to_bool(@options["status_codes"]) == true || @options["exclude_codes"] != ""
+        status_color = :light_green
+        status_code = endpoint.details.status_code
+        if status_code
+          if status_code >= 500
+            status_color = :light_magenta
+          elsif status_code >= 400
+            status_color = :light_red
+          elsif status_code >= 300
+            status_color = :cyan
+          end
+        else
+          status_code = "error"
+          status_color = :light_red
+        end
+
+        r_buffer += " [#{status_code}]".to_s.colorize(status_color).toggle(@is_color).to_s
+      end
+
       if endpoint.protocol == "ws"
         r_ws = "[websocket]".colorize(:light_red).toggle(@is_color)
         r_buffer += " #{r_ws}"
@@ -43,6 +62,11 @@ class OutputBuilderCommon < OutputBuilder
         end
       end
 
+      if baked[:path_param].size > 0
+        r_path_param = baked[:path_param].join(", ").colorize(:cyan).toggle(@is_color)
+        r_buffer += "\n  ○ path: #{r_path_param}"
+      end
+
       if baked[:body] != ""
         r_body = baked[:body].colorize(:cyan).toggle(@is_color)
         r_buffer += "\n  ○ body: #{r_body}"
@@ -58,7 +82,7 @@ class OutputBuilderCommon < OutputBuilder
         r_buffer += "\n  ○ tags: #{r_tags}"
       end
 
-      if @options["include_path"] == "yes"
+      if any_to_bool(@options["include_path"]) == true
         details = endpoint.details
         if details.code_paths && details.code_paths.size > 0
           details.code_paths.each do |code_path|

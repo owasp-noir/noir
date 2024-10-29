@@ -4,7 +4,7 @@ require "../../models/endpoint"
 class SoapTagger < Tagger
   WORDS = ["soapaction"]
 
-  def initialize(options : Hash(String, String))
+  def initialize(options : Hash(String, YAML::Any))
     super
     @name = "soap"
   end
