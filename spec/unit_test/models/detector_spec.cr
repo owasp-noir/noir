@@ -4,7 +4,7 @@ require "../../../src/config_initializer.cr"
 describe "Initialize" do
   config_init = ConfigInitializer.new
   options = config_init.default_options
-  options["base"] = "noir"
+  options["base"] = YAML::Any.new("noir")
   object = Detector.new(options)
 
   it "getter - name" do

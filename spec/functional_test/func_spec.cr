@@ -17,8 +17,8 @@ class FunctionalTester
   def initialize(@path, expected_count, expected_endpoints)
     config_init = ConfigInitializer.new
     noir_options = config_init.default_options
-    noir_options["base"] = "./spec/functional_test/#{@path}"
-    noir_options["nolog"] = "yes"
+    noir_options["base"] = YAML::Any.new("./spec/functional_test/#{@path}")
+    noir_options["nolog"] = YAML::Any.new(true)
 
     if !expected_count.nil?
       @expected_count = expected_count
@@ -95,17 +95,17 @@ class FunctionalTester
             if endpoint.params.size > 0
               describe "check - params" do
                 endpoint.params.each do |param|
-                  found_param = found_endpoint.params.find { |p| p.name == param.name }
-                  if found_param.nil?
+                  found_params = found_endpoint.params.select { |found_p| found_p.name == param.name }
+                  if found_params.size == 0
                     it "params nil" do
                       false.should eq true
                     end
                   else
                     it "check '#{param.name}' name " do
-                      param.name.should eq found_param.name
+                      param.name.should eq found_params[0].name
                     end
-                    it "check '#{param.name}' param_type " do
-                      param.param_type.should eq found_param.param_type
+                    it "check '#{param.name}' param_type '#{param.param_type}'" do
+                      (found_params.any? { |found_p| found_p.param_type == param.param_type }).should be_true
                     end
                   end
                 end
@@ -130,7 +130,7 @@ class FunctionalTester
     @app
   end
 
-  def set_url(url)
-    @app.options["url"] = url
+  def url=(url)
+    @app.options["url"] = YAML::Any.new(url)
   end
 end

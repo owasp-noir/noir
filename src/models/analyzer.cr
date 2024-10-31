@@ -10,16 +10,16 @@ class Analyzer
   @is_debug : Bool
   @is_color : Bool
   @is_log : Bool
-  @options : Hash(String, String)
+  @options : Hash(String, YAML::Any)
 
-  def initialize(options : Hash(String, String))
-    @base_path = options["base"]
-    @url = options["url"]
+  def initialize(options : Hash(String, YAML::Any))
+    @base_path = options["base"].to_s
+    @url = options["url"].to_s
     @result = [] of Endpoint
     @endpoint_references = [] of EndpointReference
-    @is_debug = str_to_bool(options["debug"])
-    @is_color = str_to_bool(options["color"])
-    @is_log = str_to_bool(options["nolog"])
+    @is_debug = any_to_bool(options["debug"])
+    @is_color = any_to_bool(options["color"])
+    @is_log = any_to_bool(options["nolog"])
     @options = options
 
     @logger = NoirLogger.new @is_debug, @is_color, @is_log
@@ -59,7 +59,7 @@ class FileAnalyzer < Analyzer
       end
     end
 
-    @options["concurrency"].to_i.times do
+    @options["concurrency"].to_s.to_i.times do
       spawn do
         loop do
           begin

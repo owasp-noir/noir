@@ -19,7 +19,7 @@ describe "Similar to tech" do
 end
 
 describe "Get Techs" do
-  techs = NoirTechs.get_techs
+  techs = NoirTechs.techs
   techs.each do |k, v|
     it "#{k} in techs" do
       v.should_not be_empty

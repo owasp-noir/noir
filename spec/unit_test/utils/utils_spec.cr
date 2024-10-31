@@ -53,15 +53,15 @@ describe "get_symbol" do
   end
 end
 
-describe "str_to_bool" do
-  it "yes" do
-    str_to_bool("yes").should eq(true)
+describe "any_to_bool" do
+  it true do
+    any_to_bool(true).should eq(true)
   end
-  it "no" do
-    str_to_bool("no").should eq(false)
+  it false do
+    any_to_bool(false).should eq(false)
   end
   it "any string" do
-    str_to_bool("hahwul").should eq(false)
+    any_to_bool("hahwul").should eq(false)
   end
 end
 

@@ -117,7 +117,7 @@ describe "Tagger" do
     config_init = ConfigInitializer.new
     noir_options = config_init.default_options
     e = Endpoint.new("/ws", "GET")
-    e.set_protocol("ws")
+    e.protocol = "ws"
 
     extected_endpoints = [e]
 

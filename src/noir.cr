@@ -6,7 +6,7 @@ require "./options.cr"
 require "./techs/techs.cr"
 
 module Noir
-  VERSION = "0.17.0"
+  VERSION = "0.18.0"
 end
 
 # Print banner
@@ -21,6 +21,39 @@ if noir_options["base"] == ""
   STDERR.puts "Please use -b or --base-path to set base path."
   STDERR.puts "If you need help, use -h or --help."
   exit(1)
+end
+
+if noir_options["url"] != "" && !noir_options["url"].to_s.includes?("://")
+  STDERR.puts "WARNING: The protocol (http or https) is missing in the URL '#{noir_options["url"]}'.".colorize(Colorize::Color256.new(208))
+  noir_options["url"] = YAML::Any.new("http://#{noir_options["url"]}")
+end
+
+# Check URL
+if noir_options["status_codes"] == true && noir_options["url"] == ""
+  STDERR.puts "ERROR: The --status-codes option requires the -u or --url flag to be specified.".colorize(:yellow)
+  STDERR.puts "Please use -u or --url to set the URL."
+  STDERR.puts "If you need help, use -h or --help."
+  exit(1)
+end
+
+# Check URL
+if noir_options["exclude_codes"] != ""
+  if noir_options["url"] == ""
+    STDERR.puts "ERROR: The --exclude-codes option requires the -u or --url flag to be specified.".colorize(:yellow)
+    STDERR.puts "Please use -u or --url to set the URL."
+    STDERR.puts "If you need help, use -h or --help."
+    exit(1)
+  end
+
+  noir_options["exclude_codes"].to_s.split(",").each do |code|
+    begin
+      code.strip.to_i
+    rescue
+      STDERR.puts "ERROR: Invalid --exclude-codes option: '#{code}'".colorize(:yellow)
+      STDERR.puts "Please use comma-separated numbers."
+      exit(1)
+    end
+  end
 end
 
 # Run Noir
@@ -43,8 +76,8 @@ app_diff = nil
 if noir_options["diff"] != ""
   # Diff mode
   diff_options = noir_options.dup
-  diff_options["base"] = noir_options["diff"].to_s
-  diff_options["nolog"] = "yes"
+  diff_options["base"] = noir_options["diff"]
+  diff_options["nolog"] = YAML::Any.new(false)
 
   app_diff = NoirRunner.new diff_options
   app.logger.info "Running Noir with Diff mode."
@@ -60,6 +93,10 @@ if app.techs.size == 0
   app.logger.sub "➔ Please check tech lists using the --list-techs flag."
   if app.options["url"] != ""
     app.logger.info "Start file-based analysis as the -u flag has been used."
+  elsif app.passive_results.size > 0
+    app.logger.info "Noir found #{app.passive_results.size} passive results."
+    app.report
+    exit(0)
   else
     exit(0)
   end

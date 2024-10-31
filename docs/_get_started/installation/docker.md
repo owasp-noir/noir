@@ -24,3 +24,5 @@ or Replace `<version>` with the specific version tag you need.
 ```dockerfile
 FROM ghcr.io/owasp-noir/noir:<version>
 ```
+
+If you want to see packages by Docker tag, visit [this page](https://github.com/owasp-noir/noir/pkgs/container/noir).

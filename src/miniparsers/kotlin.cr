@@ -332,7 +332,7 @@ class KotlinParser
           lcurl_nesting, paren_nesting = 0, 0
           class_tokens = Array(Token).new
           class_tokens << token
-        elsif start_class
+        elsif start_class && lcurl_nesting > 0
           # Recursively parse nested classes
           parse_classes(tokens, index)
         end

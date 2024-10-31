@@ -11,6 +11,15 @@ class NoirLogger
     STDOUT.puts message
   end
 
+  def puts_sub(message)
+    STDOUT.puts "  " + message
+  end
+
+  def heading(message)
+    prefix = "★".colorize(:yellow).toggle(@color_mode)
+    STDERR.puts "#{prefix} #{message}"
+  end
+
   def info(message)
     if @no_log
       return

@@ -1,38 +1,50 @@
-require "./analyzers/*"
+require "./analyzers/**"
 require "./analyzers/file_analyzers/*"
+
+macro define_analyzers(analyzers)
+  {% for analyzer in analyzers %}
+    analyzers[{{analyzer[0].id.stringify}}] = ->(options : Hash(String, YAML::Any)) do
+      instance = Analyzer::{{analyzer[1].id}}.new(options)
+      instance.analyze
+    end
+  {% end %}
+end
 
 def initialize_analyzers(logger : NoirLogger)
   # Initializing analyzers
-  analyzers = {} of String => Proc(Hash(String, String), Array(Endpoint))
+  analyzers = {} of String => Proc(Hash(String, YAML::Any), Array(Endpoint))
 
   # Mapping analyzers to their respective functions
-  analyzers["c#-aspnet-mvc"] = ->analyzer_cs_aspnet_mvc(Hash(String, String))
-  analyzers["crystal_kemal"] = ->analyzer_crystal_kemal(Hash(String, String))
-  analyzers["crystal_lucky"] = ->analyzer_crystal_lucky(Hash(String, String))
-  analyzers["elixir_phoenix"] = ->analyzer_elixir_phoenix(Hash(String, String))
-  analyzers["go_beego"] = ->analyzer_go_beego(Hash(String, String))
-  analyzers["go_echo"] = ->analyzer_go_echo(Hash(String, String))
-  analyzers["go_fiber"] = ->analyzer_go_fiber(Hash(String, String))
-  analyzers["go_gin"] = ->analyzer_go_gin(Hash(String, String))
-  analyzers["har"] = ->analyzer_har(Hash(String, String))
-  analyzers["java_armeria"] = ->analyzer_armeria(Hash(String, String))
-  analyzers["java_jsp"] = ->analyzer_jsp(Hash(String, String))
-  analyzers["java_spring"] = ->analyzer_java_spring(Hash(String, String))
-  analyzers["js_express"] = ->analyzer_express(Hash(String, String))
-  analyzers["js_restify"] = ->analyzer_restify(Hash(String, String))
-  analyzers["kotlin_spring"] = ->analyzer_kotlin_spring(Hash(String, String))
-  analyzers["oas2"] = ->analyzer_oas2(Hash(String, String))
-  analyzers["oas3"] = ->analyzer_oas3(Hash(String, String))
-  analyzers["php_pure"] = ->analyzer_php_pure(Hash(String, String))
-  analyzers["python_django"] = ->analyzer_python_django(Hash(String, String))
-  analyzers["python_fastapi"] = ->analyzer_python_fastapi(Hash(String, String))
-  analyzers["python_flask"] = ->analyzer_python_flask(Hash(String, String))
-  analyzers["raml"] = ->analyzer_raml(Hash(String, String))
-  analyzers["ruby_hanami"] = ->analyzer_ruby_hanami(Hash(String, String))
-  analyzers["ruby_rails"] = ->analyzer_ruby_rails(Hash(String, String))
-  analyzers["ruby_sinatra"] = ->analyzer_ruby_sinatra(Hash(String, String))
-  analyzers["rust_axum"] = ->analyzer_rust_axum(Hash(String, String))
-  analyzers["rust_rocket"] = ->analyzer_rust_rocket(Hash(String, String))
+  define_analyzers([
+    {"c#-aspnet-mvc", CSharp::AspNetMvc},
+    {"crystal_kemal", Crystal::Kemal},
+    {"crystal_lucky", Crystal::Lucky},
+    {"elixir_phoenix", Elixir::Phoenix},
+    {"go_beego", Go::Beego},
+    {"go_echo", Go::Echo},
+    {"go_fiber", Go::Fiber},
+    {"go_gin", Go::Gin},
+    {"har", Specification::Har},
+    {"java_armeria", Java::Armeria},
+    {"java_jsp", Java::Jsp},
+    {"java_spring", Java::Spring},
+    {"js_express", Javascript::Express},
+    {"js_restify", Javascript::Restify},
+    {"kotlin_spring", Kotlin::Spring},
+    {"oas2", Specification::Oas2},
+    {"oas3", Specification::Oas3},
+    {"php_pure", Php::Php},
+    {"python_django", Python::Django},
+    {"python_fastapi", Python::FastAPI},
+    {"python_flask", Python::Flask},
+    {"raml", Specification::RAML},
+    {"ruby_hanami", Ruby::Hanami},
+    {"ruby_rails", Ruby::Rails},
+    {"ruby_sinatra", Ruby::Sinatra},
+    {"rust_axum", Rust::Axum},
+    {"rust_rocket", Rust::Rocket},
+    {"rust_actix_web", Rust::ActixWeb},
+  ])
 
   logger.success "#{analyzers.size} Analyzers initialized"
   logger.debug "Analyzers:"
@@ -42,7 +54,7 @@ def initialize_analyzers(logger : NoirLogger)
   analyzers
 end
 
-def analysis_endpoints(options : Hash(String, String), techs, logger : NoirLogger)
+def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLogger)
   result = [] of Endpoint
   file_analyzer = FileAnalyzer.new options
   logger.info "Initializing analyzers"
@@ -57,7 +69,7 @@ def analysis_endpoints(options : Hash(String, String), techs, logger : NoirLogge
 
   techs.each do |tech|
     if analyzer.has_key?(tech)
-      if NoirTechs.similar_to_tech(options["exclude_techs"]).includes?(tech)
+      if NoirTechs.similar_to_tech(options["exclude_techs"].to_s).includes?(tech)
         logger.sub "➔ Skipping #{tech} analysis"
         next
       end

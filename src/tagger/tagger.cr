@@ -30,11 +30,11 @@ module NoirTaggers
     },
   }
 
-  def self.get_taggers
+  def self.taggers
     HasTaggers
   end
 
-  def self.run_tagger(endpoints : Array(Endpoint), options : Hash(String, String), use_taggers : String)
+  def self.run_tagger(endpoints : Array(Endpoint), options : Hash(String, YAML::Any), use_taggers : String)
     tagger_list = [] of Tagger # This will hold instances of taggers
 
     # Define taggers by creating instances

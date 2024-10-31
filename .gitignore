@@ -4,6 +4,7 @@
 *.dwarf
 .DS_Store
 .vscode
+ameba.sh
 
 # Ignore the public directory for Jekyll
 /docs/_site/
