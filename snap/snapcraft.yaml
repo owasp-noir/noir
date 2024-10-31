@@ -1,6 +1,6 @@
 name: noir
 base: core20
-version: 0.17.0
+version: 0.18.0
 summary: Attack surface detector that identifies endpoints by static analysis.
 description: |
   Noir is an open-source project specializing in identifying attack surfaces for enhanced whitebox security testing and security pipeline. 
