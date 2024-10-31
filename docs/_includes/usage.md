@@ -24,6 +24,10 @@ FLAGS:
     --no-color                       Disable color output
     --no-log                         Displaying only the results
 
+  PASSIVE SCAN:
+    -P, --passive-scan               Perform a passive scan for security issues using rules from the specified path
+    --passive-scan-path PATH         Specify the path for the rules used in the passive security scan
+
   TAGGER:
     -T, --use-all-taggers            Activates all taggers for full analysis coverage
     --use-taggers VALUES             Activates specific taggers (e.g., --use-taggers hunt,oauth)
