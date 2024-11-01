@@ -25,9 +25,7 @@ class ConfigInitializer
 
     # Create the config file if it doesn't exist
     File.write(@config_file, generate_config_file) unless File.exists?(@config_file)
-  rescue e : Exception
-    puts "Failed to create config directory or file: #{e.message}"
-    puts "Using default config."
+  rescue
   end
 
   def read_config
@@ -71,9 +69,6 @@ class ConfigInitializer
       final_options = default_options.merge(symbolized_hash) { |_, _, new_val| new_val }
       final_options
     rescue e : Exception
-      puts "Failed to read config file: #{e.message}"
-      puts "Using default config."
-
       default_options
     end
   end

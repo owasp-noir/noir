@@ -9,9 +9,6 @@ module Noir
   VERSION = "0.18.0"
 end
 
-# Print banner
-banner()
-
 # Run options parser
 noir_options = run_options_parser()
 
@@ -57,6 +54,7 @@ if noir_options["exclude_codes"] != ""
 end
 
 # Run Noir
+banner()
 app = NoirRunner.new noir_options
 start_time = Time.monotonic
 
