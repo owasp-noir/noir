@@ -133,13 +133,10 @@ def run_options_parser
       case var
       when "zsh"
         puts generate_zsh_completion_script
-        STDERR.puts "\n> Instructions: Copy the content above and save it in the zsh-completion directory as _noir".colorize(:yellow)
       when "bash"
         puts generate_bash_completion_script
-        STDERR.puts "\n> Instructions: Copy the content above and save it in the .bashrc file as noir.".colorize(:yellow)
       when "fish"
         puts generate_fish_completion_script
-        STDERR.puts "\n> Instructions: Copy the content above and save it in the fish-completion directory as noir.fish".colorize(:yellow)
       else
         puts "ERROR: Invalid completion type.".colorize(:yellow)
         puts "e.g., noir --generate-completion zsh"
@@ -164,6 +161,7 @@ def run_options_parser
     end
     parser.separator "\n  OTHERS:".colorize(:blue)
     parser.on "-h", "--help", "Show help" do
+      banner()
       puts parser
       puts ""
       puts "EXAMPLES:"
