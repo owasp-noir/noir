@@ -51,9 +51,17 @@ module NoirPassiveScan
     when "regex"
       case matcher.condition
       when "and"
-        matcher.patterns && matcher.patterns.all? { |pattern| content.match(Regex.new(pattern.to_s)) }
+        begin
+          matcher.patterns && matcher.patterns.all? { |pattern| content.match(Regex.new(pattern.to_s)) }
+        rescue
+          false
+        end
       when "or"
-        matcher.patterns && matcher.patterns.any? { |pattern| content.match(Regex.new(pattern.to_s)) }
+        begin
+          matcher.patterns && matcher.patterns.any? { |pattern| content.match(Regex.new(pattern.to_s)) }
+        rescue
+          false
+        end
       else
         false
       end
