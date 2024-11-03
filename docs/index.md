@@ -82,6 +82,10 @@ Happy contributing!
 
 ![](https://raw.githubusercontent.com/owasp-noir/noir/refs/heads/main/CONTRIBUTORS.svg)
 
+*PassiveScan Rule contributors*
+
+[![](https://raw.githubusercontent.com/owasp-noir/noir-passive-rules/refs/heads/main/CONTRIBUTORS.svg)](https://github.com/owasp-noir/noir-passive-rules/graphs/contributors)
+
 ### Code of Conduct
 OWASP Noir is committed to fostering a welcoming community.
 
