@@ -19,7 +19,7 @@ class NoirLogger
     if @no_log
       return
     end
-    
+
     prefix = "★".colorize(:yellow).toggle(@color_mode)
     STDERR.puts "#{prefix} #{message}"
   end
