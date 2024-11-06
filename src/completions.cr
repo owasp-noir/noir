@@ -5,7 +5,7 @@ def generate_zsh_completion_script
 _arguments \\
   '-b[Set base path]:path:_files' \\
   '-u[Set base URL for endpoints]:URL:_urls' \\
-  '-f[Set output format]:format:(plain yaml json jsonl markdown-table curl httpie oas2 oas3 only-url only-param only-header only-cookie)' \\
+  '-f[Set output format]:format:(plain yaml json jsonl markdown-table curl httpie oas2 oas3 only-url only-param only-header only-cookie only-tag)' \\
   '-o[Write result to file]:path:_files' \\
   '--set-pvalue[Specifies the value of the identified parameter]:value:' \\
   '--set-pvalue-header[Specifies the value of the identified parameter for headers]:value:' \\
@@ -19,6 +19,8 @@ _arguments \\
   '--include-path[Include file path in the plain result]' \\
   '--no-color[Disable color output]' \\
   '--no-log[Displaying only the results]' \\
+  '-P[Perform a passive scan for security issues using rules from the specified path]' \\
+  '--passive-scan-path[Specify the path for the rules used in the passive security scan]:path:_files' \\
   '-T[Activates all taggers for full analysis coverage]' \\
   '--use-taggers[Activates specific taggers]:values:' \\
   '--list-taggers[Lists all available taggers]' \\
@@ -34,6 +36,7 @@ _arguments \\
   '--list-techs[Show all technologies]' \\
   '--config-file[Specify the path to a configuration file in YAML format]:path:_files' \\
   '--concurrency[Set concurrency]:concurrency:' \\
+  '--generate-completion[Generate Zsh/Bash/Fish completion script]:completion:(zsh bash fish)' \\
   '-d[Show debug messages]' \\
   '-v[Show version]' \\
   '--build-info[Show version and Build info]' \\
@@ -65,6 +68,8 @@ _noir_completions() {
         --include-path
         --no-color
         --no-log
+        -P --passive-scan
+        --passive-scan-path
         -T --use-all-taggers
         --use-taggers
         --list-taggers
@@ -80,6 +85,7 @@ _noir_completions() {
         --list-techs
         --config-file
         --concurrency
+        --generate-completion
         -d --debug
         -v --version
         --build-info
@@ -88,11 +94,15 @@ _noir_completions() {
 
     case "${prev}" in
         -f|--format)
-            COMPREPLY=( $(compgen -W "plain yaml json jsonl markdown-table curl httpie oas2 oas3 only-url only-param only-header only-cookie" -- "${cur}") )
+            COMPREPLY=( $(compgen -W "plain yaml json jsonl markdown-table curl httpie oas2 oas3 only-url only-param only-header only-cookie only-tag" -- "${cur}") )
             return 0
             ;;
         --send-proxy|--send-es|--with-headers|--use-matchers|--use-filters|--diff-path|--config-file|--set-pvalue|--techs|--exclude-techs|-o|-b|-u)
             COMPREPLY=( $(compgen -f -- "${cur}") )
+            return 0
+            ;;
+        --generate-completion)
+            COMPREPLY=( $(compgen -W "zsh bash fish" -- "${cur}") )
             return 0
             ;;
         *)
@@ -133,6 +143,8 @@ complete -c noir -n '__fish_noir_needs_command' -a '--exclude-codes' -d 'Exclude
 complete -c noir -n '__fish_noir_needs_command' -a '--include-path' -d 'Include file path in the plain result'
 complete -c noir -n '__fish_noir_needs_command' -a '--no-color' -d 'Disable color output'
 complete -c noir -n '__fish_noir_needs_command' -a '--no-log' -d 'Displaying only the results'
+complete -c noir -n '__fish_noir_needs_command' -a '-P' -d 'Perform a passive scan for security issues using rules from the specified path'
+complete -c noir -n '__fish_noir_needs_command' -a '--passive-scan-path' -d 'Specify the path for the rules used in the passive security scan'
 complete -c noir -n '__fish_noir_needs_command' -a '-T' -d 'Activates all taggers for full analysis coverage'
 complete -c noir -n '__fish_noir_needs_command' -a '--use-taggers' -d 'Activates specific taggers'
 complete -c noir -n '__fish_noir_needs_command' -a '--list-taggers' -d 'Lists all available taggers'
@@ -148,6 +160,7 @@ complete -c noir -n '__fish_noir_needs_command' -a '--exclude-techs' -d 'Specify
 complete -c noir -n '__fish_noir_needs_command' -a '--list-techs' -d 'Show all technologies'
 complete -c noir -n '__fish_noir_needs_command' -a '--config-file' -d 'Specify the path to a configuration file in YAML format'
 complete -c noir -n '__fish_noir_needs_command' -a '--concurrency' -d 'Set concurrency'
+complete -c noir -n '__fish_noir_needs_command' -a '--generate-completion' -d 'Generate Zsh/Bash/Fish completion script'
 complete -c noir -n '__fish_noir_needs_command' -a '-d' -d 'Show debug messages'
 complete -c noir -n '__fish_noir_needs_command' -a '-v' -d 'Show version'
 complete -c noir -n '__fish_noir_needs_command' -a '--build-info' -d 'Show version and Build info'

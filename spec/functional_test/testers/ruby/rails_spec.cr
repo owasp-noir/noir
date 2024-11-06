@@ -22,6 +22,9 @@ extected_endpoints = [
     Param.new("X-API-KEY", "", "header"),
   ]),
   Endpoint.new("/posts/1", "DELETE"),
+  Endpoint.new("/up", "GET"),
+  Endpoint.new("/service-worker", "GET"),
+  Endpoint.new("/manifest", "GET"),
 ]
 
 FunctionalTester.new("fixtures/ruby/rails/", {

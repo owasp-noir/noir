@@ -105,3 +105,7 @@ Noir is open-source project and made it with ❤️
 if you want contribute this project, please see [CONTRIBUTING.md](./CONTRIBUTING.md) and Pull-Request with cool your contents.
 
 [![](./CONTRIBUTORS.svg)](https://github.com/owasp-noir/noir/graphs/contributors)
+
+*PassiveScan Rule contributors*
+
+[![](https://raw.githubusercontent.com/owasp-noir/noir-passive-rules/refs/heads/main/CONTRIBUTORS.svg)](https://github.com/owasp-noir/noir-passive-rules/graphs/contributors)

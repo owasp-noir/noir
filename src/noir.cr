@@ -6,7 +6,7 @@ require "./options.cr"
 require "./techs/techs.cr"
 
 module Noir
-  VERSION = "0.18.1"
+  VERSION = "0.18.2"
 end
 
 # Run options parser
@@ -54,7 +54,10 @@ if noir_options["exclude_codes"] != ""
 end
 
 # Run Noir
-banner()
+if noir_options["nolog"] == false
+  banner()
+end
+
 app = NoirRunner.new noir_options
 start_time = Time.monotonic
 
