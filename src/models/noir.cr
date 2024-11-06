@@ -158,7 +158,7 @@ class NoirRunner
 
       # Check double slash
       tiny_tmp.url = tiny_tmp.url.gsub_repeatedly("//", "/")
-      
+
       # Duplicate check
       if tiny_tmp.url != ""
         is_new = true
