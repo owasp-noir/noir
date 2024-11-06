@@ -54,7 +54,10 @@ if noir_options["exclude_codes"] != ""
 end
 
 # Run Noir
-banner()
+if noir_options["nolog"] == false
+  banner()
+end
+
 app = NoirRunner.new noir_options
 start_time = Time.monotonic
 
