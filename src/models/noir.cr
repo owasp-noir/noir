@@ -139,6 +139,8 @@ class NoirRunner
 
     @endpoints.each do |endpoint|
       tiny_tmp = endpoint
+
+      # Remove space in param name
       if endpoint.params.size > 0
         tiny_tmp.params = [] of Param
         endpoint.params.each do |param|
@@ -149,6 +151,15 @@ class NoirRunner
         end
       end
 
+      # Check start with slash
+      if tiny_tmp.url[0] != "/"
+        tiny_tmp.url = "/#{tiny_tmp.url}"
+      end
+
+      # Check double slash
+      tiny_tmp.url = tiny_tmp.url.gsub_repeatedly("//", "/")
+      
+      # Duplicate check
       if tiny_tmp.url != ""
         is_new = true
         final.each do |dup|
