@@ -6,6 +6,7 @@ module Analyzer::Python
   class Django < Python
     # Base path for the Django project
     @django_base_path : ::String = ""
+    @visited_url_paths = Hash(String, Bool).new
 
     # Regular expressions for extracting Django URL configurations
     REGEX_ROOT_URLCONF  = /\s*ROOT_URLCONF\s*=\s*r?['"]([^'"\\]*)['"]/
@@ -98,6 +99,7 @@ module Analyzer::Python
       logger.debug "Extracting endpoints from #{django_urls.filepath}"
       endpoints = [] of Endpoint
       url_base_path = File.dirname(django_urls.filepath)
+      @visited_url_paths[django_urls.filepath] = true
 
       file = File.open(django_urls.filepath, encoding: "utf-8", invalid: :skip)
       content = file.gets_to_end
@@ -129,7 +131,7 @@ module Analyzer::Python
           if File.exists?(new_route_path)
             new_django_urls = DjangoUrls.new("#{django_urls.prefix}#{route}", new_route_path, django_urls.basepath)
             details = Details.new(PathInfo.new(new_route_path))
-            if new_django_urls.filepath != django_urls.filepath
+            unless @visited_url_paths.has_key? new_django_urls.filepath
               extract_endpoints(new_django_urls).each do |endpoint|
                 endpoint.details = details
                 endpoints << endpoint
@@ -159,7 +161,7 @@ module Analyzer::Python
             end
           end
 
-          if filepath != ""
+          if filepath != "" && /^[a-zA-Z_][a-zA-Z0-9_]*$/.match(function_or_class_name)
             extract_endpoints_from_file(url, filepath, function_or_class_name).each do |endpoint|
               endpoint.details = details
               endpoints << endpoint
