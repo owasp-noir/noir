@@ -217,7 +217,6 @@ class JavaLexer < MiniLexer
         @position += 2
         while @position < @input.size
           if @input[@position] == '\n'
-            @position += 1
             break
           end
           @position += 1
