@@ -22,7 +22,7 @@ class JavaParser
     @classes_tokens.each do |class_tokens|
       name = get_class_name(class_tokens)
       methods = parse_methods(class_tokens)
-      annotations = parse_annotations(@tokens, class_tokens[0].index)
+      annotations = parse_annotations_backwards(@tokens, class_tokens[0].index)
       fields = parse_fields(class_tokens, methods, annotations)
       @classes << ClassModel.new(annotations, name, fields, methods, class_tokens)
     end
@@ -158,50 +158,50 @@ class JavaParser
     parameters
   end
 
-  def parse_annotations(tokens : Array(Token), declare_token_index : Int32)
-    skip_line = 0
-    annotation_tokens = Hash(String, AnnotationModel).new
+  def parse_annotations_backwards(tokens : Array(Token), declare_token_index : Int32)
+    annotations = Hash(String, AnnotationModel).new
 
-    cursor = declare_token_index - 1
+    # Find the closest newline before the declaration
     last_newline_index = -1
-    while cursor > 0
+    cursor = declare_token_index - 1
+
+    # Locate the newline token marking the end of the declaration line
+    while cursor >= 0 && last_newline_index == -1
       if tokens[cursor].type == :NEWLINE
-        skip_line += 1
-        if skip_line == 1
-          last_newline_index = cursor
-        end
+        last_newline_index = cursor
       end
-
-      if skip_line == 2
-        # :NEWLINE(cursor) @RequestMapping
-        # :NEWLINE         public class Controller(type param)
-        annotation_token_index = cursor + 1
-        starts_with_at = while annotation_token_index < last_newline_index
-          if tokens[annotation_token_index].type == :AT
-            break true
-          elsif tokens[annotation_token_index].type == :TAB
-            annotation_token_index += 1
-            next
-          else
-            break false
-          end
-        end
-
-        if starts_with_at
-          annotation_name = tokens[annotation_token_index + 1].value
-          annotation_params = parse_formal_parameters(tokens, annotation_token_index + 2)
-          annotation_tokens[annotation_name] = AnnotationModel.new(annotation_name, annotation_params, tokens[annotation_token_index - 1..last_newline_index - 1])
-          skip_line = 1
-          last_newline_index = cursor
-        else
-          break
-        end
-      end
-
       cursor -= 1
     end
 
-    annotation_tokens
+    # Return empty annotations if no newline was found
+    return annotations if last_newline_index == -1
+
+    # Continue parsing annotations above the declaration line
+    while cursor >= 0
+      if tokens[cursor].type == :NEWLINE
+        unless tokens[cursor + 1].type == :NEWLINE || tokens[cursor + 1].type == :TAB
+          # Break if the next token is not an annotation start
+          break if tokens[cursor + 1].type != :AT
+
+          # Extract annotation name and parameters
+          annotation_name = tokens[cursor + 2].value
+          annotation_params = parse_formal_parameters(tokens, cursor + 3)
+
+          # Store the annotation in the hash
+          annotations[annotation_name] = AnnotationModel.new(
+            annotation_name,
+            annotation_params,
+            tokens[cursor..last_newline_index - 1]
+          )
+
+          # Update the newline index to the current cursor
+          last_newline_index = cursor
+        end
+      end
+      cursor -= 1
+    end
+
+    annotations
   end
 
   def parse_classes(tokens : Array(Token))
@@ -455,7 +455,7 @@ class JavaParser
         if token.type == :RBRACE
           rbrace_count += 1
           if lbrace_count == rbrace_count
-            annotations = parse_annotations(class_tokens, method_name_index)
+            annotations = parse_annotations_backwards(class_tokens, method_name_index)
             if !method_name.nil?
               method_params = parse_formal_parameters(class_tokens, method_name_index + 1)
               method_body = class_tokens[method_body_index + 1..index - 1]
