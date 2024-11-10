@@ -151,16 +151,16 @@ class NoirRunner
         end
       end
 
-      # Check start with slash
-      if tiny_tmp.url[0] != "/"
-        tiny_tmp.url = "/#{tiny_tmp.url}"
-      end
-
-      # Check double slash
-      tiny_tmp.url = tiny_tmp.url.gsub_repeatedly("//", "/")
-
       # Duplicate check
       if tiny_tmp.url != ""
+        # Check start with slash
+        if tiny_tmp.url[0] != "/"
+          tiny_tmp.url = "/#{tiny_tmp.url}"
+        end
+
+        # Check double slash
+        tiny_tmp.url = tiny_tmp.url.gsub_repeatedly("//", "/")
+
         is_new = true
         final.each do |dup|
           if dup.method == tiny_tmp.method && dup.url == tiny_tmp.url
