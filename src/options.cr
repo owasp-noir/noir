@@ -115,12 +115,19 @@ def run_options_parser
     parser.on "-t TECHS", "--techs rails,php", "Specify the technologies to use" { |var| noir_options["techs"] = YAML::Any.new(var) }
     parser.on "--exclude-techs rails,php", "Specify the technologies to be excluded" { |var| noir_options["exclude_techs"] = YAML::Any.new(var) }
     parser.on "--list-techs", "Show all technologies" do
-      puts "Available technologies:"
+      puts "⚑ Available technologies:"
       techs = NoirTechs.techs
       techs.each do |tech, value|
-        puts "  #{tech.to_s.colorize(:green)}"
+        puts "    #{tech.to_s.colorize(:green)}"
         value.each do |k, v|
-          puts "    #{k.to_s.colorize(:blue)}: #{v}"
+          if v.is_a?(Hash)
+            puts "      ➔ #{k.to_s.colorize(:blue)}:"
+            v.each do |sub_k, sub_v|
+              puts "        └── #{sub_k.to_s.colorize(:cyan)}: #{sub_v}"
+            end
+          else
+            puts "      ➔ #{k.to_s.colorize(:blue)}: #{v}"
+          end
         end
       end
       exit
