@@ -143,11 +143,13 @@ module Analyzer::Java
               class_annotation = class_model.annotations["RequestMapping"]?
               if !class_annotation.nil?
                 next if class_annotation.params.size == 0
-                class_path_token = class_annotation.params[0][-1]
-                if class_path_token.type == :STRING_LITERAL
-                  url = class_path_token.value[1..-2]
-                  if url.ends_with? "*"
-                    url = url[0..-2]
+                if class_annotation.params[0].size > 0
+                  class_path_token = class_annotation.params[0][-1]
+                  if class_path_token.type == :STRING_LITERAL
+                    url = class_path_token.value[1..-2]
+                    if url.ends_with? "*"
+                      url = url[0..-2]
+                    end
                   end
                 end
               end

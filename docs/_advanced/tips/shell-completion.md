@@ -6,7 +6,7 @@ nav_order: 2
 layout: page
 ---
 
-## Zsh completion
+## Zsh Completion
 
 To enable auto-completion for Zsh, run the following command to generate the completion script:
 
@@ -23,7 +23,7 @@ Then, move the generated script to your Zsh completions directory, typically `~/
 noir --generate-completion zsh > ~/.zsh/completion/_noir
 ```
 
-## Bash completion
+## Bash Completion
 
 For Bash, generate the completion script by running:
 
@@ -40,7 +40,7 @@ After generating the script, move it to the appropriate directory for Bash compl
 noir --generate-completion bash > ~/.local/share/bash-completion/completions/noir
 ```
 
-## Fish completion
+## Fish Completion
 
 For Fish, generate the completion script by running:
 
@@ -55,3 +55,7 @@ After generating the script, move it to the Fish completions directory, typicall
 ```bash
 noir --generate-completion fish > ~/.config/fish/completions/noir.fish
 ```
+
+## Shell Completion for Homebrew Users
+
+For Homebrew users, shell completion (e.g., for Zsh, Bash, etc.) is installed automatically, and no additional configuration is needed. The completions are ready to use immediately after installation.

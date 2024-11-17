@@ -34,6 +34,8 @@ extected_endpoints = [
     Param.new("b", "", "query"),
     Param.new("name", "", "query"),
   ]),
+  # EmptyController.java
+  Endpoint.new("/empty", "GET"),
 ]
 
 FunctionalTester.new("fixtures/java/spring/", {

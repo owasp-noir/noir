@@ -24,9 +24,10 @@ noir -b <BASE_PATH>
 
 ## Outputs
 
-The output will display endpoints (such as paths, methods, parameters, headers, etc.), and you can specify the output format using flags `-f` or `--format`. If you're curious about the supported formats, please refer to [this](/get_started/output/) document.
+The output will display endpoints (such as paths, methods, parameters, headers, etc.), and you can specify the output format using flags `-f` or `--format`. If you're curious about the supported formats, please refer to [this](/noir/get_started/output/) document.
 
 ![](../../images/get_started/basic.png)
+*Example of plain output*
 
 ## Usage
 
