@@ -6,11 +6,11 @@ Thank you for considering contributing to our project! Here are some guidelines 
 - Begin by forking the repository.
 - Write your code within your forked repository.
 
-3. Pull Request
-- Once your contribution is ready, create a Pull Request (PR) to the dev branch of the main repository.
+2. Pull Request
+- Once your contribution is ready, create a Pull Request (PR) to the main branch of the main repository.
 - Provide a clear and concise description of your changes in the PR.
 
-4. Completion
+3. Completion
 - That's it! You're done. Await feedback and further instructions from the maintainers.
 
 ```mermaid
@@ -20,12 +20,11 @@ graph TD
         fork2["forked branch 2"]
         fork3["forked branch 3"]
     end
-    fork1 --> dev["dev branch"]
-    fork2 --> dev
-    fork3 --> dev
+    fork1 --> main["main branch"]
+    fork2 --> main
+    fork3 --> main
     
-    dev --> main["main branch"]
-    dev --> deployments["documentation deployments (https://owasp-noir.github.io)"]
+    main --> deployments["documentation deployments (https://owasp-noir.github.io)"]
 
     main -->|release| homebrew["homebrew"]
     main -->|release| snapcraft["snapcraft"]
@@ -52,7 +51,7 @@ shards build
 ```bash
 crystal spec
 
-# If you want more detail?
+# Want more details?
 crystal spec -v
 ```
 
@@ -71,28 +70,28 @@ or
 rake lint:all
 ```
 
-## 🧭 Code structure
+## 🧭 Code Structure
 
 - spec: 
-  - unit_test: Unit test codes. (for `crystal spec` command)
+  - unit_test: Unit test codes (for `crystal spec` command).
   - functional_test: Functional test codes.
 - src: Contains the source code.
   - analyzer: Code analyzers for Endpoint URL and Parameter analysis.
-  - detector: Codes for language and framework identification.
+  - detector: Code for language and framework identification.
   - models: Contains everything related to models, such as classes and structures.
 - noir.cr: Main file and command-line parser.
 
 Feel free to reach out to us if you have any questions or need further assistance!
 
-## Documents contributing
+## Document Contributing
 
-Please note that [our web page](https://owasp-noir.github.io/noir/) operates based on the dev branch. If you make any changes, kindly send a Pull Request (PR) to the dev branch. 
+Please note that [our web page](https://owasp-noir.github.io/noir/) operates based on the main branch. If you make any changes, kindly send a Pull Request (PR) to the main branch. 
 
 To ensure a smooth integration of your contributions, please follow these steps:
 
-* Fork the repository and create your feature branch from dev.
+* Fork the repository and create your feature branch from main.
 * Make your changes, ensuring they are thoroughly tested.
-* Submit your PR to the dev branch for review.
+* Submit your PR to the main branch for review.
 
 By doing so, you'll help us keep our project up-to-date and well-organized. Your efforts are greatly appreciated, and we're excited to see what you'll bring to the project!
 
