@@ -1,9 +1,14 @@
 version: 2
 updates:
-  - package-ecosystem: docker
+  - package-ecosystem: "docker"
     directory: "/"
     schedule:
-      interval: daily
-      time: "20:00"
-    open-pull-requests-limit: 10
-    target-branch: "main"
+      interval: "weekly"
+
+  - package-ecosystem: "github-actions"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "bundler"
+    schedule:
+      interval: "weekly"
