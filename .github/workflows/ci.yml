@@ -2,7 +2,7 @@
 name: CI
 on:
   pull_request_target:
-    branches: [main, dev]
+    branches: [main]
     paths: ['**/*.cr', shard.yml, Dockerfile]
 jobs:
   build-crystal:
