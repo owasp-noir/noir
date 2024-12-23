@@ -6,7 +6,7 @@ name: GHCR Publish
 # documentation.
 on:
   push:
-    branches: [main, dev]
+    branches: [main]
   release:
     types: [published]
   workflow_dispatch:
