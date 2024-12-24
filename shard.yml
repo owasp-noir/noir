@@ -20,6 +20,6 @@ targets:
 dependencies:
   crest:
     github: mamantoha/crest
-    version: ~> 1.3.13
+    version: ~> 1.4.0
   har:
     github: NeuraLegion/har
