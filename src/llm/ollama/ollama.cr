@@ -8,19 +8,18 @@ module LLM
 
     def request(prompt : String)
       body = {
-        "model":  @model,
-        "prompt": prompt,
+        :model => @model,
+        :prompt => prompt
       }
 
-      Crest::Request.execute(
-        method: "POST",
-        url: @api,
-        form: body,
-        json: true
-      )
+      response = Crest.post(@api, body, json: true)
+      response.body
+    rescue ex : Exception
+      puts "Error: #{ex.message}"
     end
 
     def query(code : String)
+      request(PROMPT + "\n" + code)
     end
   end
 end
