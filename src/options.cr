@@ -108,7 +108,7 @@ def run_options_parser
       append_to_yaml_array(noir_options, use_filters, var)
     end
 
-    parser.separator "\n  LLM Integration:".colorize(:blue)
+    parser.separator "\n  AI Integration:".colorize(:blue)
     parser.on "--ollama http://localhost:11434", "Specify the Ollama server URL" { |var| noir_options["ollama"] = YAML::Any.new(var) }
     parser.on "--ollama-model MODEL", "Specify the Ollama model name" { |var| noir_options["ollama_model"] = YAML::Any.new(var) }
 
