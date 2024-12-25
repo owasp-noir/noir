@@ -54,4 +54,6 @@
       - any-glob-to-any-file: Dockerfile
 🤖 llm:
   - changed-files:
-      - any-glob-to-any-file: [src/llm/**, src/analyzer/analyzers/llm_analyzers/**]
+      - any-glob-to-any-file:
+          - src/llm/**
+          - src/analyzer/analyzers/llm_analyzers/**
