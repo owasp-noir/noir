@@ -44,6 +44,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"rust_axum", Rust::Axum},
     {"rust_rocket", Rust::Rocket},
     {"rust_actix_web", Rust::ActixWeb},
+    {"ai_ollama", AI::Ollama},
   ])
 
   logger.success "#{analyzers.size} Analyzers initialized"
@@ -66,6 +67,11 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
 
   logger.info "Analysis Started"
   logger.sub "➔ Code Analyzer: #{techs.size} in use"
+
+  if (options["ollama"].to_s != "") && (options["ollama_model"].to_s != "")
+    logger.sub "➔ AI Analyzer: Ollama in use"
+    techs << "ai_ollama"
+  end
 
   techs.each do |tech|
     if analyzer.has_key?(tech)
