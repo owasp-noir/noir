@@ -27,11 +27,8 @@ module Analyzer::AI
           if File.exists?(path) && !(ignore_extensions().includes? File.extname(path))
             File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
               content = file.gets_to_end
-              params_query = [] of Param
-              params_body = [] of Param
-              methods = [] of String
               result = [] of Endpoint
-          
+
               begin
                 prompt = <<-PROMPT
                 !! You must only report JSON results. Don't explain anything and don't decorate it with Markdown. !!
@@ -55,11 +52,11 @@ module Analyzer::AI
                 Code:
                 #{content}
                 PROMPT
-          
+
                 response = ollama.request(prompt)
                 logger.debug "Ollama response (#{relative_path}):"
                 logger.debug_sub response
-                
+
                 response_json = JSON.parse(response.to_s)
                 response_json.as_a.each do |endpoint|
                   url = endpoint["url"].as_s
