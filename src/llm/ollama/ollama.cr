@@ -8,14 +8,14 @@ module LLM
 
     def request(prompt : String)
       body = {
-        :model => @model,
+        :model  => @model,
         :prompt => prompt,
-        :stream => false
+        :stream => false,
       }
 
       response = Crest.post(@api, body, json: true)
       response_json = JSON.parse response.body
-      
+
       response_json["response"]
     rescue ex : Exception
       puts "Error: #{ex.message}"

@@ -30,11 +30,13 @@ module Analyzer::AI
               params_body = [] of Param
               methods = [] of String
 
-              file.each_line do |line|
+              file.each_line do |_|
                 # TODO
                 # puts ollama.request("Hi! This is prompt text.")
                 # details = Details.new(PathInfo.new(path))
                 # result << Endpoint.new("/#{relative_path}", method, params_body, details)
+
+
               rescue
                 next
               end
