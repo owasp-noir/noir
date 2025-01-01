@@ -27,14 +27,13 @@ module Analyzer::AI
           if File.exists?(path) && !(ignore_extensions().includes? File.extname(path))
             File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
               content = file.gets_to_end
-              result = [] of Endpoint
 
               begin
                 prompt = <<-PROMPT
-                !! You must only report JSON results. Don't explain anything and don't decorate it with Markdown. !!
+                !! Return results strictly as a JSON object. Do not include any explanations, comments, or additional text. !!
                 ---
-                Analyze the following code and extract endpoint and parameter information.
-                Return the result strictly as a JSON object with the following structure:
+                Analyze the provided source code and extract the endpoint and parameter information. The response must follow the exact JSON structure specified below, without any deviations:
+
                 [
                   {
                     "url": "string / e.g. /api/v1/users",
@@ -42,14 +41,17 @@ module Analyzer::AI
                     "params": [
                       {
                         "name": "string / e.g. id",
-                        "param_type": "string / e.g. query, json, form, header, cookie, path",
-                        "value": "string / e.g. hahwul"
+                        "param_type": "string / one of: query, json, form, header, cookie, path",
+                        "value": "string / optional, default empty"
                       }
                     ]
                   }
                 ]
 
-                Code:
+                The `param_type` field must strictly use one of the following values: `query`, `json`, `form`, `header`, `cookie`, `path`.
+
+                Input Code:
+
                 #{content}
                 PROMPT
 
@@ -69,7 +71,7 @@ module Analyzer::AI
                     )
                   end
                   details = Details.new(PathInfo.new(path))
-                  result << Endpoint.new(url, method, params, details)
+                  @result << Endpoint.new(url, method, params, details)
                 end
               rescue ex : Exception
                 puts "Error processing file: #{path}"
@@ -83,7 +85,7 @@ module Analyzer::AI
       end
       Fiber.yield
 
-      result
+      @result
     end
 
     def ignore_extensions
