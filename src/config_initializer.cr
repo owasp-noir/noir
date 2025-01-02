@@ -107,6 +107,8 @@ class ConfigInitializer
       "diff"              => YAML::Any.new(""),
       "passive_scan"      => YAML::Any.new(false),
       "passive_scan_path" => YAML::Any.new([] of YAML::Any),
+      "ollama"            => YAML::Any.new(""),
+      "ollama_model"      => YAML::Any.new(""),
     }
 
     noir_options

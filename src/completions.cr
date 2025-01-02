@@ -40,6 +40,8 @@ _arguments \\
   '-d[Show debug messages]' \\
   '-v[Show version]' \\
   '--build-info[Show version and Build info]' \\
+  '--ollama[Specify the Ollama server URL]:URL:_urls' \\
+  '--ollama-model[Specify the Ollama model name]:model:' \\
   '-h[Show help]'
 SCRIPT
 end
@@ -86,6 +88,8 @@ _noir_completions() {
         --config-file
         --concurrency
         --generate-completion
+        --ollama
+        --ollama-model
         -d --debug
         -v --version
         --build-info
@@ -97,7 +101,7 @@ _noir_completions() {
             COMPREPLY=( $(compgen -W "plain yaml json jsonl markdown-table curl httpie oas2 oas3 only-url only-param only-header only-cookie only-tag" -- "${cur}") )
             return 0
             ;;
-        --send-proxy|--send-es|--with-headers|--use-matchers|--use-filters|--diff-path|--config-file|--set-pvalue|--techs|--exclude-techs|-o|-b|-u)
+        --send-proxy|--send-es|--with-headers|--use-matchers|--use-filters|--diff-path|--config-file|--set-pvalue|--techs|--exclude-techs|--ollama|--ollama-model|-o|-b|-u)
             COMPREPLY=( $(compgen -f -- "${cur}") )
             return 0
             ;;
@@ -161,6 +165,8 @@ complete -c noir -n '__fish_noir_needs_command' -a '--list-techs' -d 'Show all t
 complete -c noir -n '__fish_noir_needs_command' -a '--config-file' -d 'Specify the path to a configuration file in YAML format'
 complete -c noir -n '__fish_noir_needs_command' -a '--concurrency' -d 'Set concurrency'
 complete -c noir -n '__fish_noir_needs_command' -a '--generate-completion' -d 'Generate Zsh/Bash/Fish completion script'
+complete -c noir -n '__fish_noir_needs_command' -a '--ollama' -d 'Specify the Ollama server URL'
+complete -c noir -n '__fish_noir_needs_command' -a '--ollama-model' -d 'Specify the Ollama model name'
 complete -c noir -n '__fish_noir_needs_command' -a '-d' -d 'Show debug messages'
 complete -c noir -n '__fish_noir_needs_command' -a '-v' -d 'Show version'
 complete -c noir -n '__fish_noir_needs_command' -a '--build-info' -d 'Show version and Build info'
