@@ -50,6 +50,10 @@ def detect_techs(base_path : String, options : Hash(String, YAML::Any), passive_
     Rust::ActixWeb,
   ])
 
+  if options["techs"].to_s.size > 0
+    techs << options["techs"].to_s
+  end
+
   channel = Channel(String).new
   spawn do
     Dir.glob("#{base_path}/**/*") do |file|
