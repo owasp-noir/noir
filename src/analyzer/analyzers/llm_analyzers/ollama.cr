@@ -30,17 +30,17 @@ module Analyzer::AI
 
               begin
                 prompt = <<-PROMPT
-                !! Return results strictly as a JSON object. Do not include any explanations, comments, or additional text. !!
+                !! Respond only in JSON format. Do not include explanations, comments, or any additional text. !!
                 ---
-                Analyze the provided source code and extract the endpoint and parameter information. The response must follow the exact JSON structure specified below, without any deviations:
+                Analyze the given source code and extract the endpoint and parameter details. Strictly follow this JSON structure:
 
                 [
                   {
-                    "url": "string / e.g. /api/v1/users",
-                    "method": "string / e.g. GET, POST, PUT, DELETE",
+                    "url": "string / e.g., /api/v1/users",
+                    "method": "string / e.g., GET, POST, PUT, DELETE",
                     "params": [
                       {
-                        "name": "string / e.g. id",
+                        "name": "string / e.g., id",
                         "param_type": "string / one of: query, json, form, header, cookie, path",
                         "value": "string / optional, default empty"
                       }
@@ -48,7 +48,9 @@ module Analyzer::AI
                   }
                 ]
 
-                The `param_type` field must strictly use one of the following values: `query`, `json`, `form`, `header`, `cookie`, `path`.
+                - Ensure `param_type` uses only these values: `query`, `json`, `form`, `header`, `cookie`, `path`.
+                - If no endpoints are found in the code, respond with an empty array `[]`.
+                - Do not deviate from the specified JSON structure.
 
                 Input Code:
 
