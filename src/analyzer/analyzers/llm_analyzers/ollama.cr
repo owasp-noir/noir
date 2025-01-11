@@ -17,9 +17,28 @@ module Analyzer::AI
       # Init LLM Instance
       ollama = LLM::Ollama.new(@llm_url, @model)
 
+      locator = CodeLocator.instance
+      all_paths = locator.all("file_map").join("\n")
+
+      # Filter files that are likely to contain endpoints
+      filter_prompt = <<-PROMPT
+      !! Respond only in JSON format. Do not include explanations, comments, or any additional text. !!
+      ---
+      Analyze the following list of file paths and identify which files are likely to represent endpoints, including API endpoints, web pages, or static resources.
+      Return the result as a JSON array of file paths that should be analyzed further.
+
+      File paths:
+      #{all_paths}
+      PROMPT
+
+      filter_response = ollama.request(filter_prompt)
+      filtered_paths = JSON.parse(filter_response.to_s)
+      logger.debug_sub filter_response
+
       # Source Analysis
       begin
-        Dir.glob("#{base_path}/**/*") do |path|
+        filtered_paths.as_a.each do |jpath|
+          path = jpath.as_s
           next if File.directory?(path)
 
           relative_path = get_relative_path(base_path, path)
