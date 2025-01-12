@@ -1,0 +1,32 @@
+- node: Sites
+  children:
+  - node: https://www.hahwul.com
+    url: https://www.hahwul.com
+    method: GET
+    responseLength: 58064
+    statusCode: 200
+    children:
+    - node: about
+      url: https://www.hahwul.com/about
+      method: GET
+      children:
+      - node: GET:/
+        url: https://www.hahwul.com/about/
+        method: GET
+        responseLength: 60842
+        statusCode: 200
+      - node: POST:/()(1)
+        url: https://www.hahwul.com/about/
+        method: POST
+        responseLength: 485
+        statusCode: 405
+        data: 1=
+    - node: projects
+      url: https://www.hahwul.com/projects
+      method: GET
+      children:
+      - node: GET:/
+        url: https://www.hahwul.com/projects/
+        method: GET
+        responseLength: 65654
+        statusCode: 200
