@@ -17,9 +17,40 @@ module Analyzer::AI
       # Init LLM Instance
       ollama = LLM::Ollama.new(@llm_url, @model)
 
+      locator = CodeLocator.instance
+      all_paths = locator.all("file_map")
+      target_paths = [] of String
+
+      if all_paths.size > 10
+        logger.debug_sub "Ollama::Analyzing filtered files"
+
+        # Filter files that are likely to contain endpoints
+        filter_prompt = <<-PROMPT
+        !! Respond only in JSON format. Do not include explanations, comments, or any additional text. !!
+        ---
+        Analyze the following list of file paths and identify which files are likely to represent endpoints, including API endpoints, web pages, or static resources. 
+        Exclude directories from the analysis and focus only on individual files. 
+        Return the result as a JSON array of file paths that should be analyzed further.
+
+        File paths:
+        #{all_paths.join("\n")}
+        PROMPT
+
+        filter_response = ollama.request(filter_prompt)
+        filtered_paths = JSON.parse(filter_response.to_s)
+        logger.debug_sub filter_response
+
+        filtered_paths.as_a.each do |fpath|
+          target_paths << fpath.as_s
+        end
+      else
+        logger.debug_sub "Ollama::Analyzing all files"
+        target_paths = Dir.glob("#{base_path}/**/*")
+      end
+
       # Source Analysis
       begin
-        Dir.glob("#{base_path}/**/*") do |path|
+        target_paths.each do |path|
           next if File.directory?(path)
 
           relative_path = get_relative_path(base_path, path)
@@ -91,7 +122,7 @@ module Analyzer::AI
     end
 
     def ignore_extensions
-      [".js", ".css", ".html", ".xml", ".json", ".yml", ".yaml", ".md", ".jpg", ".jpeg", ".png", ".gif", ".svg", ".ico", ".eot", ".ttf", ".woff", ".woff2", ".otf", ".mp3", ".mp4", ".avi", ".mov", ".webm", ".zip", ".tar", ".gz", ".7z", ".rar", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv", ".log", ".sql", ".bak", ".swp"]
+      [".css", ".xml", ".json", ".yml", ".yaml", ".md", ".jpg", ".jpeg", ".png", ".gif", ".svg", ".ico", ".eot", ".ttf", ".woff", ".woff2", ".otf", ".mp3", ".mp4", ".avi", ".mov", ".webm", ".zip", ".tar", ".gz", ".7z", ".rar", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv", ".log", ".sql", ".bak", ".swp"]
     end
   end
 end

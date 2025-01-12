@@ -55,9 +55,12 @@ def detect_techs(base_path : String, options : Hash(String, YAML::Any), passive_
   end
 
   channel = Channel(String).new
+  locator = CodeLocator.instance
+
   spawn do
     Dir.glob("#{base_path}/**/*") do |file|
       channel.send(file)
+      locator.push "file_map", file
     end
   end
 
