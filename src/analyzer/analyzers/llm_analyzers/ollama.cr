@@ -28,8 +28,8 @@ module Analyzer::AI
         filter_prompt = <<-PROMPT
         !! Respond only in JSON format. Do not include explanations, comments, or any additional text. !!
         ---
-        Analyze the following list of file paths and identify which files are likely to represent endpoints, including API endpoints, web pages, or static resources. 
-        Exclude directories from the analysis and focus only on individual files. 
+        Analyze the following list of file paths and identify which files are likely to represent endpoints, including API endpoints, web pages, or static resources.
+        Exclude directories from the analysis and focus only on individual files.
         Return the result as a JSON array of file paths that should be analyzed further.
 
         File paths:
