@@ -11,12 +11,12 @@ module Analyzer::Specification
           if File.exists?(sites_tree)
             details = Details.new(PathInfo.new(sites_tree))
             content = File.read(sites_tree, encoding: "utf-8", invalid: :skip)
-            json_obj = JSON.parse(content)
+            yaml_obj = YAML.parse(content)
 
             begin
-              children = json_obj["children"].as_h
-              if children.size > 0
-                process_node(children)
+              children = yaml_obj.as_a
+              children.each do |child|
+                process_node(child, details)
               end
             rescue e
               @logger.debug "Exception of #{sites_tree}/paths"
@@ -29,8 +29,26 @@ module Analyzer::Specification
       @result
     end
 
-    def process_node(children)
-      # TODO..
+    def process_node(node, details)
+      puts 1
+      if node.is_a?(Hash) && node.has_key?("url") && node.has_key?("method")
+        path = node["url"].as_s
+        method = node["method"].as_s.upcase || "GET"
+        if path != ""
+          puts path, method
+        end
+      end
+
+      puts 2
+
+      if node.is_a?(Hash) && node.has_key?("children")
+        children = node["children"].as_a
+        if children.size > 0
+          children.each do |child|
+            process_node(child, details)
+          end
+        end
+      end
     end
   end
 end
