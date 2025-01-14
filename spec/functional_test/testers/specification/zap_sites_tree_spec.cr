@@ -1,10 +1,13 @@
 require "../../func_spec.cr"
 
 extected_endpoints = [
-  Endpoint.new("/v1/pets", "GET"),
-  Endpoint.new("/v1/pets", "POST", [Param.new("pet", "", "json")]),
-  Endpoint.new("/v1/pets/{petId}", "GET", [Param.new("petId", "", "path")]),
-  Endpoint.new("/v1/pets/{petId}", "PUT", [Param.new("petId", "", "path"), Param.new("pet", "", "json")]),
+  Endpoint.new("/", "GET"),
+  Endpoint.new("/about", "GET"),
+  Endpoint.new("/about/", "GET"),
+  Endpoint.new("/zz", "GET"),
+  Endpoint.new("/zz/", "DELETE"),
+  Endpoint.new("/111", "PUT"),
+  Endpoint.new("/about/", "POST", [Param.new("data", "", "form"), Param.new("id", "", "form")]),
 ]
 
 FunctionalTester.new("fixtures/specification/zap/", {
