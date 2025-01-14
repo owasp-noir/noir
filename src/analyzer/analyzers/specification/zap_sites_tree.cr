@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "uri"
 
 module Analyzer::Specification
   class ZapSitesTree < Analyzer
@@ -30,18 +31,30 @@ module Analyzer::Specification
     end
 
     def process_node(node, details)
-      puts 1
-      if node.is_a?(Hash) && node.has_key?("url") && node.has_key?("method")
+      if node.as_h.has_key?("url") && node.as_h.has_key?("method")
         path = node["url"].as_s
         method = node["method"].as_s.upcase || "GET"
+
         if path != ""
-          puts path, method
+          uri = URI.parse(path)
+          params = [] of Param
+          if node.as_h.has_key?("data")
+            data = node["data"].as_s
+            begin
+              data.split("&").each do |param|
+                param_name = param.split("=")[0]
+                param = Param.new(param_name.to_s, "", "form")
+                params << param
+              end
+            rescue
+            end
+          end
+
+          @result << Endpoint.new(uri.path, method, params, details)
         end
       end
 
-      puts 2
-
-      if node.is_a?(Hash) && node.has_key?("children")
+      if node.as_h.has_key?("children")
         children = node["children"].as_a
         if children.size > 0
           children.each do |child|
