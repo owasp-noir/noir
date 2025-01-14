@@ -30,13 +30,7 @@
         method: POST
         responseLength: 485
         statusCode: 405
-        data: form=
-      - node: POST:/()({"json":"1234"})
-        url: https://www.hahwul.com/about/
-        method: POST
-        responseLength: 485
-        statusCode: 405
-        data: '{"json":"1234"}='
+        data: data=hi&id=1
     - node: zz
       url: https://www.hahwul.com/zz
       method: GET
