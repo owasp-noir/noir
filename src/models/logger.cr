@@ -8,6 +8,7 @@ class NoirLogger
     WARNING
     ERROR
     FATAL
+    HEADING
   end
 
   def initialize(debug : Bool, colorize : Bool, no_log : Bool)
@@ -32,6 +33,8 @@ class NoirLogger
                "✖︎".colorize(:red).toggle(@color_mode)
              when LogLevel::FATAL
                "☠".colorize(:red).toggle(@color_mode)
+             when LogLevel::HEADING
+               "★".colorize(:yellow).toggle(@color_mode)
              end
 
     STDERR.puts "#{prefix} #{message}"
@@ -48,7 +51,7 @@ class NoirLogger
   end
 
   def heading(message)
-    log(LogLevel::INFO, "★ #{message}".colorize(:yellow).toggle(@color_mode).to_s)
+    log(LogLevel::HEADING, message)
   end
 
   def info(message)
