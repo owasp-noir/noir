@@ -135,6 +135,7 @@ class NoirRunner
 
   def optimize_endpoints
     @logger.info "Optimizing endpoints."
+    @logger.sub "➔ Removing duplicated endpoints and params."
     final = [] of Endpoint
 
     @endpoints.each do |endpoint|
@@ -164,6 +165,7 @@ class NoirRunner
         is_new = true
         final.each do |dup|
           if dup.method == tiny_tmp.method && dup.url == tiny_tmp.url
+            @logger.debug_sub " + Found duplicated endpoint: #{tiny_tmp.method} #{tiny_tmp.url}"
             is_new = false
             tiny_tmp.params.each do |param|
               existing_param = dup.params.find { |dup_param| dup_param.name == param.name }
@@ -235,7 +237,9 @@ class NoirRunner
     target_url = @options["url"].to_s
 
     if target_url != ""
-      @logger.info "Combining url and endpoints."
+      @logger.sub "➔ Combining url and endpoints."
+      @logger.debug_sub " + Before size: #{@endpoints.size}"
+
       @endpoints.each do |endpoint|
         tmp_endpoint = endpoint
         if tmp_endpoint.url.includes? target_url
@@ -255,12 +259,13 @@ class NoirRunner
         tmp << tmp_endpoint
       end
 
+      @logger.debug_sub " + After size: #{tmp.size}"
       @endpoints = tmp
     end
   end
 
   def add_path_parameters
-    @logger.info "Adding path parameters by URL."
+    @logger.sub "➔ Adding path parameters by URL."
     final = [] of Endpoint
 
     @endpoints.each do |endpoint|
@@ -304,7 +309,7 @@ class NoirRunner
   end
 
   def update_status_codes
-    @logger.info "Updating status codes."
+    @logger.sub "➔ Updating status codes."
     final = [] of Endpoint
 
     exclude_codes = [] of Int32

@@ -77,6 +77,7 @@ def detect_techs(base_path : String, options : Hash(String, YAML::Any), passive_
           detector_list.each do |detector|
             if detector.detect(file, content)
               techs << detector.name
+              logger.debug_sub "└── Detected: #{detector.name}"
             end
           end
 
