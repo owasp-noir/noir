@@ -52,4 +52,12 @@ describe "Detect JS Express" do
   it "import_router_double_quot" do
     instance.detect("index.js", "import { Router } from \"express\"").should eq(true)
   end
+
+  it "app_use_express_json" do
+    instance.detect("index.js", "app.use(express.json())").should eq(true)
+  end
+
+  it "app_use_express_urlencoded" do
+    instance.detect("index.js", "app.use(express.urlencoded({ extended: true }))").should eq(true)
+  end
 end
