@@ -48,8 +48,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"ai_ollama", AI::Ollama},
   ])
 
-  logger.success "#{analyzers.size} Analyzers initialized"
-  logger.debug "Analyzers:"
+  logger.debug "#{analyzers.size} Analyzers initialized"
   analyzers.each do |key, _|
     logger.debug_sub "#{key} initialized"
   end
@@ -62,9 +61,6 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
   logger.info "Initializing analyzers"
 
   analyzer = initialize_analyzers logger
-  if options["url"] != ""
-    logger.sub "➔ File analyzer initialized and #{file_analyzer.hooks_count} hooks loaded"
-  end
 
   logger.info "Analysis Started"
   logger.sub "➔ Code Analyzer: #{techs.size} in use"
@@ -89,6 +85,6 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
     result = result + file_analyzer.analyze
   end
 
-  logger.sub "➔ Found #{result.size} endpoints"
+  logger.info "Found #{result.size} endpoints"
   result
 end

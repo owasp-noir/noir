@@ -124,7 +124,7 @@ app.logger.success "Finally identified #{app.endpoints.size} endpoints."
 end_time = Time.monotonic
 elapsed_time = end_time - start_time
 
-app.logger.info "Scan completed in #{elapsed_time.total_milliseconds.round} ms."
+app.logger.info "Scan completed in #{(elapsed_time.total_milliseconds / 1000.0).round(4)} s."
 
 if app_diff.nil?
   app.logger.info "Generating Report."

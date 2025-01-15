@@ -1,10 +1,45 @@
 require "colorize"
 
 class NoirLogger
+  enum LogLevel
+    DEBUG
+    INFO
+    SUCCESS
+    WARNING
+    ERROR
+    FATAL
+    HEADING
+  end
+
   def initialize(debug : Bool, colorize : Bool, no_log : Bool)
     @debug = debug
     @color_mode = colorize
     @no_log = no_log
+  end
+
+  def log(level : LogLevel, message : String)
+    return if @no_log
+
+    prefix = case level
+             when LogLevel::DEBUG
+               "❏".colorize(:dark_gray).toggle(@color_mode)
+             when LogLevel::INFO
+               "⚑".colorize(:light_cyan).toggle(@color_mode)
+             when LogLevel::SUCCESS
+               "✔".colorize(:green).toggle(@color_mode)
+             when LogLevel::WARNING
+               "▲".colorize(:yellow).toggle(@color_mode)
+             when LogLevel::ERROR
+               "✖︎".colorize(:red).toggle(@color_mode)
+             when LogLevel::FATAL
+               "☠".colorize(:red).toggle(@color_mode)
+             when LogLevel::HEADING
+               "★".colorize(:yellow).toggle(@color_mode)
+             end
+
+    STDERR.puts "#{prefix} #{message}"
+
+    exit(1) if level == LogLevel::FATAL
   end
 
   def puts(message)
@@ -16,74 +51,41 @@ class NoirLogger
   end
 
   def heading(message)
-    if @no_log
-      return
-    end
-
-    prefix = "★".colorize(:yellow).toggle(@color_mode)
-    STDERR.puts "#{prefix} #{message}"
+    log(LogLevel::HEADING, message)
   end
 
   def info(message)
-    if @no_log
-      return
-    end
-
-    prefix = "⚑".colorize(:light_cyan).toggle(@color_mode)
-    STDERR.puts "#{prefix} #{message}"
+    log(LogLevel::INFO, message)
   end
 
   def success(message)
-    if @no_log
-      return
-    end
-
-    prefix = "✔".colorize(:green).toggle(@color_mode)
-    STDERR.puts "#{prefix} #{message}"
+    log(LogLevel::SUCCESS, message)
   end
 
   def sub(message)
-    if @no_log
-      return
-    end
-
+    return if @no_log
     STDERR.puts "  " + message
   end
 
   def warning(message)
-    prefix = "▲".colorize(:yellow).toggle(@color_mode)
-    STDERR.puts "#{prefix} #{message}"
+    log(LogLevel::WARNING, message)
   end
 
   def error(message)
-    prefix = "✖︎".colorize(:red).toggle(@color_mode)
-    STDERR.puts "#{prefix} #{message}"
+    log(LogLevel::ERROR, message)
   end
 
   def debug(message)
-    if @no_log
-      return
-    end
-
-    if @debug
-      prefix = "❏".colorize(:dark_gray).toggle(@color_mode)
-      STDERR.puts "#{prefix} #{message}"
-    end
+    return if @no_log || !@debug
+    log(LogLevel::DEBUG, message.to_s)
   end
 
   def debug_sub(message)
-    if @no_log
-      return
-    end
-
-    if @debug
-      STDERR.puts "  " + message.to_s
-    end
+    return if @no_log || !@debug
+    STDERR.puts "  " + message.to_s
   end
 
   def fatal(message)
-    prefix = "☠".colorize(:red).toggle(@color_mode)
-    STDERR.puts "#{prefix} #{message}"
-    exit(1)
+    log(LogLevel::FATAL, message)
   end
 end
