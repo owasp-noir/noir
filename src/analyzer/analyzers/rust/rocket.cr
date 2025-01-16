@@ -23,7 +23,7 @@ module Analyzer::Rust
                   path = channel.receive?
                   break if path.nil?
                   next if File.directory?(path)
-        
+
                   if File.exists?(path) && File.extname(path) == ".rs"
                     File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
                       file.each_line.with_index do |line, index|
@@ -33,7 +33,7 @@ module Analyzer::Rust
                             begin
                               callback_argument = match[1]
                               route_argument = match[2]
-        
+
                               details = Details.new(PathInfo.new(path, index + 1))
                               result << Endpoint.new("#{route_argument}", callback_to_method(callback_argument), details)
                             rescue
