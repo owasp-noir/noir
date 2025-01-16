@@ -3,6 +3,7 @@ require "../models/detector"
 require "../models/passive_scan"
 require "../passive_scan/detect.cr"
 require "yaml"
+require "wait_group"
 
 macro defind_detectors(detectors)
   {% for detector, index in detectors %}
@@ -63,35 +64,39 @@ def detect_techs(base_path : String, options : Hash(String, YAML::Any), passive_
       channel.send(file)
       locator.push "file_map", file
     end
+
+    channel.close
   end
 
-  options["concurrency"].to_s.to_i.times do
-    spawn do
-      loop do
-        begin
-          file = channel.receive
-          next if File.directory?(file)
-          logger.debug "Detecting: #{file}"
-          content = File.read(file, encoding: "utf-8", invalid: :skip)
+  WaitGroup.wait do |wg|
+    options["concurrency"].to_s.to_i.times do
+      wg.spawn do
+        loop do
+          begin
+            file = channel.receive?
+            break if file.nil?
+            next if File.directory?(file)
+            logger.debug "Detecting: #{file}"
+            content = File.read(file, encoding: "utf-8", invalid: :skip)
 
-          detector_list.each do |detector|
-            if detector.detect(file, content)
-              techs << detector.name
-              logger.debug_sub "└── Detected: #{detector.name}"
+            detector_list.each do |detector|
+              if detector.detect(file, content)
+                techs << detector.name
+                logger.debug_sub "└── Detected: #{detector.name}"
+              end
             end
-          end
 
-          results = NoirPassiveScan.detect(file, content, passive_scans, logger)
-          mutex.synchronize do
-            passive_result.concat(results)
+            results = NoirPassiveScan.detect(file, content, passive_scans, logger)
+            mutex.synchronize do
+              passive_result.concat(results)
+            end
+          rescue e : File::NotFoundError
+            logger.debug "File not found: #{file}"
           end
-        rescue e : File::NotFoundError
-          logger.debug "File not found: #{file}"
         end
       end
     end
   end
 
-  Fiber.yield
   {techs.uniq, passive_result}
 end

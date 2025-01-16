@@ -78,7 +78,7 @@ class ConfigInitializer
       "base"              => YAML::Any.new(""),
       "color"             => YAML::Any.new(true),
       "config_file"       => YAML::Any.new(""),
-      "concurrency"       => YAML::Any.new("100"),
+      "concurrency"       => YAML::Any.new("50"),
       "debug"             => YAML::Any.new(false),
       "exclude_codes"     => YAML::Any.new(""),
       "exclude_techs"     => YAML::Any.new(""),

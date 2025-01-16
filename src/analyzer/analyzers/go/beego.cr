@@ -7,90 +7,111 @@ module Analyzer::Go
       # Source Analysis
       public_dirs = [] of (Hash(String, String))
       groups = [] of Hash(String, String)
+      channel = Channel(String).new
+
       begin
-        Dir.glob("#{base_path}/**/*") do |path|
-          next if File.directory?(path)
-          if File.exists?(path) && File.extname(path) == ".go"
-            File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-              last_endpoint = Endpoint.new("", "")
-              file.each_line.with_index do |line, index|
-                details = Details.new(PathInfo.new(path, index + 1))
-                lexer = GolangLexer.new
+        spawn do
+          Dir.glob("#{@base_path}/**/*") do |file|
+            channel.send(file)
+          end
+          channel.close
+        end
 
-                if line.includes?(".Group(")
-                  map = lexer.tokenize(line)
-                  before = Token.new(:unknown, "", 0)
-                  group_name = ""
-                  group_path = ""
-                  map.each do |token|
-                    if token.type == :assign
-                      group_name = before.value.to_s.gsub(":", "").gsub(/\s/, "")
-                    end
+        WaitGroup.wait do |wg|
+          @options["concurrency"].to_s.to_i.times do
+            wg.spawn do
+              loop do
+                begin
+                  path = channel.receive?
+                  break if path.nil?
+                  next if File.directory?(path)
+                  if File.exists?(path) && File.extname(path) == ".go"
+                    File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
+                      last_endpoint = Endpoint.new("", "")
+                      file.each_line.with_index do |line, index|
+                        details = Details.new(PathInfo.new(path, index + 1))
+                        lexer = GolangLexer.new
 
-                    if token.type == :string
-                      group_path = token.value.to_s
-                      groups.each do |group|
-                        group.each do |key, value|
-                          if before.value.to_s.includes? key
-                            group_path = value + group_path
+                        if line.includes?(".Group(")
+                          map = lexer.tokenize(line)
+                          before = Token.new(:unknown, "", 0)
+                          group_name = ""
+                          group_path = ""
+                          map.each do |token|
+                            if token.type == :assign
+                              group_name = before.value.to_s.gsub(":", "").gsub(/\s/, "")
+                            end
+
+                            if token.type == :string
+                              group_path = token.value.to_s
+                              groups.each do |group|
+                                group.each do |key, value|
+                                  if before.value.to_s.includes? key
+                                    group_path = value + group_path
+                                  end
+                                end
+                              end
+                            end
+
+                            before = token
+                          end
+
+                          if group_name.size > 0 && group_path.size > 0
+                            groups << {
+                              group_name => group_path,
+                            }
+                          end
+                        end
+
+                        if line.includes?(".Get(") || line.includes?(".Post(") || line.includes?(".Put(") || line.includes?(".Delete(")
+                          get_route_path(line, groups).tap do |route_path|
+                            if route_path.size > 0
+                              new_endpoint = Endpoint.new("#{route_path}", line.split(".")[1].split("(")[0].to_s.upcase, details)
+                              result << new_endpoint
+                              last_endpoint = new_endpoint
+                            end
+                          end
+                        end
+
+                        if line.includes?(".Any(") || line.includes?(".Handler(") || line.includes?(".Router(")
+                          get_route_path(line, groups).tap do |route_path|
+                            if route_path.size > 0
+                              new_endpoint = Endpoint.new("#{route_path}", "GET", details)
+                              result << new_endpoint
+                              last_endpoint = new_endpoint
+                            end
+                          end
+                        end
+
+                        ["GetString", "GetStrings", "GetInt", "GetInt8", "GetUint8", "GetInt16", "GetUint16", "GetInt32", "GetUint32",
+                         "GetInt64", "GetUint64", "GetBool", "GetFloat"].each do |pattern|
+                          match = line.match(/#{pattern}\(\"(.*)\"\)/)
+                          if match
+                            param_name = match[1]
+                            last_endpoint.params << Param.new(param_name, "", "query")
+                          end
+                        end
+
+                        if line.includes?("GetCookie(")
+                          match = line.match(/GetCookie\(\"(.*)\"\)/)
+                          if match
+                            cookie_name = match[1]
+                            last_endpoint.params << Param.new(cookie_name, "", "cookie")
+                          end
+                        end
+
+                        if line.includes?("GetSecureCookie(")
+                          match = line.match(/GetSecureCookie\(\"(.*)\"\)/)
+                          if match
+                            cookie_name = match[1]
+                            last_endpoint.params << Param.new(cookie_name, "", "cookie")
                           end
                         end
                       end
                     end
-
-                    before = token
                   end
-
-                  if group_name.size > 0 && group_path.size > 0
-                    groups << {
-                      group_name => group_path,
-                    }
-                  end
-                end
-
-                if line.includes?(".Get(") || line.includes?(".Post(") || line.includes?(".Put(") || line.includes?(".Delete(")
-                  get_route_path(line, groups).tap do |route_path|
-                    if route_path.size > 0
-                      new_endpoint = Endpoint.new("#{route_path}", line.split(".")[1].split("(")[0].to_s.upcase, details)
-                      result << new_endpoint
-                      last_endpoint = new_endpoint
-                    end
-                  end
-                end
-
-                if line.includes?(".Any(") || line.includes?(".Handler(") || line.includes?(".Router(")
-                  get_route_path(line, groups).tap do |route_path|
-                    if route_path.size > 0
-                      new_endpoint = Endpoint.new("#{route_path}", "GET", details)
-                      result << new_endpoint
-                      last_endpoint = new_endpoint
-                    end
-                  end
-                end
-
-                ["GetString", "GetStrings", "GetInt", "GetInt8", "GetUint8", "GetInt16", "GetUint16", "GetInt32", "GetUint32",
-                 "GetInt64", "GetUint64", "GetBool", "GetFloat"].each do |pattern|
-                  match = line.match(/#{pattern}\(\"(.*)\"\)/)
-                  if match
-                    param_name = match[1]
-                    last_endpoint.params << Param.new(param_name, "", "query")
-                  end
-                end
-
-                if line.includes?("GetCookie(")
-                  match = line.match(/GetCookie\(\"(.*)\"\)/)
-                  if match
-                    cookie_name = match[1]
-                    last_endpoint.params << Param.new(cookie_name, "", "cookie")
-                  end
-                end
-
-                if line.includes?("GetSecureCookie(")
-                  match = line.match(/GetSecureCookie\(\"(.*)\"\)/)
-                  if match
-                    cookie_name = match[1]
-                    last_endpoint.params << Param.new(cookie_name, "", "cookie")
-                  end
+                rescue e : File::NotFoundError
+                  logger.debug "File not found: #{path}"
                 end
               end
             end

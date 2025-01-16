@@ -1,5 +1,6 @@
 require "./logger"
 require "./endpoint"
+require "wait_group"
 
 class Analyzer
   @result : Array(Endpoint)
@@ -57,30 +58,33 @@ class FileAnalyzer < Analyzer
       Dir.glob("#{base_path}/**/*") do |file|
         channel.send(file)
       end
+      channel.close
     end
 
-    @options["concurrency"].to_s.to_i.times do
-      spawn do
-        loop do
-          begin
-            path = channel.receive
-            next if File.directory?(path)
-            @@hooks.each do |hook|
-              file_results = hook.call(path, @url)
-              if !file_results.nil?
-                file_results.each do |file_result|
-                  @result << file_result
+    WaitGroup.wait do |wg|
+      @options["concurrency"].to_s.to_i.times do
+        wg.spawn do
+          loop do
+            begin
+              path = channel.receive?
+              break if path.nil?
+              next if File.directory?(path)
+              @@hooks.each do |hook|
+                file_results = hook.call(path, @url)
+                if !file_results.nil?
+                  file_results.each do |file_result|
+                    @result << file_result
+                  end
                 end
               end
+            rescue e
+              logger.debug e
             end
-          rescue e
-            logger.debug e
           end
         end
       end
     end
 
-    Fiber.yield
     @result
   end
 end
