@@ -5,9 +5,23 @@ module Analyzer::Rust
     def analyze
       # Source Analysis
       pattern = /#\[(get|post|put|delete|patch)\("([^"]+)"\)\]/
+      channel = Channel(String).new
 
       begin
-        Dir.glob("#{base_path}/**/*") do |path|
+        spawn do
+          Dir.glob("#{@base_path}/**/*") do |file|
+            channel.send(file)
+          end
+          channel.close
+        end
+
+WaitGroup.wait do |wg|
+  @options["concurrency"].to_s.to_i.times do
+    wg.spawn do
+      loop do
+        begin
+          path = channel.receive?
+          break if path.nil?
           next if File.directory?(path)
 
           if File.exists?(path) && File.extname(path) == ".rs"
@@ -28,7 +42,13 @@ module Analyzer::Rust
               end
             end
           end
+        rescue e : File::NotFoundError
+          logger.debug "File not found: #{path}"
         end
+      end
+    end
+  end
+end
       rescue e
       end
 
