@@ -4,19 +4,40 @@ module Analyzer::Elixir
   class Phoenix < Analyzer
     def analyze
       # Source Analysis
+      channel = Channel(String).new
+
       begin
-        Dir.glob("#{@base_path}/**/*") do |path|
-          next if File.directory?(path)
-          if File.exists?(path) && File.extname(path) == ".ex"
-            File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-              file.each_line.with_index do |line, index|
-                endpoints = line_to_endpoint(line)
-                endpoints.each do |endpoint|
-                  if endpoint.method != ""
-                    details = Details.new(PathInfo.new(path, index + 1))
-                    endpoint.details = details
-                    @result << endpoint
+        spawn do
+          Dir.glob("#{@base_path}/**/*") do |file|
+            channel.send(file)
+          end
+          channel.close
+        end
+
+        WaitGroup.wait do |wg|
+          @options["concurrency"].to_s.to_i.times do
+            wg.spawn do
+              loop do
+                begin
+                  path = channel.receive?
+                  break if path.nil?
+                  next if File.directory?(path)
+                  if File.exists?(path) && File.extname(path) == ".ex"
+                    File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
+                      file.each_line.with_index do |line, index|
+                        endpoints = line_to_endpoint(line)
+                        endpoints.each do |endpoint|
+                          if endpoint.method != ""
+                            details = Details.new(PathInfo.new(path, index + 1))
+                            endpoint.details = details
+                            @result << endpoint
+                          end
+                        end
+                      end
+                    end
                   end
+                rescue e : File::NotFoundError
+                  logger.debug "File not found: #{path}"
                 end
               end
             end
