@@ -167,7 +167,10 @@ def run_options_parser
       exit
     end
     parser.on "--build-info", "Show version and Build info" do
-      puts Crystal::DESCRIPTION
+      puts "Noir Version:      #{Noir::VERSION}"
+      puts "Crystal Version:   #{Crystal::VERSION}"
+      puts "LLVM Version:      #{Crystal::LLVM_VERSION}"
+      puts "TARGET:            #{Crystal::TARGET_TRIPLE}"
       exit
     end
     parser.separator "\n  OTHERS:".colorize(:blue)
