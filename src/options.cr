@@ -139,7 +139,7 @@ def run_options_parser
 
     parser.separator "\n  CONFIG:".colorize(:blue)
     parser.on "--config-file ./config.yaml", "Specify the path to a configuration file in YAML format" { |var| noir_options["config_file"] = YAML::Any.new(var) }
-    parser.on "--concurrency 100", "Set concurrency" { |var| noir_options["concurrency"] = YAML::Any.new(var) }
+    parser.on "--concurrency 50", "Set concurrency" { |var| noir_options["concurrency"] = YAML::Any.new(var) }
     parser.on "--generate-completion zsh", "Generate Zsh/Bash/Fish completion script" do |var|
       case var
       when "zsh"
