@@ -45,7 +45,7 @@ module Analyzer::Crystal
                           result << endpoint
                           last_endpoint = endpoint
                         end
-        
+
                         param = line_to_param(line)
                         if param.name != ""
                           if last_endpoint.method != ""

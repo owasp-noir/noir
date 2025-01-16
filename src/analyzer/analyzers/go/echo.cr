@@ -30,7 +30,7 @@ module Analyzer::Go
                       file.each_line.with_index do |line, index|
                         details = Details.new(PathInfo.new(path, index + 1))
                         lexer = GolangLexer.new
-        
+
                         if line.includes?(".Group(")
                           map = lexer.tokenize(line)
                           before = Token.new(:unknown, "", 0)
@@ -40,7 +40,7 @@ module Analyzer::Go
                             if token.type == :assign
                               group_name = before.value.to_s.gsub(":", "").gsub(/\s/, "")
                             end
-        
+
                             if token.type == :string
                               group_path = token.value.to_s
                               groups.each do |group|
@@ -51,17 +51,17 @@ module Analyzer::Go
                                 end
                               end
                             end
-        
+
                             before = token
                           end
-        
+
                           if group_name.size > 0 && group_path.size > 0
                             groups << {
                               group_name => group_path,
                             }
                           end
                         end
-        
+
                         if line.includes?(".GET(") || line.includes?(".POST(") || line.includes?(".PUT(") || line.includes?(".DELETE(")
                           get_route_path(line, groups).tap do |route_path|
                             if route_path.size > 0
@@ -71,7 +71,7 @@ module Analyzer::Go
                             end
                           end
                         end
-        
+
                         if line.includes?("Param(") || line.includes?("FormValue(")
                           get_param(line).tap do |param|
                             if param.name.size > 0 && last_endpoint.method != ""
@@ -79,7 +79,7 @@ module Analyzer::Go
                             end
                           end
                         end
-        
+
                         if line.includes?("Static(")
                           get_static_path(line).tap do |static_path|
                             if static_path.size > 0
@@ -87,7 +87,7 @@ module Analyzer::Go
                             end
                           end
                         end
-        
+
                         if line.includes?("Request().Header.Get(")
                           match = line.match(/Request\(\)\.Header\.Get\(\"(.*)\"\)/)
                           if match
@@ -95,7 +95,7 @@ module Analyzer::Go
                             last_endpoint.params << Param.new(header_name, "", "header")
                           end
                         end
-        
+
                         if line.includes?("Cookie(")
                           match = line.match(/Cookie\(\"(.*)\"\)/)
                           if match

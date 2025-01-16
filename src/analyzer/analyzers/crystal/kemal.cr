@@ -36,23 +36,23 @@ module Analyzer::Crystal
                           result << endpoint
                           last_endpoint = endpoint
                         end
-        
+
                         param = line_to_param(line)
                         if param.name != ""
                           if last_endpoint.method != ""
                             last_endpoint.push_param(param)
                           end
                         end
-        
+
                         if line.includes?("serve_static false") || line.includes?("serve_static(false)")
                           is_public = false
                         end
-        
+
                         if line.includes?("public_folder")
                           begin
                             splited = line.split("public_folder")
                             public_folder = ""
-        
+
                             if splited.size > 1
                               public_folder = splited[1].gsub("(", "").gsub(")", "").gsub(" ", "").gsub("\"", "").gsub("'", "")
                               if public_folder != ""
