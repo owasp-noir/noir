@@ -56,47 +56,61 @@ def detect_techs(base_path : String, options : Hash(String, YAML::Any), passive_
     techs << options["techs"].to_s
   end
 
-  channel = Channel(String).new
+  channel = Channel(Tuple(String, String)).new
   locator = CodeLocator.instance
+  wg = WaitGroup.new
 
+  # Thread for reading files and sending their contents to the channel
+  wg.add(1)
   spawn do
-    Dir.glob("#{base_path}/**/*") do |file|
-      channel.send(file)
-      locator.push "file_map", file
+    begin
+      Dir.glob("#{base_path}/**/*") do |file|
+        next if File.directory?(file)
+        content = File.read(file, encoding: "utf-8", invalid: :skip)
+        channel.send({file, content})
+        locator.push "file_map", file
+      end
+    ensure
+      channel.close
+      wg.done
     end
-
-    channel.close
   end
 
-  WaitGroup.wait do |wg|
-    options["concurrency"].to_s.to_i.times do
-      wg.spawn do
-        loop do
-          begin
-            file = channel.receive?
-            break if file.nil?
-            next if File.directory?(file)
-            logger.debug "Detecting: #{file}"
-            content = File.read(file, encoding: "utf-8", invalid: :skip)
+  # Thread for receiving and processing the contents from the channel
+  wg.add(1)
+  spawn do
+    begin
+      loop do
+        begin
+          file_content = channel.receive?
+          break if file_content.nil?
+          file, content = file_content
+          logger.debug "Detecting: #{file}"
 
-            detector_list.each do |detector|
-              if detector.detect(file, content)
+          detector_list.each do |detector|
+            if detector.detect(file, content)
+              mutex.synchronize do
                 techs << detector.name
-                logger.debug_sub "└── Detected: #{detector.name}"
               end
+              logger.debug_sub "└── Detected: #{detector.name}"
             end
+          end
 
-            results = NoirPassiveScan.detect(file, content, passive_scans, logger)
+          results = NoirPassiveScan.detect(file, content, passive_scans, logger)
+          if results.size > 0
             mutex.synchronize do
               passive_result.concat(results)
             end
-          rescue e : File::NotFoundError
-            logger.debug "File not found: #{file}"
           end
+        rescue e : File::NotFoundError
+          logger.debug "File not found: #{file}"
         end
       end
+    ensure
+      wg.done
     end
   end
 
+  wg.wait
   {techs.uniq, passive_result}
 end
