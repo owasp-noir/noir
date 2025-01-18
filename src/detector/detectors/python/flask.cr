@@ -3,7 +3,7 @@ require "../../../models/detector"
 module Detector::Python
   class Flask < Detector
     def detect(filename : String, file_contents : String) : Bool
-      if (filename.includes? ".py") && (file_contents.includes? "from flask")
+      if (filename.ends_with? ".py") && (file_contents.includes? "from flask")
         true
       else
         false

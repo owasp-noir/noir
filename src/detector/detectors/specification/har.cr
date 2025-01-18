@@ -7,7 +7,7 @@ require "har"
 module Detector::Specification
   class Har < Detector
     def detect(filename : String, file_contents : String) : Bool
-      if (filename.includes? ".har") || (filename.includes? ".json")
+      if (filename.ends_with? ".har") || (filename.ends_with? ".json")
         if valid_json? file_contents
           begin
             data = HAR.from_string(file_contents)
