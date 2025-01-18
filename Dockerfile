@@ -5,7 +5,7 @@ WORKDIR /noir
 COPY . .
 
 RUN shards install --production && \
-    shards build --release --production --static --no-debug
+    shards build --release --no-debug --production
 
 # RUNNER
 FROM alpine:latest
