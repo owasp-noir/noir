@@ -76,38 +76,42 @@ def detect_techs(base_path : String, options : Hash(String, YAML::Any), passive_
     end
   end
 
-  # Thread for receiving and processing the contents from the channel
-  wg.add(1)
-  spawn do
-    begin
-      loop do
-        begin
-          file_content = channel.receive?
-          break if file_content.nil?
-          file, content = file_content
-          logger.debug "Detecting: #{file}"
+  # Threads for receiving and processing the contents from the channel
+  concurrency = options["concurrency"].to_s.to_i
 
-          detector_list.each do |detector|
-            if detector.detect(file, content)
-              mutex.synchronize do
-                techs << detector.name
+  concurrency.times do
+    wg.add(1)
+    spawn do
+      begin
+        loop do
+          begin
+            file_content = channel.receive?
+            break if file_content.nil?
+            file, content = file_content
+            logger.debug "Detecting: #{file}"
+
+            detector_list.each do |detector|
+              if detector.detect(file, content)
+                mutex.synchronize do
+                  techs << detector.name
+                end
+                logger.debug_sub "└── Detected: #{detector.name}"
               end
-              logger.debug_sub "└── Detected: #{detector.name}"
             end
-          end
 
-          results = NoirPassiveScan.detect(file, content, passive_scans, logger)
-          if results.size > 0
-            mutex.synchronize do
-              passive_result.concat(results)
+            results = NoirPassiveScan.detect(file, content, passive_scans, logger)
+            if results.size > 0
+              mutex.synchronize do
+                passive_result.concat(results)
+              end
             end
+          rescue e : File::NotFoundError
+            logger.debug "File not found: #{file}"
           end
-        rescue e : File::NotFoundError
-          logger.debug "File not found: #{file}"
         end
+      ensure
+        wg.done
       end
-    ensure
-      wg.done
     end
   end
 
