@@ -279,7 +279,10 @@ class NoirRunner
           new_endpoint.url = new_endpoint.url.gsub("{#{match[1]}}", new_value)
         end
 
-        new_endpoint.params << Param.new(param, "", "path")
+        new_param = Param.new(param, "", "path")
+        unless new_endpoint.params.includes?(new_param)
+          new_endpoint.params << new_param
+        end
       end
 
       scans = endpoint.url.scan(/\/:([^\/]+)/).flatten
@@ -289,7 +292,10 @@ class NoirRunner
           new_endpoint.url = new_endpoint.url.gsub(":#{match[1]}", new_value)
         end
 
-        new_endpoint.params << Param.new(match[1], "", "path")
+        new_param = Param.new(match[1], "", "path")
+        unless new_endpoint.params.includes?(new_param)
+          new_endpoint.params << new_param
+        end
       end
 
       scans = endpoint.url.scan(/\/<([^>]+)>/).flatten
@@ -299,7 +305,11 @@ class NoirRunner
         if new_value != ""
           new_endpoint.url = new_endpoint.url.gsub("<#{match[1]}>", new_value)
         end
-        new_endpoint.params << Param.new(param, "", "path")
+
+        new_param = Param.new(param, "", "path")
+        unless new_endpoint.params.includes?(new_param)
+          new_endpoint.params << new_param
+        end
       end
 
       final << new_endpoint
