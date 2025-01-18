@@ -104,15 +104,22 @@ if app.techs.size == 0
     exit(0)
   end
 else
-  if app.techs.size > 0
+  if app.techs.any?
     app.logger.success "Detected #{app.techs.size} technologies."
-    app.techs.each_with_index do |tech, index|
-      if index < app.techs.size - 1
-        app.logger.sub "├── #{tech}"
-      else
-        app.logger.sub "└── #{tech}"
-      end
+
+    exclude_techs = app.options["exclude_techs"]?.to_s.split(",") || [] of String
+    filtered_techs = app.techs.reject do |tech|
+      exclude_techs.any? { |exclude_tech| NoirTechs.similar_to_tech(exclude_tech).includes?(tech) }
     end
+
+    app.techs.each_with_index do |tech, index|
+      is_excluded = exclude_techs.any? { |exclude_tech| NoirTechs.similar_to_tech(exclude_tech).includes?(tech) }
+      prefix = index < app.techs.size - 1 ? "├──" : "└──"
+      status = is_excluded ? " (skip)" : ""
+      app.logger.sub "#{prefix} #{tech}#{status}"
+    end
+
+    app.techs = filtered_techs
     app.logger.info "Start code analysis based on the detected technology."
   end
 end

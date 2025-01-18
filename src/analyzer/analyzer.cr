@@ -71,13 +71,8 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
   end
 
   techs.each do |tech|
-    if analyzer.has_key?(tech)
-      if NoirTechs.similar_to_tech(options["exclude_techs"].to_s).includes?(tech)
-        logger.sub "➔ Skipping #{tech} analysis"
-        next
-      end
-      result = result + analyzer[tech].call(options)
-    end
+    next unless analyzer.has_key?(tech)
+    result = result + analyzer[tech].call(options)
   end
 
   if options["url"] != ""
