@@ -104,7 +104,7 @@ if app.techs.size == 0
     exit(0)
   end
 else
-  if app.techs.any?
+  if app.techs.empty?
     app.logger.success "Detected #{app.techs.size} technologies."
 
     exclude_techs = app.options["exclude_techs"]?.to_s.split(",") || [] of String
