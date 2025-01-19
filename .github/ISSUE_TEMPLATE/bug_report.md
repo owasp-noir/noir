@@ -23,7 +23,7 @@ If applicable, add screenshots to help explain your problem.
 
 **Versions**
  - OS: [e.g. macos, linux]
- - Version [e.g. v0.18.3]
+ - Version [e.g. v0.19.0]
 
 **Additional context**
 Add any other context about the problem here.
