@@ -6,6 +6,8 @@ nav_order: 2
 layout: page
 ---
 
+## YAML
+
 ```bash
 noir -b . -f yaml --no-log
 ```

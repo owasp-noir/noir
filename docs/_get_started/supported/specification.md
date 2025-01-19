@@ -6,6 +6,8 @@ parent: Supported
 layout: page
 ---
 
+## Specification
+
 | Specification          | Format  | URL | Method | Param | Header | WS |
 |------------------------|---------|-----|--------|-------|--------|----|
 | OAS 2.0 (Swagger 2.0)  | JSON    | ✅  | ✅     | ✅    | ✅     | X  |

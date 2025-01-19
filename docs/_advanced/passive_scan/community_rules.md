@@ -6,6 +6,8 @@ nav_order: 3
 layout: page
 ---
 
+## Community Rules
+
 Community rules are managed in several repositories below. You can clone these repositories to the default rule path for use.
 
 To clone the `noir-passive-rules` repository to the default rule path, use the following command:

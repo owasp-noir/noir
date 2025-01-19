@@ -5,6 +5,12 @@ nav_order: 6
 layout: page
 ---
 
+## Diff Mode
+{: .d-inline-block }
+
+Since (v0.16.0) 
+{: .label .label-green }
+
 Diff mode is a feature that analyzes and compares two source code paths using noir, enabling you to identify newly added, modified, or removed APIs. The base path specified with the `-b` flag serves as the reference point, while the source input provided with the `--diff-path` flag is used for comparison.
 
 ```bash
