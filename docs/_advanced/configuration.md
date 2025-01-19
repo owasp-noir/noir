@@ -6,6 +6,12 @@ permalink: /configuration
 layout: page
 ---
 
+## Configuration
+{: .d-inline-block }
+
+Since (v0.16.0) 
+{: .label .label-green }
+
 {% include toc.md %}
 
 ## Config Home Path

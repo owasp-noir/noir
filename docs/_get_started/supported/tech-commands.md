@@ -6,6 +6,8 @@ nav_order: 4
 layout: page
 ---
 
+## Tech Commands
+
 ```bash
 # Force scanning to techs 
 noir -t rails

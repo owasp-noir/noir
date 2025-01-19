@@ -5,9 +5,11 @@ nav_order: 3
 layout: page
 ---
 
-{% include toc.md %}
+## Tagger
+{: .d-inline-block }
 
-## Introduction to Tagger
+Since (v0.14.0) 
+{: .label .label-green }
 
 The Tagger is a feature that adds tags to Endpoints, Params, etc., based on given conditions or logic when Noir analyzes source code. By using this feature, you can attach tag information that matches the characteristics of the Endpoints and Params. This helps analysts easily understand Endpoints or gain hints for the next security testing.
 

@@ -5,6 +5,12 @@ nav_order: 4
 layout: page
 ---
 
+## Passive Scan
+{: .d-inline-block }
+
+Since (v0.18.0) 
+{: .label .label-green }
+
 A Passive Scan is a feature where additional actions are performed by the Detector to identify security issues according to scan rules. This functionality typically includes:
 
 * Regular Expression Matching: It uses regular expressions to match patterns that could indicate security vulnerabilities.

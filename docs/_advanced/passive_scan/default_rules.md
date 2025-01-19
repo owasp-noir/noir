@@ -6,6 +6,8 @@ nav_order: 2
 layout: page
 ---
 
+## Default Rules
+
 The default rules are stored in the following paths based on your operating system:
 
 | OS | Path |

@@ -6,6 +6,8 @@ nav_order: 1
 layout: page
 ---
 
+## Passive Scan Rule
+
 ```yaml
 id: rule-id
 info:

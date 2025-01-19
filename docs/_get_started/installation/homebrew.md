@@ -7,6 +7,8 @@ toc: true
 layout: page
 ---
 
+## Homebrew
+
 Homebrew is the package manager for MacOS(or linux). On devices using homebrew, you can easily install/update using the brew command.
 
 ```shell

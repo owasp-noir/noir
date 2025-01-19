@@ -7,17 +7,18 @@ toc: true
 layout: page
 ---
 
-## Install Crystal-lang
+## Build Noir
+### Install Crystal-lang
 
 > [https://crystal-lang.org/install/](https://crystal-lang.org/install/)
 
-## Clone this repo
+### Clone this repo
 ```bash
 git clone https://github.com/owasp-noir/noir
 cd noir
 ```
 
-## Build
+### Build
 ```bash
 # Install Dependencies
 shards install
