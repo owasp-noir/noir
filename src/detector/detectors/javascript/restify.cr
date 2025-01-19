@@ -3,11 +3,11 @@ require "../../../models/detector"
 module Detector::Javascript
   class Restify < Detector
     def detect(filename : String, file_contents : String) : Bool
-      if (filename.includes? ".js") && (file_contents.includes? "require('restify')")
+      if (filename.ends_with? ".js") && (file_contents.includes? "require('restify')")
         true
-      elsif (filename.includes? ".js") && (file_contents.includes? "require(\"restify\")")
+      elsif (filename.ends_with? ".js") && (file_contents.includes? "require(\"restify\")")
         true
-      elsif (filename.includes? ".ts") && (file_contents.includes? "require(\"restify\")")
+      elsif (filename.ends_with? ".ts") && (file_contents.includes? "require(\"restify\")")
         true
       else
         false

@@ -5,7 +5,7 @@ module Detector::Php
     def detect(filename : String, file_contents : String) : Bool
       check = file_contents.includes?("<?")
       check = check || file_contents.includes?("?>")
-      check = check && filename.includes?(".php")
+      check = check && filename.ends_with?(".php")
 
       check
     end
