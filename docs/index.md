@@ -49,9 +49,9 @@ flowchart LR
 
     subgraph Analyzers
         direction LR
-        Analyzer1 & Analyzer2 & Analyzer3
-        Analyzer2 --> |Condition| Minilexer
-        Analyzer3 --> |Condition| Miniparser
+        CodeAnalyzers & FileAnalyzer & LLMAnalyzer
+        CodeAnalyzers --> |Condition| Minilexer
+        CodeAnalyzers --> |Condition| Miniparser
     end
 
     Analyzers --> |Condition| Deliver
