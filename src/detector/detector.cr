@@ -53,7 +53,17 @@ def detect_techs(base_path : String, options : Hash(String, YAML::Any), passive_
   ])
 
   if options["techs"].to_s.size > 0
-    techs << options["techs"].to_s
+    techs_tmp = options["techs"].to_s.split(",")
+    logger.success "Setting #{techs_tmp.size} techs from command line."
+    techs_tmp.each do |tech|
+      similar_tech = NoirTechs.similar_to_tech(tech)
+      if similar_tech.empty?
+        logger.error "#{tech} is not recognized in the predefined tech list."
+      else
+        logger.success "Added #{tech} to techs."
+        techs << similar_tech
+      end
+    end
   end
 
   channel = Channel(Tuple(String, String)).new

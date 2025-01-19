@@ -62,15 +62,6 @@ class NoirRunner
 
     @logger = NoirLogger.new @is_debug, @is_color, @is_log
 
-    if @options["techs"].to_s.size > 0
-      techs_tmp = @options["techs"].to_s.split(",")
-      @logger.success "Setting #{techs_tmp.size} techs from command line."
-      techs_tmp.each do |tech|
-        @techs << NoirTechs.similar_to_tech(tech)
-        @logger.debug "Added #{tech} to techs."
-      end
-    end
-
     if any_to_bool(@options["passive_scan"])
       @logger.info "Passive scanner enabled."
       if @options["passive_scan_path"].as_a.size > 0
@@ -470,5 +461,9 @@ class NoirRunner
       builder = OutputBuilderPassiveScan.new @options
       builder.print @passive_results, @logger, @is_color
     end
+  end
+
+  def techs=(value : Array(String))
+    @techs = value
   end
 end
