@@ -41,6 +41,10 @@ FLAGS:
     --use-matchers string            Send URLs that match specific conditions to the Deliver
     --use-filters string             Exclude URLs that match specified conditions and send the rest to Deliver
 
+  AI Integration:
+    --ollama http://localhost:11434  Specify the Ollama server URL
+    --ollama-model MODEL             Specify the Ollama model name
+
   DIFF:
     --diff-path ./app2               Specify the path to the old version of the source code for comparison
 
@@ -51,7 +55,7 @@ FLAGS:
 
   CONFIG:
     --config-file ./config.yaml      Specify the path to a configuration file in YAML format
-    --concurrency 100                Set concurrency
+    --concurrency 50                 Set concurrency
     --generate-completion zsh        Generate Zsh/Bash/Fish completion script
 
   DEBUG:
