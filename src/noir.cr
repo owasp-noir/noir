@@ -88,7 +88,7 @@ end
 app.logger.info "Detecting technologies to base directory."
 app.detect
 
-if app.techs.size == 0
+if app.techs.empty?
   app.logger.warning "No technologies detected."
   app.logger.sub "➔ If you know the technology, use the -t flag to specify it."
   app.logger.sub "➔ Please check tech lists using the --list-techs flag."
@@ -104,24 +104,22 @@ if app.techs.size == 0
     exit(0)
   end
 else
-  if app.techs.empty?
-    app.logger.success "Detected #{app.techs.size} technologies."
+  app.logger.success "Detected #{app.techs.size} technologies."
 
-    exclude_techs = app.options["exclude_techs"]?.to_s.split(",") || [] of String
-    filtered_techs = app.techs.reject do |tech|
-      exclude_techs.any? { |exclude_tech| NoirTechs.similar_to_tech(exclude_tech).includes?(tech) }
-    end
-
-    app.techs.each_with_index do |tech, index|
-      is_excluded = exclude_techs.any? { |exclude_tech| NoirTechs.similar_to_tech(exclude_tech).includes?(tech) }
-      prefix = index < app.techs.size - 1 ? "├──" : "└──"
-      status = is_excluded ? " (skip)" : ""
-      app.logger.sub "#{prefix} #{tech}#{status}"
-    end
-
-    app.techs = filtered_techs
-    app.logger.info "Start code analysis based on the detected technology."
+  exclude_techs = app.options["exclude_techs"]?.to_s.split(",") || [] of String
+  filtered_techs = app.techs.reject do |tech|
+    exclude_techs.any? { |exclude_tech| NoirTechs.similar_to_tech(exclude_tech).includes?(tech) }
   end
+
+  app.techs.each_with_index do |tech, index|
+    is_excluded = exclude_techs.any? { |exclude_tech| NoirTechs.similar_to_tech(exclude_tech).includes?(tech) }
+    prefix = index < app.techs.size - 1 ? "├──" : "└──"
+    status = is_excluded ? " (skip)" : ""
+    app.logger.sub "#{prefix} #{tech}#{status}"
+  end
+
+  app.techs = filtered_techs
+  app.logger.info "Start code analysis based on the detected technology."
 end
 
 app.analyze
