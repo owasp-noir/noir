@@ -211,7 +211,7 @@ module Analyzer::Java
                         ["GET", "POST", "PUT", "DELETE", "PATCH"].each do |_request_method|
                           parameters = get_endpoint_parameters(parser, _request_method, method, parameter_format, class_map)
                           url_paths.each do |url_path|
-                            @result << Endpoint.new("#{webflux_base_path}#{url}#{url_path}", _request_method, parameters, details)
+                            @result << Endpoint.new(join_paths(webflux_base_path, url, url_path), _request_method, parameters, details)
                           end
                         end
                       else
@@ -219,7 +219,7 @@ module Analyzer::Java
                         url_paths.each do |url_path|
                           request_methods.each do |request_method|
                             parameters = get_endpoint_parameters(parser, request_method, method, parameter_format, class_map)
-                            @result << Endpoint.new("#{webflux_base_path}#{url}#{url_path}", request_method, parameters, details)
+                            @result << Endpoint.new(join_paths(webflux_base_path, url, url_path), request_method, parameters, details)
                           end
                         end
                       end
@@ -243,7 +243,7 @@ module Analyzer::Java
 
                         details = Details.new(PathInfo.new(path, line))
                         url_paths.each do |url_path|
-                          @result << Endpoint.new("#{webflux_base_path}#{url}#{url_path}", request_method, parameters, details)
+                          @result << Endpoint.new(join_paths(webflux_base_path, url, url_path), request_method, parameters, details)
                         end
                         break
                       end
@@ -261,7 +261,7 @@ module Analyzer::Java
                 method = match[2]
                 endpoint = match[3].gsub(/\n/, "")
                 details = Details.new(PathInfo.new(path))
-                @result << Endpoint.new("#{url}#{endpoint}", method, details)
+                @result << Endpoint.new(join_paths(url, endpoint), method, details)
               end
             end
           end

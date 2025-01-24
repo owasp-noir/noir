@@ -16,7 +16,7 @@ extected_endpoints = [
   # ItemController.java
   Endpoint.new("/items/{id}", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/items/json/{id}", "GET", [Param.new("id", "", "path")]),
-  Endpoint.new("/items", "POST", [Param.new("id", "", "form"), Param.new("name", "", "form")]),
+  Endpoint.new("/items/", "POST", [Param.new("id", "", "form"), Param.new("name", "", "form")]),
   Endpoint.new("/items/update/{id}", "PUT", [Param.new("id", "", "path"), Param.new("id", "", "json"), Param.new("name", "", "json")]),
   Endpoint.new("/items/delete/{id}", "DELETE", [Param.new("id", "", "path")]),
   Endpoint.new("/items/requestmap/put", "PUT"),
@@ -34,8 +34,12 @@ extected_endpoints = [
     Param.new("b", "", "query"),
     Param.new("name", "", "query"),
   ]),
+  # ItemController2.java
+  Endpoint.new("/items2/{id}", "GET", [Param.new("id", "", "path")]),
+  Endpoint.new("/items2/create", "POST", [Param.new("id", "", "form"), Param.new("name", "", "form")]),
+  Endpoint.new("/items2/edit/", "PUT", [Param.new("id", "", "json"), Param.new("name", "", "json")]),
   # EmptyController.java
-  Endpoint.new("/empty", "GET"),
+  Endpoint.new("/empty/", "GET"),
 ]
 
 FunctionalTester.new("fixtures/java/spring/", {
