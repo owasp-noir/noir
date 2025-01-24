@@ -1,13 +1,14 @@
-# BUILDER
+##= BUILDER =##
 FROM crystallang/crystal:latest-alpine As builder
 
 WORKDIR /noir
 COPY . .
 
 RUN shards install --production && \
-    shards build --release --no-debug --production
+    shards build --release --no-debug --production --static
+# Ref: https://crystal-lang.org/reference/1.15/guides/static_linking.html
 
-# RUNNER
+##= RUNNER =##
 FROM alpine:latest
 LABEL org.opencontainers.image.title="OWASP Noir"
 LABEL org.opencontainers.image.version="0.19.0"
