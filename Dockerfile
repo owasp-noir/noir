@@ -11,7 +11,7 @@ RUN shards install --production && \
 ##= RUNNER =##
 FROM alpine:latest
 LABEL org.opencontainers.image.title="OWASP Noir"
-LABEL org.opencontainers.image.version="0.19.0"
+LABEL org.opencontainers.image.version="0.19.1"
 LABEL org.opencontainers.image.description="OWASP Noir is an open-source project specializing in identifying attack surfaces for enhanced whitebox security testing and security pipeline."
 LABEL org.opencontainers.image.authors="Noir Team (@hahwul, @ksg97031)"
 LABEL org.opencontainers.image.source=https://github.com/owasp-noir/noir
