@@ -11,6 +11,7 @@ module LLM
         :model  => @model,
         :prompt => prompt,
         :stream => false,
+        :format => "json",
       }
 
       response = Crest.post(@api, body, json: true)

@@ -26,11 +26,27 @@ module Analyzer::AI
 
         # Filter files that are likely to contain endpoints
         filter_prompt = <<-PROMPT
-        !! Respond only in JSON format. Do not include explanations, comments, or any additional text. !!
-        ---
-        Analyze the following list of file paths and identify which files are likely to represent endpoints, including API endpoints, web pages, or static resources.
-        Exclude directories from the analysis and focus only on individual files.
-        Return the result as a JSON array of file paths that should be analyzed further.
+        Analyze the provided list of file paths and identify individual files that are likely to represent endpoints, such as API endpoints, web pages, or static resources. 
+        Ignore directories and focus exclusively on files.
+
+        Return the result strictly in the following JSON structure:
+        {
+          "files": [
+            "string / e.g., /path/to/file1",
+            "string / e.g., /path/to/file2",
+            "string / e.g., /path/to/file3"
+          ]
+        }
+
+        If no relevant files are found, return:
+        {
+          "files": []
+        }
+
+        Guidelines:
+        - Do not include directories in the output.
+        - Focus on files related to endpoints (API, web pages, or static resources).
+        - Provide only the JSON response with no explanations or additional text.
 
         File paths:
         #{all_paths.join("\n")}
@@ -40,7 +56,7 @@ module Analyzer::AI
         filtered_paths = JSON.parse(filter_response.to_s)
         logger.debug_sub filter_response
 
-        filtered_paths.as_a.each do |fpath|
+        filtered_paths["files"].as_a.each do |fpath|
           target_paths << fpath.as_s
         end
       else
@@ -61,30 +77,34 @@ module Analyzer::AI
 
               begin
                 prompt = <<-PROMPT
-                !! Respond only in JSON format. Do not include explanations, comments, or any additional text. !!
-                ---
-                Analyze the given source code and extract the endpoint and parameter details. Strictly follow this JSON structure:
+                Analyze the provided source code to extract details about the endpoints and their parameters.
 
-                [
-                  {
-                    "url": "string / e.g., /api/v1/users",
-                    "method": "string / e.g., GET, POST, PUT, DELETE",
-                    "params": [
-                      {
-                        "name": "string / e.g., id",
-                        "param_type": "string / one of: query, json, form, header, cookie, path",
-                        "value": "string / optional, default empty"
-                      }
-                    ]
-                  }
-                ]
+                Return the result strictly in the following JSON structure:
+                {
+                  "endpoints": [
+                    {
+                      "url": "string / e.g., /api/v1/users",
+                      "method": "string / e.g., GET, POST, PUT, DELETE",
+                      "params": [
+                        {
+                          "name": "string / e.g., id",
+                          "param_type": "string / one of: query, json, form, header, cookie, path",
+                          "value": "string / optional, default empty"
+                        }
+                      ]
+                    }
+                  ]
+                }
 
-                - Ensure `param_type` uses only these values: `query`, `json`, `form`, `header`, `cookie`, `path`.
-                - If no endpoints are found in the code, respond with an empty array `[]`.
-                - Do not deviate from the specified JSON structure.
+                If no endpoints are found, return:
+                {"endpoints": []}
+
+                Guidelines:
+                - `param_type` must strictly use one of these values: `query`, `json`, `form`, `header`, `cookie`, `path`.
+                - Do not include explanations, comments, or additional text.
+                - Provide only the JSON response as output.
 
                 Input Code:
-
                 #{content}
                 PROMPT
 
@@ -93,7 +113,8 @@ module Analyzer::AI
                 logger.debug_sub response
 
                 response_json = JSON.parse(response.to_s)
-                response_json.as_a.each do |endpoint|
+                next unless response_json["endpoints"].as_a.size > 0
+                response_json["endpoints"].as_a.each do |endpoint|
                   url = endpoint["url"].as_s
                   method = endpoint["method"].as_s
                   params = endpoint["params"].as_a.map do |param|
