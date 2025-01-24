@@ -26,7 +26,7 @@ module Analyzer::AI
 
         # Filter files that are likely to contain endpoints
         filter_prompt = <<-PROMPT
-        Analyze the provided list of file paths and identify individual files that are likely to represent endpoints, such as API endpoints, web pages, or static resources. 
+        Analyze the provided list of file paths and identify individual files that are likely to represent endpoints, such as API endpoints, web pages or static resources. 
         Ignore directories and focus exclusively on files.
 
         Return the result strictly in the following JSON structure:
@@ -45,7 +45,7 @@ module Analyzer::AI
 
         Guidelines:
         - Do not include directories in the output.
-        - Focus on files related to endpoints (API, web pages, or static resources).
+        - Focus on files related to endpoints (API, web pages or static resources).
         - Provide only the JSON response with no explanations or additional text.
 
         File paths:
@@ -100,9 +100,11 @@ module Analyzer::AI
                 {"endpoints": []}
 
                 Guidelines:
-                - `param_type` must strictly use one of these values: `query`, `json`, `form`, `header`, `cookie`, `path`.
-                - Do not include explanations, comments, or additional text.
-                - Provide only the JSON response as output.
+                - The JSON should include only the fields: "url", "method" and "params" for each endpoint.
+                - The "method" field should strictly use one of these values: GET, POST, PUT, DELETE.
+                - The "params" field should consist of "name", "param_type" and "value".
+                - "param_type" must strictly use one of these values: "query", "json", "form", "header", "cookie" and "path".
+                - Do not include explanations, comments or additional text.
 
                 Input Code:
                 #{content}
