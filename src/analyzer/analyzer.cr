@@ -83,3 +83,7 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
   logger.info "Found #{result.size} endpoints"
   result
 end
+
+def join_paths(*paths : String) : String
+  File.join(paths)
+end
