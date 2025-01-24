@@ -49,7 +49,7 @@ module Analyzer::AI
         - Provide only the JSON response with no explanations or additional text.
 
         File paths:
-        #{all_paths.join("\n")}
+        #{all_paths.map { |path| "- \"#{File.expand_path(path)}\"" }.join("\n")}
         PROMPT
 
         filter_response = ollama.request(filter_prompt)
