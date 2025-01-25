@@ -28,16 +28,13 @@ module Analyzer::AI
         filter_prompt = <<-PROMPT
         Analyze the following list of file paths and identify which files are likely to represent endpoints, including API endpoints, web pages, or static resources.
 
-        If no files are found, return:
-        {"files": []}
-
         Guidelines:
         - Focus only on individual files.
         - Do not include directories.
         - Do not include explanations, comments or additional text.
 
         Input Files:
-        #{all_paths.map { |path| File.expand_path(path) }.join("\n")}
+        #{all_paths.map { |path| "- #{File.expand_path(path)}" }.join("\n")}
         PROMPT
 
         format = <<-FORMAT
@@ -81,9 +78,6 @@ module Analyzer::AI
               begin
                 prompt = <<-PROMPT
                 Analyze the provided source code to extract details about the endpoints and their parameters.
-
-                If no endpoints are found, return:
-                {"endpoints": []}
 
                 Guidelines:
                 - The "method" field should strictly use one of these values: "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD".
@@ -131,7 +125,8 @@ module Analyzer::AI
                         "required": ["url", "method", "params"]
                       }
                     }
-                  }
+                  },
+                  "required": ["endpoints"]
                 }
                 FORMAT
 
