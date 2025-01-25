@@ -27,11 +27,17 @@ module Analyzer::AI
         # Filter files that are likely to contain endpoints
         filter_prompt = <<-PROMPT
         Analyze the following list of file paths and identify which files are likely to represent endpoints, including API endpoints, web pages, or static resources.
-        Exclude directories from the analysis and focus only on individual files.
-        Return the result as a JSON array of file paths that should be analyzed further.
 
-        File paths:
-        #{all_paths.join("\n")}
+        If no files are found, return:
+        {"files": []}
+
+        Guidelines:
+        - Focus only on individual files.
+        - Do not include directories.
+        - Do not include explanations, comments or additional text.
+
+        Input Files:
+        #{all_paths.map { |path| File.expand_path(path) }.join("\n")}
         PROMPT
 
         format = <<-FORMAT
@@ -49,7 +55,7 @@ module Analyzer::AI
         }
         FORMAT
 
-        filter_response = ollama.request_with_format(filter_prompt, format)
+        filter_response = ollama.request(filter_prompt, format)
         filtered_paths = JSON.parse(filter_response.to_s)
         logger.debug_sub filter_response
 
@@ -80,10 +86,8 @@ module Analyzer::AI
                 {"endpoints": []}
 
                 Guidelines:
-                - The JSON should include only the fields: "url", "method" and "params" for each endpoint.
-                - The "method" field should strictly use one of these values: GET, POST, PUT, DELETE.
-                - The "params" field should consist of "name", "param_type" and "value".
-                - "param_type" must strictly use one of these values: "query", "json", "form", "header", "cookie" and "path".
+                - The "method" field should strictly use one of these values: "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD".
+                - The "param_type" must strictly use one of these values: "query", "json", "form", "header", "cookie" and "path".
                 - Do not include explanations, comments or additional text.
 
                 Input Code:
@@ -131,7 +135,7 @@ module Analyzer::AI
                 }
                 FORMAT
 
-                response = ollama.request_with_format(prompt, format)
+                response = ollama.request(prompt, format)
                 logger.debug "Ollama response (#{relative_path}):"
                 logger.debug_sub response
 

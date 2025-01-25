@@ -8,30 +8,13 @@ module LLM
       @model = model
     end
 
-    def request(prompt : String)
+    def request(prompt : String, format : String = "json")
       body = {
         :model  => @model,
         :prompt => prompt,
         :stream => false,
-      }
-
-      response = Crest.post(@api, body, json: true)
-      response_json = JSON.parse response.body
-
-      response_json["response"]
-    rescue ex : Exception
-      puts "Error: #{ex.message}"
-
-      ""
-    end
-
-    def request_with_format(prompt : String, format : String)
-      body = {
-        :model  => @model,
-        :prompt => prompt,
-        :stream => false,
-        :format => JSON.parse(format),
-        :temperature => 0.5,
+        :temperature => 0.3,
+        :format => format == "json" ? "json" : JSON.parse(format)
       }
 
       response = Crest.post(@api, body, json: true)
