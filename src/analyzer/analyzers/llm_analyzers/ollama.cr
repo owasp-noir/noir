@@ -26,33 +26,30 @@ module Analyzer::AI
 
         # Filter files that are likely to contain endpoints
         filter_prompt = <<-PROMPT
-        Analyze the provided list of file paths and identify individual files that are likely to represent endpoints, such as API endpoints, web pages or static resources. 
-        Ignore directories and focus exclusively on files.
-
-        Return the result strictly in the following JSON structure:
-        {
-          "files": [
-            "string / e.g., /path/to/file1",
-            "string / e.g., /path/to/file2",
-            "string / e.g., /path/to/file3"
-          ]
-        }
-
-        If no relevant files are found, return:
-        {
-          "files": []
-        }
-
-        Guidelines:
-        - Do not include directories in the output.
-        - Focus on files related to endpoints (API, web pages or static resources).
-        - Provide only the JSON response with no explanations or additional text.
+        Analyze the following list of file paths and identify which files are likely to represent endpoints, including API endpoints, web pages, or static resources.
+        Exclude directories from the analysis and focus only on individual files.
+        Return the result as a JSON array of file paths that should be analyzed further.
 
         File paths:
-        #{all_paths.map { |path| "- \"#{File.expand_path(path)}\"" }.join("\n")}
+        #{all_paths.join("\n")}
         PROMPT
 
-        filter_response = ollama.request(filter_prompt)
+        format = <<-FORMAT
+        {
+          "type": "object",
+          "properties": {
+            "files": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": ["files"]
+        }
+        FORMAT
+
+        filter_response = ollama.request_with_format(filter_prompt, format)
         filtered_paths = JSON.parse(filter_response.to_s)
         logger.debug_sub filter_response
 
@@ -79,23 +76,6 @@ module Analyzer::AI
                 prompt = <<-PROMPT
                 Analyze the provided source code to extract details about the endpoints and their parameters.
 
-                Return the result strictly in the following JSON structure:
-                {
-                  "endpoints": [
-                    {
-                      "url": "string / e.g., /api/v1/users",
-                      "method": "string / e.g., GET, POST, PUT, DELETE",
-                      "params": [
-                        {
-                          "name": "string / e.g., id",
-                          "param_type": "string / one of: query, json, form, header, cookie, path",
-                          "value": "string / optional, default empty"
-                        }
-                      ]
-                    }
-                  ]
-                }
-
                 If no endpoints are found, return:
                 {"endpoints": []}
 
@@ -110,7 +90,48 @@ module Analyzer::AI
                 #{content}
                 PROMPT
 
-                response = ollama.request(prompt)
+                format = <<-FORMAT
+                {
+                  "type": "object",
+                  "properties": {
+                    "endpoints": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "url": {
+                            "type": "string"
+                          },
+                          "method": {
+                            "type": "string"
+                          },
+                          "params": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "name": {
+                                  "type": "string"
+                                },
+                                "param_type": {
+                                  "type": "string"
+                                },
+                                "value": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["name", "param_type", "value"]
+                            }
+                          }
+                        },
+                        "required": ["url", "method", "params"]
+                      }
+                    }
+                  }
+                }
+                FORMAT
+
+                response = ollama.request_with_format(prompt, format)
                 logger.debug "Ollama response (#{relative_path}):"
                 logger.debug_sub response
 
@@ -130,8 +151,8 @@ module Analyzer::AI
                   @result << Endpoint.new(url, method, params, details)
                 end
               rescue ex : Exception
-                puts "Error processing file: #{path}"
-                puts "Error: #{ex.message}"
+                logger.debug "Error processing file: #{path}"
+                logger.debug "Error: #{ex.message}"
               end
             end
           end
@@ -145,7 +166,7 @@ module Analyzer::AI
     end
 
     def ignore_extensions
-      [".css", ".xml", ".json", ".yml", ".yaml", ".md", ".jpg", ".jpeg", ".png", ".gif", ".svg", ".ico", ".eot", ".ttf", ".woff", ".woff2", ".otf", ".mp3", ".mp4", ".avi", ".mov", ".webm", ".zip", ".tar", ".gz", ".7z", ".rar", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv", ".log", ".sql", ".bak", ".swp"]
+      [".css", ".xml", ".json", ".yml", ".yaml", ".md", ".jpg", ".jpeg", ".png", ".gif", ".svg", ".ico", ".eot", ".ttf", ".woff", ".woff2", ".otf", ".mp3", ".mp4", ".avi", ".mov", ".webm", ".zip", ".tar", ".gz", ".7z", ".rar", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv", ".log", ".sql", ".bak", ".swp", ".jar"]
     end
   end
 end
