@@ -26,21 +26,37 @@ module Analyzer::AI
 
         # Filter files that are likely to contain endpoints
         filter_prompt = <<-PROMPT
-        !! Respond only in JSON format. Do not include explanations, comments, or any additional text. !!
-        ---
         Analyze the following list of file paths and identify which files are likely to represent endpoints, including API endpoints, web pages, or static resources.
-        Exclude directories from the analysis and focus only on individual files.
-        Return the result as a JSON array of file paths that should be analyzed further.
 
-        File paths:
-        #{all_paths.join("\n")}
+        Guidelines:
+        - Focus only on individual files.
+        - Do not include directories.
+        - Do not include explanations, comments or additional text.
+
+        Input Files:
+        #{all_paths.map { |path| "- #{File.expand_path(path)}" }.join("\n")}
         PROMPT
 
-        filter_response = ollama.request(filter_prompt)
+        format = <<-FORMAT
+        {
+          "type": "object",
+          "properties": {
+            "files": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": ["files"]
+        }
+        FORMAT
+
+        filter_response = ollama.request(filter_prompt, format)
         filtered_paths = JSON.parse(filter_response.to_s)
         logger.debug_sub filter_response
 
-        filtered_paths.as_a.each do |fpath|
+        filtered_paths["files"].as_a.each do |fpath|
           target_paths << fpath.as_s
         end
       else
@@ -61,39 +77,66 @@ module Analyzer::AI
 
               begin
                 prompt = <<-PROMPT
-                !! Respond only in JSON format. Do not include explanations, comments, or any additional text. !!
-                ---
-                Analyze the given source code and extract the endpoint and parameter details. Strictly follow this JSON structure:
+                Analyze the provided source code to extract details about the endpoints and their parameters.
 
-                [
-                  {
-                    "url": "string / e.g., /api/v1/users",
-                    "method": "string / e.g., GET, POST, PUT, DELETE",
-                    "params": [
-                      {
-                        "name": "string / e.g., id",
-                        "param_type": "string / one of: query, json, form, header, cookie, path",
-                        "value": "string / optional, default empty"
-                      }
-                    ]
-                  }
-                ]
-
-                - Ensure `param_type` uses only these values: `query`, `json`, `form`, `header`, `cookie`, `path`.
-                - If no endpoints are found in the code, respond with an empty array `[]`.
-                - Do not deviate from the specified JSON structure.
+                Guidelines:
+                - The "method" field should strictly use one of these values: "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD".
+                - The "param_type" must strictly use one of these values: "query", "json", "form", "header", "cookie" and "path".
+                - Do not include explanations, comments or additional text.
 
                 Input Code:
-
                 #{content}
                 PROMPT
 
-                response = ollama.request(prompt)
+                format = <<-FORMAT
+                {
+                  "type": "object",
+                  "properties": {
+                    "endpoints": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "url": {
+                            "type": "string"
+                          },
+                          "method": {
+                            "type": "string"
+                          },
+                          "params": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "name": {
+                                  "type": "string"
+                                },
+                                "param_type": {
+                                  "type": "string"
+                                },
+                                "value": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["name", "param_type", "value"]
+                            }
+                          }
+                        },
+                        "required": ["url", "method", "params"]
+                      }
+                    }
+                  },
+                  "required": ["endpoints"]
+                }
+                FORMAT
+
+                response = ollama.request(prompt, format)
                 logger.debug "Ollama response (#{relative_path}):"
                 logger.debug_sub response
 
                 response_json = JSON.parse(response.to_s)
-                response_json.as_a.each do |endpoint|
+                next unless response_json["endpoints"].as_a.size > 0
+                response_json["endpoints"].as_a.each do |endpoint|
                   url = endpoint["url"].as_s
                   method = endpoint["method"].as_s
                   params = endpoint["params"].as_a.map do |param|
@@ -107,8 +150,8 @@ module Analyzer::AI
                   @result << Endpoint.new(url, method, params, details)
                 end
               rescue ex : Exception
-                puts "Error processing file: #{path}"
-                puts "Error: #{ex.message}"
+                logger.debug "Error processing file: #{path}"
+                logger.debug "Error: #{ex.message}"
               end
             end
           end
@@ -122,7 +165,7 @@ module Analyzer::AI
     end
 
     def ignore_extensions
-      [".css", ".xml", ".json", ".yml", ".yaml", ".md", ".jpg", ".jpeg", ".png", ".gif", ".svg", ".ico", ".eot", ".ttf", ".woff", ".woff2", ".otf", ".mp3", ".mp4", ".avi", ".mov", ".webm", ".zip", ".tar", ".gz", ".7z", ".rar", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv", ".log", ".sql", ".bak", ".swp"]
+      [".css", ".xml", ".json", ".yml", ".yaml", ".md", ".jpg", ".jpeg", ".png", ".gif", ".svg", ".ico", ".eot", ".ttf", ".woff", ".woff2", ".otf", ".mp3", ".mp4", ".avi", ".mov", ".webm", ".zip", ".tar", ".gz", ".7z", ".rar", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv", ".log", ".sql", ".bak", ".swp", ".jar"]
     end
   end
 end
