@@ -10,11 +10,11 @@ module LLM
 
     def request(prompt : String, format : String = "json")
       body = {
-        :model  => @model,
-        :prompt => prompt,
-        :stream => false,
+        :model       => @model,
+        :prompt      => prompt,
+        :stream      => false,
         :temperature => 0.3,
-        :format => format == "json" ? "json" : JSON.parse(format)
+        :format      => format == "json" ? "json" : JSON.parse(format),
       }
 
       response = Crest.post(@api, body, json: true)
