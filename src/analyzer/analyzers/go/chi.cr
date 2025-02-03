@@ -27,12 +27,11 @@ module Analyzer::Go
                     file.each_line.with_index do |line, index|
                       details = Details.new(PathInfo.new(path, index + 1))
 
-                      # Mount 처리: r.Mount("/prefix", mountedFunc())
-                      if line.includes?("r.Mount(")
-                        if match = line.match(/r\.Mount\(\s*"([^"]+)"\s*,\s*([^(]+)\(\)/)
+                      # Mount 처리: 객체가 무엇이든 Mount 호출 인식
+                      if line.includes?(".Mount(")
+                        if match = line.match(/[a-zA-Z]\w*\.Mount\(\s*"([^"]+)"\s*,\s*([^(]+)\(\)/)
                           mount_prefix = match[1]
                           router_function = match[2]
-                          # mount된 라우터 함수 내의 엔드포인트를 분석해서 mount prefix를 붙임
                           endpoints = analyze_router_function(path, router_function)
                           endpoints.each do |ep|
                             ep.url = mount_prefix + ep.url
@@ -42,11 +41,17 @@ module Analyzer::Go
                         next
                       end
 
-                      # Route 블록 처리: 블록 내 접두사 저장
-                      if line.includes?("r.Route(")
-                        if match = line.match(/r\.Route\(\s*"([^"]+)"/)
+                      # Route 블록 처리: 객체가 무엇이든 Route 호출 인식 (접두사 저장)
+                      if line.includes?(".Route(")
+                        if match = line.match(/[a-zA-Z]\w*\.Route\(\s*"([^"]+)"/)
                           prefix_stack << match[1]
                         end
+                        next
+                      end
+
+                      # 헤더 호출 건너뛰기 (예: c.Header.Get("X-API-Key"))
+                      if line.includes?(".Header.Get(")
+                        # TODO: 생각보다 복잡해져서 나중에 구현하기
                         next
                       end
 
@@ -56,24 +61,17 @@ module Analyzer::Go
                         next
                       end
 
-                      # 실제 endpoint 처리: r.Get, r.Post, r.Put, r.Delete
+                      # 실제 endpoint 처리: .Get, .Post, .Put, .Delete (임의 객체)
                       method = ""
-                      if line.includes?("r.Get(")
-                        method = "GET"
-                      elsif line.includes?("r.Post(")
-                        method = "POST"
-                      elsif line.includes?("r.Put(")
-                        method = "PUT"
-                      elsif line.includes?("r.Delete(")
-                        method = "DELETE"
+                      route_path = ""
+                      if match = line.match(/[a-zA-Z]\w*\.(Get|Post|Put|Delete)\(\s*"([^"]+)"/)
+                        method = match[1].upcase
+                        route_path = match[2]
                       end
 
-                      if method.size > 0
-                        route_path = extract_route_path(line)
-                        if route_path.size > 0
-                          full_route = (prefix_stack.join("") + route_path).to_s
-                          result << Endpoint.new(full_route, method, details)
-                        end
+                      if method.size > 0 && route_path.size > 0
+                        full_route = prefix_stack.join("") + route_path
+                        result << Endpoint.new(full_route, method, details)
                       end
                     end
                   end
@@ -90,19 +88,18 @@ module Analyzer::Go
       result
     end
 
-    # 기존 extract_route_path: r.Get("/path", ...) 등에서 경로 추출
+    # 추출: 객체.메서드("경로", ...) 형태에서 경로 추출
     def extract_route_path(line : String) : String
-      if match = line.match(/r\.\w+\(\s*"([^"]+)"/)
+      if match = line.match(/[a-zA-Z]\w*\.\w+\(\s*"([^"]+)"/)
         return match[1]
       end
       ""
     end
 
-    # 주어진 파일 내에 정의된 router 함수의 내용을 추출하여 엔드포인트 정보로 변환
+    # 주어진 파일 내에 정의된 router 함수의 내용을 추출하여 엔드포인트 정보로 변환  
     def analyze_router_function(file_path : String, func_name : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       content = File.read(file_path)
-      # 함수 정의가 포함되어 있는지 확인
       if content.includes?("func #{func_name}(")
         block_started = false
         brace_count = 0
@@ -120,21 +117,14 @@ module Analyzer::Go
             brace_count -= line.count("}")
             details = Details.new(PathInfo.new(file_path))
             method = ""
-            if line.includes?("r.Get(")
-              method = "GET"
-            elsif line.includes?("r.Post(")
-              method = "POST"
-            elsif line.includes?("r.Put(")
-              method = "PUT"
-            elsif line.includes?("r.Delete(")
-              method = "DELETE"
+            route_path = ""
+            if match = line.match(/[a-zA-Z]\w*\.(Get|Post|Put|Delete)\(\s*"([^"]+)"/)
+              method = match[1].upcase
+              route_path = match[2]
             end
 
-            if method.size > 0
-              route_path = extract_route_path(line)
-              if route_path.size > 0
-                endpoints << Endpoint.new(route_path, method, details)
-              end
+            if method.size > 0 && route_path.size > 0
+              endpoints << Endpoint.new(route_path, method, details)
             end
 
             break if brace_count <= 0
