@@ -96,7 +96,7 @@ module Analyzer::Go
       ""
     end
 
-    # 주어진 파일 내에 정의된 router 함수의 내용을 추출하여 엔드포인트 정보로 변환  
+    # 주어진 파일 내에 정의된 router 함수의 내용을 추출하여 엔드포인트 정보로 변환
     def analyze_router_function(file_path : String, func_name : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       content = File.read(file_path)
