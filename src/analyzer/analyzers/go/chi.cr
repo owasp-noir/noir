@@ -102,12 +102,11 @@ module Analyzer::Go
     def analyze_router_function(file_path : String, func_name : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       content = File.read(file_path)
-      # 간단한 정규표현식으로 함수 블록 시작 위치 찾기
-      if start_index = content.index("func #{func_name}(")
-        # 함수 블록의 중괄호 범위를 찾기 위해 플래그 사용
+      # 함수 정의가 포함되어 있는지 확인
+      if content.includes?("func #{func_name}(")
         block_started = false
         brace_count = 0
-        content.lines.each do |line|
+        content.each_line do |line|
           if !block_started
             if line.includes?("func #{func_name}(")
               block_started = true
@@ -119,7 +118,6 @@ module Analyzer::Go
           else
             brace_count += line.count("{")
             brace_count -= line.count("}")
-            # 함수 내부에서 endpoint 처리 (r.Get, r.Post, ...)
             details = Details.new(PathInfo.new(file_path))
             method = ""
             if line.includes?("r.Get(")
