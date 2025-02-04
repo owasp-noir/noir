@@ -142,6 +142,24 @@ module NoirTechs
         },
       },
     },
+    :go_chi => {
+      :framework => "Chi",
+      :language  => "Go",
+      :similar   => ["chi", "go-chi", "go_chi"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :har => {
       :format    => ["JSON"],
       :similar   => ["har"],

@@ -24,6 +24,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"go_echo", Go::Echo},
     {"go_fiber", Go::Fiber},
     {"go_gin", Go::Gin},
+    {"go_chi", Go::Chi},
     {"har", Specification::Har},
     {"java_armeria", Java::Armeria},
     {"java_jsp", Java::Jsp},
