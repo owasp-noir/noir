@@ -178,6 +178,9 @@ def run_options_parser
       banner()
       puts parser
       puts ""
+      puts "ENVIRONMENT VARIABLES:"
+      puts "  NOIR_HOME: Path to a directory containing the configuration file."
+      puts ""
       puts "EXAMPLES:"
       puts "  Basic run of noir:".colorize(:green)
       puts "      $ noir -b ."
