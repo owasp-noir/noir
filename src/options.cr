@@ -17,8 +17,10 @@ def run_options_parser
   noir_options = config_init.read_config
 
   OptionParser.parse do |parser|
-    parser.banner = "USAGE: noir <flags>\n"
-    parser.separator "FLAGS:"
+    parser.banner = "Attack surface detector that identifies endpoints by static analysis."
+    parser.separator "USAGE:".colorize(:green)
+    parser.separator "  noir -b BASE_PATH <flags>\n"
+    parser.separator "FLAGS:".colorize(:green)
     parser.separator "  BASE:".colorize(:blue)
     parser.on "-b PATH", "--base-path ./app", "(Required) Set base path" { |var| noir_options["base"] = YAML::Any.new(var) }
     parser.on "-u URL", "--url http://..", "Set base url for endpoints" { |var| noir_options["url"] = YAML::Any.new(var) }
@@ -177,21 +179,31 @@ def run_options_parser
     parser.on "-h", "--help", "Show help" do
       banner()
       puts parser
+    end
+    parser.on "--help-all", "Show all help" do
+      banner()
+      puts parser
       puts ""
-      puts "ENVIRONMENT VARIABLES:"
+      puts "ENVIRONMENT VARIABLES:".colorize(:green)
       puts "  NOIR_HOME: Path to a directory containing the configuration file."
       puts ""
-      puts "EXAMPLES:"
-      puts "  Basic run of noir:".colorize(:green)
+      puts "EXAMPLES:".colorize(:green)
+      puts "  Basic run of noir:"
       puts "      $ noir -b ."
-      puts "  Running noir targeting a specific URL and forwarding results through a proxy:".colorize(:green)
+      puts "  Running noir targeting a specific URL and forwarding results through a proxy:"
       puts "      $ noir -b . -u http://example.com"
       puts "      $ noir -b . -u http://example.com --send-proxy http://localhost:8090"
-      puts "  Running noir for detailed analysis:".colorize(:green)
+      puts "  Running noir for detailed analysis:"
       puts "      $ noir -b . -T --include-path"
-      puts "  Running noir with output limited to JSON or YAML format, without logs:".colorize(:green)
+      puts "  Running noir with output limited to JSON or YAML format, without logs:"
       puts "      $ noir -b . -f json --no-log"
       puts "      $ noir -b . -f yaml --no-log"
+      puts "  Running noir with a specific technology:"
+      puts "      $ noir -b . -t rails"
+      puts "  Running noir with a specific technology and excluding another:"
+      puts "      $ noir -b . -t rails --exclude-techs php"
+      puts "  Running noir with AI integration:"
+      puts "      $ noir -b . --ollama http://localhost:11434 --ollama-model llama3"
       exit
     end
     parser.invalid_option do |flag|
