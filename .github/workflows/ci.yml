@@ -4,6 +4,12 @@ on:
   pull_request_target:
     branches: [main]
     paths: ['**/*.cr', shard.yml, Dockerfile]
+  workflow_dispatch:
+    inputs:
+      logLevel:
+        description: manual run
+        required: false
+        default: ''
 jobs:
   build-crystal:
     runs-on: ubuntu-latest
