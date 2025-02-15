@@ -1,5 +1,6 @@
 require "./logger"
 require "yaml"
+require "json"
 
 struct PassiveScan
   struct Info
