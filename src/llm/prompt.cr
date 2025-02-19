@@ -5,7 +5,9 @@ module LLM
   Guidelines:
   - Focus only on individual files.
   - Do not include directories.
-  - Do not include explanations, comments or additional text.
+  - Do not include any explanations, comments, or additional text.
+  - Output only the JSON result.
+  - Return the result strictly in valid JSON format according to the schema provided below.
 
   Input Files:
   PROMPT
@@ -20,9 +22,8 @@ module LLM
           "type": "string"
         }
       }
-    }
-  },
-  "required": ["files"]
+    },
+    "required": ["files"]
   }
   FORMAT
 
@@ -31,8 +32,10 @@ module LLM
 
   Guidelines:
   - The "method" field should strictly use one of these values: "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD".
-  - The "param_type" must strictly use one of these values: "query", "json", "form", "header", "cookie" and "path".
-  - Do not include explanations, comments or additional text.
+  - The "param_type" must strictly use one of these values: "query", "json", "form", "header", "cookie", "path".
+  - Do not include any explanations, comments, or additional text.
+  - Output only the JSON result.
+  - Return the result strictly in valid JSON format according to the schema provided below.
 
   Input Code:
   PROMPT
