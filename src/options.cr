@@ -111,11 +111,11 @@ def run_options_parser
     end
 
     parser.separator "\n  AI Integration:".colorize(:blue)
-    parser.on "--ollama http://localhost:11434", "Specify the Ollama server URL" { |var| noir_options["ollama"] = YAML::Any.new(var) }
-    parser.on "--ollama-model MODEL", "Specify the Ollama model name" { |var| noir_options["ollama_model"] = YAML::Any.new(var) }
-    parser.on "--openai http://api.openai.com", "Specify the OpenAI/OpenAI Compatibility API's server URL (for services like OpenAI, vLLM, LMStudio)" { |var| noir_options["openai"] = YAML::Any.new(var) }
-    parser.on "--openai-model MODEL", "Specify the OpenAI/OpenAI Compatibility API's model name" { |var| noir_options["openai_model"] = YAML::Any.new(var) }
-    parser.on "--openai-api-key KEY", "Specify the OpenAI/OpenAI Compatibility API's key for authentication" { |var| noir_options["openai_api_key"] = YAML::Any.new(var) }
+    parser.on "--ollama http://localhost:11434", "Set the URL for the Ollama server" { |var| noir_options["ollama"] = YAML::Any.new(var) }
+    parser.on "--ollama-model MODEL", "Specify the name of the model to use with the Ollama server" { |var| noir_options["ollama_model"] = YAML::Any.new(var) }
+    parser.on "--openai http://api.openai.com", "Set the URL for an OpenAI-compatible API server" { |var| noir_options["openai"] = YAML::Any.new(var) }
+    parser.on "--openai-model MODEL", "Specify the model name for the OpenAI-compatible API" { |var| noir_options["openai_model"] = YAML::Any.new(var) }
+    parser.on "--openai-api-key KEY", "Set the API key for the OpenAI-compatible API" { |var| noir_options["openai_api_key"] = YAML::Any.new(var) }
 
     parser.separator "\n  DIFF:".colorize(:blue)
     parser.on "--diff-path ./app2", "Specify the path to the old version of the source code for comparison" { |var| noir_options["diff"] = YAML::Any.new(var) }
