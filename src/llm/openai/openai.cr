@@ -2,11 +2,12 @@ require "json"
 
 module LLM
   class OpenAI
-    def initialize(url : String, model : String, api_key : String?)
+    def initialize(url : String, model : String, api_key : String?, platform : String = "general")
       @url = url
       @api = @url + "/v1/chat/completions"
       @model = model
       @api_key = api_key
+      @platform = platform
     end
 
     def request(prompt : String, format : String = "json")
@@ -24,7 +25,6 @@ module LLM
 
       response = HTTP::Client.post(@api, headers: headers, body: body)
       response_json = JSON.parse(response.body)
-
       response_json["choices"][0]["message"]["content"].to_s
     rescue ex : Exception
       puts "Error: #{ex.message}"

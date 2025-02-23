@@ -8,16 +8,34 @@ module Analyzer::AI
     @llm_url : String
     @model : String
     @api_key : String?
+    @platform : String
 
     def initialize(options : Hash(String, YAML::Any))
       super(options)
-      @llm_url = options["openai"].as_s
-      @model = options["openai_model"].as_s
-      @api_key = options["openai_api_key"].as_s
+      raw_server = options["ai_server"].as_s
+      @llm_url = if raw_server.includes?("://")
+                   raw_server
+                 else
+                   case raw_server.downcase
+                   when "openai"
+                     "https://api.openai.com"
+                   when "ollama"
+                     "http://localhost:11434"
+                   when "xai"
+                      "http://localhost:8000/xai"
+                   when "vllm"
+                     "http://localhost:8000/vllm"
+                   else
+                     raw_server
+                   end
+                 end
+      @model = options["ai_model"].as_s
+      @api_key = options["ai_key"].as_s
+      @platform = options["ai_platform"]?.to_s || "general"
     end
 
     def analyze
-      openai = LLM::OpenAI.new(@llm_url, @model, @api_key)
+      openai = LLM::OpenAI.new(@llm_url, @model, @api_key, @platform)
       target_paths = select_target_paths(openai)
       target_paths.each { |path| analyze_file(path, openai) }
       Fiber.yield

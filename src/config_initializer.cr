@@ -109,9 +109,10 @@ class ConfigInitializer
       "passive_scan_path" => YAML::Any.new([] of YAML::Any),
       "ollama"            => YAML::Any.new(""),
       "ollama_model"      => YAML::Any.new(""),
-      "openai"            => YAML::Any.new(""),
-      "openai_model"      => YAML::Any.new(""),
-      "openai_api_key"    => YAML::Any.new(""),
+      "ai_server"         => YAML::Any.new(""),
+      "ai_model"          => YAML::Any.new(""),
+      "ai_key"            => YAML::Any.new(""),
+      "ai_platform"       => YAML::Any.new("general"),
     }
 
     noir_options
@@ -215,6 +216,18 @@ class ConfigInitializer
     # e.g /path/to/rules
     passive_scan: false
     passive_scan_path: []
+
+    # The AI server URL
+    ai_server: "#{options["ai_server"]}"
+
+    # The AI model to use
+    ai_model: "#{options["ai_model"]}"
+
+    # The API key for the AI server
+    ai_key: "#{options["ai_key"]}"
+
+    # The AI platform to use
+    ai_platform: "#{options["ai_platform"]}"
 
     CONTENT
 

@@ -67,14 +67,14 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
   logger.info "Analysis Started"
   logger.sub "➔ Code Analyzer: #{techs.size} in use"
 
+  if (options["ai_server"].to_s != "") && (options["ai_model"].to_s != "")
+    logger.sub "➔ AI Analyzer: OpenAI(OpenAI Compatibility API) in use"
+    techs << "ai_openai"
+  end
+
   if (options["ollama"].to_s != "") && (options["ollama_model"].to_s != "")
     logger.sub "➔ AI Analyzer: Ollama in use"
     techs << "ai_ollama"
-  end
-
-  if (options["openai"].to_s != "") && (options["openai_model"].to_s != "")
-    logger.sub "➔ AI Analyzer: OpenAI(OpenAI Compatibility API) in use"
-    techs << "ai_openai"
   end
 
   techs.each do |tech|
