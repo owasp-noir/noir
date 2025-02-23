@@ -2,12 +2,11 @@ require "json"
 
 module LLM
   class OpenAI
-    def initialize(url : String, model : String, api_key : String?, platform : String = "general")
+    def initialize(url : String, model : String, api_key : String?)
       @url = url
       @api = @url + "/v1/chat/completions"
       @model = model
       @api_key = api_key
-      @platform = platform
     end
 
     def request(prompt : String, format : String = "json")

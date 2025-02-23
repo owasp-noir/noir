@@ -8,7 +8,6 @@ module Analyzer::AI
     @llm_url : String
     @model : String
     @api_key : String?
-    @platform : String
 
     def initialize(options : Hash(String, YAML::Any))
       super(options)
@@ -34,7 +33,7 @@ module Analyzer::AI
     end
 
     def analyze
-      openai = LLM::OpenAI.new(@llm_url, @model, @api_key, @platform)
+      openai = LLM::OpenAI.new(@llm_url, @model, @api_key)
       target_paths = select_target_paths(openai)
       target_paths.each { |path| analyze_file(path, openai) }
       Fiber.yield
