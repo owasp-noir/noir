@@ -21,10 +21,10 @@ module Analyzer::AI
                      "https://api.openai.com"
                    when "ollama"
                      "http://localhost:11434"
-                   when "xai"
-                      "http://localhost:8000/xai"
+                   when "x.ai"
+                     "https://api.x.ai"
                    when "vllm"
-                     "http://localhost:8000/vllm"
+                     "http://localhost:8000"
                    else
                      raw_server
                    end
