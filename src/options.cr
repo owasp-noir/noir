@@ -114,7 +114,6 @@ def run_options_parser
     parser.on "--ai-server PREFIX|URL", "Set the AI (LLM) API server URL. Required for AI features.\n  [Prefixes]\n  * openai: http://api.openai.com\n  * x.ai: https://api.x.ai\n  * vllm: http://localhost:8000\n  * ollama: http://localhost:11434\n  [Examples]: --ai-server=openai, --ai-server=http://localhost:9100" { |var| noir_options["ai_server"] = YAML::Any.new(var) }
     parser.on "--ai-model MODEL", "Specify the model name for the AI Analysis. Required for AI features." { |var| noir_options["ai_model"] = YAML::Any.new(var) }
     parser.on "--ai-key KEY", "Provide the API key for authentication with the OpenAI-compatible API." { |var| noir_options["ai_key"] = YAML::Any.new(var) }
-    parser.on "--ai-platform PLATFORM", "Define the AI platform type (default: general)." { |var| noir_options["ai_platform"] = YAML::Any.new(var) }
     parser.on "--ollama http://localhost:11434", "(Deprecated) Set the Ollama server URL. Use --ai-server instead." { |var| noir_options["ollama"] = YAML::Any.new(var) }
     parser.on "--ollama-model MODEL", "(Deprecated) Specify the model for the Ollama server. Use --ai-model instead." { |var| noir_options["ollama_model"] = YAML::Any.new(var) }
 

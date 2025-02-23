@@ -112,7 +112,6 @@ class ConfigInitializer
       "ai_server"         => YAML::Any.new(""),
       "ai_model"          => YAML::Any.new(""),
       "ai_key"            => YAML::Any.new(""),
-      "ai_platform"       => YAML::Any.new("general"),
     }
 
     noir_options
@@ -225,9 +224,6 @@ class ConfigInitializer
 
     # The API key for the AI server
     ai_key: "#{options["ai_key"]}"
-
-    # The AI platform to use
-    ai_platform: "#{options["ai_platform"]}"
 
     CONTENT
 

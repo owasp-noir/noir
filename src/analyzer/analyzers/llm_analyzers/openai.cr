@@ -31,7 +31,6 @@ module Analyzer::AI
                  end
       @model = options["ai_model"].as_s
       @api_key = options["ai_key"].as_s
-      @platform = options["ai_platform"]?.to_s || "general"
     end
 
     def analyze
