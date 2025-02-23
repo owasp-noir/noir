@@ -47,7 +47,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"rust_rocket", Rust::Rocket},
     {"rust_actix_web", Rust::ActixWeb},
     {"ai_ollama", AI::Ollama},
-    {"ai_openai", AI::OpenAI},
+    {"ai", AI::General},
   ])
 
   logger.debug "#{analyzers.size} Analyzers initialized"
@@ -68,8 +68,8 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
   logger.sub "➔ Code Analyzer: #{techs.size} in use"
 
   if (options["ai_server"].to_s != "") && (options["ai_model"].to_s != "")
-    logger.sub "➔ AI Analyzer: OpenAI(OpenAI Compatibility API) in use"
-    techs << "ai_openai"
+    logger.sub "➔ AI Analyzer: General(OpenAI Compatibility API) in use"
+    techs << "ai"
   end
 
   if (options["ollama"].to_s != "") && (options["ollama_model"].to_s != "")

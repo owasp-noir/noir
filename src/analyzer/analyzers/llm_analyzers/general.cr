@@ -1,54 +1,38 @@
 require "../../../utils/utils.cr"
 require "../../../models/analyzer"
-require "../../../llm/openai"
+require "../../../llm/general/client"
 require "../../../llm/prompt"
 
 module Analyzer::AI
-  class OpenAI < Analyzer
+  class General < Analyzer
     @llm_url : String
     @model : String
     @api_key : String?
 
     def initialize(options : Hash(String, YAML::Any))
       super(options)
-      raw_server = options["ai_server"].as_s
-      @llm_url = if raw_server.includes?("://")
-                   raw_server
-                 else
-                   case raw_server.downcase
-                   when "openai"
-                     "https://api.openai.com"
-                   when "ollama"
-                     "http://localhost:11434"
-                   when "x.ai"
-                     "https://api.x.ai"
-                   when "vllm"
-                     "http://localhost:8000"
-                   else
-                     raw_server
-                   end
-                 end
+      @llm_url = options["ai_server"].as_s
       @model = options["ai_model"].as_s
       @api_key = options["ai_key"].as_s
     end
 
     def analyze
-      openai = LLM::OpenAI.new(@llm_url, @model, @api_key)
-      target_paths = select_target_paths(openai)
-      target_paths.each { |path| analyze_file(path, openai) }
+      client = LLM::General.new(@llm_url, @model, @api_key)
+      target_paths = select_target_paths(client)
+      target_paths.each { |path| analyze_file(path, client) }
       Fiber.yield
       @result
     end
 
-    private def select_target_paths(openai : LLM::OpenAI) : Array(String)
+    private def select_target_paths(client : LLM::General) : Array(String)
       locator = CodeLocator.instance
       all_paths = locator.all("file_map")
 
       if all_paths.size > 10
-        logger.debug_sub "OpenAI::Analyzing filtered files"
+        logger.debug_sub "AI::Analyzing filtered files"
         prompt = "#{LLM::FILTER_PROMPT}\n" +
                  all_paths.map { |p| "- #{File.expand_path(p)}" }.join("\n")
-        filter_response = openai.request(prompt, LLM::FILTER_FORMAT)
+        filter_response = client.request(prompt, LLM::FILTER_FORMAT)
         logger.debug_sub filter_response
 
         begin
@@ -59,19 +43,19 @@ module Analyzer::AI
           # fallback: analyze all files
         end
       else
-        logger.debug_sub "OpenAI::Analyzing all files"
+        logger.debug_sub "AI::Analyzing all files"
       end
       Dir.glob("#{base_path}/**/*")
     end
 
-    private def analyze_file(path : String, openai : LLM::OpenAI)
+    private def analyze_file(path : String, client : LLM::General)
       return if File.directory?(path)
       relative_path = get_relative_path(base_path, path)
 
       if File.exists?(path) && !ignore_extensions.includes?(File.extname(path))
         File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
           content = file.gets_to_end
-          process_content(content, relative_path, path, openai)
+          process_content(content, relative_path, path, client)
         end
       end
     rescue ex : Exception
@@ -79,10 +63,10 @@ module Analyzer::AI
       logger.debug "Error: #{ex.message}"
     end
 
-    private def process_content(content : String, relative_path : String, path : String, openai : LLM::OpenAI)
+    private def process_content(content : String, relative_path : String, path : String, client : LLM::General)
       prompt = "#{LLM::ANALYZE_PROMPT}\n#{content}"
-      response = openai.request(prompt, LLM::ANALYZE_FORMAT)
-      logger.debug "OpenAI response (#{relative_path}):"
+      response = client.request(prompt, LLM::ANALYZE_FORMAT)
+      logger.debug "client response (#{relative_path}):"
       logger.debug_sub response
 
       begin

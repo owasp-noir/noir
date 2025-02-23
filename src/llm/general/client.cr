@@ -1,10 +1,26 @@
 require "json"
 
 module LLM
-  class OpenAI
+  class General
     def initialize(url : String, model : String, api_key : String?)
       @url = url
-      @api = @url + "/v1/chat/completions"
+      @api = if url.includes?("://")
+               url
+             else
+               case url.downcase
+               when "openai"
+                 "https://api.openai.com/v1/chat/completions"
+               when "ollama"
+                 "http://localhost:11434/v1/chat/completions"
+               when "x.ai"
+                 "https://api.x.ai/v1/chat/completions"
+               when "vllm"
+                 "http://localhost:8000/v1/chat/completions"
+               else
+                 url
+               end
+             end
+
       @model = model
       @api_key = api_key
     end
