@@ -37,11 +37,15 @@ _arguments \\
   '--config-file[Specify the path to a configuration file in YAML format]:path:_files' \\
   '--concurrency[Set concurrency]:concurrency:' \\
   '--generate-completion[Generate Zsh/Bash/Fish completion script]:completion:(zsh bash fish)' \\
+  '--ai-provider[Specify the AI (LLM) provider or custom API URL]:provider:' \\
+  '--ai-model[Set the model name to use for AI analysis]:model:' \\
+  '--ai-key[Provide the API key for the AI provider]:key:' \\
+  '--ollama[Specify the Ollama server URL (Deprecated)]:URL:_urls' \\
+  '--ollama-model[Specify the Ollama model name (Deprecated)]:model:' \\
   '-d[Show debug messages]' \\
   '-v[Show version]' \\
   '--build-info[Show version and Build info]' \\
-  '--ollama[Specify the Ollama server URL]:URL:_urls' \\
-  '--ollama-model[Specify the Ollama model name]:model:' \\
+  '--help-all[Show all help]' \\
   '-h[Show help]'
 SCRIPT
 end
@@ -88,11 +92,15 @@ _noir_completions() {
         --config-file
         --concurrency
         --generate-completion
+        --ai-provider
+        --ai-model
+        --ai-key
         --ollama
         --ollama-model
         -d --debug
         -v --version
         --build-info
+        --help-all
         -h --help
     "
 
@@ -107,6 +115,10 @@ _noir_completions() {
             ;;
         --generate-completion)
             COMPREPLY=( $(compgen -W "zsh bash fish" -- "${cur}") )
+            return 0
+            ;;
+        --ai-provider|--ai-model|--ai-key|--ollama|--ollama-model)
+            COMPREPLY=( $(compgen -f -- "${cur}") )
             return 0
             ;;
         *)
@@ -165,11 +177,15 @@ complete -c noir -n '__fish_noir_needs_command' -a '--list-techs' -d 'Show all t
 complete -c noir -n '__fish_noir_needs_command' -a '--config-file' -d 'Specify the path to a configuration file in YAML format'
 complete -c noir -n '__fish_noir_needs_command' -a '--concurrency' -d 'Set concurrency'
 complete -c noir -n '__fish_noir_needs_command' -a '--generate-completion' -d 'Generate Zsh/Bash/Fish completion script'
-complete -c noir -n '__fish_noir_needs_command' -a '--ollama' -d 'Specify the Ollama server URL'
-complete -c noir -n '__fish_noir_needs_command' -a '--ollama-model' -d 'Specify the Ollama model name'
+complete -c noir -n '__fish_noir_needs_command' -a '--ai-provider' -d 'Specify the AI (LLM) provider or custom API URL'
+complete -c noir -n '__fish_noir_needs_command' -a '--ai-model' -d 'Set the model name to use for AI analysis'
+complete -c noir -n '__fish_noir_needs_command' -a '--ai-key' -d 'Provide the API key for the AI provider'
+complete -c noir -n '__fish_noir_needs_command' -a '--ollama' -d 'Specify the Ollama server URL (Deprecated)'
+complete -c noir -n '__fish_noir_needs_command' -a '--ollama-model' -d 'Specify the Ollama model name (Deprecated)'
 complete -c noir -n '__fish_noir_needs_command' -a '-d' -d 'Show debug messages'
 complete -c noir -n '__fish_noir_needs_command' -a '-v' -d 'Show version'
 complete -c noir -n '__fish_noir_needs_command' -a '--build-info' -d 'Show version and Build info'
+complete -c noir -n '__fish_noir_needs_command' -a '--help-all' -d 'Show all help'
 complete -c noir -n '__fish_noir_needs_command' -a '-h' -d 'Show help'
 SCRIPT
 end
