@@ -17,6 +17,22 @@ FileAnalyzer.add_hook(->(path : String, url : String) : Array(Endpoint) {
         parsed_url = URI.parse("")
 
         file.each_line.with_index do |line, index|
+          next if line.starts_with?("#") || line.starts_with?("//")
+
+          if line.strip == "###"
+            if !endpoint_url.empty? && parsed_url.to_s.includes? url
+              details = Details.new(PathInfo.new(path, index + 1))
+              results << Endpoint.new(parsed_url.path, method, params, details)
+            end
+            method = ""
+            endpoint_url = ""
+            headers = false
+            body = ""
+            params = [] of Param
+            parsed_url = URI.parse("")
+            next
+          end
+
           if line.match(/^(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD) (https?:\/\/[^\s]+)/)
             method, endpoint_url = line.split
             headers = true
