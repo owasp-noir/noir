@@ -109,7 +109,7 @@ class ConfigInitializer
       "passive_scan_path" => YAML::Any.new([] of YAML::Any),
       "ollama"            => YAML::Any.new(""),
       "ollama_model"      => YAML::Any.new(""),
-      "ai_server"         => YAML::Any.new(""),
+      "ai_provider"         => YAML::Any.new(""),
       "ai_model"          => YAML::Any.new(""),
       "ai_key"            => YAML::Any.new(""),
     }
@@ -217,7 +217,7 @@ class ConfigInitializer
     passive_scan_path: []
 
     # The AI server URL
-    ai_server: "#{options["ai_server"]}"
+    ai_provider: "#{options["ai_provider"]}"
 
     # The AI model to use
     ai_model: "#{options["ai_model"]}"

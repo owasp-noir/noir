@@ -67,8 +67,8 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
   logger.info "Analysis Started"
   logger.sub "➔ Code Analyzer: #{techs.size} in use"
 
-  if (options["ai_server"].to_s != "") && (options["ai_model"].to_s != "")
-        logger.sub "➔ AI Analyzer: Server=#{options["ai_server"].to_s}, Model=#{options["ai_model"].to_s}"
+  if (options["ai_provider"].to_s != "") && (options["ai_model"].to_s != "")
+        logger.sub "➔ AI Analyzer: Server=#{options["ai_provider"].to_s}, Model=#{options["ai_model"].to_s}"
         techs << "ai"
   end
 

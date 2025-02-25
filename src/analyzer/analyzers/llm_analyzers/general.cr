@@ -11,7 +11,7 @@ module Analyzer::AI
 
     def initialize(options : Hash(String, YAML::Any))
       super(options)
-      @llm_url = options["ai_server"].as_s
+      @llm_url = options["ai_provider"].as_s
       @model = options["ai_model"].as_s
       @api_key = options["ai_key"].as_s
     end
