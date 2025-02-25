@@ -18,6 +18,8 @@ module LLM
                  "https://api.x.ai/v1/chat/completions"
                when "vllm"
                  "http://localhost:8000/v1/chat/completions"
+               when "azure"
+                  "https://models.inference.ai.azure.com/chat/completions"
                else
                  url
                end
