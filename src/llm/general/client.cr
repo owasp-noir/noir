@@ -12,6 +12,8 @@ module LLM
                  "https://api.openai.com/v1/chat/completions"
                when "ollama"
                  "http://localhost:11434/v1/chat/completions"
+               when "lmstudio"
+                  "http://localhost:1234/v1/chat/completions"
                when "x.ai"
                  "https://api.x.ai/v1/chat/completions"
                when "vllm"
@@ -40,9 +42,11 @@ module LLM
 
       response = HTTP::Client.post(@api, headers: headers, body: body)
       response_json = JSON.parse(response.body)
-      response_json["choices"][0]["message"]["content"].to_s
+
+      response_json["choices"][0]["message"]["content"].to_s.gsub("```json", "").gsub("```", "").strip
     rescue ex : Exception
       puts "Error: #{ex.message}"
+      puts response_json
       ""
     end
 

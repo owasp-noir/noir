@@ -71,8 +71,8 @@ module Analyzer::AI
 
       begin
         response_json = JSON.parse(response.to_s)
-        response_json.as_a.each do |ep|
-          url = ep["path"].as_s
+        response_json["endpoints"].as_a.each do |ep|
+          url = ep["url"].as_s
           method = ep["method"].as_s
           params = ep["params"].as_a.map do |param|
             p = param.as_h

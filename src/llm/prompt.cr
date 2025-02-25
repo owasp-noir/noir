@@ -14,16 +14,24 @@ module LLM
 
   FILTER_FORMAT = <<-FORMAT
   {
-    "type": "object",
-    "properties": {
-      "files": {
-        "type": "array",
-        "items": {
-          "type": "string"
-        }
-      }
-    },
-    "required": ["files"]
+    "type": "json_schema",
+    "json_schema": {
+      "name": "filter_files",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": ["files"],
+        "additionalProperties": false
+      },
+      "strict": true
+    }
   }
   FORMAT
 
@@ -42,43 +50,53 @@ module LLM
 
   ANALYZE_FORMAT = <<-FORMAT
   {
-    "type": "object",
-    "properties": {
-      "endpoints": {
-        "type": "array",
-        "items": {
-          "type": "object",
-          "properties": {
-            "url": {
-              "type": "string"
-            },
-            "method": {
-              "type": "string"
-            },
-            "params": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "name": {
-                    "type": "string"
-                  },
-                  "param_type": {
-                    "type": "string"
-                  },
-                  "value": {
-                    "type": "string"
-                  }
+    "type": "json_schema",
+    "json_schema": {
+      "name": "analyze_endpoints",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "endpoints": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string"
                 },
-                "required": ["name", "param_type", "value"]
-              }
+                "method": {
+                  "type": "string"
+                },
+                "params": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "param_type": {
+                        "type": "string"
+                      },
+                      "value": {
+                        "type": "string"
+                      }
+                    },
+                    "required": ["name", "param_type", "value"],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": ["url", "method", "params"],
+              "additionalProperties": false
             }
-          },
-          "required": ["url", "method", "params"]
-        }
-      }
-    },
-    "required": ["endpoints"]
+          }
+        },
+        "required": ["endpoints"],
+        "additionalProperties": false
+      },
+      "strict": true
+    }
   }
   FORMAT
 end
