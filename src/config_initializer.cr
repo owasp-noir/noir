@@ -109,7 +109,7 @@ class ConfigInitializer
       "passive_scan_path" => YAML::Any.new([] of YAML::Any),
       "ollama"            => YAML::Any.new(""),
       "ollama_model"      => YAML::Any.new(""),
-      "ai_provider"         => YAML::Any.new(""),
+      "ai_provider"       => YAML::Any.new(""),
       "ai_model"          => YAML::Any.new(""),
       "ai_key"            => YAML::Any.new(""),
     }

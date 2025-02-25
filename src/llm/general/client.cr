@@ -13,13 +13,13 @@ module LLM
                when "ollama"
                  "http://localhost:11434/v1/chat/completions"
                when "lmstudio"
-                  "http://localhost:1234/v1/chat/completions"
+                 "http://localhost:1234/v1/chat/completions"
                when "x.ai"
                  "https://api.x.ai/v1/chat/completions"
                when "vllm"
                  "http://localhost:8000/v1/chat/completions"
                when "azure"
-                  "https://models.inference.ai.azure.com/chat/completions"
+                 "https://models.inference.ai.azure.com/chat/completions"
                else
                  url
                end
