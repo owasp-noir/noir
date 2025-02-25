@@ -5,24 +5,33 @@ module LLM
   Guidelines:
   - Focus only on individual files.
   - Do not include directories.
-  - Do not include explanations, comments or additional text.
+  - Do not include any explanations, comments, or additional text.
+  - Output only the JSON result.
+  - Return the result strictly in valid JSON format according to the schema provided below.
 
   Input Files:
   PROMPT
 
   FILTER_FORMAT = <<-FORMAT
   {
-    "type": "object",
-    "properties": {
-      "files": {
-        "type": "array",
-        "items": {
-          "type": "string"
-        }
-      }
+    "type": "json_schema",
+    "json_schema": {
+      "name": "filter_files",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": ["files"],
+        "additionalProperties": false
+      },
+      "strict": true
     }
-  },
-  "required": ["files"]
   }
   FORMAT
 
@@ -31,51 +40,63 @@ module LLM
 
   Guidelines:
   - The "method" field should strictly use one of these values: "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD".
-  - The "param_type" must strictly use one of these values: "query", "json", "form", "header", "cookie" and "path".
-  - Do not include explanations, comments or additional text.
+  - The "param_type" must strictly use one of these values: "query", "json", "form", "header", "cookie", "path".
+  - Do not include any explanations, comments, or additional text.
+  - Output only the JSON result.
+  - Return the result strictly in valid JSON format according to the schema provided below.
 
   Input Code:
   PROMPT
 
   ANALYZE_FORMAT = <<-FORMAT
   {
-    "type": "object",
-    "properties": {
-      "endpoints": {
-        "type": "array",
-        "items": {
-          "type": "object",
-          "properties": {
-            "url": {
-              "type": "string"
-            },
-            "method": {
-              "type": "string"
-            },
-            "params": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "name": {
-                    "type": "string"
-                  },
-                  "param_type": {
-                    "type": "string"
-                  },
-                  "value": {
-                    "type": "string"
-                  }
+    "type": "json_schema",
+    "json_schema": {
+      "name": "analyze_endpoints",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "endpoints": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string"
                 },
-                "required": ["name", "param_type", "value"]
-              }
+                "method": {
+                  "type": "string"
+                },
+                "params": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "param_type": {
+                        "type": "string"
+                      },
+                      "value": {
+                        "type": "string"
+                      }
+                    },
+                    "required": ["name", "param_type", "value"],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": ["url", "method", "params"],
+              "additionalProperties": false
             }
-          },
-          "required": ["url", "method", "params"]
-        }
-      }
-    },
-    "required": ["endpoints"]
+          }
+        },
+        "required": ["endpoints"],
+        "additionalProperties": false
+      },
+      "strict": true
+    }
   }
   FORMAT
 end

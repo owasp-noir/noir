@@ -111,8 +111,22 @@ def run_options_parser
     end
 
     parser.separator "\n  AI Integration:".colorize(:blue)
-    parser.on "--ollama http://localhost:11434", "Specify the Ollama server URL" { |var| noir_options["ollama"] = YAML::Any.new(var) }
-    parser.on "--ollama-model MODEL", "Specify the Ollama model name" { |var| noir_options["ollama_model"] = YAML::Any.new(var) }
+    parser.on "--ai-provider PREFIX|URL", "Specify the AI (LLM) provider or directly set a custom API URL. Required for AI features.\n" \
+                                          "  [Prefixes and Default URLs]\n" \
+                                          "  * openai: https://api.openai.com\n" \
+                                          "  * x.ai: https://api.x.ai\n" \
+                                          "  * azure: https://models.inference.ai.azure.com\n" \
+                                          "  * vllm: http://localhost:8000\n" \
+                                          "  * ollama: http://localhost:11434\n" \
+                                          "  * lmstudio: http://localhost:1234\n" \
+                                          "  [Custom URL] You can also provide a full URL directly (e.g., http://my-custom-api:9000).\n" \
+                                          "  [Examples] --ai-provider=openai, --ai-provider=http://localhost:9100/v1/chat/completions" { |var| noir_options["ai_provider"] = YAML::Any.new(var) }
+    parser.on "--ai-model MODEL", "Set the model name to use for AI analysis. Required for AI features.\n" \
+                                  "  [Example] --ai-model=gpt-4" { |var| noir_options["ai_model"] = YAML::Any.new(var) }
+    parser.on "--ai-key KEY", "Provide the API key for authenticating with the AI provider's API. Alternatively, use the NOIR_AI_KEY environment variable.\n" \
+                              "  [Example] --ai-key=your-api-key  or  export NOIR_AI_KEY=your-api-key" { |var| noir_options["ai_key"] = YAML::Any.new(var) }
+    parser.on "--ollama http://localhost:11434", "(Deprecated) Set the Ollama server URL. Use --ai-provider instead." { |var| noir_options["ollama"] = YAML::Any.new(var) }
+    parser.on "--ollama-model MODEL", "(Deprecated) Specify the model for the Ollama server. Use --ai-model instead." { |var| noir_options["ollama_model"] = YAML::Any.new(var) }
 
     parser.separator "\n  DIFF:".colorize(:blue)
     parser.on "--diff-path ./app2", "Specify the path to the old version of the source code for comparison" { |var| noir_options["diff"] = YAML::Any.new(var) }
@@ -186,6 +200,7 @@ def run_options_parser
       puts ""
       puts "ENVIRONMENT VARIABLES:".colorize(:green)
       puts "  NOIR_HOME: Path to a directory containing the configuration file."
+      puts "  NOIR_AI_KEY: API key for authenticating with an AI provider (e.g., OpenAI, xAI)"
       puts ""
       puts "EXAMPLES:".colorize(:green)
       puts "  Basic run of noir:"
