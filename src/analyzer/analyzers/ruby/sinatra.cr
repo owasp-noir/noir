@@ -26,6 +26,7 @@ module Analyzer::Ruby
                     File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
                       last_endpoint = Endpoint.new("", "")
                       file.each_line.with_index do |line, index|
+                        next unless line.valid_encoding?
                         endpoint = line_to_endpoint(line)
                         if endpoint.method != ""
                           details = Details.new(PathInfo.new(path, index + 1))
