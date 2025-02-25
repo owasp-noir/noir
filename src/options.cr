@@ -120,7 +120,7 @@ def run_options_parser
               "  * ollama: http://localhost:11434\n" \
               "  * lmstudio: http://localhost:1234\n" \
               "  [Custom URL] You can also provide a full URL directly (e.g., http://my-custom-api:9000).\n" \
-              "  [Examples] --ai-provider=openai, --ai-provider=http://localhost:9100" { |var| noir_options["ai_provider"] = YAML::Any.new(var) }
+              "  [Examples] --ai-provider=openai, --ai-provider=http://localhost:9100/v1/chat/completions" { |var| noir_options["ai_provider"] = YAML::Any.new(var) }
     parser.on "--ai-model MODEL", "Set the model name to use for AI analysis. Required for AI features.\n" \
               "  [Example] --ai-model=gpt-4" { |var| noir_options["ai_model"] = YAML::Any.new(var) }
     parser.on "--ai-key KEY", "Provide the API key for authenticating with the AI provider's API. Alternatively, use the NOIR_AI_KEY environment variable.\n" \
@@ -200,6 +200,7 @@ def run_options_parser
       puts ""
       puts "ENVIRONMENT VARIABLES:".colorize(:green)
       puts "  NOIR_HOME: Path to a directory containing the configuration file."
+      puts "  NOIR_AI_KEY: API key for authenticating with an AI provider (e.g., OpenAI, xAI)"
       puts ""
       puts "EXAMPLES:".colorize(:green)
       puts "  Basic run of noir:"

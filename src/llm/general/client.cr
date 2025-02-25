@@ -26,7 +26,7 @@ module LLM
              end
 
       @model = model
-      @api_key = api_key
+      @api_key = api_key || ENV["NOIR_AI_KEY"]
     end
 
     def request(prompt : String, format : String = "json")
