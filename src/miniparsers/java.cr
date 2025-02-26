@@ -159,13 +159,13 @@ class JavaParser
   end
 
   def parse_annotations_backwards(tokens : Array(Token), declare_token_index : Int32)
+    # Create empty annotations hash
     annotations = Hash(String, AnnotationModel).new
 
-    # Find the closest newline before the declaration
+    # Find the newline before the declaration
     last_newline_index = -1
     cursor = declare_token_index - 1
 
-    # Locate the newline token marking the end of the declaration line
     while cursor >= 0 && last_newline_index == -1
       if tokens[cursor].type == :NEWLINE
         last_newline_index = cursor
@@ -173,28 +173,46 @@ class JavaParser
       cursor -= 1
     end
 
-    # Return empty annotations if no newline was found
+    # Return if no newline was found
     return annotations if last_newline_index == -1
 
-    # Continue parsing annotations above the declaration line
+    # Parse annotations above the declaration
     while cursor >= 0
       if tokens[cursor].type == :NEWLINE
+        # Skip if next token is NEWLINE or TAB
         unless tokens[cursor + 1].type == :NEWLINE || tokens[cursor + 1].type == :TAB
-          # Break if the next token is not an annotation start
-          break if tokens[cursor + 1].type != :AT
+          if tokens[cursor + 1].type == :AT
+            # Parse new annotation starting with '@'
+            annotation_name = tokens[cursor + 2].value
+            annotation_params = parse_formal_parameters(tokens, cursor + 3)
 
-          # Extract annotation name and parameters
-          annotation_name = tokens[cursor + 2].value
-          annotation_params = parse_formal_parameters(tokens, cursor + 3)
+            annotations[annotation_name] = AnnotationModel.new(
+              annotation_name,
+              annotation_params,
+              tokens[cursor..last_newline_index - 1]
+            )
+          elsif last_newline_index > 0 && tokens[last_newline_index - 1].type == :RPAREN
+            # Continue multi-line annotation by matching '(' for ')'
+            paren_count = 1
+            while cursor >= 0
+              if tokens[cursor].type == :RPAREN
+                paren_count += 1
+              elsif tokens[cursor].type == :LPAREN
+                paren_count -= 1
+                break if paren_count == 0
+              end
+              cursor -= 1
+            end
 
-          # Store the annotation in the hash
-          annotations[annotation_name] = AnnotationModel.new(
-            annotation_name,
-            annotation_params,
-            tokens[cursor..last_newline_index - 1]
-          )
+            while cursor >= 0
+              break if tokens[cursor].type == :NEWLINE
+              cursor -= 1
+            end
+          else
+            break
+          end
 
-          # Update the newline index to the current cursor
+          # Update last newline index
           last_newline_index = cursor
         end
       end

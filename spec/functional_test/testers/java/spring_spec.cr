@@ -38,6 +38,7 @@ extected_endpoints = [
   Endpoint.new("/items2/{id}", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/items2/create", "POST", [Param.new("id", "", "form"), Param.new("name", "", "form")]),
   Endpoint.new("/items2/edit/", "PUT", [Param.new("id", "", "json"), Param.new("name", "", "json")]),
+  Endpoint.new("/items2/{id}/thePath", "GET", [Param.new("id", "", "path")]),
   # EmptyController.java
   Endpoint.new("/empty/", "GET"),
 ]
