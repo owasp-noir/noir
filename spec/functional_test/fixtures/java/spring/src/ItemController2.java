@@ -18,6 +18,13 @@ public class ItemController {
     @PutMapping("edit/")
     public Item editItem(@RequestBody Item item) {
     }
+
+    @GetMapping(value = "/{id}/thePath")
+    @Operation(summary = "Some summary", tags = {"example"},
+      responses = {@ApiResponse(content = @Content(schema = @Schema(implementation = Authorization.class)))}
+      )
+    public ResponseEntity<Object> someMethod(@PathVariable String id) throws SomeException {
+    }
 }
 
 class Item {
