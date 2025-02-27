@@ -175,6 +175,7 @@ class JavaParser
 
     # Return if no newline was found
     return annotations if last_newline_index == -1
+    last_multiline_index = last_newline_index
 
     # Parse annotations above the declaration
     while cursor >= 0
@@ -191,10 +192,11 @@ class JavaParser
               annotation_params,
               tokens[cursor..last_newline_index - 1]
             )
-          elsif last_newline_index > 0 && tokens[last_newline_index - 1].type == :RPAREN
+            last_multiline_index = cursor
+          elsif last_multiline_index == last_newline_index && tokens[last_multiline_index - 1].type == :RPAREN
             # Continue multi-line annotation by matching '(' for ')'
             paren_count = 1
-            while cursor >= 0
+            while cursor > 0
               if tokens[cursor].type == :RPAREN
                 paren_count += 1
               elsif tokens[cursor].type == :LPAREN
@@ -204,9 +206,20 @@ class JavaParser
               cursor -= 1
             end
 
+            break if cursor == 0
+            # Skip newline before '('
+            if tokens[cursor-1].type == :NEWLINE
+              cursor -= 2
+            end
+
             while cursor >= 0
               break if tokens[cursor].type == :NEWLINE
               cursor -= 1
+            end
+
+            if cursor > 0
+              last_multiline_index = cursor
+              next
             end
           else
             break

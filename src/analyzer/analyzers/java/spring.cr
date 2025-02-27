@@ -306,6 +306,7 @@ module Analyzer::Java
       if method_params[0].size != 0
         path_argument_index = 0
         method_params.each_with_index do |mapping_parameter, index|
+          next unless mapping_parameter
           if mapping_parameter[0].type == :IDENTIFIER && mapping_parameter[0].value == "value"
             path_argument_index = index
           end

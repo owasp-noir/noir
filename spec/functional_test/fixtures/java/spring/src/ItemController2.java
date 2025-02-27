@@ -11,18 +11,29 @@ public class ItemController {
     public Item getItem(@PathVariable Long id) throws ItemNotFoundException {
     }
 
-    @PostMapping("/create")
+    @PostMapping(
+        "/create" /* comment */
+    )
     public Item createItem(@RequestBody Item item) {
     }
 
-    @PutMapping("edit/")
+    @PutMapping
+    (
+        "edit/"
+    ) /* comment */
     public Item editItem(@RequestBody Item item) {
     }
 
     @GetMapping(value = "/{id}/thePath")
-    @Operation(summary = "Some summary", tags = {"example"},
+    @Dummy
+    (
+        "test"
+    ) //comment
+    @Operation( //comment
+        summary = "Some summary",
+        tags = {"example"},
       responses = {@ApiResponse(content = @Content(schema = @Schema(implementation = Authorization.class)))}
-      )
+    ) //comment
     public ResponseEntity<Object> someMethod(@PathVariable String id) throws SomeException {
     }
 }
