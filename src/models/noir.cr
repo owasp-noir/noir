@@ -130,6 +130,7 @@ class NoirRunner
     @logger.info "Optimizing endpoints."
     @logger.sub "➔ Removing duplicated endpoints and params."
     final = [] of Endpoint
+    duplicate_count = 0
 
     @endpoints.each do |endpoint|
       tiny_tmp = endpoint
@@ -158,8 +159,9 @@ class NoirRunner
         is_new = true
         final.each do |dup|
           if dup.method == tiny_tmp.method && dup.url == tiny_tmp.url
-            @logger.debug_sub " + Found duplicated endpoint: #{tiny_tmp.method} #{tiny_tmp.url}"
+            @logger.debug_sub "  - Found duplicated endpoint: #{tiny_tmp.method} #{tiny_tmp.url}"
             is_new = false
+            duplicate_count += 1
             tiny_tmp.params.each do |param|
               existing_param = dup.params.find { |dup_param| dup_param.name == param.name }
               unless existing_param
@@ -175,6 +177,7 @@ class NoirRunner
     end
 
     @endpoints = final
+    @logger.verbose_sub "➔ Total duplicated endpoints: #{duplicate_count}"
   end
 
   def apply_pvalue(param_type, param_name, param_value) : String

@@ -64,6 +64,8 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
 
   analyzer = initialize_analyzers logger
 
+  logger.verbose "Loaded #{analyzer.size} analyzers"
+
   logger.info "Analysis Started"
   logger.sub "➔ Code Analyzer: #{techs.size} in use"
 

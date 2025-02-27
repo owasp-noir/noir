@@ -189,8 +189,10 @@ def run_options_parser
       puts "TARGET:            #{Crystal::TARGET_TRIPLE}"
       exit
     end
-    parser.on "--verbose", "Show verbose messages" do
+    parser.on "--verbose", "Show verbose messages (+ automatically enable --include-path, --use-all-taggers)" do
       noir_options["verbose"] = YAML::Any.new(true)
+      noir_options["include_path"] = YAML::Any.new(true)
+      noir_options["all_taggers"] = YAML::Any.new(true)
     end
     parser.separator "\n  OTHERS:".colorize(:blue)
     parser.on "-h", "--help", "Show help" do
