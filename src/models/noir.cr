@@ -19,6 +19,7 @@ class NoirRunner
   @send_req : Bool
   @send_es : String
   @is_debug : Bool
+  @is_verbose : Bool
   @is_color : Bool
   @is_log : Bool
   @concurrency : Int32
@@ -56,11 +57,12 @@ class NoirRunner
     @send_req = any_to_bool(@options["send_req"])
     @send_es = @options["send_es"].to_s
     @is_debug = any_to_bool(@options["debug"])
+    @is_verbose = any_to_bool(@options["verbose"])
     @is_color = any_to_bool(@options["color"])
     @is_log = any_to_bool(@options["nolog"])
     @concurrency = @options["concurrency"].to_s.to_i
 
-    @logger = NoirLogger.new @is_debug, @is_color, @is_log
+    @logger = NoirLogger.new @is_debug, @is_verbose, @is_color, @is_log
 
     if any_to_bool(@options["passive_scan"])
       @logger.info "Passive scanner enabled."

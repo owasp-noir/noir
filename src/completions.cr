@@ -45,6 +45,7 @@ _arguments \\
   '-d[Show debug messages]' \\
   '-v[Show version]' \\
   '--build-info[Show version and Build info]' \\
+  '--verbose[Show verbose output]' \\
   '--help-all[Show all help]' \\
   '-h[Show help]'
 SCRIPT
@@ -100,6 +101,7 @@ _noir_completions() {
         -d --debug
         -v --version
         --build-info
+        --verbose
         --help-all
         -h --help
     "
@@ -185,6 +187,7 @@ complete -c noir -n '__fish_noir_needs_command' -a '--ollama-model' -d 'Specify 
 complete -c noir -n '__fish_noir_needs_command' -a '-d' -d 'Show debug messages'
 complete -c noir -n '__fish_noir_needs_command' -a '-v' -d 'Show version'
 complete -c noir -n '__fish_noir_needs_command' -a '--build-info' -d 'Show version and Build info'
+complete -c noir -n '__fish_noir_needs_command' -a '--verbose' -d 'Show verbose messages'
 complete -c noir -n '__fish_noir_needs_command' -a '--help-all' -d 'Show all help'
 complete -c noir -n '__fish_noir_needs_command' -a '-h' -d 'Show help'
 SCRIPT

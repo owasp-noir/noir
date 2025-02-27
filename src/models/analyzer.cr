@@ -9,6 +9,7 @@ class Analyzer
   @url : String
   @logger : NoirLogger
   @is_debug : Bool
+  @is_verbose : Bool
   @is_color : Bool
   @is_log : Bool
   @options : Hash(String, YAML::Any)
@@ -19,11 +20,12 @@ class Analyzer
     @result = [] of Endpoint
     @endpoint_references = [] of EndpointReference
     @is_debug = any_to_bool(options["debug"])
+    @is_verbose = any_to_bool(options["verbose"])
     @is_color = any_to_bool(options["color"])
     @is_log = any_to_bool(options["nolog"])
     @options = options
 
-    @logger = NoirLogger.new @is_debug, @is_color, @is_log
+    @logger = NoirLogger.new @is_debug, @is_verbose, @is_color, @is_log
   end
 
   def analyze

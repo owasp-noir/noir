@@ -189,6 +189,9 @@ def run_options_parser
       puts "TARGET:            #{Crystal::TARGET_TRIPLE}"
       exit
     end
+    parser.on "--verbose", "Show verbose messages" do
+      noir_options["verbose"] = YAML::Any.new(true)
+    end
     parser.separator "\n  OTHERS:".colorize(:blue)
     parser.on "-h", "--help", "Show help" do
       banner()

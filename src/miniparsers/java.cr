@@ -208,7 +208,7 @@ class JavaParser
 
             break if cursor == 0
             # Skip newline before '('
-            if tokens[cursor-1].type == :NEWLINE
+            if tokens[cursor - 1].type == :NEWLINE
               cursor -= 2
             end
 
