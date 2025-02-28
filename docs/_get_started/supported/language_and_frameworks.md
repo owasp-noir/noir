@@ -8,6 +8,8 @@ layout: page
 
 # Language and Frameworks
 
+This section provides an overview of the various programming languages and frameworks supported by Noir. Each language and framework is listed with the features it supports, such as URL, Method, Param, Header, Cookie, and WebSocket (WS).
+
 {% include toc.md %}
 
 ## Crystal

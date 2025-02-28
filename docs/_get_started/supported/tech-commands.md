@@ -8,6 +8,8 @@ layout: page
 
 # Tech Commands
 
+Tech commands allow you to specify and manage the technologies that Noir will use during scanning. You can force the scanner to use specific technologies, exclude certain technologies, or list all available technologies.
+
 ```bash
 # Force scanning to techs 
 noir -t rails

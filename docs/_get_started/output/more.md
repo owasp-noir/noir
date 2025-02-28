@@ -7,6 +7,9 @@ layout: page
 ---
 
 # More formats
+
+Noir supports additional output formats for specific use cases. Below are some of the formats you can use.
+
 ## Only X
 ### URL
 ```bash

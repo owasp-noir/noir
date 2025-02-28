@@ -8,9 +8,14 @@ layout: page
 
 # Open API Spec (OAS)
 
+The Open API Specification (OAS) defines a standard, language-agnostic interface to RESTful APIs. Noir can generate OAS 2.0 and 3.0 specifications for your endpoints.
+
 ```bash
-# noir -b . -f oas3
-# noir -b . -f oas2
+# oas3
+noir -b . -f oas3
+
+# oas2
+noir -b . -f oas2
 ```
 
 ```json
