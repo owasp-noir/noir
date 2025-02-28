@@ -6,6 +6,7 @@ nav_order: 1
 layout: page
 ---
 
+# JSON & JSONL
 ## JSON
 ```bash
 noir -b . -f json --no-log

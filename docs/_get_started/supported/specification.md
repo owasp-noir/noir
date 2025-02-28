@@ -6,7 +6,7 @@ parent: Supported
 layout: page
 ---
 
-## Specification
+# Specification
 
 | Specification          | Format  | URL | Method | Param | Header | WS |
 |------------------------|---------|-----|--------|-------|--------|----|

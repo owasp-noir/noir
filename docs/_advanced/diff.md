@@ -5,7 +5,7 @@ nav_order: 6
 layout: page
 ---
 
-## Diff Mode
+# Diff Mode
 {: .d-inline-block }
 
 Since (v0.16.0) 

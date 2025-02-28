@@ -6,7 +6,7 @@ permalink: /configuration
 layout: page
 ---
 
-## Configuration
+# Configuration
 {: .d-inline-block }
 
 Since (v0.16.0) 

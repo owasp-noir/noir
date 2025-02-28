@@ -1,11 +1,12 @@
 ---
-title: Curl and HTTPie
+title: HTTP Clients
 parent: Output Formatting
 has_children: false
 nav_order: 4
 layout: page
 ---
 
+# HTTP Clients
 ## Curl
 
 ```bash

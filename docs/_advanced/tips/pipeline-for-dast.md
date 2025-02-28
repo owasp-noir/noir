@@ -6,6 +6,12 @@ nav_order: 3
 layout: page
 ---
 
+# Pipeline for DAST
+
+## DAST (Dynamic Application Security Testing)
+
+DAST is a type of security testing that analyzes a running application to identify vulnerabilities. It simulates attacks from an external perspective to find security issues in the application.
+
 ## Proxy Tool Integration
 
 This command automates the use of a proxy tool in a security testing pipeline. noir is used with the `-b` option to specify the base directory (.) and -u to target a local application (http://localhost.hahwul.com:3000). The --send-proxy parameter directs traffic to a proxy server running on http://localhost:8090. This setup allows for monitoring and intercepting HTTP requests through tools like ZAP, Caido, or Burp Suite during the testing process.

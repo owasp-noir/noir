@@ -6,7 +6,7 @@ nav_order: 3
 layout: page
 ---
 
-## Open API Spec (OAS)
+# Open API Spec (OAS)
 
 ```bash
 # noir -b . -f oas3

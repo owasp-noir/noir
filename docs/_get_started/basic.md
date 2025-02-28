@@ -5,7 +5,7 @@ nav_order: 2
 layout: page
 ---
 
-## Basic Usage
+# Basic Usage
 
 With noir, you can view the help documentation using the `-h` or `--help` flags.
 

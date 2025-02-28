@@ -5,7 +5,7 @@ nav_order: 4
 layout: page
 ---
 
-## Passive Scan
+# Passive Scan
 {: .d-inline-block }
 
 Since (v0.18.0) 

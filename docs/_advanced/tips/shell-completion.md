@@ -1,11 +1,12 @@
 ---
-title: Shell Completion
+title: Shell Completions
 parent: Tips
 has_children: false
 nav_order: 2
 layout: page
 ---
 
+# Shell Completions
 ## Zsh Completion
 
 To enable auto-completion for Zsh, run the following command to generate the completion script:

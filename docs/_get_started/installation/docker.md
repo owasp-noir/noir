@@ -7,7 +7,7 @@ toc: true
 layout: page
 ---
 
-## Docker (GHCR)
+# Docker (GHCR)
 
 Docker is a popular containerization platform that simplifies the deployment and management of applications by packaging them into containers. The GitHub Container Registry (GHCR) allows you to store and manage Docker container images within GitHub.
 

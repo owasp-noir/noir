@@ -6,7 +6,7 @@ nav_order: 1
 layout: page
 ---
 
-## Passive Scan Rule
+# Passive Scan Rule
 
 ```yaml
 id: rule-id
@@ -39,7 +39,7 @@ techs:
   - "Another technology"
 ```
 
-### Example Rule: Detecting PRIVATE_KEY
+## Example Rule: Detecting PRIVATE_KEY
 
 ```yaml
 id: detect-private-key
