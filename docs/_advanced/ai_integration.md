@@ -1,6 +1,6 @@
 ---
 title: AI Integration
-has_children: false
+has_children: true
 nav_order: 5
 layout: page
 ---
@@ -8,29 +8,56 @@ layout: page
 # AI Integration
 {: .d-inline-block }
 
-New (v0.19.0) 
+Since (v0.19.0) 
 {: .label .label-green }
 
 Noir can leverage LLM services or local LLMs to perform additional analysis.
 
 ## Overview Flags
 
-* `--ollama http://localhost:11434` Specify the Ollama server URL to connect to.
-* `--ollama-model MODEL` Specify the Ollama model name to be used for analysis.
+### AI Flags
+{: .d-inline-block }
 
+New (v0.20.0) 
+{: .label .label-blue }
+
+* `--ai-provider PREFIX|URL`: Specify the AI (LLM) provider or custom API URL. Required for AI features.
+* `--ai-model MODEL`: Set the model name to use for AI analysis. Required for AI features.
+* `--ai-key KEY`: Provide the API key for authenticating with the AI provider's API. Alternatively, use the `NOIR_AI_KEY` environment variable.
+
+#### Prefixes and Default URLs
+
+| Prefix  | Default URL                          |
+|---------|--------------------------------------|
+| openai  | https://api.openai.com               |
+| x.ai    | https://api.x.ai                     |
+| azure   | https://models.inference.ai.azure.com|
+| vllm    | http://localhost:8000                |
+| ollama  | http://localhost:11434               |
+| lmstudio| http://localhost:1234                |
+
+*Custom URL example:* `--ai-provider=http://my-custom-api:9000`
+
+### Ollama Flags
+{: .d-inline-block }
+
+Since (v0.19.0) / Deprecated
+{: .label .label-yellow }
+
+> **Note:** The Ollama flags are deprecated and will be removed in a future version. Please transition to using the `--ai-provider` and `--ai-model` flags.
+
+* `--ollama URL`: Set the Ollama server URL. Use `--ai-provider` instead.
+* `--ollama-model MODEL`: Specify the model for the Ollama server. Use `--ai-model` instead.
 
 ## How to Use AI Integration
-### Step 1: Install and Run Ollama
+### Step 1: Configure AI Provider
 
-1. Install Ollama: Follow the instructions on the official Ollama website to install the required software.
-2. Run the Model: Start the Ollama server and ensure the desired model is available. For example:
+1. Choose an AI provider and obtain the necessary API key.
+2. Set the provider and model using the `--ai-provider` and `--ai-model` flags. For example:
 
 ```bash
-# Download LLM model
-ollama pull llama3
-
-# Run LLM model
-ollama run llama3
+# Set AI provider and model
+noir -b . --ai-provider=openai --ai-model=gpt-4 --ai-key=your-api-key
 ```
 
 ### Step 2: Run Noir with AI Analysis
@@ -38,12 +65,12 @@ ollama run llama3
 To leverage AI capabilities for additional analysis, use the following command:
 
 ```bash
-noir -b . --ollama http://localhost:11434 --ollama-model llama3
+noir -b . --ai-provider=openai --ai-model=gpt-4 --ai-key=your-api-key
 ```
 
 This command performs the standard Noir operations while utilizing the specified AI model for enhanced analysis.
 
-![](../../images/advanced/ollama.jpeg)
+![](../../images/advanced/ai_integration.jpeg)
 
 ## Benefits of AI Integration
 
@@ -53,5 +80,5 @@ This command performs the standard Noir operations while utilizing the specified
 
 ## Notes
 
-* Ensure that the Ollama server is running and accessible at the specified URL before executing the command.
-* Replace llama3 with the name of the desired model as required.
+* Ensure that the AI provider's service is running and accessible at the specified URL before executing the command.
+* Replace `gpt-4` with the name of the desired model as required.
