@@ -28,6 +28,9 @@ collections:
   advanced:
     permalink: "/:collection/:path/"
     output: true
+  developers:
+    permalink: "/:collection/:path/"
+    output: true
 
 just_the_docs:
   collections:
@@ -35,6 +38,8 @@ just_the_docs:
       name: Get Started
     advanced:
       name: Advanced
+    developers:
+      name: Developers
 
 mermaid:
   version: "10.9.1"
