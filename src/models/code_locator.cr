@@ -3,17 +3,19 @@ class CodeLocator
 
   @logger : NoirLogger
   @is_debug : Bool
+  @is_verbose : Bool
   @is_color : Bool
   @is_log : Bool
   @s_map : Hash(String, String)
   @a_map : Hash(String, Array(String))
 
   def initialize
-    options = {"debug" => "true", "color" => "true", "nolog" => "false"}
+    options = {"debug" => "false", "verbose" => "false", "color" => "true", "nolog" => "false"}
     @is_debug = any_to_bool(options["debug"])
+    @is_verbose = any_to_bool(options["verbose"])
     @is_color = any_to_bool(options["color"])
     @is_log = any_to_bool(options["nolog"])
-    @logger = NoirLogger.new(@is_debug, @is_color, @is_log)
+    @logger = NoirLogger.new @is_debug, @is_verbose, @is_color, @is_log
 
     @s_map = Hash(String, String).new
     @a_map = Hash(String, Array(String)).new

@@ -4,6 +4,7 @@ class Deliver
   @logger : NoirLogger
   @options : Hash(String, YAML::Any)
   @is_debug : Bool
+  @is_verbose : Bool
   @is_color : Bool
   @is_log : Bool
   @proxy : String
@@ -14,10 +15,11 @@ class Deliver
   def initialize(options : Hash(String, YAML::Any))
     @options = options
     @is_debug = any_to_bool(options["debug"])
+    @is_verbose = any_to_bool(options["verbose"])
     @is_color = any_to_bool(options["color"])
     @is_log = any_to_bool(options["nolog"])
     @proxy = options["send_proxy"].to_s
-    @logger = NoirLogger.new @is_debug, @is_color, @is_log
+    @logger = NoirLogger.new @is_debug, @is_verbose, @is_color, @is_log
 
     options["send_with_headers"].as_a.each do |set_header|
       if set_header.to_s.includes? ":"

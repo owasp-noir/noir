@@ -4,7 +4,7 @@ require "../../../src/models/passive_scan.cr"
 
 describe NoirPassiveScan do
   it "detects matches with 'and' condition" do
-    logger = NoirLogger.new(false, false, true)
+    logger = NoirLogger.new(false, false, false, true)
     rules = [
       PassiveScan.new(YAML.parse(%(
         id: hahwul-test
@@ -38,7 +38,7 @@ describe NoirPassiveScan do
   end
 
   it "detects matches with 'or' condition" do
-    logger = NoirLogger.new(false, false, true)
+    logger = NoirLogger.new(false, false, false, true)
     rules = [
       PassiveScan.new(YAML.parse(%(
         id: hahwul-test
@@ -73,7 +73,7 @@ describe NoirPassiveScan do
   end
 
   it "detects regex matches" do
-    logger = NoirLogger.new(false, false, true)
+    logger = NoirLogger.new(false, false, false, true)
     rules = [
       PassiveScan.new(YAML.parse(%(
         id: hahwul-test

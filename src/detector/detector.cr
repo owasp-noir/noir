@@ -107,6 +107,7 @@ def detect_techs(base_path : String, options : Hash(String, YAML::Any), passive_
                   techs << detector.name
                 end
                 logger.debug_sub "└── Detected: #{detector.name}"
+                logger.verbose_sub "└── Detected: #{detector.name} in #{file}"
               end
             end
 

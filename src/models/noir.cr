@@ -19,6 +19,7 @@ class NoirRunner
   @send_req : Bool
   @send_es : String
   @is_debug : Bool
+  @is_verbose : Bool
   @is_color : Bool
   @is_log : Bool
   @concurrency : Int32
@@ -56,11 +57,12 @@ class NoirRunner
     @send_req = any_to_bool(@options["send_req"])
     @send_es = @options["send_es"].to_s
     @is_debug = any_to_bool(@options["debug"])
+    @is_verbose = any_to_bool(@options["verbose"])
     @is_color = any_to_bool(@options["color"])
     @is_log = any_to_bool(@options["nolog"])
     @concurrency = @options["concurrency"].to_s.to_i
 
-    @logger = NoirLogger.new @is_debug, @is_color, @is_log
+    @logger = NoirLogger.new @is_debug, @is_verbose, @is_color, @is_log
 
     if any_to_bool(@options["passive_scan"])
       @logger.info "Passive scanner enabled."
@@ -128,6 +130,7 @@ class NoirRunner
     @logger.info "Optimizing endpoints."
     @logger.sub "➔ Removing duplicated endpoints and params."
     final = [] of Endpoint
+    duplicate_count = 0
 
     @endpoints.each do |endpoint|
       tiny_tmp = endpoint
@@ -156,8 +159,9 @@ class NoirRunner
         is_new = true
         final.each do |dup|
           if dup.method == tiny_tmp.method && dup.url == tiny_tmp.url
-            @logger.debug_sub " + Found duplicated endpoint: #{tiny_tmp.method} #{tiny_tmp.url}"
+            @logger.debug_sub "  - Found duplicated endpoint: #{tiny_tmp.method} #{tiny_tmp.url}"
             is_new = false
+            duplicate_count += 1
             tiny_tmp.params.each do |param|
               existing_param = dup.params.find { |dup_param| dup_param.name == param.name }
               unless existing_param
@@ -173,6 +177,7 @@ class NoirRunner
     end
 
     @endpoints = final
+    @logger.verbose_sub "➔ Total duplicated endpoints: #{duplicate_count}"
   end
 
   def apply_pvalue(param_type, param_name, param_value) : String

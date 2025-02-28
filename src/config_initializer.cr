@@ -80,6 +80,7 @@ class ConfigInitializer
       "config_file"       => YAML::Any.new(""),
       "concurrency"       => YAML::Any.new("50"),
       "debug"             => YAML::Any.new(false),
+      "verbose"           => YAML::Any.new(false),
       "exclude_codes"     => YAML::Any.new(""),
       "exclude_techs"     => YAML::Any.new(""),
       "format"            => YAML::Any.new("plain"),
@@ -142,6 +143,9 @@ class ConfigInitializer
 
     # Whether to enable debug mode
     debug: #{options["debug"]}
+
+    # Whether to enable verbose mode
+    verbose: #{options["verbose"]}
 
     # The status codes to exclude
     exclude_codes: "#{options["exclude_codes"]}"

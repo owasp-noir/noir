@@ -1,4 +1,6 @@
-USAGE: noir <flags>
+Attack surface detector that identifies endpoints by static analysis.
+USAGE:
+  noir -b BASE_PATH <flags>
 
 FLAGS:
   BASE:
@@ -42,8 +44,22 @@ FLAGS:
     --use-filters string             Exclude URLs that match specified conditions and send the rest to Deliver
 
   AI Integration:
-    --ollama http://localhost:11434  Specify the Ollama server URL
-    --ollama-model MODEL             Specify the Ollama model name
+    --ai-provider PREFIX|URL         Specify the AI (LLM) provider or directly set a custom API URL. Required for AI features.
+                                       [Prefixes and Default URLs]
+                                       * openai: https://api.openai.com
+                                       * x.ai: https://api.x.ai
+                                       * azure: https://models.inference.ai.azure.com
+                                       * vllm: http://localhost:8000
+                                       * ollama: http://localhost:11434
+                                       * lmstudio: http://localhost:1234
+                                       [Custom URL] You can also provide a full URL directly (e.g., http://my-custom-api:9000).
+                                       [Examples] --ai-provider=openai, --ai-provider=http://localhost:9100/v1/chat/completions
+    --ai-model MODEL                 Set the model name to use for AI analysis. Required for AI features.
+                                       [Example] --ai-model=gpt-4
+    --ai-key KEY                     Provide the API key for authenticating with the AI provider's API. Alternatively, use the NOIR_AI_KEY environment variable.
+                                       [Example] --ai-key=your-api-key  or  export NOIR_AI_KEY=your-api-key
+    --ollama http://localhost:11434  (Deprecated) Set the Ollama server URL. Use --ai-provider instead.
+    --ollama-model MODEL             (Deprecated) Specify the model for the Ollama server. Use --ai-model instead.
 
   DIFF:
     --diff-path ./app2               Specify the path to the old version of the source code for comparison
@@ -62,9 +78,15 @@ FLAGS:
     -d, --debug                      Show debug messages
     -v, --version                    Show version
     --build-info                     Show version and Build info
+    --verbose                        Show verbose messages (+ automatically enable --include-path, --use-all-taggers)
 
   OTHERS:
     -h, --help                       Show help
+    --help-all                       Show all help
+
+ENVIRONMENT VARIABLES:
+  NOIR_HOME: Path to a directory containing the configuration file.
+  NOIR_AI_KEY: API key for authenticating with an AI provider (e.g., OpenAI, xAI)
 
 EXAMPLES:
   Basic run of noir:
@@ -77,3 +99,9 @@ EXAMPLES:
   Running noir with output limited to JSON or YAML format, without logs:
       $ noir -b . -f json --no-log
       $ noir -b . -f yaml --no-log
+  Running noir with a specific technology:
+      $ noir -b . -t rails
+  Running noir with a specific technology and excluding another:
+      $ noir -b . -t rails --exclude-techs php
+  Running noir with AI integration:
+      $ noir -b . --ollama http://localhost:11434 --ollama-model llama3
