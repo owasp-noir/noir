@@ -1,11 +1,11 @@
 ---
-title: Developer Guidelines
+title: Build and Contribute
 has_children: false
 nav_order: 1
 layout: page
 ---
 
-# Developer Guidelines
+# Build and Contribute
 
 ## Installing Crystal Language
 
