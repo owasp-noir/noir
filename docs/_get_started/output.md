@@ -5,6 +5,8 @@ nav_order: 3
 layout: page
 ---
 
+# Output Formatting
+
 ## Usage
 ```bash
 noir -b <BASE_PATH> -f <FORMAT>

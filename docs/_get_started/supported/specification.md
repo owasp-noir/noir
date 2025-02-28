@@ -6,7 +6,9 @@ parent: Supported
 layout: page
 ---
 
-## Specification
+# Specification
+
+This section provides details on the various specifications supported by Noir. Each specification is listed with its format and the features it supports, such as URL, Method, Param, Header, and WebSocket (WS).
 
 | Specification          | Format  | URL | Method | Param | Header | WS |
 |------------------------|---------|-----|--------|-------|--------|----|

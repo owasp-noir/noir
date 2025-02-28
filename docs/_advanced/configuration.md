@@ -6,13 +6,15 @@ permalink: /configuration
 layout: page
 ---
 
-## Configuration
+# Configuration
 {: .d-inline-block }
 
 Since (v0.16.0) 
 {: .label .label-green }
 
 {% include toc.md %}
+
+Configuration allows you to predefine various flags for Noir, making it easier to manage and use the tool with your preferred settings.
 
 ## Config Home Path
 
@@ -39,16 +41,22 @@ Since (v0.16.0)
 base: ""
 
 # Whether to use color in the output
-color: "true"
+color: true
 
 # The configuration file to use
 config_file: ""
 
 # The number of concurrent operations to perform
-concurrency: "100"
+concurrency: "50"
 
 # Whether to enable debug mode
-debug: "false"
+debug: false
+
+# Whether to enable verbose mode
+verbose: false
+
+# The status codes to exclude
+exclude_codes: ""
 
 # Technologies to exclude
 exclude_techs: ""
@@ -56,17 +64,11 @@ exclude_techs: ""
 # The format to use for the output
 format: "plain"
 
-# Whether to display HTTP status codes in the output
-status_codes: "false"
-
-# Whether to exclude HTTP status codes from the output
-exclude_codes: ""
-
 # Whether to include the path in the output
-include_path: "false"
+include_path: false
 
 # Whether to disable logging
-nolog: "false"
+nolog: false
 
 # The output file to write to
 output: ""
@@ -80,7 +82,7 @@ send_es: ""
 send_proxy: ""
 
 # Whether to send a request
-send_req: "false"
+send_req: false
 
 # Whether to send headers with the request (Array of strings)
 # e.g "Authorization: Bearer token"
@@ -95,6 +97,9 @@ set_pvalue_form:
 set_pvalue_json:
 set_pvalue_path:
 
+# The status codes to use
+status_codes: false
+
 # The technologies to use
 techs: ""
 
@@ -108,7 +113,7 @@ use_filters:
 use_matchers:
 
 # Whether to use all taggers
-all_taggers: "false"
+all_taggers: false
 
 # The taggers to use
 # e.g "tagger1,tagger2"
@@ -117,4 +122,18 @@ use_taggers: ""
 
 # The diff file to use
 diff: ""
-```
+
+# The passive rules to use
+# e.g /path/to/rules
+passive_scan: false
+passive_scan_path: []
+
+# The AI server URL
+ai_provider: ""
+
+# The AI model to use
+ai_model: ""
+
+# The API key for the AI server
+ai_key: ""
+````

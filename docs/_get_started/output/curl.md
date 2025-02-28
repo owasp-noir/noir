@@ -1,10 +1,14 @@
 ---
-title: Curl and HTTPie
+title: HTTP Clients
 parent: Output Formatting
 has_children: false
 nav_order: 4
 layout: page
 ---
+
+# HTTP Clients
+
+Noir can generate commands for various HTTP clients, such as Curl and HTTPie, to interact with your endpoints. This allows for easy testing and integration with other tools.
 
 ## Curl
 

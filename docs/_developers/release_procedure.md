@@ -38,7 +38,7 @@ brew bump-formula-pr --strict --version <VERSION> noir
 If you encounter issues, try the following commands:
 ```bash
 HOMEBREW_NO_INSTALL_FROM_API=1 brew update
-brew bump-formula-pr --strict --version 0.19.0 noir
+brew bump-formula-pr --strict --version 0.19.1 noir
 ```
 
 #### Style Check

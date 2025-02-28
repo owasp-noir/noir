@@ -6,7 +6,9 @@ nav_order: 2
 layout: page
 ---
 
-## YAML
+# YAML
+
+YAML is a human-readable data serialization format. Noir can output the results in YAML format for easy readability and integration with other tools.
 
 ```bash
 noir -b . -f yaml --no-log

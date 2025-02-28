@@ -6,6 +6,7 @@ permalink: supported
 layout: page
 ---
 
+# Supported
 ## Endpoint's Entities
 
 - Path

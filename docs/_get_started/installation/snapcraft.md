@@ -7,7 +7,7 @@ toc: true
 layout: page
 ---
 
-## Snapcraft
+# Snapcraft
 
 Snapcraft is a powerful package manager for Linux that enables you to easily install and manage applications. It supports a wide range of distributions, making software installation simple and consistent.
 

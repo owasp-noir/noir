@@ -5,7 +5,7 @@ nav_order: 3
 layout: page
 ---
 
-## Tagger
+# Tagger
 {: .d-inline-block }
 
 Since (v0.14.0) 

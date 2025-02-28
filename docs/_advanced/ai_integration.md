@@ -11,6 +11,7 @@ layout: page
 New (v0.19.0) 
 {: .label .label-green }
 
+Noir can leverage LLM services or local LLMs to perform additional analysis.
 
 ## Overview Flags
 

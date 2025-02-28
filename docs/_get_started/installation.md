@@ -6,6 +6,8 @@ toc: true
 layout: page
 ---
 
+# Installation
+
 {% include toc.md %}
 
 You can install the tool using various package managers. Each package manager has its own dedicated page with detailed instructions. Please refer to the specific pages for comprehensive installation steps.

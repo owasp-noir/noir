@@ -6,6 +6,10 @@ nav_order: 1
 layout: page
 ---
 
+# JSON & JSONL
+
+Noir can output results in JSON and JSONL formats. JSON is a lightweight data interchange format that is easy for humans to read and write, and easy for machines to parse and generate. JSONL is a format where each JSON object is on a separate line, making it suitable for streaming and processing large datasets.
+
 ## JSON
 ```bash
 noir -b . -f json --no-log
