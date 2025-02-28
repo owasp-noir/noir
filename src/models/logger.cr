@@ -28,7 +28,7 @@ class NoirLogger
              when LogLevel::VERBOSE
                "▹".colorize(:dark_gray).toggle(@color_mode)
              when LogLevel::INFO
-               "⚑".colorize(:light_cyan).toggle(@color_mode)
+               "⚬".colorize(:light_cyan).toggle(@color_mode)
              when LogLevel::SUCCESS
                "✔".colorize(:green).toggle(@color_mode)
              when LogLevel::WARNING
