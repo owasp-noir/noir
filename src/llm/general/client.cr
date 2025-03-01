@@ -21,7 +21,7 @@ module LLM
                when "azure"
                  "https://models.inference.ai.azure.com/chat/completions"
                when "github"
-                  "https://models.github.ai/inference/chat/completions"
+                 "https://models.github.ai/inference/chat/completions"
                else
                  url
                end

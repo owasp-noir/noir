@@ -199,6 +199,7 @@ def run_options_parser
     parser.on "-h", "--help", "Show help" do
       banner()
       puts parser
+      exit
     end
     parser.on "--help-all", "Show all help" do
       banner()
