@@ -115,6 +115,7 @@ def run_options_parser
                                           "  [Prefixes and Default URLs]\n" \
                                           "  * openai: https://api.openai.com\n" \
                                           "  * xai: https://api.x.ai\n" \
+                                          "  * github: https://models.github.ai\n" \
                                           "  * azure: https://models.inference.ai.azure.com\n" \
                                           "  * vllm: http://localhost:8000\n" \
                                           "  * ollama: http://localhost:11434\n" \

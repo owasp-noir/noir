@@ -20,6 +20,8 @@ module LLM
                  "http://localhost:8000/v1/chat/completions"
                when "azure"
                  "https://models.inference.ai.azure.com/chat/completions"
+               when "github"
+                  "https://models.github.ai/inference/chat/completions"
                else
                  url
                end

@@ -48,6 +48,7 @@ FLAGS:
                                        [Prefixes and Default URLs]
                                        * openai: https://api.openai.com
                                        * xai: https://api.x.ai
+                                       * github: https://models.github.ai
                                        * azure: https://models.inference.ai.azure.com
                                        * vllm: http://localhost:8000
                                        * ollama: http://localhost:11434

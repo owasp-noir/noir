@@ -25,12 +25,13 @@ New (v0.20.0)
 * `--ai-model MODEL`: Set the model name to use for AI analysis. Required for AI features.
 * `--ai-key KEY`: Provide the API key for authenticating with the AI provider's API. Alternatively, use the `NOIR_AI_KEY` environment variable.
 
-#### Prefixes and Default URLs
+#### Prefixes and Default Hosts
 
-| Prefix  | Default URL                          |
+| Prefix  | Default Host                          |
 |---------|--------------------------------------|
 | openai  | https://api.openai.com               |
-| xAI    | https://api.x.ai                     |
+| xAI     | https://api.x.ai                     |
+| github  | https://models.github.ai             |
 | azure   | https://models.inference.ai.azure.com|
 | vllm    | http://localhost:8000                |
 | ollama  | http://localhost:11434               |
