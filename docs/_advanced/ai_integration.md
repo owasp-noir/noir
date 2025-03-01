@@ -25,12 +25,13 @@ New (v0.20.0)
 * `--ai-model MODEL`: Set the model name to use for AI analysis. Required for AI features.
 * `--ai-key KEY`: Provide the API key for authenticating with the AI provider's API. Alternatively, use the `NOIR_AI_KEY` environment variable.
 
-#### Prefixes and Default URLs
+#### Prefixes and Default Hosts
 
-| Prefix  | Default URL                          |
+| Prefix  | Default Host                          |
 |---------|--------------------------------------|
 | openai  | https://api.openai.com               |
-| x.ai    | https://api.x.ai                     |
+| xAI     | https://api.x.ai                     |
+| github  | https://models.github.ai             |
 | azure   | https://models.inference.ai.azure.com|
 | vllm    | http://localhost:8000                |
 | ollama  | http://localhost:11434               |
@@ -53,12 +54,7 @@ Since (v0.19.0) / Deprecated
 ### Step 1: Configure AI Provider
 
 1. Choose an AI provider and obtain the necessary API key.
-2. Set the provider and model using the `--ai-provider` and `--ai-model` flags. For example:
-
-```bash
-# Set AI provider and model
-noir -b . --ai-provider=openai --ai-model=gpt-4 --ai-key=your-api-key
-```
+2. If you wish to use Local LLM, please install each application.
 
 ### Step 2: Run Noir with AI Analysis
 

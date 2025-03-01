@@ -6,7 +6,7 @@ require "./options.cr"
 require "./techs/techs.cr"
 
 module Noir
-  VERSION = "0.19.1"
+  VERSION = "0.20.0"
 end
 
 # Run options parser

@@ -47,7 +47,8 @@ FLAGS:
     --ai-provider PREFIX|URL         Specify the AI (LLM) provider or directly set a custom API URL. Required for AI features.
                                        [Prefixes and Default URLs]
                                        * openai: https://api.openai.com
-                                       * x.ai: https://api.x.ai
+                                       * xai: https://api.x.ai
+                                       * github: https://models.github.ai
                                        * azure: https://models.inference.ai.azure.com
                                        * vllm: http://localhost:8000
                                        * ollama: http://localhost:11434
