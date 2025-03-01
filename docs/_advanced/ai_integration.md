@@ -53,12 +53,7 @@ Since (v0.19.0) / Deprecated
 ### Step 1: Configure AI Provider
 
 1. Choose an AI provider and obtain the necessary API key.
-2. Set the provider and model using the `--ai-provider` and `--ai-model` flags. For example:
-
-```bash
-# Set AI provider and model
-noir -b . --ai-provider=openai --ai-model=gpt-4 --ai-key=your-api-key
-```
+2. If you wish to use Local LLM, please install each application.
 
 ### Step 2: Run Noir with AI Analysis
 
