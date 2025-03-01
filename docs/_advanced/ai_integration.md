@@ -30,7 +30,7 @@ New (v0.20.0)
 | Prefix  | Default URL                          |
 |---------|--------------------------------------|
 | openai  | https://api.openai.com               |
-| x.ai    | https://api.x.ai                     |
+| xAI    | https://api.x.ai                     |
 | azure   | https://models.inference.ai.azure.com|
 | vllm    | http://localhost:8000                |
 | ollama  | http://localhost:11434               |
