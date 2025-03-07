@@ -9,7 +9,9 @@ describe LLM do
 
   it "has a FILTER_FORMAT constant" do
     LLM::FILTER_FORMAT.should_not be_nil
+    LLM::FILTER_FORMAT.should contain("\"type\": \"json_schema\"")
   end
+
   it "has an ANALYZE_PROMPT constant" do
     LLM::ANALYZE_PROMPT.should_not be_nil
     LLM::ANALYZE_PROMPT.should contain("Input Code:")
