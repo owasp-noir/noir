@@ -10,6 +10,10 @@ Jekyll::Hooks.register :site, :post_write do |_site|
   options['concurrency'] = 30
 
   site_url = 'https://owasp-noir.github.io'
-  DeadFinder.run_url(site_url, options)
-  puts DeadFinder.output
+  begin
+    DeadFinder.run_url(site_url, options)
+    puts DeadFinder.output
+  rescue StandardError => e
+    puts "Deadlink checker failed: #{e.message}"
+  end
 end
