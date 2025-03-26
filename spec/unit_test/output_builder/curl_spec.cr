@@ -8,11 +8,12 @@ describe "OutputBuilderCurl" do
     options = {
       "debug"   => YAML::Any.new(false),
       "verbose" => YAML::Any.new(false),
-      "color"   => YAML::Any.new(true),
+      "color"   => YAML::Any.new(false),
       "nolog"   => YAML::Any.new(false),
       "output"  => YAML::Any.new(""),
     }
     builder = OutputBuilderCurl.new(options)
+    builder.set_io IO::Memory.new
 
     # Create endpoints with various HTTP methods and parameters
     endpoint1 = Endpoint.new("/test", "GET")
@@ -31,5 +32,6 @@ describe "OutputBuilderCurl" do
 
     endpoints = [endpoint1, endpoint2, endpoint3]
     builder.print(endpoints)
+    puts builder.io.to_s
   end
 end

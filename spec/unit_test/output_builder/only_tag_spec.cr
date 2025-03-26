@@ -8,11 +8,12 @@ describe "OutputBuilderOnlyTag" do
     options = {
       "debug"   => YAML::Any.new(false),
       "verbose" => YAML::Any.new(false),
-      "color"   => YAML::Any.new(true),
+      "color"   => YAML::Any.new(false),
       "nolog"   => YAML::Any.new(false),
       "output"  => YAML::Any.new(""),
     }
     builder = OutputBuilderOnlyTag.new(options)
+    builder.set_io IO::Memory.new
 
     # Create endpoints with tags
     endpoint1 = Endpoint.new("/test", "GET")
@@ -30,5 +31,27 @@ describe "OutputBuilderOnlyTag" do
 
     endpoints = [endpoint1, endpoint2]
     builder.print(endpoints)
+    output = builder.io.to_s
+
+    # Verify output contains all unique tags
+    lines = output.split("\n").reject(&.empty?)
+
+    # Should have 4 unique tags (api, public, auth, sensitive)
+    lines.size.should eq(4)
+
+    # Check for presence of each tag
+    lines.should contain("api")
+    lines.should contain("public")
+    lines.should contain("auth")
+    lines.should contain("sensitive")
+
+    # Tags should be listed in order of appearance
+    lines[0].should eq("api")
+    lines[1].should eq("public")
+    lines[2].should eq("auth")
+    lines[3].should eq("sensitive")
+
+    # Verify no duplicate tags (api should appear only once despite being used twice)
+    lines.count("api").should eq(1)
   end
 end

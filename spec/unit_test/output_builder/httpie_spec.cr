@@ -8,11 +8,12 @@ describe "OutputBuilderHttpie" do
     options = {
       "debug"   => YAML::Any.new(false),
       "verbose" => YAML::Any.new(false),
-      "color"   => YAML::Any.new(true),
+      "color"   => YAML::Any.new(false),
       "nolog"   => YAML::Any.new(false),
       "output"  => YAML::Any.new(""),
     }
     builder = OutputBuilderHttpie.new(options)
+    builder.set_io IO::Memory.new
 
     # Create endpoints with various HTTP methods and parameters
     endpoint1 = Endpoint.new("/test", "GET")
@@ -31,5 +32,29 @@ describe "OutputBuilderHttpie" do
 
     endpoints = [endpoint1, endpoint2, endpoint3]
     builder.print(endpoints)
+    output = builder.io.to_s
+
+    # Verify output contains valid httpie commands
+    lines = output.split("\n").reject(&.empty?)
+
+    # Check GET request
+    get_line = lines[0]
+    get_line.should start_with("http GET")
+    get_line.should contain("/test")
+    get_line.should contain("id=1")
+    get_line.should contain("Cookie: session=abc123")
+
+    # Check POST request with JSON
+    post_line = lines[1]
+    post_line.should start_with("http POST")
+    post_line.should contain("/api/users")
+    post_line.should contain("\"username\":\"test\"")
+    post_line.should contain("x-api-key: key123")
+
+    # Check PUT request with form data
+    put_line = lines[2]
+    put_line.should start_with("http PUT")
+    put_line.should contain("/api/products")
+    put_line.should contain("name=Updated Product")
   end
 end

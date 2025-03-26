@@ -2,17 +2,19 @@ require "../../spec_helper"
 require "../../../src/output_builder/oas2"
 require "../../../src/models/endpoint"
 require "../../../src/utils/utils"
+require "json"
 
 describe "OutputBuilderOas2" do
   it "print endpoints as OpenAPI 2.0 (Swagger) specification" do
     options = {
       "debug"   => YAML::Any.new(false),
       "verbose" => YAML::Any.new(false),
-      "color"   => YAML::Any.new(true),
+      "color"   => YAML::Any.new(false),
       "nolog"   => YAML::Any.new(false),
       "output"  => YAML::Any.new(""),
     }
     builder = OutputBuilderOas2.new(options)
+    builder.set_io IO::Memory.new
 
     # Create endpoints with various HTTP methods and parameters
     endpoint1 = Endpoint.new("/pets/{petId}", "GET")
@@ -31,5 +33,16 @@ describe "OutputBuilderOas2" do
 
     endpoints = [endpoint1, endpoint2, endpoint3]
     builder.print(endpoints)
+    output = builder.io.to_s
+
+    # Verify output is valid Swagger/OpenAPI 2.0 spec
+    spec = JSON.parse(output)
+
+    # Check Swagger version
+    spec["swagger"].as_s.should eq("2.0")
+
+    # Check paths exist and have correct structure
+    paths = spec["paths"]
+    paths.as_h.size.should eq(3)
   end
 end

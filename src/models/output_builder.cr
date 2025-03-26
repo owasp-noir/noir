@@ -8,6 +8,7 @@ class OutputBuilder
   @is_color : Bool
   @is_log : Bool
   @output_file : String
+  @io : IO
 
   def initialize(options : Hash(String, YAML::Any))
     @is_debug = any_to_bool(options["debug"])
@@ -16,12 +17,13 @@ class OutputBuilder
     @is_color = any_to_bool(options["color"])
     @is_log = any_to_bool(options["nolog"])
     @output_file = options["output"].to_s
+    @io = STDOUT
 
     @logger = NoirLogger.new @is_debug, @is_verbose, @is_color, @is_log
   end
 
   def ob_puts(message)
-    puts message
+    @io.puts message
     if @output_file != ""
       File.open(@output_file, "a") do |file|
         file.puts message
@@ -31,6 +33,14 @@ class OutputBuilder
 
   def print
     # After inheriting the class, write an action code here.
+  end
+
+  def set_io(io : IO)
+    @io = io
+  end
+
+  def io
+    @io
   end
 
   def bake_endpoint(url : String, params : Array(Param))
