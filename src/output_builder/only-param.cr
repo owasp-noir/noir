@@ -15,7 +15,7 @@ class OutputBuilderOnlyParam < OutputBuilder
     end
 
     common_params.uniq.each do |common_param|
-      puts common_param.colorize(:light_green).toggle(@is_color)
+      ob_puts common_param.colorize(:light_green).toggle(@is_color)
     end
   end
 end

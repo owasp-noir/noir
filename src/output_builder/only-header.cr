@@ -20,7 +20,7 @@ class OutputBuilderOnlyHeader < OutputBuilder
     end
 
     headers.uniq.each do |header|
-      puts header.colorize(:light_green).toggle(@is_color)
+      ob_puts header.colorize(:light_green).toggle(@is_color)
     end
   end
 end
