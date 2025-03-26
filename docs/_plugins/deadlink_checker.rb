@@ -12,7 +12,7 @@ Jekyll::Hooks.register :site, :post_write do |_site|
     options = runner.default_options
     options['concurrency'] = 30
 
-    site_url = 'http://127.0.0.1:4000'
+    site_url = ENV['JEKYLL_SITE_URL'] || 'http://127.0.0.1:4000'
     begin
       DeadFinder.run_url(site_url, options)
       if DeadFinder.output.empty?
