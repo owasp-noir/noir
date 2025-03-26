@@ -23,7 +23,7 @@ class OutputBuilderOnlyTag < OutputBuilder
     end
 
     tags.uniq.each do |tag|
-      puts tag.name.colorize(:light_green).toggle(@is_color)
+      ob_puts tag.name.colorize(:light_green).toggle(@is_color)
     end
   end
 end

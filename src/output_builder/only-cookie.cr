@@ -13,7 +13,7 @@ class OutputBuilderOnlyCookie < OutputBuilder
     end
 
     cookies.uniq.each do |cookie|
-      puts cookie.colorize(:light_green).toggle(@is_color)
+      ob_puts cookie.colorize(:light_green).toggle(@is_color)
     end
   end
 end
