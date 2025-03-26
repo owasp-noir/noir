@@ -1,5 +1,6 @@
 require "../models/output_builder"
 require "../models/endpoint"
+require "uri"
 
 class OutputBuilderOas3 < OutputBuilder
   def print(endpoints : Array(Endpoint))
