@@ -19,7 +19,9 @@ Jekyll::Hooks.register :site, :post_write do |_site|
         puts 'No deadlinks found!'
       else
         DeadFinder.output.each do |key, value|
-          puts "#{key}: #{value}" if value && !value.empty?
+          value.each do |link|
+            puts "Deadlink found on #{key}: #{link}" if link && !link.empty?
+          end
         end
       end
     rescue StandardError => e
