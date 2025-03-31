@@ -1,9 +1,9 @@
 module github.com/hahwul/test-go-app
 
 go 1.22.2
-toolchain go1.23.7
+toolchain go1.24.1
 
-require github.com/beego/beego/v2 v2.3.4
+require github.com/beego/beego/v2 v2.3.6
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
