@@ -134,11 +134,13 @@ module Analyzer::Javascript
         return Param.new($1, "", "path")
       end
 
-      # Destructuring syntax for body params
+      # Handle destructuring syntax
       if line =~ /(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*req\.body/
-        params = $1.split(",").map(&.strip)
-        if !params.empty?
-          return Param.new(params[0], "", "json")
+        param_list = $1.split(",").map(&.strip)
+        if !param_list.empty?
+          # Return first param to avoid empty result
+          param_name = param_list.first
+          return Param.new(param_name, "", "json")
         end
       end
 

@@ -167,7 +167,9 @@ module Analyzer::Javascript
       if line =~ /(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*req\.body/
         params = $1.split(",").map(&.strip)
         if !params.empty?
-          return Param.new(params[0], "", "json")
+          # Return first param to avoid empty result
+          param_name = params.first
+          return Param.new(param_name, "", "json")
         end
       end
 
