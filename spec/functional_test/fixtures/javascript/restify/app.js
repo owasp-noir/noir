@@ -89,8 +89,6 @@ router.get('/users/:id', function(req, res, next) {
 
 // Adding nested router pattern
 const adminRouter = new Router();
-adminRouter.applyRoutes(server, '/admin');
-
 adminRouter.get('/dashboard', function(req, res, next) {
     const view = req.query.view;
     const adminKey = req.header('Admin-Key');
