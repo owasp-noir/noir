@@ -103,6 +103,8 @@ adminRouter.post('/users/create', function(req, res, next) {
     return next();
 });
 
+adminRouter.applyRoutes(server, '/admin');
+
 // Apply routes to server
 setupServer(server);
 router.applyRoutes(server);
