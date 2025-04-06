@@ -142,6 +142,12 @@ This section provides an overview of the various programming languages and frame
 |-----|--------|-------|--------|--------|----|
 | ✅   | ✅    | ✅    | ✅     | ✅     | ❌ |
 
+### Fastify
+
+| URL | Method | Param | Header | Cookie | WS |
+|-----|--------|-------|--------|--------|----|
+| ✅   | ✅    | ✅    | ✅     | ✅     | ❌ |
+
 ### Next
 
 | URL | Method | Param | Header | Cookie | WS |
