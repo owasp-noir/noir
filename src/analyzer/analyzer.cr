@@ -30,6 +30,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"java_jsp", Java::Jsp},
     {"java_spring", Java::Spring},
     {"js_express", Javascript::Express},
+    {"js_fastify", Javascript::Fastify},
     {"js_restify", Javascript::Restify},
     {"kotlin_spring", Kotlin::Spring},
     {"oas2", Specification::Oas2},
