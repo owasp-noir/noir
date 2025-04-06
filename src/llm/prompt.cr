@@ -99,4 +99,147 @@ module LLM
     }
   }
   FORMAT
+
+  BUNDLE_ANALYZE_PROMPT = <<-PROMPT
+  Analyze the following bundle of source code files to extract details about the endpoints and their parameters.
+
+  Guidelines:
+  - The "method" field should strictly use one of these values: "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD".
+  - The "param_type" must strictly use one of these values: "query", "json", "form", "header", "cookie", "path".
+  - Include endpoints from ALL files in the bundle.
+  - Do not include any explanations, comments, or additional text.
+  - Output only the JSON result.
+  - Return the result strictly in valid JSON format according to the schema provided below.
+
+  Bundle of files:
+  PROMPT
+
+  # Map of LLM providers and their models to their max token limits
+  # This helps determine how many files can be bundled together
+  MODEL_TOKEN_LIMITS = {
+    "openai" => {
+      "gpt-3.5-turbo"     => 16385,
+      "gpt-3.5-turbo-16k" => 16385,
+      "gpt-4"             => 8192,
+      "gpt-4-32k"         => 32768,
+      "gpt-4o"            => 128000,
+      "gpt-4o-mini"       => 128000,
+      "default"           => 8000,
+    },
+    "xai" => {
+      "grok-1"  => 8192,
+      "grok-2"  => 131072,
+      "grok-3"  => 131072,
+      "default" => 8000,
+    },
+    "anthropic" => {
+      "claude-3-opus"   => 200000,
+      "claude-3-sonnet" => 200000,
+      "claude-3-haiku"  => 200000,
+      "claude-2"        => 100000,
+      "default"         => 100000,
+    },
+    "azure" => {
+      "default" => 8000,
+    },
+    "github" => {
+      "default" => 8000,
+    },
+    "ollama" => {
+      "llama3"  => 8192,
+      "phi3"    => 8192,
+      "mistral" => 8192,
+      "phi2"    => 2048,
+      "default" => 4000,
+    },
+    "vllm" => {
+      "default" => 4000,
+    },
+    "lmstudio" => {
+      "default" => 4000,
+    },
+    "default" => 4000,
+  }
+
+  # Estimate the number of tokens in a string
+  # This is a rough estimate using 1 token ≈ 4 characters for English text
+  def self.estimate_tokens(text : String) : Int32
+    if text.size < 1024
+      250
+    else
+      (text.size / 4.0).ceil.to_i
+    end
+  end
+
+  # Get the maximum token limit for a given provider and model
+  def self.get_max_tokens(provider : String, model : String) : Int32
+    provider = provider.downcase
+
+    # Extract just the provider name if URL was provided
+    if provider.includes?("://") || provider.includes?(".")
+      # For URLs like "https://api.openai.com" or "openai.com"
+      if provider.includes?("openai")
+        provider = "openai"
+      elsif provider.includes?("anthropic")
+        provider = "anthropic"
+      elsif provider.includes?("x.ai") || provider.includes?("xai")
+        provider = "xai"
+      elsif provider.includes?("github")
+        provider = "github"
+      elsif provider.includes?("azure")
+        provider = "azure"
+      elsif provider.includes?("ollama")
+        provider = "ollama"
+      elsif provider.includes?("vllm")
+        provider = "vllm"
+      elsif provider.includes?("lmstudio")
+        provider = "lmstudio"
+      end
+    end
+
+    # Get the provider-specific limits or fall back to default
+    provider_limits = MODEL_TOKEN_LIMITS[provider]? || MODEL_TOKEN_LIMITS["default"]
+
+    if provider_limits.is_a?(Hash)
+      # Get the model-specific limit or fall back to provider default
+      if provider_limits.as(Hash).has_key?(model)
+        provider_limits.as(Hash)[model].as(Int32)
+      else
+        provider_limits.as(Hash)["default"].as(Int32)
+      end
+    else
+      provider_limits.as(Int32)
+    end
+  end
+
+  # Create a bundle of files that fits within token limits
+  # Returns the bundle content and the estimated token count
+  def self.bundle_files(files : Array(Tuple(String, String)),
+                        max_tokens : Int32,
+                        safety_margin : Float64 = 0.8) : Array(Tuple(String, Int32))
+    safe_limit = (max_tokens * safety_margin).to_i
+    bundles = [] of Tuple(String, Int32)
+    current_bundle = ""
+    current_tokens = estimate_tokens(BUNDLE_ANALYZE_PROMPT)
+
+    files.each do |file_path, content|
+      file_section = "- File: \"#{file_path}\"\n```\n#{content}\n```\n"
+      file_tokens = estimate_tokens(file_section)
+
+      if current_tokens + file_tokens > safe_limit && !current_bundle.empty?
+        bundles << {current_bundle, current_tokens}
+        current_bundle = ""
+        current_tokens = estimate_tokens(BUNDLE_ANALYZE_PROMPT)
+      end
+
+      current_bundle += file_section
+      current_tokens += file_tokens
+    end
+
+    if !current_bundle.empty?
+      bundles << {current_bundle, current_tokens}
+    end
+
+    bundles
+  end
 end
