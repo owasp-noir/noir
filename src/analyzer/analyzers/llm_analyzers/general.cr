@@ -43,7 +43,7 @@ module Analyzer::AI
     private def analyze_with_bundling(paths : Array(String), client : LLM::General)
       files_to_bundle = [] of Tuple(String, String)
       paths.each do |path|
-        next if File.directory?(path) || !File.exists?(path) || ignore_extensions.includes?(File.extname(path))
+        next if File.directory?(path) || ignore_extensions.includes?(File.extname(path))
         relative_path = get_relative_path(base_path, path)
         content = File.read(path, encoding: "utf-8", invalid: :skip)
         files_to_bundle << {relative_path, content}
