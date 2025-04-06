@@ -6,7 +6,7 @@ def get_home
   else
     # Define the config directory and file based on the OS
     {% if flag?(:windows) %}
-      @onfig_dir = "#{ENV["APPDATA"]}\\noir"
+      config_dir = "#{ENV["APPDATA"]}\\noir"
     {% else %}
       config_dir = "#{ENV["HOME"]}/.config/noir"
     {% end %}
