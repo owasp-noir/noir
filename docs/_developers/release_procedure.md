@@ -31,7 +31,7 @@ layout: page
 2. Generate a PR for the Homebrew core:
 ```bash
 brew bump-formula-pr --strict --version <VERSION> noir
-# Example: brew bump-formula-pr --strict --version 0.20.1 noir
+# Example: brew bump-formula-pr --strict --version 0.21.0 noir
 ```
 
 #### Troubleshooting
