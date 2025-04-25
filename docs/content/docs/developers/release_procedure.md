@@ -3,6 +3,7 @@ title: Release Procedure
 has_children: false
 nav_order: 2
 layout: page
+description: "Guidelines and procedures for creating and publishing new Noir releases"
 aliases:
 - /de/posts/previous-file-name
 ---

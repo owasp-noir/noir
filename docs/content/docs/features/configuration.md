@@ -1,6 +1,7 @@
 ---
 title: Configuration
 weight: 1
+description: "Guide to configuring Noir using config.yaml files with predefined settings and preferences"
 ---
 
 Configuration allows you to predefine various flags for Noir, making it easier to manage and use the tool with your preferred settings.

@@ -2,6 +2,7 @@
 title: AI-powered Analysis
 weight: 5
 layout: page
+description: "Comprehensive guide to AI integration flags and options for enabling LLM-powered analysis in Noir"
 ---
 
 Noir can leverage LLM services or local LLMs to perform additional analysis.

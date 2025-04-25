@@ -1,6 +1,6 @@
 ---
 weight: 3
 title: "Output Formats"
-description: "Example of a folder at the root of the content tree (under `/docs`)"
+description: "Documentation of available output formats for Noir scan results including JSON, YAML, OAS, and more"
 icon: "auto_awesome"
 ---

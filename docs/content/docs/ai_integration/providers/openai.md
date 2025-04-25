@@ -3,6 +3,7 @@ title: OpenAI
 parent: AI Integration
 nav_order: 4
 layout: page
+description: "Guide to integrating Noir with OpenAI services for enhanced endpoint analysis capabilities"
 ---
 
 ## Setup OpenAI

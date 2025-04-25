@@ -3,6 +3,7 @@ title: LM Studio
 parent: AI Integration
 nav_order: 3
 layout: page
+description: "Guide to using LM Studio with Noir for local LLM-powered endpoint detection and analysis"
 ---
 
 ## Setup LMStudio

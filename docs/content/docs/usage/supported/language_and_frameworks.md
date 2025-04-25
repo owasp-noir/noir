@@ -3,6 +3,7 @@ title: Language and Frameworks
 has_children: false
 nav_order: 1
 layout: page
+description: "Detailed overview of programming languages and frameworks supported by Noir, with feature compatibility information"
 ---
 
 This section provides an overview of the various programming languages and frameworks supported by Noir. Each language and framework is listed with the features it supports, such as URL, Method, Param, Header, Cookie, and WebSocket (WS).

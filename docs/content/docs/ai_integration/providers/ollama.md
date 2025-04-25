@@ -3,6 +3,7 @@ title: Ollama
 parent: AI Integration
 nav_order: 2
 layout: page
+description: "Instructions for integrating Noir with Ollama for local LLM-powered endpoint analysis"
 ---
 
 ## Setup Ollama

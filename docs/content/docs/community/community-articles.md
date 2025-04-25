@@ -1,6 +1,7 @@
 ---
 title: Community Articles
 weight: 1
+description: "Collection of articles and blog posts about Noir written by community members"
 ---
 
 * [Hello Noir 👋🏼 by HAHWUL](https://www.hahwul.com/2023/08/03/hello-noir/)

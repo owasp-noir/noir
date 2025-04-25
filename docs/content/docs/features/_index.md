@@ -1,6 +1,6 @@
 ---
 weight: 4
 title: "Features"
-description: "Example of a folder at the root of the content tree (under `/docs`)"
+description: "Overview of Noir's core features and capabilities for attack surface detection"
 icon: "auto_awesome"
 ---

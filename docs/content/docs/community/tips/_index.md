@@ -1,6 +1,6 @@
 ---
 weight: 6
 title: "Tips"
-description: "Example of a folder at the root of the content tree (under `/docs`)"
+description: "Helpful tips and best practices for using Noir effectively"
 icon: "heart_plus"
 ---

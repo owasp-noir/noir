@@ -3,6 +3,7 @@ title: xAI
 parent: AI Integration
 nav_order: 5
 layout: page
+description: "Instructions for setting up and using xAI's Grok models with Noir for advanced endpoint detection"
 ---
 
 ## Setup xAI

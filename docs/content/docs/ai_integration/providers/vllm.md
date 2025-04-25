@@ -3,6 +3,7 @@ title: VLLM
 parent: AI Integration
 nav_order: 3
 layout: page
+description: "Guide for setting up and using VLLM with Noir for efficient local model inference and endpoint analysis"
 ---
 
 ## Setup VLLM

@@ -1,6 +1,6 @@
 ---
 weight: 3
 title: "Usage"
-description: "Example of a folder at the root of the content tree (under `/docs`)"
+description: "Comprehensive guide on how to use Noir for endpoint detection and analysis"
 icon: "book"
 ---

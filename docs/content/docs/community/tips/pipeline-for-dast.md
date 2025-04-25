@@ -1,5 +1,6 @@
 ---
 title: Pipeline for DAST
+description: "Guide to integrating Noir into Dynamic Application Security Testing (DAST) pipelines with proxy tools and ZAP"
 ---
 
 ## DAST (Dynamic Application Security Testing)

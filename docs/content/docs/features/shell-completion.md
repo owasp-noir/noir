@@ -1,6 +1,7 @@
 ---
 title: Shell Completions
 weight: 2
+description: "Instructions for enabling and using shell auto-completion features with Noir in Zsh and other shells"
 ---
 
 ## Zsh Completion

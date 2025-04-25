@@ -1,6 +1,7 @@
 ---
 title: Deliver
 weight: 4
+description: "Guide to Noir's deliver feature for transmitting discovered endpoints to proxy tools and other systems"
 ---
 
 Devlier is a feature designed to transmit Endpoints discovered by Noir to other tools. Unlike Pipelines that use Output, it can forward information to proxy tools such as Caido, ZAP, and Burp, as well as to ElasticSearch. This functionality allows for easier security testing and simplifies finding and utilizing service Endpoints in a DevOps Pipeline.

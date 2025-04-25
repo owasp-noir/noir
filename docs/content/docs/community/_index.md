@@ -1,7 +1,7 @@
 ---
 weight: 6
 title: "Commumity"
-description: "Example of a folder at the root of the content tree (under `/docs`)"
+description: "Community resources, articles, tips, and contributions related to Noir"
 icon: "folder"
 ---
 

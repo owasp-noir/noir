@@ -3,6 +3,7 @@ title: Github
 parent: AI Integration
 nav_order: 6
 layout: page
+description: "Guide to using GitHub Marketplace models with Noir for AI-powered endpoint detection and analysis"
 ---
 
 ## Setup Github marketplace

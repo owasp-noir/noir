@@ -1,6 +1,7 @@
 ---
 title: Tagger
 weight: 5
+description: "Documentation for Noir's tagger feature that adds contextual tags to endpoints and parameters for better understanding of APIs"
 ---
 
 # Tagger

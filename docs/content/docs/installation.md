@@ -2,6 +2,7 @@
 title = 'Installation'
 weight = 2
 icon = "rocket"
+description = "Comprehensive guide to installing Noir on various operating systems using Homebrew, Snapcraft, Docker, or from source"
 +++
 
 ## Overview
