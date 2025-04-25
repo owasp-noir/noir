@@ -1,0 +1,104 @@
+hero:
+  enable: true
+  weight: 10
+  template: hero
+
+ # backgroundImage:
+ #   path: "a"
+ #   filename:
+ #     desktop: "1.jpeg"
+ #     mobile: "1.jpeg"
+
+  badge:
+    text: v0.22.0
+    color: primary
+    pill: false
+    soft: true
+
+  title: ""
+  subtitle: Attack surface detector that identifies endpoints by static analysis.
+
+  titleLogo:
+      path: "images"
+      filename: "owasp-noir-black.png"
+      alt: "OWASP Noir Logo"
+      height: 80px
+
+  image:
+    path: "/images"
+    filename: "basic.png" # Use prefers-color-scheme logic instead
+    source:
+      dark: "https://owasp-noir.github.io/noir/images/noir-usage.jpg"
+      light: "https://github.com/owasp-noir/noir/assets/13212227/0577860e-3d7e-4294-8f1f-dc7b87ce2b2b"
+    alt: "OWASP Noir Logo"
+    boxShadow: true
+    rounded: true
+
+  ctaButton:
+    icon: rocket_launch
+    btnText: "Get Started"
+    url: "/noir/docs/installation/"
+  cta2Button:
+    icon: code
+    btnText: "View on GitHub"
+    url: "https://github.com/owasp-noir/noir"
+
+  info: "**Open Source** MIT Licensed."
+
+# Feature Grid
+featureGrid:
+  enable: true
+  weight: 20
+  template: feature grid
+
+  title: Why Choose OWASP Noir?
+  subtitle: OWASP Noir empowers security teams with advanced attack surface detection, uncovering endpoints and vulnerabilities through static analysis. Explore its core features below.
+
+  items:
+    - title: Endpoint Extraction
+      icon: api
+      description: Extract API and web endpoints along with parameters directly from source code for comprehensive security analysis.
+
+    - title: Multi-Language Support
+      icon: code
+      description: Supports multiple programming languages and frameworks, ensuring broad compatibility for diverse projects.
+
+    - title: Security Issue Detection
+      icon: security
+      description: Perform rule-based passive scanning to identify potential security vulnerabilities with detailed insights.
+
+    - title: DevOps Integration
+      icon: code
+      description: Seamlessly integrate with DevOps tools like curl, ZAP, and Caido to enhance security pipelines.
+
+    - title: Flexible Output Formats
+      icon: file_download
+      description: Generate clear, actionable results in JSON, YAML, and OAS formats for easy consumption.
+
+    - title: AI-Enhanced Discovery
+      icon: auto_awesome
+      description: Leverage AI to uncover hidden APIs and endpoints in unfamiliar frameworks.
+
+# Image Compare
+imageCompare:
+  enable: true
+  weight: 30
+  template: image compare
+
+  title: Visualize OWASP Noir’s Analysis
+  subtitle: OWASP Noir provides detailed insights into your application’s attack surface. Compare CLI usage with JSON output to see how Noir delivers actionable results.
+
+  items:
+    - title: CLI vs. JSON Output
+      config:
+        startingPoint: 50
+        addCircle: true
+        addCircleBlur: false
+        showLabels: true
+        labelOptions:
+          before: 'CLI Usage'
+          after: 'JSON Output'
+          onHover: false
+      imagePath: "images/screenshots"
+      imageBefore: "https://owasp-noir.github.io/noir/images/noir-usage.jpg" # Placeholder for CLI screenshot (e.g., from /docs/images/get_started/basic.png)
+      imageAfter: "https://owasp-noir.github.io/noir/images/noir-usage.jpg" # Placeholder for JSON output screenshot

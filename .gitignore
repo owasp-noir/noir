@@ -6,6 +6,6 @@
 .vscode
 ameba.sh
 
-# Ignore the public directory for Jekyll
-/docs/_site/
-/docs/.jekyll-cache/
+# Ignore for Hugo
+/docs/public/
+/docs/.hugo_build.lock
