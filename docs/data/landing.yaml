@@ -3,14 +3,14 @@ hero:
   weight: 10
   template: hero
 
- # backgroundImage:
- #   path: "a"
- #   filename:
- #     desktop: "1.jpeg"
- #     mobile: "1.jpeg"
+  backgroundImage:
+    path: "images"
+    filename:
+      desktop: "b.jpg"
+      mobile: "b.jpg"
 
   badge:
-    text: v0.22.0
+    text: v0.21.0
     color: primary
     pill: false
     soft: true
@@ -20,16 +20,13 @@ hero:
 
   titleLogo:
       path: "images"
-      filename: "owasp-noir-black.png"
+      filename: "owasp-noir-black.png"  
       alt: "OWASP Noir Logo"
       height: 80px
 
   image:
-    path: "/images"
-    filename: "basic.png" # Use prefers-color-scheme logic instead
-    source:
-      dark: "https://owasp-noir.github.io/noir/images/noir-usage.jpg"
-      light: "https://github.com/owasp-noir/noir/assets/13212227/0577860e-3d7e-4294-8f1f-dc7b87ce2b2b"
+    path: "images"
+    filename: "capture.png"
     alt: "OWASP Noir Logo"
     boxShadow: true
     rounded: true
@@ -100,5 +97,5 @@ imageCompare:
           after: 'JSON Output'
           onHover: false
       imagePath: "images/screenshots"
-      imageBefore: "https://owasp-noir.github.io/noir/images/noir-usage.jpg" # Placeholder for CLI screenshot (e.g., from /docs/images/get_started/basic.png)
-      imageAfter: "https://owasp-noir.github.io/noir/images/noir-usage.jpg" # Placeholder for JSON output screenshot
+      imageBefore: "plain.png" # Placeholder for CLI screenshot (e.g., from /docs/images/get_started/basic.png)
+      imageAfter: "json.png" # Placeholder for JSON output screenshot
