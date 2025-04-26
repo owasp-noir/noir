@@ -48,7 +48,7 @@ Example
 noir -b <source_dir>
 ```
 
-![](/docs/images/get_started/basic.png)
+![](/docs/assets/images/get_started/basic.png)
 
 JSON Result
 ```
