@@ -24,12 +24,16 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      HUGO_VERSION: 0.146.5
+      HUGO_VERSION: 0.145.0
+      HUGO_ENVIRONMENT: production
+      TZ: America/Los_Angeles
     steps:
       - name: Install Hugo CLI
         run: |
           wget -O ${{ runner.temp }}/hugo.deb https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/hugo_extended_${HUGO_VERSION}_linux-amd64.deb \
           && sudo dpkg -i ${{ runner.temp }}/hugo.deb
+      - name: Install Dart Sass
+        run: sudo snap install dart-sass
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -37,31 +41,40 @@ jobs:
           fetch-depth: 0
       - name: Setup Pages
         id: pages
-        uses: actions/configure-pages@v4
+        uses: actions/configure-pages@v5
       - name: Install Node.js dependencies
-        run: '[[ -f package-lock.json || -f npm-shrinkwrap.json ]] && npm ci || true'
-      - name: Setup Hugo Modules
-        run: |
-          cd docs
-          if [ ! -f go.mod ]; then
-            hugo mod init github.com/owasp-noir/noir/docs
-          fi
-          hugo mod get -u
+        run: "[[ -f package-lock.json || -f npm-shrinkwrap.json ]] && npm ci || true"
+      - name: Cache Restore
+        id: cache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ runner.temp }}/hugo_cache
+          key: hugo-${{ github.run_id }}
+          restore-keys:
+            hugo-
+      - name: Configure Git
+        run: git config core.quotepath false
       - name: Build with Hugo
-        env:
-          # For maximum backward compatibility with Hugo modules
-          HUGO_ENVIRONMENT: production
-          HUGO_ENV: production
         run: |
-          cd docs
+          cd hugo
           hugo \
-              --gc \
-              --minify \
-              --baseURL "${{ steps.pages.outputs.base_url }}/"
+            --gc \
+            --minify \
+            --baseURL "${{ steps.pages.outputs.base_url }}/" \
+            --cacheDir "${{ runner.temp }}/hugo_cache"
+      - name: Cache Save
+        id: cache-save
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ runner.temp }}/hugo_cache
+          key: ${{ steps.cache-restore.outputs.cache-primary-key }}
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./docs/public
+          path: ./public
+
   # Deployment job
   deploy:
     environment:
@@ -73,51 +86,3 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-        
-  # Deploy to owasp-noir.github.io repository
-  deploy-to-docs-repo:
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - name: Download artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: github-pages
-          path: ./public
-          
-      - name: Extract artifact
-        run: |
-          tar -xf ./public/artifact.tar
-          rm ./public/artifact.tar
-          
-      - name: Setup Git
-        run: |
-          git config --global user.name "GitHub Actions"
-          git config --global user.email "actions@github.com"
-          
-      - name: Clone target repository
-        uses: actions/checkout@v4
-        with:
-          repository: owasp-noir/owasp-noir.github.io
-          token: ${{ secrets.NOIR_PUBLISH_TOKEN }}
-          path: /
-          
-      - name: Copy content and push
-        run: |
-          # Remove existing content in the target repository
-          rm -rf docs-repo/*
-          
-          # Copy the Hugo generated content to the target repository
-          cp -r public/* docs-repo/
-          
-          # Navigate to the target repository directory
-          cd docs-repo
-          
-          # Add all changes to git
-          git add .
-          
-          # Commit changes (exit with success even if there's nothing to commit)
-          git commit -m "Update docs from noir repository" || echo "No changes to commit"
-          
-          # Push to the target repository
-          git push
