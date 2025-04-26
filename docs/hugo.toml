@@ -24,9 +24,6 @@ title = 'OWASP Noir'
   lastMod = true
 
 [module]
-    # uncomment line below for temporary local development of module,
-    # when using a 'theme' as a git submodule or git cloned files
-    replacements = "github.com/colinwilson/lotusdocs -> lotusdocs"
     [[module.imports]]
         path = "github.com/colinwilson/lotusdocs"
         disable = false
