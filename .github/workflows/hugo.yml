@@ -23,10 +23,12 @@ jobs:
   # Build job
   build:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs
     env:
       HUGO_VERSION: 0.145.0
       HUGO_ENVIRONMENT: production
-      working-directory: ./website
     steps:
       - name: Install Hugo CLI
         run: |
