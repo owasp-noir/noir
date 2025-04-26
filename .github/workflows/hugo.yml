@@ -40,6 +40,11 @@ jobs:
         uses: actions/configure-pages@v4
       - name: Install Node.js dependencies
         run: '[[ -f package-lock.json || -f npm-shrinkwrap.json ]] && npm ci || true'
+      - name: Setup Hugo Modules
+        run: |
+          cd docs
+          hugo mod init github.com/owasp-noir/noir/docs
+          hugo mod get -u
       - name: Build with Hugo
         env:
           # For maximum backward compatibility with Hugo modules
@@ -54,7 +59,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./public
+          path: ./docs/public
   # Deployment job
   deploy:
     environment:
