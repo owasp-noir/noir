@@ -43,7 +43,9 @@ jobs:
       - name: Setup Hugo Modules
         run: |
           cd docs
-          hugo mod init github.com/owasp-noir/noir/docs
+          if [ ! -f go.mod ]; then
+            hugo mod init github.com/owasp-noir/noir/docs
+          fi
           hugo mod get -u
       - name: Build with Hugo
         env:
