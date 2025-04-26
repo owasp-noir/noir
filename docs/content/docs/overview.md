@@ -2,6 +2,7 @@
 title = 'Overview'
 weight = 1
 icon = "circle"
+aliases = ['/introdution/index.html']
 +++
 
 OWASP Noir is an open-source project, specializing in identifying attack surfaces for enhanced whitebox security testing and security pipeline.
