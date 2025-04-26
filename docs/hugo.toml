@@ -13,8 +13,11 @@ title = 'OWASP Noir'
     version   = true # include git commit info in footer
 
 [params.docs]
+  title = 'OWASP Noir'
   darkMode = true
+  themeColor = "emerald"
   sidebarIcons = true
+  titleIcon = true
   repoURL = 'https://github.com/owasp-noir/noir'
   repoBranch = 'main'
   editPage = true
