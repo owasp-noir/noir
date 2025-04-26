@@ -92,7 +92,7 @@ jobs:
         with:
           repository: owasp-noir/owasp-noir.github.io
           token: ${{ secrets.NOIR_PUBLISH_TOKEN }}
-          path: docs-repo
+          path: /
           
       - name: Copy content and push
         run: |
