@@ -23,9 +23,6 @@ jobs:
   # Build job
   build:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: docs
     env:
       HUGO_VERSION: 0.145.0
       HUGO_ENVIRONMENT: production
@@ -46,6 +43,7 @@ jobs:
         uses: actions/configure-pages@v5
       - name: Install Node.js dependencies
         run: "[[ -f package-lock.json || -f npm-shrinkwrap.json ]] && npm ci || true"
+        working-directory: docs
       - name: Cache Restore
         id: cache-restore
         uses: actions/cache/restore@v4
@@ -57,6 +55,7 @@ jobs:
             hugo-
       - name: Configure Git
         run: git config core.quotepath false
+        working-directory: docs
       - name: Build with Hugo
         run: |
           hugo \
@@ -64,6 +63,7 @@ jobs:
             --minify \
             --baseURL "${{ steps.pages.outputs.base_url }}/" \
             --cacheDir "${{ runner.temp }}/hugo_cache"
+        working-directory: docs
       - name: Cache Save
         id: cache-save
         uses: actions/cache/save@v4
@@ -74,7 +74,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./public
+          path: ./docs/public
 
   # Deployment job
   deploy:
