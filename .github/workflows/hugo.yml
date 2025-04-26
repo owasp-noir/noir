@@ -26,7 +26,7 @@ jobs:
     env:
       HUGO_VERSION: 0.145.0
       HUGO_ENVIRONMENT: production
-      TZ: America/Los_Angeles
+      working-directory: ./website
     steps:
       - name: Install Hugo CLI
         run: |
@@ -57,7 +57,6 @@ jobs:
         run: git config core.quotepath false
       - name: Build with Hugo
         run: |
-          cd hugo
           hugo \
             --gc \
             --minify \
