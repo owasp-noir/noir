@@ -126,6 +126,7 @@ def run_options_parser
                                   "  [Example] --ai-model=gpt-4" { |var| noir_options["ai_model"] = YAML::Any.new(var) }
     parser.on "--ai-key KEY", "Provide the API key for authenticating with the AI provider's API. Alternatively, use the NOIR_AI_KEY environment variable.\n" \
                               "  [Example] --ai-key=your-api-key  or  export NOIR_AI_KEY=your-api-key" { |var| noir_options["ai_key"] = YAML::Any.new(var) }
+    parser.on "--android", "Enable Android analysis" { |var| noir_options["android"] = YAML::Any.new(true) }
     parser.on "--ollama http://localhost:11434", "(Deprecated) Set the Ollama server URL. Use --ai-provider instead." { |var| noir_options["ollama"] = YAML::Any.new(var) }
     parser.on "--ollama-model MODEL", "(Deprecated) Specify the model for the Ollama server. Use --ai-model instead." { |var| noir_options["ollama_model"] = YAML::Any.new(var) }
 

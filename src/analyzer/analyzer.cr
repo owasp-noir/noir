@@ -49,6 +49,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"rust_actix_web", Rust::ActixWeb},
     {"ai_ollama", AI::Ollama},
     {"ai", AI::General},
+    {"android", AI::Android},
   ])
 
   logger.debug "#{analyzers.size} Analyzers initialized"
@@ -72,7 +73,11 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
 
   if (options["ai_provider"] != "") && (options["ai_model"] != "")
     logger.sub "➔ AI Analyzer: Server=#{options["ai_provider"]}, Model=#{options["ai_model"]}"
-    techs << "ai"
+    if options["android"]
+      techs << "android"
+    else
+      techs << "ai"
+    end
   end
 
   if (options["ollama"] != "") && (options["ollama_model"] != "")

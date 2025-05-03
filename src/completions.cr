@@ -42,6 +42,7 @@ _arguments \\
   '--ai-key[Provide the API key for the AI provider]:key:' \\
   '--ollama[Specify the Ollama server URL (Deprecated)]:URL:_urls' \\
   '--ollama-model[Specify the Ollama model name (Deprecated)]:model:' \\
+  '--android[Enable Android analysis]' \\
   '-d[Show debug messages]' \\
   '-v[Show version]' \\
   '--build-info[Show version and Build info]' \\
