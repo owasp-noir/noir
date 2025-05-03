@@ -31,11 +31,11 @@ module LLM
       @api_key = api_key || ENV["NOIR_AI_KEY"]
     end
 
-    def request(prompt : String, format : String = "json")
+    def request(prompt : String, format : String = "json", temperature : Float64 = 0.3)
       body = {
         "model"           => @model,
         "messages"        => [{"role" => "user", "content" => prompt}],
-        "temperature"     => 0.3,
+        "temperature"     => temperature,
         "stream"          => false,
         "response_format" => format == "json" ? {"type" => "json_object"} : JSON.parse(format),
       }.to_json
@@ -46,6 +46,18 @@ module LLM
 
       response = HTTP::Client.post(@api, headers: headers, body: body)
       response_json = JSON.parse(response.body)
+
+      if response_json.as_h.has_key?("error")
+        if response_json["error"].as_h.has_key?("message")
+          if response_json["error"]["message"].as_s.includes?("'temperature' does not support #{temperature}") && temperature != 1.0
+            temperature = 1.0
+            return request(prompt, format, temperature)
+          end
+        end
+
+        puts "LLM Request Error: #{response_json["error"]}"
+        return ""
+      end
 
       response_json["choices"][0]["message"]["content"].to_s.gsub("```json", "").gsub("```", "").strip
     rescue ex : Exception

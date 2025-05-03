@@ -114,6 +114,189 @@ module LLM
   Bundle of files:
   PROMPT
 
+  # Android Manifest Prompt
+  ANDROID_MANIFEST_PROMPT = <<-PROMPT
+  Analyze the provided AndroidManifest.xml file to extract details about the endpoints and their parameters.
+
+  Guidelines:
+  - Extract all the exported activities, services, and receivers from the AndroidManifest.xml file.
+  - Output only the JSON result.
+  - Return the result strictly in valid JSON format according to the schema provided below.
+
+  Input AndroidManifest.xml:
+  PROMPT
+
+  ANDROID_MANIFEST_FORMAT = <<-FORMAT
+  {
+    "type": "json_schema",
+    "json_schema": {
+      "name": "android_manifest",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "activities": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string" },
+                "exported": { "type": "boolean" },
+                "permission": { "type": "string" },
+                "intent_filters": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "actions": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      },
+                      "categories": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      },
+                      "data": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "scheme": { "type": "string" },
+                            "host": { "type": "string" },
+                            "path": { "type": "string" },
+                            "pathPattern": { "type": "string" },
+                            "mimeType": { "type": "string" }
+                          },
+                          "required": ["scheme", "host", "path", "pathPattern", "mimeType"],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "required": ["actions", "categories", "data"],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": ["name", "exported", "permission", "intent_filters"],
+              "additionalProperties": false
+            }
+          },
+          "services": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string" },
+                "exported": { "type": "boolean" },
+                "permission": { "type": "string" },
+                "intent_filters": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "actions": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      },
+                      "categories": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      },
+                      "data": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "scheme": { "type": "string" },
+                            "host": { "type": "string" },
+                            "path": { "type": "string" },
+                            "pathPattern": { "type": "string" },
+                            "mimeType": { "type": "string" }
+                          },
+                          "required": ["scheme", "host", "path", "pathPattern", "mimeType"],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "required": ["actions", "categories", "data"],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": ["name", "exported", "permission", "intent_filters"],
+              "additionalProperties": false
+            }
+          },
+          "receivers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string" },
+                "exported": { "type": "boolean" },
+                "permission": { "type": "string" },
+                "intent_filters": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "actions": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      },
+                      "categories": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      },
+                      "data": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "scheme": { "type": "string" },
+                            "host": { "type": "string" },
+                            "path": { "type": "string" },
+                            "pathPattern": { "type": "string" },
+                            "mimeType": { "type": "string" }
+                          },
+                          "required": ["scheme", "host", "path", "pathPattern", "mimeType"],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "required": ["actions", "categories", "data"],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": ["name", "exported", "permission", "intent_filters"],
+              "additionalProperties": false
+            }
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string" },
+                "authorities": { "type": "string" },
+                "exported": { "type": "boolean" },
+                "permission": { "type": "string" },
+                "readPermission": { "type": "string" },
+                "writePermission": { "type": "string" },
+                "grantUriPermissions": { "type": "boolean" }
+              },
+              "required": ["name", "authorities", "exported", "permission", "readPermission", "writePermission", "grantUriPermissions"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["activities", "services", "receivers", "providers"],
+        "additionalProperties": false
+      },
+      "strict": true
+    }
+  }
+  FORMAT
   # Map of LLM providers and their models to their max token limits
   # This helps determine how many files can be bundled together
   MODEL_TOKEN_LIMITS = {
