@@ -55,7 +55,7 @@ module LLM
           end
         end
 
-        puts "LLM Request Error: #{response_json["error"]}"
+        puts "Error in LLM request: #{response_json["error"]}"
         return ""
       end
 

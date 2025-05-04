@@ -116,14 +116,18 @@ module LLM
 
   # Android Manifest Prompt
   ANDROID_MANIFEST_PROMPT = <<-PROMPT
-  Analyze the provided AndroidManifest.xml file to extract details about the endpoints and their parameters.
+  Analyze the provided AndroidManifest.xml file to extract information about the Android application.
 
   Guidelines:
-  - Extract all the exported activities, services, and receivers from the AndroidManifest.xml file.
-  - Output only the JSON result.
-  - Return the result strictly in valid JSON format according to the schema provided below.
+  - Extract the package name
+  - Identify all exported components (activities, services, providers, receivers)
+  - For each exported component, note if it has any permission requirements
+  - Identify intent filters for exported components
+  - Pay special attention to components that might expose attack surfaces
+  - Output only the JSON result
+  - Return the result strictly in valid JSON format according to the schema provided
 
-  Input AndroidManifest.xml:
+  The AndroidManifest.xml content is:
   PROMPT
 
   ANDROID_MANIFEST_FORMAT = <<-FORMAT
@@ -134,169 +138,200 @@ module LLM
       "schema": {
         "type": "object",
         "properties": {
-          "activities": {
+          "package": { "type": "string" },
+          "uses_sdk": {
+            "type": "object",
+            "properties": {
+              "minSdkVersion": { "type": "integer" },
+              "targetSdkVersion": { "type": "integer" }
+            },
+            "required": ["minSdkVersion", "targetSdkVersion"],
+            "additionalProperties": false
+          },
+          "uses_permissions": {
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
-                "name": { "type": "string" },
-                "exported": { "type": "boolean" },
-                "permission": { "type": "string" },
-                "intent_filters": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "actions": {
-                        "type": "array",
-                        "items": { "type": "string" }
-                      },
-                      "categories": {
-                        "type": "array",
-                        "items": { "type": "string" }
-                      },
-                      "data": {
-                        "type": "array",
-                        "items": {
-                          "type": "object",
-                          "properties": {
-                            "scheme": { "type": "string" },
-                            "host": { "type": "string" },
-                            "path": { "type": "string" },
-                            "pathPattern": { "type": "string" },
-                            "mimeType": { "type": "string" }
-                          },
-                          "required": ["scheme", "host", "path", "pathPattern", "mimeType"],
-                          "additionalProperties": false
-                        }
-                      }
-                    },
-                    "required": ["actions", "categories", "data"],
-                    "additionalProperties": false
-                  }
-                }
+                "name": { "type": "string" }
               },
-              "required": ["name", "exported", "permission", "intent_filters"],
+              "required": ["name"],
               "additionalProperties": false
             }
           },
-          "services": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "name": { "type": "string" },
-                "exported": { "type": "boolean" },
-                "permission": { "type": "string" },
-                "intent_filters": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "actions": {
-                        "type": "array",
-                        "items": { "type": "string" }
-                      },
-                      "categories": {
-                        "type": "array",
-                        "items": { "type": "string" }
-                      },
-                      "data": {
-                        "type": "array",
-                        "items": {
-                          "type": "object",
-                          "properties": {
-                            "scheme": { "type": "string" },
-                            "host": { "type": "string" },
-                            "path": { "type": "string" },
-                            "pathPattern": { "type": "string" },
-                            "mimeType": { "type": "string" }
+          "components": {
+            "type": "object",
+            "properties": {
+              "activities": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": { "type": "string" },
+                    "exported": { "type": "boolean" },
+                    "permission": { "type": "string" },
+                    "intent_filters": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "actions": {
+                            "type": "array",
+                            "items": { "type": "string" }
                           },
-                          "required": ["scheme", "host", "path", "pathPattern", "mimeType"],
-                          "additionalProperties": false
-                        }
+                          "categories": {
+                            "type": "array",
+                            "items": { "type": "string" }
+                          },
+                          "data": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "scheme": { "type": "string" },
+                                "host": { "type": "string" },
+                                "path": { "type": "string" },
+                                "pathPattern": { "type": "string" },
+                                "mimeType": { "type": "string" }
+                              },
+                              "required": ["scheme", "host", "path", "pathPattern", "mimeType"],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": ["actions", "categories", "data"],
+                        "additionalProperties": false
                       }
                     },
-                    "required": ["actions", "categories", "data"],
-                    "additionalProperties": false
-                  }
+                    "is_alias": { "type": "boolean" },
+                    "target_activity": { "type": "string" }
+                  },
+                  "required": ["name", "exported", "permission", "intent_filters", "is_alias", "target_activity"],
+                  "additionalProperties": false
                 }
               },
-              "required": ["name", "exported", "permission", "intent_filters"],
-              "additionalProperties": false
-            }
-          },
-          "receivers": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "name": { "type": "string" },
-                "exported": { "type": "boolean" },
-                "permission": { "type": "string" },
-                "intent_filters": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "actions": {
-                        "type": "array",
-                        "items": { "type": "string" }
-                      },
-                      "categories": {
-                        "type": "array",
-                        "items": { "type": "string" }
-                      },
-                      "data": {
-                        "type": "array",
-                        "items": {
-                          "type": "object",
-                          "properties": {
-                            "scheme": { "type": "string" },
-                            "host": { "type": "string" },
-                            "path": { "type": "string" },
-                            "pathPattern": { "type": "string" },
-                            "mimeType": { "type": "string" }
+              "services": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": { "type": "string" },
+                    "exported": { "type": "boolean" },
+                    "permission": { "type": "string" },
+                    "intent_filters": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "actions": {
+                            "type": "array",
+                            "items": { "type": "string" }
                           },
-                          "required": ["scheme", "host", "path", "pathPattern", "mimeType"],
-                          "additionalProperties": false
-                        }
+                          "categories": {
+                            "type": "array",
+                            "items": { "type": "string" }
+                          },
+                          "data": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "scheme": { "type": "string" },
+                                "host": { "type": "string" },
+                                "path": { "type": "string" },
+                                "pathPattern": { "type": "string" },
+                                "mimeType": { "type": "string" }
+                              },
+                              "required": ["scheme", "host", "path", "pathPattern", "mimeType"],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": ["actions", "categories", "data"],
+                        "additionalProperties": false
                       }
-                    },
-                    "required": ["actions", "categories", "data"],
-                    "additionalProperties": false
-                  }
+                    }
+                  },
+                  "required": ["name", "exported", "permission", "intent_filters"],
+                  "additionalProperties": false
                 }
               },
-              "required": ["name", "exported", "permission", "intent_filters"],
-              "additionalProperties": false
-            }
-          },
-          "providers": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "name": { "type": "string" },
-                "authorities": { "type": "string" },
-                "exported": { "type": "boolean" },
-                "permission": { "type": "string" },
-                "readPermission": { "type": "string" },
-                "writePermission": { "type": "string" },
-                "grantUriPermissions": { "type": "boolean" }
+              "receivers": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": { "type": "string" },
+                    "exported": { "type": "boolean" },
+                    "permission": { "type": "string" },
+                    "intent_filters": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "actions": {
+                            "type": "array",
+                            "items": { "type": "string" }
+                          },
+                          "categories": {
+                            "type": "array",
+                            "items": { "type": "string" }
+                          },
+                          "data": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "scheme": { "type": "string" },
+                                "host": { "type": "string" },
+                                "path": { "type": "string" },
+                                "pathPattern": { "type": "string" },
+                                "mimeType": { "type": "string" }
+                              },
+                              "required": ["scheme", "host", "path", "pathPattern", "mimeType"],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": ["actions", "categories", "data"],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": ["name", "exported", "permission", "intent_filters"],
+                  "additionalProperties": false
+                }
               },
-              "required": ["name", "authorities", "exported", "permission", "readPermission", "writePermission", "grantUriPermissions"],
-              "additionalProperties": false
-            }
+              "providers": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": { "type": "string" },
+                    "authorities": { "type": "string" },
+                    "exported": { "type": "boolean" },
+                    "permission": { "type": "string" },
+                    "readPermission": { "type": "string" },
+                    "writePermission": { "type": "string" },
+                    "grantUriPermissions": { "type": "boolean" }
+                  },
+                  "required": ["name", "authorities", "exported", "permission", "readPermission", "writePermission", "grantUriPermissions"],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": ["activities", "services", "receivers", "providers"],
+            "additionalProperties": false
           }
         },
-        "required": ["activities", "services", "receivers", "providers"],
+        "required": ["package", "uses_sdk", "uses_permissions", "components"],
         "additionalProperties": false
       },
       "strict": true
     }
   }
   FORMAT
+  
   # Map of LLM providers and their models to their max token limits
   # This helps determine how many files can be bundled together
   MODEL_TOKEN_LIMITS = {
