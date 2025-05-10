@@ -65,6 +65,7 @@ struct Endpoint
   def ==(other : Endpoint) : Bool
     return false unless @url == other.url
     return false unless @method == other.method
+    return false unless @protocol == other.protocol
 
     self_params = params_to_hash
     other_params = other.params_to_hash
