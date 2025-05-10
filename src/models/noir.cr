@@ -257,6 +257,16 @@ class NoirRunner
 
       @logger.debug_sub " + After size: #{tmp.size}"
       @endpoints = tmp
+    else
+      @endpoints.each do |endpoint|
+        tmp_endpoint = endpoint
+        if endpoint.protocol == "intent"
+          tmp_endpoint.url = "intent:/" + endpoint.url
+        end
+        tmp << tmp_endpoint
+      end
+
+      @endpoints = tmp
     end
   end
 

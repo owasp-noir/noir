@@ -58,6 +58,7 @@ module Analyzer::AI
           # Generate all combinations
           actions.each do |action|
             categories.each do |category|
+              next unless category.ends_with?(".BROWSABLE")
               data_infos.each do |data_info|
                 host_path = ""
 
@@ -86,7 +87,7 @@ module Analyzer::AI
                 end
                 
                 # Create intent URL in the format: intent://HOST/PATH#Intent;...;end;
-                intent_url = "intent://" + host_path + "#Intent;"
+                intent_url = host_path + "#Intent;"
 
                 # Add scheme if available
                 if data_info["scheme"]? != nil
@@ -109,23 +110,27 @@ module Analyzer::AI
                 
                 # Add component
                 if component_name.starts_with?(package_name)
-                  intent_url += "component=#{component_name};"
-                else
-                  unless component_name.starts_with?(".")
-                    component_name = ".#{component_name}"
-                  end
-                  intent_url += "component=#{package_name}#{component_name};"
+                  component_name = component_name.gsub(package_name, "")
                 end
-                
+                unless component_name.starts_with?(".")
+                  component_name = ".#{component_name}"
+                end
+                intent_url += "component=#{package_name}/#{component_name};"
+
                 # Close the intent URL
                 intent_url += "end"
-                
-                intent_urls << intent_url
-                logger.debug_sub "Generated intent URL: #{intent_url}"
+
+                # Create endpoint
+                endpoint =Endpoint.new(
+                  url: intent_url,
+                  method: "SCHEME",
+                  params: [] of Param,
+                  details: Details.new(PathInfo.new(manifest_path)))
+                endpoint.protocol = "intent"
+                @result << endpoint
               end
             end
           end
-          #puts intent_urls
         end
       end
     
