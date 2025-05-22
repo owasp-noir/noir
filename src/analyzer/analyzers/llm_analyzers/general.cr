@@ -15,7 +15,11 @@ module Analyzer::AI
       @llm_url = options["ai_provider"].as_s
       @model = options["ai_model"].as_s
       @api_key = options["ai_key"].as_s
-      @max_tokens = LLM.get_max_tokens(@llm_url, @model)
+      if options.has_key?("ai_max_token") && !options["ai_max_token"].nil?
+        @max_tokens = options["ai_max_token"].as_i32
+      else
+        @max_tokens = LLM.get_max_tokens(@llm_url, @model)
+      end
     end
 
     def analyze
