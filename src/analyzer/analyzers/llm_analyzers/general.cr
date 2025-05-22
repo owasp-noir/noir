@@ -16,7 +16,7 @@ module Analyzer::AI
       @model = options["ai_model"].as_s
       @api_key = options["ai_key"].as_s
       if options.has_key?("ai_max_token") && !options["ai_max_token"].nil?
-        @max_tokens = options["ai_max_token"].as_i32
+        @max_tokens = options["ai_max_token"].as_i
       else
         @max_tokens = LLM.get_max_tokens(@llm_url, @model)
       end
@@ -190,6 +190,10 @@ module Analyzer::AI
        ".eot", ".ttf", ".woff", ".woff2", ".otf", ".mp3", ".mp4", ".avi", ".mov", ".webm", ".zip", ".tar",
        ".gz", ".7z", ".rar", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv",
        ".log", ".sql", ".bak", ".swp", ".jar"]
+    end
+
+    def max_tokens
+      @max_tokens
     end
   end
 end

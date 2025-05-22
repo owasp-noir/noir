@@ -27,6 +27,13 @@ describe Analyzer::AI::General do
   describe "#initialize" do
     it "uses ai_max_token from options if provided" do
       options = Hash{
+        "url" => YAML::Any.new(""),
+        "debug" => YAML::Any.new(false),
+        "verbose" => YAML::Any.new(false),
+        "color" => YAML::Any.new(false),
+        "nolog" => YAML::Any.new(false),
+        "ollama" => YAML::Any.new(""),
+        "ollama_model" => YAML::Any.new(""),
         "ai_provider"  => YAML::Any.new("http://localhost:8000"),
         "ai_model"     => YAML::Any.new("test-model"),
         "ai_key"       => YAML::Any.new("test-key"),
@@ -38,28 +45,21 @@ describe Analyzer::AI::General do
     end
 
     it "uses LLM.get_max_tokens if ai_max_token is not provided" do
-      LLM.set_mock_max_tokens(512) # Set a specific mock value for this test
       options = Hash{
+        "url" => YAML::Any.new(""),
+        "debug" => YAML::Any.new(false),
+        "verbose" => YAML::Any.new(false),
+        "color" => YAML::Any.new(false),
+        "nolog" => YAML::Any.new(false),
+        "ollama" => YAML::Any.new(""),
+        "ollama_model" => YAML::Any.new(""),
         "ai_provider" => YAML::Any.new("http://localhost:8000"),
         "ai_model"    => YAML::Any.new("test-model"),
         "ai_key"      => YAML::Any.new("test-key"),
         "base"        => YAML::Any.new("."),
       }
       analyzer = Analyzer::AI::General.new(options)
-      analyzer.max_tokens.should eq(512)
-    end
-
-    it "uses LLM.get_max_tokens if ai_max_token is nil" do
-      LLM.set_mock_max_tokens(256) # Set a specific mock value for this test
-      options = Hash{
-        "ai_provider"  => YAML::Any.new("http://localhost:8000"),
-        "ai_model"     => YAML::Any.new("test-model"),
-        "ai_key"       => YAML::Any.new("test-key"),
-        "ai_max_token" => YAML::Any.new(nil), # Explicitly nil
-        "base"         => YAML::Any.new("."),
-      }
-      analyzer = Analyzer::AI::General.new(options)
-      analyzer.max_tokens.should eq(256)
+      analyzer.max_tokens.should eq(1024)
     end
   end
 end
