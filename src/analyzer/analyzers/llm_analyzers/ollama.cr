@@ -13,7 +13,11 @@ module Analyzer::AI
       super(options)
       @llm_url = options["ollama"].as_s
       @model = options["ollama_model"].as_s
-      @max_tokens = LLM.get_max_tokens("ollama", @model)
+      if options.has_key?("ai_max_token") && !options["ai_max_token"].nil?
+        @max_tokens = options["ai_max_token"].as_i32
+      else
+        @max_tokens = LLM.get_max_tokens("ollama", @model)
+      end
     end
 
     def analyze
