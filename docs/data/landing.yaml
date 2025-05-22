@@ -10,7 +10,7 @@ hero:
       mobile: "b.jpg"
 
   badge:
-    text: v0.21.0
+    text: v0.21.1
     color: primary
     pill: false
     soft: true
@@ -19,10 +19,10 @@ hero:
   subtitle: Attack surface detector that identifies endpoints by static analysis.
 
   titleLogo:
-      path: "images"
-      filename: "owasp-noir-black.png"  
-      alt: "OWASP Noir Logo"
-      height: 80px
+    path: "images"
+    filename: "owasp-noir-black.png"
+    alt: "OWASP Noir Logo"
+    height: 80px
 
   image:
     path: "images"
@@ -93,8 +93,8 @@ imageCompare:
         addCircleBlur: false
         showLabels: true
         labelOptions:
-          before: 'CLI Usage'
-          after: 'JSON Output'
+          before: "CLI Usage"
+          after: "JSON Output"
           onHover: false
       imagePath: "images/screenshots"
       imageBefore: "plain.png" # Placeholder for CLI screenshot (e.g., from /docs/images/get_started/basic.png)
