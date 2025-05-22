@@ -22,7 +22,7 @@ aliases:
 3. Most releases are automated, handle only the items that require manual release.
 
 ## Manual releases
-### Homebrew 
+### Homebrew
 #### Step-by-Step Guide
 1. Fork the Homebrew core repository: [Homebrew/homebrew-core](https://github.com/Homebrew/homebrew-core)
 > For personal use: Sync your fork (e.g., [hahwul/homebrew-core](https://github.com/hahwul/homebrew-core))
@@ -30,7 +30,7 @@ aliases:
 2. Generate a PR for the Homebrew core:
 ```bash
 brew bump-formula-pr --strict --version <VERSION> noir
-# Example: brew bump-formula-pr --strict --version 0.21.0 noir
+# Example: brew bump-formula-pr --strict --version 0.21.1 noir
 ```
 
 #### Troubleshooting
