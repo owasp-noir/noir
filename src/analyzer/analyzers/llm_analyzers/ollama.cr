@@ -187,5 +187,9 @@ module Analyzer::AI
        ".gz", ".7z", ".rar", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv",
        ".log", ".sql", ".bak", ".swp", ".jar"]
     end
+
+    def max_tokens
+      @max_tokens
+    end
   end
 end

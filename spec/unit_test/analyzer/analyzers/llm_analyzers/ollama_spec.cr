@@ -8,25 +8,23 @@ require "../../../../../src/analyzer/analyzers/llm_analyzers/ollama"
 # If LLM mock isn't automatically shared, redefine or require from a shared spec helper.
 # To be safe, let's ensure the mock is available.
 # This module might already be defined if general_spec.cr ran first.
-unless defined?(LLM)
-  module LLM
-    def self.get_max_tokens(provider_url : String, model_name : String)
-      @@mock_max_tokens_value || 1024
-    end
+module LLM
+  def self.get_max_tokens(provider_url : String, model_name : String)
+    @@mock_max_tokens_value || 1024
+  end
 
-    def self.set_mock_max_tokens(value : Int32)
-      @@mock_max_tokens_value = value
-    end
+  def self.set_mock_max_tokens(value : Int32)
+    @@mock_max_tokens_value = value
+  end
 
-    def self.reset_mock_max_tokens
-      @@mock_max_tokens_value = nil
-    end
+  def self.reset_mock_max_tokens
+    @@mock_max_tokens_value = nil
   end
 end
 
 describe Analyzer::AI::Ollama do
   before_each do
-    LLM.reset_mock_max_tokens if defined?(LLM.reset_mock_max_tokens)
+    LLM.reset_mock_max_tokens
   end
 
   describe "#initialize" do
@@ -42,7 +40,7 @@ describe Analyzer::AI::Ollama do
     end
 
     it "uses LLM.get_max_tokens if ai_max_token is not provided" do
-      LLM.set_mock_max_tokens(768) if defined?(LLM.set_mock_max_tokens)
+      LLM.set_mock_max_tokens(768)
       options = Hash{
         "ollama"       => YAML::Any.new("http://localhost:11434"),
         "ollama_model" => YAML::Any.new("test-ollama-model"),
@@ -53,7 +51,7 @@ describe Analyzer::AI::Ollama do
     end
 
     it "uses LLM.get_max_tokens if ai_max_token is nil" do
-      LLM.set_mock_max_tokens(384) if defined?(LLM.set_mock_max_tokens)
+      LLM.set_mock_max_tokens(384)
       options = Hash{
         "ollama"       => YAML::Any.new("http://localhost:11434"),
         "ollama_model" => YAML::Any.new("test-ollama-model"),
