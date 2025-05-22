@@ -40,6 +40,7 @@ _arguments \\
   '--ai-provider[Specify the AI (LLM) provider or custom API URL]:provider:' \\
   '--ai-model[Set the model name to use for AI analysis]:model:' \\
   '--ai-key[Provide the API key for the AI provider]:key:' \\
+  '--ai-max-token[Set the maximum number of tokens for AI requests]:value:' \\
   '--ollama[Specify the Ollama server URL (Deprecated)]:URL:_urls' \\
   '--ollama-model[Specify the Ollama model name (Deprecated)]:model:' \\
   '-d[Show debug messages]' \\
@@ -96,6 +97,7 @@ _noir_completions() {
         --ai-provider
         --ai-model
         --ai-key
+        --ai-max-token
         --ollama
         --ollama-model
         -d --debug
@@ -119,7 +121,7 @@ _noir_completions() {
             COMPREPLY=( $(compgen -W "zsh bash fish" -- "${cur}") )
             return 0
             ;;
-        --ai-provider|--ai-model|--ai-key|--ollama|--ollama-model)
+        --ai-provider|--ai-model|--ai-key|--ai-max-token|--ollama|--ollama-model)
             COMPREPLY=( $(compgen -f -- "${cur}") )
             return 0
             ;;
@@ -182,6 +184,7 @@ complete -c noir -n '__fish_noir_needs_command' -a '--generate-completion' -d 'G
 complete -c noir -n '__fish_noir_needs_command' -a '--ai-provider' -d 'Specify the AI (LLM) provider or custom API URL'
 complete -c noir -n '__fish_noir_needs_command' -a '--ai-model' -d 'Set the model name to use for AI analysis'
 complete -c noir -n '__fish_noir_needs_command' -a '--ai-key' -d 'Provide the API key for the AI provider'
+complete -c noir -n '__fish_noir_needs_command' -a '--ai-max-token' -d 'Set the maximum number of tokens for AI requests'
 complete -c noir -n '__fish_noir_needs_command' -a '--ollama' -d 'Specify the Ollama server URL (Deprecated)'
 complete -c noir -n '__fish_noir_needs_command' -a '--ollama-model' -d 'Specify the Ollama model name (Deprecated)'
 complete -c noir -n '__fish_noir_needs_command' -a '-d' -d 'Show debug messages'
