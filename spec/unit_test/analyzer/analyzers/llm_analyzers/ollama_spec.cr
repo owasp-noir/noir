@@ -30,6 +30,13 @@ describe Analyzer::AI::Ollama do
   describe "#initialize" do
     it "uses ai_max_token from options if provided" do
       options = Hash{
+        "url" => YAML::Any.new(""),
+        "debug" => YAML::Any.new(false),
+        "verbose" => YAML::Any.new(false),
+        "color" => YAML::Any.new(false),
+        "nolog" => YAML::Any.new(false),
+        "ollama" => YAML::Any.new(""),
+        "ollama_model" => YAML::Any.new(""),
         "ai_provider"       => YAML::Any.new("http://localhost:11434"),
         "ai_model" => YAML::Any.new("test-ollama-model"),
         "ai_max_token" => YAML::Any.new(4096), # Different value for testing
@@ -42,6 +49,13 @@ describe Analyzer::AI::Ollama do
     it "uses LLM.get_max_tokens if ai_max_token is not provided" do
       LLM.set_mock_max_tokens(768)
       options = Hash{
+        "url" => YAML::Any.new(""),
+        "debug" => YAML::Any.new(false),
+        "verbose" => YAML::Any.new(false),
+        "color" => YAML::Any.new(false),
+        "nolog" => YAML::Any.new(false),
+        "ollama" => YAML::Any.new(""),
+        "ollama_model" => YAML::Any.new(""),
         "ai_provider"       => YAML::Any.new("http://localhost:11434"),
         "ai_model" => YAML::Any.new("test-ollama-model"),
         "base"         => YAML::Any.new("."),
@@ -53,6 +67,13 @@ describe Analyzer::AI::Ollama do
     it "uses LLM.get_max_tokens if ai_max_token is nil" do
       LLM.set_mock_max_tokens(384)
       options = Hash{
+        "url" => YAML::Any.new(""),
+        "debug" => YAML::Any.new(false),
+        "verbose" => YAML::Any.new(false),
+        "color" => YAML::Any.new(false),
+        "nolog" => YAML::Any.new(false),
+        "ollama" => YAML::Any.new(""),
+        "ollama_model" => YAML::Any.new(""),
         "ai_provider"       => YAML::Any.new("http://localhost:11434"),
         "ai_model" => YAML::Any.new("test-ollama-model"),
         "ai_max_token" => YAML::Any.new(nil), # Explicitly nil
