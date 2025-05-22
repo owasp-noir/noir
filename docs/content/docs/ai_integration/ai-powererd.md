@@ -15,6 +15,7 @@ Noir can leverage LLM services or local LLMs to perform additional analysis.
 * `--ai-provider PREFIX|URL`: Specify the AI (LLM) provider or custom API URL. Required for AI features.
 * `--ai-model MODEL`: Set the model name to use for AI analysis. Required for AI features.
 * `--ai-key KEY`: Provide the API key for authenticating with the AI provider's API. Alternatively, use the `NOIR_AI_KEY` environment variable.
+* `--ai-max-token INT`: Set the maximum number of tokens for AI requests. This affects the length of generated text and context window for analysis.
 
 #### Prefixes and Default Hosts
 
