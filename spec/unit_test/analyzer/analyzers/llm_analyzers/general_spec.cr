@@ -45,7 +45,6 @@ describe Analyzer::AI::General do
     end
 
     it "uses LLM.get_max_tokens if ai_max_token is not provided" do
-      LLM.set_mock_max_tokens(512) # Set a specific mock value for this test
       options = Hash{
         "url" => YAML::Any.new(""),
         "debug" => YAML::Any.new(false),
@@ -64,7 +63,6 @@ describe Analyzer::AI::General do
     end
 
     it "uses LLM.get_max_tokens if ai_max_token is nil" do
-      LLM.set_mock_max_tokens(256) # Set a specific mock value for this test
       options = Hash{
         "url" => YAML::Any.new(""),
         "debug" => YAML::Any.new(false),

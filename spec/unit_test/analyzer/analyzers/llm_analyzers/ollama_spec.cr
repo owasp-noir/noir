@@ -47,7 +47,6 @@ describe Analyzer::AI::Ollama do
     end
 
     it "uses LLM.get_max_tokens if ai_max_token is not provided" do
-      LLM.set_mock_max_tokens(768)
       options = Hash{
         "url" => YAML::Any.new(""),
         "debug" => YAML::Any.new(false),
@@ -65,7 +64,6 @@ describe Analyzer::AI::Ollama do
     end
 
     it "uses LLM.get_max_tokens if ai_max_token is nil" do
-      LLM.set_mock_max_tokens(384)
       options = Hash{
         "url" => YAML::Any.new(""),
         "debug" => YAML::Any.new(false),
