@@ -1,0 +1,39 @@
+[[main]]
+  name = "개요"
+  pageRef = "/docs/overview"
+  weight = 10
+
+[[main]]
+  name = "설치"
+  pageRef = "/docs/installation"
+  weight = 20
+
+[[main]]
+  name = "사용법"
+  pageRef = "/docs/usage"
+  weight = 30
+
+[[main]]
+  name = "특징"
+  pageRef = "/docs/features"
+  weight = 40
+
+[[main]]
+  name = "AI 통합"
+  pageRef = "/docs/ai_integration"
+  weight = 50
+
+[[main]]
+  name = "개발자"
+  pageRef = "/docs/developers"
+  weight = 60
+
+[[main]]
+  name = "커뮤니티"
+  pageRef = "/docs/community"
+  weight = 70
+
+[[main]]
+  name = "기여" # Assuming contribitions.md is meant to be contributions
+  pageRef = "/docs/contribitions" # Path should match the actual file
+  weight = 80

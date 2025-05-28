@@ -1,0 +1,101 @@
+hero:
+  enable: true
+  weight: 10
+  template: hero
+
+  backgroundImage:
+    path: "images"
+    filename:
+      desktop: "b.jpg"
+      mobile: "b.jpg"
+
+  badge:
+    text: v0.21.1
+    color: primary
+    pill: false
+    soft: true
+
+  title: ""
+  subtitle: "정적 분석을 통해 엔드포인트를 식별하는 공격 표면 탐지기입니다."
+
+  titleLogo:
+    path: "images"
+    filename: "owasp-noir-black.png"
+    alt: "OWASP 느와르 로고"
+    height: 80px
+
+  image:
+    path: "images"
+    filename: "capture.png"
+    alt: "OWASP 느와르 로고"
+    boxShadow: true
+    rounded: true
+
+  ctaButton:
+    icon: rocket_launch
+    btnText: "시작하기"
+    url: "/noir/docs/installation/"
+  cta2Button:
+    icon: code
+    btnText: "GitHub에서 보기"
+    url: "https://github.com/owasp-noir/noir"
+
+  info: "**오픈 소스** MIT 라이선스입니다."
+
+# Feature Grid
+featureGrid:
+  enable: true
+  weight: 20
+  template: feature grid
+
+  title: "OWASP 느와르를 선택해야 하는 이유"
+  subtitle: "OWASP 느와르는 정적 분석을 통해 엔드포인트와 취약점을 발견하여 보안 팀에 고급 공격 표면 탐지 기능을 제공합니다. 핵심 기능은 다음과 같습니다."
+
+  items:
+    - title: "엔드포인트 추출"
+      icon: api
+      description: "포괄적인 보안 분석을 위해 소스 코드에서 직접 API 및 웹 엔드포인트와 매개변수를 추출합니다."
+
+    - title: "다국어 지원"
+      icon: code
+      description: "다양한 프로그래밍 언어와 프레임워크를 지원하여 다양한 프로젝트에 대한 광범위한 호환성을 보장합니다."
+
+    - title: "보안 문제 탐지"
+      icon: security
+      description: "규칙 기반 수동 스캔을 수행하여 잠재적인 보안 취약점을 상세한 통찰력과 함께 식별합니다."
+
+    - title: "DevOps 통합"
+      icon: code
+      description: "curl, ZAP, Caido와 같은 DevOps 도구와 원활하게 통합하여 보안 파이프라인을 강화합니다."
+
+    - title: "유연한 출력 형식"
+      icon: file_download
+      description: "JSON, YAML, OAS 형식으로 명확하고 실행 가능한 결과를 생성하여 쉽게 사용할 수 있도록 합니다."
+
+    - title: "AI 강화 검색"
+      icon: auto_awesome
+      description: "AI를 활용하여 익숙하지 않은 프레임워크에서 숨겨진 API와 엔드포인트를 찾아냅니다."
+
+# Image Compare
+imageCompare:
+  enable: true
+  weight: 30
+  template: image compare
+
+  title: "OWASP 느와르 분석 시각화"
+  subtitle: "OWASP 느와르는 애플리케이션의 공격 표면에 대한 상세한 통찰력을 제공합니다. CLI 사용과 JSON 출력을 비교하여 느와르가 실행 가능한 결과를 제공하는 방법을 확인하십시오."
+
+  items:
+    - title: "CLI 대 JSON 출력"
+      config:
+        startingPoint: 50
+        addCircle: true
+        addCircleBlur: false
+        showLabels: true
+        labelOptions:
+          before: "CLI 사용"
+          after: "JSON 출력"
+          onHover: false
+      imagePath: "images/screenshots"
+      imageBefore: "plain.png" # Placeholder for CLI screenshot (e.g., from /docs/images/get_started/basic.png)
+      imageAfter: "json.png" # Placeholder for JSON output screenshot
