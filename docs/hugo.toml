@@ -1,6 +1,12 @@
 baseURL = 'https://owasp-noir.github.io/noir/'
+defaultContentLanguage = "en"
 languageCode = 'en-us'
 title = 'OWASP Noir'
+
+[languages.ko]
+  languageName = "한국어"
+  contentDir = "content/ko"
+  weight = 2
 
 [params.flexsearch]
   enabled = true
