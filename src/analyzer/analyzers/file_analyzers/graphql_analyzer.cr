@@ -63,6 +63,7 @@ FileAnalyzer.add_hook(->(path : String, url : String) : Array(Endpoint) {
   begin
     file_content = File.read(path, encoding: "utf-8", invalid: :skip)
   rescue ex
+    STDERR.puts "GraphQL Analyzer: Error reading file #{path}: #{ex.message} (#{ex.class})"
     return [] of Endpoint # Return empty if read fails
   end
 
