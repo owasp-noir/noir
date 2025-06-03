@@ -70,28 +70,31 @@ describe "GraphQL Analyzer Logic (InternalGraphqlParser.parse_content)" do
       end
 
       it "sets the correct URL and method" do
-        endpoint.not_nil!.url.should eq("/graphql")
-        endpoint.not_nil!.method.should eq("POST")
+        endpoint.should be_a(Endpoint)
+        endpoint.try &.url.should eq("/graphql")
+        endpoint.try &.method.should eq("POST")
       end
 
       it "adds correct parameter" do
-        param = endpoint.not_nil!.params.first?
+        endpoint.should be_a(Endpoint)
+        param = endpoint.try &.params.first?
         param.should_not be_nil
-        param.not_nil!.param_type.should eq("json")
-        param.not_nil!.name.should eq("graphql_operation_query_GetHero") # Adjusted to match current naming
+        param.try &.param_type.should eq("json")
+        param.try &.name.should eq("graphql_operation_query_GetHero") # Adjusted to match current naming
 
         # Parse the JSON string value for checking
-        json_value = JSON.parse(param.not_nil!.value)
-        json_value["query"]?.should eq("GetHero")
+        json_value = param.try { |p| JSON.parse(p.value) }
+        json_value.try &.["query"]?.should eq("GetHero")
       end
 
       it "sets correct path info" do
-        details = endpoint.not_nil!.details
-        details.code_paths.size.should eq(1)
-        path_info = details.code_paths.first?
+        endpoint.should be_a(Endpoint)
+        details = endpoint.try &.details
+        details.try &.code_paths.size.should eq(1)
+        path_info = details.try &.code_paths.first?
         path_info.should_not be_nil
-        path_info.not_nil!.path.should eq(path)
-        path_info.not_nil!.line.should eq(2) # Line numbers are 1-based, query GetHero is on line 2
+        path_info.try &.path.should eq(path)
+        path_info.try &.line.should eq(2) # Line numbers are 1-based, query GetHero is on line 2
       end
     end
 
@@ -103,25 +106,29 @@ describe "GraphQL Analyzer Logic (InternalGraphqlParser.parse_content)" do
       end
 
       it "sets the correct URL and method" do
-        endpoint.not_nil!.url.should eq("/graphql")
-        endpoint.not_nil!.method.should eq("POST")
+        endpoint.should be_a(Endpoint)
+        endpoint.try &.url.should eq("/graphql")
+        endpoint.try &.method.should eq("POST")
       end
 
       it "adds correct parameter" do
-        param = endpoint.not_nil!.params.first?
+        endpoint.should be_a(Endpoint)
+        param = endpoint.try &.params.first?
         param.should_not be_nil
-        param.not_nil!.param_type.should eq("json")
-        param.not_nil!.name.should eq("graphql_operation_mutation_CreateReviewForEpisode")
+        param.try &.param_type.should eq("json")
+        param.try &.name.should eq("graphql_operation_mutation_CreateReviewForEpisode")
 
-        json_value = JSON.parse(param.not_nil!.value)
-        json_value["mutation"]?.should eq("CreateReviewForEpisode")
+        json_value = param.try { |p| JSON.parse(p.value) }
+        json_value.try &.["mutation"]?.should eq("CreateReviewForEpisode")
       end
 
       it "sets correct path info" do
-        details = endpoint.not_nil!.details
-        path_info = details.code_paths.first?
-        path_info.not_nil!.path.should eq(path)
-        path_info.not_nil!.line.should eq(9) # mutation CreateReviewForEpisode is on line 9
+        endpoint.should be_a(Endpoint)
+        details = endpoint.try &.details
+        path_info = details.try &.code_paths.first?
+        path_info.should_not be_nil
+        path_info.try &.path.should eq(path)
+        path_info.try &.line.should eq(9) # mutation CreateReviewForEpisode is on line 9
       end
     end
 
@@ -133,19 +140,23 @@ describe "GraphQL Analyzer Logic (InternalGraphqlParser.parse_content)" do
       end
 
       it "sets correct parameter" do
-        param = endpoint.not_nil!.params.first?
-        param.not_nil!.param_type.should eq("json")
-        param.not_nil!.name.should eq("graphql_operation_subscription_OnNewReview")
+        endpoint.should be_a(Endpoint)
+        param = endpoint.try &.params.first?
+        param.should_not be_nil
+        param.try &.param_type.should eq("json")
+        param.try &.name.should eq("graphql_operation_subscription_OnNewReview")
 
-        json_value = JSON.parse(param.not_nil!.value)
-        json_value["subscription"]?.should eq("OnNewReview")
+        json_value = param.try { |p| JSON.parse(p.value) }
+        json_value.try &.["subscription"]?.should eq("OnNewReview")
       end
 
       it "sets correct path info" do
-        details = endpoint.not_nil!.details
-        path_info = details.code_paths.first?
-        path_info.not_nil!.path.should eq(path)
-        path_info.not_nil!.line.should eq(16) # subscription OnNewReview is on line 16
+        endpoint.should be_a(Endpoint)
+        details = endpoint.try &.details
+        path_info = details.try &.code_paths.first?
+        path_info.should_not be_nil
+        path_info.try &.path.should eq(path)
+        path_info.try &.line.should eq(16) # subscription OnNewReview is on line 16
       end
     end
 
@@ -157,19 +168,23 @@ describe "GraphQL Analyzer Logic (InternalGraphqlParser.parse_content)" do
       end
 
       it "sets correct parameter" do
-        param = endpoint.not_nil!.params.first?
-        param.not_nil!.param_type.should eq("json")
-        param.not_nil!.name.should eq("graphql_operation_query_AnotherQuery")
+        endpoint.should be_a(Endpoint)
+        param = endpoint.try &.params.first?
+        param.should_not be_nil
+        param.try &.param_type.should eq("json")
+        param.try &.name.should eq("graphql_operation_query_AnotherQuery")
 
-        json_value = JSON.parse(param.not_nil!.value)
-        json_value["query"]?.should eq("AnotherQuery")
+        json_value = param.try { |p| JSON.parse(p.value) }
+        json_value.try &.["query"]?.should eq("AnotherQuery")
       end
 
       it "sets correct path info" do
-        details = endpoint.not_nil!.details
-        path_info = details.code_paths.first?
-        path_info.not_nil!.path.should eq(path)
-        path_info.not_nil!.line.should eq(24) # Corrected: query AnotherQuery is on line 24
+        endpoint.should be_a(Endpoint)
+        details = endpoint.try &.details
+        path_info = details.try &.code_paths.first?
+        path_info.should_not be_nil
+        path_info.try &.path.should eq(path)
+        path_info.try &.line.should eq(24) # Corrected: query AnotherQuery is on line 24
       end
     end
   end
