@@ -119,7 +119,7 @@ class FunctionalTester
     end
   end
 
-  def perform_tests # Renamed from test_all
+  def perform_tests
     # Describe block removed from here
     locator = CodeLocator.instance
     locator.clear_all

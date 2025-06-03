@@ -30,4 +30,4 @@ extected_endpoints = [
 FunctionalTester.new("fixtures/ruby/rails/", {
   :techs     => 1,
   :endpoints => extected_endpoints.size,
-}, extected_endpoints).test_all
+}, extected_endpoints).perform_tests

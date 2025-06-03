@@ -26,4 +26,4 @@ extected_endpoints = [
 FunctionalTester.new("fixtures/etc/multi_techs/", {
   :techs     => 3,
   :endpoints => 8,
-}, extected_endpoints).test_all
+}, extected_endpoints).perform_tests

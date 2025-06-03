@@ -70,7 +70,7 @@ tester = FunctionalTester.new("fixtures/etc/file_based/", {
 
 tester.app.options["url"] = YAML::Any.new("https://www.hahwul.com")
 
-# Wrap the call to tester.perform_tests (formerly tester.test_all) in a describe block
+# Wrap the call to tester.perform_tests (formerly tester.perform_tests) in a describe block
 describe "Functional test for file_based fixtures (Original Tests)" do
   tester.perform_tests
 end

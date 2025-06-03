@@ -20,22 +20,22 @@ extected_endpoints = [
 FunctionalTester.new("fixtures/specification/oas3/common/", {
   :techs     => 1,
   :endpoints => extected_endpoints.size,
-}, extected_endpoints).test_all
+}, extected_endpoints).perform_tests
 
 FunctionalTester.new("fixtures/specification/oas3/no_servers/", {
   :techs     => 1,
   :endpoints => 1,
-}, nil).test_all
+}, nil).perform_tests
 
 FunctionalTester.new("fixtures/specification/oas3/multiple_docs/", {
   :techs     => 1,
   :endpoints => 2,
-}, nil).test_all
+}, nil).perform_tests
 
 FunctionalTester.new("fixtures/specification/oas3/nil_cast/", {
   :techs     => 1,
   :endpoints => 0,
-}, nil).test_all
+}, nil).perform_tests
 
 FunctionalTester.new("fixtures/specification/oas3/param_in_path/", {
   :techs     => 1,
@@ -61,4 +61,4 @@ FunctionalTester.new("fixtures/specification/oas3/param_in_path/", {
     Param.new("sort", "", "query"),
     Param.new("cookie", "", "cookie"),
   ]),
-]).test_all
+]).perform_tests

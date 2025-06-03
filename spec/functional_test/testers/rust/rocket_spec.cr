@@ -8,4 +8,4 @@ extected_endpoints = [
 FunctionalTester.new("fixtures/rust/rocket/", {
   :techs     => 1,
   :endpoints => extected_endpoints.size,
-}, extected_endpoints).test_all
+}, extected_endpoints).perform_tests
