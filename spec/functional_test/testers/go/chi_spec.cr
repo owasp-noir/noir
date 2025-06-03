@@ -16,4 +16,4 @@ expected_endpoints = [
 FunctionalTester.new("fixtures/go/chi/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
-}, expected_endpoints).test_all
+}, expected_endpoints).perform_tests

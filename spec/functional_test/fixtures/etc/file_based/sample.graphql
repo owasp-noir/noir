@@ -1,0 +1,24 @@
+# This is a sample GraphQL file for functional testing.
+
+query GetUserData {
+  user(id: "123") {
+    id
+    name
+    email
+  }
+}
+
+mutation UpdateUserProfile {
+  updateUser(name: "New Name") {
+    id
+    name
+  }
+}
+
+# Another query to ensure multiple queries are handled
+query ListItems {
+  items {
+    name
+    price
+  }
+}

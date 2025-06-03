@@ -13,4 +13,4 @@ extected_endpoints = [
 FunctionalTester.new("fixtures/ruby/sinatra/", {
   :techs     => 1,
   :endpoints => 2,
-}, extected_endpoints).test_all
+}, extected_endpoints).perform_tests

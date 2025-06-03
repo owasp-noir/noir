@@ -15,4 +15,4 @@ extected_endpoints = [
 FunctionalTester.new("fixtures/specification/raml/", {
   :techs     => 1,
   :endpoints => extected_endpoints.size,
-}, extected_endpoints).test_all
+}, extected_endpoints).perform_tests

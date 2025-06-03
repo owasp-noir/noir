@@ -1,5 +1,7 @@
+require "spec" # Make spec DSL available
 require "../../src/models/noir.cr"
 require "../../src/models/endpoint.cr"
+require "../../src/config_initializer.cr" # Added to define ConfigInitializer
 
 module Noir
   VERSION = "SPEC"
@@ -117,13 +119,12 @@ class FunctionalTester
     end
   end
 
-  def test_all
-    describe "Functional test to #{@path}" do
-      locator = CodeLocator.instance
-      locator.clear_all
-      test_detect
-      test_analyze
-    end
+  def perform_tests
+    # Describe block removed from here
+    locator = CodeLocator.instance
+    locator.clear_all
+    test_detect
+    test_analyze
   end
 
   def app

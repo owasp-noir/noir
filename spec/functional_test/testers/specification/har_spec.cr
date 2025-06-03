@@ -16,4 +16,4 @@ instance = FunctionalTester.new("fixtures/specification/har/", {
 }, extected_endpoints)
 
 instance.url = "https://www.hahwul.com"
-instance.test_all
+instance.perform_tests

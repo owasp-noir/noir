@@ -1,6 +1,7 @@
 require "./detectors/**"
 require "../models/detector"
 require "../models/passive_scan"
+require "../techs/techs.cr" # Added to define NoirTechs
 require "../passive_scan/detect.cr"
 require "yaml"
 require "wait_group"
