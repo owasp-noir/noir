@@ -98,6 +98,13 @@ noir -b . -u https://testapp.internal.domains -f json -T
 
 For more details, please visit our [documentation](https://owasp-noir.github.io/noir/) page.
 
+## Road Map
+We plan to expand the range of supported programming languages and frameworks, and to continuously increase accuracy. Furthermore, we will leverage AI and Large Language Models (LLMs) to significantly broaden our analysis capabilities.
+
+Initially conceived as a tool to assist with WhiteBox testing, our immediate goal remains to extract and provide endpoints from the source code within the DevSecOps Pipeline. This enables Dynamic Application Security Testing (DAST) tools to conduct more accurate and stable scans.
+
+Looking ahead, our ambition is for our tool to evolve into a crucial bridge, seamlessly connecting source code with DAST and other security testing tools, thereby facilitating a more integrated and effective security posture.
+
 ## Contributing
 
 Noir is open-source project and made it with ❤️ 
