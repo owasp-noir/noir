@@ -55,7 +55,7 @@ module InternalGraphqlParser
   end
 end
 
-FileAnalyzer.add_hook(->(path : String, url : String) : Array(Endpoint) {
+FileAnalyzer.add_hook(->(path : String, _url : String) : Array(Endpoint) {
   # Only process .graphql files
   return [] of Endpoint unless path.ends_with?(".graphql")
 

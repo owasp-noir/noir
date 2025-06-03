@@ -1,6 +1,6 @@
 require "../../spec_helper" # Common for Crystal spec setup
 require "../../../src/models/analyzer"
-require "../../../src/models/endpoint" # Includes Param, Details, PathInfo
+require "../../../src/models/endpoint"                                    # Includes Param, Details, PathInfo
 require "../../../src/analyzer/analyzers/file_analyzers/graphql_analyzer" # This will register the hook
 
 describe "GraphQL Analyzer Logic (InternalGraphqlParser.parse_content)" do
