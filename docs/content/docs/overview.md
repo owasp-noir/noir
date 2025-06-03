@@ -58,6 +58,13 @@ flowchart LR
     classDef highlight fill:#f9f,stroke:#333,stroke-width:4px;
 ```
 
+## Road Map
+We plan to expand the range of supported programming languages and frameworks, and to continuously increase accuracy. Furthermore, we will leverage AI and Large Language Models (LLMs) to significantly broaden our analysis capabilities.
+
+Initially conceived as a tool to assist with WhiteBox testing, our immediate goal remains to extract and provide endpoints from the source code within the DevSecOps Pipeline. This enables Dynamic Application Security Testing (DAST) tools to conduct more accurate and stable scans.
+
+Looking ahead, our ambition is for our tool to evolve into a crucial bridge, seamlessly connecting source code with DAST and other security testing tools, thereby facilitating a more integrated and effective security posture.
+
 ## About the project
 ### License
 OWASP Noir is distributed by an [MIT license](https://github.com/owasp-noir/noir/blob/main/LICENSE).
