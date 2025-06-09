@@ -48,7 +48,7 @@ ameba --fix
 or
 
 ```sh
-rake lint:all
+just fix
 ```
 
 ## How to Contribute
@@ -73,4 +73,3 @@ We welcome contributions from the community. To contribute, follow these steps:
 6. **Create a Pull Request**: Go to the original repository and click the "New Pull Request" button. Fill out the template and submit your pull request.
 
 For more detailed guidelines, please refer to our [CONTRIBUTING.md](https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md) file.
-
