@@ -23,7 +23,7 @@ graph TD
     fork1 --> main["main branch"]
     fork2 --> main
     fork3 --> main
-    
+
     main --> deployments["documentation deployments (https://owasp-noir.github.io)"]
 
     main -->|release| homebrew["homebrew"]
@@ -64,15 +64,15 @@ ameba --fix
 # https://github.com/crystal-ameba/ameba#installation
 ```
 
-or 
+or
 
 ```bash
-just lint-all
+just fix
 ```
 
 ## 🧭 Code Structure
 
-- spec: 
+- spec:
   - unit_test: Unit test codes (for `crystal spec` command).
   - functional_test: Functional test codes.
 - src: Contains the source code.
@@ -85,7 +85,7 @@ Feel free to reach out to us if you have any questions or need further assistanc
 
 ## Document Contributing
 
-Please note that [our web page](https://owasp-noir.github.io/noir/) operates based on the main branch. If you make any changes, kindly send a Pull Request (PR) to the main branch. 
+Please note that [our web page](https://owasp-noir.github.io/noir/) operates based on the main branch. If you make any changes, kindly send a Pull Request (PR) to the main branch.
 
 To ensure a smooth integration of your contributions, please follow these steps:
 
@@ -99,20 +99,16 @@ By doing so, you'll help us keep our project up-to-date and well-organized. Your
 
 To set up the documentation site locally, follow these steps:
 
-#### Install Dependencies
+#### Install Hugo
 
-We use [Just](https://github.com/casey/just) tasks to manage dependencies. Run the following command to install the necessary dependencies:
-
-```sh
-just docs-install
-```
+> https://gohugo.io/installation/
 
 #### Serve the Documentation Site
 
-After installing the dependencies, you can serve the documentation site locally using the following Just task:
+After installing the hugo, you can serve the documentation site locally using the following Just task:
 
 ```sh
 just docs-serve
 ```
 
-This will start a local server, and you can view the documentation by navigating to http://localhost:4000 in your web browser.
+This will start a local server, and you can view the documentation by navigating to http://localhost:1313 in your web browser.
