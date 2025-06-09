@@ -48,7 +48,7 @@ ameba --fix
 or
 
 ```sh
-just lint-all # MODIFIED
+just lint-all
 ```
 
 ## How to Contribute
