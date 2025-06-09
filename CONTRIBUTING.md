@@ -67,7 +67,7 @@ ameba --fix
 or 
 
 ```bash
-rake lint:all
+just lint-all # MODIFIED
 ```
 
 ## 🧭 Code Structure
@@ -104,7 +104,7 @@ To set up the documentation site locally, follow these steps:
 We use Rake tasks to manage dependencies. Run the following command to install the necessary dependencies:
 
 ```sh
-rake docs:install
+just docs-install # MODIFIED
 ```
 
 #### Serve the Documentation Site
@@ -112,7 +112,7 @@ rake docs:install
 After installing the dependencies, you can serve the documentation site locally using the following Rake task:
 
 ```sh
-rake docs:serve
+just docs-serve # MODIFIED
 ```
 
 This will start a local server, and you can view the documentation by navigating to http://localhost:4000 in your web browser.
