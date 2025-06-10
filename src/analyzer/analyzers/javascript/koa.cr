@@ -120,11 +120,6 @@ module Analyzer::Javascript
             end
           end
 
-          # Simple heuristic for body params (ctx.request.body.paramName)
-          # This is a very basic check and might need refinement.
-          # We need to find the handler block for this route to do it more accurately.
-          # For now, we'll skip complex body/query/header param extraction in regex fallback.
-
           unless result.any? { |e| e.url == full_path && e.method == http_method }
             result << endpoint
           end
