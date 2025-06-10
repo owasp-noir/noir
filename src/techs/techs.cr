@@ -283,6 +283,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :js_koa => {
+      :framework => "Koa",
+      :language  => "JavaScript",
+      :similar   => ["koa", "js-koa"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :kotlin_spring => {
       :framework => "Spring",
       :language  => "Kotlin",

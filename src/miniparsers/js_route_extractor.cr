@@ -15,7 +15,9 @@ module Noir
 
         endpoints = [] of Endpoint
         route_patterns.each do |pattern|
-          endpoint = Endpoint.new(pattern.path, pattern.method)
+          # Normalize HTTP method (e.g., DEL -> DELETE)
+          normalized_method = normalize_http_method(pattern.method)
+          endpoint = Endpoint.new(pattern.path, normalized_method)
 
           # Add path parameters detected in the URL
           pattern.params.each do |param|
@@ -35,13 +37,60 @@ module Noir
       end
     end
 
+    # Normalize HTTP method names to standard format
+    def self.normalize_http_method(method : String) : String
+      method = method.upcase
+
+      # Standardize HTTP methods
+      case method
+      when "DEL"
+        return "DELETE"
+      when "OPTIONS"
+        return "OPTIONS"
+      when "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"
+        return method
+      end
+
+      # Return the original (uppercased) method if no specific normalization needed
+      method
+    end
+
     def self.extract_params_from_context(content : String, pattern : JSRoutePattern, endpoint : Endpoint)
       # Extract additional parameters from the route handler content
       # Look for the route declaration and then analyze the handler function
-      route_declaration = "#{pattern.method.downcase}('#{pattern.path}'"
+      method_name = pattern.method.downcase
 
-      # Find the index of the route declaration
-      idx = content.index(route_declaration)
+      # Create possible method names for both dot notation and bracket notation
+      method_variations = [method_name]
+
+      # Handle the case where 'del' might be used instead of 'delete' in the code or vice versa
+      if method_name == "delete"
+        method_variations << "del"
+      elsif method_name == "del"
+        method_variations << "delete"
+      end
+
+      # Generate all possible route declarations with different syntax patterns
+      route_declarations = [] of String
+      method_variations.each do |method|
+        # Standard method call with single quotes
+        route_declarations << "#{method}('#{pattern.path}'"
+        # Method call with double quotes
+        route_declarations << "#{method}(\"#{pattern.path}\""
+        # Method call with template literals
+        route_declarations << "#{method}(`#{pattern.path}`"
+      end
+
+      # Find the index of any matching route declaration
+      idx = nil
+      route_declarations.each do |declaration|
+        found_idx = content.index(declaration)
+        if found_idx
+          idx = found_idx
+          break
+        end
+      end
+
       return unless idx
 
       # Find the opening brace of the handler function

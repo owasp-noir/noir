@@ -146,11 +146,11 @@ This section provides an overview of the various programming languages and frame
 |-----|--------|-------|--------|--------|----|
 | ✅   | ✅    | ✅    | ✅     | ✅     | ❌ |
 
-### Next
+### Koa.js
 
 | URL | Method | Param | Header | Cookie | WS |
 |-----|--------|-------|--------|--------|----|
-| ❌   | ❌    | ❌    | ❌     | ❌     | ❌ |
+| ✅   | ✅    | ✅    | X     | X     | ❌ |
 
 ## Rust
 
@@ -187,4 +187,3 @@ This section provides an overview of the various programming languages and frame
 | URL | Method | Param | Header | Cookie | WS |
 |-----|--------|-------|--------|--------|----|
 | ✅   | ❌    | ❌    | ❌     | ❌     | ❌ |
-
