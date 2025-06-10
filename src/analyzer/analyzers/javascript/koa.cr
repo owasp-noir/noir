@@ -27,7 +27,7 @@ module Analyzer::Javascript
 
                   if File.exists?(path)
                     begin
-                      parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, "koa")
+                      parser_endpoints = Noir::JSRouteExtractor.extract_routes(path)
                       parser_endpoints.each do |endpoint|
                         details = Details.new(PathInfo.new(path, 1)) # Line number is approximate
                         endpoint.details = details
@@ -82,15 +82,14 @@ module Analyzer::Javascript
         end
 
         file_content.scan(/(\w+)\.use\s*\(\s*['"]([^'"]+)['"]\s*,\s*(\w+)\.routes\(\s*\)/) do |match|
-            parent_router = match[1] # This could be app or another router
-            prefix = match[2]
-            child_router_name = match[3]
+          parent_router = match[1] # This could be app or another router
+          prefix = match[2]
+          child_router_name = match[3]
 
-            base_prefix = router_prefixes.fetch(parent_router, "")
-            full_prefix = File.join(base_prefix, prefix)
-            router_prefixes[child_router_name] = full_prefix
+          base_prefix = router_prefixes.fetch(parent_router, "")
+          full_prefix = File.join(base_prefix, prefix)
+          router_prefixes[child_router_name] = full_prefix
         end
-
 
         # Detect routes
         # Example: router.get('/users', ctx => { ... });
@@ -111,7 +110,6 @@ module Analyzer::Javascript
           full_path = "/" if full_path == "" # Handle empty path case
           full_path = "/#{full_path}" unless full_path.starts_with?('/')
 
-
           endpoint = Endpoint.new(full_path, http_method)
           details = Details.new(PathInfo.new(path, 1)) # Approximate line number
           endpoint.details = details
@@ -130,7 +128,7 @@ module Analyzer::Javascript
           # For now, we'll skip complex body/query/header param extraction in regex fallback.
 
           unless result.any? { |e| e.url == full_path && e.method == http_method }
-             result << endpoint
+            result << endpoint
           end
         end
       end

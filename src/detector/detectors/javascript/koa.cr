@@ -7,8 +7,9 @@ module Detector::Javascript
          (file_contents.match(/require\(['"]koa['"]\)/) ||
          file_contents.match(/import Koa from ['"]koa['"]/) ||
          file_contents.match(/import Router from ['"]koa-router['"]/) ||
-         file_contents.match(/new Koa\(\)/) ||
-         file_contents.match(/app\.use\(/))
+         file_contents.match(/require\(['"]koa-router['"]\)/) ||
+         file_contents.match(/require\(['"]koa-[a-zA-Z0-9-]+['"]\)/) ||
+         file_contents.match(/new Koa\(\)/))
         true
       else
         false
