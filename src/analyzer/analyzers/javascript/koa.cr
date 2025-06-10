@@ -94,12 +94,10 @@ module Analyzer::Javascript
         # Detect routes
         # Example: router.get('/users', ctx => { ... });
         # Example: app.get('/status', async (ctx) => { ... });
-        file_content.scan(/(?:(\w+)\.|app\.)(get|post|put|del|delete|patch|all)\s*\(\s*['"]([^'"]+)['"]/) do |match|
+        file_content.scan(/(?:(\w+)\.|app\.)(get|post|put|delete|del|patch|all)\s*\(\s*['"]([^'"]+)['"]/) do |match|
           router_var = match[1] # Can be nil if it's app.get directly
-          http_method = match[2].upcase
+          http_method = Noir::JSRouteExtractor.normalize_http_method(match[2])
           route_path = match[3]
-
-          http_method = "DELETE" if http_method == "DEL"
 
           current_prefix = ""
           if router_var && router_prefixes.has_key?(router_var)
