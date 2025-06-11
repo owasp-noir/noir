@@ -1,0 +1,21 @@
+{
+  "name": "laravel/laravel",
+  "type": "project",
+  "description": "The skeleton application for the Laravel framework.",
+  "keywords": ["laravel", "framework"],
+  "license": "MIT",
+  "require": {
+    "php": "^8.1",
+    "laravel/framework": "^10.0",
+    "guzzlehttp/guzzle": "^7.2"
+  },
+  "autoload": {
+    "psr-4": {
+      "App\\": "app/",
+      "Database\\Factories\\": "database/factories/",
+      "Database\\Seeders\\": "database/seeders/"
+    }
+  },
+  "minimum-stability": "stable",
+  "prefer-stable": true
+}

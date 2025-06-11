@@ -44,6 +44,7 @@ def detect_techs(base_path : String, options : Hash(String, YAML::Any), passive_
     Specification::Oas3,
     Specification::RAML,
     Specification::ZapSitesTree,
+    Php::LaravelDetector, # Added Laravel detector
     Php::Php,
     Python::Django,
     Python::FastAPI,
