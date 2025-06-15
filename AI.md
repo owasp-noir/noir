@@ -119,3 +119,5 @@ Output builders format the data extracted by analyzers into different output for
 *   **Further Documentation (`docs/`):** The `docs/` directory contains more detailed project documentation. If you need to understand specific features, advanced usage, or contribution guidelines in more depth, explore the content within `docs/content/docs/`.
 *   **Coding Style:** When adding new code, try to match the style and conventions of existing code in the same module or directory. Pay attention to naming conventions, formatting, and commenting practices.
 *   **Testing is Key:** Always add tests for new functionality. Ensure all tests pass before considering a task complete.
+*   After completing code modifications, always verify that the project builds successfully and that all tests pass.
+*   Strive to write new code that aligns with the existing code's structure, patterns, and style.
