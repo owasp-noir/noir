@@ -51,6 +51,11 @@ Analyzers are responsible for parsing source code to identify API endpoints, rou
 5.  **Run Tests:**
     *   Execute the test suite to ensure your new analyzer works as expected and doesn't break existing functionality. Refer to the `justfile` for commands to run tests.
 
+6.  **Update Documentation and Tech List:**
+    *   After creating the analyzer and its tests, update `docs/content/docs/usage/supported/language_and_frameworks.md` to reflect the support for the new language or framework.
+    *   If the analyzer is for a specific API specification (e.g., OpenAPI, RAML), also update `docs/content/docs/usage/supported/specification.md`.
+    *   Add/update the corresponding entry in `src/techs/techs.cr` so that the new technology is listed when using the `--list-techs` command.
+
 ### Adding a New Detector
 
 Detectors are used to identify the technologies, frameworks, or languages used in a project. This information can then be used to select the appropriate analyzers.
@@ -73,6 +78,11 @@ Detectors are used to identify the technologies, frameworks, or languages used i
 
 5.  **Run Tests:**
     *   Execute the test suite to ensure your new detector works correctly.
+
+6.  **Update Documentation and Tech List:**
+    *   After creating the detector and its tests, update `docs/content/docs/usage/supported/language_and_frameworks.md` to reflect the support for the new language or framework.
+    *   If the detector is for a specific API specification (e.g., OpenAPI, RAML), also update `docs/content/docs/usage/supported/specification.md`.
+    *   Add/update the corresponding entry in `src/techs/techs.cr` so that the new technology is listed when using the `--list-techs` command.
 
 ### Adding a New Output Builder
 
