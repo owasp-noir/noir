@@ -48,6 +48,7 @@ def detect_techs(base_path : String, options : Hash(String, YAML::Any), passive_
     Python::Django,
     Python::FastAPI,
     Python::Flask,
+    Python::Robyn,
     Ruby::Hanami,
     Ruby::Rails,
     Ruby::Sinatra,
