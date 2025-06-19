@@ -135,3 +135,52 @@ class FunctionalTester
     @app.options["url"] = YAML::Any.new(url)
   end
 end
+
+describe "Elixir Phoenix framework with input detection" do
+  it "should detect parameters, headers, and cookies" do
+    noir = Noir::Scanner.new("./spec/functional_test/fixtures/elixir/phoenix")
+    noir.scan
+    results = noir.result
+
+    # Test case 1: params_in_signature
+    endpoint1 = results.find { |e| e.url == "/input_test/params_in_signature/:user_id" && e.method == "GET" }
+    endpoint1.should_not be_nil
+    endpoint1.as(Endpoint).params.any? { |p| p.name == "user_id" && p.param_type == "query" }.should be_true
+    endpoint1.as(Endpoint).params.any? { |p| p.name == "type" && p.param_type == "query" }.should be_true
+    endpoint1.as(Endpoint).details.code_paths.first.path.should contain("input_test_controller.ex") # Path check
+    endpoint1.as(Endpoint).details.code_paths.first.line.should eq(15) # Line of the route definition in router.ex
+
+    # Test case 2: headers_test
+    endpoint2 = results.find { |e| e.url == "/input_test/headers_test" && e.method == "GET" }
+    endpoint2.should_not be_nil
+    endpoint2.as(Endpoint).params.any? { |p| p.name == "user-agent" && p.param_type == "header" }.should be_true
+    endpoint2.as(Endpoint).params.any? { |p| p.name == "authorization" && p.param_type == "header" }.should be_true
+    endpoint2.as(Endpoint).params.any? { |p| p.name == "x-custom-header" && p.param_type == "header" }.should be_true
+    endpoint2.as(Endpoint).details.code_paths.first.line.should eq(16) # Line of the route definition
+
+
+    # Test case 3: cookies_test
+    endpoint3 = results.find { |e| e.url == "/input_test/cookies_test" && e.method == "POST" }
+    endpoint3.should_not be_nil
+    endpoint3.as(Endpoint).params.any? { |p| p.name == "session_id" && p.param_type == "cookie" }.should be_true
+    endpoint3.as(Endpoint).params.any? { |p| p.name == "tracker_id" && p.param_type == "cookie" }.should be_true
+    endpoint3.as(Endpoint).details.code_paths.first.line.should eq(17) # Line of the route definition
+
+
+    # Test case 4: mixed_input
+    endpoint4 = results.find { |e| e.url == "/input_test/mixed_input/:item_id" && e.method == "GET" }
+    endpoint4.should_not be_nil
+    endpoint4.as(Endpoint).params.any? { |p| p.name == "item_id" && p.param_type == "query" }.should be_true
+    endpoint4.as(Endpoint).params.any? { |p| p.name == "filter" && p.param_type == "query" }.should be_true
+    endpoint4.as(Endpoint).params.any? { |p| p.name == "x-auth-token" && p.param_type == "header" }.should be_true
+    endpoint4.as(Endpoint).params.any? { |p| p.name == "user_preference" && p.param_type == "cookie" }.should be_true
+    endpoint4.as(Endpoint).details.code_paths.first.line.should eq(18) # Line of the route definition
+
+
+    # Test case 5: no_specific_inputs
+    endpoint5 = results.find { |e| e.url == "/input_test/no_specific_inputs" && e.method == "GET" }
+    endpoint5.should_not be_nil
+    endpoint5.as(Endpoint).params.empty?.should be_true # No specific params, headers, cookies expected
+    endpoint5.as(Endpoint).details.code_paths.first.line.should eq(19) # Line of the route definition
+  end
+end
