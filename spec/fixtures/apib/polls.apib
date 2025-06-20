@@ -1,0 +1,121 @@
+FORMAT: 1A
+HOST: https://polls.apiblueprint.org/
+
+# Polls API
+
+Simple API for managing polls.
+
+## Group Questions
+
+Resources related to questions in the API.
+
+### Question Collection [/questions]
+
+Represents a collection of questions.
+
+#### List all questions [GET]
+
++ Response 200 (application/json)
+
+    + Body
+
+            [
+                {
+                    "question": "Favourite programming language?",
+                    "published_at": "2015-08-17T11:52:42.142Z",
+                    "url": "/questions/1",
+                    "choices": [
+                        {
+                            "choice": "Swift",
+                            "url": "/questions/1/choices/1",
+                            "votes": 2048
+                        },
+                        {
+                            "choice": "Python",
+                            "url": "/questions/1/choices/2",
+                            "votes": 1024
+                        }
+                    ]
+                }
+            ]
+
+#### Create a new question [POST]
+
++ Request (application/json)
+
+    + Body
+
+            {
+                "question": "What is your favorite color?",
+                "choices": [
+                    "Red",
+                    "Blue",
+                    "Green"
+                ]
+            }
+
++ Response 201 (application/json)
+
+    + Headers
+
+            Location: /questions/2
+
+    + Body
+
+            {
+                "question": "What is your favorite color?",
+                "published_at": "2015-08-17T11:55:00.000Z",
+                "url": "/questions/2",
+                "choices": [
+                    {
+                        "choice": "Red",
+                        "url": "/questions/2/choices/1",
+                        "votes": 0
+                    },
+                    {
+                        "choice": "Blue",
+                        "url": "/questions/2/choices/2",
+                        "votes": 0
+                    },
+                    {
+                        "choice": "Green",
+                        "url": "/questions/2/choices/3",
+                        "votes": 0
+                    }
+                ]
+            }
+
+### Question Detail [/questions/{question_id}]
+
+Represents a single question.
+
++ Parameters
+    + question_id (number, required) - ID of the Question
+
+#### View a question's detail [GET]
+
++ Response 200 (application/json)
+
+    + Body
+
+            {
+                "question": "Favourite programming language?",
+                "published_at": "2015-08-17T11:52:42.142Z",
+                "url": "/questions/1",
+                "choices": [
+                    {
+                        "choice": "Swift",
+                        "url": "/questions/1/choices/1",
+                        "votes": 2048
+                    },
+                    {
+                        "choice": "Python",
+                        "url": "/questions/1/choices/2",
+                        "votes": 1024
+                    }
+                ]
+            }
+
+#### Delete a question [DELETE]
+
++ Response 204

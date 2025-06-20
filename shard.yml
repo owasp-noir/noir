@@ -23,3 +23,6 @@ dependencies:
     version: ~> 1.4.0
   har:
     github: NeuraLegion/har
+  markdown:
+    github: micrate/crystal-markdown
+    version: ~> 0.2.0

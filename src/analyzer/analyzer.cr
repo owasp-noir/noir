@@ -25,6 +25,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"go_fiber", Go::Fiber},
     {"go_gin", Go::Gin},
     {"go_chi", Go::Chi},
+    {"apib", Specification::ApiBlueprint},
     {"har", Specification::Har},
     {"java_armeria", Java::Armeria},
     {"java_jsp", Java::Jsp},
@@ -34,6 +35,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"js_koa", Javascript::Koa},
     {"js_restify", Javascript::Restify},
     {"kotlin_spring", Kotlin::Spring},
+    # Specification analyzers are already alphabetically sorted, apib fits here.
     {"oas2", Specification::Oas2},
     {"oas3", Specification::Oas3},
     {"raml", Specification::RAML},
