@@ -1,6 +1,8 @@
+require "../../spec_helper"
 require "../../../src/models/noir.cr"
 require "../../../src/options.cr"
 require "../../../src/models/endpoint.cr"
+require "../../../src/utils/http_symbols.cr"
 
 describe "Initialize" do
   config_init = ConfigInitializer.new
@@ -64,5 +66,48 @@ describe "set-pvalue" do
 
   it "includes '=' in the pvalue for JSON parameter" do
     runner.apply_pvalue("json", "name", "value").should eq("FUZZ=FUZZ")
+  end
+end
+
+describe "HTTP method validation" do
+  config_init = ConfigInitializer.new
+  options = config_init.default_options
+  options["nolog"] = YAML::Any.new(true)
+  runner = NoirRunner.new(options)
+
+  it "maintains valid HTTP methods" do
+    runner.endpoints << Endpoint.new("/valid", "GET")
+    runner.endpoints << Endpoint.new("/also-valid", "POST")
+    runner.optimize_endpoints
+
+    runner.endpoints[0].method.should eq("GET")
+    runner.endpoints[1].method.should eq("POST")
+  end
+
+  it "converts invalid HTTP methods to GET" do
+    runner.endpoints << Endpoint.new("/invalid-method", "INVALID")
+    runner.endpoints << Endpoint.new("/another-invalid", "test")
+    runner.optimize_endpoints
+
+    # Both endpoints should now have GET as their method
+    runner.endpoints.each do |endpoint|
+      if endpoint.url.includes?("invalid")
+        endpoint.method.should eq("GET")
+      end
+    end
+  end
+
+  it "preserves all valid HTTP methods" do
+    valid_methods = get_allowed_methods
+
+    valid_methods.each_with_index do |method, index|
+      runner.endpoints << Endpoint.new("/endpoint#{index}", method)
+    end
+
+    runner.optimize_endpoints
+
+    valid_methods.each_with_index do |method, index|
+      runner.endpoints.find! { |e| e.url == "/endpoint#{index}" }.method.should eq(method)
+    end
   end
 end
