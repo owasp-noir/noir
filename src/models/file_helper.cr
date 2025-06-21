@@ -53,17 +53,36 @@ module FileHelper
     end
   end
 
-  # Helper to get public directories content
+  # Helper to get public directories content from anywhere in the project
   def get_public_dir_files(base_path : String, folder : String) : Array(String)
-    # Check if folder is a full path or just a folder name
-    if folder.includes?("/")
-      # If folder is a full path, use it directly
-      prefix = folder.ends_with?("/") ? folder : "#{folder}/"
-    else
-      # If folder is just a name, append it to base_path
-      prefix = "#{base_path}/#{folder}/"
+    # Get all files in the project
+    files = get_all_files
+
+    # Normalize folder path
+    normalized_folder = folder.strip
+
+    # Handle different folder specification formats
+    public_dir_files = files.select do |file|
+      # Ignore directories
+      next false if File.directory?(file)
+
+      # Case 1: Folder is a full path
+      if normalized_folder.includes?("/")
+        # If folder is an absolute path like "/var/www/assets"
+        if normalized_folder.starts_with?("/")
+          file.starts_with?(normalized_folder) && !File.directory?(file)
+          # If folder is a relative path from base_path like "assets" or "public/assets"
+        else
+          combined_path = "#{base_path}/#{normalized_folder}"
+          file.starts_with?(combined_path) && !File.directory?(file)
+        end
+        # Case 2: Folder is just a name like "assets"
+      else
+        # Match files that have the folder name as a directory component
+        file.includes?("/#{normalized_folder}/") && !File.directory?(file)
+      end
     end
 
-    get_files_by_prefix(prefix)
+    public_dir_files
   end
 end

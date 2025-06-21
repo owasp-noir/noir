@@ -49,7 +49,15 @@ module Analyzer::Crystal
                             public_folder = ""
 
                             if splited.size > 1
-                              public_folder = splited[1].gsub("(", "").gsub(")", "").gsub(" ", "").gsub("\"", "").gsub("'", "")
+                              # Extract path more carefully handling quotes and spaces
+                              match_data = splited[1].match(/[=\(]\s*['"]?(.*?)['"]?\s*[\),]/)
+                              if match_data && match_data[1]?
+                                public_folder = match_data[1].strip
+                              else
+                                # Fallback to the previous approach
+                                public_folder = splited[1].gsub("(", "").gsub(")", "").gsub(" ", "").gsub("\"", "").gsub("'", "")
+                              end
+
                               if public_folder != ""
                                 public_folders << public_folder
                               end
@@ -86,18 +94,27 @@ module Analyzer::Crystal
           # Process other public folders
           public_folders.each do |folder|
             get_public_dir_files(@base_path, folder).each do |file|
-              # For custom folders, extract the file path from the folder
-              folder_name = folder.split("/").last
-              if file.includes?("/#{folder_name}/")
-                if file =~ /\/#{folder_name}\/(.*)/
+              # Extract relative path from the custom folder
+              if folder.includes?("/")
+                # For absolute paths or paths with directories
+                folder_path = folder.ends_with?("/") ? folder : "#{folder}/"
+                if file.starts_with?(folder_path)
+                  relative_path = file.sub(folder_path, "")
+                  @result << Endpoint.new("/#{relative_path}", "GET")
+                else
+                  # Try to find the folder component in the path
+                  folder_name = folder.split("/").last
+                  if file =~ /\/#{folder_name}\/(.*)/
+                    relative_path = $1
+                    @result << Endpoint.new("/#{relative_path}", "GET")
+                  end
+                end
+              else
+                # For simple folder names (no slashes)
+                if file =~ /\/#{folder}\/(.*)/
                   relative_path = $1
                   @result << Endpoint.new("/#{relative_path}", "GET")
                 end
-              else
-                # Fallback to previous approach if pattern doesn't match
-                relative_path = get_relative_path(@base_path, file)
-                relative_path = get_relative_path(folder, relative_path)
-                @result << Endpoint.new("/#{relative_path}", "GET")
               end
             end
           end
