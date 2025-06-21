@@ -13,3 +13,7 @@ def get_symbol(method : String)
 
   symbol[method]
 end
+
+def get_allowed_methods
+  ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "TRACE", "CONNECT"]
+end

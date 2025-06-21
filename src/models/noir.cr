@@ -131,9 +131,16 @@ class NoirRunner
     @logger.sub "➔ Removing duplicated endpoints and params."
     final = [] of Endpoint
     duplicate_count = 0
+    allowed_methods = get_allowed_methods
 
     @endpoints.each do |endpoint|
       tiny_tmp = endpoint
+
+      # Check if method is allowed, otherwise default to GET
+      if !allowed_methods.includes?(tiny_tmp.method)
+        @logger.debug_sub "  - Invalid HTTP method: '#{tiny_tmp.method}' for '#{tiny_tmp.url}', defaulting to GET"
+        tiny_tmp.method = "GET"
+      end
 
       # Remove space in param name
       if endpoint.params.size > 0
