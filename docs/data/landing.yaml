@@ -10,7 +10,7 @@ hero:
       mobile: "b.jpg"
 
   badge:
-    text: v0.21.1
+    text: v0.22.0
     color: primary
     pill: false
     soft: true

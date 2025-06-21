@@ -349,6 +349,21 @@ module NoirTechs
         },
       },
     },
+    :graphql => {
+      :format    => ["GRAPHQL"],
+      :similar   => ["graphql", ".graphql"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+      },
+    },
     :php_pure => {
       :framework => "",
       :language  => "PHP",
