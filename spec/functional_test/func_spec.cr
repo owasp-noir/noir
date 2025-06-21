@@ -40,7 +40,7 @@ class FunctionalTester
   def test_detect
     @app.detect
     if @expected_count.has_key?(:techs)
-      it "test detect using count check" do
+      it "test detect using count check [#{@path}]" do
         @app.techs.size.should eq @expected_count[:techs]
       end
     end
@@ -71,7 +71,7 @@ class FunctionalTester
   def test_analyze
     @app.analyze
     if @expected_count.has_key?(:endpoints)
-      it "test analyze using count check" do
+      it "test analyze using count check [#{@path}]" do
         @app.endpoints.size.should eq @expected_count[:endpoints]
       end
     end

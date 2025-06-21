@@ -5,24 +5,19 @@ module Analyzer::Crystal
     def analyze
       # Public Dir Analysis
       begin
-        Dir.glob("#{@base_path}/public/**/*") do |file|
-          next if File.directory?(file)
-          real_path = "#{@base_path}/public/".gsub(/\/+/, '/')
-          relative_path = file.sub(real_path, "")
-          @result << Endpoint.new("/#{relative_path}", "GET")
+        get_public_files(@base_path).each do |file|
+          # Extract the path after "/public/" regardless of depth
+          if file =~ /\/public\/(.*)/
+            relative_path = $1
+            @result << Endpoint.new("/#{relative_path}", "GET")
+          end
         end
       rescue e
         logger.debug e
       end
 
       channel = Channel(String).new
-
-      spawn do
-        Dir.glob("#{@base_path}/**/*") do |file|
-          channel.send(file)
-        end
-        channel.close
-      end
+      populate_channel_with_files(channel)
 
       # Source Analysis
       begin

@@ -13,7 +13,8 @@ module Analyzer::Java
       package_map = Hash(String, Hash(String, ClassModel)).new
       webflux_base_path_map = Hash(String, String).new
 
-      Dir.glob("#{@base_path}/**/*") do |path|
+      file_list = get_all_files()
+      file_list.each do |path|
         url = ""
 
         # Extract the Webflux base path from 'application.yml' in specified directories

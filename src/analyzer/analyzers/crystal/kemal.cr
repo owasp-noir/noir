@@ -10,12 +10,7 @@ module Analyzer::Crystal
 
       # Source Analysis
       begin
-        spawn do
-          Dir.glob("#{@base_path}/**/*") do |file|
-            channel.send(file)
-          end
-          channel.close
-        end
+        populate_channel_with_files(channel)
 
         WaitGroup.wait do |wg|
           @options["concurrency"].to_s.to_i.times do
@@ -54,7 +49,15 @@ module Analyzer::Crystal
                             public_folder = ""
 
                             if splited.size > 1
-                              public_folder = splited[1].gsub("(", "").gsub(")", "").gsub(" ", "").gsub("\"", "").gsub("'", "")
+                              # Extract path more carefully handling quotes and spaces
+                              match_data = splited[1].match(/[=\(]\s*['"]?(.*?)['"]?\s*[\),]/)
+                              if match_data && match_data[1]?
+                                public_folder = match_data[1].strip
+                              else
+                                # Fallback to the previous approach
+                                public_folder = splited[1].gsub("(", "").gsub(")", "").gsub(" ", "").gsub("\"", "").gsub("'", "")
+                              end
+
                               if public_folder != ""
                                 public_folders << public_folder
                               end
@@ -79,19 +82,40 @@ module Analyzer::Crystal
       # Public Dir Analysis
       if is_public
         begin
-          Dir.glob("#{@base_path}/public/**/*") do |file|
-            next if File.directory?(file)
-            real_path = "#{@base_path}/public/".gsub(/\/+/, '/')
-            relative_path = file.sub(real_path, "")
-            @result << Endpoint.new("/#{relative_path}", "GET")
+          # Process public folder files
+          get_public_files(@base_path).each do |file|
+            # Extract the path after "/public/" regardless of depth
+            if file =~ /\/public\/(.*)/
+              relative_path = $1
+              @result << Endpoint.new("/#{relative_path}", "GET")
+            end
           end
 
+          # Process other public folders
           public_folders.each do |folder|
-            Dir.glob("#{@base_path}/#{folder}/**/*") do |file|
-              next if File.directory?(file)
-              relative_path = get_relative_path(@base_path, file)
-              relative_path = get_relative_path(folder, relative_path)
-              @result << Endpoint.new("/#{relative_path}", "GET")
+            get_public_dir_files(@base_path, folder).each do |file|
+              # Extract relative path from the custom folder
+              if folder.includes?("/")
+                # For absolute paths or paths with directories
+                folder_path = folder.ends_with?("/") ? folder : "#{folder}/"
+                if file.starts_with?(folder_path)
+                  relative_path = file.sub(folder_path, "")
+                  @result << Endpoint.new("/#{relative_path}", "GET")
+                else
+                  # Try to find the folder component in the path
+                  folder_name = folder.split("/").last
+                  if file =~ /\/#{folder_name}\/(.*)/
+                    relative_path = $1
+                    @result << Endpoint.new("/#{relative_path}", "GET")
+                  end
+                end
+              else
+                # For simple folder names (no slashes)
+                if file =~ /\/#{folder}\/(.*)/
+                  relative_path = $1
+                  @result << Endpoint.new("/#{relative_path}", "GET")
+                end
+              end
             end
           end
         rescue e

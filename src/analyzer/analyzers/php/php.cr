@@ -8,12 +8,7 @@ module Analyzer::Php
       channel = Channel(String).new
 
       begin
-        spawn do
-          Dir.glob("#{@base_path}/**/*") do |file|
-            channel.send(file)
-          end
-          channel.close
-        end
+        populate_channel_with_files(channel)
 
         WaitGroup.wait do |wg|
           @options["concurrency"].to_s.to_i.times do

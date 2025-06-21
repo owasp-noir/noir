@@ -16,7 +16,8 @@ module Analyzer::Kotlin
       package_map = Hash(String, Hash(String, KotlinParser::ClassModel)).new
       webflux_base_path_map = Hash(String, String).new
 
-      Dir.glob("#{@base_path}/**/*") do |path|
+      file_list = get_all_files()
+      file_list.each do |path|
         next unless File.exists?(path)
 
         if File.directory?(path)
