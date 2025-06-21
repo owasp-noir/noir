@@ -137,7 +137,7 @@ class NoirRunner
       tiny_tmp = endpoint
 
       # Check if method is allowed, otherwise default to GET
-      if !allowed_methods.includes?(tiny_tmp.method)
+      if !allowed_methods.includes?(tiny_tmp.method.upcase)
         @logger.debug_sub "  - Invalid HTTP method: '#{tiny_tmp.method}' for '#{tiny_tmp.url}', defaulting to GET"
         tiny_tmp.method = "GET"
       end
