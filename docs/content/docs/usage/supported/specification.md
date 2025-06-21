@@ -10,9 +10,10 @@ This section provides details on the various specifications supported by Noir. E
 
 | Specification          | Format  | URL | Method | Param | Header | WS |
 |------------------------|---------|-----|--------|-------|--------|----|
-| OAS 2.0 (Swagger 2.0)  | JSON    | ✅  | ✅     | ✅    | ✅     | X  |
-| OAS 2.0 (Swagger 2.0)  | YAML    | ✅  | ✅     | ✅    | ✅     | X  |
-| OAS 3.0                | JSON    | ✅  | ✅     | ✅    | ✅     | X  |
-| OAS 3.0                | YAML    | ✅  | ✅     | ✅    | ✅     | X  |
-| RAML                   | YAML    | ✅  | ✅     | ✅    | ✅     | X  |
-| HAR                    | JSON    | ✅  | ✅     | ✅    | ✅     | X  |
+| OAS 2.0 (Swagger 2.0)  | JSON    | ✅  | ✅     | ✅    | ✅    | X  |
+| OAS 2.0 (Swagger 2.0)  | YAML    | ✅  | ✅     | ✅    | ✅    | X  |
+| OAS 3.0                | JSON    | ✅  | ✅     | ✅    | ✅    | X  |
+| OAS 3.0                | YAML    | ✅  | ✅     | ✅    | ✅    | X  |
+| RAML                   | YAML    | ✅  | ✅     | ✅    | ✅    | X  |
+| HAR                    | JSON    | ✅  | ✅     | ✅    | ✅    | X  |
+| Graphql SDL (.graphql) | GRAPHQL | ✅  | ✅     | ✅    | ✅    | X  |
