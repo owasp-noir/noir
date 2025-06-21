@@ -14,6 +14,8 @@ def get_symbol(method : String)
   symbol[method]
 end
 
+ALLOWED_HTTP_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "TRACE", "CONNECT"]
+
 def get_allowed_methods
-  ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "TRACE", "CONNECT"]
+  ALLOWED_HTTP_METHODS
 end
