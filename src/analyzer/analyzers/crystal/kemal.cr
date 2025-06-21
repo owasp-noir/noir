@@ -76,17 +76,29 @@ module Analyzer::Crystal
         begin
           # Process public folder files
           get_public_files(@base_path).each do |file|
-            real_path = "#{@base_path}/public/".gsub(/\/+/, '/')
-            relative_path = file.sub(real_path, "")
-            @result << Endpoint.new("/#{relative_path}", "GET")
+            # Extract the path after "/public/" regardless of depth
+            if file =~ /\/public\/(.*)/
+              relative_path = $1
+              @result << Endpoint.new("/#{relative_path}", "GET")
+            end
           end
 
           # Process other public folders
           public_folders.each do |folder|
             get_public_dir_files(@base_path, folder).each do |file|
-              relative_path = get_relative_path(@base_path, file)
-              relative_path = get_relative_path(folder, relative_path)
-              @result << Endpoint.new("/#{relative_path}", "GET")
+              # For custom folders, extract the file path from the folder
+              folder_name = folder.split("/").last
+              if file.includes?("/#{folder_name}/")
+                if file =~ /\/#{folder_name}\/(.*)/
+                  relative_path = $1
+                  @result << Endpoint.new("/#{relative_path}", "GET")
+                end
+              else
+                # Fallback to previous approach if pattern doesn't match
+                relative_path = get_relative_path(@base_path, file)
+                relative_path = get_relative_path(folder, relative_path)
+                @result << Endpoint.new("/#{relative_path}", "GET")
+              end
             end
           end
         rescue e

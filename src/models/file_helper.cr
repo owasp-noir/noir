@@ -24,9 +24,22 @@ module FileHelper
   end
 
   # Get public files (files that should be served as static content)
+  # This method searches for any "public" directory within the base_path (at any depth level)
   def get_public_files(base_path : String) : Array(String)
-    prefix = "#{base_path}/public/"
-    get_files_by_prefix(prefix)
+    # Get all files in the project
+    files = get_all_files
+
+    # Filter files that are inside a "public" directory under the base_path
+    public_files = files.select do |file|
+      # Check if file is under base_path
+      file.starts_with?(base_path) &&
+        # Check if file contains "/public/" directory component in its path
+        file.includes?("/public/") &&
+        # Ensure it's not a directory
+        !File.directory?(file)
+    end
+
+    public_files
   end
 
   # Helper to populate a channel from file list instead of using Dir.glob
@@ -42,7 +55,15 @@ module FileHelper
 
   # Helper to get public directories content
   def get_public_dir_files(base_path : String, folder : String) : Array(String)
-    prefix = "#{base_path}/#{folder}/"
+    # Check if folder is a full path or just a folder name
+    if folder.includes?("/")
+      # If folder is a full path, use it directly
+      prefix = folder.ends_with?("/") ? folder : "#{folder}/"
+    else
+      # If folder is just a name, append it to base_path
+      prefix = "#{base_path}/#{folder}/"
+    end
+
     get_files_by_prefix(prefix)
   end
 end

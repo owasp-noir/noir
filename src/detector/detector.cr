@@ -81,7 +81,7 @@ def detect_techs(base_path : String, options : Hash(String, YAML::Any), passive_
   wg.add(1)
   spawn do
     begin
-      Dir.glob("#{base_path}/**/*") do |file|
+      Dir.glob("#{base_path}/**/**") do |file|
         next if File.directory?(file)
         content = File.read(file, encoding: "utf-8", invalid: :skip)
         channel.send({file, content})

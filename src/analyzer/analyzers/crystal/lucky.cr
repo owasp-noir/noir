@@ -6,9 +6,11 @@ module Analyzer::Crystal
       # Public Dir Analysis
       begin
         get_public_files(@base_path).each do |file|
-          real_path = "#{@base_path}/public/".gsub(/\/+/, '/')
-          relative_path = file.sub(real_path, "")
-          @result << Endpoint.new("/#{relative_path}", "GET")
+          # Extract the path after "/public/" regardless of depth
+          if file =~ /\/public\/(.*)/
+            relative_path = $1
+            @result << Endpoint.new("/#{relative_path}", "GET")
+          end
         end
       rescue e
         logger.debug e

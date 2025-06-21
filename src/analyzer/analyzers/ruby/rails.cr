@@ -5,12 +5,13 @@ module Analyzer::Ruby
     def analyze
       # Public Dir Analysis
       begin
-        public_path_prefix = "#{@base_path}/public/"
-        get_files_by_prefix(public_path_prefix).each do |file|
-          real_path = "#{@base_path}/public/".gsub(/\/+/, '/')
-          relative_path = file.sub(real_path, "")
-          details = Details.new(PathInfo.new(file))
-          @result << Endpoint.new("/#{relative_path}", "GET", details)
+        get_public_files(@base_path).each do |file|
+          # Extract the path after "/public/" regardless of depth
+          if file =~ /\/public\/(.*)/
+            relative_path = $1
+            details = Details.new(PathInfo.new(file))
+            @result << Endpoint.new("/#{relative_path}", "GET", details)
+          end
         end
       rescue e
         logger.debug e
