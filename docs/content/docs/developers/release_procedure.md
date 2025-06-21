@@ -30,7 +30,7 @@ aliases:
 2. Generate a PR for the Homebrew core:
 ```bash
 brew bump-formula-pr --strict --version <VERSION> noir
-# Example: brew bump-formula-pr --strict --version 0.21.1 noir
+# Example: brew bump-formula-pr --strict --version 0.22.0 noir
 ```
 
 #### Troubleshooting
