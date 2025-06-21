@@ -5,8 +5,8 @@ module Analyzer::Ruby
     def analyze
       # Public Dir Analysis
       begin
-        Dir.glob("#{@base_path}/public/**/*") do |file|
-          next if File.directory?(file)
+        public_path_prefix = "#{@base_path}/public/"
+        get_files_by_prefix(public_path_prefix).each do |file|
           real_path = "#{@base_path}/public/".gsub(/\/+/, '/')
           relative_path = file.sub(real_path, "")
           details = Details.new(PathInfo.new(file))

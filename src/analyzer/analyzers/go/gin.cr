@@ -9,12 +9,7 @@ module Analyzer::Go
       groups = [] of Hash(String, String)
       channel = Channel(String).new
       begin
-        spawn do
-          Dir.glob("#{@base_path}/**/*") do |file|
-            channel.send(file)
-          end
-          channel.close
-        end
+        populate_channel_with_files(channel)
 
         WaitGroup.wait do |wg|
           @options["concurrency"].to_s.to_i.times do
@@ -113,8 +108,7 @@ module Analyzer::Go
 
       public_dirs.each do |p_dir|
         full_path = (base_path + "/" + p_dir["file_path"]).gsub_repeatedly("//", "/")
-        Dir.glob("#{full_path}/**/*") do |path|
-          next if File.directory?(path)
+        get_files_by_prefix(full_path).each do |path|
           if File.exists?(path)
             if p_dir["static_path"].ends_with?("/")
               p_dir["static_path"] = p_dir["static_path"][0..-2]

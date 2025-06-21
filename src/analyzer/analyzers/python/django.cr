@@ -45,8 +45,8 @@ module Analyzer::Python
 
       # Find static files
       begin
-        Dir.glob("#{@base_path}/static/**/*") do |file|
-          next if File.directory?(file)
+        static_prefix = "#{@base_path}/static/"
+        get_files_by_prefix(static_prefix).each do |file|
           relative_path = file.sub("#{@base_path}/static/", "")
           endpoints << Endpoint.new("/#{relative_path}", "GET")
         end
@@ -63,12 +63,7 @@ module Analyzer::Python
       channel = Channel(String).new
       search_dir = @base_path
 
-      spawn do
-        Dir.glob("#{search_dir}/**/*") do |file|
-          channel.send(file)
-        end
-        channel.close
-      end
+      populate_channel_with_files(channel)
 
       WaitGroup.wait do |wg|
         @options["concurrency"].to_s.to_i.times do

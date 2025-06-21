@@ -74,6 +74,9 @@ def detect_techs(base_path : String, options : Hash(String, YAML::Any), passive_
   locator = CodeLocator.instance
   wg = WaitGroup.new
 
+  # Clear file_map before starting
+  locator.clear("file_map")
+
   # Thread for reading files and sending their contents to the channel
   wg.add(1)
   spawn do
@@ -89,6 +92,9 @@ def detect_techs(base_path : String, options : Hash(String, YAML::Any), passive_
       wg.done
     end
   end
+
+  # Log how many files were added to the file_map
+  logger.debug "Added #{locator.all("file_map").size} files to file_map"
 
   # Threads for receiving and processing the contents from the channel
   concurrency = options["concurrency"].to_s.to_i

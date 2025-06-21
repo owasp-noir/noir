@@ -10,12 +10,7 @@ module Analyzer::Crystal
 
       # Source Analysis
       begin
-        spawn do
-          Dir.glob("#{@base_path}/**/*") do |file|
-            channel.send(file)
-          end
-          channel.close
-        end
+        populate_channel_with_files(channel)
 
         WaitGroup.wait do |wg|
           @options["concurrency"].to_s.to_i.times do
@@ -79,16 +74,16 @@ module Analyzer::Crystal
       # Public Dir Analysis
       if is_public
         begin
-          Dir.glob("#{@base_path}/public/**/*") do |file|
-            next if File.directory?(file)
+          # Process public folder files
+          get_public_files(@base_path).each do |file|
             real_path = "#{@base_path}/public/".gsub(/\/+/, '/')
             relative_path = file.sub(real_path, "")
             @result << Endpoint.new("/#{relative_path}", "GET")
           end
 
+          # Process other public folders
           public_folders.each do |folder|
-            Dir.glob("#{@base_path}/#{folder}/**/*") do |file|
-              next if File.directory?(file)
+            get_public_dir_files(@base_path, folder).each do |file|
               relative_path = get_relative_path(@base_path, file)
               relative_path = get_relative_path(folder, relative_path)
               @result << Endpoint.new("/#{relative_path}", "GET")
