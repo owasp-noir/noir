@@ -202,6 +202,7 @@ module Analyzer::Java
                       url_paths = [""]
                       if method_annotation.params.size > 0
                         url_paths = get_mapping_path(parser, tokens, method_annotation.params)
+                        url_paths = ["/"] if url_paths.empty?
                       end
 
                       line = method_annotation.tokens[0].line
@@ -240,6 +241,7 @@ module Analyzer::Java
                         url_paths = [""]
                         if method_annotation.params.size > 0
                           url_paths = get_mapping_path(parser, tokens, method_annotation.params)
+                          url_paths = ["/"] if url_paths.empty?
                         end
 
                         details = Details.new(PathInfo.new(path, line))
