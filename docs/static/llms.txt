@@ -1,0 +1,57 @@
+<project title="Noir" summary='Noir is a static analysis tool for identifying attack surfaces in source code. It is designed to be a developer-friendly tool that can be easily integrated into CI/CD pipelines. Noir also has the ability to leverage AI and LLMs to improve its analysis capabilities.'>
+Things to remember when using Noir:
+
+- Noir is a static analysis tool, not a dynamic analysis tool. This means that it analyzes the source code without executing it.
+- Noir can be used to analyze a variety of languages, but it is most effective when used with Crystal.
+- Noir can be integrated with a variety of AI and LLM providers, including OpenAI, Ollama, and LM Studio.
+
+<docs><doc title="Noir concise guide" desc="A brief overview of idiomatic Noir usage">
+# Concise reference
+
+## About Noir
+
+Noir is a static analysis tool for identifying attack surfaces in source code. It is designed to be a developer-friendly tool that can be easily integrated into CI/CD pipelines. Noir also has the ability to leverage AI and LLMs to improve its analysis capabilities.
+
+Things to remember when using Noir:
+
+- Noir is a static analysis tool, not a dynamic analysis tool. This means that it analyzes the source code without executing it.
+- Noir can be used to analyze a variety of languages, but it is most effective when used with Crystal.
+- Noir can be integrated with a variety of AI and LLM providers, including OpenAI, Ollama, and LM Studio.
+
+## Minimal App
+
+A minimal Noir app looks something like this:
+
+```bash
+# Install Noir
+shards install
+
+# Run Noir
+./bin/noir -b ./spec/functional_test/fixtures/hahwul
+```
+
+## Build and Test
+
+To build and test the project, you can use the following commands:
+
+```bash
+# Build the project
+just build
+
+# Run the tests
+just test
+```
+
+## Linting
+
+To lint the project, you can use the following commands:
+
+```bash
+# Check for linting issues
+just check
+
+# Fix linting issues
+just fix
+```
+</doc></docs>
+</project>
