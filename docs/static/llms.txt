@@ -1,0 +1,6 @@
+github
+lmstudio
+ollama
+openai
+vllm
+xai
