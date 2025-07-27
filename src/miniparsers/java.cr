@@ -171,7 +171,7 @@ class JavaParser
 
     # If no newline found, return empty annotations
     return annotations if rcursor == -1
-    
+
     # lcursor: used to parse annotations above the declaration
     lcursor = rcursor
     while lcursor > 1
@@ -198,25 +198,25 @@ class JavaParser
         break if lcursor == 0
 
         # Skip blank lines between annotation name and '('
-        while tokens[lcursor-1].type == :NEWLINE || tokens[lcursor-1].type == :TAB
+        while tokens[lcursor - 1].type == :NEWLINE || tokens[lcursor - 1].type == :TAB
           lcursor -= 1
         end
 
         # Parse the annotation with parameters
-        if tokens[lcursor-2].type == :AT
-            annotation_name = tokens[lcursor-1].value
-            annotation_params = parse_formal_parameters(tokens, lcursor)
+        if tokens[lcursor - 2].type == :AT
+          annotation_name = tokens[lcursor - 1].value
+          annotation_params = parse_formal_parameters(tokens, lcursor)
 
-            annotations[annotation_name] = AnnotationModel.new(
-              annotation_name,
-              annotation_params,
-              tokens[lcursor-2..rcursor]
-            )
-            lcursor = lcursor - 3
+          annotations[annotation_name] = AnnotationModel.new(
+            annotation_name,
+            annotation_params,
+            tokens[lcursor - 2..rcursor]
+          )
+          lcursor = lcursor - 3
         else
           break
         end
-      elsif tokens[lcursor-1].type == :AT
+      elsif tokens[lcursor - 1].type == :AT
         # Parse annotation without parameters
         annotation_name = tokens[lcursor].value
         annotation_params = parse_formal_parameters(tokens, lcursor)
@@ -224,7 +224,7 @@ class JavaParser
         annotations[annotation_name] = AnnotationModel.new(
           annotation_name,
           annotation_params,
-          tokens[lcursor-1..rcursor]
+          tokens[lcursor - 1..rcursor]
         )
         lcursor = lcursor - 2
       else
