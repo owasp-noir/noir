@@ -47,6 +47,8 @@ extected_endpoints = [
   Endpoint.new("/multi/annotation/", "GET", [Param.new("name", "", "query"), Param.new("header", "", "header")]),
   # TRequestHeader.java
   Endpoint.new("/request/header/", "GET", [Param.new("name", "", "query"), Param.new("header", "", "header"), Param.new("AUTHORIZATION", "", "header")]),
+  # DuplicateParameter.java
+  Endpoint.new("/duplicate/parameter/{token}/test", "DELETE", [Param.new("token", "", "path")]),
 ]
 
 FunctionalTester.new("fixtures/java/spring/", {
