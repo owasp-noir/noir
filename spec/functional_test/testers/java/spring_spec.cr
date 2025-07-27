@@ -45,6 +45,8 @@ extected_endpoints = [
   Endpoint.new("/api/v1/test/", "GET", [Param.new("name", "", "query"), Param.new("header", "", "header")]),
   # TApiResponses.java
   Endpoint.new("/multi/annotation/", "GET", [Param.new("name", "", "query"), Param.new("header", "", "header")]),
+  # TRequestHeader.java
+  Endpoint.new("/request/header/", "GET", [Param.new("name", "", "query"), Param.new("header", "", "header"), Param.new("AUTHORIZATION", "", "header")]),
 ]
 
 FunctionalTester.new("fixtures/java/spring/", {
