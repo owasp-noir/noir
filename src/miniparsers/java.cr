@@ -198,12 +198,12 @@ class JavaParser
         break if lcursor == 0
 
         # Skip blank lines between annotation name and '('
-        while lcursor > 0 && (tokens[lcursor-1].type == :NEWLINE || tokens[lcursor-1].type == :TAB)
+        while lcursor > 0 && (tokens[lcursor - 1].type == :NEWLINE || tokens[lcursor - 1].type == :TAB)
           lcursor -= 1
         end
 
         # Parse the annotation with parameters
-        if lcursor > 1 && tokens[lcursor-2].type == :AT
+        if lcursor > 1 && tokens[lcursor - 2].type == :AT
           annotation_name = tokens[lcursor - 1].value
           annotation_params = parse_formal_parameters(tokens, lcursor)
 
