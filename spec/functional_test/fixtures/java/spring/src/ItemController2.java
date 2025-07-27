@@ -29,11 +29,13 @@ public class ItemController {
     (
         "test"
     ) //comment
+
     @Operation( //comment
         summary = "Some summary",
         tags = {"example"},
       responses = {@ApiResponse(content = @Content(schema = @Schema(implementation = Authorization.class)))}
     ) //comment
+    
     public ResponseEntity<Object> someMethod(@PathVariable String id) throws SomeException {
     }
 }

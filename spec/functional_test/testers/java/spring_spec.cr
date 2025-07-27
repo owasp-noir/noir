@@ -43,6 +43,8 @@ extected_endpoints = [
   Endpoint.new("/empty/", "GET"),
   # MyController.java
   Endpoint.new("/api/v1/test/", "GET", [Param.new("name", "", "query"), Param.new("header", "", "header")]),
+  # TApiResponses.java
+  Endpoint.new("/multi/annotation/", "GET", [Param.new("name", "", "query"), Param.new("header", "", "header")]),
 ]
 
 FunctionalTester.new("fixtures/java/spring/", {
