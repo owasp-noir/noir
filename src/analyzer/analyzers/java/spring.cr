@@ -362,7 +362,7 @@ module Analyzer::Java
           end
 
           if parameter_format.nil?
-            parameter_format = "query"
+            next
           end
 
           default_value = nil
