@@ -135,3 +135,17 @@ class FunctionalTester
     @app.options["url"] = YAML::Any.new(url)
   end
 end
+
+describe "Functional Test" do
+  # Java
+  tester_java_spring_feign = FunctionalTester.new(
+    "fixtures/java/spring_feign",
+    {:techs => 1, :endpoints => 2},
+    [
+      Endpoint.new("http://inventory-service/api/v2/items/{id}/stock", "PATCH"),
+      Endpoint.new("http://inventory-service/api/v2/items", "GET"),
+    ]
+  )
+  tester_java_spring_feign.app.options["analyze_feign_clients"] = YAML::Any.new(true)
+  tester_java_spring_feign.perform_tests
+end

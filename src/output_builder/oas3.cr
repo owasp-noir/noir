@@ -23,15 +23,21 @@ class OutputBuilderOas3 < OutputBuilder
         }
       end
 
-      path = {
-        endpoint.method.downcase.to_s => {
-          "responses" => {
-            "200" => {
-              "description" => "Successful response",
-            },
+      path_item = {
+        "responses" => {
+          "200" => {
+            "description" => "Successful response",
           },
-          "parameters" => parameters,
         },
+        "parameters" => parameters,
+      }
+
+      if endpoint.tags.any? { |tag| tag.name == "internal" && tag.description == "true" }
+        path_item["x-internal"] = true
+      end
+
+      path = {
+        endpoint.method.downcase.to_s => path_item,
       }
       uri = URI.parse(endpoint.url)
       paths[uri.path] = path

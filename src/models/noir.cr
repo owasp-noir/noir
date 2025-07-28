@@ -27,6 +27,7 @@ class NoirRunner
   @noir_home : String
   @passive_scans : Array(PassiveScan)
   @passive_results : Array(PassiveScanResult)
+  @analyze_feign_clients : Bool
 
   macro define_getter_methods(names)
     {% for name, index in names %}
@@ -61,6 +62,7 @@ class NoirRunner
     @is_color = any_to_bool(@options["color"])
     @is_log = any_to_bool(@options["nolog"])
     @concurrency = @options["concurrency"].to_s.to_i
+    @analyze_feign_clients = any_to_bool(@options["analyze_feign_clients"])
 
     @logger = NoirLogger.new @is_debug, @is_verbose, @is_color, @is_log
 
@@ -98,6 +100,7 @@ class NoirRunner
   end
 
   def analyze
+    @options["analyze_feign_clients"] = YAML::Any.new(@analyze_feign_clients)
     @endpoints = analysis_endpoints options, @techs, @logger
     optimize_endpoints
     combine_url_and_endpoints

@@ -137,6 +137,9 @@ def run_options_parser
     parser.separator "\n  TECHNOLOGIES:".colorize(:blue)
     parser.on "-t TECHS", "--techs rails,php", "Specify the technologies to use" { |var| noir_options["techs"] = YAML::Any.new(var) }
     parser.on "--exclude-techs rails,php", "Specify the technologies to be excluded" { |var| noir_options["exclude_techs"] = YAML::Any.new(var) }
+    parser.on "--analyze-feign-clients", "Analyze Feign clients" do
+      noir_options["analyze_feign_clients"] = YAML::Any.new(true)
+    end
     parser.on "--list-techs", "Show all technologies" do
       puts "⚑ Available technologies:"
       techs = NoirTechs.techs

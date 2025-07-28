@@ -141,6 +141,7 @@ module Analyzer::Java
             # Extract URL mappings and methods from Spring MVC annotated classes
             class_map = package_class_map.merge(import_map)
             parser.classes.each do |class_model|
+              analyze_feign_client(parser, tokens, path, class_model, class_map)
               class_annotation = class_model.annotations["RequestMapping"]?
               if !class_annotation.nil?
                 next if class_annotation.params.size == 0
@@ -451,6 +452,56 @@ module Analyzer::Java
       end
 
       endpoint_parameters
+    end
+
+    def analyze_feign_client(parser : JavaParser, tokens : Array(Token), path : String, class_model : ClassModel, class_map : Hash(String, ClassModel))
+      feign_client_annotation = class_model.annotations["FeignClient"]?
+      return if feign_client_annotation.nil?
+      return unless any_to_bool(@options["analyze_feign_clients"])
+
+      base_url = ""
+      feign_client_annotation.params.each do |param|
+        if param.size > 2 && param[0].value == "url"
+          base_url = param[2].value.gsub("\"", "")
+          break
+        end
+      end
+
+      class_model.methods.values.each do |method|
+        method.annotations.values.each do |method_annotation|
+          if method_annotation.name.ends_with? "Mapping"
+            mapping_annotations = ["GetMapping", "PostMapping", "PutMapping", "DeleteMapping", "PatchMapping", "RequestMapping"]
+            mapping_index = mapping_annotations.index(method_annotation.name)
+            next if mapping_index.nil?
+
+            request_method = if method_annotation.name == "RequestMapping"
+                               "GET" # Default method
+                             else
+                               mapping_annotations[mapping_index][0..-8].upcase
+                             end
+
+            url_paths = [""]
+            if method_annotation.params.size > 0
+              url_paths = get_mapping_path(parser, tokens, method_annotation.params)
+              url_paths = ["/"] if url_paths.empty?
+            end
+
+            line = method_annotation.tokens[0].line
+            details = Details.new(PathInfo.new(path, line))
+            details.add_tag(Tag.new("internal", "true", "feign"))
+
+            parameter_format = request_method == "POST" ? "json" : "query"
+            parameters = get_endpoint_parameters(parser, request_method, method, parameter_format, class_map)
+
+            url_paths.each do |url_path|
+              full_url = join_paths(base_url, url_path)
+              endpoint = Endpoint.new(full_url, request_method, parameters, details)
+              endpoint.add_tag(Tag.new("internal", "true", "feign"))
+              @result << endpoint
+            end
+          end
+        end
+      end
     end
   end
 end

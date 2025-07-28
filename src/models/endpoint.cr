@@ -110,6 +110,7 @@ struct Details
   include YAML::Serializable
   property code_paths : Array(PathInfo) = [] of PathInfo
   property status_code : Int32 | Nil
+  property tags : Array(Tag) = [] of Tag
 
   # + New details types to be added in the future..
 
@@ -122,6 +123,10 @@ struct Details
 
   def add_path(code_path : PathInfo)
     @code_paths << code_path
+  end
+
+  def add_tag(tag : Tag)
+    @tags << tag
   end
 
   def status_code=(status_code : Int32)
