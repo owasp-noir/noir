@@ -19,6 +19,10 @@
 </p>
 
 <p align="center">
+  <a href="./README.ko.md">🇰🇷 Korean</a>
+</p>
+
+<p align="center">
   <a href="https://owasp-noir.github.io/noir/">Documentation</a> •
   <a href="https://owasp-noir.github.io/noir/get_started/installation/">Installation</a> •
   <a href="https://owasp-noir.github.io/noir/supported">Available Support Scope</a> •
