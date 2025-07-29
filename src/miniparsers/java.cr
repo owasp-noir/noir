@@ -176,7 +176,7 @@ class JavaParser
     lcursor = rcursor
     while lcursor > 1
       # Skip consecutive newlines and tabs
-      while tokens[lcursor].type == :NEWLINE || tokens[lcursor].type == :TAB
+      while lcursor > 1 && (tokens[lcursor].type == :NEWLINE || tokens[lcursor].type == :TAB)
         lcursor -= 1
       end
 
@@ -203,7 +203,7 @@ class JavaParser
         end
 
         # Parse the annotation with parameters
-        if tokens[lcursor - 2].type == :AT
+        if lcursor > 2 && tokens[lcursor - 2].type == :AT
           annotation_name = tokens[lcursor - 1].value
           annotation_params = parse_formal_parameters(tokens, lcursor)
 
