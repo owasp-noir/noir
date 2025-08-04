@@ -47,7 +47,7 @@ module Noir
         return "DELETE"
       when "OPTIONS"
         return "OPTIONS"
-      when "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"
+      when "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "ALL"
         return method
       end
 

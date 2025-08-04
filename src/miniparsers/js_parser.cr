@@ -22,6 +22,7 @@ module Noir
     @tokens : Array(JSToken) = [] of JSToken
     @position : Int32 = 0
     @framework : Symbol = :unknown
+    @variables = {} of String => String # Simple symbol table for constants
 
     def initialize(source : String)
       lexer = JSLexer.new(source)
@@ -76,6 +77,9 @@ module Noir
       # Second pass: process routes with collected prefixes
       while !is_at_end && iterations < max_iterations
         start_position = @position
+
+        # Try to parse a variable declaration
+        parse_variable_declaration
 
         # Try to parse route with current or no prefix
         route = parse_route_pattern
@@ -225,22 +229,20 @@ module Noir
 
           # Look for the path string in parentheses
           path_idx = idx + 3
-          if path_idx < @tokens.size &&
-             @tokens[path_idx].type == :lparen &&
-             path_idx + 1 < @tokens.size &&
-             @tokens[path_idx + 1].type == :string
-            path = @tokens[path_idx + 1].value
+          if path_idx < @tokens.size && @tokens[path_idx].type == :lparen
+            path, end_position = resolve_path_expression(path_idx + 1)
+            if path
+              # Advance our position past what we've parsed
+              @position = end_position
 
-            # Advance our position past what we've parsed
-            @position = path_idx + 2
+              # Extract parameters from path
+              route = JSRoutePattern.new(method, path)
+              extract_path_params(path).each do |param|
+                route.push_param(param)
+              end
 
-            # Extract parameters from path
-            route = JSRoutePattern.new(method, path)
-            extract_path_params(path).each do |param|
-              route.push_param(param)
+              return route
             end
-
-            return route
           end
         end
         idx += 1
@@ -265,22 +267,20 @@ module Noir
 
           # Look for the path string in parentheses
           path_idx = idx + 3
-          if path_idx < @tokens.size &&
-             @tokens[path_idx].type == :lparen &&
-             path_idx + 1 < @tokens.size &&
-             @tokens[path_idx + 1].type == :string
-            path = @tokens[path_idx + 1].value
+          if path_idx < @tokens.size && @tokens[path_idx].type == :lparen
+            path, end_position = resolve_path_expression(path_idx + 1)
+            if path
+              # Advance our position past what we've parsed
+              @position = end_position
 
-            # Advance our position past what we've parsed
-            @position = path_idx + 2
+              # Extract parameters from path
+              route = JSRoutePattern.new(method, path)
+              extract_path_params(path).each do |param|
+                route.push_param(param)
+              end
 
-            # Extract parameters from path
-            route = JSRoutePattern.new(method, path)
-            extract_path_params(path).each do |param|
-              route.push_param(param)
+              return route
             end
-
-            return route
           end
         end
         idx += 1
@@ -308,15 +308,15 @@ module Noir
 
           # Look for the path string in parentheses
           path_idx = idx + 3
-          if path_idx < @tokens.size &&
-             @tokens[path_idx].type == :lparen &&
-             path_idx + 1 < @tokens.size
-            # Handle both string and object pattern { path: '/route' }
-            if @tokens[path_idx + 1].type == :string
-              path = @tokens[path_idx + 1].value
-              @position = path_idx + 2
+          if path_idx < @tokens.size && @tokens[path_idx].type == :lparen && path_idx + 1 < @tokens.size
+            path = nil
+            # Try to resolve expression first
+            resolved_path, end_position = resolve_path_expression(path_idx + 1)
+            if resolved_path
+              path = resolved_path
+              @position = end_position
             elsif @tokens[path_idx + 1].type == :lbrace
-              # Look for path property in object
+              # Fallback to object parsing
               obj_idx = path_idx + 1
               while obj_idx < @tokens.size && @tokens[obj_idx].type != :rbrace
                 if @tokens[obj_idx].value == "path" &&
@@ -361,22 +361,20 @@ module Noir
 
           # Look for the path string in parentheses
           path_idx = idx + 2
-          if path_idx < @tokens.size &&
-             @tokens[path_idx].type == :lparen &&
-             path_idx + 1 < @tokens.size &&
-             @tokens[path_idx + 1].type == :string
-            path = @tokens[path_idx + 1].value
+          if path_idx < @tokens.size && @tokens[path_idx].type == :lparen
+            path, end_position = resolve_path_expression(path_idx + 1)
+            if path
+              # Advance our position past what we've parsed
+              @position = end_position
 
-            # Advance our position past what we've parsed
-            @position = path_idx + 2
+              # Extract parameters from path
+              route = JSRoutePattern.new(method, path)
+              extract_path_params(path).each do |param|
+                route.push_param(param)
+              end
 
-            # Extract parameters from path
-            route = JSRoutePattern.new(method, path)
-            extract_path_params(path).each do |param|
-              route.push_param(param)
+              return route
             end
-
-            return route
           end
         end
         idx += 1
@@ -568,6 +566,62 @@ module Noir
       end
 
       params
+    end
+
+    private def parse_variable_declaration
+      # Look for `const <identifier> = <string_literal>`
+      idx = @position
+      if idx + 3 < @tokens.size &&
+         @tokens[idx].value == "const" &&
+         @tokens[idx + 1].type == :identifier &&
+         @tokens[idx + 2].value == "=" &&
+         @tokens[idx + 3].type == :string
+
+        var_name = @tokens[idx + 1].value
+        var_value = @tokens[idx + 3].value
+        @variables[var_name] = var_value
+
+        # Advance the position past this declaration
+        @position = idx + 4
+      end
+    end
+
+    private def resolve_path_expression(start_index : Int32) : {String?, Int32}
+      idx = start_index
+      return {nil, start_index} if idx >= @tokens.size
+
+      # Handle a simple string, template literal, or identifier
+      token = @tokens[idx]
+      path_part = case token.type
+                  when :string
+                    token.value
+                  when :template_literal
+                    # Substitute variables in the template literal
+                    token.value.gsub(/\$\{([^}]+)\}/) do
+                      var_name = $1
+                      @variables[var_name]? || ""
+                    end
+                  when :identifier
+                    @variables[token.value]?
+                  else
+                    nil
+                  end
+
+      # If it's a simple value, we're done with this part
+      if path_part
+        # Check for concatenation
+        if idx + 1 < @tokens.size && @tokens[idx + 1].type == :operator && @tokens[idx + 1].value == "+"
+          next_part, end_pos = resolve_path_expression(idx + 2)
+          if next_part
+            return {path_part + next_part, end_pos}
+          else
+            return {nil, start_index}
+          end
+        end
+        return {path_part, idx + 1}
+      end
+
+      {nil, start_index}
     end
   end
 end

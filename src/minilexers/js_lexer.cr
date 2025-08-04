@@ -55,8 +55,13 @@ module Noir
         when '.'
           add_token(:dot, ".")
           advance
+        when '+'
+          add_token(:operator, "+")
+          advance
         when '"', '\''
           tokenize_string
+        when '`'
+          tokenize_template_literal
         when '/'
           if peek == '/' # Single line comment
             skip_line_comment
@@ -148,6 +153,28 @@ module Noir
       add_token(:string, string_value)
     end
 
+    private def tokenize_template_literal
+      # We will treat template literals as strings for now,
+      # the parser can handle the variable substitution.
+      advance # Skip the opening backtick
+
+      string_value = ""
+      while @current_char != '`' && @current_char != '\0'
+        # Handle escape sequences
+        if @current_char == '\\' && (peek == '`' || peek == '\\' || peek == '$')
+          advance
+        end
+
+        string_value += @current_char
+        advance
+      end
+
+      # Skip the closing backtick
+      advance if @current_char == '`'
+
+      add_token(:template_literal, string_value)
+    end
+
     private def tokenize_number
       number = ""
 
@@ -175,7 +202,7 @@ module Noir
       case identifier
       when "function", "async", "const", "let", "var", "return", "if", "else", "for", "while"
         add_token(:keyword, identifier)
-      when "get", "post", "put", "delete", "options", "head", "patch", "del"
+      when "get", "post", "put", "delete", "options", "head", "patch", "del", "all"
         add_token(:http_method, identifier)
       when "true", "false", "null", "undefined"
         add_token(:literal, identifier)

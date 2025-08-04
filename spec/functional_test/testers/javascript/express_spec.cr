@@ -47,6 +47,10 @@ extected_endpoints = [
     Param.new("view", "", "query"),
     Param.new("Admin-Token", "", "header"),
   ]),
+  # Dynamic routes
+  Endpoint.new("/api/v2/users", "GET"),
+  Endpoint.new("/api/v2/login", "POST"),
+  Endpoint.new("/api/v2/catchall", "ALL"),
 ]
 
 FunctionalTester.new("fixtures/javascript/express/", {

@@ -96,3 +96,9 @@ router.get('/admin/dashboard', (req, res) => {
 
 // Export the router
 module.exports = router;
+
+// Dynamic routes for testing
+const API_PREFIX = '/api/v2';
+router.get(`${API_PREFIX}/users`, (req, res) => res.json({}));
+router.post(API_PREFIX + '/login', (req, res) => res.json({}));
+router.all(`${API_PREFIX}/catchall`, (req, res) => res.json({}));
