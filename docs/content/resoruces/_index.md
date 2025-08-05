@@ -1,7 +1,7 @@
 +++
-title = "More Resources"
+title = "Resources"
 description = ".."
-weight = 11
+weight = 12
 sort_by = "weight"
 
 [extra]

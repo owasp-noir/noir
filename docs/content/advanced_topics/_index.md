@@ -1,7 +1,7 @@
 +++
-title = "AI Integration"
+title = "Advanced Topics"
 description = ".."
-weight = 4
+weight = 11
 sort_by = "weight"
 
 [extra]
