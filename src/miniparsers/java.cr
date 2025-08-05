@@ -164,13 +164,13 @@ class JavaParser
 
     # rcursor: search for the newline before the declaration
     rcursor = declare_token_index
-    while rcursor >= 0
+    while rcursor > 0
       rcursor -= 1
       break if tokens[rcursor].type == :NEWLINE
     end
 
     # If no newline found, return empty annotations
-    return annotations if rcursor == -1
+    return annotations if rcursor == 0
 
     # lcursor: used to parse annotations above the declaration
     lcursor = rcursor
