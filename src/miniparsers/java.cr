@@ -159,77 +159,77 @@ class JavaParser
   end
 
   def parse_annotations_backwards(tokens : Array(Token), declare_token_index : Int32)
-    # Create empty annotations hash
+    # annotations: stores parsed annotations
     annotations = Hash(String, AnnotationModel).new
 
-    # Find the newline before the declaration
-    last_newline_index = -1
-    cursor = declare_token_index - 1
-
-    while cursor >= 0 && last_newline_index == -1
-      if tokens[cursor].type == :NEWLINE
-        last_newline_index = cursor
-      end
-      cursor -= 1
+    # rcursor: search for the newline before the declaration
+    rcursor = declare_token_index
+    while rcursor >= 0
+      rcursor -= 1
+      break if tokens[rcursor].type == :NEWLINE
     end
 
-    # Return if no newline was found
-    return annotations if last_newline_index == -1
-    last_multiline_index = last_newline_index
+    # If no newline found, return empty annotations
+    return annotations if rcursor == -1
 
-    # Parse annotations above the declaration
-    while cursor >= 0
-      if tokens[cursor].type == :NEWLINE
-        # Skip if next token is NEWLINE or TAB
-        unless tokens[cursor + 1].type == :NEWLINE || tokens[cursor + 1].type == :TAB
-          if tokens[cursor + 1].type == :AT
-            # Parse new annotation starting with '@'
-            annotation_name = tokens[cursor + 2].value
-            annotation_params = parse_formal_parameters(tokens, cursor + 3)
+    # lcursor: used to parse annotations above the declaration
+    lcursor = rcursor
+    while lcursor > 1
+      # Skip consecutive newlines and tabs
+      while tokens[lcursor].type == :NEWLINE || tokens[lcursor].type == :TAB
+        lcursor -= 1
+      end
 
-            annotations[annotation_name] = AnnotationModel.new(
-              annotation_name,
-              annotation_params,
-              tokens[cursor..last_newline_index - 1]
-            )
-            last_multiline_index = cursor
-          elsif last_multiline_index == last_newline_index && tokens[last_multiline_index - 1].type == :RPAREN
-            # Continue multi-line annotation by matching '(' for ')'
-            paren_count = 1
-            while cursor > 0
-              if tokens[cursor].type == :RPAREN
-                paren_count += 1
-              elsif tokens[cursor].type == :LPAREN
-                paren_count -= 1
-                break if paren_count == 0
-              end
-              cursor -= 1
-            end
-
-            break if cursor == 0
-            # Skip newline before '('
-            if tokens[cursor - 1].type == :NEWLINE
-              cursor -= 2
-            end
-
-            while cursor >= 0
-              break if tokens[cursor].type == :NEWLINE
-              cursor -= 1
-            end
-
-            if cursor > 0
-              last_multiline_index = cursor
-              next
-            end
-          else
-            break
+      # Handle multi-line annotation by matching '(' and ')'
+      if tokens[lcursor].type == :RPAREN
+        rcursor = lcursor
+        paren_count = 1
+        lcursor -= 1
+        while lcursor > 0
+          if tokens[lcursor].type == :RPAREN
+            paren_count += 1
+          elsif tokens[lcursor].type == :LPAREN
+            paren_count -= 1
+            break if paren_count == 0
           end
 
-          # Update last newline index
-          last_newline_index = cursor
+          lcursor -= 1
         end
+        break if lcursor == 0
+
+        # Skip blank lines between annotation name and '('
+        while lcursor > 0 && (tokens[lcursor - 1].type == :NEWLINE || tokens[lcursor - 1].type == :TAB)
+          lcursor -= 1
+        end
+
+        # Parse the annotation with parameters
+        if lcursor > 1 && tokens[lcursor - 2].type == :AT
+          annotation_name = tokens[lcursor - 1].value
+          annotation_params = parse_formal_parameters(tokens, lcursor)
+
+          annotations[annotation_name] = AnnotationModel.new(
+            annotation_name,
+            annotation_params,
+            tokens[lcursor - 2..rcursor]
+          )
+          lcursor = lcursor - 3
+        else
+          break
+        end
+      elsif tokens[lcursor - 1].type == :AT
+        # Parse annotation without parameters
+        annotation_name = tokens[lcursor].value
+        annotation_params = parse_formal_parameters(tokens, lcursor)
+
+        annotations[annotation_name] = AnnotationModel.new(
+          annotation_name,
+          annotation_params,
+          tokens[lcursor - 1..rcursor]
+        )
+        lcursor = lcursor - 2
+      else
+        break
       end
-      cursor -= 1
     end
 
     annotations
