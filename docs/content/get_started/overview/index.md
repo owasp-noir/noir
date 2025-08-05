@@ -30,7 +30,7 @@ Noir is composed of several key components: detector, analyzer, deliver, minilex
 [^3]: The minilexer and miniparser is a parser and tokenizer used for code analysis to identify various elements within the source code.
 [^4]: The tagger assigns relevant tags to the identified issues for easier categorization and management.
 
-```mermaid
+{% mermaid() %}
 flowchart LR
     SourceCode:::highlight --> Detectors
 
@@ -58,7 +58,7 @@ flowchart LR
     OutputBuilder --> Report:::highlight
 
     classDef highlight fill:#f9f,stroke:#333,stroke-width:4px;
-```
+{% end %}
 
 ## Road Map
 We plan to expand the range of supported programming languages and frameworks, and to continuously increase accuracy. Furthermore, we will leverage AI and Large Language Models (LLMs) to significantly broaden our analysis capabilities.
