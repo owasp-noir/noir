@@ -17,7 +17,9 @@ If you are on macOS or Linux, the easiest way to install Noir is with [Homebrew]
 brew install noir
 ```
 
+{% alert_info() %}
 For Homebrew users, shell completions for Zsh, Bash, and Fish are automatically installed, so you can start using them right away.
+{% end %}
 
 ## Snapcraft (Linux)
 
@@ -39,7 +41,9 @@ You can find a list of all available tags on the [GitHub Packages page](https://
 
 ## Build from Source
 
-If you want to build Noir from source, you will need to have the [Crystal](https://crystal-lang.org/install/) programming language installed.
+{% alert_warning() %}
+If you want to build Noir from source, you will need to have the Crystal programming language installed.
+{% end %}
 
 1.  **Clone the repository**:
 
