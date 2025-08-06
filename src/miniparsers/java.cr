@@ -473,6 +473,15 @@ class JavaParser
               break unless previous_token.type == :THROWS && previous_token.value == "throws"
             elsif previous_token.type == :IDENTIFIER
               has_exception = true
+              # skip multiple exception handling
+              while 2 < previous_token_index
+                previous_token = class_tokens[previous_token_index - 1]
+                if previous_token.type == :NEWLINE || previous_token.type == :COMMA || previous_token.type == :IDENTIFIER
+                  previous_token_index -= 1
+                else
+                  break
+                end
+              end
             else
               break
             end

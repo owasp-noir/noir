@@ -49,6 +49,8 @@ extected_endpoints = [
   Endpoint.new("/request/header/", "GET", [Param.new("name", "", "query"), Param.new("header", "", "header"), Param.new("AUTHORIZATION", "", "header")]),
   # DuplicateParameter.java
   Endpoint.new("/duplicate/parameter/{token}/test", "DELETE", [Param.new("token", "", "path")]),
+  # ThrowsMultiException.java
+  Endpoint.new("/throws/multi/exception/", "GET", [Param.new("name", "", "query"), Param.new("header", "", "header")]),
 ]
 
 FunctionalTester.new("fixtures/java/spring/", {
