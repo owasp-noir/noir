@@ -46,8 +46,8 @@ icon = "fa-solid fa-robot"
 [extra.trust_section]
 title = "Our Tech Stack"
 logos = [
-    { src = "/resoruces/owasp.svg", alt = "OWASP" },
-    { src = "/resoruces/crystal.svg", alt = "Crystal" },
+    { src = "./resoruces/owasp.svg", alt = "OWASP" },
+    { src = "./resoruces/crystal.svg", alt = "Crystal" },
 ]
 
 [extra.social_proof_section]

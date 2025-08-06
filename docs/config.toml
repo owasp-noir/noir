@@ -16,7 +16,7 @@ highlight_code = true
 
 [extra]
 logo_text = "Goyo"
-logo_image_path = "images/logo.png"
+logo_image_path = "images/logo-s.png"
 footer_html = "Powered by <a href='https://www.getzola.org'>Zola</a> and <a href='https://github.com/hahwul/goyo'>Goyo</a>"
 default_thumbnail = "images/bbb.jpg"
 default_colorset = "dark"
