@@ -378,11 +378,23 @@ module Analyzer::Java
 
                   # Extract 'name' from @RequestParam(value/defaultValue/name = "name")
                   if request_param_name == "value"
-                    parameter_name = request_param_value[1..-2]
+                    parameter_name = request_param_value
                   elsif request_param_name == "name"
-                    parameter_name = request_param_value[1..-2]
+                    parameter_name = request_param_value
                   elsif request_param_name == "defaultValue"
-                    default_value = request_param_value[1..-2]
+                    default_value = request_param_value
+                  end
+
+                  unless parameter_name.nil?
+                    if parameter_name.starts_with?("\"") && parameter_name.ends_with?("\"")
+                      parameter_name = parameter_name[1..-2]
+                    end
+                  end
+
+                  unless default_value.nil?
+                    if default_value.starts_with?("\"") && default_value.ends_with?("\"")
+                      default_value = default_value[1..-2]
+                    end
                   end
                 end
               end
