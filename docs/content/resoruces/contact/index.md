@@ -20,5 +20,5 @@ The best way to get in touch with us is through our [GitHub repository](https://
 
 You can follow the project leaders on social media for updates and announcements:
 
-*   **hahwul**: [Twitter/X](https://x.com/hahwul), [LinkedIn](https://www.linkedin.com/in/hahwul/)
+*   **hahwul**: [𝕏](https://x.com/hahwul), [GitHub](https://github.com/hahwul)
 *   **ksg**: [GitHub](https://github.com/ksg97031)
