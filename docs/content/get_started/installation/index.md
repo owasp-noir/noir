@@ -1,121 +1,73 @@
 +++
 title = "Installation"
-description = "How to install OWASP Noir and get started."
+description = "Learn how to install OWASP Noir on your system. This guide provides instructions for installing Noir using Homebrew, Snapcraft, Docker, or by building from source."
 weight = 2
 sort_by = "weight"
 
 [extra]
 +++
 
-You can install Noir using various package managers. Each method has its advantages depending on your operating system and preferences. You can use Homebrew on macOS, Snapcraft or Homebrew on Linux, and on all operating systems including Windows, you can use Docker or build from source.
+There are several ways to install OWASP Noir, so you can choose the method that works best for your operating system and workflow.
 
-## Homebrew
+## Homebrew (macOS and Linux)
 
-Homebrew is the recommended package manager for macOS and Linux. On devices using homebrew, you can easily install and update Noir using the brew command.
-
-If you don't have Homebrew installed yet, you can install it with:
-
-```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install.sh)"
-```
-
-Once Homebrew is installed, you can install Noir with:
+If you are on macOS or Linux, the easiest way to install Noir is with [Homebrew](https://brew.sh/).
 
 ```bash
 brew install noir
 ```
 
-### Shell Completion for Homebrew Users
+For Homebrew users, shell completions for Zsh, Bash, and Fish are automatically installed, so you can start using them right away.
 
-For Homebrew users, shell completion (for Zsh, Bash, etc.) is installed automatically, and no additional configuration is needed. The completions are ready to use immediately after installation.
+## Snapcraft (Linux)
 
-## Snapcraft
-
-Snapcraft is a powerful package manager for Linux that enables you to easily install and manage applications. It supports a wide range of distributions, making software installation simple and consistent.
-
-### Install Snapcraft
-
-First, ensure you have Snap installed on your system:
-
-#### Ubuntu
-```bash
-sudo apt update
-sudo apt install snapd
-```
-
-#### Other Linux Distributions
-For other Linux distributions, please refer to the [official Snapcraft documentation](https://snapcraft.io/docs/installing-snapd).
-
-### Install Noir with Snapcraft
-
-Once you have Snapcraft installed, you can install Noir with:
+If you are on a Linux distribution that supports [Snap](https://snapcraft.io/), you can install Noir from the Snap Store.
 
 ```bash
 sudo snap install noir
 ```
 
-You can find the Noir package on the [Snapcraft store](https://snapcraft.io/noir).
+## Docker
 
-## Docker (GHCR)
-
-Docker allows you to run Noir in a container without installing it directly on your system. Noir is available on GitHub Container Registry (GHCR).
-
-To pull the latest Noir Docker image:
+If you prefer to use Docker, you can pull the official Noir image from the GitHub Container Registry (GHCR).
 
 ```bash
 docker pull ghcr.io/owasp-noir/noir:latest
 ```
 
-To use a specific version, replace `latest` with the version tag:
-
-```bash
-docker pull ghcr.io/owasp-noir/noir:<version>
-```
-
-To reference this Docker image in your own Dockerfile:
-
-```dockerfile
-FROM ghcr.io/owasp-noir/noir:latest
-```
-
-You can find all available Docker tags on the [GitHub Packages page](https://github.com/owasp-noir/noir/pkgs/container/noir).
+You can find a list of all available tags on the [GitHub Packages page](https://github.com/owasp-noir/noir/pkgs/container/noir).
 
 ## Build from Source
 
-You can build Noir directly from source by following these steps:
+If you want to build Noir from source, you will need to have the [Crystal](https://crystal-lang.org/install/) programming language installed.
 
-### Install Crystal Language
+1.  **Clone the repository**:
 
-First, install the Crystal programming language from the [official Crystal installation guide](https://crystal-lang.org/install/).
+    ```bash
+    git clone https://github.com/owasp-noir/noir
+    cd noir
+    ```
 
-### Clone the Repository
+2.  **Install dependencies**:
 
-```bash
-git clone https://github.com/owasp-noir/noir
-cd noir
-```
+    ```bash
+    shards install
+    ```
 
-### Build Noir
+3.  **Build the project**:
 
-```bash
-# Install Dependencies
-shards install
+    ```bash
+    shards build --release --no-debug
+    ```
 
-# Build (with release optimizations)
-shards build --release --no-debug
+    The compiled binary will be located at `./bin/noir`.
 
-# Optional: Copy the binary to your path
-sudo cp ./bin/noir /usr/local/bin/
-```
+## Verifying the Installation
 
-After building, you can find the Noir binary at `./bin/noir` in the project directory.
-
-## Verifying Installation
-
-After installation, you can verify that Noir is correctly installed by running:
+Once you have installed Noir, you can verify that it is working correctly by running:
 
 ```bash
 noir --version
 ```
 
-This should display the current version of Noir.
+This should print the installed version of Noir.

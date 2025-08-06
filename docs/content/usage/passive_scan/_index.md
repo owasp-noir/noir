@@ -1,36 +1,33 @@
 +++
-title = "Passive Scan"
-description = "Documentation for Noir's passive scanning capabilities to identify security issues in discovered endpoints"
+title = "Passive Security Scanning"
+description = "Learn how to use Noir's passive scanning feature to identify potential security vulnerabilities in your code without actively exploiting them. This guide covers how to run a passive scan and interpret the results."
 weight = 5
 sort_by = "weight"
 
 [extra]
 +++
 
-A Passive Scan is a feature where additional actions are performed by the Detector to identify security issues according to scan rules. This functionality typically includes:
+Noir includes a passive scanning feature that analyzes your code for potential security issues based on a set of predefined rules. Unlike active scanning, which sends test payloads to your application, passive scanning only inspects the source code, making it a safe way to identify vulnerabilities early in the development process.
 
-* Regular Expression Matching: It uses regular expressions to match patterns that could indicate security vulnerabilities.
-* String Matching: Besides regex, it looks for specific strings within the code that could be indicative of security concerns.
-* Default Rule Set: Comes with a predefined set of rules to check against common security issues.
+Passive scanning in Noir works by using regular expressions and string matching to find patterns that indicate common security risks. It comes with a default set of rules, but you can also provide your own custom rules for more targeted scanning.
+
+## How to Run a Passive Scan
+
+To perform a passive scan, use the `-P` or `--passive-scan` flag when running Noir:
 
 ```bash
 noir -b <BASE_PATH> -P
-
-# You can check the format list with the -h flag.
-#  PASSIVE SCAN:
-#    -P, --passive-scan               Perform a passive scan for security issues using rules from the specified path
-#    --passive-scan-path PATH         Specify the path for the rules used in the passive security scan
 ```
 
-Usage Example:
-
-When you run a command like:
+If you want to use a custom set of rules, you can specify the path to your rules file with the `--passive-scan-path` flag:
 
 ```bash
-noir -b ./your_app -P
+noir -b <BASE_PATH> --passive-scan --passive-scan-path /path/to/your/rules.yml
 ```
 
-The passive scan might produce results like:
+## Understanding the Output
+
+When a passive scan identifies a potential issue, it will produce output similar to this:
 
 ```
 ★ Passive Results:
@@ -39,10 +36,15 @@ The passive scan might produce results like:
   └── file: ./spec/functional_test/fixtures/crystal_kemal/src/testapp.cr:4
 ```
 
-Explanation of Output:
+Here's what each part of the output means:
 
-* Label: `[critical][hahwul-test][secret]` - This line indicates the severity, test context, and type of issue found. Here, it's critical, related to a test named hahwul-test, and concerns a secret.
-* Extract: This shows where or how the sensitive information is being accessed or used. In this case, it's extracting an x-api-key from the request headers.
-* File: Indicates the location of the potential security issue within the codebase, pointing to the exact file and line number where the issue was detected.
+*   **Severity, Test Name, and Issue Type**: `[critical][hahwul-test][secret]`
+    *   `critical`: The severity level of the finding.
+    *   `hahwul-test`: The name of the test or rule that triggered the finding.
+    *   `secret`: The type of issue, in this case, a hardcoded secret.
+*   **Extracted Code**: `extract:   env.request.headers["x-api-key"].as(String)`
+    *   This shows the line of code that matched the rule, giving you context for the potential vulnerability.
+*   **File Location**: `file: ./spec/functional_test/fixtures/crystal_kemal/src/testapp.cr:4`
+    *   This tells you the exact file and line number where the issue was found, so you can quickly navigate to the code and fix it.
 
-This output helps developers immediately identify where and what kind of security issues exist in their code, focusing on passive analysis without actively exploiting the vulnerabilities.
+By using passive scanning, you can catch security issues before they make it to production, improving the overall security of your application.

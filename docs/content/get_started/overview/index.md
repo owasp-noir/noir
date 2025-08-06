@@ -1,34 +1,29 @@
 +++
 title = "Overview"
-description = "What is Noir?"
+description = "Learn what OWASP Noir is, how it works, and what its goals are. This page provides a high-level introduction to the project and its key features."
 weight = 1
 sort_by = "weight"
 
 [extra]
 +++
 
-OWASP Noir is an open-source project, specializing in identifying attack surfaces for enhanced whitebox security testing and security pipeline.
+OWASP Noir is an open-source tool designed to help security professionals and developers identify the attack surface of their applications. By performing static analysis on source code, Noir can discover API endpoints, web pages, and other potential entry points that could be targeted by attackers.
 
-[Github](https://github.com/owasp-noir/noir)
-[OWASP](https://owasp.org/www-project-noir)
+This makes it an invaluable tool for white-box security testing and for building robust security pipelines.
 
-## What is noir?
-
-Noir is an open-source project dedicated to identifying attack surfaces, enhancing whitebox security testing, and optimizing security pipelines. It excels at discovering API endpoints, web endpoints, and other potential entry points within source code for comprehensive security analysis.
+[GitHub](https://github.com/owasp-noir/noir) | [OWASP Project Page](https://owasp.org/www-project-noir)
 
 ![noir-usage](./noir-usage.jpg)
 
-This tool was developed using [Crystal](https://crystal-lang.org). Initially started as hahwul's personal project[^1] in August 2023, it became an OWASP project[^2] in June 2024, co-led by [hahwul](https://github.com/hahwul) and [ksg](https://github.com/ksg97031).
+## How It Works
 
-[^1]: [Hello Noir 👋🏼](https://www.hahwul.com/2023/08/03/hello-noir/)
-[^2]: [Welcome to OWASP Noir](https://github.com/orgs/owasp-noir/discussions/336)
+Noir is built with the [Crystal](https://crystal-lang.org) programming language and is composed of several key components that work together to analyze code:
 
-## How it works?
-
-Noir is composed of several key components: detector, analyzer, deliver, minilexer/miniparser[^3], output-builder, and passive-scan & tagger[^4]. These components interact and work together to effectively analyze source code. Through this process, they help identify endpoints, parameters, headers, and more within the source code.
-
-[^3]: The minilexer and miniparser is a parser and tokenizer used for code analysis to identify various elements within the source code.
-[^4]: The tagger assigns relevant tags to the identified issues for easier categorization and management.
+*   **Detectors**: Identify the technologies used in a codebase.
+*   **Analyzers**: Parse the code to find endpoints, parameters, and other interesting information.
+*   **Passive Scanner & Tagger**: Use rules to identify potential vulnerabilities and add contextual tags to the findings.
+*   **Deliver**: Send the results to other tools for further analysis.
+*   **Output Builder**: Generate reports in various formats.
 
 {% mermaid() %}
 flowchart LR
@@ -60,40 +55,30 @@ flowchart LR
     classDef highlight fill:#f9f,stroke:#333,stroke-width:4px;
 {% end %}
 
-## Road Map
-We plan to expand the range of supported programming languages and frameworks, and to continuously increase accuracy. Furthermore, we will leverage AI and Large Language Models (LLMs) to significantly broaden our analysis capabilities.
+## Project Goals
 
-Initially conceived as a tool to assist with WhiteBox testing, our immediate goal remains to extract and provide endpoints from the source code within the DevSecOps Pipeline. This enables Dynamic Application Security Testing (DAST) tools to conduct more accurate and stable scans.
+The primary goal of Noir is to bridge the gap between static code analysis and dynamic security testing. By providing a comprehensive and accurate list of an application's endpoints, Noir enables DAST tools to perform more thorough and effective scans.
 
-Looking ahead, our ambition is for our tool to evolve into a crucial bridge, seamlessly connecting source code with DAST and other security testing tools, thereby facilitating a more integrated and effective security posture.
+In the future, we plan to expand our support for more languages and frameworks, improve the accuracy of our analysis, and further leverage AI and LLMs to enhance our capabilities.
 
-## About the project
-### License
-OWASP Noir is distributed by an [MIT license](https://github.com/owasp-noir/noir/blob/main/LICENSE).
+## Contributing
 
-### Contributing
+OWASP Noir is an open-source project that thrives on community contributions. If you are interested in helping us improve the tool, please check out our [Contributing Guide](https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md). We welcome contributions of all sizes, from fixing typos to adding major new features.
 
-Open-source projects thrive on the strength of the community. From small contributions to major ones, we want to express our gratitude to all contributors. If you're interested in contributing, please check out this document.
+### Contributors
 
-We believe every contribution counts and appreciate the time and effort you put into making this project better. Whether you're fixing a typo, adding a new feature, or improving documentation, your help is invaluable. Thank you for being part of our community!
-
-To get started, simply follow the guidelines in the [Contribute Guide](https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md). It's full of helpful tips and instructions to make your first contribution smooth and enjoyable.
-
-Happy contributing!
-
-#### Thank you to the contributors of Noir ♥️
+Thank you to everyone who has contributed to Noir! ♥️
 
 ![](https://raw.githubusercontent.com/owasp-noir/noir/refs/heads/main/CONTRIBUTORS.svg)
 
-*PassiveScan Rule contributors*
+*Passive Scan Rule Contributors*
 
 [![](https://raw.githubusercontent.com/owasp-noir/noir-passive-rules/refs/heads/main/CONTRIBUTORS.svg)](https://github.com/owasp-noir/noir-passive-rules/graphs/contributors)
 
-### Code of Conduct
-OWASP Noir is committed to fostering a welcoming community.
+## Code of Conduct
 
-View our [Code of Conduct](https://github.com/owasp-noir/noir/blob/main/CODE_OF_CONDUCT.md) on our GitHub repository.
+We are committed to fostering a welcoming and inclusive community. Please review our [Code of Conduct](https://github.com/owasp-noir/noir/blob/main/CODE_OF_CONDUCT.md) on our GitHub repository.
 
-## Help and feedback
+## Help and Feedback
 
-We always welcome feedback. Please share your thoughts, suggestions, or report any issues via the GitHub [discussions](https://github.com/orgs/owasp-noir/discussions) or [issues](https://github.com/owasp-noir/noir/issues) page.
+If you have any questions, suggestions, or issues, please don't hesitate to reach out to us on the GitHub [discussions](https://github.com/orgs/owasp-noir/discussions) or [issues](https://github.com/owasp-noir/noir/issues) page.

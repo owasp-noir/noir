@@ -2,11 +2,11 @@
 template = "landing.html"
 
 [extra]
-version = "v0.1.0"
+version = "v0.22.0"
 
 [extra.hero]
-title = "Noir"
-description = "OWASP Noir empowers security teams with advanced attack surface detection, uncovering endpoints and vulnerabilities through static analysis."
+title = "OWASP Noir"
+description = "Noir is an attack surface detector that enhances white-box security testing and streamlines security pipelines by discovering endpoints and potential vulnerabilities through static analysis."
 image = "/images/noir-wallpaper.jpg"
 cta_buttons = [
     { text = "Get Started", url = "/get_started/overview", style = "primary" },
@@ -14,52 +14,52 @@ cta_buttons = [
 ]
 
 [[extra.features]]
-title = "Endpoint Extraction"
-desc = "Extract API and web endpoints along with parameters directly from source code for comprehensive security analysis."
+title = "Endpoint Discovery"
+desc = "Extracts API and web endpoints, along with their parameters, directly from your source code for a comprehensive analysis of your application's attack surface."
 icon = "fa-solid fa-code"
 
 [[extra.features]]
 title = "Multi-Language Support"
-desc = "Supports multiple programming languages and frameworks, ensuring broad compatibility for diverse projects."
+desc = "Supports a wide range of programming languages and frameworks, ensuring broad compatibility across your diverse portfolio of projects."
 icon = "fa-solid fa-globe"
 
 [[extra.features]]
-title = "Security Issue Detection"
-desc = "Perform rule-based passive scanning to identify potential security vulnerabilities with detailed insights."
+title = "Vulnerability Detection"
+desc = "Performs rule-based passive scanning to identify potential security vulnerabilities and provides detailed insights to help you remediate them quickly."
 icon = "fa-solid fa-shield-halved"
 
 [[extra.features]]
 title = "DevOps Integration"
-desc = "Seamlessly integrate with DevOps tools like curl, ZAP, and Caido to enhance security pipelines."
+desc = "Seamlessly integrates with popular DevOps and security tools like cURL, ZAP, and Caido to enhance your existing security pipelines."
 icon = "fa-solid fa-gears"
 
 [[extra.features]]
 title = "Flexible Output Formats"
-desc = "Generate clear, actionable results in JSON, YAML, and OAS formats for easy consumption."
+desc = "Generates clear and actionable results in a variety of formats, including JSON, YAML, and OpenAPI, making it easy to consume the data in other tools."
 icon = "fa-solid fa-file-export"
 
 [[extra.features]]
-title = "AI-Enhanced Discovery"
-desc = "Leverage AI to uncover hidden APIs and endpoints in unfamiliar frameworks."
+title = "AI-Powered Analysis"
+desc = "Leverages the power of AI and Large Language Models (LLMs) to uncover hidden APIs and endpoints in unfamiliar or unsupported frameworks."
 icon = "fa-solid fa-robot"
 
 [extra.trust_section]
-title = "Tech Stack"
+title = "Our Tech Stack"
 logos = [
-    { src = "/resources/owasp.svg", alt = "OWASP" },
-    { src = "/resources/crystal.svg", alt = "Crystal" },
+    { src = "/resoruces/owasp.svg", alt = "OWASP" },
+    { src = "/resoruces/crystal.svg", alt = "Crystal" },
 ]
 
 [extra.social_proof_section]
 title = "What Our Users Say"
 testimonials = [
-    { author = "KSG", role = "Security Developer", quote = "Without extra tools, it includes practical features like search, multilingual support, and comments out of the box", avatar = "/resources/ksg.jpg" },
-    { author = "Lina", role = "Security Engineer", quote = "It's so simple and fast, yet I can apply an incredibly beautiful theme, which I absolutely love! I'm ready to embark on a journey to find the calm in my heart with this theme!", avatar = "/resources/lina.jpg" },
-    { author = "Bori Bae", role = "Security Engineer", quote = "The theme is clean and the settings are intuitive, so even first-time users can easily use it!", avatar = "/resources/bori.png" },
+    { author = "KSG", role = "Security Developer", quote = "Noir provides practical features like multi-language support and search out of the box, without needing extra tools.", avatar = "/images/ksg.jpg" },
+    { author = "Lina", role = "Security Engineer", quote = "It's so simple and fast, and the beautiful theme is a joy to work with. I'm ready to find my inner calm with this tool!", avatar = "/images/lina.jpg" },
+    { author = "Bori Bae", role = "Security Engineer", quote = "The theme is clean and the settings are intuitive, making it easy for even first-time users to get started.", avatar = "/images/bori.png" },
 ]
 
 [extra.final_cta_section]
-title = "Contributing"
-description = "OWASP Noir is an open-source project made with ❤️. If you want to contribute, please see CONTRIBUTING.md and submit a pull request with your awesome content!"
-button = { text = "View Contributing Guide", url = "https://github.com/hahwul/goyo/blob/main/CONTRIBUTING.md" }
+title = "Contributing to Noir"
+description = "OWASP Noir is an open-source project built with ❤️ by the community. If you would like to contribute, please see our contributing guide and submit a pull request with your awesome changes!"
+button = { text = "View Contributing Guide", url = "https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md" }
 +++

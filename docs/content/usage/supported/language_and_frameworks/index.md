@@ -1,13 +1,13 @@
 +++
-title = "Language and Frameworks"
-description = "Detailed overview of programming languages and frameworks supported by Noir, with feature compatibility information"
+title = "Supported Languages and Frameworks"
+description = "A detailed overview of the programming languages and frameworks supported by Noir, including feature compatibility for each."
 weight = 1
 sort_by = "weight"
 
 [extra]
 +++
 
-This section provides an overview of the various programming languages and frameworks supported by Noir. Each language and framework is listed with the features it supports, such as URL, Method, Param, Header, Cookie, and WebSocket (WS).
+Noir is a tool designed to analyze and understand codebases by identifying endpoints and their specifications. This section provides a comprehensive list of the programming languages and frameworks that Noir supports. For each entry, you can find a compatibility table detailing which features—such as URL, Method, Param, Header, Cookie, and WebSocket (WS)—are supported.
 
 {% include toc.md %}
 

@@ -1,78 +1,86 @@
 +++
-title = "Contributions"
-description = "Collection of articles and blog posts about Noir written by community members"
+title = "Contributing to Noir"
+description = "Learn how to contribute to the OWASP Noir project. This guide provides instructions on how to set up your development environment, build the project, and submit your first pull request."
 weight = 1
 sort_by = "weight"
 
 [extra]
 +++
 
-## Installing Crystal Language
+OWASP Noir is a community-driven project, and we welcome contributions of all kinds. Whether you are fixing a bug, adding a new feature, or improving the documentation, your help is greatly appreciated.
 
-To install Crystal Language, please refer to the official [Crystal installation guide](https://crystal-lang.org/install/). The guide provides instructions for various operating systems and package managers.
+## How to Contribute
 
-## Build & Testing
+The best way to contribute is to follow these steps:
 
-### Clone and Install Dependencies
+1.  **Fork the repository**: Start by creating your own copy of the [Noir repository](https://github.com/owasp-noir/noir) on GitHub.
+2.  **Create a new branch**: Create a new branch in your fork for your changes.
+    ```sh
+    git checkout -b your-feature-or-fix-name
+    ```
+3.  **Make your changes**: Make your changes to the code or documentation.
+4.  **Commit your changes**: Commit your changes with a clear and descriptive commit message.
+5.  **Push your changes**: Push your changes to your fork.
+    ```sh
+    git push origin your-feature-or-fix-name
+    ```
+6.  **Create a Pull Request**: Open a pull request from your fork to the main Noir repository. Please provide a clear description of the changes you have made.
+
+For more detailed guidelines, please see our official [CONTRIBUTING.md](https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md) file.
+
+## Development Setup
+
+If you are contributing to the code, you will need to set up a local development environment.
+
+### Installing Crystal
+
+Noir is built with the Crystal programming language. To install it, please follow the official [Crystal installation guide](https://crystal-lang.org/install/).
+
+### Building and Testing
+
+Once you have Crystal installed, you can clone the repository and install the dependencies:
 
 ```sh
-# If you've forked this repository, clone to https://github.com/<YOU>/noir
-git clone https://github.com/hahwul/noir
+# Clone your fork
+git clone https://github.com/<YOUR-USERNAME>/noir
 cd noir
+
+# Install dependencies
 shards install
 ```
 
-### Build
+To build the project, run:
 
 ```sh
 shards build
-# ./bin/noir
+# The binary will be located at ./bin/noir
 ```
 
-### Unit/Functional Test
+To run the unit and functional tests:
 
 ```sh
 crystal spec
 
-# Want more details?
+# For more detailed output
 crystal spec -v
 ```
 
-### Lint
+### Linting
+
+We use `ameba` for linting our code. To check the code for style issues, run:
 
 ```sh
-crystal tool format
-ameba --fix
-
-# Ameba installation
-# https://github.com/crystal-ameba/ameba#installation
+ameba
 ```
 
-or
+To automatically fix any style issues, you can run:
+
+```sh
+ameba --fix
+```
+
+Alternatively, you can use the `just` command to run the linter:
 
 ```sh
 just fix
 ```
-
-## How to Contribute
-
-We welcome contributions from the community. To contribute, follow these steps:
-
-1. **Fork the repository**: Click the "Fork" button at the top right of the repository page.
-2. **Clone your fork**:
-   ```sh
-   git clone https://github.com/your-username/noir.git
-   cd noir
-   ```
-3. **Create a new branch**:
-   ```sh
-   git checkout -b your-branch-name
-   ```
-4. **Make your changes**: Implement your changes and commit them with a descriptive message.
-5. **Push your changes**:
-   ```sh
-   git push origin your-branch-name
-   ```
-6. **Create a Pull Request**: Go to the original repository and click the "New Pull Request" button. Fill out the template and submit your pull request.
-
-For more detailed guidelines, please refer to our [CONTRIBUTING.md](https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md) file.

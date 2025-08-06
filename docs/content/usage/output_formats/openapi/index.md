@@ -1,21 +1,37 @@
 +++
-title = "Open API Spec"
-description = ""
+title = "OpenAPI Specification (OAS) Output"
+description = "Learn how to generate OpenAPI Specification (OAS) 2.0 and 3.0 documents from your Noir scan results. This is a powerful way to create API documentation and integrate with other security tools."
 weight = 4
 sort_by = "weight"
 
 [extra]
 +++
 
-The Open API Specification (OAS) defines a standard, language-agnostic interface to RESTful APIs. Noir can generate OAS 2.0 and 3.0 specifications for your endpoints.
+The OpenAPI Specification (OAS) is a standard, language-agnostic interface for describing RESTful APIs. By generating an OAS document from your codebase, you can easily create interactive API documentation, set up automated testing, or import your API definition into a variety of other tools.
 
-```bash
-# oas3
-noir -b . -f oas3
+Noir can generate both OAS 2.0 (formerly known as Swagger) and OAS 3.0 specifications.
 
-# oas2
-noir -b . -f oas2
-```
+## How to Generate an OpenAPI Specification
+
+To generate an OAS document, use the `-f` or `--format` flag with either `oas2` or `oas3`.
+
+*   **For OAS 3.0 (recommended)**:
+
+    ```bash
+    noir -b . -f oas3
+    ```
+
+*   **For OAS 2.0**:
+
+    ```bash
+    noir -b . -f oas2
+    ```
+
+This will output a JSON document that conforms to the specified OpenAPI version.
+
+## Example OAS 3.0 Output
+
+Here is a sample of the output for the `oas3` format:
 
 ```json
 {
@@ -58,60 +74,10 @@ noir -b . -f oas2
           }
         ]
       }
-    },
-    "/token": {
-      "get": {
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          }
-        },
-        "parameters": [
-          {
-            "name": "client_id",
-            "in": "formData"
-          },
-          {
-            "name": "redirect_url",
-            "in": "formData"
-          },
-          {
-            "name": "grant_type",
-            "in": "formData"
-          }
-        ]
-      }
-    },
-    "/socket": {
-      "get": {
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          }
-        },
-        "parameters": []
-      }
-    },
-    "/1.html": {
-      "get": {
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          }
-        },
-        "parameters": []
-      }
-    },
-    "/2.html": {
-      "get": {
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          }
-        },
-        "parameters": []
-      }
     }
+    // ... and so on for all other endpoints
   }
 }
 ```
+
+By using this feature, you can automatically generate a comprehensive and accurate API specification directly from your source code, saving you time and ensuring that your documentation is always up-to-date.

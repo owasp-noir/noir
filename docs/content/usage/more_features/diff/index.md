@@ -1,24 +1,27 @@
 +++
-title = "Diff Mode"
-description = "Guide to using Noir's diff mode for comparing endpoints between different versions of source code"
+title = "Comparing Code with Diff Mode"
+description = "Learn how to use Noir's diff mode to compare two different versions of a codebase and identify what has changed. This is a powerful feature for understanding the impact of code changes on your API."
 weight = 2
 sort_by = "weight"
 
 [extra]
 +++
 
-Diff mode is a feature that analyzes and compares two source code paths using noir, enabling you to identify newly added, modified, or removed APIs. The base path specified with the `-b` flag serves as the reference point, while the source input provided with the `--diff-path` flag is used for comparison.
+Diff mode is a powerful feature in Noir that allows you to compare two versions of a codebase and see exactly what has changed in terms of the discovered endpoints. This can be incredibly useful for code reviews, security assessments, and for understanding the impact of a new feature.
+
+To use diff mode, you provide a base path with the `-b` flag (representing the new version of the code) and a comparison path with the `--diff-path` flag (representing the old version).
 
 ```bash
-noir -b <BASE_PATH> --diff-path <OLD_APP>
-
-#  DIFF:
-#    --diff-path ./app2    Specify the path to the old version of the source code for comparison
+noir -b <NEW_VERSION_PATH> --diff-path <OLD_VERSION_PATH>
 ```
 
-## Plain output
+## Understanding the Output
 
-In plain output, changes to the APIs are briefly summarized.
+The output of the diff mode will show you which endpoints have been added, removed, or changed between the two versions.
+
+### Plain Output
+
+In the default plain text output, you will get a simple summary of the changes:
 
 ```
 [*] ============== DIFF ==============
@@ -26,15 +29,11 @@ In plain output, changes to the APIs are briefly summarized.
 [I] Added: /update POST
 [I] Removed: /secret.html GET
 [I] Removed: /posts GET
-[I] Removed: /posts/1 GET
-[I] Removed: /posts POST
-[I] Removed: /posts/1 PUT
-[I] Removed: /posts/1 DELETE
 ```
 
-## JSON & YAML
+### JSON and YAML Output
 
-In contrast, detailed information is provided in JSON or YAML output. (with `-f=json` or `-f=yaml` )
+For a more detailed and machine-readable output, you can use the JSON or YAML formats (`-f json` or `-f yaml`). This will provide a structured view of the added, removed, and changed endpoints, including their full details.
 
 ```json
 {
@@ -42,82 +41,18 @@ In contrast, detailed information is provided in JSON or YAML output. (with `-f=
     {
       "url": "/",
       "method": "GET",
-      "params": [
-        {
-          "name": "query",
-          "value": "",
-          "param_type": "query",
-          "tags": []
-        },
-        {
-          "name": "cookie1",
-          "value": "",
-          "param_type": "cookie",
-          "tags": []
-        },
-        {
-          "name": "cookie2",
-          "value": "",
-          "param_type": "cookie",
-          "tags": []
-        },
-        {
-          "name": "x-api-key",
-          "value": "",
-          "param_type": "header",
-          "tags": []
-        },
-        {
-          "name": "X-API-Key",
-          "value": "",
-          "param_type": "header",
-          "tags": []
-        },
-        {
-          "name": "name",
-          "value": "",
-          "param_type": "query",
-          "tags": []
-        },
-        {
-          "name": "abcd_token",
-          "value": "",
-          "param_type": "cookie",
-          "tags": []
-        }
-      ],
-      "details": {
-        "code_paths": [
-          {
-            "path": "./spec/functional_test/fixtures/rust_rocket/src/main.rs",
-            "line": 3
-          }
-        ]
-      },
-      "protocol": "http",
-      "tags": []
+      // ... full endpoint details
     }
-    ....
   ],
   "removed": [
     {
       "url": "/secret.html",
       "method": "GET",
-      "params": [],
-      "details": {
-        "code_paths": [
-          {
-            "path": "./spec/functional_test/fixtures/ruby_rails/public/secret.html"
-          }
-        ]
-      },
-      "protocol": "http",
-      "tags": []
+      // ... full endpoint details
     }
-    ....
   ],
   "changed": []
 }
 ```
 
-By utilizing this feature, you can build a more efficient pipeline, such as configuring DAST scans to target only added or modified APIs.
+By using diff mode, you can build more efficient CI/CD pipelines. For example, you could configure a DAST (Dynamic Application Security Testing) tool to only scan the endpoints that have been added or modified in a new release, saving time and resources.

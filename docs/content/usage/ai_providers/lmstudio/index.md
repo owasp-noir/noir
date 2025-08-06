@@ -1,29 +1,34 @@
 +++
-title = "LM Studio"
-description = "Guide to using LM Studio with Noir for local LLM-powered endpoint detection and analysis"
+title = "Using Noir with LM Studio"
+description = "Learn how to integrate Noir with LM Studio to run local language models for code analysis. This guide shows you how to set up the LM Studio server and connect it to Noir."
 weight = 3
 sort_by = "weight"
 
 [extra]
 +++
 
-## Setup LMStudio
+[LM Studio](https://lmstudio.ai) is a popular application that makes it easy to download and run large language models (LLMs) on your local machine. By integrating Noir with LM Studio, you can get the benefits of AI-powered code analysis without sending your code to a third-party service.
 
-1. Install LMStudio: Follow the instructions on the [official LMStudio website](https://lmstudio.ai) to install the required software.
-2. Run the Model: Ensure the desired model is available and running.
+## Setting Up LM Studio
 
-### Serve the Model
+To use LM Studio with Noir, you first need to download the application and start the local inference server.
 
-![](./lmstudio.png)
+1.  **Install LM Studio**: Download and install LM Studio from the [official website](https://lmstudio.ai).
+2.  **Start the Local Server**: Open LM Studio, select a model, and then navigate to the "Local Server" tab. Click "Start Server" to make the model available via a local API endpoint.
 
-## Run Noir with LMStudio
+    ![](./lmstudio.png)
 
-To leverage LMStudio capabilities for additional analysis, use the following command:
+## Running Noir with LM Studio
+
+Once the LM Studio server is running, you can connect Noir to it by using the `lmstudio` AI provider.
 
 ```bash
 noir -b ./spec/functional_test/fixtures/hahwul \
      --ai-provider=lmstudio \
-     --ai-model=phi-4
+     --ai-model <MODEL_NAME>
 ```
 
-This command performs the standard Noir operations while utilizing the specified LMStudio model for enhanced analysis.
+Replace `<MODEL_NAME>` with the name of the model you are serving in LM Studio. Noir will then send the discovered endpoints to the local server for analysis.
+
+This setup provides a powerful and private way to leverage AI for code analysis, giving you complete control over your data.
+

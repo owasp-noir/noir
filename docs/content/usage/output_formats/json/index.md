@@ -1,18 +1,26 @@
 +++
-title = "JSON & JSONL"
-description = ""
+title = "JSON and JSONL Output Formats"
+description = "Learn how to get your Noir scan results in JSON or JSONL format. This guide provides examples of both formats and explains how to generate them."
 weight = 2
 sort_by = "weight"
 
 [extra]
 +++
 
-Noir can output results in JSON and JSONL formats. JSON is a lightweight data interchange format that is easy for humans to read and write, and easy for machines to parse and generate. JSONL is a format where each JSON object is on a separate line, making it suitable for streaming and processing large datasets.
+Noir supports both JSON and JSONL as output formats, giving you flexibility in how you process your scan results.
 
-## JSON
+*   **JSON (JavaScript Object Notation)** is a standard, lightweight format that is easy for both humans and machines to understand. It's a great choice for one-off analyses or for integrating with tools that expect a single JSON object.
+*   **JSONL (JSON Lines)** is a format where each line is a separate, valid JSON object. This is particularly useful for streaming large amounts of data, as you can process the results one line at a time without having to load the entire file into memory.
+
+## JSON Output
+
+To get your results in JSON format, use the `-f json` or `--format json` flag. It's also a good idea to use `--no-log` to keep the output clean.
+
 ```bash
 noir -b . -f json --no-log
 ```
+
+This will produce a single JSON object containing an `endpoints` array:
 
 ```json
 {
@@ -55,17 +63,18 @@ noir -b . -f json --no-log
 }
 ```
 
-## JSONL
+## JSONL Output
+
+To get your results in JSONL format, use the `-f jsonl` flag:
 
 ```bash
 noir -b . -f jsonl --no-log
 ```
 
+This will output a series of JSON objects, each on its own line:
+
 ```json
-{"url":"/","method":"GET","params":[{"name":"x-api-key","value":"","param_type":"header","tags":[]}],"details":{"code_paths":[{"path":"./spec/functional_test/fixtures/crystal_kemal/src/testapp.cr","line":3}]},"protocol":"http","tags":[]}
-{"url":"/query","method":"POST","params":[{"name":"my_auth","value":"","param_type":"cookie","tags":[]},{"name":"query","value":"","param_type":"form","tags":[]}],"details":{"code_paths":[{"path":"./spec/functional_test/fixtures/crystal_kemal/src/testapp.cr","line":8}]},"protocol":"http","tags":[]}
-{"url":"/token","method":"GET","params":[{"name":"client_id","value":"","param_type":"form","tags":[]},{"name":"redirect_url","value":"","param_type":"form","tags":[]},{"name":"grant_type","value":"","param_type":"form","tags":[]}],"details":{"code_paths":[{"path":"./spec/functional_test/fixtures/crystal_kemal/src/testapp.cr","line":13}]},"protocol":"http","tags":[]}
-{"url":"/socket","method":"GET","params":[],"details":{"code_paths":[{"path":"./spec/functional_test/fixtures/crystal_kemal/src/testapp.cr","line":19}]},"protocol":"ws","tags":[]}
-{"url":"/1.html","method":"GET","params":[],"details":{"code_paths":[]},"protocol":"http","tags":[]}
-{"url":"/2.html","method":"GET","params":[],"details":{"code_paths":[]},"protocol":"http","tags":[]}
+{"url":"/","method":"GET","params":[...],"details":{...},"protocol":"http","tags":[]}
+{"url":"/query","method":"POST","params":[...],"details":{...},"protocol":"http","tags":[]}
+{"url":"/token","method":"GET","params":[...],"details":{...},"protocol":"http","tags":[]}
 ```

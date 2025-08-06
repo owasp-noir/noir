@@ -1,20 +1,22 @@
 +++
-title = "Specification"
-description = "Overview of API specifications supported by Noir including OAS, RAML, and HAR formats with compatibility details"
+title = "Supported Specifications"
+description = "This page provides a detailed overview of the API and data specifications that Noir supports, including OpenAPI (Swagger), RAML, HAR, and GraphQL. See the compatibility table for more information."
 weight = 2
 sort_by = "weight"
 
 [extra]
 +++
 
-This section provides details on the various specifications supported by Noir. Each specification is listed with its format and the features it supports, such as URL, Method, Param, Header, and WebSocket (WS).
+In addition to analyzing source code directly, Noir can also parse various API and data specification formats. This allows you to use Noir to analyze existing API documentation, captured network traffic, and more.
 
-| Specification          | Format  | URL | Method | Param | Header | WS |
-|------------------------|---------|-----|--------|-------|--------|----|
-| OAS 2.0 (Swagger 2.0)  | JSON    | ✅  | ✅     | ✅    | ✅    | X  |
-| OAS 2.0 (Swagger 2.0)  | YAML    | ✅  | ✅     | ✅    | ✅    | X  |
-| OAS 3.0                | JSON    | ✅  | ✅     | ✅    | ✅    | X  |
-| OAS 3.0                | YAML    | ✅  | ✅     | ✅    | ✅    | X  |
-| RAML                   | YAML    | ✅  | ✅     | ✅    | ✅    | X  |
-| HAR                    | JSON    | ✅  | ✅     | ✅    | ✅    | X  |
-| Graphql SDL (.graphql) | GRAPHQL | ✅  | ✅     | ✅    | ✅    | X  |
+This section provides a compatibility table for the different specifications that Noir supports.
+
+| Specification | Format | URL | Method | Param | Header | WS |
+|---|---|---|---|---|---|---|
+| OAS 2.0 (Swagger 2.0) | JSON | ✅ | ✅ | ✅ | ✅ | ❌ |
+| OAS 2.0 (Swagger 2.0) | YAML | ✅ | ✅ | ✅ | ✅ | ❌ |
+| OAS 3.0 | JSON | ✅ | ✅ | ✅ | ✅ | ❌ |
+| OAS 3.0 | YAML | ✅ | ✅ | ✅ | ✅ | ❌ |
+| RAML | YAML | ✅ | ✅ | ✅ | ✅ | ❌ |
+| HAR | JSON | ✅ | ✅ | ✅ | ✅ | ❌ |
+| GraphQL SDL (.graphql) | GraphQL | ✅ | ✅ | ✅ | ✅ | ❌ |

@@ -1,14 +1,16 @@
 +++
 title = "Community Articles"
-description = "Collection of articles and blog posts about Noir written by community members"
+description = "A collection of articles and blog posts about OWASP Noir from around the web. See what the community is saying about Noir and learn new ways to use the tool."
 weight = 9
 sort_by = "weight"
 
 [extra]
 +++
 
-* [Hello Noir 👋🏼 by HAHWUL](https://www.hahwul.com/2023/08/03/hello-noir/)
-* [API Attack Surface Detection using Noir by DANA EPP](https://danaepp.com/api-attack-surface-detection-using-noir)
-* [Exploring OWASP Noir's PassiveScan by HAHWUL](https://www.hahwul.com/2024/11/03/passivescan-in-owasp-noir/)
-* [Powering Up DAST with ZAP and Noir by ZAP Blog](https://www.zaproxy.org/blog/2024-11-11-powering-up-dast-with-zap-and-noir/)
-* [Enhancing OWASP Noir with AI by HAHWUL](https://www.hahwul.com/2025/01/31/owasp-noir-x-llm/)
+Here are some articles and blog posts about OWASP Noir that have been written by the community. If you have written an article about Noir and would like to have it included here, please let us know!
+
+*   [Hello Noir 👋🏼](https://www.hahwul.com/2023/08/03/hello-noir/) by Hahwul
+*   [API Attack Surface Detection using Noir](https://danaepp.com/api-attack-surface-detection-using-noir) by Dana Epp
+*   [Exploring OWASP Noir's PassiveScan](https://www.hahwul.com/2024/11/03/passivescan-in-owasp-noir/) by Hahwul
+*   [Powering Up DAST with ZAP and Noir](https://www.zaproxy.org/blog/2024-11-11-powering-up-dast-with-zap-and-noir/) by the ZAP Blog
+*   [Enhancing OWASP Noir with AI](https://www.hahwul.com/2025/01/31/owasp-noir-x-llm/) by Hahwul

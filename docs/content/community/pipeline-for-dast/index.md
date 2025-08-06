@@ -1,38 +1,49 @@
 +++
-title = "Pipeline for DAST"
-description = "Guide to integrating Noir into Dynamic Application Security Testing (DAST) pipelines with proxy tools and ZAP"
+title = "Integrating Noir into Your DAST Pipeline"
+description = "Learn how to integrate Noir into your Dynamic Application Security Testing (DAST) pipeline. This guide provides examples of how to use Noir with proxy tools like ZAP and Burp Suite."
 weight = 4
 sort_by = "weight"
 
 [extra]
 +++
 
-## DAST (Dynamic Application Security Testing)
+Dynamic Application Security Testing (DAST) is a crucial part of any security program. By integrating Noir into your DAST pipeline, you can ensure that your security tools are testing all of the endpoints that exist in your application, not just the ones that are easy to find.
 
-DAST is a type of security testing that analyzes a running application to identify vulnerabilities. It simulates attacks from an external perspective to find security issues in the application.
+## Integrating with a Proxy Tool
 
-## Proxy Tool Integration
-
-This command automates the use of a proxy tool in a security testing pipeline. noir is used with the `-b` option to specify the base directory (.) and -u to target a local application (http://localhost.hahwul.com:3000). The --send-proxy parameter directs traffic to a proxy server running on http://localhost:8090. This setup allows for monitoring and intercepting HTTP requests through tools like ZAP, Caido, or Burp Suite during the testing process.
+One of the easiest ways to integrate Noir with a DAST tool is to use a proxy like [OWASP ZAP](https://www.zaproxy.org/), [Burp Suite](https://portswigger.net/burp), or [Caido](https://caido.io/). You can use Noir's `deliver` feature to send all of the discovered endpoints to your proxy, where they can then be scanned by your DAST tool.
 
 ```bash
-noir -b . -u http://localhost.hahwul.com:3000 --send-proxy "http://localhost:8090"
+noir -b . -u http://localhost:3000 --send-proxy "http://localhost:8080"
 ```
 
-## ZAP Integration
+This command will:
 
-The process begins with endpoint discovery using noir, which scans the application source code in the specified directory (~/app_source), generates an OpenAPI specification (doc.json), and saves it in JSON format.
+1.  Scan the current directory (`-b .`).
+2.  Construct full URLs using `http://localhost:3000` as the base (`-u`).
+3.  Send all of the discovered endpoints to the proxy running on `http://localhost:8080` (`--send-proxy`).
 
-Next, the doc.json file is used in an automated ZAP scan. The zap.sh script, with the `-openapifile` option, loads the generated endpoints and uses `-openapitargeturl` to specify the target URL for testing. The `-cmd` and `-autorun` options allow for automated execution of ZAP commands based on zap.yaml, along with any additional configuration parameters. This setup enables comprehensive vulnerability assessment across discovered endpoints in the target application.
+This will populate your proxy's history with all of the endpoints from your application, allowing you to easily run an active scan on them.
 
-```bash
-# Discovering endpoints
-noir -b ~/app_source -f oas3 --no-log -o doc.json
+## Integrating with ZAP Automation
 
-# Automation scan with endpoints
-./zap.sh -openapifile ./doc.json \
-    -openapitargeturl <TARGET> \
-    -cmd -autorun zap.yaml <any other ZAP options>
-```
+For a more automated approach, you can use Noir to generate an OpenAPI specification and then feed that into ZAP's automation framework.
 
-For further details on integrating Noir and ZAP for enhanced DAST capabilities, refer to the [Powering Up DAST with ZAP and Noir](https://www.zaproxy.org/blog/2024-11-11-powering-up-dast-with-zap-and-noir/) ZAP blog post.
+1.  **Discover Endpoints**: First, use Noir to scan your application and generate an OpenAPI specification.
+
+    ```bash
+    noir -b ~/app_source -f oas3 --no-log -o doc.json
+    ```
+
+2.  **Run ZAP Scan**: Next, use the ZAP command-line script to run an automated scan using the generated OpenAPI file.
+
+    ```bash
+    ./zap.sh -openapifile ./doc.json \
+        -openapitargeturl <TARGET> \
+        -cmd -autorun zap.yaml <any other ZAP options>
+    ```
+
+This two-step process allows you to create a fully automated DAST pipeline that ensures complete coverage of your application's API.
+
+For more details on this integration, check out the ZAP blog post: [Powering Up DAST with ZAP and Noir](https://www.zaproxy.org/blog/2024-11-11-powering-up-dast-with-zap-and-noir/).
+

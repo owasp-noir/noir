@@ -1,109 +1,73 @@
 +++
-title = "Tagger"
-description = "Documentation for Noir's tagger feature that adds contextual tags to endpoints and parameters for better understanding of APIs"
+title = "Using the Tagger for Contextual Analysis"
+description = "Learn how to use Noir's Tagger feature to automatically add contextual tags to endpoints and parameters. This can help you quickly identify interesting or potentially vulnerable areas of your application."
 weight = 3
 sort_by = "weight"
 
 [extra]
 +++
 
-The Tagger is a feature that adds tags to Endpoints, Params, etc., based on given conditions or logic when Noir analyzes source code. By using this feature, you can attach tag information that matches the characteristics of the Endpoints and Params. This helps analysts easily understand Endpoints or gain hints for the next security testing.
+The Tagger is a powerful feature in Noir that automatically adds descriptive tags to the endpoints and parameters it discovers. These tags can provide valuable context about the functionality or potential security risks associated with a particular part of your application. This helps you quickly focus your attention on the areas that matter most.
+
+For example, the Tagger can identify parameters that might be vulnerable to SQL injection, or endpoints that are related to authentication.
 
 ![](./tagger.png)
 
-## Activation and Usage of Tagger
-The Tagger is disabled by default. You can enable the entire Tagger using the `-T` or `--use-all-taggers` flag or specify desired Taggers with the `--use-taggers` option. The list of available Taggers can be found using the `--list-taggers` option.
+## How to Use the Tagger
 
-```bash
-noir -b <BASE_PATH> -T
+The Tagger is disabled by default. You can enable it in a few different ways:
 
-# You can check the format list with the -h flag.
-#   TAGGER:
-#     -T, --use-all-taggers            Activates all taggers for full analysis coverage
-#     --use-taggers VALUES             Activates specific taggers (e.g., --use-taggers hunt,oauth)
-#     --list-taggers                   Lists all available taggers
-```
+*   **Enable all taggers**: To run all available taggers, use the `-T` or `--use-all-taggers` flag.
 
-## Output Format with Tagger
-When using the Tagger, tags will be displayed along with the results in Plain output as shown below. In JSON or YAML results, separate Tagger information will be included for Endpoints and Params.
+    ```bash
+    noir -b <BASE_PATH> -T
+    ```
 
-```bash
-noir -b <BASE_PATH> -T -f json
-```
+*   **Enable specific taggers**: If you only want to run certain taggers, you can specify them with the `--use-taggers` flag. You can find a list of all available taggers by running `noir --list-taggers`.
+
+    ```bash
+    noir -b <BASE_PATH> --use-taggers hunt,oauth
+    ```
+
+## Understanding the Output
+
+When you use the Tagger, the tags will be included in the output. If you are using the JSON or YAML formats, the tags will be added to the `tags` array for each endpoint and parameter.
+
+Here is an example of what the JSON output looks like with tags:
 
 ```json
 {
-    "url": "/query",
-    "method": "POST",
-    "params": [
-      {
-        "name": "my_auth",
-        "value": "",
-        "param_type": "cookie",
-        "tags": []
-      },
-      {
-        "name": "query",
-        "value": "",
-        "param_type": "form",
-        "tags": [
-          {
-            "name": "sqli",
-            "description": "This parameter may be vulnerable to SQL Injection attacks.",
-            "tagger": "Hunt"
-          }
-        ]
-      }
-    ],
-    "details": {
-      "code_paths": [
+  "url": "/query",
+  "method": "POST",
+  "params": [
+    {
+      "name": "query",
+      "value": "",
+      "param_type": "form",
+      "tags": [
         {
-          "path": "./spec/functional_test/fixtures/crystal_kemal/src/testapp.cr",
-          "line": 8
+          "name": "sqli",
+          "description": "This parameter may be vulnerable to SQL Injection attacks.",
+          "tagger": "Hunt"
         }
       ]
-    },
-    "protocol": "http",
-    "tags": []
-  },
-  {
-    "url": "/token",
-    "method": "GET",
-    "params": [
-      {
-        "name": "client_id",
-        "value": "",
-        "param_type": "form",
-        "tags": []
-      },
-      {
-        "name": "redirect_url",
-        "value": "",
-        "param_type": "form",
-        "tags": []
-      },
-      {
-        "name": "grant_type",
-        "value": "",
-        "param_type": "form",
-        "tags": []
-      }
-    ],
-    "details": {
-      "code_paths": [
-        {
-          "path": "./spec/functional_test/fixtures/crystal_kemal/src/testapp.cr",
-          "line": 13
-        }
-      ]
-    },
-    "protocol": "http",
-    "tags": [
-      {
-        "name": "oauth",
-        "description": "Suspected OAuth endpoint for granting 3rd party access.",
-        "tagger": "Oauth"
-      }
-    ]
-  }
+    }
+  ],
+  "protocol": "http",
+  "tags": []
+},
+{
+  "url": "/token",
+  "method": "GET",
+  "protocol": "http",
+  "tags": [
+    {
+      "name": "oauth",
+      "description": "Suspected OAuth endpoint for granting 3rd party access.",
+      "tagger": "Oauth"
+    }
+  ]
+}
 ```
+
+By using the Tagger, you can enrich your scan results with valuable context, making it easier to understand your application and prioritize your security efforts.

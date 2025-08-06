@@ -1,62 +1,70 @@
 +++
 title = "Shell Completions"
-description = "Instructions for enabling and using shell auto-completion features with Noir in Zsh and other shells"
+description = "Improve your productivity by enabling shell auto-completion for Noir. This guide provides instructions for setting up completions in Zsh, Bash, and Fish."
 weight = 2
 sort_by = "weight"
 
 [extra]
 +++
 
-## Zsh Completion
+Shell completion is a powerful feature that can make you more efficient when using the command line. By enabling it for Noir, you can get suggestions for commands and flags as you type, which helps reduce typos and saves you from having to memorize every option.
 
-To enable auto-completion for Zsh, run the following command to generate the completion script:
+Noir can generate completion scripts for several popular shells. Here's how to set them up.
+
+## Zsh
+
+To enable auto-completion for Zsh, you first need to generate the completion script:
 
 ```bash
 noir --generate-completion zsh
-# #compdef noir
-# _arguments \
-# ....
 ```
 
-Then, move the generated script to your Zsh completions directory, typically `~/.zsh/completion/`. If this directory does not exist, you may need to create it. Ensure the script is named `_noir` to follow Zsh's naming convention for completion scripts.
+This will output the script to your terminal. To make it active, you need to save it to your Zsh completions directory. A common location is `~/.zsh/completion/`. Make sure to name the file `_noir` to follow Zsh's conventions.
 
 ```bash
+# Create the directory if it doesn't exist
+mkdir -p ~/.zsh/completion
+
+# Save the script to the correct location
 noir --generate-completion zsh > ~/.zsh/completion/_noir
 ```
 
-## Bash Completion
+## Bash
 
-For Bash, generate the completion script by running:
+For Bash, the process is similar. First, generate the script:
 
 ```bash
 noir --generate-completion bash
-# _noir_completions() {
-#     local cur prev opts
-# ....
 ```
 
-After generating the script, move it to the appropriate directory for Bash completions. This location can vary depending on your operating system and Bash configuration, but a common path is `/etc/bash_completion.d/` for system-wide availability, or `~/.local/share/bash-completion/completions/` for a single user. Ensure the script is executable and sourced in your Bash profile.
+The location for Bash completion scripts can vary, but a good place for user-specific completions is `~/.local/share/bash-completion/completions/`. You'll want to save the script there.
 
 ```bash
+# Create the directory if it doesn't exist
+mkdir -p ~/.local/share/bash-completion/completions
+
+# Save the script
 noir --generate-completion bash > ~/.local/share/bash-completion/completions/noir
 ```
 
-## Fish Completion
+## Fish
 
-For Fish, generate the completion script by running:
+For the Fish shell, generate the script like this:
 
 ```bash
 noir --generate-completion fish
-# function __fish_noir_needs_command
-# ....
 ```
 
-After generating the script, move it to the Fish completions directory, typically `~/.config/fish/completions/.` If this directory does not exist, you may need to create it. Ensure the script is named noir.fish to follow Fish's naming convention for completion scripts.
+Fish keeps its completion scripts in `~/.config/fish/completions/`. You should save the output to a file named `noir.fish` in that directory.
 
 ```bash
+# Create the directory if it doesn't exist
+mkdir -p ~/.config/fish/completions
+
+# Save the script
 noir --generate-completion fish > ~/.config/fish/completions/noir.fish
 ```
 
-## Shell Completion for Homebrew Users
+## Homebrew Users
 
-For Homebrew users, shell completion (e.g., for Zsh, Bash, etc.) is installed automatically, and no additional configuration is needed. The completions are ready to use immediately after installation.
+If you installed Noir using Homebrew, shell completions are automatically installed for you. There's no need for any additional setup—they should work out of the box.

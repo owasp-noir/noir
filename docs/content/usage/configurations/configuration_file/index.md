@@ -1,132 +1,57 @@
 +++
-title = "Configuration File"
-description = "Guide to configuring Noir using config.yaml files with predefined settings and preferences"
+title = "Using a Configuration File"
+description = "Learn how to use a `config.yaml` file to set default options for Noir. This is a great way to streamline your workflow and ensure consistent scans."
 weight = 1
 sort_by = "weight"
 
 [extra]
 +++
 
-Configuration allows you to predefine various flags for Noir, making it easier to manage and use the tool with your preferred settings.
+To make running Noir easier and more consistent, you can use a configuration file to set default values for many of the command-line flags. This saves you from having to type the same options every time you run a scan.
 
-## Config Home Path
+## Configuration File Location
+
+Noir looks for a file named `config.yaml` in a specific directory depending on your operating system:
 
 | OS | Path |
 |---|---|
-| MacOS: | `~/.config/noir` |
-| Linux: | `~/.config/noir` |
-| Windows: | `%APPDATA%\noir` |
+| macOS | `~/.config/noir/` |
+| Linux | `~/.config/noir/` |
+| Windows | `%APPDATA%\noir\` |
 
-## Config YAML (config.yaml)
+Any settings you define in this file will be used as the default, but you can always override them by providing a different value on the command line.
 
-`$CONFIG_HOME/config.yaml`
+## Example `config.yaml`
+
+Here is an example of a `config.yaml` file with some common settings:
 
 ```yaml
 ---
-# Noir configuration file
-# This file is used to store the configuration options for Noir.
-# You can edit this file to change the configuration options.
+# Default base path for scans
+base: "/path/to/my/project"
 
-# Config values are defaults; CLI options take precedence.
-# **************************************************************
-
-# Base directory for the application
-base: ""
-
-# Whether to use color in the output
+# Always use color in the output
 color: true
 
-# The configuration file to use
-config_file: ""
+# Default output format
+format: "json"
 
-# The number of concurrent operations to perform
-concurrency: "50"
+# Exclude certain status codes
+exclude_codes: "404,500"
 
-# Whether to enable debug mode
-debug: false
+# Enable all taggers by default
+all_taggers: true
 
-# Whether to enable verbose mode
-verbose: false
+# Default AI provider and model
+ai_provider: "openai"
+ai_model: "gpt-4o"
+```
 
-# The status codes to exclude
-exclude_codes: ""
+With this configuration, you could simply run `noir` and it would be equivalent to running:
 
-# Technologies to exclude
-exclude_techs: ""
+```bash
+noir -b /path/to/my/project -f json --exclude-codes "404,500" -T --ai-provider openai --ai-model gpt-4o
+```
 
-# The format to use for the output
-format: "plain"
+By using a configuration file, you can create a personalized and efficient workflow that is tailored to your specific needs.
 
-# Whether to include the path in the output
-include_path: false
-
-# Whether to disable logging
-nolog: false
-
-# The output file to write to
-output: ""
-
-# The Elasticsearch server to send data to
-# e.g http://localhost:9200
-send_es: ""
-
-# The proxy server to use
-# e.g http://localhost:8080
-send_proxy: ""
-
-# Whether to send a request
-send_req: false
-
-# Whether to send headers with the request (Array of strings)
-# e.g "Authorization: Bearer token"
-send_with_headers:
-
-# The value to set for pvalue (Array of strings)
-set_pvalue:
-set_pvalue_header:
-set_pvalue_cookie:
-set_pvalue_query:
-set_pvalue_form:
-set_pvalue_json:
-set_pvalue_path:
-
-# The status codes to use
-status_codes: false
-
-# The technologies to use
-techs: ""
-
-# The URL to use
-url: ""
-
-# Whether to use filters (Array of strings)
-use_filters:
-
-# Whether to use matchers (Array of strings)
-use_matchers:
-
-# Whether to use all taggers
-all_taggers: false
-
-# The taggers to use
-# e.g "tagger1,tagger2"
-# To see the list of all taggers, please use the noir command with --list-taggers
-use_taggers: ""
-
-# The diff file to use
-diff: ""
-
-# The passive rules to use
-# e.g /path/to/rules
-passive_scan: false
-passive_scan_path: []
-
-# The AI server URL
-ai_provider: ""
-
-# The AI model to use
-ai_model: ""
-
-# The API key for the AI server
-ai_key: ""
-````
