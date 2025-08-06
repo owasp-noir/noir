@@ -16,10 +16,6 @@ The best way to get in touch with us is through our [GitHub repository](https://
 *   **For bug reports and feature requests**, please open an [issue](https://github.com/owasp-noir/noir/issues).
 *   **For general questions and discussions**, please use the [discussions](https://github.com/orgs/owasp-noir/discussions) page.
 
-## OWASP Slack
-
-You can also find us on the OWASP Slack workspace in the `#project-noir` channel.
-
 ## Social Media
 
 You can follow the project leaders on social media for updates and announcements:
