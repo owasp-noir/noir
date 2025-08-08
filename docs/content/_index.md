@@ -5,7 +5,7 @@ template = "landing.html"
 version = "v0.22.0"
 
 [extra.hero]
-title = "OWASP Noir"
+title = "NOIR"
 description = "Noir is an attack surface detector that enhances white-box security testing and streamlines security pipelines by discovering endpoints and potential vulnerabilities through static analysis."
 image = "/images/noir-wallpaper.jpg"
 cta_buttons = [
