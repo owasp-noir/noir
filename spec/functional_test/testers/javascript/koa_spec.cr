@@ -13,6 +13,13 @@ expected_endpoints = [
   Endpoint.new("/items/:itemId", "DELETE", [
     Param.new("itemId", "", "path"),
   ]),
+  Endpoint.new("/everything", "GET"),
+  Endpoint.new("/everything", "POST"),
+  Endpoint.new("/everything", "PUT"),
+  Endpoint.new("/everything", "DELETE"),
+  Endpoint.new("/everything", "PATCH"),
+  Endpoint.new("/everything", "HEAD"),
+  Endpoint.new("/everything", "OPTIONS"),
 ]
 
 FunctionalTester.new("fixtures/javascript/koa/", {

@@ -119,28 +119,58 @@ module Analyzer::Javascript
           # Get endpoint from line
           endpoint = line_to_endpoint(line, router_detected)
           if endpoint.method != ""
-            # Apply nested router prefix if applicable
-            if !current_router.empty? && nested_routers.has_key?(current_router) && !nested_routers[current_router].empty?
-              router_prefix = nested_routers[current_router]
-              # Handle path joining properly
-              if endpoint.url.starts_with?("/") && router_prefix.ends_with?("/")
-                endpoint.url = "#{router_prefix[0..-2]}#{endpoint.url}"
-              elsif !endpoint.url.starts_with?("/") && !router_prefix.ends_with?("/")
-                endpoint.url = "#{router_prefix}/#{endpoint.url}"
-              else
-                endpoint.url = "#{router_prefix}#{endpoint.url}"
-              end
-              # If we have a router base path and the endpoint doesn't already include it
-            elsif !current_router_base.empty? && !endpoint.url.starts_with?("/")
-              endpoint.url = "#{current_router_base}/#{endpoint.url}"
-            elsif !current_router_base.empty? && endpoint.url != "/" && !endpoint.url.starts_with?(current_router_base)
-              endpoint.url = "#{current_router_base}#{endpoint.url}"
-            end
+            # Handle router.all by expanding to all HTTP methods
+            if endpoint.method == "ALL"
+              all_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
+              all_methods.each do |method|
+                expanded_endpoint = Endpoint.new(endpoint.url, method)
 
-            details = Details.new(PathInfo.new(path, index + 1))
-            endpoint.details = details
-            result << endpoint
-            last_endpoint = endpoint
+                # Apply nested router prefix if applicable
+                if !current_router.empty? && nested_routers.has_key?(current_router) && !nested_routers[current_router].empty?
+                  router_prefix = nested_routers[current_router]
+                  # Handle path joining properly
+                  if expanded_endpoint.url.starts_with?("/") && router_prefix.ends_with?("/")
+                    expanded_endpoint.url = "#{router_prefix[0..-2]}#{expanded_endpoint.url}"
+                  elsif !expanded_endpoint.url.starts_with?("/") && !router_prefix.ends_with?("/")
+                    expanded_endpoint.url = "#{router_prefix}/#{expanded_endpoint.url}"
+                  else
+                    expanded_endpoint.url = "#{router_prefix}#{expanded_endpoint.url}"
+                  end
+                  # If we have a router base path and the endpoint doesn't already include it
+                elsif !current_router_base.empty? && !expanded_endpoint.url.starts_with?("/")
+                  expanded_endpoint.url = "#{current_router_base}/#{expanded_endpoint.url}"
+                elsif !current_router_base.empty? && expanded_endpoint.url != "/" && !expanded_endpoint.url.starts_with?(current_router_base)
+                  expanded_endpoint.url = "#{current_router_base}#{expanded_endpoint.url}"
+                end
+
+                details = Details.new(PathInfo.new(path, index + 1))
+                expanded_endpoint.details = details
+                result << expanded_endpoint
+              end
+            else
+              # Apply nested router prefix if applicable
+              if !current_router.empty? && nested_routers.has_key?(current_router) && !nested_routers[current_router].empty?
+                router_prefix = nested_routers[current_router]
+                # Handle path joining properly
+                if endpoint.url.starts_with?("/") && router_prefix.ends_with?("/")
+                  endpoint.url = "#{router_prefix[0..-2]}#{endpoint.url}"
+                elsif !endpoint.url.starts_with?("/") && !router_prefix.ends_with?("/")
+                  endpoint.url = "#{router_prefix}/#{endpoint.url}"
+                else
+                  endpoint.url = "#{router_prefix}#{endpoint.url}"
+                end
+                # If we have a router base path and the endpoint doesn't already include it
+              elsif !current_router_base.empty? && !endpoint.url.starts_with?("/")
+                endpoint.url = "#{current_router_base}/#{endpoint.url}"
+              elsif !current_router_base.empty? && endpoint.url != "/" && !endpoint.url.starts_with?(current_router_base)
+                endpoint.url = "#{current_router_base}#{endpoint.url}"
+              end
+
+              details = Details.new(PathInfo.new(path, index + 1))
+              endpoint.details = details
+              result << endpoint
+              last_endpoint = endpoint
+            end
           end
 
           # Get parameters from line
@@ -169,7 +199,7 @@ module Analyzer::Javascript
           prefix = m[2]
 
           # Now find all endpoints defined on this router
-          http_methods = %w(get post put delete patch options head)
+          http_methods = %w(get post put delete patch options head all)
 
           http_methods.each do |http_method|
             endpoint_pattern = /#{router_var}\.#{http_method}\s*\(\s*['"]([^'"]+)['"][^{]*\{([^}]*)\}/m
@@ -311,7 +341,7 @@ module Analyzer::Javascript
         next if router_prefix.empty?
 
         # Look for route handlers on this router
-        http_methods = %w(get post put delete patch options head)
+        http_methods = %w(get post put delete patch options head all)
 
         http_methods.each do |method|
           # Enhanced pattern to catch more route handler formats
@@ -361,7 +391,7 @@ module Analyzer::Javascript
 
     # Special method to process versioned routers like v1Router
     private def process_versioned_router(content : String, result : Array(Endpoint), path : String, router_name : String, prefix : String)
-      http_methods = %w(get post put delete patch options head)
+      http_methods = %w(get post put delete patch options head all)
 
       http_methods.each do |method|
         pattern = /#{router_name}\.#{method}\s*\(\s*['"]([^'"]+)['"](?:[^{]*)\{([^}]*(?:\{[^}]*\})*[^}]*)\}/m
@@ -602,7 +632,7 @@ module Analyzer::Javascript
     end
 
     def line_to_endpoint(line : String, router_detected : Bool = false) : Endpoint
-      http_methods = %w(get post put delete patch options head)
+      http_methods = %w(get post put delete patch options head all)
 
       http_methods.each do |method|
         # Match both app.method and router.method patterns with improved regex
@@ -615,9 +645,9 @@ module Analyzer::Javascript
       end
 
       # Handle route method with method as a parameter
-      if line =~ /\b(?:app|router|route|r|Router|v\d+Router|apiRouter|[\w]+Router)\s*\.\s*route\s*\(\s*['"]([^'"]+)['"].*?\.(?:get|post|put|delete|patch|options|head)\s*\(/
+      if line =~ /\b(?:app|router|route|r|Router|v\d+Router|apiRouter|[\w]+Router)\s*\.\s*route\s*\(\s*['"]([^'"]+)['"].*?\.(?:get|post|put|delete|patch|options|head|all)\s*\(/
         path = $1
-        method = line.scan(/\.(?:get|post|put|delete|patch|options|head)\s*\(/)[0][0].gsub(/[\.\s\(]/, "")
+        method = line.scan(/\.(?:get|post|put|delete|patch|options|head|all)\s*\(/)[0][0].gsub(/[\.\s\(]/, "")
         return Endpoint.new(path, method.upcase)
       end
 

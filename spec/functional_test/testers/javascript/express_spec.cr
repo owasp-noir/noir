@@ -47,6 +47,35 @@ extected_endpoints = [
     Param.new("view", "", "query"),
     Param.new("Admin-Token", "", "header"),
   ]),
+  # Dynamic path endpoints (from dynamic_paths.js)
+  Endpoint.new("/api/users", "GET"),
+  Endpoint.new("/api/login", "POST", [
+    Param.new("username", "", "json"),
+    Param.new("password", "", "json"),
+  ]),
+  # router.all expanded to all HTTP methods
+  Endpoint.new("/api/catchall", "GET"),
+  Endpoint.new("/api/catchall", "POST"),
+  Endpoint.new("/api/catchall", "PUT"),
+  Endpoint.new("/api/catchall", "DELETE"),
+  Endpoint.new("/api/catchall", "PATCH"),
+  Endpoint.new("/api/catchall", "HEAD"),
+  Endpoint.new("/api/catchall", "OPTIONS"),
+  Endpoint.new("/api/v2/users/:id", "PUT", [
+    Param.new("id", "", "path"),
+    Param.new("name", "", "json"),
+  ]),
+  Endpoint.new("/api/v2/items/:itemId", "DELETE", [
+    Param.new("itemId", "", "path"),
+  ]),
+  # More router.all endpoints
+  Endpoint.new("/api/admin", "GET"),
+  Endpoint.new("/api/admin", "POST"),
+  Endpoint.new("/api/admin", "PUT"),
+  Endpoint.new("/api/admin", "DELETE"),
+  Endpoint.new("/api/admin", "PATCH"),
+  Endpoint.new("/api/admin", "HEAD"),
+  Endpoint.new("/api/admin", "OPTIONS"),
 ]
 
 FunctionalTester.new("fixtures/javascript/express/", {
