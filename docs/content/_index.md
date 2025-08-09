@@ -7,9 +7,9 @@ version = "v0.22.0"
 [extra.hero]
 title = "NOIR"
 description = "Noir is an attack surface detector that enhances white-box security testing and streamlines security pipelines by discovering endpoints and potential vulnerabilities through static analysis."
-image = "/images/noir-wallpaper.jpg"
+image = "./images/noir-wallpaper.jpg"
 cta_buttons = [
-    { text = "Get Started", url = "/get_started/overview", style = "primary" },
+    { text = "Get Started", url = "./get_started/overview", style = "primary" },
     { text = "View on GitHub", url = "https://github.com/owasp-noir/noir", style = "secondary" },
 ]
 
