@@ -22,10 +22,13 @@ module Noir
     @tokens : Array(JSToken) = [] of JSToken
     @position : Int32 = 0
     @framework : Symbol = :unknown
+    @constants : Hash(String, String) = {} of String => String
 
     def initialize(source : String)
       lexer = JSLexer.new(source)
       @tokens = lexer.tokenize
+      # Extract constants from the source
+      extract_constants
     end
 
     def detect_framework : Symbol
@@ -227,20 +230,32 @@ module Noir
           path_idx = idx + 3
           if path_idx < @tokens.size &&
              @tokens[path_idx].type == :lparen &&
-             path_idx + 1 < @tokens.size &&
-             @tokens[path_idx + 1].type == :string
-            path = @tokens[path_idx + 1].value
+             path_idx + 1 < @tokens.size
 
-            # Advance our position past what we've parsed
-            @position = path_idx + 2
-
-            # Extract parameters from path
-            route = JSRoutePattern.new(method, path)
-            extract_path_params(path).each do |param|
-              route.push_param(param)
+            path = nil
+            # Check for regular string
+            if @tokens[path_idx + 1].type == :string
+              path = @tokens[path_idx + 1].value
+              @position = path_idx + 2
+            # Check for template literal or dynamic path construction
+            elsif @tokens[path_idx + 1].type == :template_literal ||
+                  @tokens[path_idx + 1].type == :identifier
+              resolved_path = resolve_dynamic_path(path_idx + 1)
+              if resolved_path
+                path = resolved_path
+                # Skip past the resolved tokens
+                @position = path_idx + 4  # Adjust based on pattern complexity
+              end
             end
 
-            return route
+            if path
+              # Extract parameters from path
+              route = JSRoutePattern.new(method, path)
+              extract_path_params(path).each do |param|
+                route.push_param(param)
+              end
+              return route
+            end
           end
         end
         idx += 1
@@ -363,20 +378,31 @@ module Noir
           path_idx = idx + 2
           if path_idx < @tokens.size &&
              @tokens[path_idx].type == :lparen &&
-             path_idx + 1 < @tokens.size &&
-             @tokens[path_idx + 1].type == :string
-            path = @tokens[path_idx + 1].value
+             path_idx + 1 < @tokens.size
 
-            # Advance our position past what we've parsed
-            @position = path_idx + 2
-
-            # Extract parameters from path
-            route = JSRoutePattern.new(method, path)
-            extract_path_params(path).each do |param|
-              route.push_param(param)
+            path = nil
+            # Check for regular string
+            if @tokens[path_idx + 1].type == :string
+              path = @tokens[path_idx + 1].value
+              @position = path_idx + 2
+            # Check for template literal or dynamic path construction
+            elsif @tokens[path_idx + 1].type == :template_literal ||
+                  @tokens[path_idx + 1].type == :identifier
+              resolved_path = resolve_dynamic_path(path_idx + 1)
+              if resolved_path
+                path = resolved_path
+                @position = path_idx + 4  # Adjust based on pattern complexity
+              end
             end
 
-            return route
+            if path
+              # Extract parameters from path
+              route = JSRoutePattern.new(method, path)
+              extract_path_params(path).each do |param|
+                route.push_param(param)
+              end
+              return route
+            end
           end
         end
         idx += 1
@@ -545,6 +571,63 @@ module Noir
           end
         end
         idx += 1
+      end
+
+      nil
+    end
+
+    # Extract constant assignments from the tokens
+    private def extract_constants
+      idx = 0
+      while idx < @tokens.size - 4
+        # Look for const/let/var variableName = 'value' patterns
+        if (@tokens[idx].value == "const" || @tokens[idx].value == "let" || @tokens[idx].value == "var") &&
+           idx + 4 < @tokens.size &&
+           @tokens[idx + 1].type == :identifier &&
+           @tokens[idx + 2].value == "=" &&
+           (@tokens[idx + 3].type == :string || @tokens[idx + 3].type == :template_literal)
+          var_name = @tokens[idx + 1].value
+          var_value = @tokens[idx + 3].value
+          @constants[var_name] = var_value
+        end
+        idx += 1
+      end
+    end
+
+    # Resolve dynamic path construction (template literals and concatenation)
+    private def resolve_dynamic_path(start_idx : Int32) : String?
+      return nil if start_idx >= @tokens.size
+
+      # Handle template literal case: `${variable}/path`
+      if @tokens[start_idx].type == :template_literal
+        template = @tokens[start_idx].value
+        # Basic variable substitution for ${variable} patterns
+        @constants.each do |var_name, var_value|
+          template = template.gsub("${#{var_name}}", var_value)
+        end
+        return template
+      end
+
+      # Handle string concatenation case: variable + '/path'
+      if @tokens[start_idx].type == :identifier &&
+         start_idx + 2 < @tokens.size &&
+         @tokens[start_idx + 1].type == :plus &&
+         @tokens[start_idx + 2].type == :string
+        var_name = @tokens[start_idx].value
+        if @constants.has_key?(var_name)
+          return @constants[var_name] + @tokens[start_idx + 2].value
+        end
+      end
+
+      # Handle string + variable case: '/path' + variable
+      if @tokens[start_idx].type == :string &&
+         start_idx + 2 < @tokens.size &&
+         @tokens[start_idx + 1].type == :plus &&
+         @tokens[start_idx + 2].type == :identifier
+        var_name = @tokens[start_idx + 2].value
+        if @constants.has_key?(var_name)
+          return @tokens[start_idx].value + @constants[var_name]
+        end
       end
 
       nil
