@@ -241,7 +241,7 @@ class JavaParser
 
     lbrace = rbrace = 0
     tokens.each do |token|
-      if !start_token_parse && token.type == :CLASS
+      if !start_token_parse && (token.type == :CLASS || token.type == :INTERFACE)
         start_token_parse = true
         class_body = Array(Token).new
         lbrace = rbrace = 0
@@ -267,7 +267,7 @@ class JavaParser
     has_token = false
     tokens.each do |token|
       if token.index != 0
-        if token.type == :CLASS
+        if token.type == :CLASS || token.type == :INTERFACE
           has_token = true
         elsif has_token && token.type == :IDENTIFIER
           return token.value
@@ -465,6 +465,69 @@ class JavaParser
                 i -= 1
               end
 
+              break
+            elsif previous_token.type == :TAB || previous_token.type == :NEWLINE
+              previous_token_index -= 1
+              next
+            elsif has_exception
+              break unless previous_token.type == :THROWS && previous_token.value == "throws"
+            elsif previous_token.type == :IDENTIFIER
+              has_exception = true
+              # skip multiple exception handling
+              while 2 < previous_token_index
+                previous_token = class_tokens[previous_token_index - 1]
+                if previous_token.type == :NEWLINE || previous_token.type == :COMMA || previous_token.type == :IDENTIFIER
+                  previous_token_index -= 1
+                else
+                  break
+                end
+              end
+            else
+              break
+            end
+
+            previous_token_index -= 1
+          end
+        elsif token.type == :SEMI
+          # Handle interface method declarations that end with semicolon
+          previous_token_index = index - 1
+          has_exception = false
+          while 0 < previous_token_index
+            previous_token = class_tokens[previous_token_index]
+            if previous_token.type == :RPAREN
+              rparen_count = 1
+
+              # 3. Get method declaration from ":NEWLINE" to ":RPAREN" (method declaration)
+              i = previous_token_index - 1
+              while 0 < i
+                method_declaration_token = class_tokens[i]
+                if method_declaration_token.type == :RPAREN
+                  rparen_count += 1
+                elsif method_declaration_token.type == :LPAREN
+                  lparen_count += 1
+                elsif rparen_count == lparen_count
+                  if method_name == nil && method_declaration_token.type == :IDENTIFIER
+                    method_name = method_declaration_token.value
+                    method_name_index = i
+                  elsif method_declaration_token.type == :NEWLINE
+                    method_tokens = class_tokens[i + 1..index]
+                    break
+                  end
+                end
+                i -= 1
+              end
+
+              # Create method for interface declaration (no body)
+              annotations = parse_annotations_backwards(class_tokens, method_name_index)
+              if !method_name.nil?
+                method_params = parse_formal_parameters(class_tokens, method_name_index + 1)
+                method_body = [] of Token  # Interface methods have no body
+                methods[method_name] = MethodModel.new(method_name, method_params, annotations, method_tokens, method_body)
+              end
+
+              # reset
+              method_tokens = Array(Token).new
+              method_name = nil
               break
             elsif previous_token.type == :TAB || previous_token.type == :NEWLINE
               previous_token_index -= 1

@@ -113,6 +113,7 @@ class ConfigInitializer
       "ai_provider"       => YAML::Any.new(""),
       "ai_model"          => YAML::Any.new(""),
       "ai_key"            => YAML::Any.new(""),
+      "analyze_feign"     => YAML::Any.new(false),
     }
 
     noir_options
