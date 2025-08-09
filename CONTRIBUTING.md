@@ -99,13 +99,13 @@ By doing so, you'll help us keep our project up-to-date and well-organized. Your
 
 To set up the documentation site locally, follow these steps:
 
-#### Install Hugo
+#### Install Zola
 
-> https://gohugo.io/installation/
+> https://www.getzola.org/documentation/getting-started/installation/
 
 #### Serve the Documentation Site
 
-After installing the hugo, you can serve the documentation site locally using the following Just task:
+After installing Zola, you can serve the documentation site locally using the following Just task:
 
 ```sh
 just docs-serve

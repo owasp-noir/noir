@@ -16,9 +16,9 @@ The best way to get in touch with us is through our [GitHub repository](https://
 *   **For bug reports and feature requests**, please open an [issue](https://github.com/owasp-noir/noir/issues).
 *   **For general questions and discussions**, please use the [discussions](https://github.com/orgs/owasp-noir/discussions) page.
 
-## Social Media
+## Project Leaders
 
-You can follow the project leaders on social media for updates and announcements:
+OWASP Noir is led by two co-leads. You can follow them for updates or reach out directly:
 
-*   **hahwul**: [𝕏](https://x.com/hahwul), [GitHub](https://github.com/hahwul)
-*   **ksg**: [GitHub](https://github.com/ksg97031)
+* **hahwul** (co-lead, creator): [𝕏](https://x.com/hahwul), [GitHub](https://github.com/hahwul)
+* **ksg** (co-lead): [GitHub](https://github.com/ksg97031)
