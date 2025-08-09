@@ -1,5 +1,5 @@
 require "crest"
-require "wait_group"
+require "../utils/wait_group"
 require "../utils/http_symbols"
 require "../models/deliver"
 

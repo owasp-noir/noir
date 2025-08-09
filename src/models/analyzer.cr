@@ -1,7 +1,7 @@
 require "./logger"
 require "./endpoint"
 require "./file_helper"
-require "wait_group"
+require "../utils/wait_group"
 
 class Analyzer
   include FileHelper
