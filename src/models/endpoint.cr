@@ -4,28 +4,37 @@ require "yaml"
 struct Endpoint
   include JSON::Serializable
   include YAML::Serializable
-  property url, method, params, protocol, details, tags
+  property url, method, params, protocol, details, tags, internal
 
   def initialize(@url : String, @method : String)
     @params = [] of Param
     @details = Details.new
     @protocol = "http"
     @tags = [] of Tag
+    @internal = false
   end
 
   def initialize(@url : String, @method : String, @details : Details)
     @params = [] of Param
     @protocol = "http"
     @tags = [] of Tag
+    @internal = false
   end
 
   def initialize(@url : String, @method : String, @params : Array(Param))
     @details = Details.new
     @protocol = "http"
     @tags = [] of Tag
+    @internal = false
   end
 
   def initialize(@url : String, @method : String, @params : Array(Param), @details : Details)
+    @protocol = "http"
+    @tags = [] of Tag
+    @internal = false
+  end
+
+  def initialize(@url : String, @method : String, @params : Array(Param), @details : Details, @internal : Bool)
     @protocol = "http"
     @tags = [] of Tag
   end
@@ -36,6 +45,10 @@ struct Endpoint
 
   def protocol=(protocol : String)
     @protocol = protocol
+  end
+
+  def internal=(internal : Bool)
+    @internal = internal
   end
 
   def add_tag(tag : Tag)
