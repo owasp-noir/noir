@@ -1,40 +1,64 @@
 use loco_rs::prelude::*;
-use axum::{extract::Request, response::Response};
+use axum::{extract::State, response::Response};
+use serde_json::Json;
 
-// Example Loco controller with typical patterns
-pub struct HomeController;
+// Example Loco controller following Rails conventions
+pub struct PostsController;
 
-impl HomeController {
-    pub async fn index(req: Request) -> Result<Response> {
-        // Home page handler
-        Ok(Response::new("Welcome to Loco!"))
+impl PostsController {
+    // RESTful actions following Rails conventions
+    pub async fn index(State(ctx): State<AppContext>) -> Result<impl IntoResponse> {
+        // List all posts
+        Ok(Html("Posts index"))
     }
 
-    pub async fn about(req: Request) -> Result<Response> {
-        // About page handler
-        Ok(Response::new("About us"))
+    pub async fn show(State(ctx): State<AppContext>) -> Result<impl IntoResponse> {
+        // Show specific post
+        Ok(Html("Post details"))
+    }
+
+    pub async fn new(State(ctx): State<AppContext>) -> Result<impl IntoResponse> {
+        // New post form
+        Ok(Html("New post form"))
+    }
+
+    pub async fn create(State(ctx): State<AppContext>) -> Result<impl IntoResponse> {
+        // Create post
+        Ok(Json("Post created"))
+    }
+
+    pub async fn edit(State(ctx): State<AppContext>) -> Result<impl IntoResponse> {
+        // Edit post form
+        Ok(Html("Edit post form"))
+    }
+
+    pub async fn update(State(ctx): State<AppContext>) -> Result<impl IntoResponse> {
+        // Update post
+        Ok(Json("Post updated"))
+    }
+
+    pub async fn destroy(State(ctx): State<AppContext>) -> Result<impl IntoResponse> {
+        // Delete post
+        Ok(Json("Post deleted"))
     }
 }
 
+// API controller
 pub struct ApiController;
 
 impl ApiController {
-    pub async fn users(req: Request) -> Result<Response> {
+    pub async fn users(State(ctx): State<AppContext>) -> Result<Json<Value>> {
         // API users endpoint
-        Ok(Response::new("Users API"))
+        Ok(Json("Users API"))
     }
 
-    pub async fn create_user(req: Request) -> Result<Response> {
-        // Create user endpoint
-        Ok(Response::new("User created"))
+    pub async fn health_check(State(ctx): State<AppContext>) -> Result<Json<Value>> {
+        // Health check endpoint
+        Ok(Json("OK"))
     }
 }
 
 // Function-style handlers
-pub async fn health_check(req: Request) -> Result<Response> {
-    Ok(Response::new("OK"))
-}
-
-pub async fn dashboard(req: Request) -> Result<Response> {
-    Ok(Response::new("Dashboard"))
+pub async fn dashboard(State(ctx): State<AppContext>) -> Result<impl IntoResponse> {
+    Ok(Html("Dashboard"))
 }

@@ -23,4 +23,21 @@ class WaitGroup
   def wait
     @channel.receive
   end
+
+  def spawn(&block : -> Void)
+    add(1)
+    ::spawn do
+      begin
+        block.call
+      ensure
+        done
+      end
+    end
+  end
+
+  def self.wait(&block)
+    wg = new
+    yield wg
+    wg.wait
+  end
 end

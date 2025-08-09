@@ -189,7 +189,7 @@ def run_options_parser
       puts "Noir Version:      #{Noir::VERSION}"
       puts "Crystal Version:   #{Crystal::VERSION}"
       puts "LLVM Version:      #{Crystal::LLVM_VERSION}"
-      puts "TARGET:            #{Crystal::TARGET_TRIPLE}"
+      puts "TARGET:            #{`uname -m`.strip}-unknown-linux-gnu"
       exit
     end
     parser.on "--verbose", "Show verbose messages (+ automatically enable --include-path, --use-all-taggers)" do

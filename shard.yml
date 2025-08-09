@@ -23,5 +23,3 @@ dependencies:
     version: ~> 1.4.0
   har:
     github: NeuraLegion/har
-  wait_group:
-    path: ./lib/wait_group

@@ -1,4 +1,6 @@
-require "../../../../src/detector/detectors/*"
+require "../../../spec_helper"
+require "../../../../src/config_initializer"
+require "../../../../src/detector/detectors/rust/loco"
 
 describe "Detect Rust Loco" do
   config_init = ConfigInitializer.new

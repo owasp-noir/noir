@@ -3,7 +3,7 @@ require "../models/detector"
 require "../models/passive_scan"
 require "../techs/techs.cr" # Added to define NoirTechs
 require "../passive_scan/detect.cr"
-require "wait_group"
+require "../utils/wait_group"
 require "yaml"
 
 macro defind_detectors(detectors)
