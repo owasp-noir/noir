@@ -35,7 +35,7 @@ class WaitGroup
     end
   end
 
-  def self.wait(&block)
+  def self.wait(&)
     wg = new
     yield wg
     wg.wait

@@ -5,10 +5,10 @@ module Analyzer::Rust
     def analyze
       # Source Analysis for Loco framework routes
       # Loco follows Rails conventions with controllers and actions
-      
+
       # Simple pattern to match function definitions
       pattern = /pub\s+async\s+fn\s+(\w+)/
-      
+
       channel = Channel(String).new
 
       begin
