@@ -243,8 +243,16 @@ module Noir
               resolved_path = resolve_dynamic_path(path_idx + 1)
               if resolved_path
                 path = resolved_path
-                # Skip past the resolved tokens
-                @position = path_idx + 4  # Adjust based on pattern complexity
+                # Skip past the resolved tokens - find the end of the expression
+                skip_idx = path_idx + 1
+                while skip_idx < @tokens.size && 
+                      (@tokens[skip_idx].type == :identifier || 
+                       @tokens[skip_idx].type == :plus ||
+                       @tokens[skip_idx].type == :string ||
+                       @tokens[skip_idx].type == :template_literal)
+                  skip_idx += 1
+                end
+                @position = skip_idx
               end
             end
 
@@ -391,7 +399,16 @@ module Noir
               resolved_path = resolve_dynamic_path(path_idx + 1)
               if resolved_path
                 path = resolved_path
-                @position = path_idx + 4  # Adjust based on pattern complexity
+                # Skip past the resolved tokens - find the end of the expression
+                skip_idx = path_idx + 1
+                while skip_idx < @tokens.size && 
+                      (@tokens[skip_idx].type == :identifier || 
+                       @tokens[skip_idx].type == :plus ||
+                       @tokens[skip_idx].type == :string ||
+                       @tokens[skip_idx].type == :template_literal)
+                  skip_idx += 1
+                end
+                @position = skip_idx
               end
             end
 
@@ -598,8 +615,9 @@ module Noir
     private def resolve_dynamic_path(start_idx : Int32) : String?
       return nil if start_idx >= @tokens.size
 
-      # Handle template literal case: `${variable}/path`
-      if @tokens[start_idx].type == :template_literal
+      # Handle pure template literal case: `${variable}/path`
+      if @tokens[start_idx].type == :template_literal &&
+         (start_idx + 1 >= @tokens.size || @tokens[start_idx + 1].type != :plus)
         template = @tokens[start_idx].value
         # Basic variable substitution for ${variable} patterns
         @constants.each do |var_name, var_value|
@@ -608,29 +626,46 @@ module Noir
         return template
       end
 
-      # Handle string concatenation case: variable + '/path'
-      if @tokens[start_idx].type == :identifier &&
-         start_idx + 2 < @tokens.size &&
-         @tokens[start_idx + 1].type == :plus &&
-         @tokens[start_idx + 2].type == :string
-        var_name = @tokens[start_idx].value
-        if @constants.has_key?(var_name)
-          return @constants[var_name] + @tokens[start_idx + 2].value
+      # Handle string concatenation cases (including template literals in concatenation)
+      result = ""
+      idx = start_idx
+      
+      # Parse concatenation chain: var1 + var2 + '/path' + var3
+      while idx < @tokens.size
+        if @tokens[idx].type == :identifier
+          var_name = @tokens[idx].value
+          if @constants.has_key?(var_name)
+            result += @constants[var_name]
+          else
+            result += var_name  # Keep variable name if not resolved
+          end
+        elsif @tokens[idx].type == :string
+          result += @tokens[idx].value
+        elsif @tokens[idx].type == :template_literal
+          template = @tokens[idx].value
+          # Basic variable substitution for ${variable} patterns
+          @constants.each do |var_name, var_value|
+            template = template.gsub("${#{var_name}}", var_value)
+          end
+          result += template
+        elsif @tokens[idx].type == :plus
+          # Continue to next token
+        else
+          # End of concatenation chain
+          break
+        end
+        
+        idx += 1
+        
+        # Stop if we don't see a plus operator for continuation
+        if idx < @tokens.size && @tokens[idx].type != :plus
+          break
+        elsif idx < @tokens.size && @tokens[idx].type == :plus
+          idx += 1  # Skip the plus
         end
       end
 
-      # Handle string + variable case: '/path' + variable
-      if @tokens[start_idx].type == :string &&
-         start_idx + 2 < @tokens.size &&
-         @tokens[start_idx + 1].type == :plus &&
-         @tokens[start_idx + 2].type == :identifier
-        var_name = @tokens[start_idx + 2].value
-        if @constants.has_key?(var_name)
-          return @tokens[start_idx].value + @constants[var_name]
-        end
-      end
-
-      nil
+      return result.empty? ? nil : result
     end
 
     private def extract_path_params(path : String) : Array(Param)
