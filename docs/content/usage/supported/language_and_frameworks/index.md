@@ -171,6 +171,12 @@ Noir is a tool designed to analyze and understand codebases by identifying endpo
 |-----|--------|-------|--------|--------|----|
 | ✅   | ✅    | ❌    | ❌     | ❌     | ❌ |
 
+### Loco
+
+| URL | Method | Param | Header | Cookie | WS |
+|-----|--------|-------|--------|--------|----|
+| ✅   | ✅    | ❌    | ❌     | ❌     | ❌ |
+
 ## Elixir
 
 ### Phoenix

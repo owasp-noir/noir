@@ -565,7 +565,7 @@ module NoirTechs
       :similar   => ["loco", "loco-rs", "rust-loco", "rust_loco"],
       :supported => {
         :endpoint => true,
-        :method   => false,
+        :method   => true,
         :params   => {
           :query  => false,
           :path   => false,
