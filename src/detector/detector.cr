@@ -3,8 +3,8 @@ require "../models/detector"
 require "../models/passive_scan"
 require "../techs/techs.cr" # Added to define NoirTechs
 require "../passive_scan/detect.cr"
-require "yaml"
 require "wait_group"
+require "yaml"
 
 macro defind_detectors(detectors)
   {% for detector, index in detectors %}
@@ -54,6 +54,7 @@ def detect_techs(base_path : String, options : Hash(String, YAML::Any), passive_
     Rust::Axum,
     Rust::Rocket,
     Rust::ActixWeb,
+    Rust::Loco,
   ])
 
   if options["techs"].to_s.size > 0

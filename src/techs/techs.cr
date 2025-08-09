@@ -559,6 +559,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :rust_loco => {
+      :framework => "Loco",
+      :language  => "Rust",
+      :similar   => ["loco", "loco-rs", "rust-loco", "rust_loco"],
+      :supported => {
+        :endpoint => true,
+        :method   => false,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
   }
 
   def self.techs
