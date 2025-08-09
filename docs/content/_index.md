@@ -44,22 +44,14 @@ desc = "Leverages the power of AI and Large Language Models (LLMs) to uncover hi
 icon = "fa-solid fa-robot"
 
 [extra.trust_section]
-title = "Our Tech Stack"
+title = "Built With"
 logos = [
     { src = "./resoruces/owasp.png", alt = "OWASP" },
     { src = "./resoruces/crystal.png", alt = "Crystal" },
 ]
 
-[extra.social_proof_section]
-title = "What Our Users Say"
-testimonials = [
-    { author = "KSG", role = "Security Developer", quote = "Noir provides practical features like multi-language support and search out of the box, without needing extra tools.", avatar = "/images/ksg.jpg" },
-    { author = "Lina", role = "Security Engineer", quote = "It's so simple and fast, and the beautiful theme is a joy to work with. I'm ready to find my inner calm with this tool!", avatar = "/images/lina.jpg" },
-    { author = "Bori Bae", role = "Security Engineer", quote = "The theme is clean and the settings are intuitive, making it easy for even first-time users to get started.", avatar = "/images/bori.png" },
-]
-
 [extra.final_cta_section]
-title = "Contributing to Noir"
+title = "Open Source Project"
 description = "OWASP Noir is an open-source project built with ❤️ by the community. If you would like to contribute, please see our contributing guide and submit a pull request with your awesome changes!"
 button = { text = "View Contributing Guide", url = "https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md" }
 +++
