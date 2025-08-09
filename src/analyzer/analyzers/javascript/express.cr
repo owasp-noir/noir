@@ -124,7 +124,7 @@ module Analyzer::Javascript
               all_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
               all_methods.each do |method|
                 expanded_endpoint = Endpoint.new(endpoint.url, method)
-                
+
                 # Apply nested router prefix if applicable
                 if !current_router.empty? && nested_routers.has_key?(current_router) && !nested_routers[current_router].empty?
                   router_prefix = nested_routers[current_router]

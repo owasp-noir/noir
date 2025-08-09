@@ -17,21 +17,21 @@ module Noir
         route_patterns.each do |pattern|
           # Normalize HTTP method (e.g., DEL -> DELETE)
           normalized_method = normalize_http_method(pattern.method)
-          
+
           # Handle router.all by expanding to all HTTP methods
           if normalized_method == "ALL"
             all_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
             all_methods.each do |method|
               endpoint = Endpoint.new(pattern.path, method)
-              
+
               # Add path parameters detected in the URL
               pattern.params.each do |param|
                 endpoint.push_param(param)
               end
-              
+
               # Extract other parameters like body, query, etc. from the content around this route
               extract_params_from_context(content, pattern, endpoint)
-              
+
               endpoints << endpoint
             end
           else
@@ -65,7 +65,7 @@ module Noir
       when "DEL"
         return "DELETE"
       when "ALL"
-        return "ALL"  # Keep ALL as-is for special handling
+        return "ALL" # Keep ALL as-is for special handling
       when "OPTIONS"
         return "OPTIONS"
       when "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"

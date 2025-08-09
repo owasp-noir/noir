@@ -166,21 +166,21 @@ module Noir
 
     private def tokenize_template_literal
       advance # Skip the opening backtick
-      
+
       template_value = ""
       while @current_char != '`' && @current_char != '\0'
         # Handle escape sequences
         if @current_char == '\\' && (peek == '`' || peek == '\\')
           advance
         end
-        
+
         template_value += @current_char
         advance
       end
-      
+
       # Skip the closing backtick
       advance if @current_char == '`'
-      
+
       add_token(:template_literal, template_value)
     end
 
