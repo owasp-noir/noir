@@ -1,7 +1,7 @@
 +++
 title = "Release Procedure"
 description = "A guide for maintainers on how to create and publish new releases of Noir. This page outlines the manual and automated steps for releasing to platforms like Homebrew, Snapcraft, and Docker Hub."
-weight = 6
+weight = 1
 sort_by = "weight"
 
 [extra]

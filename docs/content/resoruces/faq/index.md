@@ -1,7 +1,7 @@
 +++
-title = "Frequently Asked Questions (FAQ)"
+title = "FAQ"
 description = "Find answers to common questions about OWASP Noir. This page covers topics like what Noir is, how to use it, and how to contribute."
-weight = 1
+weight = 2
 sort_by = "weight"
 
 [extra]
