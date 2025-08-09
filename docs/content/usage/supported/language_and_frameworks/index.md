@@ -9,8 +9,6 @@ sort_by = "weight"
 
 Noir is a tool designed to analyze and understand codebases by identifying endpoints and their specifications. This section provides a comprehensive list of the programming languages and frameworks that Noir supports. For each entry, you can find a compatibility table detailing which features—such as URL, Method, Param, Header, Cookie, and WebSocket (WS)—are supported.
 
-{% include toc.md %}
-
 ## Crystal
 
 ### Kemal
