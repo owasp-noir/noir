@@ -8,11 +8,11 @@ build:
     @echo "Building the application..."
     shards build
 
-# Serve the documentation site using Hugo.
+# Serve the documentation site using Zola.
 # This requires you to be in the 'docs' directory.
 docs-serve:
-    @echo "Serving the documentation site at http://localhost:1313/ ..."
-    cd docs && hugo serve
+    @echo "Serving the documentation site at http://localhost:1111/ ..."
+    cd docs && zola serve
 
 # Automatically format code and fix linting issues.
 fix:

@@ -6,7 +6,5 @@
 .vscode
 ameba.sh
 
-# Ignore for Hugo
+# Ignore for Zola
 /docs/public/
-/docs/.hugo_build.lock
-/docs/resources/_gen/

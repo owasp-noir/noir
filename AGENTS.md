@@ -32,7 +32,7 @@ The project is organized into the following key directories:
         * `fixtures/`: Sample code and project files used as input for functional tests.
         * `testers/`: The actual functional test scripts.
     * `unit_test/`: Unit tests for individual modules in isolation.
-* `docs/`: Project documentation, generated with Hugo. A good place to find detailed information about features and usage.
+* `docs/`: Project documentation, generated with Zola. A good place to find detailed information about features and usage.
 * `shard.yml`: (Crystal) Declares project dependencies and metadata. This is the most crucial file for understanding the libraries the project uses.
 * `justfile`: Defines common project commands for building, testing, etc. Inspect this file to learn about available commands.
 
