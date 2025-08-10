@@ -521,7 +521,7 @@ class JavaParser
               annotations = parse_annotations_backwards(class_tokens, method_name_index)
               if !method_name.nil?
                 method_params = parse_formal_parameters(class_tokens, method_name_index + 1)
-                method_body = [] of Token  # Interface methods have no body
+                method_body = [] of Token # Interface methods have no body
                 methods[method_name] = MethodModel.new(method_name, method_params, annotations, method_tokens, method_body)
               end
 

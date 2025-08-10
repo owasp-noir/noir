@@ -51,6 +51,11 @@ extected_endpoints = [
   Endpoint.new("/duplicate/parameter/{token}/test", "DELETE", [Param.new("token", "", "path")]),
   # ThrowsMultiException.java
   Endpoint.new("/throws/multi/exception/", "GET", [Param.new("name", "", "query"), Param.new("header", "", "header")]),
+  # InventoryClient.java
+  Endpoint.new("/api/v2/items/{id}/stock", "PATCH", [Param.new("id", "", "path"), Param.new("quantity", "", "json")]),
+  Endpoint.new("/api/v2/items", "GET", [Param.new("category", "", "query")]),
+  Endpoint.new("/api/v2/items", "POST", [Param.new("id", "", "form"), Param.new("name", "", "form")]),
+  Endpoint.new("/api/v2/items/{id}", "DELETE", [Param.new("id", "", "path")]),
 ]
 
 FunctionalTester.new("fixtures/java/spring/", {

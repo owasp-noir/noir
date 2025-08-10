@@ -61,11 +61,8 @@ module Analyzer::Java
           feign_client_package = "org.springframework.cloud.openfeign.FeignClient"
           has_spring_bindings = content.includes?(spring_web_bind_package)
           has_feign_bindings = content.includes?(feign_client_package) || content.includes?("@FeignClient")
-          
-          # Check if we should analyze feign clients
-          analyze_feign = @options["analyze_feign"]?.try(&.as_bool) || false
-          
-          if has_spring_bindings || (has_feign_bindings && analyze_feign)
+
+          if has_spring_bindings || has_feign_bindings
             if parser_map.has_key?(path)
               parser = parser_map[path]
               tokens = parser.tokens
@@ -147,8 +144,8 @@ module Analyzer::Java
             # Extract URL mappings and methods from Spring MVC annotated classes
             class_map = package_class_map.merge(import_map)
             parser.classes.each do |class_model|
-              url = ""  # Reset URL for each class
-              
+              url = "" # Reset URL for each class
+
               # Check for @RequestMapping on controllers
               class_annotation = class_model.annotations["RequestMapping"]?
               if !class_annotation.nil?
@@ -166,12 +163,7 @@ module Analyzer::Java
 
               # Check for @FeignClient interface
               feign_client_annotation = class_model.annotations["FeignClient"]?
-              is_feign_client = !feign_client_annotation.nil? && analyze_feign
-              
-              # Skip FeignClient processing if analyze_feign is false
-              if !feign_client_annotation.nil? && !analyze_feign
-                next
-              end
+              is_feign_client = !feign_client_annotation.nil?
 
               class_model.methods.values.each do |method|
                 method.annotations.values.each do |method_annotation|
