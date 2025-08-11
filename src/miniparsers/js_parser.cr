@@ -642,8 +642,8 @@ module Noir
         elsif @tokens[idx].type == :template_literal
           template = @tokens[idx].value
           # Basic variable substitution for ${variable} patterns
-          @constants.each do |var_name, var_value|
-            template = template.gsub("${#{var_name}}", var_value)
+          @constants.each do |const_name, const_value|
+            template = template.gsub("${#{const_name}}", const_value)
           end
           result += template
         elsif @tokens[idx].type == :plus
