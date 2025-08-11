@@ -577,6 +577,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :rust_rwf => {
+      :framework => "RWF",
+      :language  => "Rust",
+      :similar   => ["rwf", "rust-rwf", "rust_rwf"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
   }
 
   def self.techs
