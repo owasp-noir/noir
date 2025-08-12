@@ -5,7 +5,7 @@ require "../../../src/models/passive_scan"
 require "../../../src/utils/utils"
 
 describe "OutputBuilderMermaid" do
-  it "print with simple endpoints" do
+  it "prints simple endpoints with grouped parameters" do
     options = {
       "debug"   => YAML::Any.new(false),
       "verbose" => YAML::Any.new(false),
@@ -18,16 +18,15 @@ describe "OutputBuilderMermaid" do
 
     endpoint1 = Endpoint.new("/", "GET")
     endpoint1.push_param(Param.new("x-api-key", "", "header"))
-    
+
     endpoint2 = Endpoint.new("/api/users", "POST")
     endpoint2.push_param(Param.new("username", "", "json"))
     endpoint2.push_param(Param.new("email", "", "json"))
-    
+
     endpoint3 = Endpoint.new("/api/users", "GET")
     endpoint3.push_param(Param.new("limit", "", "query"))
-    
-    endpoints = [endpoint1, endpoint2, endpoint3]
 
+    endpoints = [endpoint1, endpoint2, endpoint3]
     builder.print(endpoints)
     output = builder.io.to_s
 
@@ -35,17 +34,20 @@ describe "OutputBuilderMermaid" do
     output.should contain("mindmap")
     output.should contain("root((/))")
     output.should contain("GET /")
-    output.should contain("x-api-key")
+    output.should contain("  headers")
+    output.should contain("    x_api_key")
     output.should contain("api")
-    output.should contain("users")
-    output.should contain("POST /api/users")
-    output.should contain("GET /api/users")
-    output.should contain("username")
-    output.should contain("email")
-    output.should contain("limit")
+    output.should contain("  users")
+    output.should contain("    POST /api/users")
+    output.should contain("      body")
+    output.should contain("        email")
+    output.should contain("        username")
+    output.should contain("    GET /api/users")
+    output.should contain("      body")
+    output.should contain("        limit")
   end
 
-  it "print with hierarchical paths" do
+  it "prints hierarchical paths with grouped parameters and websocket" do
     options = {
       "debug"   => YAML::Any.new(false),
       "verbose" => YAML::Any.new(false),
@@ -57,35 +59,50 @@ describe "OutputBuilderMermaid" do
     builder.set_io IO::Memory.new
 
     endpoint1 = Endpoint.new("/app/data", "GET")
+    endpoint1.push_param(Param.new("auth_token", "", "header"))
+
     endpoint2 = Endpoint.new("/app/users", "POST")
     endpoint2.push_param(Param.new("param1", "", "form"))
     endpoint2.push_param(Param.new("param2", "", "form"))
-    
+
     endpoint3 = Endpoint.new("/public/images/1.png", "GET")
     endpoint4 = Endpoint.new("/public/images/2.png", "GET")
     endpoint5 = Endpoint.new("/public/1.html", "GET")
-    
-    endpoints = [endpoint1, endpoint2, endpoint3, endpoint4, endpoint5]
+    endpoint5.push_param(Param.new("session_id", "", "cookie"))
 
+    endpoint6 = Endpoint.new("/socket", "GET")
+    endpoint6.protocol = "websocket"
+
+    endpoints = [endpoint1, endpoint2, endpoint3, endpoint4, endpoint5, endpoint6]
     builder.print(endpoints)
     output = builder.io.to_s
 
-    # Verify hierarchical structure similar to issue example
+    # Verify hierarchical structure with grouped parameters
     output.should contain("mindmap")
     output.should contain("root((/))")
     output.should contain("app")
-    output.should contain("GET /app/data")
-    output.should contain("POST /app/users")
-    output.should contain("param1")
-    output.should contain("param2")
+    output.should contain("  data")
+    output.should contain("    GET /app/data")
+    output.should contain("      headers")
+    output.should contain("        auth_token")
+    output.should contain("  users")
+    output.should contain("    POST /app/users")
+    output.should contain("      body")
+    output.should contain("        param1")
+    output.should contain("        param2")
     output.should contain("public")
-    output.should contain("images")
-    output.should contain("GET /public/images/1.png")
-    output.should contain("GET /public/images/2.png")
-    output.should contain("GET /public/1.html")
+    output.should contain("  images")
+    output.should contain("    GET /public/images/1.png")
+    output.should contain("    GET /public/images/2.png")
+    output.should contain("  path_1_html")
+    output.should contain("    GET /public/1.html")
+    output.should contain("      cookies")
+    output.should contain("        session_id")
+    output.should contain("socket")
+    output.should contain("  GET /socket [websocket]")
   end
 
-  it "print with endpoints and passive results" do
+  it "prints with endpoints and passive results" do
     options = {
       "debug"   => YAML::Any.new(false),
       "verbose" => YAML::Any.new(false),
@@ -97,8 +114,9 @@ describe "OutputBuilderMermaid" do
     builder.set_io IO::Memory.new
 
     endpoint = Endpoint.new("/test", "GET")
+    endpoint.push_param(Param.new("test_param", "", "query"))
     endpoints = [endpoint]
-    
+
     # Create passive scan result
     scan_yaml = YAML.parse(%(
       id: test-rule
@@ -128,9 +146,12 @@ describe "OutputBuilderMermaid" do
     builder.print(endpoints, passive_results)
     output = builder.io.to_s
 
-    # Should still generate mindmap regardless of passive results
+    # Verify mindmap structure, ignoring passive results
     output.should contain("mindmap")
     output.should contain("root((/))")
-    output.should contain("GET /test")
+    output.should contain("test")
+    output.should contain("  GET /test")
+    output.should contain("    body")
+    output.should contain("      test_param")
   end
 end
