@@ -91,7 +91,7 @@ class OutputBuilderMermaid < OutputBuilder
       unless params_hash["header"].empty?
         headers_indent = "  " * (indent + 1)
         ob_puts "#{headers_indent}headers"
-        params_hash["header"].keys.sort.each do |header|
+        params_hash["header"].keys.sort!.each do |header|
           header_indent = "  " * (indent + 2)
           ob_puts "#{header_indent}#{sanitize_segment(header)}"
         end
@@ -101,7 +101,7 @@ class OutputBuilderMermaid < OutputBuilder
       unless params_hash["cookie"].empty?
         cookies_indent = "  " * (indent + 1)
         ob_puts "#{cookies_indent}cookies"
-        params_hash["cookie"].keys.sort.each do |cookie|
+        params_hash["cookie"].keys.sort!.each do |cookie|
           cookie_indent = "  " * (indent + 2)
           ob_puts "#{cookie_indent}#{sanitize_segment(cookie)}"
         end
@@ -117,7 +117,7 @@ class OutputBuilderMermaid < OutputBuilder
       unless body_params.empty?
         body_indent = "  " * (indent + 1)
         ob_puts "#{body_indent}body"
-        body_params.keys.sort.each do |param|
+        body_params.keys.sort!.each do |param|
           param_indent = "  " * (indent + 2)
           ob_puts "#{param_indent}#{sanitize_segment(param)}"
         end
@@ -125,7 +125,7 @@ class OutputBuilderMermaid < OutputBuilder
     end
 
     # Output children nodes recursively
-    sorted_keys = node.children.keys.sort
+    sorted_keys = node.children.keys.sort!
     sorted_keys.each do |segment|
       indent_str = "  " * indent
       ob_puts "#{indent_str}#{segment}"
