@@ -119,6 +119,7 @@ jobs:
           end
           EOF
             sed -i 's/require \"wait_group\"/require \".\\/wait_group\"/' lib/http_proxy/src/http/proxy/server.cr &&
+            mkdir -p build &&
             /usr/bin/crystal build src/noir.cr -o build/noir-${GITHUB_REF_SLUG}-linux-${ARCH} --release --no-debug --static
           "
 
