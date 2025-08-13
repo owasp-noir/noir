@@ -401,6 +401,29 @@ module Analyzer::Java
                   unless parameter_name.nil?
                     if parameter_name.starts_with?("\"") && parameter_name.ends_with?("\"")
                       parameter_name = parameter_name[1..-2]
+                    else
+                      idx = 2
+                      while idx < request_parameter_tokens.size
+                        req_param_token = request_parameter_tokens[-idx]
+                        break unless req_param_token.type == :IDENTIFIER || req_param_token.type == :DOT
+                        parameter_name = req_param_token.value + parameter_name
+                        idx += 1
+                      end
+
+                      # https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/http/HttpHeaders.html
+                      if parameter_name.starts_with?("HttpHeaders.")
+                        header_key = parameter_name["HttpHeaders.".size..-1]
+                        parameter_name = header_key.split('_').map(&.capitalize).join('-')
+                        special_cases = {
+                          "Etag"             => "ETag",
+                          "Te"               => "TE",
+                          "Www-Authenticate" => "WWW-Authenticate",
+                          "X-Frame-Options"  => "X-Frame-Options",
+                        }
+                        if special_cases.has_key?(parameter_name)
+                          parameter_name = special_cases[parameter_name]
+                        end
+                      end
                     end
                   end
 
