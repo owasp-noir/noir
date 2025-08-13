@@ -58,8 +58,11 @@ module Analyzer::Java
 
           # Process files that include Spring MVC bindings for routing
           spring_web_bind_package = "org.springframework.web.bind.annotation."
+          feign_client_package = "org.springframework.cloud.openfeign.FeignClient"
           has_spring_bindings = content.includes?(spring_web_bind_package)
-          if has_spring_bindings
+          has_feign_bindings = content.includes?(feign_client_package) || content.includes?("@FeignClient")
+
+          if has_spring_bindings || has_feign_bindings
             if parser_map.has_key?(path)
               parser = parser_map[path]
               tokens = parser.tokens
@@ -141,6 +144,9 @@ module Analyzer::Java
             # Extract URL mappings and methods from Spring MVC annotated classes
             class_map = package_class_map.merge(import_map)
             parser.classes.each do |class_model|
+              url = "" # Reset URL for each class
+
+              # Check for @RequestMapping on controllers
               class_annotation = class_model.annotations["RequestMapping"]?
               if !class_annotation.nil?
                 next if class_annotation.params.size == 0
@@ -154,6 +160,10 @@ module Analyzer::Java
                   end
                 end
               end
+
+              # Check for @FeignClient interface
+              feign_client_annotation = class_model.annotations["FeignClient"]?
+              is_feign_client = !feign_client_annotation.nil?
 
               class_model.methods.values.each do |method|
                 method.annotations.values.each do |method_annotation|
@@ -213,7 +223,8 @@ module Analyzer::Java
                         ["GET", "POST", "PUT", "DELETE", "PATCH"].each do |_request_method|
                           parameters = get_endpoint_parameters(parser, _request_method, method, parameter_format, class_map)
                           url_paths.each do |url_path|
-                            @result << Endpoint.new(join_paths(webflux_base_path, url, url_path), _request_method, parameters, details)
+                            endpoint = Endpoint.new(join_paths(webflux_base_path, url, url_path), _request_method, parameters, details, is_feign_client)
+                            @result << endpoint
                           end
                         end
                       else
@@ -221,7 +232,8 @@ module Analyzer::Java
                         url_paths.each do |url_path|
                           request_methods.each do |request_method|
                             parameters = get_endpoint_parameters(parser, request_method, method, parameter_format, class_map)
-                            @result << Endpoint.new(join_paths(webflux_base_path, url, url_path), request_method, parameters, details)
+                            endpoint = Endpoint.new(join_paths(webflux_base_path, url, url_path), request_method, parameters, details, is_feign_client)
+                            @result << endpoint
                           end
                         end
                       end
@@ -246,7 +258,8 @@ module Analyzer::Java
 
                         details = Details.new(PathInfo.new(path, line))
                         url_paths.each do |url_path|
-                          @result << Endpoint.new(join_paths(webflux_base_path, url, url_path), request_method, parameters, details)
+                          endpoint = Endpoint.new(join_paths(webflux_base_path, url, url_path), request_method, parameters, details, is_feign_client)
+                          @result << endpoint
                         end
                         break
                       end
