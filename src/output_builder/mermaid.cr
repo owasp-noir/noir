@@ -12,7 +12,7 @@ class OutputBuilderMermaid < OutputBuilder
 
   private def build_mindmap(endpoints : Array(Endpoint))
     ob_puts "mindmap"
-    ob_puts "  root((/))"
+    ob_puts "  root((API))"
 
     # Build hierarchical structure
     tree = build_path_tree(endpoints)
@@ -65,11 +65,17 @@ class OutputBuilderMermaid < OutputBuilder
   end
 
   private def sanitize_segment(segment : String) : String
-    # Replace invalid characters with underscore and ensure valid starting character
-    sanitized = segment.gsub(/[^a-zA-Z0-9_]/, "_")
-    # If starts with a number, prepend 'path_'
-    if sanitized =~ /^\d/
-      sanitized = "path_#{sanitized}"
+    # Handle path parameters (e.g., {user_id} -> param_user_id)
+    if segment.match(/^{.*}$/)
+      # Remove curly braces and prefix with 'param_'
+      sanitized = "param_#{segment.gsub(/[{}\s]/, "")}"
+    else
+      # Replace invalid characters with underscore
+      sanitized = segment.gsub(/[^a-zA-Z0-9_]/, "_")
+      # If starts with a number, prepend 'path_'
+      if sanitized =~ /^\d/
+        sanitized = "path_#{sanitized}"
+      end
     end
     # Ensure non-empty and unique
     sanitized.empty? ? "unnamed" : sanitized
@@ -79,8 +85,8 @@ class OutputBuilderMermaid < OutputBuilder
     # Output endpoints for this node
     node.endpoints.each do |endpoint|
       indent_str = "  " * indent
-      # Format endpoint with method and URL, add [websocket] if applicable
-      endpoint_label = "#{endpoint.method} #{endpoint.url}"
+      # Use only the HTTP method as the endpoint label, add [websocket] if applicable
+      endpoint_label = endpoint.method
       endpoint_label += " [websocket]" if endpoint.protocol == "websocket"
       ob_puts "#{indent_str}#{endpoint_label}"
 
@@ -107,9 +113,9 @@ class OutputBuilderMermaid < OutputBuilder
         end
       end
 
-      # Output body parameters (json, form, query)
+      # Output body parameters (json, form, query, path)
       body_params = {} of String => String
-      ["json", "form", "query"].each do |param_type|
+      ["json", "form", "query", "path"].each do |param_type|
         params_hash[param_type].each do |key, value|
           body_params[key] = value
         end

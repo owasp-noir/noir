@@ -30,24 +30,26 @@ describe "OutputBuilderMermaid" do
     builder.print(endpoints)
     output = builder.io.to_s
 
-    # Verify the mindmap structure
+    # Verify the mindmap structure without Markdown tags
     output.should contain("mindmap")
-    output.should contain("root((/))")
-    output.should contain("GET /")
+    output.should_not contain("```mermaid")
+    output.should_not contain("```")
+    output.should contain("root((API))")
+    output.should contain("GET")
     output.should contain("  headers")
     output.should contain("    x_api_key")
     output.should contain("api")
     output.should contain("  users")
-    output.should contain("    POST /api/users")
+    output.should contain("    POST")
     output.should contain("      body")
     output.should contain("        email")
     output.should contain("        username")
-    output.should contain("    GET /api/users")
+    output.should contain("    GET")
     output.should contain("      body")
     output.should contain("        limit")
   end
 
-  it "prints hierarchical paths with grouped parameters and websocket" do
+  it "prints hierarchical paths with grouped parameters, websocket, and path parameters" do
     options = {
       "debug"   => YAML::Any.new(false),
       "verbose" => YAML::Any.new(false),
@@ -73,33 +75,42 @@ describe "OutputBuilderMermaid" do
     endpoint6 = Endpoint.new("/socket", "GET")
     endpoint6.protocol = "websocket"
 
-    endpoints = [endpoint1, endpoint2, endpoint3, endpoint4, endpoint5, endpoint6]
+    endpoint7 = Endpoint.new("/app/{user_id}", "GET")
+    endpoint7.push_param(Param.new("user_id", "", "path"))
+
+    endpoints = [endpoint1, endpoint2, endpoint3, endpoint4, endpoint5, endpoint6, endpoint7]
     builder.print(endpoints)
     output = builder.io.to_s
 
-    # Verify hierarchical structure with grouped parameters
+    # Verify hierarchical structure with grouped parameters and path parameters
     output.should contain("mindmap")
-    output.should contain("root((/))")
+    output.should_not contain("```mermaid")
+    output.should_not contain("```")
+    output.should contain("root((API))")
     output.should contain("app")
     output.should contain("  data")
-    output.should contain("    GET /app/data")
+    output.should contain("    GET")
     output.should contain("      headers")
     output.should contain("        auth_token")
     output.should contain("  users")
-    output.should contain("    POST /app/users")
+    output.should contain("    POST")
     output.should contain("      body")
     output.should contain("        param1")
     output.should contain("        param2")
+    output.should contain("  param_user_id")
+    output.should contain("    GET")
+    output.should contain("      body")
+    output.should contain("        user_id")
     output.should contain("public")
     output.should contain("  images")
-    output.should contain("    GET /public/images/1.png")
-    output.should contain("    GET /public/images/2.png")
+    output.should contain("    GET")
+    output.should contain("    GET")
     output.should contain("  path_1_html")
-    output.should contain("    GET /public/1.html")
+    output.should contain("    GET")
     output.should contain("      cookies")
     output.should contain("        session_id")
     output.should contain("socket")
-    output.should contain("  GET /socket [websocket]")
+    output.should contain("  GET [websocket]")
   end
 
   it "prints with endpoints and passive results" do
@@ -148,9 +159,11 @@ describe "OutputBuilderMermaid" do
 
     # Verify mindmap structure, ignoring passive results
     output.should contain("mindmap")
-    output.should contain("root((/))")
+    output.should_not contain("```mermaid")
+    output.should_not contain("```")
+    output.should contain("root((API))")
     output.should contain("test")
-    output.should contain("  GET /test")
+    output.should contain("  GET")
     output.should contain("    body")
     output.should contain("      test_param")
   end
