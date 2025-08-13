@@ -6,5 +6,8 @@
 .vscode
 ameba.sh
 
+# Build artifacts
+/build/
+
 # Ignore for Zola
 /docs/public/

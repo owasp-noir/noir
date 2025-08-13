@@ -1,5 +1,14 @@
 name: Build Release Binaries
 
+# This workflow builds release binaries for OWASP Noir across multiple platforms
+# - Triggers automatically on git tags (v*)
+# - Can be manually triggered via workflow_dispatch
+# - Builds static binaries for Linux (x86_64, ARM64) and macOS (x86_64, ARM64)
+# - Uploads artifacts for each build
+# - Automatically uploads to GitHub Releases when triggered by a tag
+#
+# Ref: https://github.com/mint-lang/mint/blob/master/.github/workflows/build.yml
+
 on:
   workflow_dispatch:
   push:
