@@ -15,50 +15,14 @@ OWASP Noir is a Crystal-based attack surface detector that identifies endpoints 
    sudo apt install -y crystal shards just
    ```
 
-2. **Install dependencies and apply compatibility fix:**
-   ```bash
-   shards install
-   # CRITICAL: Apply http_proxy compatibility fix for Crystal 1.11.2+
-   cat > lib/http_proxy/src/http/proxy/wait_group.cr << 'EOF'
-   class WaitGroup
-     def initialize
-       @count = 0
-       @mutex = Mutex.new
-       @channel = Channel(Nil).new
-     end
-   
-     def add(delta : Int32)
-       @mutex.synchronize do
-         @count += delta
-       end
-     end
-   
-     def done
-       @mutex.synchronize do
-         @count -= 1
-         if @count == 0
-           @channel.send(nil)
-         end
-       end
-     end
-   
-     def wait
-       @channel.receive
-     end
-   end
-   EOF
-   # Fix require path in http_proxy
-   sed -i 's/require "wait_group"/require ".\/wait_group"/' lib/http_proxy/src/http/proxy/server.cr
-   ```
-
-3. **Build the application:**
+2. **Build the application:**
    ```bash
    just build
    # OR: shards build
    ```
    - **Timing: 10 seconds. NEVER CANCEL. Set timeout to 60+ seconds.**
 
-4. **Run tests:**
+3. **Run tests:**
    ```bash
    just test
    # OR: crystal spec
@@ -94,7 +58,7 @@ OWASP Noir is a Crystal-based attack surface detector that identifies endpoints 
   ```bash
   just --list                      # List available commands
   just build                       # Build application (10s)
-  just test                        # Run tests (7s) 
+  just test                        # Run tests (7s)
   just check                       # Format check + lint (NOTE: ameba issues)
   just fix                         # Auto-format + fix lint issues
   ```
@@ -182,7 +146,7 @@ lib/                     # Dependencies (managed by shards)
 ### Timing Guidelines
 - **NEVER CANCEL** any build or test operations
 - Build: 10 seconds (set 60+ second timeout)
-- Tests: 7 seconds (set 30+ second timeout)  
+- Tests: 7 seconds (set 30+ second timeout)
 - Analysis: Sub-second for small projects
 
 ### Before Committing
