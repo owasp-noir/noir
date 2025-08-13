@@ -1,7 +1,7 @@
 +++
 title = "Additional Output Formats"
 description = "Noir provides a variety of additional output formats to help you extract specific information from your codebase. This page details how to use formats like 'only-url', 'only-param', and 'markdown-table' to customize the output to your needs."
-weight = 5
+weight = 6
 sort_by = "weight"
 
 [extra]
@@ -112,4 +112,3 @@ This generates a Markdown table that you can easily copy into documentation or r
 | GET /socket | ws       |                                                                     |
 | GET /1.html | http     |                                                                     |
 | GET /2.html | http     |                                                                     |
-
