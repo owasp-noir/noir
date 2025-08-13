@@ -25,6 +25,9 @@ This will output a Mermaid mindmap definition that you can copy and paste into a
 
 Here is a sample of the output for the `mermaid` format:
 
+<details>
+    <summary>Mermaid Output</summary>
+
 ```
 mindmap
   root((API))
@@ -113,6 +116,8 @@ mindmap
       GET
       DELETE
 ```
+
+</details>
 
 You can visualize this mindmap by pasting the output into any [Mermaid live editor](https://mermaid.live/) or embedding it in your documentation.
 
