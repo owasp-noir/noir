@@ -29,7 +29,7 @@ module Analyzer::Rust
                           if match
                             begin
                               route_path = match[1]
-                              controller_name = match[2]
+                              # controller_name = match[2]
                               details = Details.new(PathInfo.new(path, index + 1))
                               # For rwf, we'll default to GET method since controllers handle method routing internally
                               result << Endpoint.new(route_path, "GET", details)
