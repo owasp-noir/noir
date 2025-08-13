@@ -458,6 +458,9 @@ class NoirRunner
     when "only-tag"
       builder = OutputBuilderOnlyTag.new @options
       builder.print @endpoints
+    when "mermaid"
+      builder = OutputBuilderMermaid.new @options
+      builder.print @endpoints, @passive_results
     else
       builder = OutputBuilderCommon.new @options
 

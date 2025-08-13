@@ -1,5 +1,5 @@
 +++
-title = "YAML Output Format"
+title = "YAML"
 description = "This page explains how to generate scan results in YAML format, which is a human-readable and easy-to-parse option for integrating with other tools or for manual review."
 weight = 3
 sort_by = "weight"
