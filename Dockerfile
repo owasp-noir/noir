@@ -11,7 +11,7 @@ RUN apt-get update && \
 # Ref: https://crystal-lang.org/reference/1.15/guides/static_linking.html
 
 ##= RUNNER =##
-FROM debian:12-slim
+FROM debian:13-slim
 LABEL org.opencontainers.image.title="OWASP Noir"
 LABEL org.opencontainers.image.version="0.22.0"
 LABEL org.opencontainers.image.description="OWASP Noir is an open-source project specializing in identifying attack surfaces for enhanced whitebox security testing and security pipeline."
