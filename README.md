@@ -21,7 +21,6 @@
 <p align="center">
   <a href="https://owasp-noir.github.io/noir/">Documentation</a> •
   <a href="https://owasp-noir.github.io/noir/get_started/installation/">Installation</a> •
-  <a href="https://owasp-noir.github.io/noir/supported">Available Support Scope</a> •
   <a href="#usage">Usage</a> •
   <a href="#contributing">Contributing</a>
 </p>
@@ -40,7 +39,7 @@ OWASP Noir is an open-source project specializing in identifying attack surfaces
 ## Usage
 
 ```bash
-noir -h 
+noir -h
 ```
 
 Example
@@ -107,7 +106,7 @@ Looking ahead, our ambition is for our tool to evolve into a crucial bridge, sea
 
 ## Contributing
 
-Noir is open-source project and made it with ❤️ 
+Noir is open-source project and made it with ❤️
 if you want contribute this project, please see [CONTRIBUTING.md](./CONTRIBUTING.md) and Pull-Request with cool your contents.
 
 [![](./CONTRIBUTORS.svg)](https://github.com/owasp-noir/noir/graphs/contributors)
