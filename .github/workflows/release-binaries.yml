@@ -1,35 +1,26 @@
+---
 name: Build Release Binaries
-
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - "v*"
-
+  release:
+    types: [published]
 jobs:
   build:
     name: Build Binaries
-
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-13, macos-latest]
-
+        os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-
     steps:
       - name: Install Crystal
         uses: crystal-lang/install-crystal@v1
-
       - name: Checkout source code
         uses: actions/checkout@v4
-
       - name: Install dependencies
         run: shards install
-
       - name: Inject slug/short variables
         uses: rlespinasse/github-slug-action@v5
-
       - name: Set architecture environment variable
         run: |
           if [ "$RUNNER_ARCH" == "X64" ]; then
@@ -39,7 +30,6 @@ jobs:
           else
             echo "ARCH=unknown" >> $GITHUB_ENV
           fi
-
       - if: matrix.os == 'ubuntu-latest'
         name: Build binary (Linux)
         run: |
@@ -51,7 +41,6 @@ jobs:
             mkdir -p build &&
             /usr/bin/crystal build src/noir.cr -o build/noir-${GITHUB_REF_SLUG}-linux-${ARCH} --release --no-debug --static
           "
-
       - if: startsWith(matrix.os, 'macos')
         name: Build binary (macOS)
         run: |
@@ -59,13 +48,11 @@ jobs:
           crystal build src/noir.cr \
             -o build/noir-${GITHUB_REF_SLUG}-osx-${ARCH} \
             --no-debug --release
-
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: build-${{ matrix.os }}-${{ env.ARCH }}
           path: build
-
       - if: startsWith(github.ref, 'refs/tags/')
         name: Upload to GitHub Releases
         uses: svenstaro/upload-release-action@v2
