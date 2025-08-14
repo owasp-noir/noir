@@ -71,10 +71,6 @@ Thank you to everyone who has contributed to Noir! ♥️
 
 ![](https://raw.githubusercontent.com/owasp-noir/noir/refs/heads/main/CONTRIBUTORS.svg)
 
-*Passive Scan Rule Contributors*
-
-[![](https://raw.githubusercontent.com/owasp-noir/noir-passive-rules/refs/heads/main/CONTRIBUTORS.svg)](https://github.com/owasp-noir/noir-passive-rules/graphs/contributors)
-
 ## Code of Conduct
 
 We are committed to fostering a welcoming and inclusive community. Please review our [Code of Conduct](https://github.com/owasp-noir/noir/blob/main/CODE_OF_CONDUCT.md) on our GitHub repository.
