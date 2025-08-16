@@ -21,7 +21,6 @@
 <p align="center">
   <a href="https://owasp-noir.github.io/noir/">Documentation</a> •
   <a href="https://owasp-noir.github.io/noir/get_started/installation/">Installation</a> •
-  <a href="https://owasp-noir.github.io/noir/supported">Available Support Scope</a> •
   <a href="#usage">Usage</a> •
   <a href="#contributing">Contributing</a>
 </p>
@@ -40,7 +39,7 @@ OWASP Noir is an open-source project specializing in identifying attack surfaces
 ## Usage
 
 ```bash
-noir -h 
+noir -h
 ```
 
 Example
@@ -98,7 +97,7 @@ noir -b . -u https://testapp.internal.domains -f json -T
 
 For more details, please visit our [documentation](https://owasp-noir.github.io/noir/) page.
 
-## Road Map
+## Roadmap
 We plan to expand the range of supported programming languages and frameworks, and to continuously increase accuracy. Furthermore, we will leverage AI and Large Language Models (LLMs) to significantly broaden our analysis capabilities.
 
 Initially conceived as a tool to assist with WhiteBox testing, our immediate goal remains to extract and provide endpoints from the source code within the DevSecOps Pipeline. This enables Dynamic Application Security Testing (DAST) tools to conduct more accurate and stable scans.
@@ -107,11 +106,7 @@ Looking ahead, our ambition is for our tool to evolve into a crucial bridge, sea
 
 ## Contributing
 
-Noir is open-source project and made it with ❤️ 
+Noir is open-source project and made it with ❤️
 if you want contribute this project, please see [CONTRIBUTING.md](./CONTRIBUTING.md) and Pull-Request with cool your contents.
 
 [![](./CONTRIBUTORS.svg)](https://github.com/owasp-noir/noir/graphs/contributors)
-
-*PassiveScan Rule contributors*
-
-[![](https://raw.githubusercontent.com/owasp-noir/noir-passive-rules/refs/heads/main/CONTRIBUTORS.svg)](https://github.com/owasp-noir/noir-passive-rules/graphs/contributors)
