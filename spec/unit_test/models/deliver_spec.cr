@@ -59,7 +59,7 @@ describe "Method-based filtering" do
     options["use_matchers"] = YAML::Any.new([YAML::Any.new("/api")])
     options["use_filters"] = YAML::Any.new([] of YAML::Any)
     deliver = Deliver.new options
-    
+
     result = deliver.apply_matchers(test_endpoints)
     result.size.should eq(2)
     result[0].url.should eq("/api/users")
@@ -72,7 +72,7 @@ describe "Method-based filtering" do
     options["use_matchers"] = YAML::Any.new([YAML::Any.new("GET")])
     options["use_filters"] = YAML::Any.new([] of YAML::Any)
     deliver = Deliver.new options
-    
+
     result = deliver.apply_matchers(test_endpoints)
     result.size.should eq(2)
     result[0].method.should eq("GET")
@@ -85,7 +85,7 @@ describe "Method-based filtering" do
     options["use_matchers"] = YAML::Any.new([YAML::Any.new("POST:/api")])
     options["use_filters"] = YAML::Any.new([] of YAML::Any)
     deliver = Deliver.new options
-    
+
     result = deliver.apply_matchers(test_endpoints)
     result.size.should eq(1)
     result[0].method.should eq("POST")
@@ -96,17 +96,17 @@ describe "Method-based filtering" do
     options["use_matchers"] = YAML::Any.new([] of YAML::Any)
     options["use_filters"] = YAML::Any.new([YAML::Any.new("/admin")])
     deliver = Deliver.new options
-    
+
     result = deliver.apply_filters(test_endpoints)
     result.size.should eq(4)
-    result.none? { |ep| ep.url.includes?("/admin") }.should be_true
+    result.none?(&.url.includes?("/admin")).should be_true
   end
 
   it "applies filters with method-only pattern" do
     options["use_matchers"] = YAML::Any.new([] of YAML::Any)
     options["use_filters"] = YAML::Any.new([YAML::Any.new("POST")])
     deliver = Deliver.new options
-    
+
     result = deliver.apply_filters(test_endpoints)
     result.size.should eq(3)
     result.none? { |ep| ep.method == "POST" }.should be_true
@@ -116,7 +116,7 @@ describe "Method-based filtering" do
     options["use_matchers"] = YAML::Any.new([] of YAML::Any)
     options["use_filters"] = YAML::Any.new([YAML::Any.new("GET:/api")])
     deliver = Deliver.new options
-    
+
     result = deliver.apply_filters(test_endpoints)
     result.size.should eq(4)
     result.none? { |ep| ep.method == "GET" && ep.url.includes?("/api") }.should be_true
@@ -126,7 +126,7 @@ describe "Method-based filtering" do
     options["use_matchers"] = YAML::Any.new([YAML::Any.new("GET"), YAML::Any.new("POST:/login")])
     options["use_filters"] = YAML::Any.new([] of YAML::Any)
     deliver = Deliver.new options
-    
+
     result = deliver.apply_matchers(test_endpoints)
     result.size.should eq(3)
     # Should include GET /api/users, GET /admin/dashboard, and POST /login
@@ -140,7 +140,7 @@ describe "Method-based filtering" do
     options["use_matchers"] = YAML::Any.new([YAML::Any.new("get")])
     options["use_filters"] = YAML::Any.new([] of YAML::Any)
     deliver = Deliver.new options
-    
+
     result = deliver.apply_matchers(test_endpoints)
     result.size.should eq(2)
     result.all? { |ep| ep.method == "GET" }.should be_true

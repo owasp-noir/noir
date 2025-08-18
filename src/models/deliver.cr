@@ -134,19 +134,19 @@ class Deliver
       parts = pattern.split(":", 2)
       method_pattern = parts[0].upcase
       url_pattern = parts[1]
-      
+
       # Check if method matches and URL contains pattern
-      return endpoint.method.upcase == method_pattern && endpoint.url.includes?(url_pattern)
+      endpoint.method.upcase == method_pattern && endpoint.url.includes?(url_pattern)
     else
       # Check if pattern is just a method name
       upper_pattern = pattern.upcase
       http_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE", "CONNECT"]
-      
+
       if http_methods.includes?(upper_pattern)
-        return endpoint.method.upcase == upper_pattern
+        endpoint.method.upcase == upper_pattern
       else
         # Backward compatibility: check URL
-        return endpoint.url.includes?(pattern)
+        endpoint.url.includes?(pattern)
       end
     end
   end
