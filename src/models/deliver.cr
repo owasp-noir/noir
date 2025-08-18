@@ -1,4 +1,5 @@
 require "./logger"
+require "../utils/utils"
 
 class Deliver
   @logger : NoirLogger
@@ -78,8 +79,8 @@ class Deliver
     result = [] of Endpoint
     endpoints.each do |endpoint|
       @matchers.each do |matcher|
-        if endpoint.url.includes? matcher
-          @logger.debug "Endpoint '#{endpoint.url}' matched with '#{matcher}'."
+        if matches_pattern?(endpoint, matcher)
+          @logger.debug "Endpoint '#{endpoint.method} #{endpoint.url}' matched with '#{matcher}'."
           result << endpoint
         end
       end
@@ -91,12 +92,16 @@ class Deliver
   def apply_filters(endpoints : Array(Endpoint))
     result = [] of Endpoint
     endpoints.each do |endpoint|
+      should_filter = false
       @filters.each do |filter|
-        if endpoint.url.includes? filter
-          @logger.debug "Endpoint '#{endpoint.url}' filtered with '#{filter}'."
-        else
-          result << endpoint
+        if matches_pattern?(endpoint, filter)
+          @logger.debug "Endpoint '#{endpoint.method} #{endpoint.url}' filtered with '#{filter}'."
+          should_filter = true
+          break
         end
+      end
+      unless should_filter
+        result << endpoint
       end
     end
 
@@ -121,5 +126,28 @@ class Deliver
 
   def run
     # After inheriting the class, write an action code here.
+  end
+
+  private def matches_pattern?(endpoint : Endpoint, pattern : String) : Bool
+    # Check if pattern contains method:url format
+    if pattern.includes? ":"
+      parts = pattern.split(":", 2)
+      method_pattern = parts[0].upcase
+      url_pattern = parts[1]
+
+      # Check if method matches and URL contains pattern
+      endpoint.method.upcase == method_pattern && endpoint.url.includes?(url_pattern)
+    else
+      # Check if pattern is just a method name
+      upper_pattern = pattern.upcase
+      http_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE", "CONNECT"]
+
+      if http_methods.includes?(upper_pattern)
+        endpoint.method.upcase == upper_pattern
+      else
+        # Backward compatibility: check URL
+        endpoint.url.includes?(pattern)
+      end
+    end
   end
 end

@@ -103,10 +103,10 @@ def run_options_parser
     parser.on "--with-headers X-Header:Value", "Add custom headers to be included in the delivery" do |var|
       append_to_yaml_array(noir_options, send_with_headers, var)
     end
-    parser.on "--use-matchers string", "Send URLs that match specific conditions to the Deliver" do |var|
+    parser.on "--use-matchers string", "Send endpoints that match specific conditions to the Deliver (supports URL, method, or method:URL patterns)" do |var|
       append_to_yaml_array(noir_options, use_matchers, var)
     end
-    parser.on "--use-filters string", "Exclude URLs that match specified conditions and send the rest to Deliver" do |var|
+    parser.on "--use-filters string", "Exclude endpoints that match specified conditions and send the rest to Deliver (supports URL, method, or method:URL patterns)" do |var|
       append_to_yaml_array(noir_options, use_filters, var)
     end
 
