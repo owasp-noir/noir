@@ -23,3 +23,6 @@ dependencies:
     version: ~> 1.4.0
   har:
     github: NeuraLegion/har
+  http_proxy:
+    github: mamantoha/http_proxy
+    version: ~> 0.12.0
