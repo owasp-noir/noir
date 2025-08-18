@@ -19,8 +19,8 @@ The Deliver feature is controlled by a set of command-line flags:
 *   `--send-proxy http://proxy...`: Send the results through an HTTP proxy.
 *   `--send-es http://es...`: Send the results to an Elasticsearch instance.
 *   `--with-headers X-Header:Value`: Add custom headers to the requests.
-*   `--use-matchers string`: Only send URLs that match a specific pattern.
-*   `--use-filters string`: Exclude URLs that match a specific pattern.
+*   `--use-matchers string`: Only send endpoints that match a specific pattern (URL, method, or method:URL combination).
+*   `--use-filters string`: Exclude endpoints that match a specific pattern (URL, method, or method:URL combination).
 
 ### Sending to a Proxy
 
@@ -46,10 +46,49 @@ noir -b ./source --send-proxy http://localhost:8080 --with-headers "Authorizatio
 
 ### Filtering and Matching
 
-If you only want to send a subset of the discovered endpoints, you can use the `--use-matchers` and `--use-filters` flags. For example, to only send endpoints that contain the word "api", you could use:
+If you only want to send a subset of the discovered endpoints, you can use the `--use-matchers` and `--use-filters` flags. The filtering supports several patterns:
+
+#### URL-based Filtering (Backward Compatible)
+To only send endpoints that contain the word "api" in their URL:
 
 ```bash
 noir -b ./source --send-proxy http://localhost:8080 --use-matchers "api"
+```
+
+#### Method-based Filtering
+To only send GET requests:
+
+```bash
+noir -b ./source --send-proxy http://localhost:8080 --use-matchers "GET"
+```
+
+To exclude all POST requests:
+
+```bash
+noir -b ./source --send-proxy http://localhost:8080 --use-filters "POST"
+```
+
+#### Method and URL Combination
+To only send POST requests to API endpoints:
+
+```bash
+noir -b ./source --send-proxy http://localhost:8080 --use-matchers "POST:/api"
+```
+
+To exclude GET requests to admin pages:
+
+```bash
+noir -b ./source --send-proxy http://localhost:8080 --use-filters "GET:/admin"
+```
+
+#### Supported HTTP Methods
+The method-based filtering supports all standard HTTP methods: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, TRACE, CONNECT (case insensitive).
+
+#### Multiple Patterns
+You can use multiple matchers or filters:
+
+```bash
+noir -b ./source --send-proxy http://localhost:8080 --use-matchers "GET" --use-matchers "POST:/api"
 ```
 
 ![](./deliver-mf.png)
