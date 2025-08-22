@@ -52,47 +52,47 @@ module Analyzer::Javascript
     private def analyze_nestjs_controllers(content : String, path : String, result : Array(Endpoint))
       # Split content by controllers and process each separately
       controllers = extract_controllers(content)
-      
+
       controllers.each do |controller_info|
         base_path = controller_info[:base_path]
         controller_content = controller_info[:content]
-        
+
         process_http_methods(controller_content, base_path, path, result)
       end
     end
 
     private def extract_controllers(content : String)
       controllers = [] of Hash(Symbol, String)
-      
+
       # Find all @Controller decorators and their associated class content
       lines = content.split('\n')
       current_controller : Hash(Symbol, String) | Nil = nil
       brace_count = 0
       in_class = false
-      
-      lines.each_with_index do |line, index|
+
+      lines.each_with_index do |line, _|
         # Check for @Controller decorator
         if line =~ /@Controller\s*\(\s*['"`]([^'"`]*?)['"`]\s*\)/
           controller_path = $1
           current_controller = {
             :base_path => controller_path,
-            :content => "",
+            :content   => "",
           }
         end
-        
+
         # Check for class start after @Controller
         if current_controller && line =~ /export\s+class\s+\w+/
           in_class = true
           brace_count = 0
         end
-        
+
         # Count braces to find class end
         if in_class && current_controller
           brace_count += line.count('{')
           brace_count -= line.count('}')
-          
+
           current_controller[:content] = current_controller[:content] + line + "\n"
-          
+
           # End of class
           if brace_count == 0 && line.includes?('}')
             controllers << current_controller
@@ -101,37 +101,37 @@ module Analyzer::Javascript
           end
         end
       end
-      
+
       controllers
     end
 
     private def process_http_methods(class_content : String, base_path : String, file_path : String, result : Array(Endpoint))
       http_methods = ["Get", "Post", "Put", "Delete", "Patch", "Options", "Head"]
-      
+
       http_methods.each do |method|
         method_pattern = /@#{method}\s*\(\s*(?:['"`]([^'"`]*?)['"`]\s*)?\)/
-        
+
         class_content.scan(method_pattern) do |match|
           route_path = ""
           if match.size > 1 && match[1]?
             route_path = match[1]
           end
-          
+
           # Construct full URL path
           full_path = combine_paths(base_path, route_path)
-          
+
           # Create endpoint
           endpoint = Endpoint.new(full_path, method.upcase)
           endpoint.details = Details.new(PathInfo.new(file_path, 1))
-          
+
           # Extract path parameters from URL
           extract_path_parameters(full_path, endpoint)
-          
+
           # Extract parameters from the method area
           if match.begin
             extract_method_parameters(class_content, match.begin + match[0].size, endpoint)
           end
-          
+
           result << endpoint
         end
       end
@@ -140,14 +140,13 @@ module Analyzer::Javascript
     private def extract_method_parameters(content : String, start_pos : Int32, endpoint : Endpoint)
       # Find the method signature that immediately follows the decorator
       method_section = content[start_pos..-1]
-      
+
       # Look for the method name first
       method_name_match = method_section.match(/\s*(\w+)\s*\(/)
-      
+
       if method_name_match
-        method_name = method_name_match[1]
         start_paren = method_name_match.end
-        
+
         # Find the matching closing parenthesis for the method parameters
         paren_count = 1
         end_paren = start_paren
@@ -163,7 +162,7 @@ module Analyzer::Javascript
             end
           end
         end
-        
+
         if end_paren > start_paren
           method_params = method_section[start_paren...end_paren]
           extract_decorator_parameters(method_params, endpoint)
@@ -205,14 +204,12 @@ module Analyzer::Javascript
     private def combine_paths(base : String, route : String) : String
       return route if base.empty?
       return base if route.empty?
-      
+
       base = base.chomp("/")
       route = route.starts_with?("/") ? route : "/#{route}"
-      
+
       "#{base}#{route}"
     end
-
-
 
     private def extract_path_parameters(url : String, endpoint : Endpoint)
       # Extract path parameters from URL patterns like :id
