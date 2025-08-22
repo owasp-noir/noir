@@ -50,24 +50,68 @@ module Analyzer::Javascript
     end
 
     private def analyze_nestjs_controllers(content : String, path : String, result : Array(Endpoint))
-      # Find @Controller decorators and their base paths
-      controller_pattern = /@Controller\s*\(\s*['"`]([^'"`]*?)['"`]\s*\)/
-      controller_matches = content.scan(controller_pattern)
+      # Split content by controllers and process each separately
+      controllers = extract_controllers(content)
       
-      base_path = ""
-      if controller_matches.size > 0 && controller_matches[0].size > 1
-        base_path = controller_matches[0][1]
+      controllers.each do |controller_info|
+        base_path = controller_info[:base_path]
+        controller_content = controller_info[:content]
+        
+        process_http_methods(controller_content, base_path, path, result)
       end
+    end
 
-      # Find HTTP method decorators with a simpler approach
+    private def extract_controllers(content : String)
+      controllers = [] of Hash(Symbol, String)
+      
+      # Find all @Controller decorators and their associated class content
+      lines = content.split('\n')
+      current_controller : Hash(Symbol, String) | Nil = nil
+      brace_count = 0
+      in_class = false
+      
+      lines.each_with_index do |line, index|
+        # Check for @Controller decorator
+        if line =~ /@Controller\s*\(\s*['"`]([^'"`]*?)['"`]\s*\)/
+          controller_path = $1
+          current_controller = {
+            :base_path => controller_path,
+            :content => "",
+          }
+        end
+        
+        # Check for class start after @Controller
+        if current_controller && line =~ /export\s+class\s+\w+/
+          in_class = true
+          brace_count = 0
+        end
+        
+        # Count braces to find class end
+        if in_class && current_controller
+          brace_count += line.count('{')
+          brace_count -= line.count('}')
+          
+          current_controller[:content] = current_controller[:content] + line + "\n"
+          
+          # End of class
+          if brace_count == 0 && line.includes?('}')
+            controllers << current_controller
+            current_controller = nil
+            in_class = false
+          end
+        end
+      end
+      
+      controllers
+    end
+
+    private def process_http_methods(class_content : String, base_path : String, file_path : String, result : Array(Endpoint))
       http_methods = ["Get", "Post", "Put", "Delete", "Patch", "Options", "Head"]
       
       http_methods.each do |method|
-        # Simpler pattern that matches the decorator and captures the method
-        # @Get(), @Get('path'), @Post(), etc.
         method_pattern = /@#{method}\s*\(\s*(?:['"`]([^'"`]*?)['"`]\s*)?\)/
         
-        content.scan(method_pattern) do |match|
+        class_content.scan(method_pattern) do |match|
           route_path = ""
           if match.size > 1 && match[1]?
             route_path = match[1]
@@ -78,14 +122,14 @@ module Analyzer::Javascript
           
           # Create endpoint
           endpoint = Endpoint.new(full_path, method.upcase)
-          endpoint.details = Details.new(PathInfo.new(path, 1))
+          endpoint.details = Details.new(PathInfo.new(file_path, 1))
           
           # Extract path parameters from URL
           extract_path_parameters(full_path, endpoint)
           
-          # Find the method body after this decorator to extract parameters
+          # Extract parameters from the method area
           if match.begin
-            extract_method_parameters(content, match.begin + match[0].size, endpoint)
+            extract_method_parameters(class_content, match.begin + match[0].size, endpoint)
           end
           
           result << endpoint
