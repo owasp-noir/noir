@@ -138,16 +138,42 @@ module Analyzer::Javascript
     end
 
     private def extract_method_parameters(content : String, start_pos : Int32, endpoint : Endpoint)
-      # Find the method body starting from the decorator position
-      method_body = content[start_pos..-1]
+      # Find the method signature that immediately follows the decorator
+      method_section = content[start_pos..-1]
       
-      # Extract parameter information from the method signature and body
-      # Look for @Query, @Param, @Body, @Headers decorators in the next few lines
-      lines = method_body.split('\n')[0..10]  # Check first 10 lines after decorator
-      method_text = lines.join('\n')
+      # Look for the method name first
+      method_name_match = method_section.match(/\s*(\w+)\s*\(/)
       
+      if method_name_match
+        method_name = method_name_match[1]
+        start_paren = method_name_match.end
+        
+        # Find the matching closing parenthesis for the method parameters
+        paren_count = 1
+        end_paren = start_paren
+        method_section[start_paren..-1].each_char_with_index do |char, index|
+          case char
+          when '('
+            paren_count += 1
+          when ')'
+            paren_count -= 1
+            if paren_count == 0
+              end_paren = start_paren + index
+              break
+            end
+          end
+        end
+        
+        if end_paren > start_paren
+          method_params = method_section[start_paren...end_paren]
+          extract_decorator_parameters(method_params, endpoint)
+        end
+      end
+    end
+
+    private def extract_decorator_parameters(method_params : String, endpoint : Endpoint)
       # Extract @Query parameters
-      method_text.scan(/@Query\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/) do |param_match|
+      method_params.scan(/@Query\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/) do |param_match|
         if param_match.size > 0
           param_name = param_match[1]
           endpoint.push_param(Param.new(param_name, "", "query"))
@@ -155,7 +181,7 @@ module Analyzer::Javascript
       end
 
       # Extract @Param parameters (path parameters)
-      method_text.scan(/@Param\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/) do |param_match|
+      method_params.scan(/@Param\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/) do |param_match|
         if param_match.size > 0
           param_name = param_match[1]
           endpoint.push_param(Param.new(param_name, "", "path"))
@@ -163,12 +189,12 @@ module Analyzer::Javascript
       end
 
       # Extract @Body() - indicates request body
-      if method_text.includes?("@Body()")
+      if method_params.includes?("@Body()")
         endpoint.push_param(Param.new("body", "", "body"))
       end
 
       # Extract @Headers parameters
-      method_text.scan(/@Headers\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/) do |param_match|
+      method_params.scan(/@Headers\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/) do |param_match|
         if param_match.size > 0
           param_name = param_match[1]
           endpoint.push_param(Param.new(param_name, "", "header"))
