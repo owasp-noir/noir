@@ -4,12 +4,7 @@ module Analyzer::Rust
   class Warp < Analyzer
     def analyze
       # Pattern for GET endpoints with warp::get()
-      get_pattern = /warp::get\(\)/
-      post_pattern = /warp::post\(\)/
-      path_pattern = /warp::path\("([^"]+)"\)/
-      path_end_pattern = /warp::path::end\(\)/
-      path_param_pattern = /warp::path::param/
-      
+
       channel = Channel(String).new
 
       begin
@@ -27,7 +22,7 @@ module Analyzer::Rust
                   if File.exists?(path) && File.extname(path) == ".rs"
                     File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
                       content = file.gets_to_end
-                      
+
                       # Simple approach: split by let statements and analyze each
                       statements = content.split(/(?=let\s+\w+\s*=)/)
                       statements.each do |statement|
@@ -65,24 +60,24 @@ module Analyzer::Rust
       elsif statement.includes?("warp::delete()")
         method = "DELETE"
       end
-      
+
       # Build path
       path_parts = [] of String
       params = [] of Param
-      
+
       # Check for root path (path::end without explicit path)
       if statement.includes?("warp::path::end()") && !statement.includes?("warp::path(\"")
         details = Details.new(PathInfo.new(file_path, 1))
         return Endpoint.new("/", method, params, details)
       end
-      
+
       # Extract explicit path segments
       statement.scan(/warp::path\("([^"]+)"\)/) do |match|
         if match.size > 1
           path_parts << match[1]
         end
       end
-      
+
       # Count parameters and add them to both path and params array
       param_count = statement.scan(/warp::path::param/).size
       param_count.times do |i|
@@ -93,13 +88,13 @@ module Analyzer::Rust
         path_parts << ":#{param_name}"
         params << Param.new(param_name, "", "path")
       end
-      
+
       if path_parts.empty?
         return nil
       end
-      
+
       route_path = "/" + path_parts.join("/")
-      
+
       details = Details.new(PathInfo.new(file_path, 1))
       Endpoint.new(route_path, method, params, details)
     rescue
