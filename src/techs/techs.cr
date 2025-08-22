@@ -595,6 +595,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :rust_warp => {
+      :framework => "Warp",
+      :language  => "Rust",
+      :similar   => ["warp", "rust-warp", "rust_warp"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => true,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
   }
 
   def self.techs
