@@ -1,4 +1,5 @@
 require "./logger"
+require "../utils/utils"
 require "yaml"
 
 class Detector

@@ -38,6 +38,7 @@ def detect_techs(base_path : String, options : Hash(String, YAML::Any), passive_
     Javascript::Express,
     Javascript::Fastify,
     Javascript::Koa,
+    Javascript::Nestjs,
     Javascript::Restify,
     Kotlin::Spring,
     Specification::Oas2,
