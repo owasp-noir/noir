@@ -145,11 +145,18 @@ Noir is a tool designed to analyze and understand codebases by identifying endpo
 |-----|--------|-------|--------|--------|----|
 | ✅   | ✅    | ✅    | ✅     | ✅     | ❌ |
 
+### Nest
+
+| URL | Method | Param | Header | Cookie | WS |
+|-----|--------|-------|--------|--------|----|
+| ✅   | ✅    | ✅    | ✅     | ✅     | ❌ |
+
 ### Koa.js
 
 | URL | Method | Param | Header | Cookie | WS |
 |-----|--------|-------|--------|--------|----|
 | ✅   | ✅    | ✅    | X     | X     | ❌ |
+
 
 ## Rust
 
