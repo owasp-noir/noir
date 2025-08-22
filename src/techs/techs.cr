@@ -301,6 +301,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :js_nestjs => {
+      :framework => "NestJS",
+      :language  => "JavaScript",
+      :similar   => ["nestjs", "nest", "js-nestjs", "js_nestjs"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :kotlin_spring => {
       :framework => "Spring",
       :language  => "Kotlin",
