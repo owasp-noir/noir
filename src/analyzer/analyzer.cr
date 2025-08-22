@@ -50,6 +50,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"rust_actix_web", Rust::ActixWeb},
     {"rust_loco", Rust::Loco},
     {"rust_rwf", Rust::Rwf},
+    {"rust_warp", Rust::Warp},
     {"ai_ollama", AI::Ollama},
     {"ai", AI::General},
   ])
