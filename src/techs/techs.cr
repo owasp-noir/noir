@@ -613,6 +613,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :rust_tide => {
+      :framework => "Tide",
+      :language  => "Rust",
+      :similar   => ["tide", "rust-tide", "rust_tide"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => true,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :rust_warp => {
       :framework => "Warp",
       :language  => "Rust",
