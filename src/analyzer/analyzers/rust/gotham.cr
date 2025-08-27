@@ -24,16 +24,16 @@ module Analyzer::Rust
                     File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
                       file.each_line.with_index do |line, index|
                         # Look for Gotham routing patterns like .get("/path")
-                        if line.includes?(".") && (line.includes?("get") || line.includes?("post") || 
-                                                   line.includes?("put") || line.includes?("delete") ||
-                                                   line.includes?("patch") || line.includes?("head") || 
-                                                   line.includes?("options"))
+                        if line.includes?(".") && (line.includes?("get") || line.includes?("post") ||
+                           line.includes?("put") || line.includes?("delete") ||
+                           line.includes?("patch") || line.includes?("head") ||
+                           line.includes?("options"))
                           match = line.match(pattern)
                           if match
                             begin
                               method = match[1]
                               route_path = match[2]
-                              
+
                               # Parse path parameters (Gotham uses :param syntax)
                               params = [] of Param
                               final_path = route_path.gsub(/:(\w+)/) do |param_match|
@@ -41,7 +41,7 @@ module Analyzer::Rust
                                 params << Param.new(param_name, "", "path")
                                 ":#{param_name}"
                               end
-                              
+
                               details = Details.new(PathInfo.new(path, index + 1))
                               endpoint = Endpoint.new(final_path, method.upcase, details)
                               params.each do |param|
