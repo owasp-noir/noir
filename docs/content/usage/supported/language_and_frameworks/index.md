@@ -18,6 +18,7 @@ Noir is a tool designed to analyze and understand codebases by identifying endpo
 
 | Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
 |-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
+| Amber | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Grip | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ |
 | Kemal | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Lucky | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
