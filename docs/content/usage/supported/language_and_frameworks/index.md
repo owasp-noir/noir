@@ -21,18 +21,13 @@ Noir is a tool designed to analyze and understand codebases by identifying endpo
 | Grip | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ |
 | Kemal | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Lucky | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Marten | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
 
 ## Elixir
 
 | Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
 |-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
 | Phoenix | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
-
-### Marten
-
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ✅    | ✅    | ✅     | ✅     | ❌ |
 
 ## Go
 
