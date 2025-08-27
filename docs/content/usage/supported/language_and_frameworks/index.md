@@ -190,6 +190,12 @@ Noir is a tool designed to analyze and understand codebases by identifying endpo
 |-----|--------|-------|--------|--------|----|
 | ✅   | ✅    | ❌    | ❌     | ❌     | ❌ |
 
+### Tide
+
+| URL | Method | Param | Header | Cookie | WS |
+|-----|--------|-------|--------|--------|----|
+| ✅   | ✅    | ❌    | ❌     | ❌     | ❌ |
+
 ### Warp
 
 | URL | Method | Param | Header | Cookie | WS |
