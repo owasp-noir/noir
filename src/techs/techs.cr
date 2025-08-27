@@ -36,6 +36,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :crystal_marten => {
+      :framework => "Marten",
+      :language  => "Crystal",
+      :similar   => ["marten", "crystal-marten", "crystal_marten"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => true,
+        :websocket   => false,
+      },
+    },
     :cs_aspnet_mvc => {
       :framework => "ASP.NET MVC",
       :language  => "C#",

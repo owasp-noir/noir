@@ -303,7 +303,7 @@ class NoirRunner
 
       scans = endpoint.url.scan(/\/<([^>]+)>/).flatten
       scans.each do |match|
-        param = match[1].split(":")[-1]
+        param = match[1].split(":")[0]
         new_value = apply_pvalue("path", param, "")
         if new_value != ""
           new_endpoint.url = new_endpoint.url.gsub("<#{match[1]}>", new_value)
