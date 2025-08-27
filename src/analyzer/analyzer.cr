@@ -20,6 +20,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"crystal_grip", Crystal::Grip},
     {"crystal_kemal", Crystal::Kemal},
     {"crystal_lucky", Crystal::Lucky},
+    {"crystal_marten", Crystal::Marten},
     {"elixir_phoenix", Elixir::Phoenix},
     {"go_beego", Go::Beego},
     {"go_echo", Go::Echo},

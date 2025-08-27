@@ -26,6 +26,7 @@ def detect_techs(base_path : String, options : Hash(String, YAML::Any), passive_
     Crystal::Grip,
     Crystal::Kemal,
     Crystal::Lucky,
+    Crystal::Marten,
     Elixir::Phoenix,
     Go::Beego,
     Go::Echo,
