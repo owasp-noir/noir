@@ -43,16 +43,16 @@ module Analyzer::Rust
 
     private def parse_tide_routes(content : String, file_path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      
+
       # Find .at() method calls with chained HTTP methods
       # Pattern: .at("/path").get(), .at("/path").post(), etc.
       at_pattern = /\.at\s*\(\s*["']([^"']+)["']\s*\)\s*\.\s*(get|post|put|delete|patch|head|options)\s*\(/i
-      
+
       content.scan(at_pattern) do |match|
         if match.size >= 3
           path = match[1]
           method = match[2].upcase
-          
+
           # Parse path parameters (Tide uses :param syntax)
           params = [] of Param
           final_path = path.gsub(/:(\w+)/) do |param_match|
@@ -60,19 +60,19 @@ module Analyzer::Rust
             params << Param.new(param_name, "", "path")
             ":#{param_name}"
           end
-          
+
           details = Details.new(PathInfo.new(file_path, 1))
           endpoints << Endpoint.new(final_path, method, params, details)
         end
       end
-      
+
       # Also look for app initialization and route definitions in separate variables
       # Pattern: let route = app.at("/path"); route.get()
       route_var_pattern = /(\w+)\s*=\s*\w+\.at\s*\(\s*["']([^"']+)["']\s*\)/
       method_call_pattern = /(\w+)\s*\.\s*(get|post|put|delete|patch|head|options)\s*\(/i
-      
+
       routes_map = {} of String => String
-      
+
       # First pass: collect route variable assignments
       content.scan(route_var_pattern) do |match|
         if match.size >= 3
@@ -81,16 +81,16 @@ module Analyzer::Rust
           routes_map[var_name] = path
         end
       end
-      
+
       # Second pass: find method calls on route variables
       content.scan(method_call_pattern) do |match|
         if match.size >= 3
           var_name = match[1]
           method = match[2].upcase
-          
+
           if routes_map.has_key?(var_name)
             path = routes_map[var_name]
-            
+
             # Parse path parameters
             params = [] of Param
             final_path = path.gsub(/:(\w+)/) do |param_match|
@@ -98,13 +98,13 @@ module Analyzer::Rust
               params << Param.new(param_name, "", "path")
               ":#{param_name}"
             end
-            
+
             details = Details.new(PathInfo.new(file_path, 1))
             endpoints << Endpoint.new(final_path, method, params, details)
           end
         end
       end
-      
+
       endpoints
     rescue
       [] of Endpoint
