@@ -4,7 +4,6 @@ module Analyzer::Crystal
   class Grip < Analyzer
     def analyze
       channel = Channel(String).new
-      scope_stack = [] of String
 
       # Source Analysis
       begin
