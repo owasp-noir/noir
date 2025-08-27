@@ -36,6 +36,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :crystal_grip => {
+      :framework => "Grip",
+      :language  => "Crystal",
+      :similar   => ["grip", "crystal-grip", "crystal_grip"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => true,
+      },
+    },
     :cs_aspnet_mvc => {
       :framework => "ASP.NET MVC",
       :language  => "C#",

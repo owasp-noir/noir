@@ -1,0 +1,17 @@
+name: testapp
+version: 0.1.0
+
+authors:
+  - hahwul <hahwul@gmail.com>
+
+targets:
+  testapp:
+    main: src/testapp.cr
+
+dependencies:
+  grip:
+    github: grip-framework/grip
+
+crystal: 1.8.2
+
+license: MIT
