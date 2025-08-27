@@ -18,6 +18,7 @@ Noir is a tool designed to analyze and understand codebases by identifying endpo
 
 | Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
 |-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
+| Grip | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ |
 | Kemal | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Lucky | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
 
@@ -26,12 +27,6 @@ Noir is a tool designed to analyze and understand codebases by identifying endpo
 | Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
 |-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
 | Phoenix | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
-
-### Grip
-
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ✅    | ✅    | ✅     | ✅     | ✅ |
 
 ## Go
 
