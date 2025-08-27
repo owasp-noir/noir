@@ -1,5 +1,23 @@
 module NoirTechs
   TECHS = {
+    :crystal_amber => {
+      :framework => "Amber",
+      :language  => "Crystal",
+      :similar   => ["amber", "crystal-amber", "crystal_amber"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => true,
+        :websocket   => true,
+      },
+    },
     :crystal_kemal => {
       :framework => "Kemal",
       :language  => "Crystal",
