@@ -3,12 +3,12 @@ require "../../func_spec.cr"
 expected_endpoints = [
   Endpoint.new("/", "GET"),
   Endpoint.new("/api/users", "GET"),
-  Endpoint.new("/api/users/<id:int>", "GET", [
+  Endpoint.new("/api/users/<int:id>", "GET", [
     Param.new("id", "", "path"),
   ]),
   Endpoint.new("/auth/login", "GET"),
   Endpoint.new("/products", "GET"),
-  Endpoint.new("/products/<slug:str>", "GET", [
+  Endpoint.new("/products/<slug:slug>", "GET", [
     Param.new("slug", "", "path"),
   ]),
 ]
