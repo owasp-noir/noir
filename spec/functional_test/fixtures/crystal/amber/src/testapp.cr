@@ -38,7 +38,7 @@ Amber::Server.configure do
     get "/posts/:id", ApplicationController, :show_post
     get "/search", ApplicationController, :search
     post "/upload", ApplicationController, :upload
-    
+
     # WebSocket route
     ws "/socket", WebSocketController, :handle
   end

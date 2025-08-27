@@ -177,23 +177,23 @@ module Analyzer::Crystal
       if content.includes?("get \"/\"") && content.includes?("ApplicationController")
         return Endpoint.new("/", "GET")
       end
-      
+
       if content.includes?("post \"/users\"") && content.includes?("ApplicationController")
         return Endpoint.new("/users", "POST")
       end
-      
+
       if content.includes?("get \"/posts/:id\"") && content.includes?("ApplicationController")
         return Endpoint.new("/posts/:id", "GET")
       end
-      
+
       if content.includes?("get \"/search\"") && content.includes?("ApplicationController")
         return Endpoint.new("/search", "GET")
       end
-      
+
       if content.includes?("post \"/upload\"") && content.includes?("ApplicationController")
         return Endpoint.new("/upload", "POST")
       end
-      
+
       if content.includes?("ws \"/socket\"") && content.includes?("WebSocketController")
         endpoint = Endpoint.new("/socket", "GET")
         endpoint.protocol = "ws"
