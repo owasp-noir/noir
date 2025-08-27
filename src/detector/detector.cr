@@ -23,6 +23,7 @@ def detect_techs(base_path : String, options : Hash(String, YAML::Any), passive_
   # Define detectors
   defind_detectors([
     CSharp::AspNetMvc,
+    Crystal::Amber,
     Crystal::Grip,
     Crystal::Kemal,
     Crystal::Lucky,
