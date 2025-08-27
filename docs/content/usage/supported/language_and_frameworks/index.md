@@ -23,6 +23,12 @@ Noir is a tool designed to analyze and understand codebases by identifying endpo
 |-----|--------|-------|--------|--------|----|
 | ✅   | ✅    | ✅    | ✅     | ✅     | ❌ |
 
+### Grip
+
+| URL | Method | Param | Header | Cookie | WS |
+|-----|--------|-------|--------|--------|----|
+| ✅   | ✅    | ✅    | ✅     | ✅     | ✅ |
+
 ## Go
 
 ### Beego
