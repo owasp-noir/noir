@@ -10,13 +10,12 @@ sort_by = "weight"
 In addition to analyzing source code directly, Noir can also parse various API and data specification formats. This allows you to use Noir to analyze existing API documentation, captured network traffic, and more.
 
 This section provides a compatibility table for the different specifications that Noir supports.
-
-| Specification | Format | URL | Method | Param | Header | WS |
-|---|---|---|---|---|---|---|
-| OAS 2.0 (Swagger 2.0) | JSON | ✅ | ✅ | ✅ | ✅ | ❌ |
-| OAS 2.0 (Swagger 2.0) | YAML | ✅ | ✅ | ✅ | ✅ | ❌ |
-| OAS 3.0 | JSON | ✅ | ✅ | ✅ | ✅ | ❌ |
-| OAS 3.0 | YAML | ✅ | ✅ | ✅ | ✅ | ❌ |
-| RAML | YAML | ✅ | ✅ | ✅ | ✅ | ❌ |
-| HAR | JSON | ✅ | ✅ | ✅ | ✅ | ❌ |
-| GraphQL SDL (.graphql) | GraphQL | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Specification | Format | endpoint | method | query | path | body | header | cookie | static_path | websocket |
+|---|---|---|---|---|---|---|---|---|---|---|
+| GraphQL | GRAPHQL | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| HAR | JSON | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| OpenAPI 2.0 (Swagger) | JSON | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| OpenAPI 2.0 (Swagger) | YAML | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| OpenAPI 3.0 | JSON | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| OpenAPI 3.0 | YAML | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| RAML | YAML | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
