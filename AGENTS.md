@@ -1,100 +1,162 @@
-# AI Agent Contributor Guidelines
+# OWASP Noir - Attack Surface Detector
 
-This document provides guidelines for an AI agent to understand the project structure and contribute effectively to the codebase.
+OWASP Noir is a Crystal-based attack surface detector that identifies endpoints by static analysis of source code across multiple programming languages and frameworks.
 
----
+**Always reference these instructions first and fallback to search or bash commands only when you encounter unexpected information that does not match the info here.**
 
-## 🚀 Getting Started: Guiding Principles
+## Working Effectively
 
-Before making any code changes, please adhere to these core principles:
+### Bootstrap, Build, and Test
+**NEVER CANCEL BUILDS OR TESTS - Follow exact timing guidelines below:**
 
-* **Testing is Mandatory:** Every new feature or fix must be accompanied by relevant tests. Consider writing tests before writing the new code.
-* **Follow Existing Patterns:** When adding new code, imitation is the best approach. Consistently follow the structure, naming conventions, and coding style of existing code.
-* **Documentation is Key:** When adding new features (like an Analyzer or Detector), you must also update the relevant documentation and the technology list (`techs.cr`).
-* **Leverage the `justfile`:** It's best to use the commands defined in the `justfile` for common tasks like building, testing, and linting the project.
+1. **Install Crystal and dependencies:**
+   ```bash
+   sudo apt update
+   sudo apt install -y crystal shards just
+   ```
 
----
+2. **Build the application:**
+   ```bash
+   just build
+   # OR: shards build
+   ```
+   - **Timing: 10 seconds. NEVER CANCEL. Set timeout to 60+ seconds.**
 
-## 📂 Project Structure
+3. **Run tests:**
+   ```bash
+   just test
+   # OR: crystal spec
+   ```
+   - **Timing: 7 seconds (1384 tests). NEVER CANCEL. Set timeout to 30+ seconds.**
 
-The project is organized into the following key directories:
+### Run the Application
 
-* `src/`: Contains the core source code of the application.
-    * `analyzer/`: Analyzers that parse source code to find endpoints, routes, etc.
-    * `detector/`: Detectors that identify the frameworks and technologies used.
-    * `output_builder/`: Logic for formatting the analysis results into various formats (JSON, YAML, cURL, etc.).
-    * `models/`: Data models and structures used throughout the application.
-    * `llm/`: Code related to Large Language Model (LLM) integration.
-    * `tagger/`: Code for tagging or categorizing discovered endpoints.
-    * `deliver/`: Code for sending processed data to external tools or proxies.
-* `spec/`: Contains all test code.
-    * `functional_test/`: End-to-end functional tests from a user's perspective.
-        * `fixtures/`: Sample code and project files used as input for functional tests.
-        * `testers/`: The actual functional test scripts.
-    * `unit_test/`: Unit tests for individual modules in isolation.
-* `docs/`: Project documentation, generated with Zola. A good place to find detailed information about features and usage.
-* `shard.yml`: (Crystal) Declares project dependencies and metadata. This is the most crucial file for understanding the libraries the project uses.
-* `justfile`: Defines common project commands for building, testing, etc. Inspect this file to learn about available commands.
+- **Basic usage:**
+  ```bash
+  ./bin/noir -h                    # Show help
+  ./bin/noir --version             # Show version
+  ./bin/noir --list-techs          # List supported technologies
+  ```
 
----
+- **Analyze source code:**
+  ```bash
+  ./bin/noir -b path/to/source     # Basic analysis
+  ./bin/noir -b . -f json          # JSON output format
+  ./bin/noir -b . -f yaml          # YAML output format
+  ./bin/noir -b . --verbose        # Detailed analysis
+  ```
 
-## 💻 Development Workflows
+### Development Commands
 
-### Adding a New Analyzer
+- **Formatting and linting:**
+  ```bash
+  crystal tool format              # Format code
+  # NOTE: ameba linter has compatibility issues with Crystal 1.11.2
+  ```
 
-1.  **Create Analyzer File:** Create the file in a language-specific subdirectory within `src/analyzer/analyzers/` (e.g., `src/analyzer/analyzers/crystal/kemal.cr`).
-    * Refer to existing Analyzers (like `example.cr`) for structure and style.
-2.  **Add Functional Test:** Create a corresponding test file in `spec/functional_test/testers/` using the same path structure (e.g., `spec/functional_test/testers/crystal/kemal_spec.cr`).
-    * Tests should verify that your analyzer correctly identifies endpoints from sample code.
-3.  **Provide Fixture File:** Add sample source code files for your tests under `spec/functional_test/fixtures/` (e.g., `spec/functional_test/fixtures/crystal/kemal/`).
-4.  **Register Analyzer (if needed):** Check and update a central registry file, such as `src/analyzer/analyzer.cr`, to register your new analyzer.
-5.  **Run Tests & Update Docs:**
-    * Run the full test suite to ensure no regressions. (`just test`)
-    * **Important:** Add the newly supported technology to `docs/content/docs/usage/supported/language_and_frameworks.md` and `src/techs/techs.cr`.
+- **Using just commands:**
+  ```bash
+  just --list                      # List available commands
+  just build                       # Build application (10s)
+  just test                        # Run tests (7s)
+  just check                       # Format check + lint (NOTE: ameba issues)
+  just fix                         # Auto-format + fix lint issues
+  ```
 
-### Adding a New Detector
+## Validation
 
-1.  **Create Detector File:** Place the new file in `src/detector/detectors/` (e.g., `src/detector/detectors/crystal/my_framework.cr`).
-    * Refer to `detector_example.cr` and other existing Detectors for the required interface and conventions.
-2.  **Add Unit Test:** Create a test file in `spec/unit_test/detector/` (e.g., `spec/unit_test/detector/crystal/my_framework_detector_spec.cr`).
-    * Tests should verify that the detector correctly identifies the technology based on file content or project structure.
-3.  **Register Detector (if needed):** Check the central registry file (e.g., `src/detector/detector.cr`) and add your new detector.
-4.  **Run Tests & Update Docs:**
-    * Run the full test suite. (`just test`)
-    * **Important:** Update `docs/content/docs/usage/supported/language_and_frameworks.md` and `src/techs/techs.cr`.
+### Always test these scenarios after making changes:
+1. **Build and run basic analysis:**
+   ```bash
+   just build && ./bin/noir -b spec/functional_test/fixtures/crystal
+   ```
+   - Should detect crystal_kemal and crystal_lucky technologies
+   - Should find ~10 endpoints with parameters
 
-### Adding a New Output Builder
+2. **Test JSON output:**
+   ```bash
+   ./bin/noir -b spec/functional_test/fixtures/crystal -f json
+   ```
+   - Should produce valid JSON with endpoints array
 
-1.  **Create Builder File:** Place the new file in the `src/output_builder/` directory (e.g., `src/output_builder/my_new_format.cr`).
-    * Examine existing builders like `json.cr` or `curl.cr` to implement the required interface.
-2.  **Add Unit Test:** Create a test file in `spec/unit_test/output_builder/` (e.g., `spec/unit_test/output_builder/my_new_format_spec.cr`).
-    * Tests should verify that the builder correctly formats input data into the desired output.
-3.  **Update Options & Logic:** Modify the application logic (e.g., the command-line option handler in `src/options.cr`) to recognize the new output format.
-4.  **Run Tests:** Run the full test suite to confirm everything works as expected.
+3. **Run full test suite:**
+   ```bash
+   just test
+   ```
+   - Should pass all 1384 tests in ~7 seconds
 
----
+4. **Technology detection:**
+   ```bash
+   ./bin/noir --list-techs | head -5
+   ```
+   - Should list supported frameworks and languages
 
-## 🛠️ Building & Testing
+## Common Tasks
 
-It is highly recommended to use `just` for all tasks.
+### Repository Structure
+```
+src/                     # Core source code
+├── analyzer/            # Code analyzers for endpoint/parameter analysis
+├── detector/            # Technology and framework detection
+├── output_builder/      # Output format generation (JSON, YAML, etc.)
+├── models/              # Data structures and models
+├── llm/                 # AI/LLM integration
+├── tagger/              # Endpoint tagging and categorization
+└── deliver/             # Results delivery (proxy, elasticsearch)
 
-* **List available commands:**
-    ```
-    just --list
-    ```
-* **Build the project:**
-    ```
-    just build
-    ```
-* **Run tests:**
-    ```
-    just test
-    ```
-* **Manual execution (without `just`):**
-    ```
-    shards install # Install dependencies
-    shards build   # Build
-    crystal spec   # Run tests
-    ```
+spec/                    # Test code
+├── functional_test/     # End-to-end tests
+│   ├── fixtures/        # Sample code for testing
+│   └── testers/         # Test implementations
+└── unit_test/           # Unit tests
 
-After finishing your work, always verify that the project builds successfully and that all tests pass.
+docs/                    # Zola-based documentation
+bin/                     # Compiled binary location
+lib/                     # Dependencies (managed by shards)
+```
+
+### Key Files
+- `shard.yml`: Dependencies and project metadata
+- `justfile`: Task definitions and commands
+- `src/noir.cr`: Main application entry point
+- `.ameba.yml`: Linting configuration (compatibility issues)
+
+### Adding New Analyzers
+1. Create analyzer in `src/analyzer/analyzers/{language}/{framework}.cr`
+2. Add functional test in `spec/functional_test/testers/{language}/{framework}_spec.cr`
+3. Add test fixtures in `spec/functional_test/fixtures/{language}/{framework}/`
+4. Register analyzer in `src/analyzer/analyzer.cr` if needed
+5. Update documentation and `src/techs/techs.cr`
+6. Run `just test` to validate
+
+### Adding New Detectors
+1. Create detector in `src/detector/detectors/{language}/{framework}.cr`
+2. Add unit test in `spec/unit_test/detector/{language}/{framework}_detector_spec.cr`
+3. Register detector in `src/detector/detector.cr` if needed
+4. Update documentation and `src/techs/techs.cr`
+5. Run `just test` to validate
+
+## Critical Notes
+
+### Known Issues
+- **http_proxy dependency**: Requires manual compatibility fix for Crystal 1.11.2+ (see bootstrap steps)
+- **ameba linter**: Has compatibility issues with Crystal 1.11.2, use `crystal tool format` instead
+- **Zola docs**: Not installed by default, install separately if needed for documentation work
+
+### Timing Guidelines
+- **NEVER CANCEL** any build or test operations
+- Build: 10 seconds (set 60+ second timeout)
+- Tests: 7 seconds (set 30+ second timeout)
+- Analysis: Sub-second for small projects
+
+### Before Committing
+1. Run `just build` to ensure compilation
+2. Run `just test` to ensure all tests pass
+3. Run `crystal tool format` for code formatting
+4. Test basic functionality with sample fixtures
+5. If adding new analyzers/detectors, update documentation
+
+### Environment
+- Crystal ~> 1.10 (tested with 1.11.2)
+- Ubuntu 24.04+ recommended
+- Requires manual dependency fixes as documented above

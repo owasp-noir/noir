@@ -18,8 +18,10 @@ def initialize_analyzers(logger : NoirLogger)
   define_analyzers([
     {"c#-aspnet-mvc", CSharp::AspNetMvc},
     {"crystal_amber", Crystal::Amber},
+    {"crystal_grip", Crystal::Grip},
     {"crystal_kemal", Crystal::Kemal},
     {"crystal_lucky", Crystal::Lucky},
+    {"crystal_marten", Crystal::Marten},
     {"elixir_phoenix", Elixir::Phoenix},
     {"go_beego", Go::Beego},
     {"go_echo", Go::Echo},
@@ -54,6 +56,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"rust_rwf", Rust::Rwf},
     {"rust_tide", Rust::Tide},
     {"rust_warp", Rust::Warp},
+    {"rust_gotham", Rust::Gotham},
     {"ai_ollama", AI::Ollama},
     {"ai", AI::General},
   ])

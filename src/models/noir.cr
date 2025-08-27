@@ -301,9 +301,23 @@ class NoirRunner
         end
       end
 
-      scans = endpoint.url.scan(/\/<([^>]+)>/).flatten
+      scans = endpoint.url.scan(/<([^>]+)>/).flatten
       scans.each do |match|
-        param = match[1].split(":")[-1]
+        parts = match[1].split(":")
+        if parts.size > 1
+          # Handle both Django style <type:name> and Marten style <name:type>
+          # Check if first part looks like a type (int, str, slug, uuid, etc.)
+          if parts[0] =~ /^(int|str|string|slug|uuid|float|bool|path)$/
+            # Django style: <type:name>
+            param = parts[1]
+          else
+            # Marten style: <name:type>
+            param = parts[0]
+          end
+        else
+          param = parts[0]
+        end
+
         new_value = apply_pvalue("path", param, "")
         if new_value != ""
           new_endpoint.url = new_endpoint.url.gsub("<#{match[1]}>", new_value)
