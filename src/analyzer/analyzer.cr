@@ -17,6 +17,7 @@ def initialize_analyzers(logger : NoirLogger)
   # Mapping analyzers to their respective functions
   define_analyzers([
     {"c#-aspnet-mvc", CSharp::AspNetMvc},
+    {"crystal_grip", Crystal::Grip},
     {"crystal_kemal", Crystal::Kemal},
     {"crystal_lucky", Crystal::Lucky},
     {"crystal_marten", Crystal::Marten},
@@ -54,6 +55,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"rust_rwf", Rust::Rwf},
     {"rust_tide", Rust::Tide},
     {"rust_warp", Rust::Warp},
+    {"rust_gotham", Rust::Gotham},
     {"ai_ollama", AI::Ollama},
     {"ai", AI::General},
   ])

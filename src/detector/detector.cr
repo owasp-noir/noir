@@ -23,6 +23,7 @@ def detect_techs(base_path : String, options : Hash(String, YAML::Any), passive_
   # Define detectors
   defind_detectors([
     CSharp::AspNetMvc,
+    Crystal::Grip,
     Crystal::Kemal,
     Crystal::Lucky,
     Crystal::Marten,
@@ -60,6 +61,7 @@ def detect_techs(base_path : String, options : Hash(String, YAML::Any), passive_
     Rust::Rwf,
     Rust::Tide,
     Rust::Warp,
+    Rust::Gotham,
   ])
 
   if options["techs"].to_s.size > 0
