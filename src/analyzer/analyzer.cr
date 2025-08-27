@@ -53,6 +53,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"rust_rwf", Rust::Rwf},
     {"rust_tide", Rust::Tide},
     {"rust_warp", Rust::Warp},
+    {"rust_gotham", Rust::Gotham},
     {"ai_ollama", AI::Ollama},
     {"ai", AI::General},
   ])
