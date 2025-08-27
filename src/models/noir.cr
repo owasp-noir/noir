@@ -311,13 +311,13 @@ class NoirRunner
             # Django style: <type:name>
             param = parts[1]
           else
-            # Marten style: <name:type> 
+            # Marten style: <name:type>
             param = parts[0]
           end
         else
           param = parts[0]
         end
-        
+
         new_value = apply_pvalue("path", param, "")
         if new_value != ""
           new_endpoint.url = new_endpoint.url.gsub("<#{match[1]}>", new_value)

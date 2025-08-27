@@ -105,7 +105,7 @@ module Analyzer::Crystal
       content.scan(/path\s+['"](.+?)['"]/) do |match|
         if match.size > 1
           route = match[1].to_s
-          
+
           # Extract HTTP methods from handler class patterns
           # For now, assume GET for routes, but could be enhanced to detect handler methods
           return Endpoint.new(route, "GET")
