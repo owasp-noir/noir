@@ -649,6 +649,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :rust_gotham => {
+      :framework => "Gotham",
+      :language  => "Rust",
+      :similar   => ["gotham", "rust-gotham", "rust_gotham"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
   }
 
   def self.techs
