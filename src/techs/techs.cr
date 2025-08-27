@@ -1,3 +1,5 @@
+require "json"
+
 module NoirTechs
   TECHS = {
     :crystal_kemal => {
@@ -667,6 +669,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :rust_gotham => {
+      :framework => "Gotham",
+      :language  => "Rust",
+      :similar   => ["gotham", "rust-gotham", "rust_gotham"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
   }
 
   def self.techs
@@ -682,4 +702,11 @@ module NoirTechs
 
     ""
   end
+end
+
+if __FILE__ == PROGRAM_NAME
+  # When running this file directly (e.g., `crystal run src/techs/techs.cr`),
+  # print the TECHS catalog as JSON. This block does not run when the file is
+  # required from other code (e.g., Noir's main application).
+  puts NoirTechs::TECHS.to_json
 end

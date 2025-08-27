@@ -7,21 +7,25 @@ sort_by = "weight"
 [extra]
 +++
 
-Noir is a tool designed to analyze and understand codebases by identifying endpoints and their specifications. This section provides a comprehensive list of the programming languages and frameworks that Noir supports. For each entry, you can find a compatibility table detailing which features—such as URL, Method, Param, Header, Cookie, and WebSocket (WS)—are supported.
+Noir is a tool designed to analyze and understand codebases by identifying endpoints and their specifications. This section provides a comprehensive list of the programming languages that Noir supports. For each language, this page shows a single table with a Framework column and the following fields: endpoint, method, query, path, body, header, cookie, static_path, websocket.
+## C#
+
+| Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
+|-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
+| ASP.NET MVC | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 
 ## Crystal
 
-### Kemal
+| Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
+|-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
+| Kemal | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Lucky | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
 
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ✅    | ✅    | ✅     | ✅     | ✅ |
+## Elixir
 
-### Lucky
-
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ✅    | ✅    | ✅     | ✅     | ❌ |
+| Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
+|-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
+| Phoenix | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 
 ### Grip
 
@@ -31,195 +35,70 @@ Noir is a tool designed to analyze and understand codebases by identifying endpo
 
 ## Go
 
-### Beego
-
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ✅    | ❌    | ❌     | ❌     | ❌ |
-
-### Echo
-
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ✅    | ✅    | ✅     | ✅     | ❌ |
-
-### Gin
-
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ✅    | ✅    | ✅     | ✅     | ❌ |
-
-### Fiber
-
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ✅    | ✅    | ✅     | ✅     | ✅ |
-
-## Python
-
-### Django
-
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ✅    | ✅    | ✅     | ✅     | ❌ |
-
-### Flask
-
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ✅    | ✅    | ✅     | ✅     | ❌ |
-
-### FastAPI
-
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ✅    | ✅    | ✅     | ✅     | ✅ |
-
-## Ruby
-
-### Rails
-
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ✅    | ✅    | ✅     | ✅     | ❌ |
-
-### Sinatra
-
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ✅    | ✅    | ✅     | ✅     | ❌ |
-
-### Hanami
-
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ✅    | ❌    | ❌     | ❌     | ❌ |
-
-## Php
-
-### Laravel
-
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ✅    | ✅    | ✅     | ❌     | ❌ |
+| Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
+|-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
+| Beego | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Chi | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Echo | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Fiber | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Gin | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
 
 ## Java
 
-### Jsp
+| Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
+|-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
+| Armeria | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| JSP | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ❌ |
+| Spring | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
 
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ✅    | ✅    | ❌     | ❌     | ❌ |
+## JavaScript
 
-### Armeria
-
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ✅    | ❌    | ❌     | ❌     | ❌ |
-
-### Spring
-
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ✅    | ✅    | ✅     | ❌     | ❌ |
+| Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
+|-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
+| Express | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Fastify | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Koa | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| NestJS | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Restify | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
 
 ## Kotlin
 
-### Spring
+| Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
+|-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
+| Spring | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ✅    | ✅    | ✅     | ✅     | ❌ |
+## PHP
 
-## Javascript
+| Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
+|-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
+| Pure | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ |
 
-### Express
+## Python
 
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ✅    | ✅    | ✅     | ✅     | ❌ |
+| Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
+|-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
+| Django | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| FastAPI | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Flask | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
 
-### Restify
+## Ruby
 
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ✅    | ✅    | ✅     | ✅     | ❌ |
-
-### Fastify
-
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ✅    | ✅    | ✅     | ✅     | ❌ |
-
-### Nest
-
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ✅    | ✅    | ✅     | ✅     | ❌ |
-
-### Koa.js
-
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ✅    | ✅    | X     | X     | ❌ |
-
+| Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
+|-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
+| Hanami | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Rails | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Sinatra | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
 
 ## Rust
 
-### Axum
+| Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
+|-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
+| Actix Web | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Axum | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Gotham | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Loco | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| RWF | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Rocket | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Tide | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Warp | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ✅    | ❌    | ❌     | ❌     | ❌ |
-
-### Rocket
-
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ✅    | ❌    | ❌     | ❌     | ❌ |
-
-### Actix Web
-
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ✅    | ❌    | ❌     | ❌     | ❌ |
-
-### Loco
-
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ✅    | ❌    | ❌     | ❌     | ❌ |
-
-### Rwf
-
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ✅    | ❌    | ❌     | ❌     | ❌ |
-
-### Tide
-
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ✅    | ❌    | ❌     | ❌     | ❌ |
-
-### Warp
-
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ✅    | ❌    | ❌     | ❌     | ❌ |
-
-## Elixir
-
-### Phoenix
-
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ✅    | ❌    | ❌     | ❌     | ✅ |
-
-## C#
-
-### ASP.NET MVC
-
-| URL | Method | Param | Header | Cookie | WS |
-|-----|--------|-------|--------|--------|----|
-| ✅   | ❌    | ❌    | ❌     | ❌     | ❌ |

@@ -14,6 +14,16 @@ docs-serve:
     @echo "Serving the documentation site at http://localhost:1111/ ..."
     cd docs && zola serve
 
+# Generate supported docs from current ./bin/noir --list-techs output.
+docs-supported: build
+    @echo "Generating supported docs from --list-techs..."
+    crystal run scripts/generate_supported_docs.cr
+
+# Generate supported docs and then serve the docs.
+docs-serve-supported: docs-supported
+    @echo "Serving the documentation site at http://localhost:1111/ ..."
+    cd docs && zola serve
+
 # Automatically format code and fix linting issues.
 fix:
     @echo "Formatting code and fixing linting issues..."

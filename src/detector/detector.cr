@@ -60,6 +60,7 @@ def detect_techs(base_path : String, options : Hash(String, YAML::Any), passive_
     Rust::Rwf,
     Rust::Tide,
     Rust::Warp,
+    Rust::Gotham,
   ])
 
   if options["techs"].to_s.size > 0
