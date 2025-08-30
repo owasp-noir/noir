@@ -1,4 +1,5 @@
 require "json"
+require "http/client"
 
 module LLM
   class General

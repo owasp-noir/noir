@@ -1,4 +1,5 @@
 require "json"
+require "crest"
 
 module LLM
   class Ollama
