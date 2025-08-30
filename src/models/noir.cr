@@ -100,7 +100,7 @@ class NoirRunner
 
   def analyze
     @endpoints = analysis_endpoints options, @techs, @logger
-    
+
     # Use the new optimizer module
     optimizer = LLMEndpointOptimizer.new(@logger, @options)
     @endpoints = optimizer.optimize(@endpoints)

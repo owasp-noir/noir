@@ -26,7 +26,7 @@ describe "LLMEndpointOptimizer" do
         Endpoint.new("/users/{id}", "GET"),
         Endpoint.new("users/{id}", "GET"), # duplicate
       ]
-      
+
       result = optimizer.optimize(endpoints)
       result.size.should eq(1) # Should deduplicate
       result[0].url.should eq("/users/{id}")
@@ -38,20 +38,20 @@ describe "LLMEndpointOptimizer" do
     it "works as standard optimizer when no LLM config" do
       options["url"] = YAML::Any.new("https://test.com")
       optimizer = LLMEndpointOptimizer.new(logger, options)
-      
+
       endpoints = [
         Endpoint.new("/users/{id}", "GET"),
         Endpoint.new("//users//{id}", "GET"), # duplicate with extra slashes
         Endpoint.new("/posts/:post_id", "POST"),
       ]
-      
+
       result = optimizer.optimize(endpoints)
-      
+
       # Should work like base optimizer
       result.size.should eq(2) # Deduplicated
       result[0].url.should eq("https://test.com/users/{id}")
       result[1].url.should eq("https://test.com/posts/:post_id")
-      
+
       # Should extract parameters
       result[0].params.size.should eq(1)
       result[1].params.size.should eq(1)
@@ -66,7 +66,7 @@ describe "LLMEndpointOptimizer" do
         Endpoint.new("/api/*/data", "GET"),
         Endpoint.new("/api/users_data__special", "GET"),
       ]
-      
+
       result = optimizer.optimize(endpoints)
       result.size.should eq(2)
       result[0].url.should eq("/api/*/data")
@@ -78,7 +78,7 @@ describe "LLMEndpointOptimizer" do
     it "applies pvalue configurations" do
       options["set_pvalue"] = YAML::Any.new([YAML::Any.new("id=TEST_ID")])
       optimizer = LLMEndpointOptimizer.new(logger, options)
-      
+
       result = optimizer.apply_pvalue("path", "id", "original")
       result.should eq("TEST_ID")
     end
@@ -87,7 +87,7 @@ describe "LLMEndpointOptimizer" do
       options["url"] = YAML::Any.new("https://api.test.com")
       optimizer = LLMEndpointOptimizer.new(logger, options)
       endpoints = [Endpoint.new("/users", "GET")]
-      
+
       result = optimizer.combine_url_and_endpoints(endpoints)
       result[0].url.should eq("https://api.test.com/users")
     end
@@ -95,7 +95,7 @@ describe "LLMEndpointOptimizer" do
     it "extracts path parameters" do
       optimizer = LLMEndpointOptimizer.new(logger, options)
       endpoints = [Endpoint.new("/users/{id}/posts/<int:post_id>", "GET")]
-      
+
       result = optimizer.add_path_parameters(endpoints)
       result[0].params.size.should eq(2)
       result[0].params[0].name.should eq("id")
@@ -108,23 +108,23 @@ describe "LLMEndpointOptimizer" do
       options["url"] = YAML::Any.new("https://api.example.com")
       options["set_pvalue"] = YAML::Any.new([YAML::Any.new("user_id=123"), YAML::Any.new("post_id=456")])
       optimizer = LLMEndpointOptimizer.new(logger, options)
-      
+
       endpoints = [
         Endpoint.new("/users/{user_id}", "GET"),
         Endpoint.new("/users/:user_id/posts/<int:post_id>", "GET"),
         Endpoint.new("//users//{user_id}", "GET"), # exact duplicate with slashes
       ]
-      
+
       result = optimizer.optimize(endpoints)
-      
+
       # Should have 2 unique endpoints after optimization
       result.size.should eq(2)
-      
+
       # All should have proper base URL
       result.each do |endpoint|
         endpoint.url.should contain("https://api.example.com")
       end
-      
+
       # Should extract all parameters
       result[0].params.size.should eq(1)
       result[1].params.size.should eq(2)

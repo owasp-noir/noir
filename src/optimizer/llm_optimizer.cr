@@ -32,19 +32,19 @@ class LLMEndpointOptimizer < EndpointOptimizer
     return endpoints if endpoints.empty? || !@use_llm || !@llm_client
 
     @logger.info "Applying LLM-based optimization for non-standard paths and parameters."
-    
+
     # Filter endpoints that might benefit from LLM optimization
     candidates = find_optimization_candidates(endpoints)
-    
+
     if candidates.empty?
       @logger.debug_sub "No endpoints found that would benefit from LLM optimization."
       return endpoints
     end
 
     @logger.debug_sub "Found #{candidates.size} endpoints that may benefit from LLM optimization."
-    
+
     optimized_endpoints = [] of Endpoint
-    
+
     candidates.each do |endpoint|
       optimized_endpoint = llm_optimize_single_endpoint(endpoint)
       optimized_endpoints << optimized_endpoint
@@ -62,34 +62,34 @@ class LLMEndpointOptimizer < EndpointOptimizer
   # Find endpoints that would benefit from LLM optimization
   private def find_optimization_candidates(endpoints : Array(Endpoint)) : Array(Endpoint)
     candidates = [] of Endpoint
-    
+
     endpoints.each do |endpoint|
       # Check for non-standard URL patterns that might need refinement
       if has_non_standard_patterns(endpoint)
         candidates << endpoint
       end
     end
-    
+
     candidates
   end
 
   # Check if an endpoint has non-standard patterns that could benefit from LLM optimization
   private def has_non_standard_patterns(endpoint : Endpoint) : Bool
     url = endpoint.url
-    
+
     # Look for unusual parameter patterns, complex paths, or non-standard naming
-    return true if url.includes?("*") # Wildcard patterns
-    return true if url.includes?("...") # Spread/rest patterns
-    return true if url.scan(/\{[^}]*\|[^}]*\}/).size > 0 # Union types in parameters
-    return true if url.scan(/[A-Z]{2,}/).size > 0 # Unusual uppercase segments
-    return true if url.scan(/\d{3,}/).size > 0 # Long numeric segments
+    return true if url.includes?("*")                         # Wildcard patterns
+    return true if url.includes?("...")                       # Spread/rest patterns
+    return true if url.scan(/\{[^}]*\|[^}]*\}/).size > 0      # Union types in parameters
+    return true if url.scan(/[A-Z]{2,}/).size > 0             # Unusual uppercase segments
+    return true if url.scan(/\d{3,}/).size > 0                # Long numeric segments
     return true if url.includes?("__") || url.includes?("--") # Double separators
-    
+
     # Check for complex parameter patterns
     params_text = endpoint.params.map(&.name).join(" ")
-    return true if params_text.includes?("_id_") # Complex ID patterns
+    return true if params_text.includes?("_id_")          # Complex ID patterns
     return true if params_text.scan(/[A-Z]{2,}/).size > 0 # Unusual naming patterns
-    
+
     false
   end
 
@@ -100,7 +100,7 @@ class LLMEndpointOptimizer < EndpointOptimizer
 
     # Create optimization prompt
     prompt = create_optimization_prompt(endpoint)
-    
+
     begin
       response = client.request(prompt, LLM_OPTIMIZE_FORMAT)
       response_str = response.to_s
@@ -123,68 +123,66 @@ class LLMEndpointOptimizer < EndpointOptimizer
 
     <<-PROMPT
     #{LLM_OPTIMIZE_PROMPT}
-    
+
     Endpoint to optimize:
     - Method: #{endpoint.method}
     - URL: #{endpoint.url}
     - Parameters:
     #{params_info}
-    
+
     Please provide optimized versions with improved naming, structure, and parameter handling.
     PROMPT
   end
 
   # Apply LLM optimization suggestions to an endpoint
   private def apply_llm_optimizations(endpoint : Endpoint, response : String) : Endpoint
-    begin
-      optimization_data = JSON.parse(response).as_h
-      
-      optimized_endpoint = endpoint
-      
-      # Apply URL optimizations if suggested
-      if optimization_data.has_key?("optimized_url")
-        new_url = optimization_data["optimized_url"].as_s
-        if new_url != endpoint.url && new_url.size > 0 && new_url.starts_with?("/")
-          @logger.debug_sub "  - URL optimized: #{endpoint.url} → #{new_url}"
-          optimized_endpoint.url = new_url
-        end
+    optimization_data = JSON.parse(response).as_h
+
+    optimized_endpoint = endpoint
+
+    # Apply URL optimizations if suggested
+    if optimization_data.has_key?("optimized_url")
+      new_url = optimization_data["optimized_url"].as_s
+      if new_url != endpoint.url && new_url.size > 0 && new_url.starts_with?("/")
+        @logger.debug_sub "  - URL optimized: #{endpoint.url} → #{new_url}"
+        optimized_endpoint.url = new_url
       end
-      
-      # Apply parameter optimizations if suggested
-      if optimization_data.has_key?("optimized_params")
-        optimized_params = [] of Param
-        optimization_data["optimized_params"].as_a.each do |param_data|
-          param_obj = param_data.as_h
-          name = param_obj["name"].as_s
-          param_type = param_obj["param_type"].as_s
-          value = param_obj.has_key?("value") ? param_obj["value"].as_s : ""
-          
-          optimized_params << Param.new(name, value, param_type)
-        end
-        
-        if optimized_params.size > 0
-          @logger.debug_sub "  - Parameters optimized: #{endpoint.params.size} → #{optimized_params.size}"
-          optimized_endpoint.params = optimized_params
-        end
-      end
-      
-      optimized_endpoint
-    rescue ex : Exception
-      @logger.debug "Failed to parse LLM optimization response: #{ex.message}"
-      endpoint
     end
+
+    # Apply parameter optimizations if suggested
+    if optimization_data.has_key?("optimized_params")
+      optimized_params = [] of Param
+      optimization_data["optimized_params"].as_a.each do |param_data|
+        param_obj = param_data.as_h
+        name = param_obj["name"].as_s
+        param_type = param_obj["param_type"].as_s
+        value = param_obj.has_key?("value") ? param_obj["value"].as_s : ""
+
+        optimized_params << Param.new(name, value, param_type)
+      end
+
+      if optimized_params.size > 0
+        @logger.debug_sub "  - Parameters optimized: #{endpoint.params.size} → #{optimized_params.size}"
+        optimized_endpoint.params = optimized_params
+      end
+    end
+
+    optimized_endpoint
+  rescue ex : Exception
+    @logger.debug "Failed to parse LLM optimization response: #{ex.message}"
+    endpoint
   end
 
   # Check if two endpoints represent the same logical endpoint for replacement
   private def matches_endpoint_identity(original : Endpoint, optimized : Endpoint) : Bool
     # Match by method and similar URL structure (before optimization)
     return false unless original.method == optimized.method
-    
-    # For identity matching, use a flexible comparison that accounts for 
+
+    # For identity matching, use a flexible comparison that accounts for
     # parameter names and basic URL structure
     original_base = original.url.gsub(/\{[^}]+\}/, "{param}").gsub(/:[\w]+/, ":param").gsub(/<[^>]+>/, "<param>")
     optimized_base = optimized.url.gsub(/\{[^}]+\}/, "{param}").gsub(/:[\w]+/, ":param").gsub(/<[^>]+>/, "<param>")
-    
+
     original_base == optimized_base
   end
 
@@ -193,9 +191,9 @@ class LLMEndpointOptimizer < EndpointOptimizer
     # Check if LLM is enabled in options
     if @options.has_key?("ai_provider") && @options["ai_provider"].to_s != ""
       @use_llm = true
-      
+
       provider = @options["ai_provider"].to_s.downcase
-      
+
       case provider
       when "ollama"
         if @options.has_key?("ollama") && @options.has_key?("ollama_model")
@@ -213,7 +211,7 @@ class LLMEndpointOptimizer < EndpointOptimizer
           @logger.debug_sub "LLM optimization enabled with #{provider}: #{@options["ai_model"]}"
         end
       end
-      
+
       unless @llm_client
         @use_llm = false
         @logger.debug "LLM optimization disabled - missing required configuration"
@@ -224,13 +222,13 @@ class LLMEndpointOptimizer < EndpointOptimizer
   # LLM prompt for optimization
   LLM_OPTIMIZE_PROMPT = <<-PROMPT
   Analyze the provided endpoint and optimize it for better structure, naming conventions, and parameter handling.
-  
+
   Focus on:
   - Normalizing unusual URL patterns
   - Improving parameter naming conventions
   - Standardizing path structures
   - Removing redundant or confusing elements
-  
+
   Guidelines:
   - Keep the core functionality and meaning intact
   - Use RESTful conventions where appropriate
