@@ -34,7 +34,7 @@ flowchart LR
         Detector1 & Detector2 & Detector3 --> |Condition| PassiveScan
     end
 
-    PassiveScan --> |Results| OutputBuilder
+    PassiveScan --> |Results| BaseOptimizer
 
     Detectors --> |Techs| Analyzers
 
@@ -44,15 +44,23 @@ flowchart LR
         CodeAnalyzers --> |Condition| Minilexer
         CodeAnalyzers --> |Condition| Miniparser
     end
+   subgraph Optimizer
+       direction LR
+       BaseOptimizer[Optimizer] --> LLMOptimizer[LLM Optimizer]
+       LLMOptimizer[LLM Optimizer] --> OptimizedResult
+       OptimizedResult[Result]
+   end
 
     Analyzers --> |Condition| Deliver
     Analyzers --> |Condition| Tagger
     Deliver --> 3rdParty
-    Tagger --> |Tags| OutputBuilder
-    Analyzers --> |Endpoints| OutputBuilder
+    BaseOptimizer --> OptimizedResult
+    OptimizedResult --> OutputBuilder
+    Tagger --> |Tags| BaseOptimizer
+    Analyzers --> |Endpoints| BaseOptimizer
     OutputBuilder --> Report:::highlight
 
-    classDef highlight fill:#f9f,stroke:#333,stroke-width:4px;
+    classDef highlight fill:#000,stroke:#333,stroke-width:4px;
 {% end %}
 
 ## Project Goals
