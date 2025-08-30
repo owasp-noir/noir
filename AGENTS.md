@@ -101,6 +101,7 @@ src/                     # Core source code
 ├── output_builder/      # Output format generation (JSON, YAML, etc.)
 ├── models/              # Data structures and models
 ├── llm/                 # AI/LLM integration
+├── optimizer/           # Endpoint optimization (normalization/dedup) and LLM optimizer
 ├── tagger/              # Endpoint tagging and categorization
 └── deliver/             # Results delivery (proxy, elasticsearch)
 
