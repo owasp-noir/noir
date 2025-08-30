@@ -32,7 +32,7 @@ docs-serve-supported: docs-supported
 
 # Check for missing i18n (Korean) documentation files.
 docs-i18n-check:
-    @echo "Checking for missing Korean (ko) documentation files..."
+    @echo "Checking for missing i18n documentation files..."
     crystal run scripts/check_i18n_docs.cr
 
 # Automatically format code and fix linting issues.
