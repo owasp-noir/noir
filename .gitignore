@@ -11,3 +11,4 @@ ameba.sh
 
 # Ignore for Zola
 /docs/public/
+lib/http_proxy/src/wait_group.cr

@@ -393,6 +393,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :kotlin_ktor => {
+      :framework => "Ktor",
+      :language  => "Kotlin",
+      :similar   => ["ktor", "kotlin-ktor", "kotlin_ktor"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :oas2 => {
       :format    => ["JSON", "YAML"],
       :similar   => ["oas 2.0", "oas_2_0", "swagger 2.0", "swagger_2_0", "swagger"],
