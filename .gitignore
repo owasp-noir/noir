@@ -9,5 +9,9 @@ ameba.sh
 # Build artifacts
 /build/
 
+# Nix
+result
+result-*
+
 # Ignore for Zola
 /docs/public/

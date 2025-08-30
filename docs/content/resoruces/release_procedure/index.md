@@ -19,6 +19,7 @@ Noir is distributed through several channels. Some are updated automatically via
 | Homebrew (Tap) | `owasp-noir/noir` | Automated |
 | Snapcraft | [noir](https://snapcraft.io/noir) | Automated |
 | Docker Hub | [ghcr.io/owasp-noir/noir](https://github.com/owasp-noir/noir/pkgs/container/noir) | Automated |
+| Nix | [nixpkgs](https://github.com/NixOS/nixpkgs) | Manual |
 | OWASP Project Page | [OWASP/www-project-noir](https://github.com/OWASP/www-project-noir) | Manual |
 
 ## General Procedure
@@ -47,6 +48,38 @@ To update the main Homebrew formula, you need to submit a pull request to the `h
     cd $(brew --repository)/Library/Taps/homebrew/homebrew-core/Formula
     brew style noir.rb
     ```
+
+### Nix
+
+To add Noir to the official nixpkgs repository, you need to submit a pull request to the nixpkgs repository.
+
+1.  **Fork and Sync**: Make sure you have a fork of the [NixOS/nixpkgs](https://github.com/NixOS/nixpkgs) repository and that it is up-to-date.
+
+2.  **Create Package Expression**: Create a new package expression in the appropriate category. For Noir, this would typically be in `pkgs/tools/security/` or `pkgs/development/tools/`.
+
+3.  **Use crystal2nix**: Use the [crystal2nix](https://github.com/nix-community/crystal2nix) tool to generate or update the Nix expression:
+
+    ```bash
+    # Install crystal2nix
+    nix-env -iA nixpkgs.crystal2nix
+    
+    # Generate Nix expression
+    crystal2nix > noir.nix
+    ```
+
+4.  **Update all-packages.nix**: Add the package to `pkgs/top-level/all-packages.nix`:
+
+    ```nix
+    noir = callPackage ../tools/security/noir { };
+    ```
+
+5.  **Test the Build**: Before submitting, test that the package builds correctly:
+
+    ```bash
+    nix-build -A noir
+    ```
+
+6.  **Create Pull Request**: Submit a pull request to the nixpkgs repository following their [contribution guidelines](https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md).
 
 ### OWASP Project Page
 

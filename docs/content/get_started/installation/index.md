@@ -29,6 +29,46 @@ If you are on a Linux distribution that supports [Snap](https://snapcraft.io/), 
 sudo snap install noir
 ```
 
+## Nix
+
+If you use [Nix](https://nixos.org/), you can install Noir using Nix flakes or the traditional Nix expressions.
+
+### Using Nix Flakes (Recommended)
+
+```bash
+# Install directly from the repository
+nix profile install github:owasp-noir/noir
+
+# Or run without installing
+nix run github:owasp-noir/noir -- --help
+```
+
+### Using Traditional Nix
+
+```bash
+# Clone the repository first
+git clone https://github.com/owasp-noir/noir
+cd noir
+
+# Install using Nix
+nix-env -f default.nix -i
+
+# Or enter a development shell
+nix-shell
+```
+
+### Development Environment
+
+For development, you can use the provided Nix flake or shell.nix:
+
+```bash
+# Using flakes
+nix develop
+
+# Using traditional shell.nix
+nix-shell
+```
+
 ## Docker
 
 If you prefer to use Docker, you can pull the official Noir image from the GitHub Container Registry (GHCR).
