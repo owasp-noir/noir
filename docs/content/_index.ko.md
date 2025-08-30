@@ -7,7 +7,7 @@ version = "v0.23.1"
 [extra.hero]
 title = "NOIR"
 description = "Noir는 정적 분석을 통해 엔드포인트와 잠재적 취약점을 발견하여 화이트박스 보안 테스트를 향상시키고 보안 파이프라인을 간소화하는 공격 표면 탐지기입니다."
-image = "./images/noir-wallpaper.jpg"
+image = "../images/noir-wallpaper.jpg"
 cta_buttons = [
     { text = "시작하기", url = "./get_started/overview", style = "primary" },
     { text = "GitHub에서 보기", url = "https://github.com/owasp-noir/noir", style = "secondary" },
