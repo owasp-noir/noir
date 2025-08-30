@@ -456,6 +456,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :php_symfony => {
+      :framework => "Symfony",
+      :language  => "PHP",
+      :similar   => ["symfony", "php-symfony", "php_symfony"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => true,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :python_django => {
       :framework => "Django",
       :language  => "Python",

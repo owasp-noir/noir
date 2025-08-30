@@ -1,0 +1,23 @@
+api_health_check:
+    path: /api/health
+    methods: [GET]
+
+api_docs:
+    path: /api/docs
+    methods: [GET]
+
+api_categories:
+    path: /api/categories
+    methods: [GET, POST]
+
+api_category_show:
+    path: /api/categories/{id}
+    methods: [GET, PUT, DELETE]
+
+api_search:
+    path: /api/search
+    methods: [GET]
+
+webhooks_receive:
+    path: /webhooks/{provider}
+    methods: [POST]
