@@ -38,6 +38,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"js_nestjs", Javascript::Nestjs},
     {"js_restify", Javascript::Restify},
     {"kotlin_spring", Kotlin::Spring},
+    {"kotlin_ktor", Kotlin::Ktor},
     {"oas2", Specification::Oas2},
     {"oas3", Specification::Oas3},
     {"raml", Specification::RAML},
