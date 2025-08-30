@@ -43,6 +43,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"raml", Specification::RAML},
     {"zap_sites_tree", Specification::ZapSitesTree},
     {"php_pure", Php::Php},
+    {"php_symfony", Php::Symfony},
     {"python_django", Python::Django},
     {"python_fastapi", Python::FastAPI},
     {"python_flask", Python::Flask},

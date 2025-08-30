@@ -49,6 +49,7 @@ def detect_techs(base_path : String, options : Hash(String, YAML::Any), passive_
     Specification::RAML,
     Specification::ZapSitesTree,
     Php::Php,
+    Php::Symfony,
     Python::Django,
     Python::FastAPI,
     Python::Flask,
