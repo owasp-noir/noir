@@ -11,7 +11,7 @@ build_search_index = true
 
 [languages.ko]
 generate_feeds = true
-build_search_index = true
+build_search_index = false
 
 [markdown]
 # Whether to do syntax highlighting
