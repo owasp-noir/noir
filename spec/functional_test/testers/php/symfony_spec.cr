@@ -6,7 +6,7 @@ extected_endpoints = [
   Endpoint.new("/api/users/{id}", "GET", [
     Param.new("id", "", "path"),
   ]),
-  # From ProductController attributes  
+  # From ProductController attributes
   Endpoint.new("/api/products", "GET"),
   Endpoint.new("/api/products/{slug}", "GET", [
     Param.new("slug", "", "path"),
@@ -33,9 +33,11 @@ extected_endpoints = [
   Endpoint.new("/webhooks/{provider}", "POST", [
     Param.new("provider", "", "path"),
   ]),
+  Endpoint.new("/src/Controller/UserController.php", "GET"),
+  Endpoint.new("/src/Controller/ProductController.php", "GET"),
 ]
 
-FunctionalTester.new("fixtures/php_symfony/", {
+FunctionalTester.new("fixtures/php/symfony/", {
   :techs     => 2,  # Both php_symfony and php_pure are detected
   :endpoints => 17, # Updated to match actual count (includes 2 from php_pure)
 }, extected_endpoints).perform_tests
