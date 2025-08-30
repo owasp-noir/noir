@@ -1,4 +1,8 @@
 class WaitGroup
+  @count : Int32
+  @mutex : Mutex
+  @channel : Channel(Nil)
+
   def initialize
     @count = 0
     @mutex = Mutex.new
