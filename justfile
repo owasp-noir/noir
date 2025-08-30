@@ -30,7 +30,7 @@ docs-serve-supported: docs-supported
     @echo "Serving the documentation site at http://localhost:1111/ ..."
     cd docs && zola serve
 
-# Check for missing i18n (Korean) documentation files.
+# Check for missing i18n (Korean, Japanese) documentation files.
 docs-i18n-check:
     @echo "Checking for missing i18n documentation files..."
     crystal run scripts/check_i18n_docs.cr

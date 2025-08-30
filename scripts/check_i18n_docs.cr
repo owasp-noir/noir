@@ -68,7 +68,7 @@ class I18nDocsChecker
 
   def initialize(
     @base_path : String = "docs/content",
-    @languages : Array(String) = ["ko"],
+    @languages : Array(String) = ["ko", "ja"],
     @quiet : Bool = false,
     @format : String = "text",
     @fail_on_missing : Bool = true
@@ -258,8 +258,8 @@ if show_help
   exit 0
 end
 
-# Default to Korean if nothing provided via env or CLI (backward compatible)
-languages = ["ko"] if languages.empty?
+# Default to Korean and Japanese if nothing provided via env or CLI
+languages = ["ko", "ja"] if languages.empty?
 languages.uniq!
 
 checker = I18nDocsChecker.new(base_path, languages, quiet, format, fail_on_missing)
