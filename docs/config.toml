@@ -10,8 +10,9 @@ compile_sass = false
 build_search_index = true
 
 [languages.ko]
+title = "OWASP Noir"
 generate_feeds = true
-build_search_index = false
+build_search_index = true
 
 [markdown]
 # Whether to do syntax highlighting
