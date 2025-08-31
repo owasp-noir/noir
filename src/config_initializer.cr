@@ -75,46 +75,48 @@ class ConfigInitializer
 
   def default_options
     noir_options = {
-      "base"                  => YAML::Any.new(""),
-      "color"                 => YAML::Any.new(true),
-      "config_file"           => YAML::Any.new(""),
-      "concurrency"           => YAML::Any.new("50"),
-      "debug"                 => YAML::Any.new(false),
-      "verbose"               => YAML::Any.new(false),
-      "exclude_codes"         => YAML::Any.new(""),
-      "exclude_techs"         => YAML::Any.new(""),
-      "format"                => YAML::Any.new("plain"),
-      "include_path"          => YAML::Any.new(false),
-      "nolog"                 => YAML::Any.new(false),
-      "output"                => YAML::Any.new(""),
-      "send_es"               => YAML::Any.new(""),
-      "send_proxy"            => YAML::Any.new(""),
-      "send_req"              => YAML::Any.new(false),
-      "send_with_headers"     => YAML::Any.new([] of YAML::Any),
-      "set_pvalue"            => YAML::Any.new([] of YAML::Any),
-      "set_pvalue_header"     => YAML::Any.new([] of YAML::Any),
-      "set_pvalue_cookie"     => YAML::Any.new([] of YAML::Any),
-      "set_pvalue_query"      => YAML::Any.new([] of YAML::Any),
-      "set_pvalue_form"       => YAML::Any.new([] of YAML::Any),
-      "set_pvalue_json"       => YAML::Any.new([] of YAML::Any),
-      "set_pvalue_path"       => YAML::Any.new([] of YAML::Any),
-      "status_codes"          => YAML::Any.new(false),
-      "techs"                 => YAML::Any.new(""),
-      "url"                   => YAML::Any.new(""),
-      "use_filters"           => YAML::Any.new([] of YAML::Any),
-      "use_matchers"          => YAML::Any.new([] of YAML::Any),
-      "all_taggers"           => YAML::Any.new(false),
-      "use_taggers"           => YAML::Any.new(""),
-      "diff"                  => YAML::Any.new(""),
-      "passive_scan"          => YAML::Any.new(false),
-      "passive_scan_path"     => YAML::Any.new([] of YAML::Any),
-      "passive_scan_severity" => YAML::Any.new("high"),
-      "ollama"                => YAML::Any.new(""),
-      "ollama_model"          => YAML::Any.new(""),
-      "ai_provider"           => YAML::Any.new(""),
-      "ai_model"              => YAML::Any.new(""),
-      "ai_key"                => YAML::Any.new(""),
-      "analyze_feign"         => YAML::Any.new(false),
+      "base"                         => YAML::Any.new(""),
+      "color"                        => YAML::Any.new(true),
+      "config_file"                  => YAML::Any.new(""),
+      "concurrency"                  => YAML::Any.new("50"),
+      "debug"                        => YAML::Any.new(false),
+      "verbose"                      => YAML::Any.new(false),
+      "exclude_codes"                => YAML::Any.new(""),
+      "exclude_techs"                => YAML::Any.new(""),
+      "format"                       => YAML::Any.new("plain"),
+      "include_path"                 => YAML::Any.new(false),
+      "nolog"                        => YAML::Any.new(false),
+      "output"                       => YAML::Any.new(""),
+      "send_es"                      => YAML::Any.new(""),
+      "send_proxy"                   => YAML::Any.new(""),
+      "send_req"                     => YAML::Any.new(false),
+      "send_with_headers"            => YAML::Any.new([] of YAML::Any),
+      "set_pvalue"                   => YAML::Any.new([] of YAML::Any),
+      "set_pvalue_header"            => YAML::Any.new([] of YAML::Any),
+      "set_pvalue_cookie"            => YAML::Any.new([] of YAML::Any),
+      "set_pvalue_query"             => YAML::Any.new([] of YAML::Any),
+      "set_pvalue_form"              => YAML::Any.new([] of YAML::Any),
+      "set_pvalue_json"              => YAML::Any.new([] of YAML::Any),
+      "set_pvalue_path"              => YAML::Any.new([] of YAML::Any),
+      "status_codes"                 => YAML::Any.new(false),
+      "techs"                        => YAML::Any.new(""),
+      "url"                          => YAML::Any.new(""),
+      "use_filters"                  => YAML::Any.new([] of YAML::Any),
+      "use_matchers"                 => YAML::Any.new([] of YAML::Any),
+      "all_taggers"                  => YAML::Any.new(false),
+      "use_taggers"                  => YAML::Any.new(""),
+      "diff"                         => YAML::Any.new(""),
+      "passive_scan"                 => YAML::Any.new(false),
+      "passive_scan_path"            => YAML::Any.new([] of YAML::Any),
+      "passive_scan_severity"        => YAML::Any.new("high"),
+      "passive_scan_auto_update"     => YAML::Any.new(false),
+      "passive_scan_no_update_check" => YAML::Any.new(false),
+      "ollama"                       => YAML::Any.new(""),
+      "ollama_model"                 => YAML::Any.new(""),
+      "ai_provider"                  => YAML::Any.new(""),
+      "ai_model"                     => YAML::Any.new(""),
+      "ai_key"                       => YAML::Any.new(""),
+      "analyze_feign"                => YAML::Any.new(false),
     }
 
     noir_options
@@ -225,6 +227,12 @@ class ConfigInitializer
     # Minimum severity level for passive scan (critical, high, medium, low)
     # Default: high (detects high and critical severity issues)
     passive_scan_severity: "high"
+
+    # Automatically update passive rules from repository at startup
+    passive_scan_auto_update: false
+
+    # Skip checking for passive rules updates at startup
+    passive_scan_no_update_check: false
 
     # The AI server URL
     ai_provider: "#{options["ai_provider"]}"

@@ -67,6 +67,17 @@ class NoirRunner
 
     if any_to_bool(@options["passive_scan"])
       @logger.info "Passive scanner enabled."
+
+      # Check for passive rules updates unless disabled
+      unless any_to_bool(@options["passive_scan_no_update_check"])
+        # Initialize rules if they don't exist
+        PassiveRulesUpdater.initialize_rules(@logger)
+
+        # Check for updates (auto-update if enabled)
+        auto_update = any_to_bool(@options["passive_scan_auto_update"])
+        PassiveRulesUpdater.check_for_updates(@logger, auto_update)
+      end
+
       if @options["passive_scan_path"].as_a.size > 0
         @logger.sub "├── Using custom passive rules."
         @options["passive_scan_path"].as_a.each do |rule_path|
