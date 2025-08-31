@@ -46,7 +46,7 @@ module Analyzer::Kotlin
     private def extract_routes_from_content(path : String, content : String)
       lines = content.split('\n')
       prefix_stack = [] of String
-      brace_stack = [] of Int32  # Track brace depth for each prefix
+      brace_stack = [] of Int32 # Track brace depth for each prefix
 
       lines.each_with_index do |line, index|
         stripped_line = line.strip
@@ -71,12 +71,12 @@ module Analyzer::Kotlin
           if method_match = stripped_line.match(/#{method.downcase}\s*\(\s*["']([^"']+)["']\s*\)/)
             route_path = method_match[1]
             full_path = build_full_path(prefix_stack, route_path)
-            
+
             endpoint = create_endpoint(full_path, method, path)
-            
+
             # Extract additional parameters from the line and subsequent lines
             extract_parameters_from_context(endpoint, line, content, index)
-            
+
             @result << endpoint
           end
         end
@@ -118,7 +118,7 @@ module Analyzer::Kotlin
     # Extract path parameters from URL patterns like {id} or {userId}
     private def extract_path_parameters(path : String) : Array(Param)
       params = [] of Param
-      
+
       # Match {param} patterns in Ktor
       path.scan(/\{([^}]+)\}/) do |match|
         param_name = match[1]
@@ -134,12 +134,12 @@ module Analyzer::Kotlin
       # Look for common parameter patterns in Ktor handlers
       # Search through the handler block for parameter usage
       lines = content.split('\n')
-      
+
       # Find the end of the current handler block
       start_index = line_index
       brace_count = 0
       end_index = start_index
-      
+
       (start_index...lines.size).each do |i|
         brace_count += lines[i].count('{')
         brace_count -= lines[i].count('}')
@@ -148,11 +148,11 @@ module Analyzer::Kotlin
           break
         end
       end
-      
+
       # Analyze lines within the handler block
       (start_index..end_index).each do |i|
         handler_line = lines[i]
-        
+
         # Check for call.receive<Type>() patterns
         if handler_line.includes?("call.receive<") && (type_match = handler_line.match(/call\.receive<([^>]+)>/))
           param_type = type_match[1]
@@ -161,7 +161,7 @@ module Analyzer::Kotlin
         end
 
         # Check for call.parameters["name"] patterns
-        if handler_line.includes?("call.parameters[") 
+        if handler_line.includes?("call.parameters[")
           handler_line.scan(/call\.parameters\["([^"]+)"\]/) do |match|
             param_name = match[1]
             param = Param.new(param_name, "", "query")
