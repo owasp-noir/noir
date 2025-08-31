@@ -1,3 +1,4 @@
+require "../../spec_helper"
 require "../../../src/passive_scan/detect.cr"
 require "../../../src/models/logger.cr"
 require "../../../src/models/passive_scan.cr"
@@ -103,5 +104,263 @@ describe NoirPassiveScan do
 
     results.size.should eq(1)
     results[0].line_number.should eq(1)
+  end
+
+  describe "severity filtering" do
+    it "filters by critical severity only" do
+      logger = NoirLogger.new(false, false, false, true)
+      rules = [
+        PassiveScan.new(YAML.parse(%(
+          id: test-critical
+          info:
+            name: Critical Issue
+            author:
+              - test
+            severity: critical
+            description: Critical severity test
+            reference:
+              - https://example.com
+          matchers-condition: and
+          matchers:
+            - type: word
+              patterns:
+                - critical
+              condition: or
+          category: security
+          techs:
+            - '*'
+        ))),
+        PassiveScan.new(YAML.parse(%(
+          id: test-high
+          info:
+            name: High Issue
+            author:
+              - test
+            severity: high
+            description: High severity test
+            reference:
+              - https://example.com
+          matchers-condition: and
+          matchers:
+            - type: word
+              patterns:
+                - high
+              condition: or
+          category: security
+          techs:
+            - '*'
+        ))),
+      ]
+      file_content = "This is a critical issue and a high priority item."
+
+      # Test critical only
+      results = NoirPassiveScan.detect_with_severity("test_file.txt", file_content, rules, logger, "critical")
+      results.size.should eq(1)
+      results[0].info.severity.should eq("critical")
+    end
+
+    it "filters by high severity and above" do
+      logger = NoirLogger.new(false, false, false, true)
+      rules = [
+        PassiveScan.new(YAML.parse(%(
+          id: test-critical
+          info:
+            name: Critical Issue
+            author:
+              - test
+            severity: critical
+            description: Critical severity test
+            reference:
+              - https://example.com
+          matchers-condition: and
+          matchers:
+            - type: word
+              patterns:
+                - critical
+              condition: or
+          category: security
+          techs:
+            - '*'
+        ))),
+        PassiveScan.new(YAML.parse(%(
+          id: test-high
+          info:
+            name: High Issue
+            author:
+              - test
+            severity: high
+            description: High severity test
+            reference:
+              - https://example.com
+          matchers-condition: and
+          matchers:
+            - type: word
+              patterns:
+                - high
+              condition: or
+          category: security
+          techs:
+            - '*'
+        ))),
+        PassiveScan.new(YAML.parse(%(
+          id: test-medium
+          info:
+            name: Medium Issue
+            author:
+              - test
+            severity: medium
+            description: Medium severity test
+            reference:
+              - https://example.com
+          matchers-condition: and
+          matchers:
+            - type: word
+              patterns:
+                - medium
+              condition: or
+          category: security
+          techs:
+            - '*'
+        ))),
+      ]
+      file_content = "This is a critical issue, a high priority item, and a medium concern."
+
+      # Test high and above (should include critical and high, exclude medium)
+      results = NoirPassiveScan.detect_with_severity("test_file.txt", file_content, rules, logger, "high")
+      results.size.should eq(2)
+      severities = results.map(&.info.severity)
+      severities.should contain("critical")
+      severities.should contain("high")
+      severities.should_not contain("medium")
+    end
+
+    it "filters by medium severity and above" do
+      logger = NoirLogger.new(false, false, false, true)
+      rules = [
+        PassiveScan.new(YAML.parse(%(
+          id: test-critical
+          info:
+            name: Critical Issue
+            author:
+              - test
+            severity: critical
+            description: Critical severity test
+            reference:
+              - https://example.com
+          matchers-condition: and
+          matchers:
+            - type: word
+              patterns:
+                - critical
+              condition: or
+          category: security
+          techs:
+            - '*'
+        ))),
+        PassiveScan.new(YAML.parse(%(
+          id: test-medium
+          info:
+            name: Medium Issue
+            author:
+              - test
+            severity: medium
+            description: Medium severity test
+            reference:
+              - https://example.com
+          matchers-condition: and
+          matchers:
+            - type: word
+              patterns:
+                - medium
+              condition: or
+          category: security
+          techs:
+            - '*'
+        ))),
+        PassiveScan.new(YAML.parse(%(
+          id: test-low
+          info:
+            name: Low Issue
+            author:
+              - test
+            severity: low
+            description: Low severity test
+            reference:
+              - https://example.com
+          matchers-condition: and
+          matchers:
+            - type: word
+              patterns:
+                - low
+              condition: or
+          category: info
+          techs:
+            - '*'
+        ))),
+      ]
+      file_content = "This is a critical issue, a medium concern, and a low priority item."
+
+      # Test medium and above (should include critical and medium, exclude low)
+      results = NoirPassiveScan.detect_with_severity("test_file.txt", file_content, rules, logger, "medium")
+      results.size.should eq(2)
+      severities = results.map(&.info.severity)
+      severities.should contain("critical")
+      severities.should contain("medium")
+      severities.should_not contain("low")
+    end
+
+    it "includes all severities with low threshold" do
+      logger = NoirLogger.new(false, false, false, true)
+      rules = [
+        PassiveScan.new(YAML.parse(%(
+          id: test-critical
+          info:
+            name: Critical Issue
+            author:
+              - test
+            severity: critical
+            description: Critical severity test
+            reference:
+              - https://example.com
+          matchers-condition: and
+          matchers:
+            - type: word
+              patterns:
+                - critical
+              condition: or
+          category: security
+          techs:
+            - '*'
+        ))),
+        PassiveScan.new(YAML.parse(%(
+          id: test-low
+          info:
+            name: Low Issue
+            author:
+              - test
+            severity: low
+            description: Low severity test
+            reference:
+              - https://example.com
+          matchers-condition: and
+          matchers:
+            - type: word
+              patterns:
+                - low
+              condition: or
+          category: info
+          techs:
+            - '*'
+        ))),
+      ]
+      file_content = "This is a critical issue and a low priority item."
+
+      # Test low and above (should include all)
+      results = NoirPassiveScan.detect_with_severity("test_file.txt", file_content, rules, logger, "low")
+      results.size.should eq(2)
+      severities = results.map(&.info.severity)
+      severities.should contain("critical")
+      severities.should contain("low")
+    end
   end
 end

@@ -25,6 +25,30 @@ If you want to use a custom set of rules, you can specify the path to your rules
 noir -b <BASE_PATH> --passive-scan --passive-scan-path /path/to/your/rules.yml
 ```
 
+### Filtering by Severity Level
+
+You can filter passive scan results by minimum severity level using the `--passive-scan-severity` flag. The available severity levels are:
+
+- `critical`: Only critical severity issues
+- `high`: High and critical severity issues (default)
+- `medium`: Medium, high, and critical severity issues
+- `low`: All severity levels (low, medium, high, and critical)
+
+Examples:
+
+```bash
+# Show only critical severity issues
+noir -b <BASE_PATH> -P --passive-scan-severity critical
+
+# Show medium severity and above (medium, high, critical)
+noir -b <BASE_PATH> -P --passive-scan-severity medium
+
+# Show all issues (default behavior when using 'low')
+noir -b <BASE_PATH> -P --passive-scan-severity low
+```
+
+The default severity threshold is `high`, which means that without specifying the flag, Noir will detect issues with high and critical severities.
+
 ## Understanding the Output
 
 When a passive scan identifies a potential issue, it will produce output similar to this:
