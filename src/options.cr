@@ -89,6 +89,8 @@ def run_options_parser
         exit(1)
       end
     end
+    parser.on "--passive-scan-auto-update", "Automatically update passive scan rules from the remote repository at startup" { |_| noir_options["passive_scan_auto_update"] = YAML::Any.new(true) }
+    parser.on "--passive-scan-no-update-check", "Skip checking for passive scan rules updates at startup" { |_| noir_options["passive_scan_no_update_check"] = YAML::Any.new(true) }
 
     parser.separator "\n  TAGGER:".colorize(:blue)
     parser.on "-T", "--use-all-taggers", "Activates all taggers for full analysis coverage" { |_| noir_options["all_taggers"] = YAML::Any.new(true) }

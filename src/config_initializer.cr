@@ -106,9 +106,11 @@ class ConfigInitializer
       "all_taggers"           => YAML::Any.new(false),
       "use_taggers"           => YAML::Any.new(""),
       "diff"                  => YAML::Any.new(""),
-      "passive_scan"          => YAML::Any.new(false),
-      "passive_scan_path"     => YAML::Any.new([] of YAML::Any),
-      "passive_scan_severity" => YAML::Any.new("high"),
+      "passive_scan"                => YAML::Any.new(false),
+      "passive_scan_path"           => YAML::Any.new([] of YAML::Any),
+      "passive_scan_severity"       => YAML::Any.new("high"),
+      "passive_scan_auto_update"    => YAML::Any.new(false),
+      "passive_scan_no_update_check" => YAML::Any.new(false),
       "ollama"                => YAML::Any.new(""),
       "ollama_model"          => YAML::Any.new(""),
       "ai_provider"           => YAML::Any.new(""),
@@ -225,6 +227,12 @@ class ConfigInitializer
     # Minimum severity level for passive scan (critical, high, medium, low)
     # Default: high (detects high and critical severity issues)
     passive_scan_severity: "high"
+
+    # Automatically update passive rules from repository at startup
+    passive_scan_auto_update: false
+
+    # Skip checking for passive rules updates at startup
+    passive_scan_no_update_check: false
 
     # The AI server URL
     ai_provider: "#{options["ai_provider"]}"
