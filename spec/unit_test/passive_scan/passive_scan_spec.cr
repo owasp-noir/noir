@@ -152,7 +152,7 @@ describe NoirPassiveScan do
         ))),
       ]
       file_content = "This is a critical issue and a high priority item."
-      
+
       # Test critical only
       results = NoirPassiveScan.detect_with_severity("test_file.txt", file_content, rules, logger, "critical")
       results.size.should eq(1)
@@ -224,7 +224,7 @@ describe NoirPassiveScan do
         ))),
       ]
       file_content = "This is a critical issue, a high priority item, and a medium concern."
-      
+
       # Test high and above (should include critical and high, exclude medium)
       results = NoirPassiveScan.detect_with_severity("test_file.txt", file_content, rules, logger, "high")
       results.size.should eq(2)
@@ -299,7 +299,7 @@ describe NoirPassiveScan do
         ))),
       ]
       file_content = "This is a critical issue, a medium concern, and a low priority item."
-      
+
       # Test medium and above (should include critical and medium, exclude low)
       results = NoirPassiveScan.detect_with_severity("test_file.txt", file_content, rules, logger, "medium")
       results.size.should eq(2)
@@ -354,7 +354,7 @@ describe NoirPassiveScan do
         ))),
       ]
       file_content = "This is a critical issue and a low priority item."
-      
+
       # Test low and above (should include all)
       results = NoirPassiveScan.detect_with_severity("test_file.txt", file_content, rules, logger, "low")
       results.size.should eq(2)
