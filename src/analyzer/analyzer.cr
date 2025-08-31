@@ -49,6 +49,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"python_fastapi", Python::FastAPI},
     {"python_flask", Python::Flask},
     {"python_sanic", Python::Sanic},
+    {"python_tornado", Python::Tornado},
     {"ruby_hanami", Ruby::Hanami},
     {"ruby_rails", Ruby::Rails},
     {"ruby_sinatra", Ruby::Sinatra},
