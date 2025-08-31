@@ -46,7 +46,6 @@ module Analyzer::Python
           path_api_instances[path] = api_instances
 
           lines.each_with_index do |line, line_index|
-            original_line = line
             line = line.gsub(" ", "") # remove spaces for easier regex matching
 
             # Identify Sanic instance assignments
@@ -241,7 +240,7 @@ module Analyzer::Python
 
       # Parse the codeblock for request parameter usage
       json_variable_names = [] of String
-      
+
       # First pass: identify JSON variable assignments
       codeblock_lines.each do |code_line|
         # Look for patterns like: record = request.json
