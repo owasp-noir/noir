@@ -546,6 +546,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :python_sanic => {
+      :framework => "Sanic",
+      :language  => "Python",
+      :similar   => ["sanic", "python-sanic", "python_sanic"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => true,
+      },
+    },
     :raml => {
       :format    => ["YAML"],
       :similar   => ["raml"],
