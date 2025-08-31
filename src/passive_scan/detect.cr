@@ -1,12 +1,24 @@
 require "../models/passive_scan"
 require "../models/logger"
+require "./severity"
 require "yaml"
 
 module NoirPassiveScan
+  # Original detect method for backward compatibility
   def self.detect(file_path : String, file_content : String, rules : Array(PassiveScan), logger : NoirLogger) : Array(PassiveScanResult)
+    detect_with_severity(file_path, file_content, rules, logger, "low")
+  end
+
+  # Enhanced detect method with severity filtering
+  def self.detect_with_severity(file_path : String, file_content : String, rules : Array(PassiveScan), logger : NoirLogger, min_severity : String) : Array(PassiveScanResult)
     results = [] of PassiveScanResult
 
     rules.each do |rule|
+      # Skip rules that don't meet the severity threshold
+      unless PassiveScanSeverity.meets_threshold?(rule.info.severity, min_severity)
+        next
+      end
+
       matchers = rule.matchers
 
       if rule.matchers_condition == "and"

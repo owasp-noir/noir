@@ -108,6 +108,7 @@ class ConfigInitializer
       "diff"              => YAML::Any.new(""),
       "passive_scan"      => YAML::Any.new(false),
       "passive_scan_path" => YAML::Any.new([] of YAML::Any),
+      "passive_scan_severity" => YAML::Any.new("high"),
       "ollama"            => YAML::Any.new(""),
       "ollama_model"      => YAML::Any.new(""),
       "ai_provider"       => YAML::Any.new(""),
@@ -220,6 +221,10 @@ class ConfigInitializer
     # e.g /path/to/rules
     passive_scan: false
     passive_scan_path: []
+    
+    # Minimum severity level for passive scan (critical, high, medium, low)
+    # Default: high (detects high and critical severity issues)
+    passive_scan_severity: "high"
 
     # The AI server URL
     ai_provider: "#{options["ai_provider"]}"

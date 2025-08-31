@@ -80,6 +80,15 @@ def run_options_parser
     parser.on "--passive-scan-path PATH", "Specify the path for the rules used in the passive security scan" do |var|
       append_to_yaml_array(noir_options, passive_scan_path, var)
     end
+    parser.on "--passive-scan-severity SEVERITY", "Set minimum severity level for passive scan (critical, high, medium, low). Default: high" do |var|
+      valid_severities = ["critical", "high", "medium", "low"]
+      if valid_severities.includes?(var.downcase)
+        noir_options["passive_scan_severity"] = YAML::Any.new(var.downcase)
+      else
+        STDERR.puts "ERROR: Invalid severity level '#{var}'. Valid options are: #{valid_severities.join(", ")}".colorize(:yellow)
+        exit(1)
+      end
+    end
 
     parser.separator "\n  TAGGER:".colorize(:blue)
     parser.on "-T", "--use-all-taggers", "Activates all taggers for full analysis coverage" { |_| noir_options["all_taggers"] = YAML::Any.new(true) }

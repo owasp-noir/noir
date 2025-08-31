@@ -133,7 +133,9 @@ def detect_techs(base_path : String, options : Hash(String, YAML::Any), passive_
               end
             end
 
-            results = NoirPassiveScan.detect(file, content, passive_scans, logger)
+            # Get the minimum severity threshold from options
+            min_severity = options["passive_scan_severity"]?.try(&.to_s) || "high"
+            results = NoirPassiveScan.detect_with_severity(file, content, passive_scans, logger, min_severity)
             if results.size > 0
               mutex.synchronize do
                 passive_result.concat(results)
