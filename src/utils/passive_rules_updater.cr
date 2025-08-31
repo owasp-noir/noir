@@ -109,6 +109,7 @@ module PassiveRulesUpdater
     logger.warning "Passive rules are #{behind_count} commits behind the latest version."
     logger.sub "├── Run 'git pull' in ~/.config/noir/passive_rules/ to update"
     logger.sub "├── Or use 'git clone #{REPO_URL} ~/.config/noir/passive_rules/' to get the latest rules"
+    logger.sub "├── Or run 'noir -b . -P --passive-scan-auto-update' to auto-update on startup"
   end
 
   # Initialize passive rules if they don't exist
