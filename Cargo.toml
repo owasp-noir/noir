@@ -1,0 +1,73 @@
+[package]
+name = "just"
+version = "1.13.0"
+authors = ["Casey Rodarmor <casey@rodarmor.com>"]
+autotests = false
+categories = ["command-line-utilities", "development-tools"]
+description = "🤖 Just a command runner"
+edition = "2021"
+exclude = ["/book", "/icon.png", "/screenshot.png", "/www"]
+homepage = "https://github.com/casey/just"
+keywords = ["command-line", "task", "runner", "development", "utility"]
+license = "CC0-1.0"
+readme = "crates-io-readme.md"
+repository = "https://github.com/casey/just"
+rust-version = "1.63"
+
+[workspace]
+members = [".", "bin/ref-type", "bin/generate-book", "bin/update-contributors"]
+
+[dependencies]
+ansi_term = "0.12.0"
+atty = "0.2.0"
+camino = "1.0.4"
+clap = { version = "2.33.0", features = ["wrap_help"] }
+ctrlc = { version = "3.1.1", features = ["termination"] }
+derivative = "2.0.0"
+dotenvy = "0.15"
+edit-distance = "2.0.0"
+env_logger = "0.10.0"
+heck = "0.4.0"
+lexiclean = "0.0.1"
+libc = "0.2.0"
+log = "0.4.4"
+regex = "1.5.4"
+serde = { version = "1.0.130", features = ["derive", "rc"] }
+serde_json = "1.0.68"
+sha2 = "0.10"
+similar = { version = "2.1.0", features = ["unicode"] }
+snafu = "0.7.0"
+strum = { version = "0.24.0", features = ["derive"] }
+target = "2.0.0"
+tempfile = "3.0.0"
+typed-arena = "2.0.1"
+unicode-width = "0.1.0"
+uuid = { version = "1.0.0", features = ["v4"] }
+
+[dev-dependencies]
+cradle = "0.2.0"
+executable-path = "1.0.0"
+pretty_assertions = "1.0.0"
+temptree = "0.2.0"
+which = "4.0.0"
+yaml-rust = "0.4.5"
+
+[features]
+# No features are active by default.
+default = []
+# The `help4help2man` feature modifies the message produced by `--help`
+# so that `help2man` produces a reasonable man page.
+help4help2man = []
+
+# The public documentation is minimal and doesn't change between
+# platforms, so we only build them for linux on docs.rs to save
+# their build machines some cycles.
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[profile.release]
+lto = true
+
+[[test]]
+name = "integration"
+path = "tests/lib.rs"
