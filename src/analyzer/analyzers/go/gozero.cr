@@ -19,14 +19,14 @@ module Analyzer::Go
                   path = channel.receive?
                   break if path.nil?
                   next if File.directory?(path)
-                  
+
                   # Handle both .go files and .api files
                   if File.exists?(path) && (File.extname(path) == ".go" || File.extname(path) == ".api")
                     File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
                       last_endpoint = Endpoint.new("", "")
                       file.each_line.with_index do |line, index|
                         details = Details.new(PathInfo.new(path, index + 1))
-                        
+
                         # Handle .api files (go-zero API definition files)
                         if File.extname(path) == ".api"
                           # Parse go-zero .api route definitions
@@ -35,13 +35,13 @@ module Analyzer::Go
                           if match = line.match(/^\s*(get|post|put|delete|patch|head|options)\s+([^\s\(]+)/)
                             method = match[1].upcase
                             route_path = match[2]
-                            
+
                             new_endpoint = Endpoint.new(route_path, method, details)
                             result << new_endpoint
                             last_endpoint = new_endpoint
                           end
                         end
-                        
+
                         # Handle .go files
                         if File.extname(path) == ".go"
                           lexer = GolangLexer.new
@@ -85,14 +85,13 @@ module Analyzer::Go
                              line.includes?(".GET(") || line.includes?(".POST(") || line.includes?(".PUT(") || line.includes?(".DELETE(") ||
                              line.includes?(".Patch(") || line.includes?(".PATCH(") || line.includes?(".Head(") || line.includes?(".HEAD(") ||
                              line.includes?(".Options(") || line.includes?(".OPTIONS(")
-                            
-                            get_route_path(line, groups).tap do |route_path|
-                              if route_path.size > 0
+                            get_route_path(line, groups).tap do |resolved_route_path|
+                              if resolved_route_path.size > 0
                                 # Extract method from the line (e.g., ".Get(" -> "GET")
                                 method_match = line.match(/\.(Get|Post|Put|Delete|Patch|Head|Options|GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\(/)
                                 if method_match
                                   method = method_match[1].upcase
-                                  new_endpoint = Endpoint.new("#{route_path}", method, details)
+                                  new_endpoint = Endpoint.new("#{resolved_route_path}", method, details)
                                   result << new_endpoint
                                   last_endpoint = new_endpoint
                                 end
