@@ -164,6 +164,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :go_fasthttp => {
+      :framework => "fasthttp",
+      :language  => "Go",
+      :similar   => ["fasthttp", "go-fasthttp", "go_fasthttp"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :go_fiber => {
       :framework => "Fiber",
       :language  => "Go",

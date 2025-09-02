@@ -25,6 +25,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"elixir_phoenix", Elixir::Phoenix},
     {"go_beego", Go::Beego},
     {"go_echo", Go::Echo},
+    {"go_fasthttp", Go::Fasthttp},
     {"go_fiber", Go::Fiber},
     {"go_gin", Go::Gin},
     {"go_chi", Go::Chi},
