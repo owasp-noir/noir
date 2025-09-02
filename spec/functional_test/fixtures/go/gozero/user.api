@@ -1,0 +1,65 @@
+syntax = "v1"
+
+info(
+    title: "User API"
+    desc: "Example go-zero API"
+    author: "example"
+    email: "example@example.com"
+    version: "v1"
+)
+
+type (
+    User {
+        ID   int    `json:"id"`
+        Name string `json:"name"`
+        Email string `json:"email"`
+    }
+
+    CreateUserRequest {
+        Name  string `json:"name"`
+        Email string `json:"email"`
+    }
+
+    UpdateUserRequest {
+        Name  string `json:"name,optional"`
+        Email string `json:"email,optional"`
+    }
+)
+
+service user-api {
+    @handler GetUser
+    get /users/:id (User)
+
+    @handler CreateUser
+    post /users (CreateUserRequest) returns (User)
+
+    @handler UpdateUser
+    put /users/:id (UpdateUserRequest) returns (User)
+
+    @handler DeleteUser
+    delete /users/:id
+
+    @handler ListUsers
+    get /users returns ([]User)
+
+    @handler GetProfile
+    get /profile returns (User)
+
+    @handler UpdateProfile
+    put /profile (UpdateUserRequest) returns (User)
+}
+
+@server(
+    group: admin
+    prefix: /admin
+)
+service user-api {
+    @handler AdminListUsers
+    get /users returns ([]User)
+
+    @handler AdminDeleteUser
+    delete /users/:id
+
+    @handler AdminCreateUser
+    post /users (CreateUserRequest) returns (User)
+}
