@@ -216,6 +216,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :go_gozero => {
+      :framework => "go-zero",
+      :language  => "Go",
+      :similar   => ["go-zero", "gozero", "go_gozero"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => true,
+        :websocket   => false,
+      },
+    },
     :har => {
       :format    => ["JSON"],
       :similar   => ["har"],
