@@ -20,87 +20,119 @@ module Analyzer::Go
                   break if path.nil?
                   next if File.directory?(path)
                   if File.exists?(path) && File.extname(path) == ".go"
-                    File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-                      last_endpoint = Endpoint.new("", "")
-                      file.each_line.with_index do |line, index|
-                        details = Details.new(PathInfo.new(path, index + 1))
-                        lexer = GolangLexer.new
+                    # Read all lines for lookahead processing
+                    lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
+                    last_endpoint = Endpoint.new("", "")
+                    
+                    lines.each_with_index do |line, index|
+                      details = Details.new(PathInfo.new(path, index + 1))
+                      lexer = GolangLexer.new
 
-                        # Handle subrouter creation (e.g., r.PathPrefix("/api/").Subrouter())
-                        if line.includes?(".PathPrefix(") && line.includes?(".Subrouter()")
-                          map = lexer.tokenize(line)
-                          before = Token.new(:unknown, "", 0)
-                          subrouter_name = ""
-                          subrouter_path = ""
-                          map.each do |token|
-                            if token.type == :assign
-                              subrouter_name = before.value.to_s.gsub(":", "").gsub(/\s/, "")
-                            end
+                      # Handle subrouter creation (e.g., r.PathPrefix("/api/").Subrouter())
+                      if line.includes?(".PathPrefix(") && line.includes?(".Subrouter()")
+                        map = lexer.tokenize(line)
+                        before = Token.new(:unknown, "", 0)
+                        subrouter_name = ""
+                        subrouter_path = ""
+                        map.each do |token|
+                          if token.type == :assign
+                            subrouter_name = before.value.to_s.gsub(":", "").gsub(/\s/, "")
+                          end
 
-                            if token.type == :string
-                              subrouter_path = token.value.to_s
-                              subrouters.each do |sub|
-                                sub.each do |key, value|
-                                  if before.value.to_s.includes? key
-                                    subrouter_path = value + subrouter_path
-                                  end
+                          if token.type == :string
+                            subrouter_path = token.value.to_s
+                            subrouters.each do |sub|
+                              sub.each do |key, value|
+                                if before.value.to_s.includes? key
+                                  subrouter_path = value + subrouter_path
                                 end
                               end
                             end
-
-                            before = token
                           end
 
-                          if subrouter_name.size > 0 && subrouter_path.size > 0
-                            subrouters << {subrouter_name => subrouter_path}
-                          end
+                          before = token
                         end
 
-                        # Handle route definitions (e.g., r.HandleFunc("/path", handler).Methods("GET"))
-                        if line.includes?(".HandleFunc(")
-                          get_route_path(line, subrouters).tap do |route_path|
-                            if route_path.size > 0
-                              # Try to get method from the same line first
-                              method = get_method_from_line(line)
-                              new_endpoint = Endpoint.new("#{route_path}", method, details)
-                              result << new_endpoint
-                              last_endpoint = new_endpoint
-                            end
-                          end
+                        if subrouter_name.size > 0 && subrouter_path.size > 0
+                          subrouters << {subrouter_name => subrouter_path}
                         end
+                      end
 
-                        # Handle method specification on separate line (e.g., }).Methods("POST"))
-                        if line.includes?(".Methods(") && (line.includes?("}).Methods(") || line.strip.starts_with?(".Methods("))
-                          method = get_method_from_line(line)
-                          if method != "GET" && last_endpoint.url != ""
-                            last_endpoint.method = method
-                          end
-                        end
-
-                        # Handle parameter extraction patterns in Go
-                        ["Vars", "Query", "PostFormValue", "FormValue", "Header", "Cookie"].each do |pattern|
-                          if line.includes?("#{pattern}(")
-                            get_param(line, pattern).tap do |param|
-                              if param.name.size > 0 && last_endpoint.method != ""
-                                last_endpoint.params << param
+                      # Handle route definitions (e.g., r.HandleFunc("/path", handler).Methods("GET"))
+                      if line.includes?(".HandleFunc(")
+                        get_route_path(line, subrouters).tap do |route_path|
+                          if route_path.size > 0
+                            # Check next 5 lines for .Methods() call
+                            method = "GET"  # default
+                            (0..5).each do |lookahead|
+                              check_line_idx = index + lookahead
+                              break if check_line_idx >= lines.size
+                              check_line = lines[check_line_idx]
+                              if check_line.includes?(".Methods(")
+                                method = get_method_from_line(check_line)
+                                break
                               end
                             end
+                            
+                            new_endpoint = Endpoint.new("#{route_path}", method, details)
+                            result << new_endpoint
+                            last_endpoint = new_endpoint
                           end
                         end
+                      end
 
-                        # Handle static file serving (e.g., r.PathPrefix("/static/").Handler(...))
-                        if line.includes?(".PathPrefix(") && line.includes?(".Handler(") && !line.includes?(".Subrouter(")
-                          get_static_path(line).tap do |static_path|
-                            if static_path["static_path"].size > 0 && static_path["file_path"].size > 0
-                              public_dirs << static_path
-                            end
+                      # Handle parameter extraction patterns in Go (order matters - check more specific patterns first)
+                      if line.includes?("Vars(")
+                        get_param(line, "Vars").tap do |param|
+                          if param.name.size > 0 && last_endpoint.url != ""
+                            last_endpoint.params << param
+                          end
+                        end
+                      elsif line.includes?("Query().Get(")
+                        get_param(line, "Query").tap do |param|
+                          if param.name.size > 0 && last_endpoint.url != ""
+                            last_endpoint.params << param
+                          end
+                        end
+                      elsif line.includes?("PostFormValue(")
+                        get_param(line, "PostFormValue").tap do |param|
+                          if param.name.size > 0 && last_endpoint.url != ""
+                            last_endpoint.params << param
+                          end
+                        end
+                      elsif line.includes?("FormValue(")
+                        get_param(line, "FormValue").tap do |param|
+                          if param.name.size > 0 && last_endpoint.url != ""
+                            last_endpoint.params << param
+                          end
+                        end
+                      elsif line.includes?("Header.Get(")
+                        get_param(line, "Header").tap do |param|
+                          if param.name.size > 0 && last_endpoint.url != ""
+                            last_endpoint.params << param
+                          end
+                        end
+                      elsif line.includes?("Cookie(")
+                        get_param(line, "Cookie").tap do |param|
+                          if param.name.size > 0 && last_endpoint.url != ""
+                            last_endpoint.params << param
+                          end
+                        end
+                      end
+
+                      # Handle static file serving (e.g., r.PathPrefix("/static/").Handler(...))
+                      if line.includes?(".PathPrefix(") && line.includes?(".Handler(") && !line.includes?(".Subrouter(")
+                        get_static_path(line).tap do |static_path|
+                          if static_path["static_path"].size > 0 && static_path["file_path"].size > 0
+                            public_dirs << static_path
                           end
                         end
                       end
                     end
                   end
-                rescue e : File::NotFoundError
-                  logger.debug "File not found: #{path}"
+                rescue e
+                  # Skip problematic files
+                  next
                 end
               end
             end
@@ -168,8 +200,6 @@ module Analyzer::Go
     end
 
     def get_param(line : String, pattern : String) : Param
-      lexer = GolangLexer.new
-      map = lexer.tokenize(line)
       param_name = ""
       param_type = ""
 
