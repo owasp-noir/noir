@@ -13,7 +13,7 @@ module Analyzer::Go
               last_endpoint = Endpoint.new("", "")
               file.each_line.with_index do |line, index|
                 details = Details.new(PathInfo.new(path, index + 1))
-                
+
                 # Detect fasthttp route patterns
                 endpoint = analyze_route_line(line, details)
                 if endpoint.method != ""
