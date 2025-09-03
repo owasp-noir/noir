@@ -1,3 +1,4 @@
+require "../../../spec_helper"
 require "../../../../src/detector/detectors/go/*"
 
 describe "Detect Go Gin" do

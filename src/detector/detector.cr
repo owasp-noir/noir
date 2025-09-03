@@ -36,6 +36,7 @@ def detect_techs(base_path : String, options : Hash(String, YAML::Any), passive_
     Go::Gin,
     Go::Chi,
     Go::GoZero,
+    Go::Mux,
     Specification::Har,
     Java::Armeria,
     Java::Jsp,
