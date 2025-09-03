@@ -11,13 +11,13 @@ Noir는 엔드포인트와 해당 명세를 식별하여 코드베이스를 분�
 
 ## C#
 
-| 프레임워크 | endpoint | method | query | path | body | header | cookie | static_path | websocket |
+| Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
 |-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
 | ASP.NET MVC | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 
 ## Crystal
 
-| 프레임워크 | endpoint | method | query | path | body | header | cookie | static_path | websocket |
+| Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
 |-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
 | Amber | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Grip | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ |
@@ -27,25 +27,25 @@ Noir는 엔드포인트와 해당 명세를 식별하여 코드베이스를 분�
 
 ## Elixir
 
-| 프레임워크 | endpoint | method | query | path | body | header | cookie | static_path | websocket |
+| Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
 |-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
 | Phoenix | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 
 ## Go
 
-| 프레임워크 | endpoint | method | query | path | body | header | cookie | static_path | websocket |
+| Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
 |-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
-| Echo | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Beego | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Chi | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Echo | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Fiber | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Gin | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
-| Gorm | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Gorilla Mux | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| gRPC | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| HTTP | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| fasthttp | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
 | go-zero | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
 
 ## Java
 
-| 프레임워크 | endpoint | method | query | path | body | header | cookie | static_path | websocket |
+| Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
 |-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
 | Armeria | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | JSP | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ❌ |
@@ -53,45 +53,49 @@ Noir는 엔드포인트와 해당 명세를 식별하여 코드베이스를 분�
 
 ## JavaScript
 
-| 프레임워크 | endpoint | method | query | path | body | header | cookie | static_path | websocket |
+| Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
 |-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
-| Express | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-| Koa | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Express | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Fastify | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Koa | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| NestJS | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Restify | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
 
 ## Kotlin
 
-| 프레임워크 | endpoint | method | query | path | body | header | cookie | static_path | websocket |
+| Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
 |-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
 | Ktor | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
 | Spring | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 
 ## PHP
 
-| 프레임워크 | endpoint | method | query | path | body | header | cookie | static_path | websocket |
+| Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
 |-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
 | Pure | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ |
 | Symfony | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 
 ## Python
 
-| 프레임워크 | endpoint | method | query | path | body | header | cookie | static_path | websocket |
+| Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
 |-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
-| Django | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
-| FastAPI | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-| Flask | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
+| Django | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| FastAPI | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Flask | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
 | Sanic | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ |
 | Tornado | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ |
 
 ## Ruby
 
-| 프레임워크 | endpoint | method | query | path | body | header | cookie | static_path | websocket |
+| Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
 |-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
+| Hanami | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Rails | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-| Sinatra | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Sinatra | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
 
 ## Rust
 
-| 프레임워크 | endpoint | method | query | path | body | header | cookie | static_path | websocket |
+| Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
 |-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
 | Actix Web | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Axum | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
@@ -101,10 +105,3 @@ Noir는 엔드포인트와 해당 명세를 식별하여 코드베이스를 분�
 | Rocket | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Tide | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Warp | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
-
-## 범례
-
-* ✅ = 완전 지원
-* ❌ = 지원하지 않음
-
-이 표는 각 프레임워크에서 사용 가능한 기능을 보여줍니다. Noir를 사용하여 프로젝트를 분석할 때 프레임워크가 원하는 기능을 지원하는지 확인할 수 있습니다.
