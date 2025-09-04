@@ -23,6 +23,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"crystal_lucky", Crystal::Lucky},
     {"crystal_marten", Crystal::Marten},
     {"elixir_phoenix", Elixir::Phoenix},
+    {"elixir_plug", Elixir::Plug},
     {"go_beego", Go::Beego},
     {"go_echo", Go::Echo},
     {"go_fasthttp", Go::Fasthttp},
