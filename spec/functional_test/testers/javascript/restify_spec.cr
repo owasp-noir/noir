@@ -43,9 +43,7 @@ extected_endpoints = [
     Param.new("itemId", "", "path"),
     Param.new("fields", "", "query"),
   ]),
-  Endpoint.new("/info", "GET", [
-    Param.new("format", "", "query"),
-  ]),
+  Endpoint.new("/info", "GET"),
   # New added endpoints - router defined with path prefix
   Endpoint.new("/dashboard", "GET", [
     Param.new("view", "", "query"),

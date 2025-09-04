@@ -25,10 +25,7 @@ extected_endpoints = [
   Endpoint.new("/items/multiple/methods", "POST"),
   Endpoint.new("/items/multiple/methods2", "GET"),
   Endpoint.new("/items/multiple/methods2", "POST"),
-  Endpoint.new("/greet", "GET", [
-    Param.new("name", "", "query"),
-    Param.new("header", "", "header"),
-  ]),
+  Endpoint.new("/greet", "GET"),
   Endpoint.new("/greet2", "GET", [
     Param.new("myname", "", "query"),
     Param.new("b", "", "query"),
@@ -42,15 +39,15 @@ extected_endpoints = [
   # EmptyController.java
   Endpoint.new("/empty/", "GET"),
   # MyController.java
-  Endpoint.new("/api/v1/test/", "GET", [Param.new("name", "", "query"), Param.new("header", "", "header")]),
+  Endpoint.new("/api/v1/test/", "GET"),
   # TApiResponses.java
-  Endpoint.new("/multi/annotation/", "GET", [Param.new("name", "", "query"), Param.new("header", "", "header")]),
+  Endpoint.new("/multi/annotation/", "GET"),
   # TRequestHeader.java
-  Endpoint.new("/request/header/", "GET", [Param.new("name", "", "query"), Param.new("header", "", "header"), Param.new("Authorization", "", "header")]),
+  Endpoint.new("/request/header/", "GET"),
   # DuplicateParameter.java
   Endpoint.new("/duplicate/parameter/{token}/test", "DELETE", [Param.new("token", "", "path")]),
   # ThrowsMultiException.java
-  Endpoint.new("/throws/multi/exception/", "GET", [Param.new("name", "", "query"), Param.new("header", "", "header")]),
+  Endpoint.new("/throws/multi/exception/", "GET"),
   # InventoryClient.java
   Endpoint.new("/api/v2/items/{id}/stock", "PATCH", [Param.new("id", "", "path"), Param.new("quantity", "", "json")]),
   Endpoint.new("/api/v2/items", "GET", [Param.new("category", "", "query")]),

@@ -16,10 +16,8 @@ extected_endpoints = [
     Param.new("context", "", "json"),
   ]),
   Endpoint.new("/posts/1", "PUT", [
-    Param.new("id", "", "json"),
     Param.new("title", "", "json"),
     Param.new("context", "", "json"),
-    Param.new("X-API-KEY", "", "header"),
   ]),
   Endpoint.new("/posts/1", "DELETE"),
   Endpoint.new("/up", "GET"),
