@@ -1,5 +1,5 @@
 ---
-name: Snapcraft tab Publish
+name: Snapcraft Publish
 on:
   release:
     types: [published]

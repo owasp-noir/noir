@@ -1,5 +1,5 @@
 ---
-name: Homebrew tab Publish
+name: Homebrew tap Publish
 on:
   release:
     types: [published]
