@@ -49,7 +49,7 @@ describe "Detect Laravel" do
       namespace App\\Http\\Controllers;
       use Illuminate\\Http\\Request;
       use Illuminate\\Http\\Response;
-      
+
       class UserController extends Controller {}
     }
     instance.detect("app/Http/Controllers/UserController.php", controller_content).should eq(true)
@@ -58,7 +58,7 @@ describe "Detect Laravel" do
   it "detects Laravel from controller in app/Http/Controllers/" do
     controller_content = %{<?php
       namespace App\\Http\\Controllers;
-      
+
       class ProductController extends Controller {
         public function index() {}
       }

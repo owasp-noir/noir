@@ -5,7 +5,7 @@ require "../../func_spec.cr"
 expected_endpoints = [
   # Core Laravel routes that are definitely working
   Endpoint.new("/", "GET"),
-  Endpoint.new("/dashboard", "GET"), 
+  Endpoint.new("/dashboard", "GET"),
   Endpoint.new("/users", "GET"),
   Endpoint.new("/users", "POST"),
   Endpoint.new("/health", "GET"),

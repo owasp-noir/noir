@@ -81,26 +81,24 @@ module Analyzer::Php
               params = extract_route_params(route_path)
               details = Details.new(PathInfo.new(path))
               endpoints << Endpoint.new(route_path, method, params, details)
-
             when route_patterns[1] # Route::match with multiple methods
               methods_str = match[1]
               route_path = match[2]
               methods = extract_methods_from_array(methods_str)
               params = extract_route_params(route_path)
               details = Details.new(PathInfo.new(path))
-              
-              methods.each do |method|
-                endpoints << Endpoint.new(route_path, method, params, details)
-              end
 
+              methods.each do |http_method|
+                endpoints << Endpoint.new(route_path, http_method, params, details)
+              end
             when route_patterns[2] # Route::any
               route_path = match[1]
               all_methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
               params = extract_route_params(route_path)
               details = Details.new(PathInfo.new(path))
-              
-              all_methods.each do |method|
-                endpoints << Endpoint.new(route_path, method, params, details)
+
+              all_methods.each do |http_method|
+                endpoints << Endpoint.new(route_path, http_method, params, details)
               end
             end
           end
@@ -151,13 +149,12 @@ module Analyzer::Php
         method_matches = content.scan(/#\[Route\s*\(\s*['"]([^'"]+)['"][^)]*\)\]\s*public\s+function\s+(\w+)/m)
         method_matches.each do |match|
           route_path = match[1]
-          method_name = match[2]
-          
+
           # Default to GET if no specific method found
           http_method = extract_http_method_from_path_context(content, match[0])
           params = extract_route_params(route_path)
           details = Details.new(PathInfo.new(path))
-          
+
           endpoints << Endpoint.new(route_path, http_method, params, details)
         end
       end
@@ -173,13 +170,13 @@ module Analyzer::Php
       route_matches.each do |match|
         method = match[1].upcase
         route_path = match[2]
-        
+
         # Build full path with prefix
         if prefix.empty?
           full_path = route_path
         else
           full_path = "/#{prefix.strip('/')}/#{route_path.strip('/')}"
-          full_path = full_path.gsub(/\/+/, "/") # Remove duplicate slashes
+          full_path = full_path.gsub(/\/+/, "/")               # Remove duplicate slashes
           full_path = full_path.chomp("/") if full_path != "/" # Remove trailing slash unless it's root
         end
 
@@ -194,19 +191,19 @@ module Analyzer::Php
         methods_str = match[1]
         route_path = match[2]
         methods = extract_methods_from_array(methods_str)
-        
+
         # Build full path with prefix
         if prefix.empty?
           full_path = route_path
         else
           full_path = "/#{prefix.strip('/')}/#{route_path.strip('/')}"
-          full_path = full_path.gsub(/\/+/, "/") # Remove duplicate slashes
+          full_path = full_path.gsub(/\/+/, "/")               # Remove duplicate slashes
           full_path = full_path.chomp("/") if full_path != "/" # Remove trailing slash unless it's root
         end
 
         params = extract_route_params(full_path)
         details = Details.new(PathInfo.new(file_path))
-        
+
         methods.each do |method|
           endpoints << Endpoint.new(full_path, method, params, details)
         end
@@ -221,14 +218,14 @@ module Analyzer::Php
 
       # Standard Laravel resource routes
       resource_routes = [
-        {"/#{resource}", "GET"},                    # index
-        {"/#{resource}/create", "GET"},            # create
-        {"/#{resource}", "POST"},                  # store
-        {"/#{resource}/{id}", "GET"},              # show
-        {"/#{resource}/{id}/edit", "GET"},         # edit
-        {"/#{resource}/{id}", "PUT"},              # update
-        {"/#{resource}/{id}", "PATCH"},            # update
-        {"/#{resource}/{id}", "DELETE"},           # destroy
+        {"/#{resource}", "GET"},           # index
+        {"/#{resource}/create", "GET"},    # create
+        {"/#{resource}", "POST"},          # store
+        {"/#{resource}/{id}", "GET"},      # show
+        {"/#{resource}/{id}/edit", "GET"}, # edit
+        {"/#{resource}/{id}", "PUT"},      # update
+        {"/#{resource}/{id}", "PATCH"},    # update
+        {"/#{resource}/{id}", "DELETE"},   # destroy
       ]
 
       resource_routes.each do |route_info|
