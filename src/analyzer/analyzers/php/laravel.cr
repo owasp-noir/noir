@@ -57,85 +57,14 @@ module Analyzer::Php
 
     private def analyze_routes_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        content = file.gets_to_end
-
-        # Match Route::method('path', ...)
-        route_patterns = [
-          # Route::get('/path', [Controller::class, 'method'])
-          /Route::(get|post|put|patch|delete|options|head)\s*\(\s*['"]([^'"]+)['"][^)]*\)/mi,
-          # Route::match(['GET', 'POST'], '/path', ...)
-          /Route::match\s*\(\s*\[([^\]]+)\]\s*,\s*['"]([^'"]+)['"][^)]*\)/mi,
-          # Route::any('/path', ...)
-          /Route::any\s*\(\s*['"]([^'"]+)['"][^)]*\)/mi,
-        ]
-
-        route_patterns.each do |pattern|
-          matches = content.scan(pattern)
-          matches.each do |match|
-            case pattern
-            when route_patterns[0] # Single method routes
-              method = match[1].upcase
-              route_path = match[2]
-              params = extract_route_params(route_path)
-              details = Details.new(PathInfo.new(path))
-              endpoints << Endpoint.new(route_path, method, params, details)
-            when route_patterns[1] # Route::match with multiple methods
-              methods_str = match[1]
-              route_path = match[2]
-              methods = extract_methods_from_array(methods_str)
-              params = extract_route_params(route_path)
-              details = Details.new(PathInfo.new(path))
-
-              methods.each do |http_method|
-                endpoints << Endpoint.new(route_path, http_method, params, details)
-              end
-            when route_patterns[2] # Route::any
-              route_path = match[1]
-              all_methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
-              params = extract_route_params(route_path)
-              details = Details.new(PathInfo.new(path))
-
-              all_methods.each do |http_method|
-                endpoints << Endpoint.new(route_path, http_method, params, details)
-              end
-            end
-          end
+      begin
+        File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
+          content = file.gets_to_end
+          endpoints = analyze_routes_content(content, "", path)
         end
-
-        # Match Route::resource('resource', Controller::class)
-        resource_matches = content.scan(/Route::resource\s*\(\s*['"]([^'"]+)['"][^)]*\)/mi)
-        resource_matches.each do |match|
-          resource_name = match[1]
-          endpoints.concat(create_resource_endpoints(resource_name, path))
-        end
-
-        # Match Route::apiResource('resource', Controller::class)
-        api_resource_matches = content.scan(/Route::apiResource\s*\(\s*['"]([^'"]+)['"][^)]*\)/mi)
-        api_resource_matches.each do |match|
-          resource_name = match[1]
-          endpoints.concat(create_api_resource_endpoints(resource_name, path))
-        end
-
-        # Match Route::group with prefix - improved regex
-        group_matches = content.scan(/Route::group\s*\(\s*\[[^}]*['"]prefix['"]\s*=>\s*['"]([^'"]+)['"][^}]*\]\s*,\s*function\s*\([^)]*\)\s*\{((?:[^{}]|{[^{}]*})*)\}/mi)
-        group_matches.each do |match|
-          prefix = match[1]
-          group_content = match[2]
-          group_endpoints = analyze_routes_content(group_content, prefix, path)
-          endpoints.concat(group_endpoints)
-        end
-
-        # Also look for simple Route::group without prefix for completeness
-        simple_group_matches = content.scan(/Route::group\s*\(\s*function\s*\([^)]*\)\s*\{((?:[^{}]|{[^{}]*})*)\}/mi)
-        simple_group_matches.each do |match|
-          group_content = match[1]
-          group_endpoints = analyze_routes_content(group_content, "", path)
-          endpoints.concat(group_endpoints)
-        end
+      rescue e
+        logger.debug "Error analyzing routes file #{path}: #{e}"
       end
-
       endpoints
     end
 
@@ -146,16 +75,37 @@ module Analyzer::Php
         content = file.gets_to_end
 
         # Look for Laravel Route attributes on controller methods
-        method_matches = content.scan(/#\[Route\s*\(\s*['"]([^'"]+)['"][^)]*\)\]\s*public\s+function\s+(\w+)/m)
+        # e.g., #[Route('/users', methods: ['GET'])]
+        method_matches = content.scan(/#\[Route\s*\(([^]]*)\]\s*public\s+function\s+(\w+)/m)
         method_matches.each do |match|
-          route_path = match[1]
+          attribute_content = match[1] # This is the content of the attribute
 
-          # Default to GET if no specific method found
-          http_method = extract_http_method_from_path_context(content, match[0])
+          path_match = attribute_content.match(/['"]([^'"]+)['"]/)
+          next unless path_match
+
+          route_path = path_match[1]
           params = extract_route_params(route_path)
           details = Details.new(PathInfo.new(path))
 
-          endpoints << Endpoint.new(route_path, http_method, params, details)
+          methods = [] of String
+          methods_match = attribute_content.match(/methods:\s*\[([^\]]*)\]/i)
+          if methods_match
+            methods = extract_methods_from_array(methods_match[1])
+          else
+            # also check for single method: methods: 'POST' or methods: "POST"
+            method_match = attribute_content.match(/methods:\s*['"]([^'"]+)['"]/)
+            if method_match
+              methods << method_match[1].upcase
+            end
+          end
+
+          if methods.empty?
+            methods << "GET"
+          end
+
+          methods.each do |http_method|
+            endpoints << Endpoint.new(route_path, http_method, params, details.dup)
+          end
         end
       end
 
@@ -164,52 +114,100 @@ module Analyzer::Php
 
     private def analyze_routes_content(content : String, prefix : String, file_path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
+      details = Details.new(PathInfo.new(file_path))
 
-      # Simple parsing for route definitions within groups
-      route_matches = content.scan(/Route::(get|post|put|patch|delete|options|head)\s*\(\s*['"]([^'"]+)['"][^)]*\)/mi)
-      route_matches.each do |match|
-        method = match[1].upcase
-        route_path = match[2]
+      # 1. Simple routes: Route::get, Route::post, etc.
+      route_patterns = [
+        /Route::(get|post|put|patch|delete|options|head)\s*\(\s*['"]([^'"]+)['"][^)]*\)/mi,
+        /Route::match\s*\(\s*\[([^\]]+)\]\s*,\s*['"]([^'"]+)['"][^)]*\)/mi,
+        /Route::any\s*\(\s*['"]([^'"]+)['"][^)]*\)/mi,
+      ]
 
-        # Build full path with prefix
-        if prefix.empty?
-          full_path = route_path
-        else
-          full_path = "/#{prefix.strip('/')}/#{route_path.strip('/')}"
-          full_path = full_path.gsub(/\/+/, "/")               # Remove duplicate slashes
-          full_path = full_path.chomp("/") if full_path != "/" # Remove trailing slash unless it's root
+      route_patterns.each do |pattern|
+        matches = content.scan(pattern)
+        matches.each do |match|
+          full_path = ""
+          methods = [] of String
+
+          case pattern
+          when route_patterns[0] # Single method
+            methods << match[1].upcase
+            route_path = match[2]
+            full_path = build_full_path(prefix, route_path)
+          when route_patterns[1] # Route::match
+            methods = extract_methods_from_array(match[1])
+            route_path = match[2]
+            full_path = build_full_path(prefix, route_path)
+          when route_patterns[2] # Route::any
+            methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
+            route_path = match[1]
+            full_path = build_full_path(prefix, route_path)
+          end
+
+          params = extract_route_params(full_path)
+          methods.each do |http_method|
+            endpoints << Endpoint.new(full_path, http_method, params, details.dup)
+          end
         end
-
-        params = extract_route_params(full_path)
-        details = Details.new(PathInfo.new(file_path))
-        endpoints << Endpoint.new(full_path, method, params, details)
       end
 
-      # Also check for Route::match within groups
-      match_routes = content.scan(/Route::match\s*\(\s*\[([^\]]+)\]\s*,\s*['"]([^'"]+)['"][^)]*\)/mi)
-      match_routes.each do |match|
-        methods_str = match[1]
-        route_path = match[2]
-        methods = extract_methods_from_array(methods_str)
+      # 2. Resource routes
+      resource_matches = content.scan(/Route::resource\s*\(\s*['"]([^'"]+)['"][^)]*\)/mi)
+      resource_matches.each do |match|
+        resource_name = match[1]
+        full_resource_path = build_full_path(prefix, resource_name)
+        endpoints.concat(create_resource_endpoints(full_resource_path.lstrip('/'), file_path))
+      end
 
-        # Build full path with prefix
-        if prefix.empty?
-          full_path = route_path
-        else
-          full_path = "/#{prefix.strip('/')}/#{route_path.strip('/')}"
-          full_path = full_path.gsub(/\/+/, "/")               # Remove duplicate slashes
-          full_path = full_path.chomp("/") if full_path != "/" # Remove trailing slash unless it's root
+      api_resource_matches = content.scan(/Route::apiResource\s*\(\s*['"]([^'"]+)['"][^)]*\)/mi)
+      api_resource_matches.each do |match|
+        resource_name = match[1]
+        full_resource_path = build_full_path(prefix, resource_name)
+        endpoints.concat(create_api_resource_endpoints(full_resource_path.lstrip('/'), file_path))
+      end
+
+      # 3. Group routes (recursive)
+      # Route::prefix(...)->group(...)
+      fluent_group_matches = content.scan(/Route::prefix\s*\(\s*['"]([^'"]+)['"]\s*\)->group\s*\(\s*function\s*\([^)]*\)\s*\{((?:[^{}]|{[^{}]*})*)\}/mi)
+      fluent_group_matches.each do |match|
+        group_prefix = match[1]
+        group_content = match[2]
+        new_prefix = build_full_path(prefix, group_prefix)
+        endpoints.concat(analyze_routes_content(group_content, new_prefix, file_path))
+      end
+
+      # Route::group with array options
+      group_matches = content.scan(/Route::group\s*\(\s*\[(.*?)\]\s*,\s*function\s*\([^)]*\)\s*\{((?:[^{}]|{[^{}]*})*)\}/mi)
+      group_matches.each do |match|
+        options_str = match[1]
+        group_content = match[2]
+
+        new_prefix = prefix
+        if prefix_match = options_str.match(/['"]prefix['"]\s*=>\s*['"]([^'"]+)['"]/)
+          new_prefix = build_full_path(prefix, prefix_match[1])
         end
 
-        params = extract_route_params(full_path)
-        details = Details.new(PathInfo.new(file_path))
+        endpoints.concat(analyze_routes_content(group_content, new_prefix, file_path))
+      end
 
-        methods.each do |method|
-          endpoints << Endpoint.new(full_path, method, params, details)
-        end
+      # Simple group with no prefix: Route::group(function() { ... })
+      simple_group_matches = content.scan(/Route::group\s*\(\s*function\s*\([^)]*\)\s*\{((?:[^{}]|{[^{}]*})*)\}/mi)
+      simple_group_matches.each do |match|
+        group_content = match[1]
+        endpoints.concat(analyze_routes_content(group_content, prefix, file_path))
       end
 
       endpoints
+    end
+
+    private def build_full_path(prefix : String, path : String) : String
+      return prefix if path == "/" && !prefix.empty?
+      return path if prefix.empty?
+
+      full_path = "/#{prefix.strip('/')}/#{path.strip('/')}"
+      full_path = full_path.gsub(/\/+/, "/")
+      full_path = full_path.chomp('/') if full_path.size > 1
+      full_path
     end
 
     private def create_resource_endpoints(resource : String, file_path : String) : Array(Endpoint)
@@ -287,23 +285,6 @@ module Analyzer::Php
       end
 
       params
-    end
-
-    private def extract_http_method_from_path_context(content : String, route_match : String) : String
-      # Try to find the HTTP method from the Route attribute context
-      route_start = content.index(route_match)
-      if route_start
-        context_start = [route_start - 100, 0].max
-        context_end = [route_start + 200, content.size].min
-        context = content[context_start..context_end]
-
-        # Look for methods: ['GET'] or methods: 'POST'
-        if match = context.match(/methods?\s*[:=]\s*['"]?([^'",\]]+)['"]?/)
-          return match[1].upcase
-        end
-      end
-
-      "GET" # Default to GET if no method specified
     end
   end
 end
