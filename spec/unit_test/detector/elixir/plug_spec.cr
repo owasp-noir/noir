@@ -89,7 +89,7 @@ describe "Detect Elixir Plug" do
       use Plug.Router
 
       forward "/api", to: MyApp.API
-      
+
       get "/health", do: send_resp(conn, 200, "OK")
     end
     ELIXIR

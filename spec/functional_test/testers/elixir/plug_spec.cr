@@ -8,7 +8,7 @@ expected_endpoints = [
   Endpoint.new("/users/:id", "DELETE", [Param.new("id", "", "path")]),
   Endpoint.new("/health", "HEAD"),
   Endpoint.new("/api/*path", "OPTIONS"),
-  Endpoint.new("/api", "GET"),  # This is from the forward statement
+  Endpoint.new("/api", "GET"), # This is from the forward statement
   Endpoint.new("/webhook", "POST"),
   Endpoint.new("/webhook", "PUT"),
   Endpoint.new("/simple", "GET"),

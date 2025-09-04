@@ -12,11 +12,11 @@ module Detector::Elixir
       if filename.ends_with?(".ex") || filename.ends_with?(".exs")
         # Look for Plug router modules or plug usage
         return file_contents.includes?("use Plug.Router") ||
-               file_contents.includes?("plug :match") ||
-               file_contents.includes?("plug :dispatch") ||
-               file_contents.includes?("Plug.Router") ||
-               file_contents.includes?("import Plug.") ||
-               file_contents.includes?("forward ") && file_contents.includes?("do:")
+          file_contents.includes?("plug :match") ||
+          file_contents.includes?("plug :dispatch") ||
+          file_contents.includes?("Plug.Router") ||
+          file_contents.includes?("import Plug.") ||
+          file_contents.includes?("forward ") && file_contents.includes?("do:")
       end
 
       false

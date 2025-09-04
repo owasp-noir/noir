@@ -100,9 +100,9 @@ module Analyzer::Elixir
 
       # Match match statements with method patterns
       # match "/path", via: [:get, :post]
-      if match = line.match(/match\s+["\']([^"\']+)["\'][^:]*via:\s*\[([^\]]+)\]/)
-        path = match[1]
-        methods_str = match[2]
+      if via_match = line.match(/match\s+["\']([^"\']+)["\'][^:]*via:\s*\[([^\]]+)\]/)
+        path = via_match[1]
+        methods_str = via_match[2]
         methods_str.scan(/:(\w+)/) do |method_match|
           endpoints << Endpoint.new(path, method_match[1].upcase)
         end
