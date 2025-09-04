@@ -357,6 +357,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :java_vertx => {
+      :framework => "Vert.x",
+      :language  => "Java",
+      :similar   => ["vertx", "vert.x", "java-vertx", "java_vertx"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => true,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :js_express => {
       :framework => "Express",
       :language  => "JavaScript",

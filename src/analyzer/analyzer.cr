@@ -36,6 +36,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"java_armeria", Java::Armeria},
     {"java_jsp", Java::Jsp},
     {"java_spring", Java::Spring},
+    {"java_vertx", Java::Vertx},
     {"js_express", Javascript::Express},
     {"js_fastify", Javascript::Fastify},
     {"js_koa", Javascript::Koa},
