@@ -27,10 +27,3 @@ jobs:
           echo '${{ steps.noir.outputs.endpoints }}' | jq .
           echo "Passive scan results:"
           echo '${{ steps.noir.outputs.passive_results }}' | jq .
-
-      - name: Save results as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: noir-analysis-results
-          path: |
-            noir-output.json
