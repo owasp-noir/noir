@@ -23,7 +23,7 @@ module Analyzer::Go
                     # Read all lines for lookahead processing
                     lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
                     last_endpoint = Endpoint.new("", "")
-                    
+
                     lines.each_with_index do |line, index|
                       details = Details.new(PathInfo.new(path, index + 1))
                       lexer = GolangLexer.new
@@ -63,7 +63,7 @@ module Analyzer::Go
                         get_route_path(line, subrouters).tap do |route_path|
                           if route_path.size > 0
                             # Check next 5 lines for .Methods() call
-                            method = "GET"  # default
+                            method = "GET" # default
                             (0..5).each do |lookahead|
                               check_line_idx = index + lookahead
                               break if check_line_idx >= lines.size
@@ -73,7 +73,7 @@ module Analyzer::Go
                                 break
                               end
                             end
-                            
+
                             new_endpoint = Endpoint.new("#{route_path}", method, details)
                             result << new_endpoint
                             last_endpoint = new_endpoint
