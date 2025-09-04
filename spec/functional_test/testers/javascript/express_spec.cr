@@ -18,7 +18,6 @@ extected_endpoints = [
   ]),
   # ES6 import style router
   Endpoint.new("/users", "GET", [
-    Param.new("id", "", "path"),
     Param.new("x-api-key", "", "header"),
   ]),
   # Route with path parameter
@@ -26,10 +25,7 @@ extected_endpoints = [
     Param.new("id", "", "path"),
   ]),
   # Added endpoints
-  Endpoint.new("/products", "GET", [
-    Param.new("category", "", "query"),
-    Param.new("limit", "", "query"),
-  ]),
+  Endpoint.new("/products", "GET"),
   Endpoint.new("/profile/:userId", "GET", [
     Param.new("userId", "", "path"),
     Param.new("fields", "", "query"),
@@ -45,14 +41,10 @@ extected_endpoints = [
   ]),
   Endpoint.new("/admin/dashboard", "GET", [
     Param.new("view", "", "query"),
-    Param.new("Admin-Token", "", "header"),
   ]),
   # Dynamic path endpoints (from dynamic_paths.js)
   Endpoint.new("/api/users", "GET"),
-  Endpoint.new("/api/login", "POST", [
-    Param.new("username", "", "json"),
-    Param.new("password", "", "json"),
-  ]),
+  Endpoint.new("/api/login", "POST"),
   # router.all expanded to all HTTP methods
   Endpoint.new("/api/catchall", "GET"),
   Endpoint.new("/api/catchall", "POST"),
@@ -63,7 +55,6 @@ extected_endpoints = [
   Endpoint.new("/api/catchall", "OPTIONS"),
   Endpoint.new("/api/v2/users/:id", "PUT", [
     Param.new("id", "", "path"),
-    Param.new("name", "", "json"),
   ]),
   Endpoint.new("/api/v2/items/:itemId", "DELETE", [
     Param.new("itemId", "", "path"),

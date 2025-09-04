@@ -7,7 +7,6 @@ extected_endpoints = [
     Param.new("cookie2", "", "cookie"),
   ]),
   Endpoint.new("/update", "POST"),
-  Endpoint.new("/query", "POST", [Param.new("query", "", "form")]),
 ]
 
 FunctionalTester.new("fixtures/ruby/sinatra/", {

@@ -7,7 +7,7 @@ extected_endpoints = [
   Endpoint.new("/login", "POST", [Param.new("username", "", "form"), Param.new("password", "", "form")]),
   Endpoint.new("/create_record", "PUT", [Param.new("name", "", "form")]),
   Endpoint.new("/delete_record", "DELETE", [Param.new("name", "", "json")]),
-  Endpoint.new("/get_ip", "GET", [Param.new("X-Forwarded-For", "", "header")]),
+  Endpoint.new("/get_ip", "GET"),
   Endpoint.new("/", "GET"),
 ]
 

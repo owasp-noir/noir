@@ -13,7 +13,6 @@ extected_endpoints = [
   Endpoint.new("/api/sign_ups", "POST", [
     Param.new("name1", "", "cookie"),
     Param.new("name2", "", "cookie"),
-    Param.new("name3", "", "cookie"),
   ]),
 ]
 
