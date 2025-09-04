@@ -546,6 +546,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :php_laravel => {
+      :framework => "Laravel",
+      :language  => "PHP",
+      :similar   => ["laravel", "php-laravel", "php_laravel"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :php_symfony => {
       :framework => "Symfony",
       :language  => "PHP",
