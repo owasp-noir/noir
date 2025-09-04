@@ -1,0 +1,96 @@
+---
+name: OWASP Noir Action
+description: A GitHub Action to detect attack surfaces by static analysis using OWASP Noir
+branding:
+  icon: search
+  color: purple
+inputs:
+  base_path:
+    description: The base path to analyze for endpoints (equivalent to -b/--base-path)
+    required: true
+    default: '.'
+  url:
+    description: Set base url for endpoints (equivalent to -u/--url)
+    required: false
+    default: ''
+  format:
+    description: Set output format (plain, yaml, json, jsonl, markdown-table, curl, httpie, oas2, oas3, etc.)
+    required: false
+    default: 'json'
+  output_file:
+    description: Write result to file (equivalent to -o/--output)
+    required: false
+    default: ''
+  techs:
+    description: Specify the technologies to use (equivalent to -t/--techs)
+    required: false
+    default: ''
+  exclude_techs:
+    description: Specify the technologies to be excluded (equivalent to --exclude-techs)
+    required: false
+    default: ''
+  passive_scan:
+    description: Perform a passive scan for security issues (equivalent to -P/--passive-scan)
+    required: false
+    default: 'false'
+  passive_scan_severity:
+    description: Set minimum severity level for passive scan (critical, high, medium, low)
+    required: false
+    default: 'high'
+  use_all_taggers:
+    description: Activates all taggers for full analysis coverage (equivalent to -T/--use-all-taggers)
+    required: false
+    default: 'false'
+  use_taggers:
+    description: Activates specific taggers (equivalent to --use-taggers)
+    required: false
+    default: ''
+  include_path:
+    description: Include file path in the result (equivalent to --include-path)
+    required: false
+    default: 'false'
+  verbose:
+    description: Show verbose messages (equivalent to --verbose)
+    required: false
+    default: 'false'
+  debug:
+    description: Show debug messages (equivalent to -d/--debug)
+    required: false
+    default: 'false'
+  concurrency:
+    description: Set concurrency level (equivalent to --concurrency)
+    required: false
+    default: ''
+  exclude_codes:
+    description: Exclude specific HTTP response codes (comma-separated, equivalent to --exclude-codes)
+    required: false
+    default: ''
+  status_codes:
+    description: Display HTTP status codes for discovered endpoints (equivalent to --status-codes)
+    required: false
+    default: 'false'
+outputs:
+  endpoints:
+    description: JSON formatted result of the endpoint analysis
+  passive_results:
+    description: JSON formatted result of the passive scan (if enabled)
+runs:
+  using: docker
+  image: github-action/Dockerfile
+  args:
+    - ${{ inputs.base_path }}
+    - ${{ inputs.url }}
+    - ${{ inputs.format }}
+    - ${{ inputs.output_file }}
+    - ${{ inputs.techs }}
+    - ${{ inputs.exclude_techs }}
+    - ${{ inputs.passive_scan }}
+    - ${{ inputs.passive_scan_severity }}
+    - ${{ inputs.use_all_taggers }}
+    - ${{ inputs.use_taggers }}
+    - ${{ inputs.include_path }}
+    - ${{ inputs.verbose }}
+    - ${{ inputs.debug }}
+    - ${{ inputs.concurrency }}
+    - ${{ inputs.exclude_codes }}
+    - ${{ inputs.status_codes }}
