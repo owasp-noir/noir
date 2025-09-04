@@ -2,9 +2,9 @@ name: Noir Action Example
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
   noir-analysis:
@@ -13,24 +13,23 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        
+
       - name: Run OWASP Noir
         id: noir
         uses: ./
         with:
-          base_path: 'spec/functional_test/fixtures/crystal'
-          format: 'json'
-          passive_scan: 'true'
-          passive_scan_severity: 'medium'
-          include_path: 'true'
-          
+          base_path: "spec/functional_test/fixtures/crystal"
+          format: "json"
+          passive_scan: "true"
+          include_path: "true"
+
       - name: Display results
         run: |
           echo "Endpoints found:"
           echo '${{ steps.noir.outputs.endpoints }}' | jq .
           echo "Passive scan results:"
           echo '${{ steps.noir.outputs.passive_results }}' | jq .
-          
+
       - name: Save results as artifact
         uses: actions/upload-artifact@v4
         with:
