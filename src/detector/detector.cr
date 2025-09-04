@@ -29,6 +29,7 @@ def detect_techs(base_path : String, options : Hash(String, YAML::Any), passive_
     Crystal::Lucky,
     Crystal::Marten,
     Elixir::Phoenix,
+    Elixir::Plug,
     Go::Beego,
     Go::Echo,
     Go::Fasthttp,

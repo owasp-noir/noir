@@ -128,6 +128,24 @@ module NoirTechs
         :websocket   => true,
       },
     },
+    :elixir_plug => {
+      :framework => "Plug",
+      :language  => "Elixir",
+      :similar   => ["plug", "elixir-plug", "elixir_plug"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => true,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :go_beego => {
       :framework => "Beego",
       :language  => "Go",
