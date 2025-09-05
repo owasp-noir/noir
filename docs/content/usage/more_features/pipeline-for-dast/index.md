@@ -1,7 +1,7 @@
 +++
 title = "Integrating Noir into Your DAST Pipeline"
 description = "Learn how to integrate Noir into your Dynamic Application Security Testing (DAST) pipeline. This guide provides examples of how to use Noir with proxy tools like ZAP and Burp Suite."
-weight = 4
+weight = 12
 sort_by = "weight"
 
 [extra]
@@ -46,4 +46,3 @@ For a more automated approach, you can use Noir to generate an OpenAPI specifica
 This two-step process allows you to create a fully automated DAST pipeline that ensures complete coverage of your application's API.
 
 For more details on this integration, check out the ZAP blog post: [Powering Up DAST with ZAP and Noir](https://www.zaproxy.org/blog/2024-11-11-powering-up-dast-with-zap-and-noir/).
-
