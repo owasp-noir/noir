@@ -1,7 +1,7 @@
 +++
 title = "DAST 파이프라인에 Noir 통합하기"
 description = "Noir를 동적 애플리케이션 보안 테스트(DAST) 파이프라인에 통합하는 방법을 알아보세요. 이 가이드는 ZAP 및 Burp Suite와 같은 프록시 도구와 함께 Noir를 사용하는 예제를 제공합니다."
-weight = 4
+weight = 12
 sort_by = "weight"
 
 [extra]

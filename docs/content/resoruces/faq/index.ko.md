@@ -29,7 +29,7 @@ Noir는 광범위한 프로그래밍 언어와 프레임워크를 지원합니�
 
 ### 다른 보안 도구와 Noir를 어떻게 통합할 수 있나요?
 
-Noir는 ZAP, Burp Suite, Caido와 같은 인기 있는 보안 도구와 쉽게 통합할 수 있습니다. 자세한 내용은 [DAST 파이프라인](@/community/pipeline-for-dast/index.md) 가이드를 참조하세요.
+Noir는 ZAP, Burp Suite, Caido와 같은 인기 있는 보안 도구와 쉽게 통합할 수 있습니다. 자세한 내용은 [DAST 파이프라인](@/usage/more_features/pipeline-for-dast/index.md) 가이드를 참조하세요.
 
 ### Noir가 발견한 결과를 어떻게 내보낼 수 있나요?
 
