@@ -4,13 +4,13 @@ require "../../../utils/wait_group"
 module Analyzer::Java
   class Vertx < Analyzer
     # Regex patterns for Vert.x route detection
-    REGEX_ROUTER_ROUTE = /router\.(get|post|put|delete|patch|head|options|connect|trace)\s*\(\s*["\']([^"\']*)["\'].*?\)/i
-    REGEX_ROUTE_METHOD = /\.route\s*\(\s*["\']([^"\']*)["\'].*?\)\s*\.\s*(get|post|put|delete|patch|head|options|connect|trace)\s*\(/i
+    REGEX_ROUTER_ROUTE    = /router\.(get|post|put|delete|patch|head|options|connect|trace)\s*\(\s*["\']([^"\']*)["\'].*?\)/i
+    REGEX_ROUTE_METHOD    = /\.route\s*\(\s*["\']([^"\']*)["\'].*?\)\s*\.\s*(get|post|put|delete|patch|head|options|connect|trace)\s*\(/i
     REGEX_ROUTER_INSTANCE = /Router\s+(\w+)\s*=\s*Router\.router\(\s*[^)]*\s*\)/
-    REGEX_MOUNTSUBPATH = /router\.mountSubRouter\s*\(\s*["\']([^"\']*)["\'].*?\)/i
+    REGEX_MOUNTSUBPATH    = /router\.mountSubRouter\s*\(\s*["\']([^"\']*)["\'].*?\)/i
 
     def analyze
-      # Source Analysis  
+      # Source Analysis
       channel = Channel(String).new
 
       begin
@@ -37,7 +37,7 @@ module Analyzer::Java
                       next if match.size < 3
                       method = match[1].upcase
                       endpoint = match[2]
-                      
+
                       next if !["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "CONNECT", "TRACE"].includes?(method)
                       next if endpoint.empty?
 
@@ -49,7 +49,7 @@ module Analyzer::Java
                       next if match.size < 3
                       endpoint = match[1]
                       method = match[2].upcase
-                      
+
                       next if !["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "CONNECT", "TRACE"].includes?(method)
                       next if endpoint.empty?
 
@@ -65,7 +65,6 @@ module Analyzer::Java
                       # Sub-routers typically handle multiple methods, so we'll add a GET as default
                       @result << Endpoint.new(endpoint, "GET", details)
                     end
-
                   end
                 rescue e : File::NotFoundError
                   logger.debug "File not found: #{path}"
