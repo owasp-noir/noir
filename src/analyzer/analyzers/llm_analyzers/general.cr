@@ -76,7 +76,7 @@ module Analyzer::AI
                    cached
                  else
                    r = client.request_messages(messages, LLM::ANALYZE_FORMAT)
-                   LLM::Cache.store(key, r)
+                   LLM::Cache.store(key, r.to_s)
                    r
                  end
 
@@ -132,7 +132,7 @@ module Analyzer::AI
                             cached
                           else
                             r = client.request_messages(messages, LLM::FILTER_FORMAT)
-                            LLM::Cache.store(key, r)
+                            LLM::Cache.store(key, r.to_s)
                             r
                           end
         logger.debug_sub filter_response
@@ -174,7 +174,7 @@ module Analyzer::AI
                    cached
                  else
                    r = client.request_messages(messages, LLM::ANALYZE_FORMAT)
-                   LLM::Cache.store(key, r)
+                   LLM::Cache.store(key, r.to_s)
                    r
                  end
       logger.debug "client response (#{relative_path}):"

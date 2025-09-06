@@ -1,4 +1,3 @@
-# frozen_string_literal: true
 # LLM disk cache for AI responses
 #
 # Usage:

@@ -50,8 +50,8 @@ module LLM
 
       (response_json["choices"][0]["message"]["content"].to_s.gsub("```json", "").gsub("```", "").strip).to_s
     rescue ex : Exception
-      puts "Error: #{ex.message}"
-      ""
+      # puts "Error: #{ex.message}"
+      # ""
     end
 
     def request(prompt : String, format : String = "json")

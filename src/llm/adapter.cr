@@ -1,4 +1,3 @@
-# noir/src/llm/adapter.cr
 # Unified LLM adapter abstraction to normalize access across providers.
 #
 # This adapter wraps existing clients:

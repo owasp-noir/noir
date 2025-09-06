@@ -24,9 +24,8 @@ module LLM
 
       response_json["response"].to_s
     rescue ex : Exception
-      puts "Error: #{ex.message}"
-
-      ""
+      #  puts "Error: #{ex.message}"
+      # ""
     end
 
     def request_with_context(system : String?, user : String, format : String = "json", cache_key : String? = nil)
