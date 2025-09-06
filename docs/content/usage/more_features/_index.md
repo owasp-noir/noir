@@ -1,7 +1,7 @@
 +++
 title = "Additional Features"
 description = "Explore Noir's advanced features, including the Tagger for contextual analysis and the Deliver feature for sending results to other tools. This section will help you get the most out of Noir."
-weight = 6
+weight = 10
 sort_by = "weight"
 
 [extra]
