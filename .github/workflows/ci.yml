@@ -1,15 +1,15 @@
 ---
 name: CI
 on:
-  pull_request_target:
+  pull_request:
     branches: [main]
-    paths: ['**/*.cr', shard.yml, Dockerfile]
+    paths: ["**/*.cr", shard.yml, Dockerfile]
   workflow_dispatch:
     inputs:
       logLevel:
         description: manual run
         required: false
-        default: ''
+        default: ""
 jobs:
   build-crystal:
     runs-on: ubuntu-latest
