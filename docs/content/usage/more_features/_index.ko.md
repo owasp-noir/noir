@@ -1,7 +1,7 @@
 +++
 title = "추가 기능"
 description = "컨텍스트 분석을 위한 Tagger와 다른 도구에 결과를 전송하는 Deliver 기능을 포함하여 Noir의 고급 기능을 탐색하세요. 이 섹션은 Noir를 최대한 활용하는 데 도움이 됩니다."
-weight = 6
+weight = 10
 sort_by = "weight"
 
 [extra]
