@@ -32,10 +32,10 @@ module LLM
       @api_key = api_key || ENV["NOIR_AI_KEY"]
     end
 
-    def request(prompt : String, format : String = "json")
+    def request_messages(messages : Array(Hash(String, String)), format : String = "json")
       body = {
         "model"           => @model,
-        "messages"        => [{"role" => "user", "content" => prompt}],
+        "messages"        => messages,
         "temperature"     => 0.3,
         "stream"          => false,
         "response_format" => format == "json" ? {"type" => "json_object"} : JSON.parse(format),
@@ -48,11 +48,15 @@ module LLM
       response = HTTP::Client.post(@api, headers: headers, body: body)
       response_json = JSON.parse(response.body)
 
-      response_json["choices"][0]["message"]["content"].to_s.gsub("```json", "").gsub("```", "").strip
+      (response_json["choices"][0]["message"]["content"].to_s.gsub("```json", "").gsub("```", "").strip).to_s
     rescue ex : Exception
       puts "Error: #{ex.message}"
-      puts response_json
       ""
+    end
+
+    def request(prompt : String, format : String = "json")
+      messages = [{"role" => "user", "content" => prompt}]
+      request_messages(messages, format).to_s
     end
 
     def query(code : String)

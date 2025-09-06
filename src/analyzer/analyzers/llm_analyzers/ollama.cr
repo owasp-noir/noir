@@ -2,6 +2,7 @@ require "../../../utils/utils.cr"
 require "../../../models/analyzer"
 require "../../../llm/ollama"
 require "../../../llm/prompt"
+require "../../../llm/cache"
 
 module Analyzer::AI
   class Ollama < Analyzer
@@ -68,8 +69,15 @@ module Analyzer::AI
     end
 
     private def process_bundle(bundle_content : String, ollama : LLM::Ollama)
-      prompt = "#{LLM::BUNDLE_ANALYZE_PROMPT}\n#{bundle_content}"
-      response = ollama.request(prompt, LLM::ANALYZE_FORMAT)
+      cache_key = "ollama:#{@model}:BUNDLE_ANALYZE"
+      disk_key = LLM::Cache.key("ollama", @model, "BUNDLE_ANALYZE", LLM::ANALYZE_FORMAT, bundle_content)
+      response = if cached = LLM::Cache.fetch(disk_key)
+                   cached
+                 else
+                   r = ollama.request_with_context(LLM::SYSTEM_BUNDLE, bundle_content, LLM::ANALYZE_FORMAT, cache_key)
+                   LLM::Cache.store(disk_key, r)
+                   r
+                 end
 
       logger.debug "Bundle analysis response:"
       logger.debug_sub response
@@ -116,9 +124,16 @@ module Analyzer::AI
 
       if all_paths.size > 10
         logger.debug_sub "Ollama::Analyzing filtered files"
-        prompt = "#{LLM::FILTER_PROMPT}\n" +
-                 all_paths.map { |p| "- #{File.expand_path(p)}" }.join("\n")
-        filter_response = ollama.request(prompt, LLM::FILTER_FORMAT)
+        user_payload = all_paths.map { |p| "- #{File.expand_path(p)}" }.join("\n")
+        cache_key = "ollama:#{@model}:FILTER"
+        disk_key = LLM::Cache.key("ollama", @model, "FILTER", LLM::FILTER_FORMAT, user_payload)
+        filter_response = if cached = LLM::Cache.fetch(disk_key)
+                            cached
+                          else
+                            r = ollama.request_with_context(LLM::SYSTEM_FILTER, user_payload, LLM::FILTER_FORMAT, cache_key)
+                            LLM::Cache.store(disk_key, r)
+                            r
+                          end
         logger.debug_sub filter_response
 
         begin
@@ -152,8 +167,15 @@ module Analyzer::AI
     end
 
     private def process_content(content : String, relative_path : String, path : String, ollama : LLM::Ollama)
-      prompt = "#{LLM::ANALYZE_PROMPT}\n#{content}"
-      response = ollama.request(prompt, LLM::ANALYZE_FORMAT)
+      cache_key = "ollama:#{@model}:ANALYZE"
+      disk_key = LLM::Cache.key("ollama", @model, "ANALYZE", LLM::ANALYZE_FORMAT, content)
+      response = if cached = LLM::Cache.fetch(disk_key)
+                   cached
+                 else
+                   r = ollama.request_with_context(LLM::SYSTEM_ANALYZE, content, LLM::ANALYZE_FORMAT, cache_key)
+                   LLM::Cache.store(disk_key, r)
+                   r
+                 end
       logger.debug "Ollama response (#{relative_path}):"
       logger.debug_sub response
 
