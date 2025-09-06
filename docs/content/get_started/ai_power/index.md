@@ -25,6 +25,10 @@ noir -b . --ai-provider <PROVIDER> --ai-model <MODEL_NAME> --ai-key <YOUR_API_KE
 *   `--ai-model`: The name of the model you want to use for the analysis (e.g., `gpt-4o`).
 *   `--ai-key`: Your API key for the AI provider. You can also set this using the `NOIR_AI_KEY` environment variable.
 *   `--ai-max-token`: (Optional) The maximum number of tokens to use for AI requests. This can affect the length of the generated text.
+*   `--cache-disable`: Disable the on-disk LLM cache for this run.
+*   `--cache-clear`: Clear the LLM cache directory before the run.
+
+By default, Noir caches AI responses on disk to speed up repeated analyses and reduce costs. Use the cache flags above to bypass or purge the cache when needed.
 
 ### Supported AI Providers
 
