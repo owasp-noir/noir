@@ -25,6 +25,10 @@ noir -b . --ai-provider <PROVIDER> --ai-model <MODEL_NAME> --ai-key <YOUR_API_KE
 *   `--ai-model`: 분석에 사용하려는 모델의 이름입니다(예: `gpt-4o`).
 *   `--ai-key`: AI 제공업체를 위한 API 키입니다. `NOIR_AI_KEY` 환경 변수를 사용하여 설정할 수도 있습니다.
 *   `--ai-max-token`: (선택사항) AI 요청에 사용할 최대 토큰 수입니다. 이는 생성된 텍스트의 길이에 영향을 줄 수 있습니다.
+*   `--cache-disable`: 현재 실행에서 LLM 디스크 캐시를 비활성화합니다.
+*   `--cache-clear`: 실행 전에 LLM 캐시 디렉터리를 비웁니다.
+
+기본적으로 Noir는 AI 응답을 디스크에 캐시하여 반복 분석 속도를 높이고 비용을 줄입니다. 필요 시 위 캐시 플래그를 사용해 캐시를 비활성화하거나 사전 정리할 수 있습니다.
 
 ### 지원되는 AI 제공업체
 

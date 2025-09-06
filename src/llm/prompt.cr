@@ -1,5 +1,10 @@
 module LLM
-  FILTER_PROMPT = <<-PROMPT
+  SHARED_RULES = "Output only JSON. No explanations. method in [GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD]. param_type in [query, json, form, header, cookie, path]."
+
+  SYSTEM_FILTER  = "#{SHARED_RULES} Given a list of file paths, return JSON with property files: string[] of likely endpoints (no directories)."
+  SYSTEM_ANALYZE = "#{SHARED_RULES} Given source code, return JSON with endpoints: [{url, method, params:[{name, param_type, value}]}]."
+  SYSTEM_BUNDLE  = "#{SHARED_RULES} Given a bundle of files, include endpoints from ALL files; return the same JSON schema."
+  FILTER_PROMPT  = <<-PROMPT
   Analyze the following list of file paths and identify which files are likely to represent endpoints, including API endpoints, web pages, or static resources.
 
   Guidelines:
@@ -220,7 +225,7 @@ module LLM
     safe_limit = (max_tokens * safety_margin).to_i
     bundles = [] of Tuple(String, Int32)
     current_bundle = ""
-    current_tokens = estimate_tokens(BUNDLE_ANALYZE_PROMPT)
+    current_tokens = estimate_tokens(SYSTEM_BUNDLE)
 
     files.each do |file_path, content|
       file_section = "- File: \"#{file_path}\"\n```\n#{content}\n```\n"
@@ -229,7 +234,7 @@ module LLM
       if current_tokens + file_tokens > safe_limit && !current_bundle.empty?
         bundles << {current_bundle, current_tokens}
         current_bundle = ""
-        current_tokens = estimate_tokens(BUNDLE_ANALYZE_PROMPT)
+        current_tokens = estimate_tokens(SYSTEM_BUNDLE)
       end
 
       current_bundle += file_section

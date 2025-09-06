@@ -21,6 +21,22 @@ Noir는 운영 체제에 따라 특정 디렉토리에서 `config.yaml`이라는
 
 이 파일에서 정의한 모든 설정이 기본값으로 사용되지만 명령줄에서 다른 값을 제공하여 언제든지 재정의할 수 있습니다.
 
+## Noir 홈 디렉터리 구조
+
+Noir는 동일한 홈 디렉터리 경로 아래에 구성과 캐시를 저장합니다(위 표의 경로 참고). 일반적인 구조는 다음과 같습니다:
+
+```
+~/.config/noir/
+├── config.yaml          # 기본 구성 파일
+├── cache/
+│   └── ai/              # AI 기반 분석을 위한 LLM 응답 캐시
+└── passive_rules/       # Passive Scan을 위한 룰 디렉토리
+```
+
+- config.yaml: 기본 구성 파일
+- cache/ai: 반복 분석 속도 향상과 비용 절감을 위한 AI 응답 캐시 저장 위치
+- passive_rules: Passive Scan 규칙 파일 저장 위치
+
 ## `config.yaml` 예제
 
 다음은 일반적인 설정이 포함된 `config.yaml` 파일의 예제입니다:

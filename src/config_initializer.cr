@@ -116,6 +116,8 @@ class ConfigInitializer
       "ai_provider"                  => YAML::Any.new(""),
       "ai_model"                     => YAML::Any.new(""),
       "ai_key"                       => YAML::Any.new(""),
+      "cache_disable"                => YAML::Any.new(false),
+      "cache_clear"                  => YAML::Any.new(false),
       "analyze_feign"                => YAML::Any.new(false),
     }
 
@@ -242,6 +244,13 @@ class ConfigInitializer
 
     # The API key for the AI server
     ai_key: "#{options["ai_key"]}"
+
+    # CACHE:
+    # Disable LLM disk cache for this run
+    cache_disable: #{options["cache_disable"]}
+
+    # Clear LLM cache directory before run
+    cache_clear: #{options["cache_clear"]}
 
     CONTENT
 

@@ -21,6 +21,22 @@ Noir looks for a file named `config.yaml` in a specific directory depending on y
 
 Any settings you define in this file will be used as the default, but you can always override them by providing a different value on the command line.
 
+## Noir Home Directory Structure
+
+Noir stores configuration and cache under the same home directory (see the paths above). A typical structure looks like:
+
+```
+~/.config/noir/
+├── config.yaml          # Main configuration file
+├── cache/
+│   └── ai/              # LLM response cache (used by AI-powered analysis)
+└── passive_rules/       # Rules directory for Passive Scan
+```
+
+- config.yaml: Your main configuration file.
+- cache/ai: Stores AI response cache to speed up repeated analyses and reduce costs.
+- passive_rules: Contains rule files for Passive Scan.
+
 ## Example `config.yaml`
 
 Here is an example of a `config.yaml` file with some common settings:
