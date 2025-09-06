@@ -10,7 +10,6 @@ COPY entrypoint.sh /entrypoint.sh
 
 # Make the entrypoint script executable
 RUN chmod 755 /entrypoint.sh
-USER 2:2
 
 # Set the entrypoint to the script
 ENTRYPOINT ["/entrypoint.sh"]
