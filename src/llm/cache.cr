@@ -13,10 +13,13 @@
 require "digest/sha256"
 require "file_utils"
 require "time"
+require "../utils/home"
 
 module LLM
   module Cache
-    CACHE_DIR = ".noir_cache/ai"
+    def self.cache_dir : String
+      File.join(get_home, "cache", "ai")
+    end
 
     # Build a deterministic cache key from inputs
     #
@@ -40,13 +43,13 @@ module LLM
 
     # Get the file system path for a given key
     def self.path_for(key : String) : String
-      File.join(CACHE_DIR, "#{key}.json")
+      File.join(cache_dir, "#{key}.json")
     end
 
     # Ensure the cache directory exists
     def self.ensure_dir : Nil
-      return if File.directory?(CACHE_DIR)
-      FileUtils.mkdir_p(CACHE_DIR)
+      return if File.directory?(cache_dir)
+      FileUtils.mkdir_p(cache_dir)
     end
 
     # Fetch cached content by key (returns nil if not present)
@@ -79,10 +82,10 @@ module LLM
 
     # Clear all cache entries. Returns the number of deleted files.
     def self.clear : Int32
-      return 0 unless File.directory?(CACHE_DIR)
+      return 0 unless File.directory?(cache_dir)
       count = 0
-      Dir.children(CACHE_DIR).each do |entry|
-        fp = File.join(CACHE_DIR, entry)
+      Dir.children(cache_dir).each do |entry|
+        fp = File.join(cache_dir, entry)
         next unless File.file?(fp)
         begin
           File.delete(fp)
@@ -97,11 +100,11 @@ module LLM
     # Purge entries older than the specified number of days.
     # Returns the number of deleted files.
     def self.purge_older_than(days : Int32) : Int32
-      return 0 unless File.directory?(CACHE_DIR)
+      return 0 unless File.directory?(cache_dir)
       threshold = Time.utc - days.days
       count = 0
-      Dir.children(CACHE_DIR).each do |entry|
-        fp = File.join(CACHE_DIR, entry)
+      Dir.children(cache_dir).each do |entry|
+        fp = File.join(cache_dir, entry)
         next unless File.file?(fp)
         begin
           info = File.info(fp)
@@ -122,9 +125,9 @@ module LLM
     def self.stats : Hash(String, Int64)
       entries = 0_i64
       bytes = 0_i64
-      if File.directory?(CACHE_DIR)
-        Dir.children(CACHE_DIR).each do |entry|
-          fp = File.join(CACHE_DIR, entry)
+      if File.directory?(cache_dir)
+        Dir.children(cache_dir).each do |entry|
+          fp = File.join(cache_dir, entry)
           next unless File.file?(fp)
           begin
             entries += 1
