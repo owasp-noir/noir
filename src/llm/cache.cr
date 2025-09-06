@@ -17,6 +17,26 @@ require "../utils/home"
 
 module LLM
   module Cache
+    @@enabled = true
+
+    def self.enabled? : Bool
+      @@enabled && !disabled_by_env?
+    end
+
+    def self.enable : Nil
+      @@enabled = true
+    end
+
+    def self.disable : Nil
+      @@enabled = false
+    end
+
+    def self.disabled_by_env? : Bool
+      return false unless ENV.has_key?("NOIR_CACHE_DISABLE")
+      val = ENV["NOIR_CACHE_DISABLE"]
+      ["1", "true", "yes", "on"].includes?(val.downcase)
+    end
+
     def self.cache_dir : String
       File.join(get_home, "cache", "ai")
     end
@@ -54,6 +74,7 @@ module LLM
 
     # Fetch cached content by key (returns nil if not present)
     def self.fetch(key : String) : String?
+      return nil unless enabled?
       path = path_for(key)
       return nil unless File.exists?(path)
       File.read(path)
@@ -63,6 +84,7 @@ module LLM
 
     # Store content for a key. Returns true on success.
     def self.store(key : String, content : String) : Bool
+      return false unless enabled?
       ensure_dir
       File.write(path_for(key), content)
       true

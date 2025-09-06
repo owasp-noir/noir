@@ -188,6 +188,14 @@ def run_options_parser
       exit
     end
 
+    parser.separator "\n  CACHE:".colorize(:blue)
+    parser.on "--cache-disable", "Disable LLM cache for this run" do
+      noir_options["cache_disable"] = YAML::Any.new(true)
+    end
+    parser.on "--cache-clear", "Clear LLM cache directory before run" do
+      noir_options["cache_clear"] = YAML::Any.new(true)
+    end
+
     parser.separator "\n  DEBUG:".colorize(:blue)
     parser.on "-d", "--debug", "Show debug messages" do
       noir_options["debug"] = YAML::Any.new(true)

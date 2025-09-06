@@ -4,6 +4,7 @@ require "./models/noir.cr"
 require "./banner.cr"
 require "./options.cr"
 require "./techs/techs.cr"
+require "./llm/cache"
 
 module Noir
   VERSION = "0.23.1"
@@ -11,6 +12,18 @@ end
 
 # Run options parser
 noir_options = run_options_parser()
+
+# Handle CACHE flags
+if noir_options["cache_disable"] == true
+  LLM::Cache.disable
+end
+if noir_options["cache_clear"] == true
+  begin
+    cleared = LLM::Cache.clear
+    STDERR.puts "CACHE: Cleared #{cleared} entries."
+  rescue
+  end
+end
 
 # Check base path
 if noir_options["base"] == ""
