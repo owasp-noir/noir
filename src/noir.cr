@@ -5,6 +5,7 @@ require "./banner.cr"
 require "./options.cr"
 require "./techs/techs.cr"
 require "./llm/cache"
+require "./llm/prompt_overrides"
 
 module Noir
   VERSION = "0.23.1"
@@ -23,6 +24,20 @@ if noir_options["cache_clear"] == true
     STDERR.puts "CACHE: Cleared #{cleared} entries."
   rescue
   end
+end
+
+# Handle prompt override flags
+if noir_options.has_key?("override_filter_prompt")
+  LLM::PromptOverrides.filter_prompt = noir_options["override_filter_prompt"].to_s
+end
+if noir_options.has_key?("override_analyze_prompt")
+  LLM::PromptOverrides.analyze_prompt = noir_options["override_analyze_prompt"].to_s
+end
+if noir_options.has_key?("override_bundle_analyze_prompt")
+  LLM::PromptOverrides.bundle_analyze_prompt = noir_options["override_bundle_analyze_prompt"].to_s
+end
+if noir_options.has_key?("override_llm_optimize_prompt")
+  LLM::PromptOverrides.llm_optimize_prompt = noir_options["override_llm_optimize_prompt"].to_s
 end
 
 # Check base path

@@ -1,5 +1,6 @@
 require "./completions.cr"
 require "./config_initializer.cr"
+require "./banner.cr"
 require "yaml"
 
 macro append_to_yaml_array(hash, key, value)
@@ -11,12 +12,64 @@ macro append_to_yaml_array(hash, key, value)
   {{hash.id}}[{{key.stringify}}] = YAML::Any.new(tmp)
 end
 
+def extract_hidden_prompt_flags(noir_options : Hash(String, YAML::Any)) : Array(String)
+  args = ARGV.dup
+  filtered_args = [] of String
+  i = 0
+
+  while i < args.size
+    arg = args[i]
+    case arg
+    when "--override-analyze-prompt"
+      if i + 1 < args.size && !args[i + 1].starts_with?("-")
+        noir_options["override_analyze_prompt"] = YAML::Any.new(args[i + 1])
+        i += 2 # skip the flag and its value
+      else
+        STDERR.puts "ERROR: #{arg} requires an argument.".colorize(:yellow)
+        exit(1)
+      end
+    when "--override-llm-optimize-prompt"
+      if i + 1 < args.size && !args[i + 1].starts_with?("-")
+        noir_options["override_llm_optimize_prompt"] = YAML::Any.new(args[i + 1])
+        i += 2
+      else
+        STDERR.puts "ERROR: #{arg} requires an argument.".colorize(:yellow)
+        exit(1)
+      end
+    when "--override-bundle-analyze-prompt"
+      if i + 1 < args.size && !args[i + 1].starts_with?("-")
+        noir_options["override_bundle_analyze_prompt"] = YAML::Any.new(args[i + 1])
+        i += 2
+      else
+        STDERR.puts "ERROR: #{arg} requires an argument.".colorize(:yellow)
+        exit(1)
+      end
+    when "--override-filter-prompt"
+      if i + 1 < args.size && !args[i + 1].starts_with?("-")
+        noir_options["override_filter_prompt"] = YAML::Any.new(args[i + 1])
+        i += 2
+      else
+        STDERR.puts "ERROR: #{arg} requires an argument.".colorize(:yellow)
+        exit(1)
+      end
+    else
+      filtered_args << arg
+      i += 1
+    end
+  end
+
+  filtered_args
+end
+
 def run_options_parser
   # Check config file
   config_init = ConfigInitializer.new
   noir_options = config_init.read_config
 
-  OptionParser.parse do |parser|
+  # Pre-process ARGV to extract hidden prompt override flags
+  extracted_args = extract_hidden_prompt_flags(noir_options)
+
+  OptionParser.parse(extracted_args) do |parser|
     parser.banner = "Attack surface detector that identifies endpoints by static analysis."
     parser.separator "USAGE:".colorize(:green)
     parser.separator "  noir -b BASE_PATH <flags>\n"
