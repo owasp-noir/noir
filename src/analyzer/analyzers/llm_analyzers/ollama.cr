@@ -2,6 +2,7 @@ require "../../../utils/utils.cr"
 require "../../../models/analyzer"
 require "../../../llm/ollama"
 require "../../../llm/prompt"
+require "../../../llm/prompt_overrides"
 require "../../../llm/cache"
 
 module Analyzer::AI
@@ -70,11 +71,11 @@ module Analyzer::AI
 
     private def process_bundle(bundle_content : String, ollama : LLM::Ollama)
       cache_key = "ollama:#{@model}:BUNDLE_ANALYZE"
-      disk_key = LLM::Cache.key("ollama", @model, "BUNDLE_ANALYZE", LLM::ANALYZE_FORMAT, bundle_content)
+      disk_key = LLM::Cache.key("ollama", @model, "BUNDLE_ANALYZE", LLM::ANALYZE_FORMAT, "#{LLM::PromptOverrides.bundle_analyze_prompt}\n#{bundle_content}")
       response = if cached = LLM::Cache.fetch(disk_key)
                    cached
                  else
-                   r = ollama.request_with_context(LLM::SYSTEM_BUNDLE, bundle_content, LLM::ANALYZE_FORMAT, cache_key)
+                   r = ollama.request_with_context(LLM::SYSTEM_BUNDLE, "#{LLM::PromptOverrides.bundle_analyze_prompt}\n#{bundle_content}", LLM::ANALYZE_FORMAT, cache_key)
                    LLM::Cache.store(disk_key, r)
                    r
                  end
@@ -126,11 +127,11 @@ module Analyzer::AI
         logger.debug_sub "Ollama::Analyzing filtered files"
         user_payload = all_paths.map { |p| "- #{File.expand_path(p)}" }.join("\n")
         cache_key = "ollama:#{@model}:FILTER"
-        disk_key = LLM::Cache.key("ollama", @model, "FILTER", LLM::FILTER_FORMAT, user_payload)
+        disk_key = LLM::Cache.key("ollama", @model, "FILTER", LLM::FILTER_FORMAT, "#{LLM::PromptOverrides.filter_prompt}\n#{user_payload}")
         filter_response = if cached = LLM::Cache.fetch(disk_key)
                             cached
                           else
-                            r = ollama.request_with_context(LLM::SYSTEM_FILTER, user_payload, LLM::FILTER_FORMAT, cache_key)
+                            r = ollama.request_with_context(LLM::SYSTEM_FILTER, "#{LLM::PromptOverrides.filter_prompt}\n#{user_payload}", LLM::FILTER_FORMAT, cache_key)
                             LLM::Cache.store(disk_key, r)
                             r
                           end
@@ -168,11 +169,11 @@ module Analyzer::AI
 
     private def process_content(content : String, relative_path : String, path : String, ollama : LLM::Ollama)
       cache_key = "ollama:#{@model}:ANALYZE"
-      disk_key = LLM::Cache.key("ollama", @model, "ANALYZE", LLM::ANALYZE_FORMAT, content)
+      disk_key = LLM::Cache.key("ollama", @model, "ANALYZE", LLM::ANALYZE_FORMAT, "#{LLM::PromptOverrides.analyze_prompt}\n#{content}")
       response = if cached = LLM::Cache.fetch(disk_key)
                    cached
                  else
-                   r = ollama.request_with_context(LLM::SYSTEM_ANALYZE, content, LLM::ANALYZE_FORMAT, cache_key)
+                   r = ollama.request_with_context(LLM::SYSTEM_ANALYZE, "#{LLM::PromptOverrides.analyze_prompt}\n#{content}", LLM::ANALYZE_FORMAT, cache_key)
                    LLM::Cache.store(disk_key, r)
                    r
                  end

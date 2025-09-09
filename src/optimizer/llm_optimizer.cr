@@ -2,6 +2,7 @@ require "./optimizer"
 require "../llm/general/client"
 require "../llm/ollama"
 require "../llm/prompt"
+require "../llm/prompt_overrides"
 
 # Enhanced optimizer with LLM-based optimization capabilities
 # for refining non-standard or unconventional paths and parameters
@@ -122,7 +123,7 @@ class LLMEndpointOptimizer < EndpointOptimizer
     end.join("\n")
 
     <<-PROMPT
-    #{LLM_OPTIMIZE_PROMPT}
+    #{LLM::PromptOverrides.llm_optimize_prompt}
 
     Endpoint to optimize:
     - Method: #{endpoint.method}

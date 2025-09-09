@@ -1,7 +1,7 @@
 +++
 title = "FAQ"
 description = "OWASP Noir에 대한 일반적인 질문의 답변을 찾아보세요. 이 페이지는 Noir가 무엇인지, 사용법 및 기여 방법과 같은 주제를 다룹니다."
-weight = 2
+weight = 3
 sort_by = "weight"
 
 [extra]
