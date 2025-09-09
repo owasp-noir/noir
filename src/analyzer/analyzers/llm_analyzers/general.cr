@@ -2,6 +2,7 @@ require "../../../utils/utils.cr"
 require "../../../models/analyzer"
 require "../../../llm/general/client"
 require "../../../llm/prompt"
+require "../../../llm/prompt_overrides"
 require "../../../llm/cache"
 
 module Analyzer::AI
@@ -70,8 +71,8 @@ module Analyzer::AI
     end
 
     private def process_bundle(bundle_content : String, client : LLM::General)
-      messages = [{"role" => "system", "content" => LLM::SYSTEM_BUNDLE}, {"role" => "user", "content" => bundle_content}]
-      key = LLM::Cache.key(@llm_url, @model, "BUNDLE_ANALYZE", LLM::ANALYZE_FORMAT, bundle_content)
+      messages = [{"role" => "system", "content" => LLM::SYSTEM_BUNDLE}, {"role" => "user", "content" => "#{LLM::PromptOverrides.bundle_analyze_prompt}\n#{bundle_content}"}]
+      key = LLM::Cache.key(@llm_url, @model, "BUNDLE_ANALYZE", LLM::ANALYZE_FORMAT, "#{LLM::PromptOverrides.bundle_analyze_prompt}\n#{bundle_content}")
       response = if cached = LLM::Cache.fetch(key)
                    cached
                  else
@@ -126,8 +127,8 @@ module Analyzer::AI
       if all_paths.size > 10
         logger.debug_sub "AI::Analyzing filtered files"
         user_payload = all_paths.map { |p| "- #{File.expand_path(p)}" }.join("\n")
-        messages = [{"role" => "system", "content" => LLM::SYSTEM_FILTER}, {"role" => "user", "content" => user_payload}]
-        key = LLM::Cache.key(@llm_url, @model, "FILTER", LLM::FILTER_FORMAT, user_payload)
+        messages = [{"role" => "system", "content" => LLM::SYSTEM_FILTER}, {"role" => "user", "content" => "#{LLM::PromptOverrides.filter_prompt}\n#{user_payload}"}]
+        key = LLM::Cache.key(@llm_url, @model, "FILTER", LLM::FILTER_FORMAT, "#{LLM::PromptOverrides.filter_prompt}\n#{user_payload}")
         filter_response = if cached = LLM::Cache.fetch(key)
                             cached
                           else
@@ -168,8 +169,8 @@ module Analyzer::AI
     end
 
     private def process_content(content : String, relative_path : String, path : String, client : LLM::General)
-      messages = [{"role" => "system", "content" => LLM::SYSTEM_ANALYZE}, {"role" => "user", "content" => content}]
-      key = LLM::Cache.key(@llm_url, @model, "ANALYZE", LLM::ANALYZE_FORMAT, content)
+      messages = [{"role" => "system", "content" => LLM::SYSTEM_ANALYZE}, {"role" => "user", "content" => "#{LLM::PromptOverrides.analyze_prompt}\n#{content}"}]
+      key = LLM::Cache.key(@llm_url, @model, "ANALYZE", LLM::ANALYZE_FORMAT, "#{LLM::PromptOverrides.analyze_prompt}\n#{content}")
       response = if cached = LLM::Cache.fetch(key)
                    cached
                  else
