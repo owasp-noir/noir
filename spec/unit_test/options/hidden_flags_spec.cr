@@ -5,7 +5,7 @@ describe "Hidden Prompt Override Flag Extraction" do
   it "extracts override-filter-prompt flag correctly" do
     args = ["--override-filter-prompt", "Test filter prompt", "-b", "/tmp/test"]
     options = Hash(String, YAML::Any).new
-    
+
     # Simulate the extract_hidden_prompt_flags function logic
     filtered_args = [] of String
     i = 0
@@ -35,10 +35,10 @@ describe "Hidden Prompt Override Flag Extraction" do
       "--override-analyze-prompt", "Custom analyze",
       "--override-bundle-analyze-prompt", "Custom bundle",
       "--override-llm-optimize-prompt", "Custom optimize",
-      "-b", "/tmp/test"
+      "-b", "/tmp/test",
     ]
     options = Hash(String, YAML::Any).new
-    
+
     filtered_args = [] of String
     i = 0
 
