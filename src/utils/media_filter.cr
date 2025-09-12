@@ -1,8 +1,22 @@
 require "file"
 
 module MediaFilter
-  # Maximum file size for processing (10MB by default)
-  MAX_FILE_SIZE = 10 * 1024 * 1024
+  # Maximum file size for processing (default 10MB).
+  # Can be overridden with the environment variable NOIR_MAX_FILE_SIZE.
+  # Supported formats for NOIR_MAX_FILE_SIZE:
+  #   * Plain bytes integer (e.g., 5242880)
+  #   * Human-readable with unit suffix (K, KB, M, MB, G, GB) e.g., 5MB, 500K, 1G
+  # Invalid / unparsable values fall back to the default (10MB).
+  MAX_FILE_SIZE = begin
+    if size_str = ENV["NOIR_MAX_FILE_SIZE"]?
+      parsed = MediaFilter.parse_size(size_str)
+      parsed > 0 ? parsed : 10 * 1024 * 1024
+    else
+      10 * 1024 * 1024
+    end
+  rescue
+    10 * 1024 * 1024
+  end
 
   # Common media file extensions that should be skipped
   MEDIA_EXTENSIONS = [
@@ -33,6 +47,28 @@ module MediaFilter
     # Other binary formats
     ".ttf", ".otf", ".woff", ".woff2", ".eot",
   ]
+
+  # Parse size strings like "10MB", "500K", "1G" or raw bytes ("1048576")
+  def self.parse_size(str : String) : Int32
+    s = str.strip.upcase
+    if m = s.match(/^(\d+)([KMG]?B?)$/)
+      num = m[1].to_i64
+      unit = m[2]
+      factor = case unit
+               when "K", "KB" then 1024_i64
+               when "M", "MB" then 1024_i64 * 1024
+               when "G", "GB" then 1024_i64 * 1024 * 1024
+               else                1_i64
+               end
+      total = num * factor
+      total > Int32::MAX ? Int32::MAX : total.to_i
+    else
+      val = s.to_i64
+      val > Int32::MAX ? Int32::MAX : val.to_i
+    end
+  rescue
+    0
+  end
 
   # Check if a file should be skipped based on extension
   def self.media_file?(file_path : String) : Bool
