@@ -48,26 +48,36 @@ module MediaFilter
     ".ttf", ".otf", ".woff", ".woff2", ".eot",
   ]
 
+  # Cache for parsed size strings
+  @@size_cache : Hash(String, Int32) = Hash(String, Int32).new
+
   # Parse size strings like "10MB", "500K", "1G" or raw bytes ("1048576")
   def self.parse_size(str : String) : Int32
     s = str.strip.upcase
-    if m = s.match(/^(\d+)([KMG]?B?)$/)
-      num = m[1].to_i64
-      unit = m[2]
-      factor = case unit
-               when "K", "KB" then 1024_i64
-               when "M", "MB" then 1024_i64 * 1024
-               when "G", "GB" then 1024_i64 * 1024 * 1024
-               else                1_i64
-               end
-      total = num * factor
-      total > Int32::MAX ? Int32::MAX : total.to_i
-    else
-      val = s.to_i64
-      val > Int32::MAX ? Int32::MAX : val.to_i
+    if cached = @@size_cache[s]?
+      return cached
     end
-  rescue
-    0
+    result = begin
+      if m = s.match(/^(\d+)([KMG]?B?)$/)
+        num = m[1].to_i64
+        unit = m[2]
+        factor = case unit
+                 when "K", "KB" then 1024_i64
+                 when "M", "MB" then 1024_i64 * 1024
+                 when "G", "GB" then 1024_i64 * 1024 * 1024
+                 else                1_i64
+                 end
+        total = num * factor
+        total > Int32::MAX ? Int32::MAX : total.to_i
+      else
+        val = s.to_i64
+        val > Int32::MAX ? Int32::MAX : val.to_i
+      end
+    rescue
+      0
+    end
+    @@size_cache[s] = result
+    result
   end
 
   # Check if a file should be skipped based on extension
