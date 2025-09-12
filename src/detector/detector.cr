@@ -103,11 +103,11 @@ def detect_techs(base_path : String, options : Hash(String, YAML::Any), passive_
     begin
       skipped_files = 0
       total_files = 0
-      
+
       Dir.glob("#{base_path}/**/**") do |file|
         next if File.directory?(file)
         total_files += 1
-        
+
         # Check if file should be skipped due to media type or size
         if MediaFilter.should_skip_file?(file)
           reason = MediaFilter.skip_reason(file)
@@ -115,12 +115,12 @@ def detect_techs(base_path : String, options : Hash(String, YAML::Any), passive_
           skipped_files += 1
           next
         end
-        
+
         content = File.read(file, encoding: "utf-8", invalid: :skip)
         channel.send({file, content})
         locator.push "file_map", file
       end
-      
+
       if skipped_files > 0
         logger.info "Skipped #{skipped_files} media/large files out of #{total_files} total files"
       end
