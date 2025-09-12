@@ -282,6 +282,7 @@ def run_options_parser
       puts "ENVIRONMENT VARIABLES:".colorize(:green)
       puts "  NOIR_HOME: Path to a directory containing the configuration file."
       puts "  NOIR_AI_KEY: API key for authenticating with an AI provider (e.g., OpenAI, xAI)"
+      puts "  NOIR_MAX_FILE_SIZE: Maximum file size for code analysis (e.g., 5MB, 1048576). Larger or media files are skipped."
       puts ""
       puts "EXAMPLES:".colorize(:green)
       puts "  Basic run of noir:"

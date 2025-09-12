@@ -2,6 +2,7 @@ require "./logger"
 require "./endpoint"
 require "./file_helper"
 require "../utils/wait_group"
+require "../utils/media_filter"
 
 class Analyzer
   include FileHelper
@@ -69,6 +70,17 @@ class FileAnalyzer < Analyzer
               path = channel.receive?
               break if path.nil?
               next if File.directory?(path)
+
+              # Skip media or large files (reuse detector MediaFilter logic)
+              if MediaFilter.should_skip_file?(path)
+                if reason = MediaFilter.skip_reason(path)
+                  logger.debug "Skipping #{path}: #{reason}"
+                else
+                  logger.debug "Skipping #{path}: filtered"
+                end
+                next
+              end
+
               @@hooks.each do |hook|
                 file_results = hook.call(path, @url)
                 if !file_results.nil?
