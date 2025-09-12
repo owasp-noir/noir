@@ -88,8 +88,9 @@ module MediaFilter
 
   # Check if a file is too large to process
   def self.file_too_large?(file_path : String, max_size : Int32 = MAX_FILE_SIZE) : Bool
-    return false unless File.exists?(file_path)
-    File.size(file_path) > max_size
+    size = File.size?(file_path)
+    return false unless size
+    size > max_size
   end
 
   # Combined check - returns true if file should be skipped
