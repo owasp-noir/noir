@@ -11,17 +11,17 @@ jobs:
     steps:
       # Checkout the repository code
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # Generate SBOM using hahwul/cyclonedx-cr action
       - name: Generate SBOM
         uses: hahwul/cyclonedx-cr@v1.0.0
         with:
-          shard_file: ./shard.yml  # Explicitly map to shard_file
-          lock_file: ./shard.lock  # Explicitly map to lock_file
-          output_file: ./sbom.xml  # Map to output_file
-          output_format: xml  # Map to output_format
-          spec_version: 1.6  # Optional, specify if needed
+          shard_file: ./shard.yml # Explicitly map to shard_file
+          lock_file: ./shard.lock # Explicitly map to lock_file
+          output_file: ./sbom.xml # Map to output_file
+          output_format: xml # Map to output_format
+          spec_version: 1.6 # Optional, specify if needed
 
       # Upload SBOM to GitHub Release
       - name: Upload SBOM to Release
