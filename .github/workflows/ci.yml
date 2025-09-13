@@ -17,7 +17,7 @@ jobs:
       matrix:
         crystal-version: [1.14.1, 1.15.0, 1.16.0, 1.17.0]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: MeilCli/setup-crystal-action@v4
         with:
           crystal_version: ${{ matrix.crystal-version }}
@@ -32,7 +32,7 @@ jobs:
         arch: [linux/amd64, linux/arm64]
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Install cosign
         if: github.event_name != 'pull_request'
         uses: sigstore/cosign-installer@v3.1.1
@@ -63,7 +63,7 @@ jobs:
     container:
       image: crystallang/crystal
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
       - name: Crystal Ameba Linter
         id: crystal-ameba
         uses: crystal-ameba/github-action@v0.8.0
@@ -74,7 +74,7 @@ jobs:
     container:
       image: 84codes/crystal:latest-debian-12
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
       - name: Install dependencies
         run: shards install
       - name: Run tests

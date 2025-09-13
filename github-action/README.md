@@ -5,7 +5,7 @@ This GitHub Action allows you to run OWASP Noir security analysis in your CI/CD 
 ## Features
 
 - **Endpoint Detection**: Automatically discovers endpoints in your application code
-- **Multiple Output Formats**: Supports JSON, YAML, plain text, and other formats  
+- **Multiple Output Formats**: Supports JSON, YAML, plain text, and other formats
 - **Passive Security Scanning**: Detects potential security issues in your code
 - **Technology Detection**: Automatically identifies frameworks and technologies
 - **Comprehensive Coverage**: Supports multiple programming languages and frameworks
@@ -22,14 +22,14 @@ jobs:
   noir-analysis:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      
+      - uses: actions/checkout@v5
+
       - name: Run OWASP Noir
         id: noir
         uses: owasp-noir/noir@main
         with:
           base_path: '.'
-          
+
       - name: Display results
         run: echo '${{ steps.noir.outputs.endpoints }}' | jq .
 ```
@@ -44,8 +44,8 @@ jobs:
   security-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      
+      - uses: actions/checkout@v5
+
       - name: Run OWASP Noir with Passive Scanning
         id: noir
         uses: owasp-noir/noir@main
@@ -57,15 +57,15 @@ jobs:
           use_all_taggers: 'true'
           include_path: 'true'
           verbose: 'true'
-          
+
       - name: Process Results
         run: |
           echo "🔍 Endpoints discovered:"
           echo '${{ steps.noir.outputs.endpoints }}' | jq '.endpoints | length'
-          
+
           echo "🚨 Security issues found:"
           echo '${{ steps.noir.outputs.passive_results }}' | jq '. | length'
-          
+
       - name: Save detailed results
         uses: actions/upload-artifact@v4
         with:
