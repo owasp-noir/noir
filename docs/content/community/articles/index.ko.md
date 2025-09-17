@@ -13,11 +13,13 @@ sort_by = "weight"
 
 ![OWASP Seoul 2025 - Open Source Gardening](owasp-seoul.jpg)
 
-## 기사 및 블로그
+## 기사, 블로그 및 링크
 다음은 커뮤니티에서 작성한 OWASP Noir에 대한 일부 기사와 블로그 게시물입니다. Noir에 대한 기사를 작성하셨고 여기에 포함되기를 원하신다면 저희에게 알려주세요!
 
-*   [Hello Noir 👋🏼](https://www.hahwul.com/2023/08/03/hello-noir/) by Hahwul
-*   [Noir를 사용한 API 공격 표면 탐지](https://danaepp.com/api-attack-surface-detection-using-noir) by Dana Epp
-*   [OWASP Noir의 PassiveScan 탐색](https://www.hahwul.com/2024/11/03/passivescan-in-owasp-noir/) by Hahwul
-*   [ZAP과 Noir로 DAST 강화하기](https://www.zaproxy.org/blog/2024-11-11-powering-up-dast-with-zap-and-noir/) by the ZAP Blog
-*   [AI로 OWASP Noir 향상시키기](https://www.hahwul.com/2025/01/31/owasp-noir-x-llm/) by Hahwul
+* [Hello Noir 👋🏼](https://www.hahwul.com/2023/08/03/hello-noir/) by Hahwul
+* [API Attack Surface Detection using Noir](https://danaepp.com/api-attack-surface-detection-using-noir) by Dana Epp
+* [Exploring OWASP Noir's PassiveScan](https://www.hahwul.com/2024/11/03/passivescan-in-owasp-noir/) by Hahwul
+* [Powering Up DAST with ZAP and Noir](https://www.zaproxy.org/blog/2024-11-11-powering-up-dast-with-zap-and-noir/) by the ZAP Blog
+* [Enhancing OWASP Noir with AI](https://www.hahwul.com/2025/01/31/owasp-noir-x-llm/) by Hahwul
+* [Awesome Crystal](https://github.com/veelenga/awesome-crystal#security)
+* [Analysis Tools - Static Analysis](https://github.com/analysis-tools-dev/static-analysis#securitysast)
