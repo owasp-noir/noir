@@ -110,3 +110,8 @@ Noir is open-source project and made it with ❤️
 if you want contribute this project, please see [CONTRIBUTING.md](./CONTRIBUTING.md) and Pull-Request with cool your contents.
 
 [![](./CONTRIBUTORS.svg)](https://github.com/owasp-noir/noir/graphs/contributors)
+
+## Mascot
+
+| ![](docs/static/images/mascot/hak.jpg "Hak") | Our mascot is Hak (학), a crane that symbolizes elegance and precision in uncovering hidden secrets. In Korean, "학 (두루미)" means "crane," representing a cool friend who digs into the depths to reveal vulnerabilities and attack surfaces in your code. <br><br> For more artwork and resources related to Hak, check out [noir-artwork repository](https://github.com/owasp-noir/noir-artwork).|
+| -------------- | -------------- |
