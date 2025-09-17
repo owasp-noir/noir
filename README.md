@@ -122,16 +122,3 @@ if you want contribute this project, please see [CONTRIBUTING.md](./CONTRIBUTING
     <img src="docs/static/images/mascot/hak.jpg" alt="Hak the Crane" width="300">
   </div>
 </div>
-
-<table>
-    <tr>
-        <td><img src="docs/static/images/mascot/1.png"></td>
-        <td><img src="docs/static/images/mascot/2.png"></td>
-        <td><img src="docs/static/images/mascot/3.png"></td>
-    </tr>
-    <tr>
-        <td><img src="docs/static/images/mascot/4.png"></td>
-        <td><img src="docs/static/images/mascot/5.png"></td>
-        <td><img src="docs/static/images/mascot/6.png"></td>
-    </tr>
-</table>
