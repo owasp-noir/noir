@@ -110,3 +110,28 @@ Noir is open-source project and made it with ❤️
 if you want contribute this project, please see [CONTRIBUTING.md](./CONTRIBUTING.md) and Pull-Request with cool your contents.
 
 [![](./CONTRIBUTORS.svg)](https://github.com/owasp-noir/noir/graphs/contributors)
+
+## Mascot
+
+<div style="display: flex; align-items: flex-start; gap: 20px;">
+  <div style="flex: 1;">
+    <p>Our mascot is Hak (학), a crane that symbolizes elegance and precision in uncovering hidden secrets. In Korean, "학" means "crane," representing a cool friend who digs into the depths to reveal vulnerabilities and attack surfaces in your code.</p>
+    <p>For more artwork and resources related to Hak, check out our <a href="https://github.com/owasp-noir/noir-artwork">noir-artwork repository</a>.</p>
+  </div>
+  <div style="flex: 0 0 auto;">
+    <img src="docs/static/images/mascot/hak.jpg" alt="Hak the Crane" width="300">
+  </div>
+</div>
+
+<table>
+    <tr>
+        <td><img src="docs/static/images/mascot/1.png"></td>
+        <td><img src="docs/static/images/mascot/2.png"></td>
+        <td><img src="docs/static/images/mascot/3.png"></td>
+    </tr>
+    <tr>
+        <td><img src="docs/static/images/mascot/4.png"></td>
+        <td><img src="docs/static/images/mascot/5.png"></td>
+        <td><img src="docs/static/images/mascot/6.png"></td>
+    </tr>
+</table>
