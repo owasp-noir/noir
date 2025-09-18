@@ -2,7 +2,7 @@
 template = "landing.html"
 
 [extra]
-version = "v0.23.1"
+version = "v0.24.0"
 
 [extra.hero]
 title = "NOIR"
