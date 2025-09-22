@@ -47,7 +47,9 @@ Example
 noir -b <source_dir>
 ```
 
-![](/docs/assets/images/get_started/basic.png)
+If you use it with Github Action, please refer to this [document](/github-action) .
+
+![](/docs/static/images/basic.png)
 
 JSON Result
 ```
