@@ -6,6 +6,7 @@ version = "v0.24.0"
 
 [extra.hero]
 title = "NOIR"
+badge = "v0.24.0"
 description = "Noir는 정적 분석을 통해 엔드포인트와 잠재적 취약점을 발견하여 화이트박스 보안 테스트를 향상시키고 보안 파이프라인을 간소화하는 공격 표면 탐지기입니다."
 image = "../images/noir-wallpaper.jpg"
 cta_buttons = [
