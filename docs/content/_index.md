@@ -6,6 +6,7 @@ version = "v0.24.0"
 
 [extra.hero]
 title = "NOIR"
+badge = "v0.24.0"
 description = "Noir is an attack surface detector that enhances white-box security testing and streamlines security pipelines by discovering endpoints and potential vulnerabilities through static analysis."
 image = "./images/noir-wallpaper.jpg"
 cta_buttons = [
