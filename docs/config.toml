@@ -27,11 +27,23 @@ footer_html = "Powered by <a href='https://www.getzola.org'>Zola</a> and <a href
 default_thumbnail = "images/bbb.jpg"
 default_colorset = "dark"
 sidebar_expand_depth = 0
+
+lang_aliases = { en = "English", ko = "한국어" }
+
 nav = [
-    { name = "Get Started", url = "/noir/get_started/overview", type = "url" },
-    { name = "GitHub", url = "https://github.com/owasp-noir/noir", type = "url" },
-    { name = "OWASP", type = "dropdown", members = [
-        { name = "OWASP Project", url = "https://owasp.org/www-project-noir/", type = "url" },
-        { name = "OWASP Nest", url = "https://nest.owasp.dev/projects/noir", type = "url" },
+    { name = "Documents", url = "/noir/get_started/overview", type = "url", icon = "fa-solid fa-book" },
+    { name = "GitHub", url = "https://github.com/owasp-noir/noir", type = "url", icon = "fa-brands fa-github" },
+    { name = "OWASP", type = "dropdown", icon = "fa-solid fa-globe", members = [
+        { name = "OWASP Project", url = "https://owasp.org/www-project-noir/", type = "url" , icon = "fa-solid fa-flag"},
+        { name = "OWASP Nest", url = "https://nest.owasp.dev/projects/noir", type = "url" , icon = "fa-solid fa-igloo"},
+    ] },
+]
+
+nav_ko = [
+    { name = "문서", url = "/ko/noir/get_started/overview", type = "url", icon = "fa-solid fa-book" },
+    { name = "GitHub", url = "https://github.com/owasp-noir/noir", type = "url", icon = "fa-brands fa-github" },
+    { name = "OWASP", type = "dropdown", icon = "fa-solid fa-globe", members = [
+        { name = "OWASP Project", url = "https://owasp.org/www-project-noir/", type = "url" , icon = "fa-solid fa-flag"},
+        { name = "OWASP Nest", url = "https://nest.owasp.dev/projects/noir", type = "url" , icon = "fa-solid fa-igloo"},
     ] },
 ]
