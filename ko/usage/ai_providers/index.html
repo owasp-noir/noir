@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    
+        
+    
+    
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <style>
+        @font-face {
+            font-family: "Pretendard-Regular";
+            src: url('https://owasp-noir.github.io/noir/fonts/Pretendard-Regular.woff') format("woff");
+            font-weight: 400;
+            font-style: normal;
+        }
+        body {
+            font-family: "Pretendard-Regular", sans-serif;
+        }
+    </style>
+
+    
+
+    <title>AI 제공업체 | OWASP Noir</title>
+
+    
+    
+
+      <!-- SEO: Open Graph / Twitter Card -->
+      <meta property="og:title" content="AI 제공업체 | OWASP Noir" />
+      <meta property="og:description" content="OpenAI, xAI 및 Ollama, LM Studio와 같은 도구를 통한 로컬 모델을 포함하여 Noir를 다양한 AI 제공업체에 연결하는 방법을 알아보세요. 이 섹션은 각 제공업체에 대한 가이드를 제공합니다." />
+      <meta property="og:url" content="https://owasp-noir.github.io/noir/" />
+      <meta property="og:type" content="website" />
+      
+      <meta property="og:image" content="https://owasp-noir.github.io/noir/images/bbb.jpg" />
+      
+
+      <meta name="twitter:card" content="summary_large_image" />
+      <meta name="twitter:title" content="OWASP Noir" />
+      <meta name="twitter:description" content="OpenAI, xAI 및 Ollama, LM Studio와 같은 도구를 통한 로컬 모델을 포함하여 Noir를 다양한 AI 제공업체에 연결하는 방법을 알아보세요. 이 섹션은 각 제공업체에 대한 가이드를 제공합니다." />
+      
+      
+      
+      <meta name="twitter:image" content="https://owasp-noir.github.io/noir/images/bbb.jpg" />
+      
+
+      <!-- CSS -->
+    <link rel="stylesheet" href="https://owasp-noir.github.io/noir/css/main.css">
+    <link rel="stylesheet" href="https://owasp-noir.github.io/noir/css/font-awesome.min.css">
+    <link rel="stylesheet" href="https://owasp-noir.github.io/noir/css/katex.min.css">
+
+    <script src="https://owasp-noir.github.io/noir/js/mermaid.min.js"></script>
+    <script src="https://owasp-noir.github.io/noir/js/katex.min.js"></script>
+    <script src="https://owasp-noir.github.io/noir/js/copy_code.js"></script>
+    <script src="https://owasp-noir.github.io/noir/js/copy_heading_link.js"></script>
+
+    
+    
+</head>
+<body>
+    
+
+<!-- Search Modal -->
+<input type="checkbox" id="search-modal" class="modal-toggle" />
+<div class="modal modal-middle">
+    <div class="modal-box relative max-w-2xl p-0 bg-base-100 shadow-2xl">
+        <label for="search-modal" class="btn btn-sm btn-circle btn-ghost absolute right-4 top-4 z-10">✕</label>
+        <div class="search-container">
+            <!-- Search Input Container -->
+            <div class="search-input-container px-6 pt-6 pb-4 border-b border-base-300/30">
+                <div class="relative">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="search-icon absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-base-content/40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                    <input id="search" type="search" placeholder="Search documentation..." class="search-input w-full pl-12 pr-4 py-3 text-base bg-transparent border-0 focus:outline-none focus:ring-0 text-base-content placeholder:text-base-content/40">
+                </div>
+            </div>
+            <!-- Search Results Container -->
+            <div class="search-results-container px-2 py-2 max-h-96 overflow-y-auto">
+                <div class="search-results__header px-4 py-2 text-xs text-base-content/60"></div>
+                <ul class="search-results__items space-y-1"></ul>
+            </div>
+            <!-- Search Footer -->
+            <div class="search-footer px-6 py-3 border-t border-base-300/30 flex items-center justify-end gap-4 text-xs text-base-content/50">
+                <div class="flex items-center gap-1">
+                    <kbd class="kbd kbd-xs">↑</kbd>
+                    <kbd class="kbd kbd-xs">↓</kbd>
+                    <span>to navigate</span>
+                </div>
+                <div class="flex items-center gap-1">
+                    <kbd class="kbd kbd-xs">↵</kbd>
+                    <span>to select</span>
+                </div>
+                <div class="flex items-center gap-1">
+                    <kbd class="kbd kbd-xs">esc</kbd>
+                    <span>to close</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+    <div class="drawer lg:drawer-open">
+        <input id="my-drawer-2" type="checkbox" class="drawer-toggle" />
+        <div class="drawer-content flex flex-col pt-16">
+            
+<div class="navbar opacity-95 fixed top-0 left-0 right-0 z-50 h-16 border-b border-gray-500/15 backdrop-blur-3xl">
+    <!-- Mobile hamburger -->
+    <div class="flex-none lg:hidden">
+        <label for="my-drawer-2" class="btn btn-square btn-ghost">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="inline-block w-5 h-5 stroke-current"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+        </label>
+    </div>
+    <!-- Logo -->
+    <div class="flex-1">
+        <a href="/" class="btn btn-ghost hover:animate-pulse hover:bg-transparent hover:border-transparent normal-case text-xl" style="background: linear-gradient(135deg, #9ca3af, #6b7280); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; font-weight: bold; font-size: 1.5rem;">
+            
+                <img src="https://owasp-noir.github.io/noir/images/logo.png" alt="OWASP Noir" class="h-18 w-auto" style="padding: 14px;"/>
+            
+        </a>
+    </div>
+    <!-- Desktop Menu -->
+    <div class="flex-none hidden lg:flex">
+        <ul class="menu menu-horizontal px-1 items-center">
+            
+            
+                
+                
+                    
+                
+            
+            
+                
+                    
+                        <li>
+                            <a class="btn btn-ghost hover:no-underline" href="/ko/noir/get_started/overview">
+                                <i class="fa-solid fa-book"></i>
+                                문서
+                            </a>
+                        </li>
+                    
+                
+                    
+                        <li>
+                            <a class="btn btn-ghost hover:no-underline" href="https://github.com/owasp-noir/noir">
+                                <i class="fa-brands fa-github"></i>
+                                GitHub
+                            </a>
+                        </li>
+                    
+                
+                    
+                        <li class="dropdown dropdown-end">
+                            <div tabindex="0" role="button" class="btn btn-ghost">
+                                <i class="fa-solid fa-globe"></i>
+                                OWASP
+                                <svg class="inline w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                            </div>
+                            <ul tabindex="0" class="dropdown-content menu bg-base-100 border border-gray-500/15 rounded-box z-1 p-2 shadow-sm">
+                                
+                                    <li>
+                                        <a class="btn btn-ghost hover:no-underline" href="https://owasp.org/www-project-noir/">
+                                            <i class="fa-solid fa-flag"></i>
+                                            OWASP Project
+                                        </a>
+                                    </li>
+                                
+                                    <li>
+                                        <a class="btn btn-ghost hover:no-underline" href="https://nest.owasp.dev/projects/noir">
+                                            <i class="fa-solid fa-igloo"></i>
+                                            OWASP Nest
+                                        </a>
+                                    </li>
+                                
+                            </ul>
+                        </li>
+                    
+                
+            
+            
+            <li>
+                <div class="dropdown dropdown-end p-0">
+                    <div tabindex="0" role="button" class="btn btn-ghost px-2" aria-label="Languages">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-7 h-7" width="20" height="20" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                            <path stroke="none" d="M0 0h24v24H0z" fill="none"></path>
+                            <path d="M4 5h7"></path>
+                            <path d="M7 4c0 4.846 0 7 .5 8"></path>
+                            <path d="M10 8.5c0 2.286 -2 4.5 -3.5 4.5s-2.5 -1.135 -2.5 -2c0 -2 1 -3 3 -3s5 .57 5 2.857c0 1.524 -.667 2.571 -2 3.143"></path>
+                            <path d="M12 20l4 -9l4 9"></path>
+                            <path d="M19.1 18h-6.2"></path>
+                        </svg>
+                    </div>
+                    <ul tabindex="0" class="dropdown-content menu bg-base-100 border border-gray-500/15 rounded-box z-1 p-2 shadow-lg min-w-max whitespace-nowrap">
+                        
+                            
+                                
+                                
+                                
+                                    <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/">English</a></li>
+                                
+                            
+                            
+                        
+                    </ul>
+                </div>
+            </li>
+            
+
+            
+            <li>
+                <label class="swap swap-rotate btn btn-ghost">
+                  <input type="checkbox" class="theme-controller" value="night" aria-labelledby="swap color"/>
+                  <svg class="swap-off h-5 w-5 fill-current" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M5.64,17l-.71.71a1,1,0,0,0,0,1.41,1,1,0,0,0,1.41,0l.71-.71A1,1,0,0,0,5.64,17ZM5,12a1,1,0,0,0-1-1H3a1,1,0,0,0,0,2H4A1,1,0,0,0,5,12Zm7-7a1,1,0,0,0,1-1V3a1,1,0,0,0-2,0V4A1,1,0,0,0,12,5ZM5.64,7.05a1,1,0,0,0,.7.29,1,1,0,0,0,.71-.29,1,1,0,0,0,0-1.41l-.71-.71A1,1,0,0,0,4.93,6.34Zm12,.29a1,1,0,0,0,.7-.29l.71-.71a1,1,0,1,0-1.41-1.41L17,5.64a1,1,0,0,0,0,1.41A1,1,0,0,0,17.66,7.34ZM21,11H20a1,1,0,0,0,0,2h1a1,1,0,0,0,0-2Zm-9,8a1,1,0,0,0-1,1v1a1,1,0,0,0,2,0V20A1,1,0,0,0,12,19ZM18.36,17A1,1,0,0,0,17,18.36l.71.71a1,1,0,0,0,1.41,0,1,1,0,0,0,0-1.41ZM12,6.5A5.5,5.5,0,1,0,17.5,12,5.51,5.51,0,0,0,12,6.5Zm0,9A3.5,3.5,0,1,1,15.5,12,3.5,3.5,0,0,1,12,15.5Z" /></svg>
+                  <svg class="swap-on h-5 w-5 fill-current" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21.64,13a1,1,0,0,0-1.05-.14,8.05,8.05,0,0,1-3.37.73A8.15,8.15,0,0,1,9.08,5.49a8.59,8.59,0,0,1,.25-2A1,1,0,0,0,8,2.36,10.14,10.14,0,1,0,22,14.05,1,1,0,0,0,21.64,13Zm-9.5,6.69A8.14,8.14,0,0,1,7.08,5.22v.27A10.15,10.15,0,0,0,17.22,15.63a9.79,9.79,0,0,0,2.1-.22A8.11,8.11,0,0,1,12.14,19.73Z" /></svg>
+                </label>
+            </li>
+            
+
+        </ul>
+    </div>
+</div>
+
+
+            
+            
+            <div class="p-8 w-full max-w-7xl mx-auto lg:grid lg:grid-cols-[1fr_250px] lg:gap-8">
+                <main class="prose w-full max-w-7xl mx-auto">
+            
+                    
+    <div class="mb-12 pb-4 border-b border-gray-500/15">
+        <h1>AI 제공업체</h1>
+        <p class="text-gray-500">OpenAI, xAI 및 Ollama, LM Studio와 같은 도구를 통한 로컬 모델을 포함하여 Noir를 다양한 AI 제공업체에 연결하는 방법을 알아보세요. 이 섹션은 각 제공업체에 대한 가이드를 제공합니다.</p>
+    </div>
+    <p>Noir의 AI 기반 분석은 다양한 대규모 언어 모델(LLM) 제공업체와 함께 사용할 수 있습니다. 강력한 클라우드 기반 모델을 사용하든 개인정보 보호 및 오프라인 사용을 위한 로컬 모델을 사용하든, Noir가 모든 것을 지원합니다.</p>
+<p>이 섹션은 지원되는 각 AI 제공업체와 함께 Noir를 설정하고 사용하는 방법에 대한 자세한 가이드를 제공합니다:</p>
+<ul>
+<li><strong>클라우드 기반 제공업체</strong>:
+<ul>
+<li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/openai/">OpenAI</a></li>
+<li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/xai/">xAI</a></li>
+<li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/github_marketplace/">GitHub Marketplace</a></li>
+</ul>
+</li>
+<li><strong>로컬 모델 제공업체</strong>:
+<ul>
+<li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/ollama/">Ollama</a></li>
+<li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/vllm/">vLLM</a></li>
+<li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/lmstudio/">LM Studio</a></li>
+</ul>
+</li>
+</ul>
+<p>이 가이드를 따라하면 AI의 힘을 코드 분석 워크플로에 쉽게 통합할 수 있습니다.</p>
+
+
+
+                    
+
+
+
+                    <nav class="mt-12 pt-8 border-t border-gray-500/15">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div class="prev-nav-item">
+                                
+    
+    
+    
+        
+        
+            
+        
+    
+        
+        
+            
+        
+    
+        
+        
+            
+        
+    
+        
+        
+            
+        
+    
+
+                            </div>
+                            <div class="next-nav-item">
+                                
+    
+        
+        <a class="nav-button nav-button-next group" href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/ollama/">
+            <div class="nav-button-content">
+                <div class="nav-button-direction">
+                    <span class="nav-button-label">Next</span>
+                    <svg class="w-5 h-5 transition-transform group-hover:translate-x-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                    </svg>
+                </div>
+                <div class="nav-button-title">Ollama와 함께 Noir 사용하기</div>
+            </div>
+        </a>
+    
+
+                            </div>
+                        </div>
+                    </nav>
+                </main>
+
+                
+                
+                    
+
+
+                
+            </div>
+
+            <script>
+              // Determine theme: localStorage > extra.default_colorset > goyo-dark
+              // Expose theme config for global use (e.g., goyo.js)
+              window.defaultColorset = "dark";
+              window.defaultBrightness = "darker";
+              window.themeMap = { "dark": "goyo-dark", "light": "goyo-light" };
+              window.fallbackTheme = window.themeMap[window.defaultColorset] || "goyo-dark";
+              
+              // Theme mapping - maps user-friendly names to actual DaisyUI theme names
+              var themeMapping = { "goyo-dark": "night", "goyo-light": "lofi" };
+              var currentUserTheme = localStorage.getItem('theme') || window.fallbackTheme;
+              var actualTheme = themeMapping[currentUserTheme] || currentUserTheme;
+              
+              var mermaidTheme = "dark";
+              if(currentUserTheme == "goyo-light") {
+                mermaidTheme = "light";
+              }
+              mermaid.initialize({ startOnLoad: false, theme: mermaidTheme });
+              document.addEventListener('DOMContentLoaded', async () => {
+                const mermaidElements = document.querySelectorAll('.mermaid');
+
+                if (mermaidElements.length > 0) {
+                    await mermaid.run({
+                        nodes: mermaidElements
+                    });
+                }
+              });
+            </script>
+
+        </div>
+
+        
+        
+        <div id="sidebar" class="drawer-side fixed top-0 pt-12 bottom-0 z-40 border-r border-gray-500/15">
+        
+            
+                
+
+
+
+    
+
+<label for="my-drawer-2" class="drawer-overlay"></label>
+<div class="mt-4 w-68 h-[calc(100vh-4rem)] bg-base-100 text-base-content flex flex-col overflow-auto">
+    
+    <div class="px-2 pt-4 pb-0 flex flex-col items-center gap-2">
+        <div class="w-full flex items-center gap-2">
+            <label for="search-modal" class="input w-full flex items-center justify-between text-left bg-base-100 cursor-pointer border-gray-500/15 hover:border-gray-500/55 hover:border-1 transition" aria-label="검색">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                <span class="text-gray-400"><kbd class="kbd">⌘</kbd><kbd class="kbd">K</kbd></span>
+            </label>
+        </div>
+    </div>
+    
+    <ul class="menu w-full flex-grow">
+        
+        
+        
+        
+            
+            <li>
+                
+                    <details >
+                        <summary ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//get_started">Getting Started</a></summary>
+                        <ul>
+                            
+                            
+                                <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//get_started/overview">Overview</a></li>
+                            
+                                <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//get_started/installation">Installation</a></li>
+                            
+                                <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//get_started/running">Running Noir</a></li>
+                            
+                                <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//get_started/ai-power">AI-Powered Analysis</a></li>
+                            
+                            
+                        </ul>
+                    </details>
+                
+            </li>
+        
+            
+            <li>
+                
+                    <details open>
+                        <summary ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage">Usage Guide</a></summary>
+                        <ul>
+                            
+                            
+                            
+                                
+                                <li>
+                                    
+                                        <details >
+                                            <summary ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/supported">Supported Technologies</a></summary>
+                                            <ul>
+                                                
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/supported/language-and-frameworks">Supported Languages and Frameworks</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/supported/specification">Supported Specifications</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/supported/tech-commands">Managing Technology Scopes</a></li>
+                                                
+                                                
+                                            </ul>
+                                        </details>
+                                    
+                                </li>
+                            
+                                
+                                <li>
+                                    
+                                        <details >
+                                            <summary ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/output_formats">Output Formats</a></summary>
+                                            <ul>
+                                                
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/output_formats/curl">HTTP Client Commands</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/output_formats/json">JSON and JSONL</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/output_formats/yaml">YAML</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/output_formats/openapi">OpenAPI Specification</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/output_formats/mermaid">Mermaid Chart</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/output_formats/more">Additional Output Formats</a></li>
+                                                
+                                                
+                                            </ul>
+                                        </details>
+                                    
+                                </li>
+                            
+                                
+                                <li>
+                                    
+                                        <details open>
+                                            <summary class="rounded bg-gray-500/15"><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/ai_providers">AI Providers</a></summary>
+                                            <ul>
+                                                
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/ai_providers/ollama">Using Noir with Ollama</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/ai_providers/lmstudio">Using Noir with LM Studio</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/ai_providers/vllm">Using Noir with vLLM</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/ai_providers/openai">Using Noir with OpenAI</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/ai_providers/xai">Using Noir with xAI</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/ai_providers/github-marketplace">Using Noir with GitHub Marketplace Models</a></li>
+                                                
+                                                
+                                            </ul>
+                                        </details>
+                                    
+                                </li>
+                            
+                                
+                                <li>
+                                    
+                                        <details >
+                                            <summary ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/configurations">Configuration</a></summary>
+                                            <ul>
+                                                
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/configurations/configuration-file">Using a Configuration File</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/configurations/shell-completion">Shell Completions</a></li>
+                                                
+                                                
+                                            </ul>
+                                        </details>
+                                    
+                                </li>
+                            
+                                
+                                <li>
+                                    
+                                        <details >
+                                            <summary ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/passive_scan">Passive Security Scanning</a></summary>
+                                            <ul>
+                                                
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/passive_scan/rule">Passive Scan Rule</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/passive_scan/default-rules">Default Passive Scan Rules</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/passive_scan/community-rules">Community-Contributed Passive Scan Rules</a></li>
+                                                
+                                                
+                                            </ul>
+                                        </details>
+                                    
+                                </li>
+                            
+                                
+                                <li>
+                                    <a  href="https://owasp-noir.github.io/noir/ko//usage/github_action">GitHub Action</a>
+                                </li>
+                            
+                                
+                                <li>
+                                    
+                                        <details >
+                                            <summary ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/more_features">Additional Features</a></summary>
+                                            <ul>
+                                                
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/more_features/deliver">Delivering Results to Other Tools</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/more_features/diff">Comparing Code with Diff Mode</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/more_features/tagger">Using the Tagger for Contextual Analysis</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/more_features/pipeline-for-dast">Integrating Noir into Your DAST Pipeline</a></li>
+                                                
+                                                
+                                            </ul>
+                                        </details>
+                                    
+                                </li>
+                            
+                        </ul>
+                    </details>
+                
+            </li>
+        
+            
+            <li>
+                
+                    <details >
+                        <summary ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//community">Community</a></summary>
+                        <ul>
+                            
+                            
+                                <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//community/contributions">Contributing to Noir</a></li>
+                            
+                                <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//community/articles">Community Articles &amp; Talks</a></li>
+                            
+                            
+                        </ul>
+                    </details>
+                
+            </li>
+        
+            
+            <li>
+                
+                    <details >
+                        <summary ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//resoruces">Resources</a></summary>
+                        <ul>
+                            
+                            
+                                <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//resoruces/release-procedure">Release Procedure</a></li>
+                            
+                                <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//resoruces/hidden-flags">Hidden Flags</a></li>
+                            
+                                <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//resoruces/faq">FAQ</a></li>
+                            
+                                <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//resoruces/contact">Contact Us</a></li>
+                            
+                            
+                        </ul>
+                    </details>
+                
+            </li>
+        
+    </ul>
+
+    
+<footer class="footer text-xs pt-4 px-4 text-base-content border-t border-gray-500/15">
+    <aside>
+        <p>
+            Powered by <a href='https://www.getzola.org'>Zola</a> and <a href='https://github.com/hahwul/goyo'>Goyo</a>
+        </p>
+    </aside>
+</footer>
+
+</div>
+
+            
+        </div>
+    </div>
+
+    
+        
+        <script type="text/javascript" src="https://owasp-noir.github.io/noir/fuse.min.js"></script>
+        <script type="text/javascript" src="https://owasp-noir.github.io/noir/search_index.ko.js"></script>
+        
+        <script type="text/javascript" src="https://owasp-noir.github.io/noir/goyo.js"></script>
+    
+</body>
+</html>
