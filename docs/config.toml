@@ -26,6 +26,7 @@ logo_image_padding = "14px"
 footer_html = "Powered by <a href='https://www.getzola.org'>Zola</a> and <a href='https://github.com/hahwul/goyo'>Goyo</a>"
 default_thumbnail = "images/bbb.jpg"
 default_colorset = "dark"
+brightness = "darker"
 sidebar_expand_depth = 0
 
 lang_aliases = { en = "English", ko = "한국어" }
