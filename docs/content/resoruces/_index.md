@@ -10,5 +10,5 @@ sort_by = "weight"
 This section provides additional resources to help you get the most out of OWASP Noir.
 
 *   **[FAQ](faq/)**: Find answers to frequently asked questions.
-*   **[Changelog](changelog/)**: See what's new in the latest version of Noir.
+*   **[Release Procedure](release_procedure/)**: Learn about the process for creating and publishing new releases of Noir.
 *   **[Contact](contact/)**: Learn how to get in touch with the Noir team.

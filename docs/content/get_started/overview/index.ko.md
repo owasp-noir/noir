@@ -39,7 +39,7 @@ Noir는 다양한 프로그래밍 언어와 프레임워크를 지원합니다:
 *   **Ruby**: Rails, Sinatra
 *   **Rust**: Actix Web, Axum, Gotham, Rocket 등
 
-전체 목록은 [지원되는 언어 및 프레임워크](/noir/usage/supported/language_and_frameworks) 페이지를 참조하세요.
+전체 목록은 [지원되는 언어 및 프레임워크](/noir/usage/supported/language_and_frameworks/) 페이지를 참조하세요.
 
 ## 주요 기능
 

@@ -11,4 +11,4 @@ OWASP Noir는 커뮤니티 주도 프로젝트이며, 모든 사람의 기여와
 
 *   **[기사](articles/)**: 커뮤니티 멤버들이 작성한 Noir에 관한 기사와 블로그 게시물을 읽어보세요.
 *   **[기여](contributions/)**: 개발 환경 설정과 풀 리퀘스트 제출 방법을 포함하여 Noir 프로젝트에 기여하는 방법을 알아보세요.
-*   **[DAST를 위한 파이프라인](pipeline-for-dast/)**: DAST 파이프라인에 Noir를 통합하여 보안 테스트의 효과를 향상시키는 방법을 알아보세요.
+*   **[DAST를 위한 파이프라인](../usage/more_features/pipeline-for-dast/)**: DAST 파이프라인에 Noir를 통합하여 보안 테스트의 효과를 향상시키는 방법을 알아보세요.
