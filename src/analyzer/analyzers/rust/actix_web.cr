@@ -22,29 +22,29 @@ module Analyzer::Rust
                   if File.exists?(path) && File.extname(path) == ".rs"
                     lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
                     lines.each_with_index do |line, index|
-                        if line.to_s.includes? "#["
-                          match = line.match(pattern)
-                          if match
-                            begin
-                              route_argument = match[2]
-                              callback_argument = match[1]
-                              details = Details.new(PathInfo.new(path, index + 1))
-                              endpoint = Endpoint.new("#{route_argument}", callback_to_method(callback_argument), details)
-                              
-                              # Extract path parameters from route pattern
-                              extract_path_params(route_argument, endpoint)
-                              
-                              # Look ahead to extract parameters from function signature and body
-                              extract_function_params(lines, index + 1, endpoint)
-                              
-                              result << endpoint
-                            rescue e
-                              logger.debug "Error processing endpoint: #{e.message}"
-                            end
+                      if line.to_s.includes? "#["
+                        match = line.match(pattern)
+                        if match
+                          begin
+                            route_argument = match[2]
+                            callback_argument = match[1]
+                            details = Details.new(PathInfo.new(path, index + 1))
+                            endpoint = Endpoint.new("#{route_argument}", callback_to_method(callback_argument), details)
+
+                            # Extract path parameters from route pattern
+                            extract_path_params(route_argument, endpoint)
+
+                            # Look ahead to extract parameters from function signature and body
+                            extract_function_params(lines, index + 1, endpoint)
+
+                            result << endpoint
+                          rescue e
+                            logger.debug "Error processing endpoint: #{e.message}"
                           end
                         end
                       end
                     end
+                  end
                 rescue e : File::NotFoundError
                   logger.debug "File not found: #{path}"
                 end
@@ -81,37 +81,37 @@ module Analyzer::Rust
       in_function = false
       brace_count = 0
       seen_opening_brace = false
-      
+
       (start_index...[start_index + 20, lines.size].min).each do |i|
         line = lines[i]
-        
+
         # Track if we're inside the function
         if line.includes?("async fn ") || line.includes?("fn ")
           in_function = true
         end
-        
+
         # Track braces to know when function ends
         brace_count += line.count('{')
         if brace_count > 0
           seen_opening_brace = true
         end
         brace_count -= line.count('}')
-        
+
         # Extract query parameters from web::Query<T>
         if line.includes?("web::Query<") || line.includes?(": web::Query")
           endpoint.push_param(Param.new("query", "", "query"))
         end
-        
+
         # Extract JSON body from web::Json<T>
         if line.includes?("web::Json<") || line.includes?(": web::Json")
           endpoint.push_param(Param.new("body", "", "json"))
         end
-        
+
         # Extract form body from web::Form<T>
         if line.includes?("web::Form<") || line.includes?(": web::Form")
           endpoint.push_param(Param.new("form", "", "form"))
         end
-        
+
         # Extract headers from .headers().get()
         if line.includes?(".headers().get(")
           match = line.match(/\.headers\(\)\.get\("([^"]+)"\)/)
@@ -120,7 +120,7 @@ module Analyzer::Rust
             endpoint.push_param(Param.new(header_name, "", "header"))
           end
         end
-        
+
         # Extract cookies from .cookie()
         if line.includes?(".cookie(")
           match = line.match(/\.cookie\("([^"]+)"\)/)
@@ -129,12 +129,12 @@ module Analyzer::Rust
             endpoint.push_param(Param.new(cookie_name, "", "cookie"))
           end
         end
-        
+
         # Stop if we've moved past the function (brace count is back to 0 after we've seen an opening brace)
         if in_function && seen_opening_brace && brace_count == 0 && i > start_index
           break
         end
-        
+
         # Also stop if we hit another attribute
         if i > start_index && line.strip.starts_with?("#[")
           break
