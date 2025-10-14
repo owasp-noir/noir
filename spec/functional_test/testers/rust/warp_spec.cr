@@ -6,7 +6,18 @@ expected_endpoints = [
   Endpoint.new("/users/:param", "GET", [
     Param.new("param", "", "path"),
   ]),
-  Endpoint.new("/users", "POST"),
+  Endpoint.new("/search", "GET", [
+    Param.new("SearchQuery", "", "query"),
+  ]),
+  Endpoint.new("/users", "POST", [
+    Param.new("CreateUser", "", "json"),
+  ]),
+  Endpoint.new("/protected", "GET", [
+    Param.new("authorization", "", "header"),
+  ]),
+  Endpoint.new("/session", "GET", [
+    Param.new("session_id", "", "cookie"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/rust/warp/", {
