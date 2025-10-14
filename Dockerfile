@@ -1,5 +1,5 @@
 ##= BUILDER =##
-FROM 84codes/crystal:latest-debian-12 As builder
+FROM 84codes/crystal:latest-debian-13 As builder
 
 WORKDIR /noir
 COPY . .
