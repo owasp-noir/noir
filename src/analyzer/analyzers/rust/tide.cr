@@ -60,7 +60,7 @@ module Analyzer::Rust
           match_end = match.end
           if match_end
             handler = extract_handler_from_position(content, match_end)
-            
+
             # Parse path parameters (Tide uses :param syntax)
             params = [] of Param
             final_path = path.gsub(/:(\w+)/) do |param_match|
@@ -136,7 +136,7 @@ module Analyzer::Rust
     private def extract_handler_from_position(content : String, start_pos : Int32) : String
       paren_count = 1
       i = start_pos
-      
+
       while i < content.size && paren_count > 0
         char = content[i]
         if char == '('
@@ -146,8 +146,8 @@ module Analyzer::Rust
         end
         i += 1
       end
-      
-      content[start_pos...i-1].strip
+
+      content[start_pos...i - 1].strip
     rescue
       ""
     end
@@ -180,10 +180,10 @@ module Analyzer::Rust
       brace_count = 0
       in_body = false
       body_start = 0
-      
+
       (start_pos...content.size).each do |i|
         char = content[i]
-        
+
         if char == '{'
           if brace_count == 0
             body_start = i
@@ -197,7 +197,7 @@ module Analyzer::Rust
           end
         end
       end
-      
+
       nil
     rescue
       nil
