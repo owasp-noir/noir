@@ -68,6 +68,10 @@ module Analyzer::Rust
       # Check for root path (path::end without explicit path)
       if statement.includes?("warp::path::end()") && !statement.includes?("warp::path(\"")
         details = Details.new(PathInfo.new(file_path, 1))
+
+        # Still check for parameters even on root path
+        extract_non_path_params(statement, params)
+
         return Endpoint.new("/", method, params, details)
       end
 
@@ -95,10 +99,66 @@ module Analyzer::Rust
 
       route_path = "/" + path_parts.join("/")
 
+      # Extract query, body, header, and cookie parameters
+      extract_non_path_params(statement, params)
+
       details = Details.new(PathInfo.new(file_path, 1))
       Endpoint.new(route_path, method, params, details)
     rescue
       nil
+    end
+
+    private def extract_non_path_params(statement : String, params : Array(Param))
+      # Extract query parameters - warp::query::<T>() or .and(warp::query())
+      if statement.includes?("warp::query")
+        # Try to extract the type parameter for better naming
+        query_match = statement.match(/warp::query(?:::<(\w+)>)?/)
+        if query_match
+          param_name = query_match[1]? || "query"
+          params << Param.new(param_name, "", "query")
+        end
+      end
+
+      # Extract JSON body parameters - warp::body::json::<T>()
+      if statement.includes?("warp::body::json") || statement.includes?("warp::body::form")
+        body_match = statement.match(/warp::body::(?:json|form)(?:::<(\w+)>)?/)
+        if body_match
+          param_name = body_match[1]? || "body"
+          params << Param.new(param_name, "", "json")
+        end
+      end
+
+      # Extract header parameters - warp::header::<T>("header-name") or warp::header("header-name")
+      statement.scan(/warp::header(?:::<[^>]+>)?\("([^"]+)"\)/) do |match|
+        if match.size > 1
+          header_name = match[1]
+          params << Param.new(header_name, "", "header")
+        end
+      end
+
+      # Also check for .header() pattern
+      statement.scan(/\.header\("([^"]+)"\)/) do |match|
+        if match.size > 1
+          header_name = match[1]
+          params << Param.new(header_name, "", "header")
+        end
+      end
+
+      # Extract cookie parameters - warp::cookie::<T>("cookie-name") or warp::cookie("cookie-name")
+      statement.scan(/warp::cookie(?:::<[^>]+>)?\("([^"]+)"\)/) do |match|
+        if match.size > 1
+          cookie_name = match[1]
+          params << Param.new(cookie_name, "", "cookie")
+        end
+      end
+
+      # Also check for .cookie() pattern
+      statement.scan(/\.cookie\("([^"]+)"\)/) do |match|
+        if match.size > 1
+          cookie_name = match[1]
+          params << Param.new(cookie_name, "", "cookie")
+        end
+      end
     end
   end
 end
