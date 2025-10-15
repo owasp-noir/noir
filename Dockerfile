@@ -5,9 +5,9 @@ WORKDIR /noir
 COPY . .
 
 RUN apt-get update && \
-    apt-get install -y libyaml-dev zlib1g-dev libzstd-dev pkg-config && \
+    apt-get install -y libyaml-dev && \
     shards install --production && \
-    crystal build -o bin/noir src/noir.cr --release --no-debug --static --link-flags "-Wl,--start-group -lssl -lcrypto -lz -lzstd -Wl,--end-group"
+    shards build --release --no-debug --production --static
 # Ref: https://crystal-lang.org/reference/1.15/guides/static_linking.html
 
 ##= RUNNER =##
