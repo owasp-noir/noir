@@ -37,15 +37,15 @@ module Analyzer::Rust
                             details = Details.new(PathInfo.new(path, index + 1))
                             # Infer HTTP method from action name and context
                             http_method = infer_http_method(method_name, line)
-                            
+
                             endpoint = Endpoint.new(endpoint_path, http_method, details)
-                            
+
                             # Extract path parameters from the endpoint path
                             extract_path_params(endpoint_path, endpoint)
-                            
+
                             # Extract parameters from function signature and body
                             extract_function_params(lines, index, endpoint)
-                            
+
                             result << endpoint
                           rescue e
                             # Log the exception for debugging
@@ -128,7 +128,7 @@ module Analyzer::Rust
           "DELETE"
         elsif line.includes?("patch") || line.includes?("PATCH")
           "PATCH"
-        # Check if Form<T> is present, which typically indicates POST
+          # Check if Form<T> is present, which typically indicates POST
         elsif line.includes?("Form<")
           "POST"
         else
@@ -193,9 +193,9 @@ module Analyzer::Rust
       # Extract the parameter section (between parentheses, before ->)
       # Split signature at -> to separate parameters from return type
       param_section = function_signature.split("->").first? || function_signature
-      
+
       # Now extract parameters from the parameter section only
-      
+
       # Extract Query parameters - Query<T> in function parameters
       if param_section.includes?("Query<")
         endpoint.push_param(Param.new("query", "", "query"))
@@ -223,7 +223,7 @@ module Analyzer::Rust
         # Look in the function body for specific header usage
         (start_index...[start_index + 30, lines.size].min).each do |i|
           line = lines[i]
-          
+
           # Extract specific header names from .get("header_name") or headers.get("header_name")
           if line.includes?(".get(\"")
             line.scan(/\.get\("([^"]+)"\)/) do |match|
@@ -240,7 +240,7 @@ module Analyzer::Rust
       # Extract cookies from cookie access patterns
       (start_index...[start_index + 30, lines.size].min).each do |i|
         line = lines[i]
-        
+
         # Look for .cookie("name") patterns
         if line.includes?(".cookie(\"")
           line.scan(/\.cookie\("([^"]+)"\)/) do |match|
