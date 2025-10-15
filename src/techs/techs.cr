@@ -785,9 +785,9 @@ module NoirTechs
         :endpoint => true,
         :method   => true,
         :params   => {
-          :query  => false,
-          :path   => false,
-          :body   => false,
+          :query  => true,
+          :path   => true,
+          :body   => true,
           :header => false,
           :cookie => false,
         },

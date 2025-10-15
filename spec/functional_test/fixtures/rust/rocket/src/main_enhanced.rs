@@ -1,17 +1,7 @@
 #[macro_use] extern crate rocket;
 
 use rocket::serde::json::Json;
-use rocket::form::Form;
-
-#[get("/")]
-fn index() -> &'static str {
-    "Hello, world!"
-}
-
-#[post("/customer", data = "<input>")]
-fn customer() -> &'static str {
-    "Hello, world!"
-}
+use rocket::http::{Header, CookieJar};
 
 // Path parameters
 #[get("/users/<id>")]
@@ -37,32 +27,30 @@ fn filter(name: String, age: i32, active: bool) -> String {
 
 // Body/Data parameters
 #[post("/users", data = "<user>")]
-fn create_user(user: String) -> String {
+fn create_user(user: Json<User>) -> String {
     "User created".to_string()
 }
 
 #[put("/products/<id>", data = "<product>")]
-fn update_product(id: i32, product: String) -> String {
+fn update_product(id: i32, product: Json<Product>) -> String {
     format!("Product {} updated", id)
 }
 
 // Form data
 #[post("/login", data = "<credentials>")]
-fn login(credentials: String) -> String {
+fn login(credentials: Form<LoginForm>) -> String {
     "Login success".to_string()
 }
 
 // Mixed parameters
 #[post("/items/<id>?<version>", data = "<item>")]
-fn update_item(id: i32, version: Option<String>, item: String) -> String {
+fn update_item(id: i32, version: Option<String>, item: Json<Item>) -> String {
     format!("Item {} updated", id)
 }
 
 #[launch]
 fn rocket() -> _ {
     rocket::build().mount("/", routes![
-        index,
-        customer,
         get_user, 
         get_post, 
         search,
