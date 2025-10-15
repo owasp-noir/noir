@@ -19,6 +19,29 @@ expected_endpoints = [
   ]),
   Endpoint.new("/health", "GET"),
   Endpoint.new("/api/v1/status", "GET"),
+  Endpoint.new("/search", "GET", [
+    Param.new("SearchQuery", "", "query"),
+  ]),
+  Endpoint.new("/api/users", "POST", [
+    Param.new("UserData", "", "json"),
+  ]),
+  Endpoint.new("/login", "POST", [
+    Param.new("LoginForm", "", "form"),
+  ]),
+  Endpoint.new("/auth", "GET", [
+    Param.new("Authorization", "", "header"),
+    Param.new("X-API-Key", "", "header"),
+  ]),
+  Endpoint.new("/session", "GET", [
+    Param.new("session_id", "", "cookie"),
+  ]),
+  Endpoint.new("/complex/:id", "POST", [
+    Param.new("id", "", "path"),
+    Param.new("SearchQuery", "", "query"),
+    Param.new("UserData", "", "json"),
+    Param.new("Authorization", "", "header"),
+    Param.new("session_id", "", "cookie"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/rust/tide/", {
