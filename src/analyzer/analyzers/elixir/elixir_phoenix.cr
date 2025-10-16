@@ -85,7 +85,7 @@ module Analyzer::Elixir
       if match = line.match(/resources\s+['"]([^'"]+)['"]\s*,\s*(\w+)(?:\s*,\s*only:\s*\[([^\]]+)\])?/)
         base_path = match[1]
         only_actions = match[3]?
-        
+
         if only_actions
           # Parse only: [:index, :show, :create, etc.]
           actions = only_actions.scan(/:(\w+)/).map { |m| m[1] }
@@ -93,7 +93,7 @@ module Analyzer::Elixir
           # Default to all REST actions
           actions = ["index", "show", "create", "update", "delete", "new", "edit"]
         end
-        
+
         actions.each do |action|
           case action
           when "index"
