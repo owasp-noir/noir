@@ -14,6 +14,7 @@ In this section, you'll find detailed information on the different output format
 *   **JSON**: A widely used format that's perfect for integrating with other tools and scripts.
 *   **YAML**: A human-readable format that's great for configuration files and manual inspection.
 *   **OpenAPI Specification (OAS)**: Generate an OpenAPI document from your code to easily create API documentation or set up security testing.
+*   **SARIF**: Industry-standard format for security tool output with native CI/CD platform integration.
 *   **And more**: Discover additional formats for specialized use cases.
 
 By choosing the right output format, you can streamline your development process and make it easier to act on the insights provided by Noir.
