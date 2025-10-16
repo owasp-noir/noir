@@ -48,6 +48,7 @@ module Analyzer::Elixir
     def line_to_endpoint(line : String) : Array(Endpoint)
       endpoints = Array(Endpoint).new
 
+      # Standard HTTP methods
       line.scan(/get\s+['"](.+?)['"]\s*,\s*(.+?)\s*/) do |match|
         endpoints << Endpoint.new("#{match[1]}", "GET")
       end
@@ -68,10 +69,50 @@ module Analyzer::Elixir
         endpoints << Endpoint.new("#{match[1]}", "DELETE")
       end
 
+      # Socket routes
       line.scan(/socket\s+['"](.+?)['"]\s*,\s*(.+?)\s*/) do |match|
         tmp = Endpoint.new("#{match[1]}", "GET")
         tmp.protocol = "ws"
         endpoints << tmp
+      end
+
+      # LiveView routes
+      line.scan(/live\s+['"](.+?)['"]\s*,\s*(.+?)\s*/) do |match|
+        endpoints << Endpoint.new("#{match[1]}", "GET")
+      end
+
+      # Resources macro - generates standard REST routes
+      if match = line.match(/resources\s+['"]([^'"]+)['"]\s*,\s*(\w+)(?:\s*,\s*only:\s*\[([^\]]+)\])?/)
+        base_path = match[1]
+        only_actions = match[3]?
+
+        if only_actions
+          # Parse only: [:index, :show, :create, etc.]
+          actions = only_actions.scan(/:(\w+)/).map { |m| m[1] }
+        else
+          # Default to all REST actions
+          actions = ["index", "show", "create", "update", "delete", "new", "edit"]
+        end
+
+        actions.each do |action|
+          case action
+          when "index"
+            endpoints << Endpoint.new(base_path, "GET")
+          when "show"
+            endpoints << Endpoint.new("#{base_path}/:id", "GET")
+          when "create"
+            endpoints << Endpoint.new(base_path, "POST")
+          when "update"
+            endpoints << Endpoint.new("#{base_path}/:id", "PUT")
+            endpoints << Endpoint.new("#{base_path}/:id", "PATCH")
+          when "delete"
+            endpoints << Endpoint.new("#{base_path}/:id", "DELETE")
+          when "new"
+            endpoints << Endpoint.new("#{base_path}/new", "GET")
+          when "edit"
+            endpoints << Endpoint.new("#{base_path}/:id/edit", "GET")
+          end
+        end
       end
 
       endpoints

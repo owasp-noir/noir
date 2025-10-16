@@ -182,6 +182,20 @@ class EndpointOptimizer
         end
       end
 
+      # Handle /*param patterns (wildcard/glob parameters)
+      scans = endpoint.url.scan(/\/\*([^\/]+)/).flatten
+      scans.each do |match|
+        new_value = apply_pvalue("path", match[1], "")
+        if new_value != ""
+          new_endpoint.url = new_endpoint.url.gsub("*#{match[1]}", new_value)
+        end
+
+        new_param = Param.new(match[1], "", "path")
+        unless new_endpoint.params.includes?(new_param)
+          new_endpoint.params << new_param
+        end
+      end
+
       final << new_endpoint
     end
 
