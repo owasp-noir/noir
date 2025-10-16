@@ -119,7 +119,7 @@ describe "OutputBuilderSarif" do
     # Check rules are defined
     rules = runs[0]["tool"]["driver"]["rules"].as_a
     rules.size.should eq(2)
-    rule_ids = rules.map { |r| r["id"].as_s }
+    rule_ids = rules.map(&.["id"].as_s)
     rule_ids.should contain("endpoint-discovery")
     rule_ids.should contain("test-rule")
   end
@@ -141,7 +141,7 @@ describe "OutputBuilderSarif" do
     severities = {"critical" => "error", "high" => "error", "medium" => "warning", "low" => "note"}
     passive_results = [] of PassiveScanResult
 
-    severities.each do |severity, expected_level|
+    severities.each do |severity, _|
       scan_yaml = YAML.parse(%(
         id: test-#{severity}
         info:

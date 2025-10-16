@@ -110,7 +110,7 @@ class OutputBuilderSarif < OutputBuilder
     json.array do
       # Add endpoint results
       endpoints.each do |endpoint|
-        baked = bake_endpoint(endpoint.url, endpoint.params)
+        bake_endpoint(endpoint.url, endpoint.params)
         params_info = [] of String
 
         endpoint.params.each do |param|
