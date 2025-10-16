@@ -276,6 +276,9 @@ class NoirRunner
     when "curl"
       builder = OutputBuilderCurl.new @options
       builder.print @endpoints
+    when "sarif"
+      builder = OutputBuilderSarif.new @options
+      builder.print @endpoints, @passive_results
     when "oas2"
       buidler = OutputBuilderOas2.new @options
       buidler.print @endpoints

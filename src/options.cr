@@ -79,7 +79,7 @@ def run_options_parser
     parser.on "-u URL", "--url http://..", "Set base url for endpoints" { |var| noir_options["url"] = YAML::Any.new(var) }
 
     parser.separator "\n  OUTPUT:".colorize(:blue)
-    parser.on "-f FORMAT", "--format json", "Set output format\n  * plain yaml json jsonl markdown-table\n  * curl httpie oas2 oas3\n  * only-url only-param only-header only-cookie only-tag\n  * mermaid" { |var| noir_options["format"] = YAML::Any.new(var) }
+    parser.on "-f FORMAT", "--format json", "Set output format\n  * plain yaml json jsonl markdown-table sarif\n  * curl httpie oas2 oas3\n  * only-url only-param only-header only-cookie only-tag\n  * mermaid" { |var| noir_options["format"] = YAML::Any.new(var) }
     parser.on "-o PATH", "--output out.txt", "Write result to file" { |var| noir_options["output"] = YAML::Any.new(var) }
     parser.on "--set-pvalue VALUE", "Specifies the value of the identified parameter for all types" do |var|
       append_to_yaml_array(noir_options, set_pvalue, var)
