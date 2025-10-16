@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        crystal-version: [1.14.1, 1.15.0, 1.16.0, 1.17.0]
+        crystal-version: [1.15.0, 1.16.0, 1.17.0, 1.18.0]
     steps:
       - uses: actions/checkout@v5
       - uses: MeilCli/setup-crystal-action@v4
