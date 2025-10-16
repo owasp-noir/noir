@@ -76,7 +76,7 @@ module Analyzer::Rust
       brace_count = 0
       seen_opening_brace = false
 
-      lines.each_with_index do |line, i|
+      lines.each_with_index do |line, _|
         # Check if we're entering the controller definition
         if line.includes?("struct #{controller_name}")
           in_controller = true
