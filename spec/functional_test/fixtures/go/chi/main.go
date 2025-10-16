@@ -46,6 +46,49 @@ import (
 	// Mount the admin sub-router
 	r.Mount("/admin", adminRouter())
   
+	// Routes to test parameter extraction with inline handlers
+	r.Get("/search-test", func(w http.ResponseWriter, r *http.Request) {
+		// Test query parameters
+		query := r.URL.Query().Get("q")
+		page := r.URL.Query().Get("page")
+		limit := r.URL.Query().Get("limit")
+		_ = query
+		_ = page
+		_ = limit
+	})
+	
+	r.Post("/login-test", func(w http.ResponseWriter, r *http.Request) {
+		// Test form parameters
+		username := r.FormValue("username")
+		password := r.FormValue("password")
+		_ = username
+		_ = password
+	})
+	
+	r.Post("/register-test", func(w http.ResponseWriter, r *http.Request) {
+		// Test POST form parameters
+		email := r.PostFormValue("email")
+		name := r.PostFormValue("name")
+		_ = email
+		_ = name
+	})
+	
+	r.Get("/api-test", func(w http.ResponseWriter, r *http.Request) {
+		// Test header extraction
+		apiKey := r.Header.Get("X-API-Key")
+		userAgent := r.Header.Get("User-Agent")
+		_ = apiKey
+		_ = userAgent
+	})
+	
+	r.Get("/profile-test", func(w http.ResponseWriter, r *http.Request) {
+		// Test cookie extraction
+		sessionCookie, _ := r.Cookie("session")
+		authCookie, _ := r.Cookie("auth_token")
+		_ = sessionCookie
+		_ = authCookie
+	})
+  
 	http.ListenAndServe(":3333", r)
   }
   

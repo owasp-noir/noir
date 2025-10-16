@@ -19,6 +19,10 @@ module Analyzer::Go
                 if File.exists?(path) && File.extname(path) == ".go"
                   File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
                     prefix_stack = [] of String
+                    last_endpoint = Endpoint.new("", "")
+                    in_inline_handler = false
+                    handler_brace_count = 0
+
                     file.each_line.with_index do |line, index|
                       details = Details.new(PathInfo.new(path, index + 1))
 
@@ -44,29 +48,95 @@ module Analyzer::Go
                         next
                       end
 
-                      # 헤더 호출 건너뛰기 (예: c.Header.Get("X-API-Key"))
-                      if line.includes?(".Header.Get(")
-                        # TODO: 생각보다 복잡해져서 나중에 구현하기
-                        next
-                      end
-
-                      # 블록 종료 시 접두사 제거 (단순히 '}'만 있는 줄로 처리)
-                      if line.strip == "}" && !prefix_stack.empty?
+                      # 블록 종료 시 접두사 제거 (}로 시작하는 줄 또는 })로 끝나는 줄 처리)
+                      # Closing braces that end Route blocks
+                      if (line.strip == "}" || line.strip == "})") && !prefix_stack.empty?
                         prefix_stack.pop
                         next
                       end
 
                       # 실제 endpoint 처리: .Get, .Post, .Put, .Delete (임의 객체)
-                      method = ""
-                      route_path = ""
-                      if match = line.match(/[a-zA-Z]\w*\.(Get|Post|Put|Delete)\(\s*"([^"]+)"/)
-                        method = match[1].upcase
-                        route_path = match[2]
+                      # Skip if it's a Header.Get, Cookie, or other parameter extraction pattern
+                      if !line.includes?("Header.Get") && !line.includes?("Cookie(") &&
+                         !line.includes?("URLParam") && !line.includes?("Query().Get") &&
+                         !line.includes?("FormValue(") && !line.includes?("PostFormValue(")
+                        method = ""
+                        route_path = ""
+                        if match = line.match(/[a-zA-Z]\w*\.(Get|Post|Put|Delete)\(\s*"([^"]+)"/)
+                          method = match[1].upcase
+                          route_path = match[2]
+                        end
+
+                        if method.size > 0 && route_path.size > 0
+                          full_route = prefix_stack.join("") + route_path
+                          new_endpoint = Endpoint.new(full_route, method, details)
+                          result << new_endpoint
+                          last_endpoint = new_endpoint
+
+                          # Check if this route has an inline handler (func keyword after the route)
+                          if line.includes?("func(")
+                            in_inline_handler = true
+                            handler_brace_count = line.count("{") - line.count("}")
+                          end
+                        end
                       end
 
-                      if method.size > 0 && route_path.size > 0
-                        full_route = prefix_stack.join("") + route_path
-                        result << Endpoint.new(full_route, method, details)
+                      # Track brace count when inside an inline handler
+                      if in_inline_handler
+                        handler_brace_count += line.count("{")
+                        handler_brace_count -= line.count("}")
+
+                        # End of inline handler
+                        if handler_brace_count <= 0
+                          in_inline_handler = false
+                          handler_brace_count = 0
+                        end
+                      end
+
+                      # Parameter extraction patterns (order matters - check more specific patterns first)
+                      # Extract chi.URLParam only in inline handler or in ArticleCtx-like middleware
+                      # Other parameters only in inline handler context
+                      if line.includes?("chi.URLParam(")
+                        # Only extract URLParam if in inline handler, or it's part of a middleware function
+                        if in_inline_handler
+                          get_param(line, "URLParam").tap do |param|
+                            if param.name.size > 0 && last_endpoint.url != ""
+                              last_endpoint.params << param
+                            end
+                          end
+                        end
+                      elsif in_inline_handler
+                        if line.includes?("Query().Get(")
+                          get_param(line, "Query").tap do |param|
+                            if param.name.size > 0 && last_endpoint.url != ""
+                              last_endpoint.params << param
+                            end
+                          end
+                        elsif line.includes?("PostFormValue(")
+                          get_param(line, "PostFormValue").tap do |param|
+                            if param.name.size > 0 && last_endpoint.url != ""
+                              last_endpoint.params << param
+                            end
+                          end
+                        elsif line.includes?("FormValue(")
+                          get_param(line, "FormValue").tap do |param|
+                            if param.name.size > 0 && last_endpoint.url != ""
+                              last_endpoint.params << param
+                            end
+                          end
+                        elsif line.includes?("Header.Get(")
+                          get_param(line, "Header").tap do |param|
+                            if param.name.size > 0 && last_endpoint.url != ""
+                              last_endpoint.params << param
+                            end
+                          end
+                        elsif line.includes?("Cookie(")
+                          get_param(line, "Cookie").tap do |param|
+                            if param.name.size > 0 && last_endpoint.url != ""
+                              last_endpoint.params << param
+                            end
+                          end
+                        end
                       end
                     end
                   end
@@ -81,6 +151,53 @@ module Analyzer::Go
         logger.debug e
       end
       result
+    end
+
+    def get_param(line : String, pattern : String) : Param
+      param_name = ""
+      param_type = ""
+
+      # Special handling for different patterns
+      case pattern
+      when "URLParam"
+        # Handle chi.URLParam(r, "id") pattern
+        if match = line.match(/chi\.URLParam\([^,]+,\s*[\"']([^\"']+)[\"']\s*\)/)
+          param_name = match[1]
+          param_type = "path"
+        end
+      when "Query"
+        # Handle r.URL.Query().Get("name") pattern
+        if match = line.match(/Query\(\)\s*\.\s*Get\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
+          param_name = match[1]
+          param_type = "query"
+        end
+      when "PostFormValue"
+        # Handle r.PostFormValue("username") pattern
+        if match = line.match(/PostFormValue\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
+          param_name = match[1]
+          param_type = "form"
+        end
+      when "FormValue"
+        # Handle r.FormValue("password") pattern
+        if match = line.match(/FormValue\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
+          param_name = match[1]
+          param_type = "form"
+        end
+      when "Header"
+        # Handle r.Header.Get("User-Agent") pattern
+        if match = line.match(/Header\s*\.\s*Get\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
+          param_name = match[1]
+          param_type = "header"
+        end
+      when "Cookie"
+        # Handle r.Cookie("auth_token") pattern
+        if match = line.match(/Cookie\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
+          param_name = match[1]
+          param_type = "cookie"
+        end
+      end
+
+      Param.new(param_name, "", param_type)
     end
 
     # 추출: 객체.메서드("경로", ...) 형태에서 경로 추출

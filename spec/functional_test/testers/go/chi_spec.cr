@@ -11,6 +11,27 @@ expected_endpoints = [
   Endpoint.new("/admin/", "GET"),
   Endpoint.new("/admin/accounts", "GET"),
   Endpoint.new("/accounts", "GET"),
+  Endpoint.new("/search-test", "GET", [
+    Param.new("q", "", "query"),
+    Param.new("page", "", "query"),
+    Param.new("limit", "", "query"),
+  ]),
+  Endpoint.new("/login-test", "POST", [
+    Param.new("username", "", "form"),
+    Param.new("password", "", "form"),
+  ]),
+  Endpoint.new("/register-test", "POST", [
+    Param.new("email", "", "form"),
+    Param.new("name", "", "form"),
+  ]),
+  Endpoint.new("/api-test", "GET", [
+    Param.new("X-API-Key", "", "header"),
+    Param.new("User-Agent", "", "header"),
+  ]),
+  Endpoint.new("/profile-test", "GET", [
+    Param.new("session", "", "cookie"),
+    Param.new("auth_token", "", "cookie"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/go/chi/", {
