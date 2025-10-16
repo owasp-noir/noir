@@ -23,6 +23,24 @@ defmodule ElixirPhoenixWeb.Router do
     patch "/page", PageController, :home
     delete "/page", PageController, :home
     socket "/socket", MyAppWeb.Socket, websocket: true, longpoll: false
+    
+    # Routes with path parameters
+    get "/users/:id", UserController, :show
+    put "/users/:id", UserController, :update
+    delete "/users/:id", UserController, :delete
+    get "/users/:user_id/posts/:id", PostController, :show
+    
+    # Routes with wildcard parameters
+    get "/files/*path", FileController, :serve
+    
+    # LiveView routes
+    live "/live/users", UserLive
+    live "/live/users/:id", UserLive
+    live "/live/users/:id/edit", UserEditLive
+    
+    # Resources macro
+    resources "/posts", PostController
+    resources "/comments", CommentController, only: [:index, :show]
   end
 
   # Other scopes may use custom stacks.
