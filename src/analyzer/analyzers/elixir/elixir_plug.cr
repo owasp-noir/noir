@@ -45,19 +45,94 @@ module Analyzer::Elixir
     def analyze_content(content : String, file_path : String) : Array(Endpoint)
       endpoints = Array(Endpoint).new
 
-      # Split content into lines for line-by-line analysis
-      content.lines.each_with_index do |line, index|
+      # Find all route blocks and extract params
+      lines = content.lines
+      lines.each_with_index do |line, index|
         line_endpoints = line_to_endpoint(line.strip)
         line_endpoints.each do |endpoint|
           if endpoint.method != ""
             details = Details.new(PathInfo.new(file_path, index + 1))
             endpoint.details = details
+
+            # Extract parameters from the route block
+            params = extract_params_from_block(lines, index, endpoint.method)
+            params.each { |param| endpoint.push_param(param) }
+
             endpoints << endpoint
           end
         end
       end
 
       endpoints
+    end
+
+    def extract_params_from_block(lines : Array(String), start_index : Int32, method : String) : Array(Param)
+      params = Array(Param).new
+
+      # Find the end of the current route block (find matching "end")
+      block_end = find_block_end(lines, start_index)
+      return params if block_end == -1
+
+      # Extract parameters from the block content
+      (start_index..block_end).each do |i|
+        line = lines[i]
+
+        # Extract query parameters (conn.query_params["param"] or conn.params["param"] for GET)
+        line.scan(/conn\.query_params\[["']([^"']+)["']\]/) do |match|
+          param_name = match[1]
+          params << Param.new(param_name, "", "query") unless params.any? { |p| p.name == param_name && p.param_type == "query" }
+        end
+
+        # Extract params (could be query for GET or form for POST/PUT/PATCH)
+        line.scan(/conn\.params\[["']([^"']+)["']\]/) do |match|
+          param_name = match[1]
+          param_type = (method == "GET") ? "query" : "form"
+          params << Param.new(param_name, "", param_type) unless params.any? { |p| p.name == param_name && p.param_type == param_type }
+        end
+
+        # Extract body parameters (conn.body_params["param"] for POST/PUT/PATCH)
+        line.scan(/conn\.body_params\[["']([^"']+)["']\]/) do |match|
+          param_name = match[1]
+          params << Param.new(param_name, "", "form") unless params.any? { |p| p.name == param_name && p.param_type == "form" }
+        end
+
+        # Extract header parameters (get_req_header(conn, "header-name"))
+        line.scan(/get_req_header\(conn,\s*["']([^"']+)["']\)/) do |match|
+          param_name = match[1]
+          params << Param.new(param_name, "", "header") unless params.any? { |p| p.name == param_name && p.param_type == "header" }
+        end
+
+        # Extract cookie parameters (conn.cookies["cookie_name"])
+        line.scan(/conn\.cookies\[["']([^"']+)["']\]/) do |match|
+          param_name = match[1]
+          params << Param.new(param_name, "", "cookie") unless params.any? { |p| p.name == param_name && p.param_type == "cookie" }
+        end
+      end
+
+      params
+    end
+
+    def find_block_end(lines : Array(String), start_index : Int32) : Int32
+      # Find the matching "end" for the route block starting with "do"
+      return -1 if start_index >= lines.size
+
+      # Check if the line has "do" keyword
+      return -1 unless lines[start_index].includes?("do")
+
+      depth = 1
+      (start_index + 1...lines.size).each do |i|
+        line = lines[i].strip
+
+        # Count "do" keywords that increase depth
+        depth += line.scan(/\bdo\b/).size
+
+        # Count "end" keywords that decrease depth
+        depth -= line.scan(/\bend\b/).size
+
+        return i if depth == 0
+      end
+
+      -1
     end
 
     def line_to_endpoint(line : String) : Array(Endpoint)
