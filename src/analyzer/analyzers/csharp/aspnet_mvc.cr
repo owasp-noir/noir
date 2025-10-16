@@ -71,7 +71,7 @@ module Analyzer::CSharp
 
       i = 0
       http_method = "GET" # Default method for tracking across lines
-      
+
       while i < lines.size
         line = lines[i]
 
@@ -103,7 +103,7 @@ module Analyzer::CSharp
             end
 
             @result << endpoint
-            
+
             # Reset to default after processing the method
             http_method = "GET"
           end
@@ -134,7 +134,7 @@ module Analyzer::CSharp
       # Handle multi-line method signatures
       full_signature = line
       paren_count = line.count('(') - line.count(')')
-      
+
       current_index = start_index + 1
       while paren_count > 0 && current_index < lines.size
         full_signature += " " + lines[current_index]
@@ -151,15 +151,15 @@ module Analyzer::CSharp
 
       # Determine default parameter type based on HTTP method
       default_param_type = case http_method
-                          when "GET"
-                            "query"
-                          when "POST", "PUT", "PATCH"
-                            "form"
-                          when "DELETE"
-                            "query"
-                          else
-                            "query"
-                          end
+                           when "GET"
+                             "query"
+                           when "POST", "PUT", "PATCH"
+                             "form"
+                           when "DELETE"
+                             "query"
+                           else
+                             "query"
+                           end
 
       # Parse individual parameters
       param_list.split(',').each do |param_def|
@@ -172,7 +172,7 @@ module Analyzer::CSharp
         next if parts.size < 2
 
         param_name = parts[-1].gsub(/=.*$/, "").strip
-        
+
         parameters << Param.new(param_name, "", default_param_type)
       end
 
