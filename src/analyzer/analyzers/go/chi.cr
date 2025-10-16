@@ -22,7 +22,7 @@ module Analyzer::Go
                     last_endpoint = Endpoint.new("", "")
                     in_inline_handler = false
                     handler_brace_count = 0
-                    
+
                     file.each_line.with_index do |line, index|
                       details = Details.new(PathInfo.new(path, index + 1))
 
@@ -57,7 +57,7 @@ module Analyzer::Go
 
                       # 실제 endpoint 처리: .Get, .Post, .Put, .Delete (임의 객체)
                       # Skip if it's a Header.Get, Cookie, or other parameter extraction pattern
-                      if !line.includes?("Header.Get") && !line.includes?("Cookie(") && 
+                      if !line.includes?("Header.Get") && !line.includes?("Cookie(") &&
                          !line.includes?("URLParam") && !line.includes?("Query().Get") &&
                          !line.includes?("FormValue(") && !line.includes?("PostFormValue(")
                         method = ""
@@ -72,7 +72,7 @@ module Analyzer::Go
                           new_endpoint = Endpoint.new(full_route, method, details)
                           result << new_endpoint
                           last_endpoint = new_endpoint
-                          
+
                           # Check if this route has an inline handler (func keyword after the route)
                           if line.includes?("func(")
                             in_inline_handler = true
@@ -80,12 +80,12 @@ module Analyzer::Go
                           end
                         end
                       end
-                      
+
                       # Track brace count when inside an inline handler
                       if in_inline_handler
                         handler_brace_count += line.count("{")
                         handler_brace_count -= line.count("}")
-                        
+
                         # End of inline handler
                         if handler_brace_count <= 0
                           in_inline_handler = false
