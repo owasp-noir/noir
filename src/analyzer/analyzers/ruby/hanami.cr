@@ -18,7 +18,7 @@ module Analyzer::Ruby
                 # Scan action file for parameters
                 scan_action_file(endpoint, action_path)
               end
-              
+
               @result << endpoint
               last_endpoint = endpoint
               _ = last_endpoint
@@ -47,7 +47,7 @@ module Analyzer::Ruby
 
       File.open(action_path, "r", encoding: "utf-8", invalid: :skip) do |file|
         in_params_block = false
-        
+
         file.each_line do |line|
           # Detect params block
           if line.strip == "params do"
