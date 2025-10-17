@@ -2,7 +2,7 @@ require "../../../models/analyzer"
 
 module Analyzer::Java
   class Armeria < Analyzer
-    REGEX_SERVER_CODE_BLOCK = /Server\s*\.builder\(\s*\)\s*\.[^;]*?build\(\)\s*\./
+    REGEX_SERVER_CODE_BLOCK = /Server\s*\.builder\(\s*\)\s*\.[^;]*build\(\)\s*\./
     REGEX_SERVICE_CODE      = /\.service(If|Under|)?\([^;]+?\)/
     REGEX_ROUTE_CODE        = /\.route\(\)\s*\.\s*(\w+)\s*\(([^\.]*)\)\./
 
@@ -43,7 +43,9 @@ module Analyzer::Java
                         endpoint = split_params[endpoint_param_index].strip
 
                         endpoint = endpoint[1..-2]
-                        @result << Endpoint.new("#{endpoint}", "GET", details)
+                        ep = Endpoint.new("#{endpoint}", "GET", details)
+                        extract_path_parameters(endpoint, ep)
+                        @result << ep
                       end
 
                       server_codeblock.scan(REGEX_ROUTE_CODE) do |route_code_match|
@@ -60,7 +62,9 @@ module Analyzer::Java
                         next if endpoint[0] != '"'
 
                         endpoint = endpoint[1..-2]
-                        @result << Endpoint.new("#{endpoint}", method, details)
+                        ep = Endpoint.new("#{endpoint}", method, details)
+                        extract_path_parameters(endpoint, ep)
+                        @result << ep
                       end
                     end
                   end
@@ -77,6 +81,19 @@ module Analyzer::Java
       Fiber.yield
 
       @result
+    end
+
+    # Extract path parameters from URLs like /users/{userId} or /items/{itemId}/comments
+    private def extract_path_parameters(url : String, endpoint : Endpoint)
+      url.scan(/\{(\w+)\}/) do |match|
+        if match.size > 0
+          param_name = match[1]
+          # Only add if not already present
+          unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
+            endpoint.push_param(Param.new(param_name, "", "path"))
+          end
+        end
+      end
     end
   end
 end
