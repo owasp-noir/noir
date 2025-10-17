@@ -2,7 +2,7 @@ require "../../../models/analyzer"
 
 module Analyzer::Java
   class Armeria < Analyzer
-    REGEX_SERVER_CODE_BLOCK = /Server\s*\.builder\(\s*\)\s*\.[^;]*?build\(\)\s*\./
+    REGEX_SERVER_CODE_BLOCK = /Server\s*\.builder\(\s*\)\s*\.[^;]*build\(\)\s*\./
     REGEX_SERVICE_CODE      = /\.service(If|Under|)?\([^;]+?\)/
     REGEX_ROUTE_CODE        = /\.route\(\)\s*\.\s*(\w+)\s*\(([^\.]*)\)\./
 
