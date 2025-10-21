@@ -21,3 +21,13 @@ FunctionalTester.new("fixtures/specification/postman/common/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests
+
+FunctionalTester.new("fixtures/specification/postman/folders/", {
+  :techs     => 1,
+  :endpoints => 2,
+}, nil).perform_tests
+
+FunctionalTester.new("fixtures/specification/postman/v2_0/", {
+  :techs     => 1,
+  :endpoints => 1,
+}, nil).perform_tests

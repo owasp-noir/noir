@@ -68,10 +68,12 @@ module Analyzer::Specification
       if request["url"]?
         url = request["url"]
         
-        if url.is_a?(String)
+        # Check if URL is a simple string (v2.0.0 format) or object (v2.1.0 format)
+        begin
+          url_string = url.as_s
           # URL is a string
-          url_path = extract_path_from_url(url.to_s)
-        elsif url.is_a?(JSON::Any)
+          url_path = extract_path_from_url(url_string)
+        rescue
           # URL is an object
           # Extract path
           if url["path"]?
