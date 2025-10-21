@@ -53,6 +53,7 @@ def detect_techs(base_path : String, options : Hash(String, YAML::Any), passive_
     Kotlin::Ktor,
     Specification::Oas2,
     Specification::Oas3,
+    Specification::Postman,
     Specification::RAML,
     Specification::ZapSitesTree,
     Php::Php,

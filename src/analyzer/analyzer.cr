@@ -46,6 +46,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"kotlin_ktor", Kotlin::Ktor},
     {"oas2", Specification::Oas2},
     {"oas3", Specification::Oas3},
+    {"postman", Specification::Postman},
     {"raml", Specification::RAML},
     {"zap_sites_tree", Specification::ZapSitesTree},
     {"php_pure", Php::Php},
