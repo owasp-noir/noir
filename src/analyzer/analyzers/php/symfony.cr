@@ -217,8 +217,15 @@ module Analyzer::Php
       params = [] of Param
       seen_params = Set(String).new
 
+      # Find the method body - between the method declaration and the next method or end of context
+      # Look for the method body between { and the next public function or end
+      method_body_match = context.match(/public\s+function\s+\w+[^{]*\{([^}]*(?:\{[^}]*\}[^}]*)*)\}/)
+      return params unless method_body_match
+
+      method_body = method_body_match[1]
+
       # Extract query parameters: $request->query->get('param')
-      query_matches = context.scan(/\$request->query->get\s*\(\s*['"]([^'"]+)['"]\s*\)/)
+      query_matches = method_body.scan(/\$request->query->get\s*\(\s*['"]([^'"]+)['"]\s*\)/)
       query_matches.each do |match|
         param_name = match[1]
         unless seen_params.includes?(param_name)
@@ -228,7 +235,7 @@ module Analyzer::Php
       end
 
       # Extract request body/form parameters: $request->request->get('param')
-      request_matches = context.scan(/\$request->request->get\s*\(\s*['"]([^'"]+)['"]\s*\)/)
+      request_matches = method_body.scan(/\$request->request->get\s*\(\s*['"]([^'"]+)['"]\s*\)/)
       request_matches.each do |match|
         param_name = match[1]
         unless seen_params.includes?(param_name)
@@ -239,7 +246,7 @@ module Analyzer::Php
 
       # Extract generic request parameters: $request->get('param')
       # This is ambiguous (could be query or body), so we mark it as query by default
-      generic_matches = context.scan(/\$request->get\s*\(\s*['"]([^'"]+)['"]\s*\)/)
+      generic_matches = method_body.scan(/\$request->get\s*\(\s*['"]([^'"]+)['"]\s*\)/)
       generic_matches.each do |match|
         param_name = match[1]
         unless seen_params.includes?(param_name)
