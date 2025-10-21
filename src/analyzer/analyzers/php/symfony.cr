@@ -64,23 +64,29 @@ module Analyzer::Php
         content = file.gets_to_end
 
         # Look for route annotations (@Route) - more flexible pattern
-        annotation_matches = content.scan(/@Route\s*\(\s*["']([^"']+)["']/m)
-        annotation_matches.each do |match|
+        # Track offset to find each match correctly
+        offset = 0
+        content.scan(/@Route\s*\(\s*["']([^"']+)["'][^)]*\)/m) do |match|
           route_path = match[1]
+          full_match = match[0]
 
-          # Look for methods in the annotation context
-          # Find the full annotation block
-          route_start = content.index(match[0])
+          # Find this specific match starting from current offset
+          route_start = content.index(full_match, offset)
           if route_start
-            # Get a reasonable context around the annotation
-            context_start = [route_start - 200, 0].max
-            context_end = [route_start + 300, content.size].min
-            context = content[context_start..context_end]
+            offset = route_start + full_match.size
 
-            methods = extract_methods_from_annotation_context(context)
+            # Extract methods from the annotation itself
+            methods = extract_methods_from_annotation_context(full_match)
             methods = ["GET"] if methods.empty?
 
+            # Get context for method body parameter extraction (starts from annotation)
+            context_end = [route_start + 400, content.size].min
+            method_context = content[route_start..context_end]
+
             params = extract_route_params(route_path)
+            # Extract additional parameters from method body
+            params.concat(extract_method_params(method_context))
+
             details = Details.new(PathInfo.new(path))
 
             methods.each do |method|
@@ -90,21 +96,29 @@ module Analyzer::Php
         end
 
         # Look for route attributes (#[Route]) - PHP 8 style
-        attribute_matches = content.scan(/#\[Route\s*\(\s*['"]([^'"]+)['"][^)]*\)/m)
-        attribute_matches.each do |match|
+        # Track offset to find each match correctly
+        offset = 0
+        content.scan(/#\[Route\s*\(\s*['"]([^'"]+)['"][^)]*\)/m) do |match|
           route_path = match[1]
+          full_match = match[0]
 
-          # Look for methods in the attribute context
-          route_start = content.index(match[0])
+          # Find this specific match starting from current offset
+          route_start = content.index(full_match, offset)
           if route_start
-            context_start = [route_start - 50, 0].max
-            context_end = [route_start + 200, content.size].min
-            context = content[context_start..context_end]
+            offset = route_start + full_match.size
 
-            methods = extract_methods_from_attribute_context(context)
+            # Extract methods from the attribute itself
+            methods = extract_methods_from_attribute_context(full_match)
             methods = ["GET"] if methods.empty?
 
+            # Get context for method body parameter extraction (starts from attribute)
+            context_end = [route_start + 400, content.size].min
+            method_context = content[route_start..context_end]
+
             params = extract_route_params(route_path)
+            # Extract additional parameters from method body
+            params.concat(extract_method_params(method_context))
+
             details = Details.new(PathInfo.new(path))
 
             methods.each do |method|
@@ -194,6 +208,51 @@ module Analyzer::Php
       param_matches.each do |match|
         param_name = match[1]
         params << Param.new(param_name, "", "path")
+      end
+
+      params
+    end
+
+    private def extract_method_params(context : String) : Array(Param)
+      params = [] of Param
+      seen_params = Set(String).new
+
+      # Find the method body - between the method declaration and the next method or end of context
+      # Look for the method body between { and the next public function or end
+      method_body_match = context.match(/public\s+function\s+\w+[^{]*\{([^}]*(?:\{[^}]*\}[^}]*)*)\}/)
+      return params unless method_body_match
+
+      method_body = method_body_match[1]
+
+      # Extract query parameters: $request->query->get('param')
+      query_matches = method_body.scan(/\$request->query->get\s*\(\s*['"]([^'"]+)['"]\s*\)/)
+      query_matches.each do |match|
+        param_name = match[1]
+        unless seen_params.includes?(param_name)
+          params << Param.new(param_name, "", "query")
+          seen_params.add(param_name)
+        end
+      end
+
+      # Extract request body/form parameters: $request->request->get('param')
+      request_matches = method_body.scan(/\$request->request->get\s*\(\s*['"]([^'"]+)['"]\s*\)/)
+      request_matches.each do |match|
+        param_name = match[1]
+        unless seen_params.includes?(param_name)
+          params << Param.new(param_name, "", "form")
+          seen_params.add(param_name)
+        end
+      end
+
+      # Extract generic request parameters: $request->get('param')
+      # This is ambiguous (could be query or body), so we mark it as query by default
+      generic_matches = method_body.scan(/\$request->get\s*\(\s*['"]([^'"]+)['"]\s*\)/)
+      generic_matches.each do |match|
+        param_name = match[1]
+        unless seen_params.includes?(param_name)
+          params << Param.new(param_name, "", "query")
+          seen_params.add(param_name)
+        end
       end
 
       params
