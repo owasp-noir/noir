@@ -14,6 +14,9 @@ class UserController extends AbstractController
      */
     public function list(Request $request): JsonResponse
     {
+        $page = $request->query->get('page');
+        $limit = $request->query->get('limit');
+        $search = $request->get('search');
         $users = [];
         return $this->json($users);
     }
@@ -31,6 +34,8 @@ class UserController extends AbstractController
      */
     public function create(Request $request): JsonResponse
     {
+        $name = $request->request->get('name');
+        $email = $request->request->get('email');
         return $this->json(['status' => 'created']);
     }
 

@@ -24,6 +24,9 @@ class ProductController extends AbstractController
     #[Route('/api/products', methods: ['POST'])]
     public function create(Request $request): JsonResponse
     {
+        $name = $request->request->get('name');
+        $price = $request->request->get('price');
+        $category = $request->get('category');
         return $this->json(['status' => 'created']);
     }
 
