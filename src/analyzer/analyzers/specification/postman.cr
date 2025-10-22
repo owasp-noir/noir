@@ -51,7 +51,7 @@ module Analyzer::Specification
 
     private def process_request(item, details)
       request = item["request"]
-      
+
       # Get HTTP method
       method = "GET"
       if request.is_a?(JSON::Any) && request["method"]?
@@ -67,7 +67,7 @@ module Analyzer::Specification
 
       if request["url"]?
         url = request["url"]
-        
+
         # Check if URL is a simple string (v2.0.0 format) or object (v2.1.0 format)
         begin
           url_string = url.as_s
