@@ -1,0 +1,30 @@
+{
+  "info": {
+    "name": "V2.0 Collection",
+    "schema": "https://schema.getpostman.com/json/collection/v2.0.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Upload File",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "value": ""
+            },
+            {
+              "key": "title",
+              "value": "My File"
+            }
+          ]
+        },
+        "url": "https://api.example.com/upload"
+      }
+    }
+  ]
+}

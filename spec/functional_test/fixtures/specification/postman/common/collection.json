@@ -1,0 +1,91 @@
+{
+  "info": {
+    "_postman_id": "12345678-1234-1234-1234-123456789012",
+    "name": "Sample API Collection",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Get Users",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer token123"
+          }
+        ],
+        "url": {
+          "raw": "https://api.example.com/users?page=1&limit=10",
+          "protocol": "https",
+          "host": ["api", "example", "com"],
+          "path": ["users"],
+          "query": [
+            {
+              "key": "page",
+              "value": "1"
+            },
+            {
+              "key": "limit",
+              "value": "10"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Create User",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"name\":\"John Doe\",\"email\":\"john@example.com\"}"
+        },
+        "url": {
+          "raw": "https://api.example.com/users",
+          "protocol": "https",
+          "host": ["api", "example", "com"],
+          "path": ["users"]
+        }
+      }
+    },
+    {
+      "name": "Update User",
+      "request": {
+        "method": "PUT",
+        "header": [],
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            {
+              "key": "name",
+              "value": "Jane Doe"
+            },
+            {
+              "key": "email",
+              "value": "jane@example.com"
+            }
+          ]
+        },
+        "url": {
+          "raw": "https://api.example.com/users/:userId",
+          "protocol": "https",
+          "host": ["api", "example", "com"],
+          "path": ["users", ":userId"],
+          "variable": [
+            {
+              "key": "userId",
+              "value": "123"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
