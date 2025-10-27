@@ -10,6 +10,7 @@ class Analyzer
   @result : Array(Endpoint)
   @endpoint_references : Array(EndpointReference)
   @base_path : String
+  @base_paths : Array(String)
   @url : String
   @logger : NoirLogger
   @is_debug : Bool
@@ -19,7 +20,8 @@ class Analyzer
   @options : Hash(String, YAML::Any)
 
   def initialize(options : Hash(String, YAML::Any))
-    @base_path = options["base"].to_s
+    @base_paths = options["base"].as_a.map(&.to_s)
+    @base_path = @base_paths.first? || ""
     @url = options["url"].to_s
     @result = [] of Endpoint
     @endpoint_references = [] of EndpointReference
@@ -44,7 +46,7 @@ class Analyzer
     {% end %}
   end
 
-  define_getter_methods [result, base_path, url, logger]
+  define_getter_methods [result, base_path, base_paths, url, logger]
 end
 
 class FileAnalyzer < Analyzer

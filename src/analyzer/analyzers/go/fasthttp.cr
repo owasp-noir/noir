@@ -6,23 +6,24 @@ module Analyzer::Go
     def analyze
       # Source Analysis
       begin
-        Dir.glob("#{base_path}/**/*.go") do |path|
-          next if File.directory?(path)
-          if File.exists?(path)
-            File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-              last_endpoint = Endpoint.new("", "")
-              file.each_line.with_index do |line, index|
-                details = Details.new(PathInfo.new(path, index + 1))
+        base_paths.each do |current_base_path|
+          Dir.glob("#{current_base_path}/**/*.go") do |path|
+            next if File.directory?(path)
+            if File.exists?(path)
+              File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
+                last_endpoint = Endpoint.new("", "")
+                file.each_line.with_index do |line, index|
+                  details = Details.new(PathInfo.new(path, index + 1))
 
-                # Detect fasthttp route patterns
-                endpoint = analyze_route_line(line, details)
-                if endpoint.method != ""
-                  result << endpoint
-                  last_endpoint = endpoint
-                end
+                  # Detect fasthttp route patterns
+                  endpoint = analyze_route_line(line, details)
+                  if endpoint.method != ""
+                    result << endpoint
+                    last_endpoint = endpoint
+                  end
 
-                # Detect parameter usage in current context
-                params = analyze_param_line(line)
+                  # Detect parameter usage in current context
+                  params = analyze_param_line(line)
                 params.each do |param|
                   if param.name.size > 0 && last_endpoint.method != ""
                     # Check for duplicates before adding
@@ -34,6 +35,7 @@ module Analyzer::Go
               end
             end
           end
+        end
         end
       rescue e
         logger.debug e

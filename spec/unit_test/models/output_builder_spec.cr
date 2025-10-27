@@ -4,7 +4,7 @@ require "../../../src/options.cr"
 describe "Initialize" do
   config_init = ConfigInitializer.new
   options = config_init.default_options
-  options["base"] = YAML::Any.new("noir")
+  options["base"] = YAML::Any.new([YAML::Any.new("noir")])
   options["format"] = YAML::Any.new("json")
   options["output"] = YAML::Any.new("output.json")
 
@@ -72,7 +72,7 @@ end
 describe OutputBuilderDiff do
   config_init = ConfigInitializer.new
   options = config_init.default_options
-  options["base"] = YAML::Any.new("noir")
+  options["base"] = YAML::Any.new([YAML::Any.new("noir")])
   options["format"] = YAML::Any.new("json")
 
   it "calculates the diff correctly" do

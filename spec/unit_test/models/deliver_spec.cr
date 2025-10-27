@@ -6,7 +6,7 @@ require "../../../src/options.cr"
 describe "Initialize" do
   config_init = ConfigInitializer.new
   options = config_init.default_options
-  options["base"] = YAML::Any.new("noir")
+  options["base"] = YAML::Any.new([YAML::Any.new("noir")])
   options["send_proxy"] = YAML::Any.new("http://localhost:8090")
   options["nolog"] = YAML::Any.new(true)
 
@@ -43,7 +43,7 @@ end
 describe "Method-based filtering" do
   config_init = ConfigInitializer.new
   options = config_init.default_options
-  options["base"] = YAML::Any.new("noir")
+  options["base"] = YAML::Any.new([YAML::Any.new("noir")])
   options["send_proxy"] = YAML::Any.new("http://localhost:8090")
   options["nolog"] = YAML::Any.new(true)
 

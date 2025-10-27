@@ -41,7 +41,7 @@ if noir_options.has_key?("override_llm_optimize_prompt")
 end
 
 # Check base path
-if noir_options["base"] == ""
+if noir_options["base"].as_a.empty?
   STDERR.puts "ERROR: Base path is required.".colorize(:yellow)
   STDERR.puts "Please use -b or --base-path to set base path."
   STDERR.puts "If you need help, use -h or --help."
@@ -105,7 +105,7 @@ app_diff = nil
 if noir_options["diff"] != ""
   # Diff mode
   diff_options = noir_options.dup
-  diff_options["base"] = noir_options["diff"]
+  diff_options["base"] = YAML::Any.new([YAML::Any.new(noir_options["diff"].to_s)])
   diff_options["nolog"] = YAML::Any.new(false)
 
   app_diff = NoirRunner.new diff_options

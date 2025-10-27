@@ -7,7 +7,7 @@ require "../../../src/utils/http_symbols.cr"
 describe "Initialize" do
   config_init = ConfigInitializer.new
   options = config_init.default_options
-  options["base"] = YAML::Any.new("noir")
+  options["base"] = YAML::Any.new([YAML::Any.new("noir")])
   runner = NoirRunner.new(options)
 
   it "getter - options" do
@@ -19,7 +19,7 @@ end
 describe "Methods" do
   config_init = ConfigInitializer.new
   options = config_init.default_options
-  options["base"] = YAML::Any.new("noir")
+  options["base"] = YAML::Any.new([YAML::Any.new("noir")])
   options["url"] = YAML::Any.new("https://www.hahwul.com")
   options["nolog"] = YAML::Any.new(true)
   runner = NoirRunner.new(options)
@@ -37,7 +37,7 @@ end
 describe "set-pvalue" do
   config_init = ConfigInitializer.new
   options = config_init.default_options
-  options["base"] = YAML::Any.new("noir")
+  options["base"] = YAML::Any.new([YAML::Any.new("noir")])
   options["set_pvalue_query"] = YAML::Any.new([YAML::Any.new("FUZZ")])
   options["set_pvalue_header"] = YAML::Any.new([YAML::Any.new("name=FUZZ")])
   options["set_pvalue_cookie"] = YAML::Any.new([YAML::Any.new("name:FUZZ")])

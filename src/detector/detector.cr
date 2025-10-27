@@ -15,7 +15,7 @@ macro defind_detectors(detectors)
   {% end %}
 end
 
-def detect_techs(base_path : String, options : Hash(String, YAML::Any), passive_scans : Array(PassiveScan), logger : NoirLogger)
+def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), passive_scans : Array(PassiveScan), logger : NoirLogger)
   techs = [] of String
   passive_result = [] of PassiveScanResult
   detector_list = [] of Detector
@@ -105,21 +105,23 @@ def detect_techs(base_path : String, options : Hash(String, YAML::Any), passive_
       skipped_files = 0
       total_files = 0
 
-      Dir.glob("#{base_path}/**/**") do |file|
-        next if File.directory?(file)
-        total_files += 1
+      base_paths.each do |base_path|
+        Dir.glob("#{base_path}/**/**") do |file|
+          next if File.directory?(file)
+          total_files += 1
 
-        # Check if file should be skipped due to media type or size
-        if MediaFilter.should_skip_file?(file)
-          reason = MediaFilter.skip_reason(file)
-          logger.debug "Skipping #{file}: #{reason}"
-          skipped_files += 1
-          next
+          # Check if file should be skipped due to media type or size
+          if MediaFilter.should_skip_file?(file)
+            reason = MediaFilter.skip_reason(file)
+            logger.debug "Skipping #{file}: #{reason}"
+            skipped_files += 1
+            next
+          end
+
+          content = File.read(file, encoding: "utf-8", invalid: :skip)
+          channel.send({file, content})
+          locator.push "file_map", file
         end
-
-        content = File.read(file, encoding: "utf-8", invalid: :skip)
-        channel.send({file, content})
-        locator.push "file_map", file
       end
 
       if skipped_files > 0

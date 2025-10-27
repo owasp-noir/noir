@@ -33,16 +33,17 @@ module Analyzer::Python
       tornado_app_instances["app"] ||= "" # Common tornado app instance name
       path_api_instances = Hash(::String, Hash(::String, ::String)).new
 
-      # Iterate through all Python files in the base path
-      Dir.glob("#{base_path}/**/*.py") do |path|
-        next if File.directory?(path)
-        next if path.includes?("/site-packages/")
-        @logger.debug "Analyzing #{path}"
+      # Iterate through all Python files in all base paths
+      base_paths.each do |current_base_path|
+        Dir.glob("#{current_base_path}/**/*.py") do |path|
+          next if File.directory?(path)
+          next if path.includes?("/site-packages/")
+          @logger.debug "Analyzing #{path}"
 
-        File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-          lines = file.each_line.to_a
-          next unless lines.any?(&.includes?("tornado"))
-          api_instances = Hash(::String, ::String).new
+          File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
+            lines = file.each_line.to_a
+            next unless lines.any?(&.includes?("tornado"))
+            api_instances = Hash(::String, ::String).new
           path_api_instances[path] = api_instances
 
           lines.each_with_index do |line, line_index|
@@ -64,6 +65,7 @@ module Analyzer::Python
             end
           end
         end
+      end
       end
 
       result = [] of Endpoint

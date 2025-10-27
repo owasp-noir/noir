@@ -144,13 +144,21 @@ module Analyzer::AI
         rescue e : Exception
           logger.debug "Error parsing filter response: #{e.message}"
           # fallback: analyze all files
-          return Dir.glob("#{base_path}/**/*").reject { |p| File.directory?(p) || ignore_extensions.includes?(File.extname(p)) }
+          files = [] of String
+          base_paths.each do |current_base_path|
+            files.concat(Dir.glob("#{current_base_path}/**/*").reject { |p| File.directory?(p) || ignore_extensions.includes?(File.extname(p)) })
+          end
+          return files
         end
       else
         logger.debug_sub "AI::Analyzing all files"
       end
 
-      Dir.glob("#{base_path}/**/*").reject { |p| File.directory?(p) || ignore_extensions.includes?(File.extname(p)) }
+      files = [] of String
+      base_paths.each do |current_base_path|
+        files.concat(Dir.glob("#{current_base_path}/**/*").reject { |p| File.directory?(p) || ignore_extensions.includes?(File.extname(p)) })
+      end
+      files
     end
 
     private def analyze_file(path : String, client : LLM::General)
