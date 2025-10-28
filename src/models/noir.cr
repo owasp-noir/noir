@@ -95,7 +95,8 @@ class NoirRunner
   end
 
   def detect
-    detected_techs = detect_techs options["base"].to_s, options, @passive_scans, @logger
+    base_paths = options["base"].as_a.map(&.to_s)
+    detected_techs = detect_techs base_paths, options, @passive_scans, @logger
     @techs = detected_techs[0]
     @passive_results = detected_techs[1]
 

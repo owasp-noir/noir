@@ -75,7 +75,9 @@ def run_options_parser
     parser.separator "  noir -b BASE_PATH <flags>\n"
     parser.separator "FLAGS:".colorize(:green)
     parser.separator "  BASE:".colorize(:blue)
-    parser.on "-b PATH", "--base-path ./app", "(Required) Set base path" { |var| noir_options["base"] = YAML::Any.new(var) }
+    parser.on "-b PATH", "--base-path ./app", "(Required) Set base path" do |var|
+      append_to_yaml_array(noir_options, base, var)
+    end
     parser.on "-u URL", "--url http://..", "Set base url for endpoints" { |var| noir_options["url"] = YAML::Any.new(var) }
 
     parser.separator "\n  OUTPUT:".colorize(:blue)

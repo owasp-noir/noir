@@ -33,66 +33,68 @@ module Analyzer::Python
       blueprint_prefixes = Hash(::String, ::String).new
       path_api_instances = Hash(::String, Hash(::String, ::String)).new
 
-      # Iterate through all Python files in the base path
-      Dir.glob("#{base_path}/**/*.py") do |path|
-        next if File.directory?(path)
-        next if path.includes?("/site-packages/")
-        @logger.debug "Analyzing #{path}"
+      # Iterate through all Python files in all base paths
+      base_paths.each do |current_base_path|
+        Dir.glob("#{current_base_path}/**/*.py") do |path|
+          next if File.directory?(path)
+          next if path.includes?("/site-packages/")
+          @logger.debug "Analyzing #{path}"
 
-        File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-          lines = file.each_line.to_a
-          next unless lines.any?(&.includes?("sanic"))
-          api_instances = Hash(::String, ::String).new
-          path_api_instances[path] = api_instances
+          File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
+            lines = file.each_line.to_a
+            next unless lines.any?(&.includes?("sanic"))
+            api_instances = Hash(::String, ::String).new
+            path_api_instances[path] = api_instances
 
-          lines.each_with_index do |line, line_index|
-            line = line.gsub(" ", "") # remove spaces for easier regex matching
+            lines.each_with_index do |line, line_index|
+              line = line.gsub(" ", "") # remove spaces for easier regex matching
 
-            # Identify Sanic instance assignments
-            sanic_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:sanic\.)?Sanic\(/
-            if sanic_match
-              sanic_instance_name = sanic_match[1]
-              api_instances[sanic_instance_name] ||= ""
-              sanic_instances[sanic_instance_name] ||= ""
-            end
-
-            # Identify Blueprint instance assignments
-            blueprint_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:sanic\.)?Blueprint\(/
-            if blueprint_match
-              prefix = ""
-              blueprint_instance_name = blueprint_match[1]
-              param_codes = line.split("Blueprint", 2)[1]
-              prefix_match = param_codes.match /url_prefix=[rf]?['"]([^'"]*)['"]/
-              if !prefix_match.nil? && prefix_match.size == 2
-                prefix = prefix_match[1]
+              # Identify Sanic instance assignments
+              sanic_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:sanic\.)?Sanic\(/
+              if sanic_match
+                sanic_instance_name = sanic_match[1]
+                api_instances[sanic_instance_name] ||= ""
+                sanic_instances[sanic_instance_name] ||= ""
               end
 
-              blueprint_prefixes[blueprint_instance_name] ||= prefix
-              api_instances[blueprint_instance_name] ||= prefix
-            end
+              # Identify Blueprint instance assignments
+              blueprint_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:sanic\.)?Blueprint\(/
+              if blueprint_match
+                prefix = ""
+                blueprint_instance_name = blueprint_match[1]
+                param_codes = line.split("Blueprint", 2)[1]
+                prefix_match = param_codes.match /url_prefix=[rf]?['"]([^'"]*)['"]/
+                if !prefix_match.nil? && prefix_match.size == 2
+                  prefix = prefix_match[1]
+                end
 
-            # Identify Sanic route decorators
-            line.scan(/@(#{PYTHON_VAR_NAME_REGEX})\.route\([rf]?['"]([^'"]*)['"](.*)/) do |_match|
-              if _match.size > 0
-                router_name = _match[1]
-                route_path = _match[2]
-                extra_params = _match[3]
-                router_info = Tuple(Int32, ::String, ::String, ::String).new(line_index, path, route_path, extra_params)
-                @routes[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String)
-                @routes[router_name] << router_info
+                blueprint_prefixes[blueprint_instance_name] ||= prefix
+                api_instances[blueprint_instance_name] ||= prefix
               end
-            end
 
-            # Also detect method-specific decorators like @app.get, @app.post, etc.
-            HTTP_METHODS.each do |method|
-              line.scan(/@(#{PYTHON_VAR_NAME_REGEX})\.#{method.downcase}\([rf]?['"]([^'"]*)['"](.*)/) do |_match|
+              # Identify Sanic route decorators
+              line.scan(/@(#{PYTHON_VAR_NAME_REGEX})\.route\([rf]?['"]([^'"]*)['"](.*)/) do |_match|
                 if _match.size > 0
                   router_name = _match[1]
                   route_path = _match[2]
-                  extra_params = "methods=['#{method.upcase}']"
+                  extra_params = _match[3]
                   router_info = Tuple(Int32, ::String, ::String, ::String).new(line_index, path, route_path, extra_params)
                   @routes[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String)
                   @routes[router_name] << router_info
+                end
+              end
+
+              # Also detect method-specific decorators like @app.get, @app.post, etc.
+              HTTP_METHODS.each do |method|
+                line.scan(/@(#{PYTHON_VAR_NAME_REGEX})\.#{method.downcase}\([rf]?['"]([^'"]*)['"](.*)/) do |_match|
+                  if _match.size > 0
+                    router_name = _match[1]
+                    route_path = _match[2]
+                    extra_params = "methods=['#{method.upcase}']"
+                    router_info = Tuple(Int32, ::String, ::String, ::String).new(line_index, path, route_path, extra_params)
+                    @routes[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String)
+                    @routes[router_name] << router_info
+                  end
                 end
               end
             end

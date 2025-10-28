@@ -38,7 +38,7 @@ describe Analyzer::AI::General do
         "ai_model"     => YAML::Any.new("test-model"),
         "ai_key"       => YAML::Any.new("test-key"),
         "ai_max_token" => YAML::Any.new(2048),
-        "base"         => YAML::Any.new("."),
+        "base"         => YAML::Any.new([YAML::Any.new(".")]),
       }
       analyzer = Analyzer::AI::General.new(options)
       analyzer.max_tokens.should eq(2048)
@@ -56,7 +56,7 @@ describe Analyzer::AI::General do
         "ai_provider"  => YAML::Any.new("http://localhost:8000"),
         "ai_model"     => YAML::Any.new("test-model"),
         "ai_key"       => YAML::Any.new("test-key"),
-        "base"         => YAML::Any.new("."),
+        "base"         => YAML::Any.new([YAML::Any.new(".")]),
       }
       analyzer = Analyzer::AI::General.new(options)
       analyzer.max_tokens.should eq(1024)

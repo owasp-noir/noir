@@ -48,7 +48,7 @@ class ConfigInitializer
 
       # Transform specific keys for array and string config values
       [
-        "send_with_headers", "use_filters", "use_matchers",
+        "base", "send_with_headers", "use_filters", "use_matchers",
         "set_pvalue", "set_pvalue_header", "set_pvalue_cookie",
         "set_pvalue_query", "set_pvalue_form", "set_pvalue_json", "set_pvalue_path",
       ].each do |key|
@@ -75,7 +75,7 @@ class ConfigInitializer
 
   def default_options
     noir_options = {
-      "base"                         => YAML::Any.new(""),
+      "base"                         => YAML::Any.new([] of YAML::Any),
       "color"                        => YAML::Any.new(true),
       "config_file"                  => YAML::Any.new(""),
       "concurrency"                  => YAML::Any.new("50"),
@@ -135,8 +135,8 @@ class ConfigInitializer
     # Config values are defaults; CLI options take precedence.
     # **************************************************************
 
-    # Base directory for the application
-    base: "#{options["base"]}"
+    # Base directory for the application (can be an array for multiple paths)
+    base: []
 
     # Whether to use color in the output
     color: #{options["color"]}

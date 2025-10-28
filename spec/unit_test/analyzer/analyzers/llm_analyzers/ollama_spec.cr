@@ -41,7 +41,7 @@ describe Analyzer::AI::Ollama do
         "ai_provider"  => YAML::Any.new("http://localhost:11434"),
         "ai_model"     => YAML::Any.new("test-ollama-model"),
         "ai_max_token" => YAML::Any.new(4096), # Different value for testing
-        "base"         => YAML::Any.new("."),
+        "base"         => YAML::Any.new([YAML::Any.new(".")]),
       }
       analyzer = Analyzer::AI::Ollama.new(options)
       analyzer.max_tokens.should eq(4096)
@@ -58,7 +58,7 @@ describe Analyzer::AI::Ollama do
         "ollama_model" => YAML::Any.new(""),
         "ai_provider"  => YAML::Any.new("http://localhost:11434"),
         "ai_model"     => YAML::Any.new("test-ollama-model"),
-        "base"         => YAML::Any.new("."),
+        "base"         => YAML::Any.new([YAML::Any.new(".")]),
       }
       analyzer = Analyzer::AI::Ollama.new(options)
       analyzer.max_tokens.should eq(1024)

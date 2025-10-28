@@ -4,7 +4,7 @@ require "../../../src/options.cr"
 describe "Initialize Analyzer" do
   config_init = ConfigInitializer.new
   options = config_init.default_options
-  options["base"] = YAML::Any.new("noir")
+  options["base"] = YAML::Any.new([YAML::Any.new("noir")])
   object = Analyzer.new(options)
 
   it "getter - url" do
@@ -24,7 +24,7 @@ end
 describe "Initialize FileAnalyzer" do
   config_init = ConfigInitializer.new
   options = config_init.default_options
-  options["base"] = YAML::Any.new("noir")
+  options["base"] = YAML::Any.new([YAML::Any.new("noir")])
   object = FileAnalyzer.new(options)
 
   it "getter - url" do

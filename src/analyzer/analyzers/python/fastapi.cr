@@ -10,42 +10,44 @@ module Analyzer::Python
       fastapi_base_file : ::String = ""
 
       begin
-        # Iterate through all Python files in the base path
-        Dir.glob("#{base_path}/**/*.py") do |path|
-          next if File.directory?(path)
-          next if path.includes?("/site-packages/")
-          source = File.read(path, encoding: "utf-8", invalid: :skip)
+        # Iterate through all Python files in all base paths
+        base_paths.each do |current_base_path|
+          Dir.glob("#{current_base_path}/**/*.py") do |path|
+            next if File.directory?(path)
+            next if path.includes?("/site-packages/")
+            source = File.read(path, encoding: "utf-8", invalid: :skip)
 
-          source.each_line do |line|
-            line = line.gsub(" ", "")
-            match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:fastapi\.)?FastAPI\(/
-            if !match.nil?
-              fastapi_instance_name = match[1]
-              unless include_router_map.has_key?(fastapi_instance_name)
-                include_router_map[path] = {match[1] => Router.new("")}
+            source.each_line do |line|
+              line = line.gsub(" ", "")
+              match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:fastapi\.)?FastAPI\(/
+              if !match.nil?
+                fastapi_instance_name = match[1]
+                unless include_router_map.has_key?(fastapi_instance_name)
+                  include_router_map[path] = {match[1] => Router.new("")}
 
-                # base path
-                fastapi_base_file = path
-                @fastapi_base_path = Path.new(File.dirname(path)).parent.to_s
-                break
-              end
-            end
-
-            # https://fastapi.tiangolo.com/tutorial/bigger-applications/
-            match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:fastapi\.)?APIRouter\(/
-            if !match.nil?
-              prefix = ""
-              router_instance_name = match[1]
-              param_codes = line.split("APIRouter", 2)[1]
-              prefix_match = param_codes.match /prefix\s*=\s*['"]([^'"]*)['"]/
-              if !prefix_match.nil? && prefix_match.size == 2
-                prefix = prefix_match[1]
+                  # base path
+                  fastapi_base_file = path
+                  @fastapi_base_path = Path.new(File.dirname(path)).parent.to_s
+                  break
+                end
               end
 
-              if include_router_map.has_key?(path)
-                include_router_map[path][router_instance_name] = Router.new(prefix)
-              else
-                include_router_map[path] = {router_instance_name => Router.new(prefix)}
+              # https://fastapi.tiangolo.com/tutorial/bigger-applications/
+              match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:fastapi\.)?APIRouter\(/
+              if !match.nil?
+                prefix = ""
+                router_instance_name = match[1]
+                param_codes = line.split("APIRouter", 2)[1]
+                prefix_match = param_codes.match /prefix\s*=\s*['"]([^'"]*)['"]/
+                if !prefix_match.nil? && prefix_match.size == 2
+                  prefix = prefix_match[1]
+                end
+
+                if include_router_map.has_key?(path)
+                  include_router_map[path][router_instance_name] = Router.new(prefix)
+                else
+                  include_router_map[path] = {router_instance_name => Router.new(prefix)}
+                end
               end
             end
           end
