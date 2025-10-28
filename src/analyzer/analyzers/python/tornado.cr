@@ -44,28 +44,28 @@ module Analyzer::Python
             lines = file.each_line.to_a
             next unless lines.any?(&.includes?("tornado"))
             api_instances = Hash(::String, ::String).new
-          path_api_instances[path] = api_instances
+            path_api_instances[path] = api_instances
 
-          lines.each_with_index do |line, line_index|
-            line = line.gsub(" ", "") # remove spaces for easier regex matching
+            lines.each_with_index do |line, line_index|
+              line = line.gsub(" ", "") # remove spaces for easier regex matching
 
-            # Identify Tornado Application instance assignments
-            app_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:tornado\.web\.)?Application\(/
-            if app_match
-              app_instance_name = app_match[1]
-              api_instances[app_instance_name] ||= ""
-              tornado_app_instances[app_instance_name] ||= ""
-            end
+              # Identify Tornado Application instance assignments
+              app_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:tornado\.web\.)?Application\(/
+              if app_match
+                app_instance_name = app_match[1]
+                api_instances[app_instance_name] ||= ""
+                tornado_app_instances[app_instance_name] ||= ""
+              end
 
-            # Look for URL routing patterns in tornado.web.Application
-            # Pattern: [(r"/path", HandlerClass), ...]
-            if line.includes?("Application(") || line.includes?("Application([")
-              # Extract URL patterns from this and following lines
-              extract_url_patterns_from_application(lines, line_index, path, api_instances)
+              # Look for URL routing patterns in tornado.web.Application
+              # Pattern: [(r"/path", HandlerClass), ...]
+              if line.includes?("Application(") || line.includes?("Application([")
+                # Extract URL patterns from this and following lines
+                extract_url_patterns_from_application(lines, line_index, path, api_instances)
+              end
             end
           end
         end
-      end
       end
 
       result = [] of Endpoint

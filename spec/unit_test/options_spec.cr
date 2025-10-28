@@ -19,11 +19,11 @@ describe "run_options_parser" do
   it "supports multiple -b flags" do
     # Save original ARGV
     original_argv = ARGV.dup
-    
+
     # Test with multiple -b flags
     ARGV.clear
     ARGV.concat(["-b", "./app1", "-b", "./app2", "-b", "./app3"])
-    
+
     begin
       noir_options = run_options_parser()
       noir_options["base"].as_a.size.should eq(3)
@@ -40,11 +40,11 @@ describe "run_options_parser" do
   it "supports single -b flag" do
     # Save original ARGV
     original_argv = ARGV.dup
-    
+
     # Test with single -b flag
     ARGV.clear
     ARGV.concat(["-b", "./single_app"])
-    
+
     begin
       noir_options = run_options_parser()
       noir_options["base"].as_a.size.should eq(1)
@@ -56,4 +56,3 @@ describe "run_options_parser" do
     end
   end
 end
-

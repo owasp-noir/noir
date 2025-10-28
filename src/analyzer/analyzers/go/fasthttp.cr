@@ -24,18 +24,18 @@ module Analyzer::Go
 
                   # Detect parameter usage in current context
                   params = analyze_param_line(line)
-                params.each do |param|
-                  if param.name.size > 0 && last_endpoint.method != ""
-                    # Check for duplicates before adding
-                    unless last_endpoint.params.any? { |p| p.name == param.name && p.param_type == param.param_type }
-                      last_endpoint.params << param
+                  params.each do |param|
+                    if param.name.size > 0 && last_endpoint.method != ""
+                      # Check for duplicates before adding
+                      unless last_endpoint.params.any? { |p| p.name == param.name && p.param_type == param.param_type }
+                        last_endpoint.params << param
+                      end
                     end
                   end
                 end
               end
             end
           end
-        end
         end
       rescue e
         logger.debug e

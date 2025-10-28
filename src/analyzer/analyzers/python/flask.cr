@@ -50,123 +50,123 @@ module Analyzer::Python
             api_instances = Hash(::String, ::String).new
             path_api_instances[path] = api_instances
 
-          lines.each_with_index do |line, line_index|
-            line = line.gsub(" ", "") # remove spaces for easier regex matching
+            lines.each_with_index do |line, line_index|
+              line = line.gsub(" ", "") # remove spaces for easier regex matching
 
-            # Identify Flask instance assignments
-            flask_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:flask\.)?Flask\(/
-            if flask_match
-              flask_instance_name = flask_match[1]
-              api_instances[flask_instance_name] ||= ""
-            end
-
-            # Identify Blueprint instance assignments
-            blueprint_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:flask\.)?Blueprint\(/
-            if blueprint_match
-              prefix = ""
-              blueprint_instance_name = blueprint_match[1]
-              param_codes = line.split("Blueprint", 2)[1]
-              prefix_match = param_codes.match /url_prefix=[rf]?['"]([^'"]*)['"]/
-              if !prefix_match.nil? && prefix_match.size == 2
-                prefix = prefix_match[1]
+              # Identify Flask instance assignments
+              flask_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:flask\.)?Flask\(/
+              if flask_match
+                flask_instance_name = flask_match[1]
+                api_instances[flask_instance_name] ||= ""
               end
 
-              blueprint_prefixes[blueprint_instance_name] ||= prefix
-              api_instances[blueprint_instance_name] ||= prefix
-            end
+              # Identify Blueprint instance assignments
+              blueprint_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:flask\.)?Blueprint\(/
+              if blueprint_match
+                prefix = ""
+                blueprint_instance_name = blueprint_match[1]
+                param_codes = line.split("Blueprint", 2)[1]
+                prefix_match = param_codes.match /url_prefix=[rf]?['"]([^'"]*)['"]/
+                if !prefix_match.nil? && prefix_match.size == 2
+                  prefix = prefix_match[1]
+                end
 
-            # Identify Api instance assignments
-            init_app_match = line.match /(#{PYTHON_VAR_NAME_REGEX})\.init_app\((#{PYTHON_VAR_NAME_REGEX})/
-            if init_app_match
-              api_instance_name = init_app_match[1]
-              parser = get_parser(path)
-              if parser.@global_variables.has_key?(api_instance_name)
-                gv = parser.@global_variables[api_instance_name]
-                api_instances[api_instance_name] ||= ""
+                blueprint_prefixes[blueprint_instance_name] ||= prefix
+                api_instances[blueprint_instance_name] ||= prefix
               end
-            end
 
-            # Api from flask instance
-            flask_instances.each do |_flask_instance_name, _prefix|
-              api_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:flask_restx\.)?Api\((app=)?#{_flask_instance_name}/
-              if api_match
-                api_instance_name = api_match[1]
-                api_instances[api_instance_name] ||= _prefix
-              end
-            end
-
-            # Api from blueprint instance
-            blueprint_prefixes.each do |_blueprint_instance_name, _prefix|
-              api_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:flask_restx\.)?Api\((app=)?#{_blueprint_instance_name}/
-              if api_match
-                api_instance_name = api_match[1]
-                api_instances[api_instance_name] ||= _prefix
-              end
-            end
-
-            # Api Namespace
-            api_instances.each do |_api_instance_name, _prefix|
-              add_namespace_match = line.match /(#{_api_instance_name})\.add_namespace\((#{PYTHON_VAR_NAME_REGEX})/
-              if add_namespace_match
+              # Identify Api instance assignments
+              init_app_match = line.match /(#{PYTHON_VAR_NAME_REGEX})\.init_app\((#{PYTHON_VAR_NAME_REGEX})/
+              if init_app_match
+                api_instance_name = init_app_match[1]
                 parser = get_parser(path)
-                if parser.@global_variables.has_key?(add_namespace_match[2])
-                  gv = parser.@global_variables[add_namespace_match[2]]
-                  if gv.type == "Namespace"
-                    api_instances[gv.name] = extract_namespace_prefix(parser, add_namespace_match[2], _prefix)
+                if parser.@global_variables.has_key?(api_instance_name)
+                  gv = parser.@global_variables[api_instance_name]
+                  api_instances[api_instance_name] ||= ""
+                end
+              end
+
+              # Api from flask instance
+              flask_instances.each do |_flask_instance_name, _prefix|
+                api_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:flask_restx\.)?Api\((app=)?#{_flask_instance_name}/
+                if api_match
+                  api_instance_name = api_match[1]
+                  api_instances[api_instance_name] ||= _prefix
+                end
+              end
+
+              # Api from blueprint instance
+              blueprint_prefixes.each do |_blueprint_instance_name, _prefix|
+                api_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:flask_restx\.)?Api\((app=)?#{_blueprint_instance_name}/
+                if api_match
+                  api_instance_name = api_match[1]
+                  api_instances[api_instance_name] ||= _prefix
+                end
+              end
+
+              # Api Namespace
+              api_instances.each do |_api_instance_name, _prefix|
+                add_namespace_match = line.match /(#{_api_instance_name})\.add_namespace\((#{PYTHON_VAR_NAME_REGEX})/
+                if add_namespace_match
+                  parser = get_parser(path)
+                  if parser.@global_variables.has_key?(add_namespace_match[2])
+                    gv = parser.@global_variables[add_namespace_match[2]]
+                    if gv.type == "Namespace"
+                      api_instances[gv.name] = extract_namespace_prefix(parser, add_namespace_match[2], _prefix)
+                    end
                   end
                 end
               end
-            end
 
-            # Temporary Addition: register_view
-            blueprint_prefixes.each do |blueprint_name, blueprint_prefix|
-              view_registration_match = line.match /#{blueprint_name},routes=(.*)\)/
-              if view_registration_match
-                route_paths = view_registration_match[1]
-                route_paths.scan /['"]([^'"]*)['"]/ do |path_str_match|
-                  if !path_str_match.nil? && path_str_match.size == 2
-                    route_path = path_str_match[1]
-                    # Parse methods from reference views (TODO)
-                    route_url = "#{blueprint_prefix}#{route_path}"
-                    route_url = "/#{route_url}" unless route_url.starts_with?("/")
-                    details = Details.new(PathInfo.new(path, line_index + 1))
-                    result << Endpoint.new(route_url, "GET", details)
+              # Temporary Addition: register_view
+              blueprint_prefixes.each do |blueprint_name, blueprint_prefix|
+                view_registration_match = line.match /#{blueprint_name},routes=(.*)\)/
+                if view_registration_match
+                  route_paths = view_registration_match[1]
+                  route_paths.scan /['"]([^'"]*)['"]/ do |path_str_match|
+                    if !path_str_match.nil? && path_str_match.size == 2
+                      route_path = path_str_match[1]
+                      # Parse methods from reference views (TODO)
+                      route_url = "#{blueprint_prefix}#{route_path}"
+                      route_url = "/#{route_url}" unless route_url.starts_with?("/")
+                      details = Details.new(PathInfo.new(path, line_index + 1))
+                      result << Endpoint.new(route_url, "GET", details)
+                    end
                   end
                 end
               end
-            end
 
-            # Identify Blueprint registration
-            register_blueprint_match = line.match /(#{PYTHON_VAR_NAME_REGEX})\.register_blueprint\((#{DOT_NATION})/
-            if register_blueprint_match
-              url_prefix_match = line.match /url_prefix=[rf]?['"]([^'"]*)['"]/
-              if url_prefix_match
-                blueprint_name = register_blueprint_match[2]
-                parser = get_parser(path)
-                if parser.@global_variables.has_key?(blueprint_name)
-                  gv = parser.@global_variables[blueprint_name]
-                  if gv.type == "Blueprint"
-                    register_blueprint[gv.path] ||= Hash(::String, ::String).new
-                    register_blueprint[gv.path][blueprint_name] = url_prefix_match[1]
+              # Identify Blueprint registration
+              register_blueprint_match = line.match /(#{PYTHON_VAR_NAME_REGEX})\.register_blueprint\((#{DOT_NATION})/
+              if register_blueprint_match
+                url_prefix_match = line.match /url_prefix=[rf]?['"]([^'"]*)['"]/
+                if url_prefix_match
+                  blueprint_name = register_blueprint_match[2]
+                  parser = get_parser(path)
+                  if parser.@global_variables.has_key?(blueprint_name)
+                    gv = parser.@global_variables[blueprint_name]
+                    if gv.type == "Blueprint"
+                      register_blueprint[gv.path] ||= Hash(::String, ::String).new
+                      register_blueprint[gv.path][blueprint_name] = url_prefix_match[1]
+                    end
                   end
                 end
               end
-            end
 
-            # Identify Flask route decorators
-            line.scan(/@(#{PYTHON_VAR_NAME_REGEX})\.route\([rf]?['"]([^'"]*)['"](.*)/) do |_match|
-              if _match.size > 0
-                router_name = _match[1]
-                route_path = _match[2]
-                extra_params = _match[3]
-                router_info = Tuple(Int32, ::String, ::String, ::String).new(line_index, path, route_path, extra_params)
-                @routes[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String)
-                @routes[router_name] << router_info
+              # Identify Flask route decorators
+              line.scan(/@(#{PYTHON_VAR_NAME_REGEX})\.route\([rf]?['"]([^'"]*)['"](.*)/) do |_match|
+                if _match.size > 0
+                  router_name = _match[1]
+                  route_path = _match[2]
+                  extra_params = _match[3]
+                  router_info = Tuple(Int32, ::String, ::String, ::String).new(line_index, path, route_path, extra_params)
+                  @routes[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String)
+                  @routes[router_name] << router_info
+                end
               end
             end
           end
         end
-      end
       end
 
       # Update the API instances with the blueprint prefixes

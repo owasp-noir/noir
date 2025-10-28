@@ -39,18 +39,18 @@ module Analyzer::Python
                 router_instance_name = match[1]
                 param_codes = line.split("APIRouter", 2)[1]
                 prefix_match = param_codes.match /prefix\s*=\s*['"]([^'"]*)['"]/
-              if !prefix_match.nil? && prefix_match.size == 2
-                prefix = prefix_match[1]
-              end
+                if !prefix_match.nil? && prefix_match.size == 2
+                  prefix = prefix_match[1]
+                end
 
-              if include_router_map.has_key?(path)
-                include_router_map[path][router_instance_name] = Router.new(prefix)
-              else
-                include_router_map[path] = {router_instance_name => Router.new(prefix)}
+                if include_router_map.has_key?(path)
+                  include_router_map[path][router_instance_name] = Router.new(prefix)
+                else
+                  include_router_map[path] = {router_instance_name => Router.new(prefix)}
+                end
               end
             end
           end
-        end
         end
       rescue e : Exception
         logger.debug e.message
