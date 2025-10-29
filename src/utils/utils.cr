@@ -19,7 +19,7 @@ end
 def join_path(*segments : String) : String
   path = segments
     .reject(&.empty?)
-    .map { |s| s.chomp("/").lstrip("/") }
+    .map(&.chomp("/").lstrip("/"))
     .join("/")
 
   path.starts_with?("/") ? path : "/#{path}"

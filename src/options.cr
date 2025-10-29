@@ -16,7 +16,7 @@ end
 private def process_override_flag(flag : String, option_key : String, noir_options : Hash(String, YAML::Any), args : Array(String), i : Int32) : Int32
   if i + 1 < args.size && !args[i + 1].starts_with?("-")
     noir_options[option_key] = YAML::Any.new(args[i + 1])
-    return i + 2
+    i + 2
   else
     STDERR.puts "ERROR: #{flag} requires an argument.".colorize(:yellow)
     exit(1)
