@@ -15,10 +15,10 @@ end
 noir_options = run_options_parser()
 
 # Handle CACHE flags
-if noir_options["cache_disable"] == true
+if noir_options["cache_disable"]
   LLM::Cache.disable
 end
-if noir_options["cache_clear"] == true
+if noir_options["cache_clear"]
   begin
     cleared = LLM::Cache.clear
     STDERR.puts "CACHE: Cleared #{cleared} entries."
@@ -54,7 +54,7 @@ if noir_options["url"] != "" && !noir_options["url"].to_s.includes?("://")
 end
 
 # Check URL
-if noir_options["status_codes"] == true && noir_options["url"] == ""
+if noir_options["status_codes"] && noir_options["url"] == ""
   STDERR.puts "ERROR: The --status-codes option requires the -u or --url flag to be specified.".colorize(:yellow)
   STDERR.puts "Please use -u or --url to set the URL."
   STDERR.puts "If you need help, use -h or --help."

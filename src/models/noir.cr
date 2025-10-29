@@ -118,12 +118,12 @@ class NoirRunner
     @endpoints = optimizer.optimize(@endpoints)
 
     # Set status code
-    if any_to_bool(@options["status_codes"]) == true || @options["exclude_codes"].to_s != ""
+    if any_to_bool(@options["status_codes"]) || @options["exclude_codes"].to_s != ""
       update_status_codes
     end
 
     # Run tagger
-    if any_to_bool(@options["all_taggers"]) == true
+    if any_to_bool(@options["all_taggers"])
       @logger.success "Running all taggers."
       NoirTaggers.run_tagger @endpoints, @options, "all"
       if @is_debug
