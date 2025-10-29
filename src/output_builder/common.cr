@@ -84,7 +84,7 @@ class OutputBuilderCommon < OutputBuilder
 
       if any_to_bool(@options["include_path"])
         details = endpoint.details
-        if details.code_paths && details.code_paths.size > 0
+        if details.code_paths && !details.code_paths.empty?
           details.code_paths.each do |code_path|
             if code_path.line.nil?
               r_buffer += "\n  ○ file: #{code_path.path}"

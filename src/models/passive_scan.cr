@@ -50,7 +50,7 @@ struct PassiveScan
   end
 
   def valid?
-    @id != "" && @info != "" && @matchers.size > 0
+    @id != "" && @info != "" && !@matchers.empty?
   end
 end
 

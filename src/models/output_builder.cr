@@ -98,7 +98,7 @@ class OutputBuilder
           is_json = true
         end
 
-        if param.tags.size > 0
+        if !param.tags.empty?
           param.tags.each do |tag|
             final_tags << tag.name
           end

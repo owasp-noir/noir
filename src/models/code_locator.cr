@@ -93,7 +93,7 @@ class CodeLocator
     total_usages = @file_usage_stats.values.sum
     @logger.sub("  Total file reads: #{total_usages}")
 
-    if @is_verbose && @file_usage_stats.size > 0
+    if @is_verbose && !@file_usage_stats.empty?
       @logger.sub("  Top 10 most accessed files:")
       @file_usage_stats.to_a.sort_by { |_, count| -count }[0..9].each do |file, count|
         @logger.sub("    #{count} times: #{file}")
