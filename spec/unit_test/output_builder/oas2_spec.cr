@@ -46,7 +46,7 @@ describe "OutputBuilderOas2" do
     spec["info"]["version"].as_s.should eq("1.0.0")
     
     # Check required OAS2 fields
-    spec["basePath"].as_s.should eq("")
+    spec["basePath"].as_s.should eq("/")
     spec["schemes"].as_a.size.should eq(2)
     spec["produces"].as_a.size.should eq(1)
 
