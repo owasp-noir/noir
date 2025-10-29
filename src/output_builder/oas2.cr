@@ -61,7 +61,7 @@ class OutputBuilderOas2 < OutputBuilder
       # Add single Cookie header parameter if cookies exist
       # Cookies are not directly supported in OAS2, typically sent as Cookie header
       unless cookie_names.empty?
-        cookie_desc = "Cookies: " + cookie_names.map { |name| "#{name}=value" }.join("; ")
+        cookie_desc = "Cookies: " + cookie_names.map { |name| "#{name}=<value>" }.join("; ")
         parameters << {
           "name" => JSON::Any.new("Cookie"),
           "in" => JSON::Any.new("header"),
