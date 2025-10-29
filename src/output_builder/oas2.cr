@@ -1,52 +1,129 @@
 require "../models/output_builder"
 require "../models/endpoint"
 require "uri"
+require "json"
 
 class OutputBuilderOas2 < OutputBuilder
   def print(endpoints : Array(Endpoint))
-    paths = {} of String => Hash(String, Hash(String, Array(Hash(String, String)) | Hash(String, Hash(String, String))))
-    endpoints.each do |endpoint|
-      parameters = [] of Hash(String, String)
-      endpoint.params.each do |param|
-        in_str = "query"
-        if param.param_type == "json"
-          in_str = "form"
-        elsif param.param_type == "form"
-          in_str = "formData"
-        elsif param.param_type == "header"
-          in_str = "header"
-        end
+    paths = {} of String => Hash(String, JSON::Any)
 
+    endpoints.each do |endpoint|
+      parameters = [] of Hash(String, JSON::Any)
+      has_body = false
+      consumes = [] of String
+      cookie_names = [] of String
+
+      endpoint.params.each do |param|
+        case param.param_type
+        when "json"
+          # JSON body parameters should be represented as a body parameter in OAS2
+          has_body = true
+          consumes << "application/json" unless consumes.includes?("application/json")
+        when "form"
+          # Form data parameters
+          parameters << {
+            "name"     => JSON::Any.new(param.name),
+            "in"       => JSON::Any.new("formData"),
+            "type"     => JSON::Any.new("string"),
+            "required" => JSON::Any.new(false),
+          }
+          consumes << "application/x-www-form-urlencoded" unless consumes.includes?("application/x-www-form-urlencoded")
+        when "header"
+          # Header parameters
+          parameters << {
+            "name"     => JSON::Any.new(param.name),
+            "in"       => JSON::Any.new("header"),
+            "type"     => JSON::Any.new("string"),
+            "required" => JSON::Any.new(false),
+          }
+        when "path"
+          # Path parameters
+          parameters << {
+            "name"     => JSON::Any.new(param.name),
+            "in"       => JSON::Any.new("path"),
+            "type"     => JSON::Any.new("string"),
+            "required" => JSON::Any.new(true),
+          }
+        when "cookie"
+          # Collect cookie names for later
+          cookie_names << param.name
+        else
+          # Default to query parameter
+          parameters << {
+            "name"     => JSON::Any.new(param.name),
+            "in"       => JSON::Any.new("query"),
+            "type"     => JSON::Any.new("string"),
+            "required" => JSON::Any.new(false),
+          }
+        end
+      end
+
+      # Add single Cookie header parameter if cookies exist
+      # Cookies are not directly supported in OAS2, typically sent as Cookie header
+      unless cookie_names.empty?
+        cookie_desc = "Cookies: " + cookie_names.map { |name| "#{name}=<value>" }.join("; ")
         parameters << {
-          "name" => param.name,
-          "in"   => in_str,
+          "name"        => JSON::Any.new("Cookie"),
+          "in"          => JSON::Any.new("header"),
+          "type"        => JSON::Any.new("string"),
+          "required"    => JSON::Any.new(false),
+          "description" => JSON::Any.new(cookie_desc),
         }
       end
 
-      path = {
-        endpoint.method.downcase.to_s => {
-          "responses" => {
-            "200" => {
-              "description" => "Successful response",
-            },
-          },
-          "parameters" => parameters,
-        },
-      }
+      # Add body parameter for JSON content
+      if has_body
+        parameters << {
+          "name"     => JSON::Any.new("body"),
+          "in"       => JSON::Any.new("body"),
+          "required" => JSON::Any.new(false),
+          "schema"   => JSON::Any.new({
+            "type" => JSON::Any.new("object"),
+          } of String => JSON::Any),
+        }
+      end
+
+      # Build operation object
+      operation = {
+        "responses" => JSON::Any.new({
+          "200" => JSON::Any.new({
+            "description" => JSON::Any.new("Successful response"),
+          } of String => JSON::Any),
+        } of String => JSON::Any),
+        "parameters" => JSON::Any.new(parameters.map { |p| JSON::Any.new(p) }),
+      } of String => JSON::Any
+
+      # Add consumes if present
+      unless consumes.empty?
+        operation["consumes"] = JSON::Any.new(consumes.map { |c| JSON::Any.new(c) })
+      end
+
+      # Convert path parameters from :param to {param} format for OAS2
       uri = URI.parse(endpoint.url)
-      paths[uri.path] = path
+      oas_path = uri.path.gsub(/:(\w+)/, "{\\1}")
+      oas_path = oas_path.gsub(/<[^:>]+:(\w+)>/, "{\\1}") # Handle <type:param> format
+
+      # Initialize path if not exists
+      unless paths.has_key?(oas_path)
+        paths[oas_path] = {} of String => JSON::Any
+      end
+
+      # Add method to path
+      paths[oas_path][endpoint.method.downcase] = JSON::Any.new(operation)
     end
 
-    oas2 = {
-      "swagger" => "2.0",
-      "info"    => {
-        "title"   => "Generated by Noir",
-        "version" => "",
-      },
-      "basePath" => "",
-      "paths"    => paths,
-    }
+    oas2_hash = {
+      "swagger" => JSON::Any.new("2.0"),
+      "info"    => JSON::Any.new({
+        "title"   => JSON::Any.new("Generated by Noir"),
+        "version" => JSON::Any.new("1.0.0"),
+      } of String => JSON::Any),
+      "basePath" => JSON::Any.new("/"),
+      "schemes"  => JSON::Any.new([JSON::Any.new("http"), JSON::Any.new("https")]),
+      "produces" => JSON::Any.new([JSON::Any.new("application/json")]),
+      "paths"    => JSON::Any.new(paths.transform_values { |v| JSON::Any.new(v) }),
+    } of String => JSON::Any
 
-    ob_puts oas2.to_json
+    ob_puts JSON::Any.new(oas2_hash).to_pretty_json
   end
 end
