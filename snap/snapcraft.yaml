@@ -12,7 +12,12 @@ license: MIT
 
 apps:
   noir:
-    command: noir
+    command: bin/noir
+    plugs:
+      - home
+      - removable-media
+      - network
+      - network-bind
 
 parts:
   noir:
@@ -24,7 +29,7 @@ parts:
       snapcraftctl pull
       shards install
       shards build --release --no-debug --production
-      cp ./bin/noir $SNAPCRAFT_PART_INSTALL/
+      install -Dm755 ./bin/noir "$SNAPCRAFT_PART_INSTALL/bin/noir"
       snapcraftctl build
     build-packages:
       - git
