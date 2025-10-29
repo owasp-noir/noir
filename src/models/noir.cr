@@ -78,7 +78,7 @@ class NoirRunner
         PassiveRulesUpdater.check_for_updates(@logger, auto_update)
       end
 
-      if @options["passive_scan_path"].as_a.size > 0
+      if !@options["passive_scan_path"].as_a.empty?
         @logger.sub "├── Using custom passive rules."
         @options["passive_scan_path"].as_a.each do |rule_path|
           @passive_scans = NoirPassiveScan.load_rules rule_path.to_s, @logger
@@ -118,12 +118,12 @@ class NoirRunner
     @endpoints = optimizer.optimize(@endpoints)
 
     # Set status code
-    if any_to_bool(@options["status_codes"]) == true || @options["exclude_codes"].to_s != ""
+    if any_to_bool(@options["status_codes"]) || @options["exclude_codes"].to_s != ""
       update_status_codes
     end
 
     # Run tagger
-    if any_to_bool(@options["all_taggers"]) == true
+    if any_to_bool(@options["all_taggers"])
       @logger.success "Running all taggers."
       NoirTaggers.run_tagger @endpoints, @options, "all"
       if @is_debug
@@ -153,11 +153,11 @@ class NoirRunner
 
     @endpoints.each do |endpoint|
       begin
-        if endpoint.params.size > 0
+        if !endpoint.params.empty?
           endpoint_hash = endpoint.params_to_hash
           body = {} of String => String
           is_json = false
-          if endpoint_hash["json"].size > 0
+          if !endpoint_hash["json"].empty?
             is_json = true
             body = endpoint_hash["json"]
           else
@@ -315,7 +315,7 @@ class NoirRunner
   end
 
   def print_passive_results
-    if @passive_results.size > 0
+    if !@passive_results.empty?
       @logger.puts ""
       @logger.heading "Passive Results:"
       builder = OutputBuilderPassiveScan.new @options

@@ -20,7 +20,7 @@ class OutputBuilderCommon < OutputBuilder
       r_ws = ""
       r_buffer = "\n#{r_method} #{r_url}"
 
-      if any_to_bool(@options["status_codes"]) == true || @options["exclude_codes"] != ""
+      if any_to_bool(@options["status_codes"]) || @options["exclude_codes"] != ""
         status_color = :light_green
         status_code = endpoint.details.status_code
         if status_code
@@ -82,9 +82,9 @@ class OutputBuilderCommon < OutputBuilder
         r_buffer += "\n  ○ tags: #{r_tags}"
       end
 
-      if any_to_bool(@options["include_path"]) == true
+      if any_to_bool(@options["include_path"])
         details = endpoint.details
-        if details.code_paths && details.code_paths.size > 0
+        if details.code_paths && !details.code_paths.empty?
           details.code_paths.each do |code_path|
             if code_path.line.nil?
               r_buffer += "\n  ○ file: #{code_path.path}"

@@ -12,46 +12,33 @@ macro append_to_yaml_array(hash, key, value)
   {{hash.id}}[{{key.stringify}}] = YAML::Any.new(tmp)
 end
 
+# Helper method to process override prompt flags
+private def process_override_flag(flag : String, option_key : String, noir_options : Hash(String, YAML::Any), args : Array(String), i : Int32) : Int32
+  if i + 1 < args.size && !args[i + 1].starts_with?("-")
+    noir_options[option_key] = YAML::Any.new(args[i + 1])
+    i + 2
+  else
+    STDERR.puts "ERROR: #{flag} requires an argument.".colorize(:yellow)
+    exit(1)
+  end
+end
+
 def extract_hidden_prompt_flags(noir_options : Hash(String, YAML::Any)) : Array(String)
   args = ARGV.dup
   filtered_args = [] of String
   i = 0
 
+  override_flags = {
+    "--override-analyze-prompt"        => "override_analyze_prompt",
+    "--override-llm-optimize-prompt"   => "override_llm_optimize_prompt",
+    "--override-bundle-analyze-prompt" => "override_bundle_analyze_prompt",
+    "--override-filter-prompt"         => "override_filter_prompt",
+  }
+
   while i < args.size
     arg = args[i]
-    case arg
-    when "--override-analyze-prompt"
-      if i + 1 < args.size && !args[i + 1].starts_with?("-")
-        noir_options["override_analyze_prompt"] = YAML::Any.new(args[i + 1])
-        i += 2 # skip the flag and its value
-      else
-        STDERR.puts "ERROR: #{arg} requires an argument.".colorize(:yellow)
-        exit(1)
-      end
-    when "--override-llm-optimize-prompt"
-      if i + 1 < args.size && !args[i + 1].starts_with?("-")
-        noir_options["override_llm_optimize_prompt"] = YAML::Any.new(args[i + 1])
-        i += 2
-      else
-        STDERR.puts "ERROR: #{arg} requires an argument.".colorize(:yellow)
-        exit(1)
-      end
-    when "--override-bundle-analyze-prompt"
-      if i + 1 < args.size && !args[i + 1].starts_with?("-")
-        noir_options["override_bundle_analyze_prompt"] = YAML::Any.new(args[i + 1])
-        i += 2
-      else
-        STDERR.puts "ERROR: #{arg} requires an argument.".colorize(:yellow)
-        exit(1)
-      end
-    when "--override-filter-prompt"
-      if i + 1 < args.size && !args[i + 1].starts_with?("-")
-        noir_options["override_filter_prompt"] = YAML::Any.new(args[i + 1])
-        i += 2
-      else
-        STDERR.puts "ERROR: #{arg} requires an argument.".colorize(:yellow)
-        exit(1)
-      end
+    if override_flags.has_key?(arg)
+      i = process_override_flag(arg, override_flags[arg], noir_options, args, i)
     else
       filtered_args << arg
       i += 1
