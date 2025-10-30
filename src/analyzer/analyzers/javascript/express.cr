@@ -3,6 +3,10 @@ require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Javascript
   class Express < Analyzer
+    # Constants for method chaining detection
+    MAX_CHAIN_METHOD_DISTANCE = 1000
+    MAX_CHAIN_SEARCH_DISTANCE = 5000
+
     def analyze
       # Source Analysis
       channel = Channel(String).new
@@ -77,6 +81,9 @@ module Analyzer::Javascript
 
         # First, handle the specific v1Router pattern directly
         handle_v1_router_pattern(file_content, result, path)
+
+        # Handle app.route('/path').method1().method2() patterns
+        handle_app_route_chaining(file_content, result, path)
 
         # First analyze file for router imports and declarations
         file_content.each_line do |line|
@@ -612,7 +619,7 @@ module Analyzer::Javascript
       end
 
       # Handle destructuring syntax
-      if line =~ /(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\\s*req\.body/
+      if line =~ /(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*req\.body/
         param_list = $1.split(",").map(&.strip)
         if !param_list.empty?
           param_list.each do |in_param|
@@ -704,6 +711,94 @@ module Analyzer::Javascript
           end
         end
       end
+    end
+
+    # Handle app.route('/path').get(...).post(...) chaining patterns
+    private def handle_app_route_chaining(content : String, result : Array(Endpoint), path : String)
+      # Find all app.route() declarations
+      route_starts = [] of Tuple(Int32, String)
+      content.scan(/(?:app|router)\.route\s*\(\s*['"]([^'"]+)['"]/) do |match|
+        if match.size >= 1
+          if start = match.begin(0)
+            route_starts << {start, match[1]}
+          end
+        end
+      end
+
+      # For each route, find all chained methods
+      route_starts.each do |start_pos, route_path|
+        # Search for the end of the route chain by tracking braces
+        # Start after the route('/path') call
+        search_start = content.index(")", start_pos)
+        return unless search_start
+
+        # Find all chained .method( calls until we hit something that's not a chain
+        methods_found = [] of Tuple(String, Int32)
+        scan_pos = search_start
+        loop do
+          # Look for .method( pattern
+          method_match = content.match(/\.\s*(get|post|put|delete|patch|head|options)\s*\(/, scan_pos)
+          break unless method_match
+          pos = method_match.begin(0)
+          break unless pos
+          match_pos = pos
+
+          # Don't check between content - just check if the distance is too great
+          # If methods are part of the same chain, they should be relatively close
+          # (even with function bodies, usually within 500 chars per method)
+          break if match_pos - scan_pos > MAX_CHAIN_METHOD_DISTANCE
+
+          methods_found << {method_match[1], match_pos}
+
+          # Skip past the method name and opening paren, then skip the function body
+          func_start = content.index("{", match_pos)
+          if func_start
+            func_end = Noir::JSRouteExtractor.find_matching_brace(content, func_start)
+            scan_pos = func_end ? func_end + 1 : match_pos + method_match[0].size
+          else
+            scan_pos = match_pos + method_match[0].size
+          end
+
+          # Limit search to reasonable distance from route start
+          break if scan_pos > start_pos + MAX_CHAIN_SEARCH_DISTANCE
+        end
+
+        # Create endpoints for each found method
+        methods_found.each do |method_name, method_pos|
+          method = method_name.upcase
+
+          # Create endpoint for this method
+          endpoint = Endpoint.new(route_path, method)
+          details = Details.new(PathInfo.new(path, 1))
+          endpoint.details = details
+
+          # Try to extract the function body for this specific method
+          # Find the function body following this method position
+          func_start = content.index("{", method_pos)
+          if func_start
+            # Find matching closing brace using shared utility
+            func_end = Noir::JSRouteExtractor.find_matching_brace(content, func_start)
+            if func_end
+              handler_body = content[func_start..func_end]
+
+              # Extract parameters from handler body
+              extract_params_from_handler(handler_body, endpoint)
+            end
+          end
+
+          result << endpoint
+        end
+      end
+    end
+
+    # Extract parameters from a handler function body
+    # Delegates to JSRouteExtractor to avoid duplication
+    private def extract_params_from_handler(handler_body : String, endpoint : Endpoint)
+      # Use the static methods from JSRouteExtractor for consistency
+      Noir::JSRouteExtractor.extract_query_params(handler_body, endpoint)
+      Noir::JSRouteExtractor.extract_body_params(handler_body, endpoint)
+      Noir::JSRouteExtractor.extract_header_params(handler_body, endpoint)
+      Noir::JSRouteExtractor.extract_cookie_params(handler_body, endpoint)
     end
   end
 end

@@ -23,6 +23,8 @@ module Noir
     @position : Int32 = 0
     @framework : Symbol = :unknown
     @constants : Hash(String, String) = {} of String => String
+    @current_route_path : String? = nil
+    @current_route_start_idx : Int32? = nil
 
     def initialize(source : String)
       lexer = JSLexer.new(source)
@@ -430,6 +432,59 @@ module Noir
       # Parse app.route('/path').get(...).post(...) patterns
       idx = @position
 
+      # First, check if we're continuing a chained route
+      if @current_route_path.is_a?(String) && @current_route_start_idx
+        # We're in the middle of a chain, look for the next method
+        # Start from current position and scan forward
+        method_idx = @position
+        paren_depth = 0
+
+        # First, skip past any function call we might be in the middle of
+        while method_idx < @tokens.size
+          if @tokens[method_idx].type == :lparen
+            paren_depth += 1
+          elsif @tokens[method_idx].type == :rparen
+            paren_depth -= 1
+            if paren_depth == 0
+              method_idx += 1
+              break
+            end
+          end
+          method_idx += 1
+        end
+
+        # Now look for the next chained method
+        while method_idx < @tokens.size - 1
+          if @tokens[method_idx].type == :dot &&
+             method_idx + 1 < @tokens.size &&
+             @tokens[method_idx + 1].type == :http_method
+            method = @tokens[method_idx + 1].value.upcase
+
+            # Create a route for this HTTP method
+            path = @current_route_path.as(String)
+            route = JSRoutePattern.new(method, path)
+            extract_path_params(path).each do |param|
+              route.push_param(param)
+            end
+
+            @position = method_idx + 2 # Move past the dot and method name
+            # Don't reset yet - there might be more methods chained
+            return route
+          elsif @tokens[method_idx].type == :semicolon ||
+                (@tokens[method_idx].value == "route" && method_idx > @position + 5)
+            # End of chain
+            break
+          end
+
+          method_idx += 1
+        end
+
+        # No more methods found in chain, reset
+        @current_route_path = nil
+        @current_route_start_idx = nil
+      end
+
+      # Look for a new route() declaration
       while idx < @tokens.size - 5
         if (@tokens[idx].value == "app" ||
            @tokens[idx].value == "router" ||
@@ -444,7 +499,7 @@ module Noir
           path = @tokens[idx + 4].value
 
           # Look for method chaining after .route('/path')
-          method_idx = idx + 6 # Skip past closing paren
+          method_idx = idx + 6 # Skip past string and closing paren
           while method_idx < @tokens.size - 1
             if @tokens[method_idx].type == :dot &&
                method_idx + 1 < @tokens.size &&
@@ -457,10 +512,13 @@ module Noir
                 route.push_param(param)
               end
 
-              @position = method_idx + 2 # Move past this method
+              # Set up for chain continuation
+              @current_route_path = path
+              @current_route_start_idx = idx
+              @position = method_idx + 2 # Move past dot and method
               return route
-            elsif @tokens[method_idx].type != :dot
-              # End of method chain
+            elsif @tokens[method_idx].type == :semicolon
+              # End of statement without finding a method
               break
             end
             method_idx += 1
