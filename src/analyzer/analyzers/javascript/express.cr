@@ -3,6 +3,10 @@ require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Javascript
   class Express < Analyzer
+    # Constants for method chaining detection
+    MAX_CHAIN_METHOD_DISTANCE = 1000
+    MAX_CHAIN_SEARCH_DISTANCE = 5000
+    
     def analyze
       # Source Analysis
       channel = Channel(String).new
@@ -738,21 +742,21 @@ module Analyzer::Javascript
           # Don't check between content - just check if the distance is too great
           # If methods are part of the same chain, they should be relatively close
           # (even with function bodies, usually within 500 chars per method)
-          break if match_pos - scan_pos > 1000
+          break if match_pos - scan_pos > MAX_CHAIN_METHOD_DISTANCE
           
           methods_found << {method_match[1], match_pos}
           
           # Skip past the method name and opening paren, then skip the function body
           func_start = content.index("{", match_pos)
           if func_start
-            func_end = find_matching_brace_in_string(content, func_start)
+            func_end = Noir::JSRouteExtractor.find_matching_brace(content, func_start)
             scan_pos = func_end ? func_end + 1 : match_pos + method_match[0].size
           else
             scan_pos = match_pos + method_match[0].size
           end
           
           # Limit search to reasonable distance from route start
-          break if scan_pos > start_pos + 5000
+          break if scan_pos > start_pos + MAX_CHAIN_SEARCH_DISTANCE
         end
         
         # Create endpoints for each found method
@@ -768,8 +772,8 @@ module Analyzer::Javascript
           # Find the function body following this method position
           func_start = content.index("{", method_pos)
           if func_start
-            # Find matching closing brace
-            func_end = find_matching_brace_in_string(content, func_start)
+            # Find matching closing brace using shared utility
+            func_end = Noir::JSRouteExtractor.find_matching_brace(content, func_start)
             if func_end
               handler_body = content[func_start..func_end]
               
@@ -783,81 +787,14 @@ module Analyzer::Javascript
       end
     end
     
-    # Helper method to find matching closing brace in a string
-    private def find_matching_brace_in_string(content : String, start_idx : Int32) : Int32?
-      brace_count = 1
-      idx = start_idx + 1
-      
-      while idx < content.size && brace_count > 0
-        case content[idx]
-        when '{'
-          brace_count += 1
-        when '}'
-          brace_count -= 1
-        end
-        
-        return idx if brace_count == 0
-        idx += 1
-      end
-      
-      nil
-    end
-    
     # Extract parameters from a handler function body
+    # Delegates to JSRouteExtractor to avoid duplication
     private def extract_params_from_handler(handler_body : String, endpoint : Endpoint)
-      # Extract query parameters
-      handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*req\.query/) do |match|
-        if match.size > 0
-          params = match[1].split(",").map(&.strip)
-          params.each do |param|
-            clean_param = param.split("=").first.strip
-            endpoint.push_param(Param.new(clean_param, "", "query")) unless clean_param.empty?
-          end
-        end
-      end
-      
-      handler_body.scan(/req\.query\.(\w+)/) do |match|
-        if match.size > 0
-          endpoint.push_param(Param.new(match[1], "", "query"))
-        end
-      end
-      
-      # Extract body parameters
-      handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*req\.body/) do |match|
-        if match.size > 0
-          params = match[1].split(",").map(&.strip)
-          params.each do |param|
-            clean_param = param.split("=").first.strip
-            endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
-          end
-        end
-      end
-      
-      handler_body.scan(/req\.body\.(\w+)/) do |match|
-        if match.size > 0
-          endpoint.push_param(Param.new(match[1], "", "json"))
-        end
-      end
-      
-      # Extract headers
-      handler_body.scan(/req\.header\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
-        if match.size > 0
-          endpoint.push_param(Param.new(match[1], "", "header"))
-        end
-      end
-      
-      handler_body.scan(/req\.headers\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match|
-        if match.size > 0
-          endpoint.push_param(Param.new(match[1], "", "header"))
-        end
-      end
-      
-      # Extract cookies
-      handler_body.scan(/req\.cookies\.(\w+)/) do |match|
-        if match.size > 0
-          endpoint.push_param(Param.new(match[1], "", "cookie"))
-        end
-      end
+      # Use the static methods from JSRouteExtractor for consistency
+      Noir::JSRouteExtractor.extract_query_params(handler_body, endpoint)
+      Noir::JSRouteExtractor.extract_body_params(handler_body, endpoint)
+      Noir::JSRouteExtractor.extract_header_params(handler_body, endpoint)
+      Noir::JSRouteExtractor.extract_cookie_params(handler_body, endpoint)
     end
   end
 end

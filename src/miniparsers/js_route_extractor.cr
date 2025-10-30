@@ -153,7 +153,7 @@ module Noir
       extract_cookie_params(handler_body, endpoint)
     end
 
-    private def self.find_matching_brace(content : String, open_brace_idx : Int32) : Int32?
+    def self.find_matching_brace(content : String, open_brace_idx : Int32) : Int32?
       brace_count = 1
       idx = open_brace_idx + 1
 
@@ -174,7 +174,7 @@ module Noir
       nil
     end
 
-    private def self.extract_body_params(handler_body : String, endpoint : Endpoint)
+    def self.extract_body_params(handler_body : String, endpoint : Endpoint)
       # Look for req.body.X or const/let/var { X } = req.body
       # First check the destructuring pattern
       handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*(?:req|request)\.body/) do |match|
@@ -202,7 +202,7 @@ module Noir
       end
     end
 
-    private def self.extract_query_params(handler_body : String, endpoint : Endpoint)
+    def self.extract_query_params(handler_body : String, endpoint : Endpoint)
       # Look for destructuring: const/let/var { X } = req.query
       handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*(?:req|request)\.query/) do |match|
         if match.size > 0
@@ -222,7 +222,7 @@ module Noir
       end
     end
 
-    private def self.extract_header_params(handler_body : String, endpoint : Endpoint)
+    def self.extract_header_params(handler_body : String, endpoint : Endpoint)
       # Look for req.headers['X'] or req.header('X')
       handler_body.scan(/(?:req|request)\.headers\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match|
         if match.size > 0
@@ -243,7 +243,7 @@ module Noir
       end
     end
 
-    private def self.extract_cookie_params(handler_body : String, endpoint : Endpoint)
+    def self.extract_cookie_params(handler_body : String, endpoint : Endpoint)
       # Look for req.cookies.X
       handler_body.scan(/(?:req|request)\.cookies\.(\w+)/) do |match|
         if match.size > 0
