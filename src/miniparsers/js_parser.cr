@@ -439,7 +439,7 @@ module Noir
         method_idx = @position
         paren_depth = 0
         found_closing = false
-        
+
         # First, skip past any function call we might be in the middle of
         while method_idx < @tokens.size
           if @tokens[method_idx].type == :lparen
@@ -454,20 +454,20 @@ module Noir
           end
           method_idx += 1
         end
-        
+
         # Now look for the next chained method
         while method_idx < @tokens.size - 1
           if @tokens[method_idx].type == :dot &&
              method_idx + 1 < @tokens.size &&
              @tokens[method_idx + 1].type == :http_method
             method = @tokens[method_idx + 1].value.upcase
-            
+
             # Create a route for this HTTP method
             route = JSRoutePattern.new(method, @current_route_path.not_nil!)
             extract_path_params(@current_route_path.not_nil!).each do |param|
               route.push_param(param)
             end
-            
+
             @position = method_idx + 2 # Move past the dot and method name
             # Don't reset yet - there might be more methods chained
             return route
@@ -476,10 +476,10 @@ module Noir
             # End of chain
             break
           end
-          
+
           method_idx += 1
         end
-        
+
         # No more methods found in chain, reset
         @current_route_path = nil
         @current_route_start_idx = nil
