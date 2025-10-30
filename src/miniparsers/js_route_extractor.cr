@@ -102,17 +102,38 @@ module Noir
         route_declarations << "#{method}(`#{pattern.path}`"
       end
 
+      # Also handle app.route('/path').method() pattern
+      # In this case, search for route('/path')...method(
+      route_declarations << "route('#{pattern.path}'"
+      route_declarations << "route(\"#{pattern.path}\""
+      route_declarations << "route(`#{pattern.path}`"
+
       # Find the index of any matching route declaration
       idx = nil
+      found_declaration = ""
       route_declarations.each do |declaration|
         found_idx = content.index(declaration)
         if found_idx
           idx = found_idx
+          found_declaration = declaration
           break
         end
       end
 
       return unless idx
+
+      # If we found a route() declaration, we need to find the specific .method() call after it
+      if found_declaration.starts_with?("route(")
+        # Look for the .method( pattern after the route declaration
+        search_start = idx
+        method_variations.each do |method|
+          method_idx = content.index(".#{method}(", search_start)
+          if method_idx && method_idx > idx && (method_idx - idx) < 200
+            idx = method_idx
+            break
+          end
+        end
+      end
 
       # Find the opening brace of the handler function
       open_brace_idx = content.index("{", idx)
@@ -166,8 +187,15 @@ module Noir
         end
       end
 
-      # Then check direct property access
+      # Check direct property access: req.body.X
       handler_body.scan(/(?:req|request)\.body\.(\w+)/) do |match|
+        if match.size > 0
+          endpoint.push_param(Param.new(match[1], "", "json"))
+        end
+      end
+
+      # Check array access: req.body['X'] or req.body["X"]
+      handler_body.scan(/(?:req|request)\.body\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match|
         if match.size > 0
           endpoint.push_param(Param.new(match[1], "", "json"))
         end
@@ -175,6 +203,17 @@ module Noir
     end
 
     private def self.extract_query_params(handler_body : String, endpoint : Endpoint)
+      # Look for destructuring: const/let/var { X } = req.query
+      handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*(?:req|request)\.query/) do |match|
+        if match.size > 0
+          params = match[1].split(",").map(&.strip)
+          params.each do |param|
+            clean_param = param.split("=").first.strip
+            endpoint.push_param(Param.new(clean_param, "", "query")) unless clean_param.empty?
+          end
+        end
+      end
+
       # Look for req.query.X
       handler_body.scan(/(?:req|request)\.query\.(\w+)/) do |match|
         if match.size > 0

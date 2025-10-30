@@ -14,7 +14,7 @@ module Analyzer::Python
       "files"   => {["POST", "PUT", "PATCH", "DELETE"], "form"},
       "values"  => {["GET", "POST", "PUT", "PATCH", "DELETE"], "query"},
       "json"    => {["POST", "PUT", "PATCH", "DELETE"], "json"},
-      "cookie"  => {nil, "cookie"},
+      "cookies" => {nil, "cookie"},
       "headers" => {nil, "header"},
     }
 

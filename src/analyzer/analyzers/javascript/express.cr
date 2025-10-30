@@ -612,7 +612,7 @@ module Analyzer::Javascript
       end
 
       # Handle destructuring syntax
-      if line =~ /(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\\s*req\.body/
+      if line =~ /(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*req\.body/
         param_list = $1.split(",").map(&.strip)
         if !param_list.empty?
           param_list.each do |in_param|
