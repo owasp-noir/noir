@@ -433,12 +433,11 @@ module Noir
       idx = @position
 
       # First, check if we're continuing a chained route
-      if @current_route_path && @current_route_start_idx
+      if @current_route_path.is_a?(String) && @current_route_start_idx
         # We're in the middle of a chain, look for the next method
         # Start from current position and scan forward
         method_idx = @position
         paren_depth = 0
-        found_closing = false
 
         # First, skip past any function call we might be in the middle of
         while method_idx < @tokens.size
@@ -447,7 +446,6 @@ module Noir
           elsif @tokens[method_idx].type == :rparen
             paren_depth -= 1
             if paren_depth == 0
-              found_closing = true
               method_idx += 1
               break
             end
@@ -463,8 +461,9 @@ module Noir
             method = @tokens[method_idx + 1].value.upcase
 
             # Create a route for this HTTP method
-            route = JSRoutePattern.new(method, @current_route_path.not_nil!)
-            extract_path_params(@current_route_path.not_nil!).each do |param|
+            path = @current_route_path.as(String)
+            route = JSRoutePattern.new(method, path)
+            extract_path_params(path).each do |param|
               route.push_param(param)
             end
 

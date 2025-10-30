@@ -719,7 +719,9 @@ module Analyzer::Javascript
       route_starts = [] of Tuple(Int32, String)
       content.scan(/(?:app|router)\.route\s*\(\s*['"]([^'"]+)['"]/) do |match|
         if match.size >= 1
-          route_starts << {match.begin(0).not_nil!, match[1]}
+          if start = match.begin(0)
+            route_starts << {start, match[1]}
+          end
         end
       end
 
@@ -737,7 +739,9 @@ module Analyzer::Javascript
           # Look for .method( pattern
           method_match = content.match(/\.\s*(get|post|put|delete|patch|head|options)\s*\(/, scan_pos)
           break unless method_match
-          match_pos = method_match.begin(0).not_nil!
+          pos = method_match.begin(0)
+          break unless pos
+          match_pos = pos
 
           # Don't check between content - just check if the distance is too great
           # If methods are part of the same chain, they should be relatively close
