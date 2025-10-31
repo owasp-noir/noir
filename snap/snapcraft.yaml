@@ -1,18 +1,18 @@
 name: noir
-base: core22
-version: "0.24.0"
+base: core20
+version: 0.24.0
 summary: Attack surface detector that identifies endpoints by static analysis.
 description: |
   Noir is an open-source project specializing in identifying attack surfaces for enhanced whitebox security testing and security pipeline.
   This includes the capability to discover API endpoints, web endpoints, and other potential entry points within source code for thorough security analysis.
 
-grade: stable
-confinement: strict
+grade: stable # must be 'stable' to release into candidate/stable channels
+confinement: strict # use 'strict' once you have the right plugs and slots
 license: MIT
 
 apps:
   noir:
-    command: bin/noir
+    command: noir
     plugs:
       - home
       - removable-media
@@ -22,24 +22,18 @@ apps:
 parts:
   noir:
     source: ./
-    plugin: nil
+    plugin: nil #crystal
+    #crystal-channel: latest/stable
     override-build: |
-      git clone https://github.com/crystal-lang/shards.git --branch v0.18.0 --depth 1
-      cd shards
-      make CRFLAGS="--release"
-      export PATH="$PWD/bin:$PATH"
-      cd ..
-
-      shards update
+      curl -fsSL https://crystal-lang.org/install.sh | sudo bash
+      snapcraftctl pull
       shards install
-      crystal build src/noir.cr -o bin/noir --release --no-debug
-
-      install -Dm755 bin/noir "${CRAFT_PART_INSTALL}/bin/noir"
-      craftctl default
+      shards build --release --no-debug --production
+      cp ./bin/noir $SNAPCRAFT_PART_INSTALL/
+      snapcraftctl build
     build-packages:
       - git
-      - crystal
-      - make
+      - curl
       - libssl-dev
       - libxml2-dev
       - libz-dev
@@ -47,8 +41,7 @@ parts:
       - libpcre2-dev
       - libevent-dev
       - libgmp-dev
-      - libpcre3-dev
     stage-packages:
-      - libssl3
+      - libssl1.1
       - libxml2
       - libevent-2.1-7
