@@ -24,14 +24,22 @@ parts:
     source: ./
     plugin: nil
     override-build: |
+      git clone https://github.com/crystal-lang/shards.git --branch v0.18.0 --depth 1
+      cd shards
+      make CRFLAGS="--release"
+      export PATH="$PWD/bin:$PATH"
+      cd ..
+
       shards update
       shards install
-      shards build --release --no-debug --production
-      install -Dm755 ./bin/noir "${CRAFT_PART_INSTALL}/bin/noir"
+      crystal build src/noir.cr -o bin/noir --release --no-debug
+
+      install -Dm755 bin/noir "${CRAFT_PART_INSTALL}/bin/noir"
       craftctl default
     build-packages:
       - git
       - crystal
+      - make
       - libssl-dev
       - libxml2-dev
       - libz-dev
