@@ -1,5 +1,5 @@
 name: noir
-base: core24
+base: core22
 version: "0.24.0"
 summary: Attack surface detector that identifies endpoints by static analysis.
 description: |
