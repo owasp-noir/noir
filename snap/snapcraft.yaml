@@ -1,5 +1,5 @@
 name: noir
-base: core20
+base: core24
 version: 0.24.0
 summary: Attack surface detector that identifies endpoints by static analysis.
 description: |
@@ -42,6 +42,6 @@ parts:
       - libevent-dev
       - libgmp-dev
     stage-packages:
-      - libssl1.1
+      - libssl3
       - libxml2
       - libevent-2.1-7
