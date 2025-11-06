@@ -31,20 +31,20 @@ describe "WaitGroup" do
     it "wait blocks until count reaches zero" do
       wg = WaitGroup.new
       wg.add(2)
-      
+
       counter = 0
       spawn do
         sleep 0.01
         counter += 1
         wg.done
       end
-      
+
       spawn do
         sleep 0.02
         counter += 1
         wg.done
       end
-      
+
       wg.wait
       counter.should eq(2)
     end
@@ -54,12 +54,12 @@ describe "WaitGroup" do
     it "automatically adds and calls done" do
       wg = WaitGroup.new
       executed = false
-      
+
       wg.spawn do
         sleep 0.01
         executed = true
       end
-      
+
       wg.wait
       executed.should eq(true)
     end
@@ -67,25 +67,25 @@ describe "WaitGroup" do
     it "handles multiple spawned tasks" do
       wg = WaitGroup.new
       counter = 0
-      
+
       3.times do
         wg.spawn do
           sleep 0.01
           counter += 1
         end
       end
-      
+
       wg.wait
       counter.should eq(3)
     end
 
     it "calls done even if task raises exception" do
       wg = WaitGroup.new
-      
+
       wg.spawn do
         raise "test error"
       end
-      
+
       # This should not hang even though the task raised an error
       wg.wait
       true.should eq(true)
@@ -95,19 +95,19 @@ describe "WaitGroup" do
   describe "class method wait" do
     it "provides convenient syntax for waiting" do
       counter = 0
-      
+
       WaitGroup.wait do |wg|
         wg.spawn do
           sleep 0.01
           counter += 1
         end
-        
+
         wg.spawn do
           sleep 0.01
           counter += 1
         end
       end
-      
+
       counter.should eq(2)
     end
   end
@@ -116,14 +116,14 @@ describe "WaitGroup" do
     it "handles add with multiple values" do
       wg = WaitGroup.new
       wg.add(3)
-      
+
       3.times do
         spawn do
           sleep 0.01
           wg.done
         end
       end
-      
+
       wg.wait
       true.should eq(true)
     end

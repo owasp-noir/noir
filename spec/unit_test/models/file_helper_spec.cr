@@ -19,10 +19,10 @@ describe "FileHelper" do
     it "returns all files from CodeLocator" do
       helper = TestHelper.new
       locator = CodeLocator.instance
-      
+
       locator.push("file_map", "/test/file1.cr")
       locator.push("file_map", "/test/file2.cr")
-      
+
       files = helper.get_all_files
       files.should contain("/test/file1.cr")
       files.should contain("/test/file2.cr")
@@ -33,11 +33,11 @@ describe "FileHelper" do
     it "filters files by extension" do
       helper = TestHelper.new
       locator = CodeLocator.instance
-      
+
       locator.push("file_map", "/test/file1.cr")
       locator.push("file_map", "/test/file2.rb")
       locator.push("file_map", "/test/file3.cr")
-      
+
       cr_files = helper.get_files_by_extension(".cr")
       cr_files.size.should eq(2)
       cr_files.should contain("/test/file1.cr")
@@ -47,9 +47,9 @@ describe "FileHelper" do
     it "returns empty array if no matches" do
       helper = TestHelper.new
       locator = CodeLocator.instance
-      
+
       locator.push("file_map", "/test/file1.cr")
-      
+
       rb_files = helper.get_files_by_extension(".rb")
       rb_files.should be_empty
     end
@@ -59,11 +59,11 @@ describe "FileHelper" do
     it "filters files by prefix" do
       helper = TestHelper.new
       locator = CodeLocator.instance
-      
+
       locator.push("file_map", "/app/src/file1.cr")
       locator.push("file_map", "/app/test/file2.cr")
       locator.push("file_map", "/lib/file3.cr")
-      
+
       app_files = helper.get_files_by_prefix("/app")
       app_files.size.should eq(2)
       app_files.should contain("/app/src/file1.cr")
@@ -75,11 +75,11 @@ describe "FileHelper" do
     it "filters by both prefix and extension" do
       helper = TestHelper.new
       locator = CodeLocator.instance
-      
+
       locator.push("file_map", "/app/file1.cr")
       locator.push("file_map", "/app/file2.rb")
       locator.push("file_map", "/lib/file3.cr")
-      
+
       files = helper.get_files_by_prefix_and_extension("/app", ".cr")
       files.size.should eq(1)
       files.should contain("/app/file1.cr")
@@ -90,11 +90,11 @@ describe "FileHelper" do
     it "finds files in public directories" do
       helper = TestHelper.new
       locator = CodeLocator.instance
-      
+
       locator.push("file_map", "/app/public/style.css")
       locator.push("file_map", "/app/public/script.js")
       locator.push("file_map", "/app/src/file.cr")
-      
+
       public_files = helper.get_public_files("/app")
       public_files.size.should eq(2)
       public_files.should contain("/app/public/style.css")
@@ -104,10 +104,10 @@ describe "FileHelper" do
     it "handles nested public directories" do
       helper = TestHelper.new
       locator = CodeLocator.instance
-      
+
       locator.push("file_map", "/app/modules/admin/public/admin.css")
       locator.push("file_map", "/app/public/main.css")
-      
+
       public_files = helper.get_public_files("/app")
       public_files.size.should eq(2)
     end
@@ -115,9 +115,9 @@ describe "FileHelper" do
     it "returns empty array if no public files" do
       helper = TestHelper.new
       locator = CodeLocator.instance
-      
+
       locator.push("file_map", "/app/src/file.cr")
-      
+
       public_files = helper.get_public_files("/app")
       public_files.should be_empty
     end
@@ -127,11 +127,11 @@ describe "FileHelper" do
     it "finds files in named directory with full path" do
       helper = TestHelper.new
       locator = CodeLocator.instance
-      
+
       locator.push("file_map", "/app/assets/style.css")
       locator.push("file_map", "/app/assets/script.js")
       locator.push("file_map", "/app/src/file.cr")
-      
+
       asset_files = helper.get_public_dir_files("/app", "assets")
       asset_files.size.should eq(2)
       asset_files.should contain("/app/assets/style.css")
@@ -141,9 +141,9 @@ describe "FileHelper" do
     it "handles relative paths" do
       helper = TestHelper.new
       locator = CodeLocator.instance
-      
+
       locator.push("file_map", "/app/static/images/logo.png")
-      
+
       files = helper.get_public_dir_files("/app", "static/images")
       files.size.should eq(1)
       files.should contain("/app/static/images/logo.png")
@@ -152,9 +152,9 @@ describe "FileHelper" do
     it "handles absolute paths" do
       helper = TestHelper.new
       locator = CodeLocator.instance
-      
+
       locator.push("file_map", "/var/www/assets/style.css")
-      
+
       files = helper.get_public_dir_files("/var/www", "/var/www/assets")
       files.size.should eq(1)
       files.should contain("/var/www/assets/style.css")
@@ -163,10 +163,10 @@ describe "FileHelper" do
     it "matches folder name anywhere in path" do
       helper = TestHelper.new
       locator = CodeLocator.instance
-      
+
       locator.push("file_map", "/app/modules/assets/file1.css")
       locator.push("file_map", "/lib/assets/file2.css")
-      
+
       files = helper.get_public_dir_files("/app", "assets")
       files.size.should eq(2)
     end

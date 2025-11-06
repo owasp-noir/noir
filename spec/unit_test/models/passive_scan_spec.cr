@@ -17,7 +17,7 @@ describe "PassiveScan" do
       )
       yaml = YAML.parse(yaml_str)
       info = PassiveScan::Info.new(yaml)
-      
+
       info.name.should eq("Test Rule")
       info.severity.should eq("high")
       info.description.should eq("Test description")
@@ -36,7 +36,7 @@ describe "PassiveScan" do
       )
       yaml = YAML.parse(yaml_str)
       matcher = PassiveScan::Matcher.new(yaml)
-      
+
       matcher.type.should eq("regex")
       matcher.patterns.size.should eq(1)
       matcher.condition.should eq("or")
@@ -67,7 +67,7 @@ describe "PassiveScan" do
       )
       yaml = YAML.parse(yaml_str)
       scan = PassiveScan.new(yaml)
-      
+
       scan.id.should eq("test-scan-001")
       scan.info.name.should eq("Test Rule")
       scan.matchers_condition.should eq("and")
@@ -99,7 +99,7 @@ describe "PassiveScan" do
       )
       yaml = YAML.parse(yaml_str)
       scan = PassiveScan.new(yaml)
-      
+
       scan.valid?.should eq(true)
     end
   end
@@ -128,14 +128,14 @@ describe "PassiveScan" do
       )
       yaml = YAML.parse(yaml_str)
       scan = PassiveScan.new(yaml)
-      
+
       result = PassiveScanResult.new(
         scan,
         "/path/to/file.js",
         42,
         "const password = 'test123'"
       )
-      
+
       result.id.should eq("test-scan-001")
       result.info.name.should eq("Test Rule")
       result.category.should eq("security")
@@ -167,10 +167,10 @@ describe "PassiveScan" do
       )
       yaml = YAML.parse(yaml_str)
       scan = PassiveScan.new(yaml)
-      
+
       result = PassiveScanResult.new(scan, "/test.js", 1, "test")
       json = result.to_json
-      
+
       json.should contain("test-scan-001")
       json.should contain("/test.js")
     end
