@@ -2,6 +2,7 @@ require "json"
 require "http/client"
 
 module LLM
+  # General OpenAI-compatible LLM client
   class General
     def initialize(url : String, model : String, api_key : String?)
       @url = url
@@ -32,6 +33,7 @@ module LLM
       @api_key = api_key || ENV["NOIR_AI_KEY"]
     end
 
+    # Make a request with chat-style messages
     def request_messages(messages : Array(Hash(String, String)), format : String = "json")
       body = {
         "model"           => @model,
@@ -50,17 +52,13 @@ module LLM
 
       (response_json["choices"][0]["message"]["content"].to_s.gsub("```json", "").gsub("```", "").strip).to_s
     rescue ex : Exception
-      # puts "Error: #{ex.message}"
-      # ""
+      ""
     end
 
+    # Make a simple request with a single prompt
     def request(prompt : String, format : String = "json")
       messages = [{"role" => "user", "content" => prompt}]
       request_messages(messages, format).to_s
-    end
-
-    def query(code : String)
-      request(PROMPT + "\n" + code)
     end
   end
 end
