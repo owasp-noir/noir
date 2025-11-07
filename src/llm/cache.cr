@@ -1,5 +1,10 @@
 # LLM disk cache for AI responses
 #
+# Provides persistent caching of LLM responses to:
+# - Reduce API costs by avoiding duplicate requests
+# - Improve performance by serving cached responses instantly
+# - Enable offline operation for previously analyzed code
+#
 # Usage:
 #   key = LLM::Cache.key(provider, model, kind, format, payload)
 #   if cached = LLM::Cache.fetch(key)
@@ -8,6 +13,8 @@
 #     response = call_llm(...)
 #     LLM::Cache.store(key, response)
 #   end
+#
+# Cache can be disabled via NOIR_CACHE_DISABLE environment variable.
 
 require "digest/sha256"
 require "file_utils"
@@ -18,24 +25,29 @@ module LLM
   module Cache
     @@enabled = true
 
+    # Check if caching is enabled
     def self.enabled? : Bool
       @@enabled && !disabled_by_env?
     end
 
+    # Enable caching
     def self.enable : Nil
       @@enabled = true
     end
 
+    # Disable caching
     def self.disable : Nil
       @@enabled = false
     end
 
+    # Check if caching is disabled via environment variable
     def self.disabled_by_env? : Bool
       return false unless ENV.has_key?("NOIR_CACHE_DISABLE")
       val = ENV["NOIR_CACHE_DISABLE"]
       ["1", "true", "yes", "on"].includes?(val.downcase)
     end
 
+    # Get the cache directory path
     def self.cache_dir : String
       File.join(get_home, "cache", "ai")
     end

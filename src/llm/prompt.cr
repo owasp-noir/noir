@@ -1,9 +1,25 @@
+# LLM prompts and formats for AI-powered endpoint analysis
+#
+# This module contains:
+# - System prompts that define the LLM's role and constraints
+# - User prompts that provide specific instructions for each task
+# - JSON schemas that enforce structured output format
+#
+# Three main operations are supported:
+# 1. FILTER: Identify which files likely contain endpoints
+# 2. ANALYZE: Extract endpoints and parameters from a single file
+# 3. BUNDLE_ANALYZE: Extract endpoints from multiple files at once
+
 module LLM
+  # Shared rules enforced across all LLM operations
   SHARED_RULES = "Output only JSON. No explanations. method in [GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD]. param_type in [query, json, form, header, cookie, path]."
 
+  # System prompts define the LLM's role for each operation
   SYSTEM_FILTER  = "#{SHARED_RULES} Given a list of file paths, return JSON with property files: string[] of likely endpoints (no directories)."
   SYSTEM_ANALYZE = "#{SHARED_RULES} Given source code, return JSON with endpoints: [{url, method, params:[{name, param_type, value}]}]."
   SYSTEM_BUNDLE  = "#{SHARED_RULES} Given a bundle of files, include endpoints from ALL files; return the same JSON schema."
+  
+  # User prompt for file filtering operation
   FILTER_PROMPT  = <<-PROMPT
   Analyze the following list of file paths and identify which files are likely to represent endpoints, including API endpoints, web pages, or static resources.
 
@@ -17,6 +33,7 @@ module LLM
   Input Files:
   PROMPT
 
+  # JSON schema for file filtering response
   FILTER_FORMAT = <<-FORMAT
   {
     "type": "json_schema",
@@ -40,6 +57,7 @@ module LLM
   }
   FORMAT
 
+  # User prompt for endpoint analysis operation
   ANALYZE_PROMPT = <<-PROMPT
   Analyze the provided source code to extract details about the endpoints and their parameters.
 

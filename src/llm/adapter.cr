@@ -1,13 +1,14 @@
 # Unified LLM adapter abstraction to normalize access across providers.
 #
-# This adapter wraps existing clients:
+# This adapter provides a single interface for interacting with different LLM providers:
 # - LLM::General (OpenAI-compatible chat APIs)
-# - LLM::Ollama  (Ollama local API, with optional KV context reuse)
+# - LLM::Ollama (Ollama local API with optional KV context reuse)
 #
-# Goals:
-# - Single interface for sending messages or a raw prompt
-# - Optional context-aware request for providers that support it
-# - Easy future integration into analyzers to remove provider-specific branches
+# Benefits:
+# - Consistent interface across different providers
+# - Optional context-aware requests for improved efficiency
+# - Easy integration in analyzers without provider-specific code
+# - Simplified testing and mocking
 
 require "./general/client"
 require "./ollama/ollama"
@@ -43,6 +44,9 @@ module LLM
   end
 
   # Adapter for OpenAI-compatible chat APIs (LLM::General).
+  #
+  # Supports any provider that implements the OpenAI chat completions API,
+  # including OpenAI, Azure, GitHub Models, xAI, and others.
   class GeneralAdapter
     include Adapter
 
@@ -61,6 +65,9 @@ module LLM
   end
 
   # Adapter for Ollama (LLM::Ollama) with optional context reuse.
+  #
+  # Ollama supports KV cache reuse which can significantly improve performance
+  # by preserving context across multiple requests with the same cache key.
   class OllamaAdapter
     include Adapter
 
@@ -89,6 +96,7 @@ module LLM
       client.request_with_context(system, user, format, cache_key)
     end
 
+    # Flatten chat messages into system and user prompts
     private def flatten_messages(messages : Messages) : {String?, String}
       systems = [] of String
       users = [] of String
@@ -109,13 +117,13 @@ module LLM
     end
   end
 
-  # Simple factory for creating adapters.
+  # Factory for creating LLM adapters based on provider configuration.
   #
-  # - If provider indicates Ollama (contains "ollama"), returns OllamaAdapter
-  # - Otherwise returns GeneralAdapter
+  # Usage:
+  #   adapter = LLM::AdapterFactory.for("openai", "gpt-4o", api_key)
+  #   adapter = LLM::AdapterFactory.for("http://localhost:11434", "llama3")
   #
-  # Note: This factory does not guess default URLs beyond provider tokens.
-  #       Callers should pass proper values depending on their configuration.
+  # The factory automatically detects Ollama providers and creates the appropriate adapter.
   class AdapterFactory
     def self.for(provider : String, model : String, api_key : String? = nil) : Adapter
       prov = provider.downcase
