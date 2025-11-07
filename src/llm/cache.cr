@@ -1,10 +1,5 @@
 # LLM disk cache for AI responses
 #
-# Provides persistent caching of LLM responses to:
-# - Reduce API costs by avoiding duplicate requests
-# - Improve performance by serving cached responses instantly
-# - Enable offline operation for previously analyzed code
-#
 # Usage:
 #   key = LLM::Cache.key(provider, model, kind, format, payload)
 #   if cached = LLM::Cache.fetch(key)
@@ -13,8 +8,6 @@
 #     response = call_llm(...)
 #     LLM::Cache.store(key, response)
 #   end
-#
-# Cache can be disabled via NOIR_CACHE_DISABLE environment variable.
 
 require "digest/sha256"
 require "file_utils"
@@ -25,29 +18,24 @@ module LLM
   module Cache
     @@enabled = true
 
-    # Check if caching is enabled
     def self.enabled? : Bool
       @@enabled && !disabled_by_env?
     end
 
-    # Enable caching
     def self.enable : Nil
       @@enabled = true
     end
 
-    # Disable caching
     def self.disable : Nil
       @@enabled = false
     end
 
-    # Check if caching is disabled via environment variable
     def self.disabled_by_env? : Bool
       return false unless ENV.has_key?("NOIR_CACHE_DISABLE")
       val = ENV["NOIR_CACHE_DISABLE"]
       ["1", "true", "yes", "on"].includes?(val.downcase)
     end
 
-    # Get the cache directory path
     def self.cache_dir : String
       File.join(get_home, "cache", "ai")
     end
@@ -72,18 +60,15 @@ module LLM
       Digest::SHA256.hexdigest(data)
     end
 
-    # Get the file system path for a given key
     def self.path_for(key : String) : String
       File.join(cache_dir, "#{key}.json")
     end
 
-    # Ensure the cache directory exists
     def self.ensure_dir : Nil
       return if File.directory?(cache_dir)
       FileUtils.mkdir_p(cache_dir)
     end
 
-    # Fetch cached content by key (returns nil if not present)
     def self.fetch(key : String) : String?
       return nil unless enabled?
       path = path_for(key)
@@ -93,7 +78,6 @@ module LLM
       nil
     end
 
-    # Store content for a key. Returns true on success.
     def self.store(key : String, content : String) : Bool
       return false unless enabled?
       ensure_dir
@@ -103,7 +87,6 @@ module LLM
       false
     end
 
-    # Remove a cached entry by key. Returns true if a file was removed.
     def self.delete(key : String) : Bool
       path = path_for(key)
       return false unless File.exists?(path)
@@ -113,7 +96,6 @@ module LLM
       false
     end
 
-    # Clear all cache entries. Returns the number of deleted files.
     def self.clear : Int32
       return 0 unless File.directory?(cache_dir)
       count = 0
@@ -124,14 +106,11 @@ module LLM
           File.delete(fp)
           count += 1
         rescue
-          # ignore failures and continue
         end
       end
       count
     end
 
-    # Purge entries older than the specified number of days.
-    # Returns the number of deleted files.
     def self.purge_older_than(days : Int32) : Int32
       return 0 unless File.directory?(cache_dir)
       threshold = Time.utc - days.days
@@ -146,15 +125,11 @@ module LLM
             count += 1
           end
         rescue
-          # ignore and continue
         end
       end
       count
     end
 
-    # Returns simple statistics for the cache directory:
-    # - "entries": number of files
-    # - "bytes": total size in bytes
     def self.stats : Hash(String, Int64)
       entries = 0_i64
       bytes = 0_i64
@@ -166,7 +141,6 @@ module LLM
             entries += 1
             bytes += File.size(fp)
           rescue
-            # ignore files that disappear mid-scan
           end
         end
       end

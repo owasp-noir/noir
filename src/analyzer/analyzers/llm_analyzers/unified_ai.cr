@@ -7,9 +7,6 @@ require "../../../llm/cache"
 module Analyzer::AI
   # Unified AI analyzer that uses a provider-agnostic LLM adapter.
   # Supports both OpenAI-compatible APIs and Ollama.
-  #
-  # This analyzer automatically detects the provider based on configuration
-  # and uses the appropriate adapter for optimal performance.
   class Unified < Analyzer
     @provider : String
     @model : String
@@ -19,7 +16,6 @@ module Analyzer::AI
     def initialize(options : Hash(String, YAML::Any))
       super(options)
 
-      # Determine provider configuration
       if options.has_key?("ai_provider") && !options["ai_provider"].as_s.empty?
         @provider = options["ai_provider"].as_s
         @model = options["ai_model"].as_s
@@ -29,13 +25,11 @@ module Analyzer::AI
         @model = options["ollama_model"].as_s
         @api_key = nil
       else
-        # Default to Ollama if no configuration is provided
         @provider = "ollama"
         @model = "llama3"
         @api_key = nil
       end
 
-      # Determine token limit
       if options.has_key?("ai_max_token") && !options["ai_max_token"].nil?
         @max_tokens = options["ai_max_token"].as_i
       else
@@ -54,7 +48,6 @@ module Analyzer::AI
 
       logger.info "AI Analysis using #{@provider} with model #{@model} (max tokens: #{@max_tokens})"
 
-      # Use bundling for efficiency when we have many files
       if @max_tokens > 0 && target_paths.size > 5
         analyze_with_bundling(target_paths, adapter)
       else
@@ -65,7 +58,6 @@ module Analyzer::AI
       @result
     end
 
-    # Analyze multiple files in bundles to optimize token usage
     private def analyze_with_bundling(paths : Array(String), adapter : LLM::Adapter)
       files_to_bundle = prepare_files_for_bundling(paths)
       bundles = LLM.bundle_files(files_to_bundle, @max_tokens)
@@ -73,7 +65,6 @@ module Analyzer::AI
       process_bundles_concurrently(bundles, adapter)
     end
 
-    # Prepare files for bundling by reading content
     private def prepare_files_for_bundling(paths : Array(String)) : Array(Tuple(String, String))
       files = [] of Tuple(String, String)
       paths.each do |path|
@@ -86,7 +77,6 @@ module Analyzer::AI
       files
     end
 
-    # Process bundles concurrently for better performance
     private def process_bundles_concurrently(bundles : Array(Tuple(String, Int32)), adapter : LLM::Adapter)
       channel = Channel(Tuple(String, Int32)).new
 
@@ -102,7 +92,6 @@ module Analyzer::AI
       bundles.size.times { channel.receive }
     end
 
-    # Process a single bundle of files
     private def process_bundle(bundle_content : String, adapter : LLM::Adapter)
       response = call_llm_with_cache(
         kind: "BUNDLE_ANALYZE",
@@ -118,12 +107,10 @@ module Analyzer::AI
       parse_and_store_endpoints(response, "#{base_path}/ai_detected")
     end
 
-    # Select target files for analysis, optionally using LLM to filter
     private def select_target_paths(adapter : LLM::Adapter) : Array(String)
       locator = CodeLocator.instance
       all_paths = locator.all("file_map")
 
-      # Use LLM filtering for large file sets
       if all_paths.size > 10
         logger.debug_sub "AI::Filtering files using LLM"
         filter_paths_with_llm(all_paths, adapter)
@@ -133,7 +120,6 @@ module Analyzer::AI
       end
     end
 
-    # Use LLM to filter which files are likely to contain endpoints
     private def filter_paths_with_llm(all_paths : Array(String), adapter : LLM::Adapter) : Array(String)
       user_payload = all_paths.map { |p| "- #{File.expand_path(p)}" }.join("\n")
 
@@ -151,12 +137,10 @@ module Analyzer::AI
         return filtered["files"].as_a.map(&.as_s)
       rescue e : Exception
         logger.debug "Error parsing filter response: #{e.message}"
-        # Fallback to analyzing all files
         return get_all_source_files
       end
     end
 
-    # Get all source files from base paths
     private def get_all_source_files : Array(String)
       files = [] of String
       base_paths.each do |current_base_path|
@@ -167,7 +151,6 @@ module Analyzer::AI
       files
     end
 
-    # Analyze a single file
     private def analyze_file(path : String, adapter : LLM::Adapter)
       return if File.directory?(path)
       return unless File.exists?(path) && !ignore_extensions.includes?(File.extname(path))
@@ -182,7 +165,6 @@ module Analyzer::AI
       logger.debug "Error: #{ex.message}"
     end
 
-    # Process content from a single file
     private def process_file_content(content : String, relative_path : String, path : String, adapter : LLM::Adapter)
       response = call_llm_with_cache(
         kind: "ANALYZE",
@@ -198,7 +180,6 @@ module Analyzer::AI
       parse_and_store_endpoints(response, path)
     end
 
-    # Parse LLM response and store endpoints
     private def parse_and_store_endpoints(response : String, default_path : String)
       begin
         response_json = JSON.parse(response.to_s)
@@ -211,7 +192,6 @@ module Analyzer::AI
       end
     end
 
-    # Create an Endpoint object from JSON data
     private def create_endpoint_from_json(ep : JSON::Any, default_path : String) : Endpoint
       url = ep["url"].as_s
       method = ep["method"].as_s
@@ -230,7 +210,6 @@ module Analyzer::AI
       Endpoint.new(url, method, params, details)
     end
 
-    # Create a Param object from JSON data
     private def create_param_from_json(param : JSON::Any) : Param
       p = param.as_h
       name = p["name"].as_s
@@ -245,16 +224,13 @@ module Analyzer::AI
       Param.new(name, value, param_type)
     end
 
-    # Centralized LLM call with caching and optional context reuse
     private def call_llm_with_cache(kind : String, system_prompt : String, payload : String, format : String, adapter : LLM::Adapter) : String
       disk_key = LLM::Cache.key(@provider, @model, kind, format, payload)
 
-      # Check cache first
       if cached = LLM::Cache.fetch(disk_key)
         return cached
       end
 
-      # Make LLM request with context support if available
       response = if adapter.supports_context?
                    ctx_key = "#{@provider}:#{@model}:#{kind}"
                    adapter.request_with_context(system_prompt, payload, format, ctx_key)
@@ -263,12 +239,10 @@ module Analyzer::AI
                    adapter.request_messages(messages, format)
                  end
 
-      # Store in cache
       LLM::Cache.store(disk_key, response)
       response
     end
 
-    # File extensions to ignore during analysis
     def ignore_extensions
       [".css", ".xml", ".json", ".yml", ".yaml", ".md", ".jpg", ".jpeg", ".png", ".gif", ".svg", ".ico",
        ".eot", ".ttf", ".woff", ".woff2", ".otf", ".mp3", ".mp4", ".avi", ".mov", ".webm", ".zip", ".tar",
