@@ -18,7 +18,7 @@ module Analyzer::AI
 
     def initialize(options : Hash(String, YAML::Any))
       super(options)
-      
+
       # Determine provider configuration
       if options.has_key?("ai_provider") && !options["ai_provider"].as_s.empty?
         @provider = options["ai_provider"].as_s
@@ -69,7 +69,7 @@ module Analyzer::AI
     private def analyze_with_bundling(paths : Array(String), adapter : LLM::Adapter)
       files_to_bundle = prepare_files_for_bundling(paths)
       bundles = LLM.bundle_files(files_to_bundle, @max_tokens)
-      
+
       process_bundles_concurrently(bundles, adapter)
     end
 
@@ -78,7 +78,7 @@ module Analyzer::AI
       files = [] of Tuple(String, String)
       paths.each do |path|
         next if File.directory?(path) || File.symlink?(path) || ignore_extensions.includes?(File.extname(path))
-        
+
         relative_path = get_relative_path(base_path, path)
         content = File.read(path, encoding: "utf-8", invalid: :skip)
         files << {relative_path, content}
@@ -191,7 +191,7 @@ module Analyzer::AI
         format: LLM::ANALYZE_FORMAT,
         adapter: adapter
       )
-      
+
       logger.debug "AI response (#{relative_path}):"
       logger.debug_sub response
 
@@ -248,7 +248,7 @@ module Analyzer::AI
     # Centralized LLM call with caching and optional context reuse
     private def call_llm_with_cache(kind : String, system_prompt : String, payload : String, format : String, adapter : LLM::Adapter) : String
       disk_key = LLM::Cache.key(@provider, @model, kind, format, payload)
-      
+
       # Check cache first
       if cached = LLM::Cache.fetch(disk_key)
         return cached
