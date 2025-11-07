@@ -68,8 +68,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"rust_tide", Rust::Tide},
     {"rust_warp", Rust::Warp},
     {"rust_gotham", Rust::Gotham},
-    {"ai_ollama", AI::Ollama},
-    {"ai", AI::General},
+    {"ai", AI::Unified},
   ])
 
   logger.debug "#{analyzers.size} Analyzers initialized"
@@ -94,11 +93,9 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
   if (options["ai_provider"] != "") && (options["ai_model"] != "")
     logger.sub "➔ AI Analyzer: Server=#{options["ai_provider"]}, Model=#{options["ai_model"]}"
     techs << "ai"
-  end
-
-  if (options["ollama"] != "") && (options["ollama_model"] != "")
+  elsif (options["ollama"] != "") && (options["ollama_model"] != "")
     logger.sub "➔ AI Analyzer: Ollama in use"
-    techs << "ai_ollama"
+    techs << "ai"
   end
 
   techs.each do |tech|

@@ -1,6 +1,5 @@
 require "../../../../spec_helper"
-require "../../../../../src/analyzer/analyzers/llm_analyzers/general"
-require "../../../../../src/llm/general/client" # To mock LLM module
+require "../../../../../src/analyzer/analyzers/llm_analyzers/unified_ai"
 
 module LLM
   # Mocking get_max_tokens for testing purposes
@@ -19,13 +18,13 @@ module LLM
   end
 end
 
-describe Analyzer::AI::General do
+describe Analyzer::AI::Unified do
   before_each do
     LLM.reset_mock_max_tokens
   end
 
   describe "#initialize" do
-    it "uses ai_max_token from options if provided" do
+    it "uses ai_max_token from options if provided with ai_provider" do
       options = Hash{
         "url"          => YAML::Any.new(""),
         "debug"        => YAML::Any.new(false),
@@ -40,7 +39,7 @@ describe Analyzer::AI::General do
         "ai_max_token" => YAML::Any.new(2048),
         "base"         => YAML::Any.new([YAML::Any.new(".")]),
       }
-      analyzer = Analyzer::AI::General.new(options)
+      analyzer = Analyzer::AI::Unified.new(options)
       analyzer.max_tokens.should eq(2048)
     end
 
@@ -58,7 +57,7 @@ describe Analyzer::AI::General do
         "ai_key"       => YAML::Any.new("test-key"),
         "base"         => YAML::Any.new([YAML::Any.new(".")]),
       }
-      analyzer = Analyzer::AI::General.new(options)
+      analyzer = Analyzer::AI::Unified.new(options)
       analyzer.max_tokens.should eq(1024)
     end
   end

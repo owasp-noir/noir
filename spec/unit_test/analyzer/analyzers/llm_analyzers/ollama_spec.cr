@@ -1,14 +1,6 @@
 require "../../../../spec_helper"
-require "../../../../../src/analyzer/analyzers/llm_analyzers/ollama"
+require "../../../../../src/analyzer/analyzers/llm_analyzers/unified_ai"
 
-# The LLM module mock should be available from general_spec.cr if run together,
-# or ensure it's defined/required if running specs independently.
-# For robustness, we can redefine it or ensure it's in a shared helper.
-# For now, assuming it might be available or let's redefine for clarity if needed.
-
-# If LLM mock isn't automatically shared, redefine or require from a shared spec helper.
-# To be safe, let's ensure the mock is available.
-# This module might already be defined if general_spec.cr ran first.
 module LLM
   def self.get_max_tokens(provider_url : String, model_name : String)
     @@mock_max_tokens_value || 1024
@@ -23,12 +15,12 @@ module LLM
   end
 end
 
-describe Analyzer::AI::Ollama do
+describe Analyzer::AI::Unified do
   before_each do
     LLM.reset_mock_max_tokens
   end
 
-  describe "#initialize" do
+  describe "#initialize with ollama config" do
     it "uses ai_max_token from options if provided" do
       options = Hash{
         "url"          => YAML::Any.new(""),
@@ -36,14 +28,14 @@ describe Analyzer::AI::Ollama do
         "verbose"      => YAML::Any.new(false),
         "color"        => YAML::Any.new(false),
         "nolog"        => YAML::Any.new(false),
-        "ollama"       => YAML::Any.new(""),
-        "ollama_model" => YAML::Any.new(""),
-        "ai_provider"  => YAML::Any.new("http://localhost:11434"),
-        "ai_model"     => YAML::Any.new("test-ollama-model"),
-        "ai_max_token" => YAML::Any.new(4096), # Different value for testing
+        "ollama"       => YAML::Any.new("http://localhost:11434"),
+        "ollama_model" => YAML::Any.new("test-ollama-model"),
+        "ai_provider"  => YAML::Any.new(""),
+        "ai_model"     => YAML::Any.new(""),
+        "ai_max_token" => YAML::Any.new(4096),
         "base"         => YAML::Any.new([YAML::Any.new(".")]),
       }
-      analyzer = Analyzer::AI::Ollama.new(options)
+      analyzer = Analyzer::AI::Unified.new(options)
       analyzer.max_tokens.should eq(4096)
     end
 
@@ -54,13 +46,13 @@ describe Analyzer::AI::Ollama do
         "verbose"      => YAML::Any.new(false),
         "color"        => YAML::Any.new(false),
         "nolog"        => YAML::Any.new(false),
-        "ollama"       => YAML::Any.new(""),
-        "ollama_model" => YAML::Any.new(""),
-        "ai_provider"  => YAML::Any.new("http://localhost:11434"),
-        "ai_model"     => YAML::Any.new("test-ollama-model"),
+        "ollama"       => YAML::Any.new("http://localhost:11434"),
+        "ollama_model" => YAML::Any.new("test-ollama-model"),
+        "ai_provider"  => YAML::Any.new(""),
+        "ai_model"     => YAML::Any.new(""),
         "base"         => YAML::Any.new([YAML::Any.new(".")]),
       }
-      analyzer = Analyzer::AI::Ollama.new(options)
+      analyzer = Analyzer::AI::Unified.new(options)
       analyzer.max_tokens.should eq(1024)
     end
   end

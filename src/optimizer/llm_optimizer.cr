@@ -1,6 +1,5 @@
 require "./optimizer"
-require "../llm/general/client"
-require "../llm/ollama"
+require "../llm/adapter"
 require "../llm/prompt"
 require "../llm/prompt_overrides"
 
@@ -8,11 +7,11 @@ require "../llm/prompt_overrides"
 # for refining non-standard or unconventional paths and parameters
 class LLMEndpointOptimizer < EndpointOptimizer
   @use_llm : Bool = false
-  @llm_client : LLM::General | LLM::Ollama | Nil = nil
+  @adapter : LLM::Adapter | Nil = nil
 
   def initialize(@logger : NoirLogger, @options : Hash(String, YAML::Any))
     super(@logger, @options)
-    setup_llm_client
+    setup_llm_adapter
   end
 
   # Enhanced optimization with LLM capabilities
@@ -21,7 +20,7 @@ class LLMEndpointOptimizer < EndpointOptimizer
     optimized = super(endpoints)
 
     # Then apply LLM optimization if enabled
-    if @use_llm && @llm_client
+    if @use_llm && @adapter
       optimized = llm_optimize_endpoints(optimized)
     end
 
@@ -30,7 +29,7 @@ class LLMEndpointOptimizer < EndpointOptimizer
 
   # Use LLM to optimize and refine non-standard paths and parameters
   private def llm_optimize_endpoints(endpoints : Array(Endpoint)) : Array(Endpoint)
-    return endpoints if endpoints.empty? || !@use_llm || !@llm_client
+    return endpoints if endpoints.empty? || !@use_llm || !@adapter
 
     @logger.info "Applying LLM-based optimization for non-standard paths and parameters."
 
@@ -96,14 +95,14 @@ class LLMEndpointOptimizer < EndpointOptimizer
 
   # Use LLM to optimize a single endpoint
   private def llm_optimize_single_endpoint(endpoint : Endpoint) : Endpoint
-    client = @llm_client
-    return endpoint unless client
+    adapter = @adapter
+    return endpoint unless adapter
 
     # Create optimization prompt
     prompt = create_optimization_prompt(endpoint)
 
     begin
-      response = client.request(prompt, LLM_OPTIMIZE_FORMAT)
+      response = adapter.request(prompt, LLM_OPTIMIZE_FORMAT)
       response_str = response.to_s
       @logger.debug_sub "LLM optimization response for #{endpoint.method} #{endpoint.url}:"
       @logger.debug_sub response_str
@@ -187,36 +186,29 @@ class LLMEndpointOptimizer < EndpointOptimizer
     original_base == optimized_base
   end
 
-  # Setup LLM client based on configuration
-  private def setup_llm_client
-    # Check if LLM is enabled in options
-    if @options.has_key?("ai_provider") && @options["ai_provider"].to_s != ""
+  # Setup LLM adapter based on configuration
+  private def setup_llm_adapter
+    # Determine provider and model from options
+    provider = ""
+    model = ""
+    api_key = nil
+
+    if @options.has_key?("ai_provider") && !@options["ai_provider"].to_s.empty?
+      provider = @options["ai_provider"].to_s
+      model = @options["ai_model"]?.try(&.to_s) || ""
+      api_key = @options["ai_key"]?.try(&.to_s)
+    elsif @options.has_key?("ollama") && !@options["ollama"].to_s.empty?
+      provider = @options["ollama"].to_s
+      model = @options["ollama_model"]?.try(&.to_s) || ""
+    end
+
+    if !provider.empty? && !model.empty?
       @use_llm = true
-
-      provider = @options["ai_provider"].to_s.downcase
-
-      case provider
-      when "ollama"
-        if @options.has_key?("ollama") && @options.has_key?("ollama_model")
-          @llm_client = LLM::Ollama.new(@options["ollama"].to_s, @options["ollama_model"].to_s)
-          @logger.debug_sub "LLM optimization enabled with Ollama: #{@options["ollama_model"]}"
-        end
-      else
-        # General LLM provider (OpenAI, Anthropic, etc.)
-        if @options.has_key?("ai_model") && @options.has_key?("ai_key")
-          @llm_client = LLM::General.new(
-            @options["ai_provider"].to_s,
-            @options["ai_model"].to_s,
-            @options["ai_key"].to_s
-          )
-          @logger.debug_sub "LLM optimization enabled with #{provider}: #{@options["ai_model"]}"
-        end
-      end
-
-      unless @llm_client
-        @use_llm = false
-        @logger.debug "LLM optimization disabled - missing required configuration"
-      end
+      @adapter = LLM::AdapterFactory.for(provider, model, api_key)
+      @logger.debug_sub "LLM optimization enabled with #{provider}: #{model}"
+    else
+      @use_llm = false
+      @logger.debug "LLM optimization disabled - missing required configuration"
     end
   end
 

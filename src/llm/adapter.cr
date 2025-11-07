@@ -1,13 +1,8 @@
 # Unified LLM adapter abstraction to normalize access across providers.
 #
-# This adapter wraps existing clients:
+# Supports:
 # - LLM::General (OpenAI-compatible chat APIs)
-# - LLM::Ollama  (Ollama local API, with optional KV context reuse)
-#
-# Goals:
-# - Single interface for sending messages or a raw prompt
-# - Optional context-aware request for providers that support it
-# - Easy future integration into analyzers to remove provider-specific branches
+# - LLM::Ollama (Ollama local API with optional KV context reuse)
 
 require "./general/client"
 require "./ollama/ollama"
@@ -73,10 +68,8 @@ module LLM
       true
     end
 
-    # For Ollama, messages are flattened to "system\n\nuser" when context reuse isn't explicitly used.
     def request_messages(messages : Messages, format : String = "json") : String
       system_msg, user_payload = flatten_messages(messages)
-      # Use context-aware method without a cache key to preserve consistent behavior.
       client.request_with_context(system_msg, user_payload, format, nil)
     end
 
@@ -84,7 +77,6 @@ module LLM
       client.request(prompt, format)
     end
 
-    # Pass-through to the underlying context-aware API for maximum efficiency.
     def request_with_context(system : String?, user : String, format : String = "json", cache_key : String? = nil) : String
       client.request_with_context(system, user, format, cache_key)
     end
@@ -99,8 +91,6 @@ module LLM
         case role
         when "system" then systems << content
         when "user"   then users << content
-        else
-          # ignore assistant/tool/etc for current use case
         end
       end
       sys = systems.empty? ? nil : systems.join("\n\n")
@@ -109,22 +99,14 @@ module LLM
     end
   end
 
-  # Simple factory for creating adapters.
-  #
-  # - If provider indicates Ollama (contains "ollama"), returns OllamaAdapter
-  # - Otherwise returns GeneralAdapter
-  #
-  # Note: This factory does not guess default URLs beyond provider tokens.
-  #       Callers should pass proper values depending on their configuration.
+  # Factory for creating LLM adapters based on provider configuration.
   class AdapterFactory
     def self.for(provider : String, model : String, api_key : String? = nil) : Adapter
       prov = provider.downcase
       if prov.includes?("ollama")
-        # Heuristic: If provider looks like a URL, pass as-is. Otherwise use a common default base.
         url = provider.includes?("://") ? provider : "http://localhost:11434"
         OllamaAdapter.new(LLM::Ollama.new(url, model))
       else
-        # For OpenAI-compatible servers, LLM::General handles mapping known tokens (e.g., "openai") to URLs.
         GeneralAdapter.new(LLM::General.new(provider, model, api_key))
       end
     end
