@@ -134,10 +134,10 @@ module Analyzer::AI
 
       begin
         filtered = JSON.parse(response.to_s)
-        return filtered["files"].as_a.map(&.as_s)
+        filtered["files"].as_a.map(&.as_s)
       rescue e : Exception
         logger.debug "Error parsing filter response: #{e.message}"
-        return get_all_source_files
+        get_all_source_files
       end
     end
 
@@ -153,7 +153,7 @@ module Analyzer::AI
 
     private def analyze_file(path : String, adapter : LLM::Adapter)
       return if File.directory?(path)
-      return unless File.exists?(path) && !ignore_extensions.includes?(File.extname(path))
+      return if !File.exists?(path) || ignore_extensions.includes?(File.extname(path))
 
       relative_path = get_relative_path(base_path, path)
       File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
@@ -181,15 +181,13 @@ module Analyzer::AI
     end
 
     private def parse_and_store_endpoints(response : String, default_path : String)
-      begin
-        response_json = JSON.parse(response.to_s)
-        response_json["endpoints"].as_a.each do |ep|
-          endpoint = create_endpoint_from_json(ep, default_path)
-          @result << endpoint
-        end
-      rescue e : Exception
-        logger.debug "Error parsing response: #{e.message}"
+      response_json = JSON.parse(response.to_s)
+      response_json["endpoints"].as_a.each do |ep|
+        endpoint = create_endpoint_from_json(ep, default_path)
+        @result << endpoint
       end
+    rescue e : Exception
+      logger.debug "Error parsing response: #{e.message}"
     end
 
     private def create_endpoint_from_json(ep : JSON::Any, default_path : String) : Endpoint
