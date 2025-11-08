@@ -4,6 +4,8 @@ on:
   pull_request:
     branches: [main]
     paths: ["**/*.cr", shard.yml, Dockerfile]
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       logLevel:
@@ -79,3 +81,23 @@ jobs:
         run: shards install
       - name: Run tests
         run: crystal spec
+  build-snapcraft:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - amd64
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v5
+      - name: Build snapcraft package
+        uses: diddlesnaps/snapcraft-multiarch-action@v1
+        with:
+          architecture: ${{ matrix.platform }}
+        id: build
+      - name: Review snapcraft package
+        uses: diddlesnaps/snapcraft-review-action@v1
+        with:
+          snap: ${{ steps.build.outputs.snap }}
