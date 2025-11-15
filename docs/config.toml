@@ -23,7 +23,7 @@ highlight_code = true
 logo_text = "OWASP Noir"
 logo_image_path = "images/logo.png"
 logo_image_padding = "14px"
-footer_html = "<div style='display: flex; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap;'><a href='https://owasp.org' target='_blank' rel='noopener noreferrer' style='display: inline-flex; align-items: center;'><img src='/noir/images/owasp-logo.svg' alt='OWASP' style='height: 24px; opacity: 0.6; filter: grayscale(100%);' /></a><span style='opacity: 0.6;'>•</span><span>Powered by <a href='https://www.getzola.org' class='font-medium text-base-content/70 hover:text-base-content transition-colors duration-200'>Zola</a> and <a href='https://github.com/hahwul/goyo' class='font-medium text-base-content/70 hover:text-base-content transition-colors duration-200'>Goyo</a></span></div>"
+footer_html = "<div style='display: flex; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap;'><a href='https://owasp.org' target='_blank' rel='noopener noreferrer' style='display: inline-flex; align-items: center;'><img src='/images/owasp.png' alt='OWASP' style='height: 24px' /></a><span style='opacity: 0.6;'>•</span><span>Powered by <a href='https://www.getzola.org' class='font-medium text-base-content/70 hover:text-base-content transition-colors duration-200'>Zola</a> and <a href='https://github.com/hahwul/goyo' class='font-medium text-base-content/70 hover:text-base-content transition-colors duration-200'>Goyo</a></span></div>"
 default_thumbnail = "images/bbb.jpg"
 default_colorset = "dark"
 brightness = "darker"

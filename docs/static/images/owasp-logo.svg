@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 60" width="200" height="60">
-  <defs>
-    <style>
-      .owasp-text { fill: #8c8c8c; font-family: Arial, sans-serif; font-weight: bold; }
-    </style>
-  </defs>
-  <!-- Simple OWASP text logo in grayscale -->
-  <text x="10" y="40" class="owasp-text" font-size="36">OWASP</text>
-</svg>
