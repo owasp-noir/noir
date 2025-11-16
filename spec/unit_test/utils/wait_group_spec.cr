@@ -20,7 +20,7 @@ describe "WaitGroup" do
       wg = WaitGroup.new
       wg.add(1)
       spawn do
-        sleep 0.01
+        sleep 0.01.seconds
         wg.done
       end
       wg.wait
@@ -34,13 +34,13 @@ describe "WaitGroup" do
 
       counter = 0
       spawn do
-        sleep 0.01
+        sleep 0.01.seconds
         counter += 1
         wg.done
       end
 
       spawn do
-        sleep 0.02
+        sleep 0.02.seconds
         counter += 1
         wg.done
       end
@@ -56,7 +56,7 @@ describe "WaitGroup" do
       executed = false
 
       wg.spawn do
-        sleep 0.01
+        sleep 0.01.seconds
         executed = true
       end
 
@@ -70,7 +70,7 @@ describe "WaitGroup" do
 
       3.times do
         wg.spawn do
-          sleep 0.01
+          sleep 0.01.seconds
           counter += 1
         end
       end
@@ -98,12 +98,12 @@ describe "WaitGroup" do
 
       WaitGroup.wait do |wg|
         wg.spawn do
-          sleep 0.01
+          sleep 0.01.seconds
           counter += 1
         end
 
         wg.spawn do
-          sleep 0.01
+          sleep 0.01.seconds
           counter += 1
         end
       end
@@ -119,7 +119,7 @@ describe "WaitGroup" do
 
       3.times do
         spawn do
-          sleep 0.01
+          sleep 0.01.seconds
           wg.done
         end
       end
