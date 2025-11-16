@@ -32,6 +32,35 @@ extected_endpoints = [
     Param.new("price", "", "form"),
     Param.new("stock", "", "form"),
   ]),
+  # New ApiController endpoints with attribute-based routing
+  Endpoint.new("/api/Api/users/{id}", "GET", [
+    Param.new("id", "", "path"),
+    Param.new("authorization", "", "header"),
+  ]),
+  Endpoint.new("/api/Api/users", "POST", [
+    Param.new("userData", "", "json"),
+    Param.new("apiKey", "", "header"),
+  ]),
+  Endpoint.new("/api/Api/products/{productId}", "PUT", [
+    Param.new("productId", "", "path"),
+    Param.new("productData", "", "json"),
+    Param.new("contentType", "", "header"),
+  ]),
+  Endpoint.new("/api/Api/items/{itemId}", "DELETE", [
+    Param.new("itemId", "", "path"),
+    Param.new("confirm", "", "query"),
+    Param.new("authorization", "", "header"),
+  ]),
+  Endpoint.new("/api/Api/search", "GET", [
+    Param.new("term", "", "query"),
+    Param.new("page", "", "query"),
+    Param.new("acceptLanguage", "", "header"),
+  ]),
+  Endpoint.new("/api/Api/upload", "POST", [
+    Param.new("fileName", "", "form"),
+    Param.new("description", "", "form"),
+    Param.new("contentType", "", "header"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/csharp/aspnet_mvc/", {
