@@ -69,23 +69,34 @@ module Analyzer::CSharp
       controller_name = extract_controller_name(content)
       return if controller_name.empty?
 
+      # Extract controller-level route prefix
+      controller_route_prefix = extract_controller_route(content)
+
       i = 0
       http_method = "GET" # Default method for tracking across lines
+      action_route = ""    # Track action-level route
 
       while i < lines.size
         line = lines[i]
 
-        # Look for HTTP method attributes
-        if line.includes?("[HttpPost]")
+        # Look for HTTP method attributes (with optional route)
+        if line.includes?("[HttpPost")
           http_method = "POST"
-        elsif line.includes?("[HttpGet]")
+          action_route = extract_attribute_route(line, "HttpPost")
+        elsif line.includes?("[HttpGet")
           http_method = "GET"
-        elsif line.includes?("[HttpPut]")
+          action_route = extract_attribute_route(line, "HttpGet")
+        elsif line.includes?("[HttpPut")
           http_method = "PUT"
-        elsif line.includes?("[HttpDelete]")
+          action_route = extract_attribute_route(line, "HttpPut")
+        elsif line.includes?("[HttpDelete")
           http_method = "DELETE"
-        elsif line.includes?("[HttpPatch]")
+          action_route = extract_attribute_route(line, "HttpDelete")
+        elsif line.includes?("[HttpPatch")
           http_method = "PATCH"
+          action_route = extract_attribute_route(line, "HttpPatch")
+        elsif line.includes?("[Route")
+          action_route = extract_attribute_route(line, "Route")
         end
 
         # Check for action method definition
@@ -94,7 +105,8 @@ module Analyzer::CSharp
           parameters = extract_parameters(line, lines, i, http_method)
 
           unless action_name.empty?
-            url = "/#{controller_name}/#{action_name}"
+            # Build URL from controller route, action route, and action name
+            url = build_url(controller_route_prefix, action_route, controller_name, action_name)
             details = Details.new(PathInfo.new(file, i + 1))
             endpoint = Endpoint.new(url, http_method, details)
 
@@ -106,6 +118,7 @@ module Analyzer::CSharp
 
             # Reset to default after processing the method
             http_method = "GET"
+            action_route = ""
           end
         end
 
@@ -166,17 +179,81 @@ module Analyzer::CSharp
         param_def = param_def.strip
         next if param_def.empty?
 
+        # Check for parameter binding attributes
+        param_type = default_param_type
+        if param_def.includes?("[FromQuery]")
+          param_type = "query"
+          param_def = param_def.gsub("[FromQuery]", "").strip
+        elsif param_def.includes?("[FromRoute]")
+          param_type = "path"
+          param_def = param_def.gsub("[FromRoute]", "").strip
+        elsif param_def.includes?("[FromBody]")
+          param_type = "json"
+          param_def = param_def.gsub("[FromBody]", "").strip
+        elsif param_def.includes?("[FromHeader]")
+          param_type = "header"
+          param_def = param_def.gsub("[FromHeader]", "").strip
+        elsif param_def.includes?("[FromForm]")
+          param_type = "form"
+          param_def = param_def.gsub("[FromForm]", "").strip
+        elsif param_def.includes?("[FromCookie]")
+          param_type = "cookie"
+          param_def = param_def.gsub("[FromCookie]", "").strip
+        end
+
         # Extract parameter name (last word before optional default value)
-        # Format: "type name" or "type name = default"
+        # Format: "type name" or "type name = default" or "[Attribute] type name"
         parts = param_def.split(/\s+/)
         next if parts.size < 2
 
         param_name = parts[-1].gsub(/=.*$/, "").strip
 
-        parameters << Param.new(param_name, "", default_param_type)
+        parameters << Param.new(param_name, "", param_type)
       end
 
       parameters
+    end
+
+    private def extract_controller_route(content : String) : String
+      # Extract [Route("...")] attribute from controller class
+      match = content.match(/\[Route\s*\(\s*"([^"]+)"\s*\)\s*\]\s*\n?\s*public\s+class\s+\w+Controller/)
+      return "" unless match
+      match[1]
+    end
+
+    private def extract_attribute_route(line : String, attribute : String) : String
+      # Extract route from [HttpGet("route")] or [Route("route")]
+      match = line.match(/\[#{attribute}\s*\(\s*"([^"]+)"\s*\)\s*\]/)
+      return "" unless match
+      match[1]
+    end
+
+    private def build_url(controller_route : String, action_route : String, controller_name : String, action_name : String) : String
+      # Build URL from components
+      parts = [] of String
+
+      # Add controller route if present
+      unless controller_route.empty?
+        # Replace [controller] placeholder
+        route = controller_route.gsub("[controller]", controller_name)
+        parts << route unless route.empty?
+      end
+
+      # Add action route if present
+      unless action_route.empty?
+        parts << action_route
+      else
+        # If no explicit route, use controller and action names
+        if controller_route.empty?
+          parts << controller_name
+        end
+        parts << action_name
+      end
+
+      # Join parts and ensure it starts with /
+      url = "/" + parts.join("/").gsub(/\/+/, "/").gsub(/^\//, "")
+      url = "/" if url.empty?
+      url
     end
   end
 end
