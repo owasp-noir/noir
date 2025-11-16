@@ -106,6 +106,15 @@ Initially conceived as a tool to assist with WhiteBox testing, our immediate goa
 
 Looking ahead, our ambition is for our tool to evolve into a crucial bridge, seamlessly connecting source code with DAST and other security testing tools, thereby facilitating a more integrated and effective security posture.
 
+## News & Updates
+
+* October 2025: Presented at the OWASP Seoul Meetup.
+* June 2024: Joined OWASP as OWASP Noir
+  * Renamed the GitHub organization from noir-cr to owasp-noir
+  * Transitioned to a co-maintainership model with [@ksg97031](https://github.com/ksg97031)
+* November 2023: Moved the Noir repository to the noir-cr GitHub organization.
+* August 2023: Started as [@hahwul](https://github.com/hahwul)'s personal project.
+
 ## Contributing
 
 Noir is open-source project and made it with ❤️
