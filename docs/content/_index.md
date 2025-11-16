@@ -2,11 +2,11 @@
 template = "landing.html"
 
 [extra]
-version = "v0.25.0"
+version = "v0.25.1"
 
 [extra.hero]
 title = "NOIR"
-badge = "v0.25.0"
+badge = "v0.25.1"
 description = "Noir is an attack surface detector that enhances white-box security testing and streamlines security pipelines by discovering endpoints and potential vulnerabilities through static analysis."
 image = "./images/noir-wallpaper.jpg"
 cta_buttons = [

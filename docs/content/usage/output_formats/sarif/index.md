@@ -43,7 +43,7 @@ Here is a sample of what the SARIF output looks like:
       "tool": {
         "driver": {
           "name": "OWASP Noir",
-          "version": "0.25.0",
+          "version": "0.25.1",
           "informationUri": "https://github.com/owasp-noir/noir",
           "rules": [
             {
