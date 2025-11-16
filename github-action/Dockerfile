@@ -1,5 +1,5 @@
 # Use the OWASP Noir base image from GitHub Container Registry
-FROM ghcr.io/owasp-noir/noir:v0.25.0
+FROM ghcr.io/owasp-noir/noir:v0.25.1
 
 # Install jq for JSON processing
 USER 0

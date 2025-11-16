@@ -38,7 +38,7 @@ Noir는 여러 채널을 통해 배포됩니다. 일부는 GitHub Actions를 통
 
     ```bash
     brew bump-formula-pr --strict --version <VERSION> noir
-    # 예: brew bump-formula-pr --strict --version 0.25.0 noir
+    # 예: brew bump-formula-pr --strict --version 0.25.1 noir
     ```
 
 3.  **스타일 확인**: (선택사항) 변경 사항이 Homebrew의 스타일 가이드라인을 충족하는지 확인하려면 다음을 실행할 수 있습니다:
