@@ -61,6 +61,10 @@ extected_endpoints = [
     Param.new("description", "", "form"),
     Param.new("contentType", "", "header"),
   ]),
+  Endpoint.new("/api/Api/profile", "GET", [
+    Param.new("sessionId", "", "cookie"),
+    Param.new("preferences", "", "cookie"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/csharp/aspnet_mvc/", {

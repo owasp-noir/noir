@@ -196,6 +196,9 @@ module Analyzer::CSharp
         elsif param_def.includes?("[FromForm]")
           param_type = "form"
           param_def = param_def.gsub("[FromForm]", "").strip
+        elsif param_def.includes?("[FromCookie]")
+          param_type = "cookie"
+          param_def = param_def.gsub("[FromCookie]", "").strip
         end
 
         # Extract parameter name (last word before optional default value)

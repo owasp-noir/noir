@@ -46,5 +46,12 @@ namespace MyApp.Controllers
         {
             return View();
         }
+        
+        // GET: /api/Api/profile
+        [HttpGet("profile")]
+        public ActionResult GetProfile([FromCookie] string sessionId, [FromCookie] string preferences)
+        {
+            return View();
+        }
     }
 }
