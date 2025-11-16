@@ -74,7 +74,7 @@ module Analyzer::CSharp
 
       i = 0
       http_method = "GET" # Default method for tracking across lines
-      action_route = ""    # Track action-level route
+      action_route = ""   # Track action-level route
 
       while i < lines.size
         line = lines[i]
@@ -240,14 +240,14 @@ module Analyzer::CSharp
       end
 
       # Add action route if present
-      unless action_route.empty?
-        parts << action_route
-      else
+      if action_route.empty?
         # If no explicit route, use controller and action names
         if controller_route.empty?
           parts << controller_name
         end
         parts << action_name
+      else
+        parts << action_route
       end
 
       # Join parts and ensure it starts with /
