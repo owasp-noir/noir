@@ -1,6 +1,8 @@
 module github.com/hahwul/test-go-app
 
-go 1.20
+go 1.23.0
+
+toolchain go1.24.10
 
 require github.com/gin-gonic/gin v1.9.1
 
