@@ -38,6 +38,34 @@ func main() {
 	e.Static("/public", "public")
 	e.Static("/public", "./public2")
 	e.Static("/public", "/public3")
+	
+	// Test various coding styles
+	// Mixed case methods (Go convention)
+	e.Get("/mixed-get", func(c echo.Context) error {
+		return c.String(http.StatusOK, "mixed case get")
+	})
+	
+	e.Post("/mixed-post", func(c echo.Context) error {
+		_ = c.FormValue("field1")
+		return c.String(http.StatusOK, "mixed case post")
+	})
+	
+	e.Put("/mixed-put", func(c echo.Context) error {
+		return c.String(http.StatusOK, "mixed case put")
+	})
+	
+	e.Delete("/mixed-delete", func(c echo.Context) error {
+		return c.String(http.StatusOK, "mixed case delete")
+	})
+	
+	// Multi-line route definition
+	e.GET(
+		"/multiline",
+		func(c echo.Context) error {
+			_ = c.QueryParam("ml_param")
+			return c.String(http.StatusOK, "multiline")
+		},
+	)
 
 	e.Logger.Fatal(e.Start(":1323"))
 }

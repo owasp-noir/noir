@@ -39,6 +39,24 @@ func main() {
 	})
 
 	app.Static("/", "/public")
+	
+	// Test additional HTTP methods
+	app.Put("/update-put", func(c *fiber.Ctx) error {
+		return c.SendString("PUT")
+	})
+	
+	app.Delete("/delete-item", func(c *fiber.Ctx) error {
+		return c.SendString("DELETE")
+	})
+	
+	// Multi-line route definition
+	app.Get(
+		"/multiline",
+		func(c *fiber.Ctx) error {
+			_ = c.Query("ml_param")
+			return c.SendString("multiline")
+		},
+	)
 
 	log.Fatal(app.Listen(":3000"))
 }
