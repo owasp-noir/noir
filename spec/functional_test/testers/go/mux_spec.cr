@@ -23,6 +23,7 @@ extected_endpoints = [
   Endpoint.new("/api/status", "GET"),
   Endpoint.new("/api/v1/health", "GET"),
   Endpoint.new("/static/test.txt", "GET"),
+  Endpoint.new("/multiline", "GET"),
 ]
 
 FunctionalTester.new("fixtures/go/mux/", {

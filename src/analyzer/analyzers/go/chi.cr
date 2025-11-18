@@ -17,14 +17,15 @@ module Analyzer::Go
                 break if path.nil?
                 next if File.directory?(path)
                 if File.exists?(path) && File.extname(path) == ".go"
-                  File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-                    prefix_stack = [] of String
-                    last_endpoint = Endpoint.new("", "")
-                    in_inline_handler = false
-                    handler_brace_count = 0
+                  # Read all lines for multi-line pattern support
+                  lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
+                  prefix_stack = [] of String
+                  last_endpoint = Endpoint.new("", "")
+                  in_inline_handler = false
+                  handler_brace_count = 0
 
-                    file.each_line.with_index do |line, index|
-                      details = Details.new(PathInfo.new(path, index + 1))
+                  lines.each_with_index do |line, index|
+                    details = Details.new(PathInfo.new(path, index + 1))
 
                       # Mount 처리: 객체가 무엇이든 Mount 호출 인식
                       if line.includes?(".Mount(")
@@ -62,9 +63,21 @@ module Analyzer::Go
                          !line.includes?("FormValue(") && !line.includes?("PostFormValue(")
                         method = ""
                         route_path = ""
-                        if match = line.match(/[a-zA-Z]\w*\.(Get|Post|Put|Delete)\(\s*"([^"]+)"/)
+                        
+                        # First try to match method with route on same line
+                        if match = line.match(/[a-zA-Z]\w*\.(GET|Get|get|POST|Post|post|PUT|Put|put|DELETE|Delete|delete|PATCH|Patch|patch)\(\s*"([^"]+)"/i)
                           method = match[1].upcase
                           route_path = match[2]
+                        # Then try to match method without route (for multi-line cases)
+                        elsif match = line.match(/[a-zA-Z]\w*\.(GET|Get|get|POST|Post|post|PUT|Put|put|DELETE|Delete|delete|PATCH|Patch|patch)\s*\(/i)
+                          method = match[1].upcase
+                          # Look for route in next line
+                          if index + 1 < lines.size
+                            next_line = lines[index + 1]
+                            if next_match = next_line.match(/"([^"]+)"/)
+                              route_path = next_match[1]
+                            end
+                          end
                         end
 
                         if method.size > 0 && route_path.size > 0
@@ -140,12 +153,11 @@ module Analyzer::Go
                       end
                     end
                   end
+                rescue e : File::NotFoundError
+                  logger.debug "File not found: #{path}"
                 end
-              rescue e : File::NotFoundError
-                logger.debug "File not found: #{path}"
               end
             end
-          end
         end
       rescue e
         logger.debug e
@@ -230,7 +242,8 @@ module Analyzer::Go
             details = Details.new(PathInfo.new(file_path))
             method = ""
             route_path = ""
-            if match = line.match(/[a-zA-Z]\w*\.(Get|Post|Put|Delete)\(\s*"([^"]+)"/)
+            # Support case-insensitive method names
+            if match = line.match(/[a-zA-Z]\w*\.(GET|Get|get|POST|Post|post|PUT|Put|put|DELETE|Delete|delete|PATCH|Patch|patch)\(\s*"([^"]+)"/i)
               method = match[1].upcase
               route_path = match[2]
             end

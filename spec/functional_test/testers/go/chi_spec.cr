@@ -32,6 +32,9 @@ expected_endpoints = [
     Param.new("session", "", "cookie"),
     Param.new("auth_token", "", "cookie"),
   ]),
+  Endpoint.new("/multiline", "GET"),
+  Endpoint.new("/uppercase", "GET"),
+  Endpoint.new("/uppercase-post", "POST"),
 ]
 
 FunctionalTester.new("fixtures/go/chi/", {

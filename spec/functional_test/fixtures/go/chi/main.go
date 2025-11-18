@@ -88,6 +88,23 @@ import (
 		_ = sessionCookie
 		_ = authCookie
 	})
+	
+	// Test multi-line route definition
+	r.Get(
+		"/multiline",
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte("multiline"))
+		},
+	)
+	
+	// Test uppercase methods
+	r.GET("/uppercase", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("uppercase"))
+	})
+	
+	r.POST("/uppercase-post", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("uppercase post"))
+	})
   
 	http.ListenAndServe(":3333", r)
   }
