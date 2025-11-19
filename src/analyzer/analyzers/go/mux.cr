@@ -65,7 +65,7 @@ module Analyzer::Go
                         if route_path.size == 0 && index + 1 < lines.size
                           route_path = get_route_path(lines[index + 1], subrouters)
                         end
-                        
+
                         if route_path.size > 0
                           # Check next 5 lines for .Methods() call
                           method = "GET" # default

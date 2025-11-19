@@ -23,106 +23,106 @@ module Analyzer::Go
                     # Read all lines for multi-line pattern support
                     lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
                     last_endpoint = Endpoint.new("", "")
-                    
+
                     lines.each_with_index do |line, index|
                       details = Details.new(PathInfo.new(path, index + 1))
                       lexer = GolangLexer.new
 
                       if line.includes?(".Group(")
                         map = lexer.tokenize(line)
-                          before = Token.new(:unknown, "", 0)
-                          group_name = ""
-                          group_path = ""
-                          map.each do |token|
-                            if token.type == :assign
-                              group_name = before.value.to_s.gsub(":", "").gsub(/\s/, "")
-                            end
+                        before = Token.new(:unknown, "", 0)
+                        group_name = ""
+                        group_path = ""
+                        map.each do |token|
+                          if token.type == :assign
+                            group_name = before.value.to_s.gsub(":", "").gsub(/\s/, "")
+                          end
 
-                            if token.type == :string
-                              group_path = token.value.to_s
-                              groups.each do |group|
-                                group.each do |key, value|
-                                  if before.value.to_s.includes? key
-                                    group_path = value + group_path
-                                  end
+                          if token.type == :string
+                            group_path = token.value.to_s
+                            groups.each do |group|
+                              group.each do |key, value|
+                                if before.value.to_s.includes? key
+                                  group_path = value + group_path
                                 end
                               end
                             end
-
-                            before = token
                           end
 
-                          if group_name.size > 0 && group_path.size > 0
-                            groups << {
-                              group_name => group_path,
-                            }
-                          end
+                          before = token
                         end
 
-                        # Use case-insensitive regex for HTTP method detection
-                        # Matches patterns like: .GET(, .Get(, .get(, .POST(, .Post(, .post(, etc.
-                        # Exclude parameter extraction patterns
-                        if !line.includes?("Header.Get") && !line.includes?("Cookie.Get") &&
-                           (match = line.match(/\.(GET|Get|get|POST|Post|post|PUT|Put|put|DELETE|Delete|delete|PATCH|Patch|patch|OPTIONS|Options|options|HEAD|Head|head)\s*\(/i))
-                          method = match[1].upcase
-                          get_route_path(line, groups).tap do |route_path|
-                            # Handle multi-line routes - check next lines if route is empty
-                            if route_path.size == 0 && index + 1 < lines.size
-                              next_line = lines[index + 1]
-                              route_path = get_route_path(next_line, groups)
+                        if group_name.size > 0 && group_path.size > 0
+                          groups << {
+                            group_name => group_path,
+                          }
+                        end
+                      end
+
+                      # Use case-insensitive regex for HTTP method detection
+                      # Matches patterns like: .GET(, .Get(, .get(, .POST(, .Post(, .post(, etc.
+                      # Exclude parameter extraction patterns
+                      if !line.includes?("Header.Get") && !line.includes?("Cookie.Get") &&
+                         (match = line.match(/\.(GET|Get|get|POST|Post|post|PUT|Put|put|DELETE|Delete|delete|PATCH|Patch|patch|OPTIONS|Options|options|HEAD|Head|head)\s*\(/i))
+                        method = match[1].upcase
+                        get_route_path(line, groups).tap do |route_path|
+                          # Handle multi-line routes - check next lines if route is empty
+                          if route_path.size == 0 && index + 1 < lines.size
+                            next_line = lines[index + 1]
+                            route_path = get_route_path(next_line, groups)
+                          end
+
+                          if route_path.size > 0
+                            new_endpoint = Endpoint.new("#{route_path}", method, details)
+                            if line.includes?("websocket.New(")
+                              new_endpoint.protocol = "ws"
                             end
-                            
-                            if route_path.size > 0
-                              new_endpoint = Endpoint.new("#{route_path}", method, details)
-                              if line.includes?("websocket.New(")
-                                new_endpoint.protocol = "ws"
-                              end
-                              result << new_endpoint
-                              last_endpoint = new_endpoint
-                            end
-                          end
-                        end
-
-                        if line.includes?(".Query(") || line.includes?(".FormValue(")
-                          get_param(line).tap do |param|
-                            if param.name.size > 0 && last_endpoint.method != ""
-                              last_endpoint.params << param
-                            end
-                          end
-                        end
-
-                        if line.includes?("Static(")
-                          get_static_path(line).tap do |static_path|
-                            if static_path.size > 0
-                              public_dirs << static_path
-                            end
-                          end
-                        end
-
-                        if line.includes?("GetRespHeader(")
-                          match = line.match(/GetRespHeader\(\"(.*)\"\)/)
-                          if match
-                            header_name = match[1]
-                            last_endpoint.params << Param.new(header_name, "", "header")
-                          end
-                        end
-
-                        if line.includes?("Vary(")
-                          match = line.match(/Vary\(\"(.*)\"\)/)
-                          if match
-                            header_value = match[1]
-                            last_endpoint.params << Param.new("Vary", header_value, "header")
-                          end
-                        end
-
-                        if line.includes?("Cookies(")
-                          match = line.match(/Cookies\(\"(.*)\"\)/)
-                          if match
-                            cookie_name = match[1]
-                            last_endpoint.params << Param.new(cookie_name, "", "cookie")
+                            result << new_endpoint
+                            last_endpoint = new_endpoint
                           end
                         end
                       end
+
+                      if line.includes?(".Query(") || line.includes?(".FormValue(")
+                        get_param(line).tap do |param|
+                          if param.name.size > 0 && last_endpoint.method != ""
+                            last_endpoint.params << param
+                          end
+                        end
+                      end
+
+                      if line.includes?("Static(")
+                        get_static_path(line).tap do |static_path|
+                          if static_path.size > 0
+                            public_dirs << static_path
+                          end
+                        end
+                      end
+
+                      if line.includes?("GetRespHeader(")
+                        match = line.match(/GetRespHeader\(\"(.*)\"\)/)
+                        if match
+                          header_name = match[1]
+                          last_endpoint.params << Param.new(header_name, "", "header")
+                        end
+                      end
+
+                      if line.includes?("Vary(")
+                        match = line.match(/Vary\(\"(.*)\"\)/)
+                        if match
+                          header_value = match[1]
+                          last_endpoint.params << Param.new("Vary", header_value, "header")
+                        end
+                      end
+
+                      if line.includes?("Cookies(")
+                        match = line.match(/Cookies\(\"(.*)\"\)/)
+                        if match
+                          cookie_name = match[1]
+                          last_endpoint.params << Param.new(cookie_name, "", "cookie")
+                        end
+                      end
+                    end
                   end
                 rescue e : File::NotFoundError
                   logger.debug "File not found: #{path}"
