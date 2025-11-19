@@ -60,24 +60,28 @@ module Analyzer::Go
 
                       # Handle route definitions (e.g., r.HandleFunc("/path", handler).Methods("GET"))
                       if line.includes?(".HandleFunc(")
-                        get_route_path(line, subrouters).tap do |route_path|
-                          if route_path.size > 0
-                            # Check next 5 lines for .Methods() call
-                            method = "GET" # default
-                            (0..5).each do |lookahead|
-                              check_line_idx = index + lookahead
-                              break if check_line_idx >= lines.size
-                              check_line = lines[check_line_idx]
-                              if check_line.includes?(".Methods(")
-                                method = get_method_from_line(check_line)
-                                break
-                              end
-                            end
+                        route_path = get_route_path(line, subrouters)
+                        # Handle multi-line routes - check next line if route is empty
+                        if route_path.size == 0 && index + 1 < lines.size
+                          route_path = get_route_path(lines[index + 1], subrouters)
+                        end
 
-                            new_endpoint = Endpoint.new("#{route_path}", method, details)
-                            result << new_endpoint
-                            last_endpoint = new_endpoint
+                        if route_path.size > 0
+                          # Check next 5 lines for .Methods() call
+                          method = "GET" # default
+                          (0..5).each do |lookahead|
+                            check_line_idx = index + lookahead
+                            break if check_line_idx >= lines.size
+                            check_line = lines[check_line_idx]
+                            if check_line.includes?(".Methods(")
+                              method = get_method_from_line(check_line)
+                              break
+                            end
                           end
+
+                          new_endpoint = Endpoint.new("#{route_path}", method, details)
+                          result << new_endpoint
+                          last_endpoint = new_endpoint
                         end
                       end
 

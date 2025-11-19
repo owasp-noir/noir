@@ -14,6 +14,11 @@ extected_endpoints = [
   Endpoint.new("/ws", "GET"),
   Endpoint.new("/admin/users", "GET"),
   Endpoint.new("/admin/v1/migration", "GET"),
+  Endpoint.new("/update-put", "PUT"),
+  Endpoint.new("/delete-item", "DELETE"),
+  Endpoint.new("/multiline", "GET", [
+    Param.new("ml_param", "", "query"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/go/fiber/", {

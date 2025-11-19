@@ -19,6 +19,15 @@ extected_endpoints = [
   Endpoint.new("/public/coffee.txt", "GET"),
   Endpoint.new("/admin/users", "GET"),
   Endpoint.new("/admin/v1/migration", "GET"),
+  Endpoint.new("/mixed-get", "GET"),
+  Endpoint.new("/mixed-post", "POST", [
+    Param.new("field1", "", "form"),
+  ]),
+  Endpoint.new("/mixed-put", "PUT"),
+  Endpoint.new("/mixed-delete", "DELETE"),
+  Endpoint.new("/multiline", "GET", [
+    Param.new("ml_param", "", "query"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/go/echo/", {

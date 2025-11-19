@@ -37,6 +37,34 @@ func main() {
 		c.JSON(http.StatusOK, "users")
 	})
 
+	// Test various coding styles
+	// Mixed case methods (Go convention)
+	r.Get("/mixed-get", func(c *gin.Context) {
+		c.JSON(http.StatusOK, "mixed case get")
+	})
+	
+	r.Post("/mixed-post", func(c *gin.Context) {
+		_ = c.PostForm("field1")
+		c.JSON(http.StatusOK, "mixed case post")
+	})
+	
+	r.Put("/mixed-put", func(c *gin.Context) {
+		c.JSON(http.StatusOK, "mixed case put")
+	})
+	
+	r.Delete("/mixed-delete", func(c *gin.Context) {
+		c.JSON(http.StatusOK, "mixed case delete")
+	})
+	
+	// Multi-line route definition
+	r.GET(
+		"/multiline",
+		func(c *gin.Context) {
+			_ = c.Query("ml_param")
+			c.JSON(http.StatusOK, "multiline")
+		},
+	)
+
 	r.Static("/public", "public")
 	r.Run() // listen and serve on 0.0.0.0:8080 (for windows "localhost:8080")
 }
