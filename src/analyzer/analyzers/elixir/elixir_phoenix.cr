@@ -83,7 +83,9 @@ module Analyzer::Elixir
       
       # Find all function definitions and extract parameters
       lines.each_with_index do |line, index|
-        # Match function definitions: def action_name(conn, _params) do
+        # Match public function definitions only: def action_name(conn, _params) do
+        # Exclude private functions (defp)
+        next if line.match(/^\s*defp\s/)
         if match = line.match(/^\s*def\s+(\w+)\(conn,/)
           action_name = match[1]
           
@@ -109,8 +111,10 @@ module Analyzer::Elixir
       route_key = "#{endpoint.method}::#{endpoint.url}"
       if @route_map.has_key?(route_key)
         mapping = @route_map[route_key]
-        return mapping.controller.downcase.includes?(controller_name.downcase.gsub("_controller", "")) &&
-               mapping.action == action_name
+        # Normalize both controller names and check for exact match
+        normalized_controller = controller_name.downcase.gsub("_controller", "")
+        normalized_mapping = mapping.controller.downcase.gsub("controller", "")
+        return normalized_controller == normalized_mapping && mapping.action == action_name
       end
       
       # Fallback: try to match by conventional naming
@@ -126,8 +130,8 @@ module Analyzer::Elixir
       (start_index + 1...lines.size).each do |i|
         line = lines[i].strip
         
-        # Count keywords that increase depth
-        depth += line.scan(/\b(do|def|defp|case|cond|if|unless|fn)\b/).size
+        # Count keywords that increase depth (excluding 'fn' which has different end syntax)
+        depth += line.scan(/\b(do|def|defp|case|cond|if|unless)\b/).size
         
         # Count "end" keywords that decrease depth
         depth -= line.scan(/\bend\b/).size
@@ -140,6 +144,7 @@ module Analyzer::Elixir
     
     def extract_params_from_function_block(lines : Array(String), start_index : Int32, end_index : Int32, method : String) : Array(Param)
       params = Array(Param).new
+      seen_params = Set(String).new  # Track seen params for O(1) lookup
       
       # Extract parameters from the function block content
       (start_index..end_index).each do |i|
@@ -148,32 +153,52 @@ module Analyzer::Elixir
         # Extract query parameters (conn.query_params["param"])
         line.scan(/conn\.query_params\[["']([^"']+)["']\]/) do |match|
           param_name = match[1]
-          params << Param.new(param_name, "", "query") unless params.any? { |p| p.name == param_name && p.param_type == "query" }
+          param_key = "query:#{param_name}"
+          unless seen_params.includes?(param_key)
+            params << Param.new(param_name, "", "query")
+            seen_params << param_key
+          end
         end
         
         # Extract params (could be query for GET or form for POST/PUT/PATCH)
         line.scan(/conn\.params\[["']([^"']+)["']\]/) do |match|
           param_name = match[1]
           param_type = (method == "GET") ? "query" : "form"
-          params << Param.new(param_name, "", param_type) unless params.any? { |p| p.name == param_name && p.param_type == param_type }
+          param_key = "#{param_type}:#{param_name}"
+          unless seen_params.includes?(param_key)
+            params << Param.new(param_name, "", param_type)
+            seen_params << param_key
+          end
         end
         
         # Extract body parameters (conn.body_params["param"])
         line.scan(/conn\.body_params\[["']([^"']+)["']\]/) do |match|
           param_name = match[1]
-          params << Param.new(param_name, "", "form") unless params.any? { |p| p.name == param_name && p.param_type == "form" }
+          param_key = "form:#{param_name}"
+          unless seen_params.includes?(param_key)
+            params << Param.new(param_name, "", "form")
+            seen_params << param_key
+          end
         end
         
         # Extract header parameters (get_req_header(conn, "header-name"))
         line.scan(/get_req_header\(conn,\s*["']([^"']+)["']\)/) do |match|
           param_name = match[1]
-          params << Param.new(param_name, "", "header") unless params.any? { |p| p.name == param_name && p.param_type == "header" }
+          param_key = "header:#{param_name}"
+          unless seen_params.includes?(param_key)
+            params << Param.new(param_name, "", "header")
+            seen_params << param_key
+          end
         end
         
         # Extract cookie parameters (conn.cookies["cookie_name"])
         line.scan(/conn\.cookies\[["']([^"']+)["']\]/) do |match|
           param_name = match[1]
-          params << Param.new(param_name, "", "cookie") unless params.any? { |p| p.name == param_name && p.param_type == "cookie" }
+          param_key = "cookie:#{param_name}"
+          unless seen_params.includes?(param_key)
+            params << Param.new(param_name, "", "cookie")
+            seen_params << param_key
+          end
         end
       end
       
