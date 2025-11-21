@@ -16,9 +16,14 @@ expected_endpoints = [
   Endpoint.new("/webhook", "POST"),
   Endpoint.new("/webhook", "PUT"),
   Endpoint.new("/simple", "GET"),
+  # ApiRouter endpoints
   Endpoint.new("/status", "GET"),
   Endpoint.new("/data", "POST"),
   Endpoint.new("/data/:type", "GET", [Param.new("type", "", "path")]),
+  Endpoint.new("/search/api", "GET", [Param.new("query", "", "query"), Param.new("page", "", "query")]),
+  Endpoint.new("/api/create", "POST", [Param.new("title", "", "form"), Param.new("description", "", "form")]),
+  Endpoint.new("/api/secured", "GET", [Param.new("x-api-token", "", "header"), Param.new("authorization", "", "header")]),
+  Endpoint.new("/api/session", "GET", [Param.new("api_token", "", "cookie"), Param.new("api_user", "", "cookie")]),
 ]
 
 FunctionalTester.new("fixtures/elixir/plug/", {
