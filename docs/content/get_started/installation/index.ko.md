@@ -39,6 +39,18 @@ docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest -b /tmp
 
 이 명령은 현재 디렉토리를 Docker 컨테이너에 마운트하고 Noir를 실행하여 코드를 분석합니다.
 
+## Unofficial
+
+### Arch AUR
+
+Arch Linux를 사용하는 경우 [AUR](https://aur.archlinux.org/packages/noir)에서 Noir를 설치할 수 있습니다.
+
+```bash
+yay -S noir
+```
+
+또는 다른 AUR 헬퍼를 사용할 수 있습니다.
+
 ## 소스에서 빌드
 
 더 많은 제어가 필요하거나 개발에 기여하고 싶다면 소스에서 Noir를 빌드할 수 있습니다.

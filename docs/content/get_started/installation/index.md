@@ -39,6 +39,18 @@ docker pull ghcr.io/owasp-noir/noir:latest
 
 You can find a list of all available tags on the [GitHub Packages page](https://github.com/owasp-noir/noir/pkgs/container/noir).
 
+## Unofficial
+
+### Arch AUR
+
+If you are on Arch Linux, you can install Noir from the [AUR](https://aur.archlinux.org/packages/noir).
+
+```bash
+yay -S noir
+```
+
+Or use any other AUR helper.
+
 ## Build from Source
 
 {% alert_warning() %}
