@@ -4,15 +4,15 @@ module Analyzer::Elixir
   class Phoenix < Analyzer
     # Store mapping of route -> controller/action for parameter extraction
     @route_map : Hash(String, ControllerAction) = Hash(String, ControllerAction).new
-    
+
     struct ControllerAction
       property controller : String
       property action : String
-      
+
       def initialize(@controller : String, @action : String)
       end
     end
-    
+
     def analyze
       # Source Analysis - First pass: collect routes
       channel = Channel(String).new
@@ -62,14 +62,14 @@ module Analyzer::Elixir
     def extract_controller_params
       # Find all controller files and extract parameters
       controller_files = Dir.glob(File.join(@base_path, "**", "*_controller.ex"))
-      
+
       controller_files.each do |controller_path|
         next unless File.exists?(controller_path)
-        
+
         begin
           content = File.read(controller_path, encoding: "utf-8", invalid: :skip)
           controller_name = File.basename(controller_path, ".ex")
-          
+
           # Extract parameters from each action in the controller
           extract_params_from_controller(content, controller_name, controller_path)
         rescue e
@@ -77,10 +77,10 @@ module Analyzer::Elixir
         end
       end
     end
-    
+
     def extract_params_from_controller(content : String, controller_name : String, controller_path : String)
       lines = content.lines
-      
+
       # Find all function definitions and extract parameters
       lines.each_with_index do |line, index|
         # Match public function definitions only: def action_name(conn, _params) do
@@ -88,7 +88,7 @@ module Analyzer::Elixir
         next if line.match(/^\s*defp\s/)
         if match = line.match(/^\s*def\s+(\w+)\(conn,/)
           action_name = match[1]
-          
+
           # Find the matching endpoints for this controller and action
           @result.each do |endpoint|
             # Match based on route_map if available, or try to match by convention
@@ -96,7 +96,7 @@ module Analyzer::Elixir
               # Find the end of the function block
               block_end = find_function_end(lines, index)
               next if block_end == -1
-              
+
               # Extract parameters from the function block
               params = extract_params_from_function_block(lines, index, block_end, endpoint.method)
               params.each { |param| endpoint.push_param(param) }
@@ -105,7 +105,7 @@ module Analyzer::Elixir
         end
       end
     end
-    
+
     def should_extract_params_for_endpoint?(endpoint : Endpoint, controller_name : String, action_name : String) : Bool
       # Check if the endpoint's route_map entry matches this controller/action
       route_key = "#{endpoint.method}::#{endpoint.url}"
@@ -116,40 +116,40 @@ module Analyzer::Elixir
         normalized_mapping = mapping.controller.downcase.gsub("controller", "")
         return normalized_controller == normalized_mapping && mapping.action == action_name
       end
-      
+
       # Fallback: try to match by conventional naming
       # For example, resources routes: GET /posts -> PostController.index
       false
     end
-    
+
     def find_function_end(lines : Array(String), start_index : Int32) : Int32
       # Find the matching "end" for the function starting with "def"
       return -1 if start_index >= lines.size
-      
+
       depth = 1
       (start_index + 1...lines.size).each do |i|
         line = lines[i].strip
-        
+
         # Count keywords that increase depth (excluding 'fn' which has different end syntax)
         depth += line.scan(/\b(do|def|defp|case|cond|if|unless)\b/).size
-        
+
         # Count "end" keywords that decrease depth
         depth -= line.scan(/\bend\b/).size
-        
+
         return i if depth == 0
       end
-      
+
       -1
     end
-    
+
     def extract_params_from_function_block(lines : Array(String), start_index : Int32, end_index : Int32, method : String) : Array(Param)
       params = Array(Param).new
-      seen_params = Set(String).new  # Track seen params for O(1) lookup
-      
+      seen_params = Set(String).new # Track seen params for O(1) lookup
+
       # Extract parameters from the function block content
       (start_index..end_index).each do |i|
         line = lines[i]
-        
+
         # Extract query parameters (conn.query_params["param"])
         line.scan(/conn\.query_params\[["']([^"']+)["']\]/) do |match|
           param_name = match[1]
@@ -159,7 +159,7 @@ module Analyzer::Elixir
             seen_params << param_key
           end
         end
-        
+
         # Extract params (could be query for GET or form for POST/PUT/PATCH)
         line.scan(/conn\.params\[["']([^"']+)["']\]/) do |match|
           param_name = match[1]
@@ -170,7 +170,7 @@ module Analyzer::Elixir
             seen_params << param_key
           end
         end
-        
+
         # Extract body parameters (conn.body_params["param"])
         line.scan(/conn\.body_params\[["']([^"']+)["']\]/) do |match|
           param_name = match[1]
@@ -180,7 +180,7 @@ module Analyzer::Elixir
             seen_params << param_key
           end
         end
-        
+
         # Extract header parameters (get_req_header(conn, "header-name"))
         line.scan(/get_req_header\(conn,\s*["']([^"']+)["']\)/) do |match|
           param_name = match[1]
@@ -190,7 +190,7 @@ module Analyzer::Elixir
             seen_params << param_key
           end
         end
-        
+
         # Extract cookie parameters (conn.cookies["cookie_name"])
         line.scan(/conn\.cookies\[["']([^"']+)["']\]/) do |match|
           param_name = match[1]
@@ -201,10 +201,10 @@ module Analyzer::Elixir
           end
         end
       end
-      
+
       params
     end
-    
+
     def line_to_endpoint(line : String, file_path : String) : Array(Endpoint)
       endpoints = Array(Endpoint).new
 
@@ -293,7 +293,7 @@ module Analyzer::Elixir
             put_endpoint = Endpoint.new("#{base_path}/:id", "PUT")
             @route_map["PUT::#{base_path}/:id"] = ControllerAction.new(controller, "update")
             endpoints << put_endpoint
-            
+
             patch_endpoint = Endpoint.new("#{base_path}/:id", "PATCH")
             @route_map["PATCH::#{base_path}/:id"] = ControllerAction.new(controller, "update")
             endpoints << patch_endpoint

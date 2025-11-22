@@ -68,7 +68,7 @@ module Analyzer::Elixir
 
     def extract_params_from_block(lines : Array(String), start_index : Int32, method : String) : Array(Param)
       params = Array(Param).new
-      seen_params = Set(String).new  # Track seen params for O(1) lookup
+      seen_params = Set(String).new # Track seen params for O(1) lookup
 
       # Find the end of the current route block (find matching "end")
       block_end = find_block_end(lines, start_index)
