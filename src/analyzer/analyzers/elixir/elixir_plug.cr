@@ -68,6 +68,7 @@ module Analyzer::Elixir
 
     def extract_params_from_block(lines : Array(String), start_index : Int32, method : String) : Array(Param)
       params = Array(Param).new
+      seen_params = Set(String).new # Track seen params for O(1) lookup
 
       # Find the end of the current route block (find matching "end")
       block_end = find_block_end(lines, start_index)
@@ -80,32 +81,52 @@ module Analyzer::Elixir
         # Extract query parameters (conn.query_params["param"] or conn.params["param"] for GET)
         line.scan(/conn\.query_params\[["']([^"']+)["']\]/) do |match|
           param_name = match[1]
-          params << Param.new(param_name, "", "query") unless params.any? { |p| p.name == param_name && p.param_type == "query" }
+          param_key = "query:#{param_name}"
+          unless seen_params.includes?(param_key)
+            params << Param.new(param_name, "", "query")
+            seen_params << param_key
+          end
         end
 
         # Extract params (could be query for GET or form for POST/PUT/PATCH)
         line.scan(/conn\.params\[["']([^"']+)["']\]/) do |match|
           param_name = match[1]
           param_type = (method == "GET") ? "query" : "form"
-          params << Param.new(param_name, "", param_type) unless params.any? { |p| p.name == param_name && p.param_type == param_type }
+          param_key = "#{param_type}:#{param_name}"
+          unless seen_params.includes?(param_key)
+            params << Param.new(param_name, "", param_type)
+            seen_params << param_key
+          end
         end
 
         # Extract body parameters (conn.body_params["param"] for POST/PUT/PATCH)
         line.scan(/conn\.body_params\[["']([^"']+)["']\]/) do |match|
           param_name = match[1]
-          params << Param.new(param_name, "", "form") unless params.any? { |p| p.name == param_name && p.param_type == "form" }
+          param_key = "form:#{param_name}"
+          unless seen_params.includes?(param_key)
+            params << Param.new(param_name, "", "form")
+            seen_params << param_key
+          end
         end
 
         # Extract header parameters (get_req_header(conn, "header-name"))
         line.scan(/get_req_header\(conn,\s*["']([^"']+)["']\)/) do |match|
           param_name = match[1]
-          params << Param.new(param_name, "", "header") unless params.any? { |p| p.name == param_name && p.param_type == "header" }
+          param_key = "header:#{param_name}"
+          unless seen_params.includes?(param_key)
+            params << Param.new(param_name, "", "header")
+            seen_params << param_key
+          end
         end
 
         # Extract cookie parameters (conn.cookies["cookie_name"])
         line.scan(/conn\.cookies\[["']([^"']+)["']\]/) do |match|
           param_name = match[1]
-          params << Param.new(param_name, "", "cookie") unless params.any? { |p| p.name == param_name && p.param_type == "cookie" }
+          param_key = "cookie:#{param_name}"
+          unless seen_params.includes?(param_key)
+            params << Param.new(param_name, "", "cookie")
+            seen_params << param_key
+          end
         end
       end
 
