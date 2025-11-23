@@ -32,7 +32,7 @@ struct TestEndpoint
   property details : TestDetails
 end
 
-# Corrected spelling from expected_endpoints to expected_endpoints
+# Corrected spelling from extected_endpoints to expected_endpoints
 expected_endpoints = [
   Endpoint.new("https://www.hahwul.com/", "GET"),
   Endpoint.new("https://www.hahwul.com/about", "GET"),
