@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-extected_endpoints = [
+expected_endpoints = [
   Endpoint.new("https://www.hahwul.com/", "GET", [
     Param.new("Host", "www.hahwul.com", "header"),
     Param.new("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:123.0) Gecko/20100101 Firefox/123.0", "header"),
@@ -12,8 +12,8 @@ extected_endpoints = [
 
 instance = FunctionalTester.new("fixtures/specification/har/", {
   :techs     => 1,
-  :endpoints => extected_endpoints.size,
-}, extected_endpoints)
+  :endpoints => expected_endpoints.size,
+}, expected_endpoints)
 
 instance.url = "https://www.hahwul.com"
 instance.perform_tests

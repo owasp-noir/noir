@@ -4,7 +4,7 @@ require "process" # Ensure Process is available at top
 
 # Helper structs for parsing, matching the structure in src/models/endpoint.cr
 # Moved to top-level to avoid "can't declare class dynamically" error.
-# Note: The Endpoint and Param structs used by extected_endpoints are from func_spec.cr via noir models,
+# Note: The Endpoint and Param structs used by expected_endpoints are from func_spec.cr via noir models,
 # not these Test* structs. These Test* structs are for the separate GraphQL CLI test.
 struct TestPathInfo
   include JSON::Serializable
@@ -32,7 +32,7 @@ struct TestEndpoint
   property details : TestDetails
 end
 
-# Corrected spelling from extected_endpoints to expected_endpoints
+# Corrected spelling from expected_endpoints to expected_endpoints
 expected_endpoints = [
   Endpoint.new("https://www.hahwul.com/", "GET"),
   Endpoint.new("https://www.hahwul.com/about", "GET"),

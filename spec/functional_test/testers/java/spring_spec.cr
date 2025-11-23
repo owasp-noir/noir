@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-extected_endpoints = [
+expected_endpoints = [
   # MyRoutingConfiguration.java
   Endpoint.new("/{user}", "GET", [Param.new("user", "", "path")]),
   Endpoint.new("/{user}/customers", "GET", [Param.new("user", "", "path")]),
@@ -57,5 +57,5 @@ extected_endpoints = [
 
 FunctionalTester.new("fixtures/java/spring/", {
   :techs     => 1,
-  :endpoints => extected_endpoints.size,
-}, extected_endpoints).perform_tests
+  :endpoints => expected_endpoints.size,
+}, expected_endpoints).perform_tests

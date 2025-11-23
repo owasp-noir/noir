@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-extected_endpoints = [
+expected_endpoints = [
   Endpoint.new("/", "GET", [Param.new("name", "", "query")]),
   Endpoint.new("/users", "GET"),
   Endpoint.new("/users", "POST", [Param.new("username", "", "form"), Param.new("email", "", "form")]),
@@ -9,5 +9,5 @@ extected_endpoints = [
 
 FunctionalTester.new("fixtures/python/tornado/", {
   :techs     => 1,
-  :endpoints => extected_endpoints.size,
-}, extected_endpoints).perform_tests
+  :endpoints => expected_endpoints.size,
+}, expected_endpoints).perform_tests

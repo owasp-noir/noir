@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-extected_endpoints = [
+expected_endpoints = [
   # PostsController endpoints (mapped without /posts prefix)
   Endpoint.new("/", "GET", [Param.new("query", "", "query")]),
   Endpoint.new("/:id", "GET", [Param.new("id", "", "path")]),
@@ -19,5 +19,5 @@ extected_endpoints = [
 
 FunctionalTester.new("fixtures/rust/loco/", {
   :techs     => 2,
-  :endpoints => extected_endpoints.size,
-}, extected_endpoints).perform_tests
+  :endpoints => expected_endpoints.size,
+}, expected_endpoints).perform_tests

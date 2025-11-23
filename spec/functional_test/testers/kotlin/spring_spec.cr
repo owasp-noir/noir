@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-extected_endpoints = [
+expected_endpoints = [
   Endpoint.new("/api/article/", "GET"),
   Endpoint.new("/api/article/{slug}", "GET", [Param.new("slug", "", "path")]),
   Endpoint.new("/api/user/", "GET"),
@@ -34,5 +34,5 @@ extected_endpoints = [
 
 FunctionalTester.new("fixtures/kotlin/spring/", {
   :techs     => 1,
-  :endpoints => extected_endpoints.size,
-}, extected_endpoints).perform_tests
+  :endpoints => expected_endpoints.size,
+}, expected_endpoints).perform_tests
