@@ -92,14 +92,17 @@ module Noir
       end
 
       # Add case variations (Get, POST, Put, etc.)
+      # Collect new variations first to avoid modifying array during iteration
+      additional_variations = [] of String
       method_variations.each do |method|
         # Add capitalized version (Get, Post, Put)
         capitalized = method.capitalize
-        method_variations << capitalized unless method_variations.includes?(capitalized)
+        additional_variations << capitalized unless method_variations.includes?(capitalized) || additional_variations.includes?(capitalized)
         # Add uppercase version (GET, POST, PUT)
         uppercased = method.upcase
-        method_variations << uppercased unless method_variations.includes?(uppercased)
+        additional_variations << uppercased unless method_variations.includes?(uppercased) || additional_variations.includes?(uppercased)
       end
+      method_variations.concat(additional_variations)
 
       # Generate all possible route declarations with different syntax patterns
       route_declarations = [] of String

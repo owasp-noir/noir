@@ -20,6 +20,9 @@ module Noir
     @current_char : Char = '\0'
     @tokens : Array(JSToken) = [] of JSToken
 
+    # HTTP methods list for consistent checking
+    HTTP_METHODS = ["get", "post", "put", "delete", "options", "head", "patch", "del", "all"]
+
     def initialize(@source : String)
       @current_char = @source[@position]? || '\0'
     end
@@ -200,14 +203,12 @@ module Noir
       case identifier
       when "function", "async", "const", "let", "var", "return", "if", "else", "for", "while"
         add_token(:keyword, identifier)
-      when "get", "post", "put", "delete", "options", "head", "patch", "del", "all"
-        add_token(:http_method, identifier)
       when "true", "false", "null", "undefined"
         add_token(:literal, identifier)
       else
-        # Check for case-insensitive HTTP methods (Get, Post, PUT, DELETE, etc.)
+        # Check for HTTP methods (case-sensitive and case-insensitive)
         identifier_lower = identifier.downcase
-        if ["get", "post", "put", "delete", "options", "head", "patch", "del", "all"].includes?(identifier_lower)
+        if HTTP_METHODS.includes?(identifier_lower)
           add_token(:http_method, identifier_lower)
         else
           add_token(:identifier, identifier)
