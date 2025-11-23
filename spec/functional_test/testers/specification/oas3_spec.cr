@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-extected_endpoints = [
+expected_endpoints = [
   Endpoint.new("/pets", "GET", [
     Param.new("query", "", "query"),
     Param.new("sort", "", "query"),
@@ -19,8 +19,8 @@ extected_endpoints = [
 
 FunctionalTester.new("fixtures/specification/oas3/common/", {
   :techs     => 1,
-  :endpoints => extected_endpoints.size,
-}, extected_endpoints).perform_tests
+  :endpoints => expected_endpoints.size,
+}, expected_endpoints).perform_tests
 
 FunctionalTester.new("fixtures/specification/oas3/no_servers/", {
   :techs     => 1,

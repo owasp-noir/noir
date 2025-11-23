@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-extected_endpoints = [
+expected_endpoints = [
   # Basic HTTP methods with query and form parameters
   Endpoint.new("/page", "GET", [Param.new("q", "", "query"), Param.new("page", "", "query"), Param.new("limit", "", "query")]),
   Endpoint.new("/page", "POST", [Param.new("q", "", "query"), Param.new("page", "", "form"), Param.new("limit", "", "form")]),
@@ -36,5 +36,5 @@ extected_endpoints = [
 
 FunctionalTester.new("fixtures/elixir/phoenix/", {
   :techs     => 1,
-  :endpoints => extected_endpoints.size,
-}, extected_endpoints).perform_tests
+  :endpoints => expected_endpoints.size,
+}, expected_endpoints).perform_tests

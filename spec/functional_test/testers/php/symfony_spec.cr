@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-extected_endpoints = [
+expected_endpoints = [
   # From UserController annotations
   Endpoint.new("/api/users", "GET", [
     Param.new("page", "", "query"),
@@ -58,4 +58,4 @@ extected_endpoints = [
 FunctionalTester.new("fixtures/php/symfony/", {
   :techs     => 2,  # Both php_symfony and php_pure are detected
   :endpoints => 20, # Updated to include all methods from UserController (was 17, now 20)
-}, extected_endpoints).perform_tests
+}, expected_endpoints).perform_tests

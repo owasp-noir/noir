@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-extected_endpoints = [
+expected_endpoints = [
   Endpoint.new("/", "GET", [
     Param.new("query", "", "query"),
   ]),
@@ -22,4 +22,4 @@ extected_endpoints = [
 FunctionalTester.new("fixtures/etc/multi_techs/", {
   :techs     => 3,
   :endpoints => 8,
-}, extected_endpoints).perform_tests
+}, expected_endpoints).perform_tests

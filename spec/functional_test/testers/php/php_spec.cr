@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-extected_endpoints = [
+expected_endpoints = [
   Endpoint.new("/get.php", "GET", [Param.new("param1", "", "query")]),
   Endpoint.new("/header.php", "GET", [
     Param.new("X-API-KEY", "", "header"),
@@ -17,5 +17,5 @@ extected_endpoints = [
 
 FunctionalTester.new("fixtures/php/php/", {
   :techs     => 1,
-  :endpoints => extected_endpoints.size,
-}, extected_endpoints).perform_tests
+  :endpoints => expected_endpoints.size,
+}, expected_endpoints).perform_tests

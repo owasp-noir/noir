@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-extected_endpoints = [
+expected_endpoints = [
   # Traditional app-based routes
   Endpoint.new("/", "GET", [
     Param.new("name", "", "query"),
@@ -71,5 +71,5 @@ extected_endpoints = [
 
 FunctionalTester.new("fixtures/javascript/express/", {
   :techs     => 1,
-  :endpoints => extected_endpoints.size,
-}, extected_endpoints).perform_tests
+  :endpoints => expected_endpoints.size,
+}, expected_endpoints).perform_tests
