@@ -91,6 +91,16 @@ module Noir
         method_variations << "delete"
       end
 
+      # Add case variations (Get, POST, Put, etc.)
+      method_variations.each do |method|
+        # Add capitalized version (Get, Post, Put)
+        capitalized = method.capitalize
+        method_variations << capitalized unless method_variations.includes?(capitalized)
+        # Add uppercase version (GET, POST, PUT)
+        uppercased = method.upcase
+        method_variations << uppercased unless method_variations.includes?(uppercased)
+      end
+
       # Generate all possible route declarations with different syntax patterns
       route_declarations = [] of String
       method_variations.each do |method|

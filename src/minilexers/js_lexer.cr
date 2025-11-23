@@ -205,7 +205,13 @@ module Noir
       when "true", "false", "null", "undefined"
         add_token(:literal, identifier)
       else
-        add_token(:identifier, identifier)
+        # Check for case-insensitive HTTP methods (Get, Post, PUT, DELETE, etc.)
+        identifier_lower = identifier.downcase
+        if ["get", "post", "put", "delete", "options", "head", "patch", "del", "all"].includes?(identifier_lower)
+          add_token(:http_method, identifier_lower)
+        else
+          add_token(:identifier, identifier)
+        end
       end
     end
   end
