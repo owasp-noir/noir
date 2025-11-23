@@ -251,6 +251,13 @@ module Noir
           endpoint.push_param(Param.new(match[1], "", "header"))
         end
       end
+
+      # Also handle req.get('header-name') pattern (Express)
+      handler_body.scan(/(?:req|request)\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
+        if match.size > 0
+          endpoint.push_param(Param.new(match[1], "", "header"))
+        end
+      end
     end
 
     def self.extract_cookie_params(handler_body : String, endpoint : Endpoint)
