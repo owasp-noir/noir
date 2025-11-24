@@ -146,6 +146,8 @@ module Analyzer::Rust
       in_handle_method = false
       brace_count = 0
       seen_opening_brace = false
+      # Track path parameters already added from route to avoid duplicates
+      existing_path_params = endpoint.params.select { |p| p.param_type == "path" }.map(&.name).to_set
 
       lines.each_with_index do |line, _|
         # Check if we're entering the controller definition
@@ -169,20 +171,12 @@ module Analyzer::Rust
           # Extract path parameters from request.path_parameter with or without type
           # Supports: request.path_parameter("id"), request.path_parameter::<i64>("id")
           if line.includes?("request.path_parameter")
-            line.scan(/request\.path_parameter(?:::<[^>]+>)?\("([^"]+)"\)/) do |match|
-              param_name = match[1]
-              # Only add if not already present from route extraction
-              already_exists = endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
-              endpoint.push_param(Param.new(param_name, "", "path")) unless already_exists
-            end
+            extract_typed_params(line, /request\.path_parameter/, endpoint, "path", existing_path_params)
           end
 
           # Extract query parameters from request.query_parameter()
           if line.includes?("request.query_parameter")
-            line.scan(/request\.query_parameter(?:::<[^>]+>)?\("([^"]+)"\)/) do |match|
-              param_name = match[1]
-              endpoint.push_param(Param.new(param_name, "", "query"))
-            end
+            extract_typed_params(line, /request\.query_parameter/, endpoint, "query")
           end
 
           # Extract body/JSON parameters from request.body()
@@ -224,6 +218,18 @@ module Analyzer::Rust
           in_controller = false
           break
         end
+      end
+    end
+
+    # Helper method to extract parameters with optional type annotations
+    # Pattern: request.method_name("param") or request.method_name::<Type>("param")
+    private def extract_typed_params(line : String, method_pattern : Regex, endpoint : Endpoint, param_type : String, existing_params : Set(String)? = nil)
+      pattern = /#{method_pattern.source}(?:::<[^>]+>)?\("([^"]+)"\)/
+      line.scan(pattern) do |match|
+        param_name = match[1]
+        # Only add if not already in existing params (for path parameters)
+        next if existing_params && existing_params.includes?(param_name)
+        endpoint.push_param(Param.new(param_name, "", param_type))
       end
     end
   end
