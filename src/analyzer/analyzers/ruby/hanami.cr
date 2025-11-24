@@ -60,7 +60,7 @@ module Analyzer::Ruby
 
           # Extract params from params block
           if in_params_block
-            # Match required(:name) or optional(:name)
+            # Match required(:name) or optional(:name) with any validation method
             line.scan(/(?:required|optional)\(:([\w]+)\)/) do |match|
               if match.size > 1
                 param_name = match[1]
@@ -79,6 +79,36 @@ module Analyzer::Ruby
             end
           end
 
+          # Extract query parameters from request.params["name"]
+          line.scan(/request\.params\[['"](\w+)['"]\]/) do |match|
+            if match.size > 1
+              param_name = match[1]
+              endpoint.push_param(Param.new(param_name, "", "query"))
+            end
+          end
+
+          # Extract query parameters from params[:name] (without request prefix)
+          # Avoid matching inside params do blocks
+          unless in_params_block
+            line.scan(/(?<![a-z_])params\[:([\w]+)\]/) do |match|
+              if match.size > 1
+                param_name = match[1]
+                endpoint.push_param(Param.new(param_name, "", "query"))
+              end
+            end
+          end
+
+          # Extract query parameters from params["name"] (without request prefix)
+          # Avoid matching inside params do blocks
+          unless in_params_block
+            line.scan(/(?<![a-z_])params\[['"](\w+)['"]\]/) do |match|
+              if match.size > 1
+                param_name = match[1]
+                endpoint.push_param(Param.new(param_name, "", "query"))
+              end
+            end
+          end
+
           # Extract header parameters from request.headers['name'] or request.headers["name"]
           line.scan(/request\.headers\[['"](.+?)['"]\]/) do |match|
             if match.size > 1
@@ -92,6 +122,15 @@ module Analyzer::Ruby
             if match.size > 1
               param_name = match[1]
               endpoint.push_param(Param.new(param_name, "", "cookie"))
+            end
+          end
+
+          # Extract environment headers from request.env['HTTP_*']
+          line.scan(/request\.env\[['"]HTTP_(.+?)['"]\]/) do |match|
+            if match.size > 1
+              # Convert HTTP_USER_AGENT to User-Agent format
+              header_name = match[1].split('_').map(&.capitalize).join('-')
+              endpoint.push_param(Param.new(header_name, "", "header"))
             end
           end
         end

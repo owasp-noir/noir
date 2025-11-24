@@ -8,5 +8,9 @@ module Testapp
     post "/books", to: "books.create"
     patch "/books/:id", to: "books.update"
     delete "/books/:id", to: "books.destroy"
+
+    get "/users/search", to: "users.search"
+    post "/users", to: "users.create"
+    get "/users/:id/profile", to: "users.profile"
   end
 end
