@@ -3,6 +3,7 @@ require "../../func_spec.cr"
 expected_endpoints = [
   Endpoint.new("/", "GET"),
   Endpoint.new("/users", "GET"),
+  Endpoint.new("/users", "POST"),
   Endpoint.new("/api", "GET"),
   Endpoint.new("/users/:id", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/search", "GET", [Param.new("q", "", "query"), Param.new("limit", "", "query")]),
