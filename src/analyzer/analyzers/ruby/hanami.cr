@@ -59,6 +59,8 @@ module Analyzer::Ruby
           end
 
           # Extract params from params block
+          # Matches required(:name) or optional(:name) - validation methods like
+          # .filled(), .value(), .maybe() are chained after and don't affect extraction
           if in_params_block
             # Match required(:name) or optional(:name) with any validation method
             line.scan(/(?:required|optional)\(:([\w]+)\)/) do |match|
@@ -88,9 +90,10 @@ module Analyzer::Ruby
           end
 
           # Extract query parameters from params[:name] (without request prefix)
+          # Use word boundary to avoid matching params inside method names or identifiers
           # Avoid matching inside params do blocks
           unless in_params_block
-            line.scan(/(?<![a-z_])params\[:([\w]+)\]/) do |match|
+            line.scan(/\bparams\[:([\w]+)\]/) do |match|
               if match.size > 1
                 param_name = match[1]
                 endpoint.push_param(Param.new(param_name, "", "query"))
@@ -99,9 +102,10 @@ module Analyzer::Ruby
           end
 
           # Extract query parameters from params["name"] (without request prefix)
+          # Use word boundary to avoid matching params inside method names or identifiers
           # Avoid matching inside params do blocks
           unless in_params_block
-            line.scan(/(?<![a-z_])params\[['"](\w+)['"]\]/) do |match|
+            line.scan(/\bparams\[['"](\w+)['"]\]/) do |match|
               if match.size > 1
                 param_name = match[1]
                 endpoint.push_param(Param.new(param_name, "", "query"))
