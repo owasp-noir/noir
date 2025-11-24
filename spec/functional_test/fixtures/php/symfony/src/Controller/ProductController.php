@@ -27,12 +27,17 @@ class ProductController extends AbstractController
         $name = $request->request->get('name');
         $price = $request->request->get('price');
         $category = $request->get('category');
+        $userAgent = $request->headers->get('User-Agent');
+        $image = $request->files->get('image');
         return $this->json(['status' => 'created']);
     }
 
     #[Route('/api/products/{slug}', methods: ['PATCH'])]
     public function update(string $slug, Request $request): JsonResponse
     {
+        $jsonContent = $request->getContent();
+        $token = $request->headers->get('X-CSRF-Token');
+        $cookieData = $request->cookies->get('preferences');
         return $this->json(['slug' => $slug, 'status' => 'updated']);
     }
 }
