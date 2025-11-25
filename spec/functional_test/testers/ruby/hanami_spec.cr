@@ -29,6 +29,28 @@ expected_endpoints = [
     Param.new("id", "", "path"),
     Param.new("csrf_token", "", "cookie"),
   ]),
+  Endpoint.new("/users/search", "GET", [
+    Param.new("query", "", "query"),
+    Param.new("page", "", "query"),
+    Param.new("limit", "", "query"),
+    Param.new("sort", "", "query"),
+    Param.new("order", "", "query"),
+    Param.new("User-Agent", "", "header"),
+    Param.new("X-Custom", "", "header"),
+  ]),
+  Endpoint.new("/users", "POST", [
+    Param.new("username", "", "json"),
+    Param.new("email", "", "json"),
+    Param.new("name", "", "json"),
+    Param.new("age", "", "json"),
+    Param.new("Content-Type", "", "header"),
+    Param.new("Authorization", "", "header"),
+  ]),
+  Endpoint.new("/users/:id/profile", "GET", [
+    Param.new("id", "", "path"),
+    Param.new("session_token", "", "cookie"),
+    Param.new("If-None-Match", "", "header"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/ruby/hanami/", {
