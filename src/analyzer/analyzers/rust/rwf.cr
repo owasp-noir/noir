@@ -31,25 +31,25 @@ module Analyzer::Rust
                             route_path = match[1]
                             controller_name = match[2]
                             details = Details.new(PathInfo.new(path, index + 1))
-                            
+
                             # Extract HTTP methods supported by the controller
                             methods = extract_controller_methods(lines, controller_name)
-                            
+
                             # If no specific methods found, default to GET
                             if methods.empty?
                               methods = ["GET"]
                             end
-                            
+
                             # Create an endpoint for each HTTP method
                             methods.each do |http_method|
                               endpoint = Endpoint.new(route_path, http_method, details)
-                              
+
                               # Extract path parameters from route pattern (e.g., /users/:id)
                               extract_path_params(route_path, endpoint)
-                              
+
                               # Look for controller implementation to extract more parameters
                               extract_controller_params(lines, controller_name, endpoint)
-                              
+
                               result << endpoint
                             end
                           rescue
