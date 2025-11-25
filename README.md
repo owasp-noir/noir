@@ -118,8 +118,8 @@ Looking ahead, our ambition is for our tool to evolve into a crucial bridge, sea
 
 ## Contributing
 
-Noir is open-source project and made it with ❤️
-if you want contribute this project, please see [CONTRIBUTING.md](./CONTRIBUTING.md) and Pull-Request with cool your contents.
+Noir is an open-source project made with ❤️.
+If you would like to contribute, please check [CONTRIBUTING.md](./CONTRIBUTING.md) and submit a Pull Request.
 
 [![](./CONTRIBUTORS.svg)](https://github.com/owasp-noir/noir/graphs/contributors)
 
