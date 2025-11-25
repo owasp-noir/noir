@@ -221,18 +221,18 @@ module Analyzer::Php
       # Find the start of the method function
       func_match = context.match(/public\s+function\s+\w+[^{]*\{/)
       return params unless func_match
-      
+
       # Find the opening brace position
       start_pos = context.index(func_match[0])
       return params unless start_pos
-      
-      brace_start = start_pos + func_match[0].size - 1  # Position of the opening '{'
-      
+
+      brace_start = start_pos + func_match[0].size - 1 # Position of the opening '{'
+
       # Count braces to find the matching closing brace
       brace_count = 1
       pos = brace_start + 1
       method_end = pos
-      
+
       while pos < context.size && brace_count > 0
         if context[pos] == '{'
           brace_count += 1
@@ -242,7 +242,7 @@ module Analyzer::Php
         end
         pos += 1
       end
-      
+
       # Extract the method body (between the opening and closing braces)
       return params if method_end <= brace_start + 1
       method_body = context[(brace_start + 1)...method_end]
