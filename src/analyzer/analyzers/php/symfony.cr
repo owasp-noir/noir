@@ -80,7 +80,7 @@ module Analyzer::Php
             methods = ["GET"] if methods.empty?
 
             # Get context for method body parameter extraction (starts from annotation)
-            context_end = [route_start + 400, content.size].min
+            context_end = [route_start + 1000, content.size].min
             method_context = content[route_start..context_end]
 
             params = extract_route_params(route_path)
@@ -112,7 +112,7 @@ module Analyzer::Php
             methods = ["GET"] if methods.empty?
 
             # Get context for method body parameter extraction (starts from attribute)
-            context_end = [route_start + 400, content.size].min
+            context_end = [route_start + 1000, content.size].min
             method_context = content[route_start..context_end]
 
             params = extract_route_params(route_path)
@@ -217,15 +217,38 @@ module Analyzer::Php
       params = [] of Param
       seen_params = Set(String).new
 
-      # Find the method body - between the method declaration and the next method or end of context
-      # Look for the method body between { and the next public function or end
-      method_body_match = context.match(/public\s+function\s+\w+[^{]*\{([^}]*(?:\{[^}]*\}[^}]*)*)\}/)
-      return params unless method_body_match
+      # Improved method body extraction using brace counting
+      # Find the start of the method function
+      func_match = context.match(/public\s+function\s+\w+[^{]*\{/)
+      return params unless func_match
 
-      method_body = method_body_match[1]
+      # Find the opening brace position
+      start_pos = context.index(func_match[0])
+      return params unless start_pos
+
+      brace_start = start_pos + func_match[0].size - 1 # Position of the opening '{'
+
+      # Count braces to find the matching closing brace
+      brace_count = 1
+      pos = brace_start + 1
+      method_end = pos
+
+      while pos < context.size && brace_count > 0
+        if context[pos] == '{'
+          brace_count += 1
+        elsif context[pos] == '}'
+          brace_count -= 1
+          method_end = pos if brace_count == 0
+        end
+        pos += 1
+      end
+
+      # Extract the method body (between the opening and closing braces)
+      return params if method_end <= brace_start + 1
+      method_body = context[(brace_start + 1)...method_end]
 
       # Extract query parameters: $request->query->get('param')
-      query_matches = method_body.scan(/\$request->query->get\s*\(\s*['"]([^'"]+)['"]\s*\)/)
+      query_matches = method_body.scan(/\$request->query->get\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*[^)]+)?\)/)
       query_matches.each do |match|
         param_name = match[1]
         unless seen_params.includes?(param_name)
@@ -235,7 +258,7 @@ module Analyzer::Php
       end
 
       # Extract request body/form parameters: $request->request->get('param')
-      request_matches = method_body.scan(/\$request->request->get\s*\(\s*['"]([^'"]+)['"]\s*\)/)
+      request_matches = method_body.scan(/\$request->request->get\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*[^)]+)?\)/)
       request_matches.each do |match|
         param_name = match[1]
         unless seen_params.includes?(param_name)
@@ -244,9 +267,39 @@ module Analyzer::Php
         end
       end
 
+      # Extract header parameters: $request->headers->get('param')
+      header_matches = method_body.scan(/\$request->headers->get\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*[^)]+)?\)/)
+      header_matches.each do |match|
+        param_name = match[1]
+        unless seen_params.includes?(param_name)
+          params << Param.new(param_name, "", "header")
+          seen_params.add(param_name)
+        end
+      end
+
+      # Extract cookie parameters: $request->cookies->get('param')
+      cookie_matches = method_body.scan(/\$request->cookies->get\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*[^)]+)?\)/)
+      cookie_matches.each do |match|
+        param_name = match[1]
+        unless seen_params.includes?(param_name)
+          params << Param.new(param_name, "", "cookie")
+          seen_params.add(param_name)
+        end
+      end
+
+      # Extract file parameters: $request->files->get('param')
+      file_matches = method_body.scan(/\$request->files->get\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*[^)]+)?\)/)
+      file_matches.each do |match|
+        param_name = match[1]
+        unless seen_params.includes?(param_name)
+          params << Param.new(param_name, "", "file")
+          seen_params.add(param_name)
+        end
+      end
+
       # Extract generic request parameters: $request->get('param')
       # This is ambiguous (could be query or body), so we mark it as query by default
-      generic_matches = method_body.scan(/\$request->get\s*\(\s*['"]([^'"]+)['"]\s*\)/)
+      generic_matches = method_body.scan(/\$request->get\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*[^)]+)?\)/)
       generic_matches.each do |match|
         param_name = match[1]
         unless seen_params.includes?(param_name)

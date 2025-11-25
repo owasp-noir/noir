@@ -6,6 +6,8 @@ expected_endpoints = [
     Param.new("page", "", "query"),
     Param.new("limit", "", "query"),
     Param.new("search", "", "query"),
+    Param.new("X-API-Key", "", "header"),
+    Param.new("session_id", "", "cookie"),
   ]),
   Endpoint.new("/api/users/{id}", "GET", [
     Param.new("id", "", "path"),
@@ -13,9 +15,12 @@ expected_endpoints = [
   Endpoint.new("/api/users", "POST", [
     Param.new("name", "", "form"),
     Param.new("email", "", "form"),
+    Param.new("Authorization", "", "header"),
+    Param.new("avatar", "", "file"),
   ]),
   Endpoint.new("/api/users/{id}", "PUT", [
     Param.new("id", "", "path"),
+    Param.new("Content-Type", "", "header"),
   ]),
   Endpoint.new("/api/users/{id}", "DELETE", [
     Param.new("id", "", "path"),
@@ -29,9 +34,13 @@ expected_endpoints = [
     Param.new("name", "", "form"),
     Param.new("price", "", "form"),
     Param.new("category", "", "query"),
+    Param.new("User-Agent", "", "header"),
+    Param.new("image", "", "file"),
   ]),
   Endpoint.new("/api/products/{slug}", "PATCH", [
     Param.new("slug", "", "path"),
+    Param.new("X-CSRF-Token", "", "header"),
+    Param.new("preferences", "", "cookie"),
   ]),
   # From routes.yaml
   Endpoint.new("/api/health", "GET"),

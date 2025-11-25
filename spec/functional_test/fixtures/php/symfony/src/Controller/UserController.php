@@ -17,6 +17,8 @@ class UserController extends AbstractController
         $page = $request->query->get('page');
         $limit = $request->query->get('limit');
         $search = $request->get('search');
+        $apiKey = $request->headers->get('X-API-Key');
+        $sessionId = $request->cookies->get('session_id');
         $users = [];
         return $this->json($users);
     }
@@ -36,6 +38,8 @@ class UserController extends AbstractController
     {
         $name = $request->request->get('name');
         $email = $request->request->get('email');
+        $authToken = $request->headers->get('Authorization');
+        $avatar = $request->files->get('avatar');
         return $this->json(['status' => 'created']);
     }
 
@@ -44,6 +48,8 @@ class UserController extends AbstractController
      */
     public function update(int $id, Request $request): JsonResponse
     {
+        $data = json_decode($request->getContent(), true);
+        $contentType = $request->headers->get('Content-Type');
         return $this->json(['id' => $id, 'status' => 'updated']);
     }
 
