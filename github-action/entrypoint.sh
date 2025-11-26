@@ -18,110 +18,105 @@
 # $15 : exclude_codes
 # $16 : status_codes
 
-# Set up base command with required parameters
+# ==============================================================================
+# Helper Functions
+# ==============================================================================
+
+# Add option with value to command if value is not empty
+# Usage: add_option "flag" "value"
+add_option() {
+    flag="$1"
+    value="$2"
+    [ -n "$value" ] && cmd="$cmd $flag '$value'"
+}
+
+# Add flag to command if condition is "true"
+# Usage: add_flag "flag" "condition"
+add_flag() {
+    flag="$1"
+    condition="$2"
+    [ "$condition" = "true" ] && cmd="$cmd $flag"
+}
+
+# Print error message and exit with given code
+# Usage: error_exit "message" exit_code
+error_exit() {
+    echo "Error: $1"
+    exit "$2"
+}
+
+# ==============================================================================
+# Initialize Variables
+# ==============================================================================
+
+format="${3:-json}"
+output_file="${4:-/tmp/noir_output.json}"
+
+# ==============================================================================
+# Build Command
+# ==============================================================================
+
 cmd="noir -b '$1' --no-log"
-
-# Add URL if provided
-[ -n "$2" ] && cmd="$cmd -u '$2'"
-
-# Set format (default to json if not provided)
-format="$3"
-[ -z "$format" ] && format="json"
 cmd="$cmd -f $format"
+cmd="$cmd -o '$output_file'"
 
-# Add output file if specified
-[ -n "$4" ] && cmd="$cmd -o '$4'"
+add_option "-u" "$2"
+add_option "-t" "$5"
+add_option "--exclude-techs" "$6"
 
-# Add technologies if specified
-[ -n "$5" ] && cmd="$cmd -t '$5'"
+add_flag "-P" "$7"
+[ "$7" = "true" ] && add_option "--passive-scan-severity" "$8"
 
-# Add excluded technologies if specified
-[ -n "$6" ] && cmd="$cmd --exclude-techs '$6'"
+add_flag "-T" "$9"
+add_option "--use-taggers" "${10}"
 
-# Add passive scan if enabled
-[ "$7" = "true" ] && cmd="$cmd -P"
+add_flag "--include-path" "${11}"
+add_flag "--verbose" "${12}"
+add_flag "-d" "${13}"
 
-# Add passive scan severity if passive scan is enabled and severity is specified
-[ "$7" = "true" ] && [ -n "$8" ] && cmd="$cmd --passive-scan-severity '$8'"
+add_option "--concurrency" "${14}"
+add_option "--exclude-codes" "${15}"
 
-# Add all taggers if enabled
-[ "$9" = "true" ] && cmd="$cmd -T"
+add_flag "--status-codes" "${16}"
 
-# Add specific taggers if specified
-[ -n "${10}" ] && cmd="$cmd --use-taggers '${10}'"
-
-# Add include path if enabled
-[ "${11}" = "true" ] && cmd="$cmd --include-path"
-
-# Add verbose if enabled
-[ "${12}" = "true" ] && cmd="$cmd --verbose"
-
-# Add debug if enabled
-[ "${13}" = "true" ] && cmd="$cmd -d"
-
-# Add concurrency if specified
-[ -n "${14}" ] && cmd="$cmd --concurrency '${14}'"
-
-# Add exclude codes if specified
-[ -n "${15}" ] && cmd="$cmd --exclude-codes '${15}'"
-
-# Add status codes if enabled
-[ "${16}" = "true" ] && cmd="$cmd --status-codes"
-
-# Set output file for JSON results if not specified
-output_file=""
-if [ -n "$4" ]; then
-    output_file="$4"
-else
-    output_file="/tmp/noir_output.json"
-    cmd="$cmd -o '$output_file'"
-fi
+# ==============================================================================
+# Execute Command
+# ==============================================================================
 
 echo "Executing command: $cmd"
-
-# Execute the command
 eval "$cmd"
 exit_code=$?
 
-if [ $exit_code -ne 0 ]; then
-    echo "Error: Noir command failed with exit code $exit_code"
-    exit $exit_code
-fi
+[ $exit_code -ne 0 ] && error_exit "Noir command failed with exit code $exit_code" $exit_code
+[ ! -f "$output_file" ] && error_exit "Output file $output_file not found" 1
 
-# Check if the output file exists
-if [ ! -f "$output_file" ]; then
-    echo "Error: Output file $output_file not found"
-    exit 1
-fi
+# ==============================================================================
+# Process Output
+# ==============================================================================
 
-# Read the output and set it as a GitHub Action output
 if [ "$format" = "json" ] || [ "$format" = "jsonl" ]; then
-    # For JSON output, validate and format for GitHub Actions
     if command -v jq >/dev/null 2>&1; then
-        # Validate JSON and compress for GitHub Actions output
-        if jq empty "$output_file" 2>/dev/null; then
-            endpoints_output=$(cat "$output_file" | jq -c .)
-            echo "endpoints=$endpoints_output" >> $GITHUB_OUTPUT
-            
-            # If there are passive results, extract them separately
-            passive_results=$(echo "$endpoints_output" | jq -c '.passive_results // []')
-            echo "passive_results=$passive_results" >> $GITHUB_OUTPUT
-        else
-            echo "Error: Invalid JSON output from Noir"
-            exit 1
-        fi
+        jq empty "$output_file" 2>/dev/null || error_exit "Invalid JSON output from Noir" 1
+
+        endpoints_output=$(jq -c . "$output_file")
+        passive_results=$(jq -c '.passive_results // []' "$output_file")
+
+        echo "endpoints=$endpoints_output" >> "$GITHUB_OUTPUT"
+        echo "passive_results=$passive_results" >> "$GITHUB_OUTPUT"
     else
-        # Fallback if jq is not available
-        endpoints_output=$(cat "$output_file" | tr -d '\n')
-        echo "endpoints=$endpoints_output" >> $GITHUB_OUTPUT
-        echo "passive_results=[]" >> $GITHUB_OUTPUT
+        endpoints_output=$(tr -d '\n' < "$output_file")
+        echo "endpoints=$endpoints_output" >> "$GITHUB_OUTPUT"
+        echo "passive_results=[]" >> "$GITHUB_OUTPUT"
     fi
 else
-    # For non-JSON formats, just output the raw content
-    endpoints_output=$(cat "$output_file" | tr -d '\n')
-    echo "endpoints=$endpoints_output" >> $GITHUB_OUTPUT
-    echo "passive_results=[]" >> $GITHUB_OUTPUT
+    endpoints_output=$(tr -d '\n' < "$output_file")
+    echo "endpoints=$endpoints_output" >> "$GITHUB_OUTPUT"
+    echo "passive_results=[]" >> "$GITHUB_OUTPUT"
 fi
+
+# ==============================================================================
+# Summary
+# ==============================================================================
 
 echo "Noir analysis completed successfully"
 echo "Output format: $format"
