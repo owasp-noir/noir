@@ -143,6 +143,8 @@ module LLM
       "gpt-5"                => 1000000,
       "gpt-5.1"              => 1000000,
       "gpt-5-mini"           => 1000000,
+      "gpt-5-codex-max"      => 1000000,
+      "gpt-5.1-codex-max"    => 1000000,
       "default"              => 8000,
     },
     "xai" => {
@@ -174,6 +176,7 @@ module LLM
       "claude-opus-4"      => 200000,
       "claude-opus-4-1"    => 200000,
       "claude-opus-4.1"    => 200000,
+      "claude-opus-4-5"    => 200000,
       "default"            => 100000,
     },
     "azure" => {
@@ -189,6 +192,8 @@ module LLM
       "o1-preview"           => 128000,
       "o1-mini"              => 128000,
       "gpt-4.1"              => 1000000,
+      "gpt-5-codex-max"      => 1000000,
+      "gpt-5.1-codex-max"    => 1000000,
       "default"              => 8000,
     },
     "github" => {
@@ -238,6 +243,7 @@ module LLM
       "gemini-pro-vision"    => 16384,
       "gemini-2.0-flash-exp" => 1048576,
       "gemini-2.5-pro"       => 2000000,
+      "gemini-3-pro-preview" => 2000000,
       "default"              => 32760,
     },
     "cohere" => {
