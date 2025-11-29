@@ -1,10 +1,27 @@
 #!/usr/bin/env crystal
 # noir/scripts/generate_supported_docs.cr
-# Generate docs/content/usage/supported/language_and_frameworks/index.md
-# Generate docs/content/usage/supported/specification/index.md
-# from `./bin/noir --list-techs` output.
+# Generate supported documentation pages from `./bin/noir --list-techs` output.
+#
+# Generates:
+#   - docs/content/usage/supported/language_and_frameworks/index.md (and *.ko.md, etc.)
+#   - docs/content/usage/supported/specification/index.md
+#
+# Usage:
+#   crystal run scripts/generate_supported_docs.cr -- [options]
+#   just docs-supported
+#
+# Examples:
+#   crystal run scripts/generate_supported_docs.cr
+#   crystal run scripts/generate_supported_docs.cr -- --dry-run
+#   crystal run scripts/generate_supported_docs.cr -- -q
+#
+# Exit codes:
+#   0 - Success
+#   1 - Failed to run noir binary or generate docs
+#   2 - Invalid options
 
 require "json"
+require "option_parser"
 
 struct Tech
   property key : String
@@ -267,44 +284,6 @@ def friendly_format_name(key : String, block : Tech) : String
   end
 end
 
-def generate_markdown(techs : Array(Tech)) : String
-  # Group by language; formats/specs will go in a separate bucket
-  by_language = Hash(String, Array(Tech)).new { |h, k| h[k] = [] of Tech }
-  formats = [] of {name: String, tech: Tech}
-
-  techs.each do |t|
-    if t.is_format || t.language.nil?
-      formats << {name: friendly_format_name(t.key, t), tech: t}
-    else
-      if lang = t.language
-        by_language[lang] << t
-      end
-    end
-  end
-
-  # Sort languages and frameworks
-  lang_keys = by_language.keys.sort!
-  lang_keys.each do |lang|
-    by_language[lang].sort_by!(&.framework)
-  end
-  formats.sort_by! { |e| e[:name] }
-
-  io = IO::Memory.new
-  io << TECH_HEADER
-
-  lang_keys.each do |lang|
-    io << "## #{lang}\n\n"
-    io << "| Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |\n"
-    io << "|-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|\n"
-    by_language[lang].each do |t|
-      io << "| #{t.framework} | #{check(t.endpoint)} | #{check(t.method)} | #{check(t.query)} | #{check(t.path)} | #{check(t.body)} | #{check(t.header)} | #{check(t.cookie)} | #{check(t.static_path)} | #{check(t.websocket)} |\n"
-    end
-    io << "\n"
-  end
-
-  io.to_s
-end
-
 def ensure_parent_dir(path : String)
   dir = File.dirname(path)
   Dir.mkdir_p(dir) unless Dir.exists?(dir)
@@ -347,7 +326,7 @@ def generate_language_tables(techs : Array(Tech)) : String
   io.to_s
 end
 
-def inject_autogen_into_language_pages(root : String, tables : String) : Array(String)
+def inject_autogen_into_language_pages(root : String, tables : String, dry_run : Bool = false) : Array(String)
   dir = language_pages_dir(root)
   updated = [] of String
 
@@ -359,41 +338,15 @@ def inject_autogen_into_language_pages(root : String, tables : String) : Array(S
     new_content = parts[0] + AUTOGEN_MARKER + "\n\n" + tables
     new_content += "\n" unless new_content.ends_with?("\n")
 
-    ensure_parent_dir(path)
-    File.write(path, new_content)
+    unless dry_run
+      ensure_parent_dir(path)
+      File.write(path, new_content)
+    end
     updated << path
   end
 
   updated
 end
-
-def main
-  # Resolve project root
-  root = project_root_from_script
-
-  status, text = run_list_techs(root)
-  if status != 0
-    STDERR.puts text
-    STDERR.puts "Cannot generate docs without `./bin/noir --list-techs` output. Ensure the binary is built (e.g., `just build`)."
-    exit status
-  end
-
-  techs = parse_tech_blocks(text)
-
-  # Generate tables-only content and inject into all language_and_frameworks/*.md pages
-  tables = generate_language_tables(techs)
-  updated_files = inject_autogen_into_language_pages(root, tables)
-  updated_files.each { |p| puts "Updated: #{p}" }
-
-  # Generate specification page (with full header retained)
-  content_specs = generate_specs_markdown(techs)
-  spec_output_path = default_spec_output_path(root)
-  ensure_parent_dir(spec_output_path)
-  File.write(spec_output_path, content_specs)
-  puts "Generated: #{spec_output_path}"
-end
-
-main
 
 def default_spec_output_path(root : String) : String
   File.join(root, "docs", "content", "usage", "supported", "specification", "index.md")
@@ -436,4 +389,87 @@ def generate_specs_markdown(techs : Array(Tech)) : String
     end
   end
   io.to_s
+end
+
+# ---------------------------
+# CLI parsing and entry point
+# ---------------------------
+
+quiet = false
+dry_run = false
+show_help = false
+
+parser = OptionParser.new do |p|
+  p.banner = "Usage: crystal run scripts/generate_supported_docs.cr -- [options]"
+
+  p.on("-q", "--quiet", "Quiet mode (suppress output messages)") do
+    quiet = true
+  end
+
+  p.on("--dry-run", "Preview changes without writing files") do
+    dry_run = true
+  end
+
+  p.on("-h", "--help", "Show help") do
+    show_help = true
+  end
+end
+
+begin
+  parser.parse
+rescue ex : OptionParser::Exception
+  STDERR.puts ex.message
+  STDERR.puts
+  STDERR.puts parser
+  exit 2
+end
+
+if show_help
+  puts parser
+  puts
+  puts "Description:"
+  puts "  Generates supported documentation pages from `./bin/noir --list-techs` output."
+  puts
+  puts "Generates:"
+  puts "  - docs/content/usage/supported/language_and_frameworks/*.md"
+  puts "  - docs/content/usage/supported/specification/index.md"
+  puts
+  puts "Examples:"
+  puts "  crystal run scripts/generate_supported_docs.cr"
+  puts "  crystal run scripts/generate_supported_docs.cr -- --dry-run"
+  puts "  crystal run scripts/generate_supported_docs.cr -- -q"
+  puts "  just docs-supported"
+  exit 0
+end
+
+# Resolve project root
+root = project_root_from_script
+
+status, text = run_list_techs(root)
+if status != 0
+  STDERR.puts text
+  STDERR.puts "Cannot generate docs without `./bin/noir --list-techs` output. Ensure the binary is built (e.g., `just build`)."
+  exit 1
+end
+
+techs = parse_tech_blocks(text)
+
+# Generate tables-only content and inject into all language_and_frameworks/*.md pages
+tables = generate_language_tables(techs)
+updated_files = inject_autogen_into_language_pages(root, tables, dry_run)
+unless quiet
+  prefix = dry_run ? "Would update" : "Updated"
+  updated_files.each { |p| puts "#{prefix}: #{p}" }
+end
+
+# Generate specification page (with full header retained)
+content_specs = generate_specs_markdown(techs)
+spec_output_path = default_spec_output_path(root)
+unless dry_run
+  ensure_parent_dir(spec_output_path)
+  File.write(spec_output_path, content_specs)
+end
+unless quiet
+  prefix = dry_run ? "Would generate" : "Generated"
+  puts "#{prefix}: #{spec_output_path}"
 end
