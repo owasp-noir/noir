@@ -7,9 +7,15 @@ sort_by = "weight"
 [extra]
 +++
 
-OWASP Noir is an open-source tool designed to help security professionals and developers identify the attack surface of their applications. By performing static analysis on source code, Noir can discover API endpoints, web pages, and other potential entry points that could be targeted by attackers.
+OWASP Noir is a hybrid static and AI-driven analyzer that detects every endpoint in your codebase—from shadow APIs to standard routes. By combining static code analysis with Large Language Model (LLM) capabilities, Noir uncovers hidden endpoints, shadow APIs, and other security blind spots that traditional tools often miss.
 
-This makes it an invaluable tool for white-box security testing and for building robust security pipelines.
+## Key Capabilities
+
+- **Attack Surface Discovery**: Analyzes source code to identify your application's complete attack surface, including hidden endpoints, shadow APIs, and other security weaknesses.
+- **AI-Powered Analysis**: Leverages LLMs to detect endpoints in any language or framework—even those not natively supported—ensuring comprehensive coverage.
+- **SAST-to-DAST Bridge**: Acts as a bridge between static code analysis and dynamic testing by providing discovered endpoints to DAST tools, enabling more accurate and comprehensive security scans.
+- **DevSecOps Ready**: Designed for seamless integration into CI/CD pipelines with support for popular security tools like ZAP, Burp Suite, and Caido.
+- **Multi-Format Output**: Delivers results in JSON, YAML, OpenAPI Specification, and other formats for easy integration with your existing workflow.
 
 [GitHub](https://github.com/owasp-noir/noir) | [OWASP Project Page](https://owasp.org/www-project-noir)
 
@@ -21,6 +27,7 @@ Noir is built with the [Crystal](https://crystal-lang.org) programming language 
 
 *   **Detectors**: Identify the technologies used in a codebase.
 *   **Analyzers**: Parse the code to find endpoints, parameters, and other interesting information.
+*   **LLM Analyzer**: Uses AI to discover endpoints in unsupported or unfamiliar frameworks.
 *   **Passive Scanner & Tagger**: Use rules to identify potential vulnerabilities and add contextual tags to the findings.
 *   **Deliver**: Send the results to other tools for further analysis.
 *   **Output Builder**: Generate reports in various formats.
@@ -65,7 +72,9 @@ flowchart LR
 
 ## Project Goals
 
-The primary goal of Noir is to bridge the gap between static code analysis and dynamic security testing. By providing a comprehensive and accurate list of an application's endpoints, Noir enables DAST tools to perform more thorough and effective scans.
+The primary goal of Noir is to bridge the gap between static code analysis and dynamic security testing. By providing a comprehensive and accurate list of an application's endpoints—including those that are hidden or undocumented—Noir enables DAST tools to perform more thorough and effective scans.
+
+Noir serves as the critical link in DevSecOps pipelines, transforming source code analysis into actionable endpoint data that security tools can consume immediately.
 
 In the future, we plan to expand our support for more languages and frameworks, improve the accuracy of our analysis, and further leverage AI and LLMs to enhance our capabilities.
 
