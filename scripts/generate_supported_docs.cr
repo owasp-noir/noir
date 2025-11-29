@@ -456,7 +456,7 @@ techs = parse_tech_blocks(text)
 
 # Generate tables-only content and inject into all language_and_frameworks/*.md pages
 tables = generate_language_tables(techs)
-updated_files = inject_autogen_into_language_pages(root, tables, dry_run)
+updated_files = inject_autogen_into_language_pages(root, tables, dry_run: dry_run)
 unless quiet
   prefix = dry_run ? "Would update" : "Updated"
   updated_files.each { |p| puts "#{prefix}: #{p}" }
