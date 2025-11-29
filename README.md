@@ -29,11 +29,11 @@ OWASP Noir is an open-source attack surface detector designed to identify every 
 
 ## Why Noir?
 
-- **Attack Surface Discovery**: Analyzes source code to identify your application's complete attack surface, including hidden endpoints, shadow APIs, and other security blind spots.
-- **AI-Powered Analysis**: Leverages Large Language Models (LLMs) to detect endpoints in any language or framework—even those not natively supported.
-- **SAST-to-DAST Bridge**: Connects static code analysis with dynamic testing by providing discovered endpoints to DAST tools, enabling more comprehensive and accurate security scans.
-- **DevSecOps Ready**: Designed for seamless integration into security pipelines with support for tools like ZAP, Burp Suite, Caido, and more.
-- **Multi-Format Output**: Delivers results in JSON, YAML, OpenAPI Specification, and other formats for easy integration with your existing workflow.
+- Attack Surface Discovery: Analyzes source code to identify your application's complete attack surface, including hidden endpoints, shadow APIs, and other security blind spots.
+- AI-Powered Analysis: Leverages Large Language Models (LLMs) to detect endpoints in any language or framework—even those not natively supported.
+- SAST-to-DAST Bridge: Connects static code analysis with dynamic testing by providing discovered endpoints to DAST tools, enabling more comprehensive and accurate security scans.
+- DevSecOps Ready: Designed for seamless integration into security pipelines with support for tools like ZAP, Burp Suite, Caido, and more.
+- Multi-Format Output: Delivers results in JSON, YAML, OpenAPI Specification, and other formats for easy integration with your existing workflow.
 
 ## Usage
 
