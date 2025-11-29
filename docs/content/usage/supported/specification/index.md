@@ -12,3 +12,11 @@ In addition to analyzing source code directly, Noir can also parse various API a
 This section provides a compatibility table for the different specifications that Noir supports.
 | Specification | Format | endpoint | method | query | path | body | header | cookie | static_path | websocket |
 |---|---|---|---|---|---|---|---|---|---|---|
+| GraphQL | GRAPHQL | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| HAR | JSON | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| OpenAPI 2.0 (Swagger) | JSON | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| OpenAPI 2.0 (Swagger) | YAML | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| OpenAPI 3.0 | JSON | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| OpenAPI 3.0 | YAML | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Pure | JSON | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
+| RAML | YAML | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
