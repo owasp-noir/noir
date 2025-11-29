@@ -21,7 +21,7 @@ RUN apt-get update && \
 FROM debian:13-slim
 LABEL org.opencontainers.image.title="OWASP Noir"
 LABEL org.opencontainers.image.version="0.25.1"
-LABEL org.opencontainers.image.description="OWASP Noir is an open-source project specializing in identifying attack surfaces for enhanced whitebox security testing and security pipeline."
+LABEL org.opencontainers.image.description="A hybrid static and AI-driven analyzer that detects every endpoint in your codebase, from shadow APIs to standard routes."
 LABEL org.opencontainers.image.authors="Noir Team (@hahwul, @ksg97031)"
 LABEL org.opencontainers.image.source=https://github.com/owasp-noir/noir
 LABEL org.opencontainers.image.documentation="https://owasp-noir.github.io/noir/"
