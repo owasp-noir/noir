@@ -1,10 +1,8 @@
 name: noir
 base: core20
 version: 0.25.1
-summary: Attack surface detector that identifies endpoints by static analysis.
-description: |
-  Noir is an open-source project specializing in identifying attack surfaces for enhanced whitebox security testing and security pipeline.
-  This includes the capability to discover API endpoints, web endpoints, and other potential entry points within source code for thorough security analysis.
+summary: OWASP Noir
+description: A hybrid static and AI-driven analyzer that detects every endpoint in your codebase, from shadow APIs to standard routes.
 
 grade: stable # must be 'stable' to release into candidate/stable channels
 confinement: strict # use 'strict' once you have the right plugs and slots

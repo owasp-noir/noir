@@ -4,7 +4,7 @@ version: 0.25.1
 authors:
   - hahwul <hahwul@gmail.com>
   - ksg97031 <ksg97031@gmail.com>
-description: Attack surface detector that identifies endpoints by static analysis
+description: A hybrid static and AI-driven analyzer that detects every endpoint in your codebase, from shadow APIs to standard routes
 repository: https://github.com/owasp-noir/noir
 license: MIT
 
