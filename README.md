@@ -4,7 +4,7 @@
     <source media="(prefers-color-scheme: light)" srcset="https://github.com/owasp-noir/noir/assets/13212227/0577860e-3d7e-4294-8f1f-dc7b87ce2b2b" width="500px;">
     <img alt="OWASP Noir Logo" src="https://github.com/owasp-noir/noir/assets/13212227/04aee7d0-c224-481b-8d79-2dbdcf3ad84b" width="500px;">
   </picture>
-  <p>Attack surface detector that identifies endpoints by static analysis.</p>
+  <p>A hybrid static and AI-driven analyzer that detects every endpoint in your codebase, from shadow APIs to standard routes.</p>
 </div>
 
 <p align="center">
@@ -25,16 +25,15 @@
   <a href="#contributing">Contributing</a>
 </p>
 
-OWASP Noir is an open-source project specializing in identifying attack surfaces for enhanced whitebox security testing and security pipeline. This includes the capability to discover API endpoints, web endpoints, and other potential entry points within source code for thorough security analysis.
+OWASP Noir is an open-source attack surface detector designed to identify every endpoint in your codebase through static analysis and AI-driven techniques. It specializes in uncovering hidden endpoints, shadow APIs, and security weaknesses that often go unnoticed, helping security teams and developers gain complete visibility into their application's attack surface.
 
-## Key Features
+## Why Noir?
 
-- Extract API endpoints and parameters from source code.
-- Support multiple languages and frameworks.
-- Uncover security issues with detailed analysis and rule-based passive scanning.
-- Integrate seamlessly with DevOps pipelines and tools like curl, ZAP, and Caido.
-- Deliver clear, actionable results in formats like JSON, YAML, and OAS.
-- Enhance endpoint discovery with AI for unfamiliar frameworks and hidden APIs.
+- **Attack Surface Discovery**: Analyzes source code to identify your application's complete attack surface, including hidden endpoints, shadow APIs, and other security blind spots.
+- **AI-Powered Analysis**: Leverages Large Language Models (LLMs) to detect endpoints in any language or framework—even those not natively supported.
+- **SAST-to-DAST Bridge**: Connects static code analysis with dynamic testing by providing discovered endpoints to DAST tools, enabling more comprehensive and accurate security scans.
+- **DevSecOps Ready**: Designed for seamless integration into security pipelines with support for tools like ZAP, Burp Suite, Caido, and more.
+- **Multi-Format Output**: Delivers results in JSON, YAML, OpenAPI Specification, and other formats for easy integration with your existing workflow.
 
 ## Usage
 

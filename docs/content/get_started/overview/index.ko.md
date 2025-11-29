@@ -7,9 +7,15 @@ sort_by = "weight"
 [extra]
 +++
 
-OWASP Noir는 보안 전문가와 개발자가 애플리케이션의 공격 표면을 식별하는 데 도움이 되도록 설계된 오픈 소스 도구입니다. 소스 코드에 대한 정적 분석을 수행하여 Noir는 공격자가 대상으로 삼을 수 있는 API 엔드포인트, 웹 페이지 및 기타 잠재적 진입점을 발견할 수 있습니다.
+OWASP Noir는 정적 분석과 AI 기반 기술을 결합하여 코드베이스의 모든 엔드포인트를 탐지하는 하이브리드 분석기입니다. Shadow API부터 일반 라우트까지, 정적 코드 분석과 대규모 언어 모델(LLM) 기능을 결합하여 기존 도구가 놓치기 쉬운 숨겨진 엔드포인트와 보안 사각지대를 발견합니다.
 
-이로 인해 화이트박스 보안 테스트와 견고한 보안 파이프라인 구축에 매우 귀중한 도구가 됩니다.
+## 주요 기능
+
+- **공격 표면 발견**: 소스 코드를 분석하여 숨겨진 엔드포인트, Shadow API 및 기타 보안 약점을 포함한 애플리케이션의 전체 공격 표면을 식별합니다.
+- **AI 기반 분석**: LLM을 활용하여 네이티브로 지원되지 않는 언어나 프레임워크에서도 엔드포인트를 탐지하여 포괄적인 커버리지를 보장합니다.
+- **SAST-DAST 연결**: 발견된 엔드포인트를 DAST 도구에 제공하여 정적 코드 분석과 동적 테스트를 연결하고, 더 정확하고 포괄적인 보안 스캔을 가능하게 합니다.
+- **DevSecOps 지원**: ZAP, Burp Suite, Caido 등 인기 보안 도구를 지원하며 CI/CD 파이프라인에 원활하게 통합되도록 설계되었습니다.
+- **다양한 출력 형식**: JSON, YAML, OpenAPI 명세 등 다양한 형식으로 결과를 제공하여 기존 워크플로우와 쉽게 통합할 수 있습니다.
 
 [GitHub](https://github.com/owasp-noir/noir) | [OWASP 프로젝트 페이지](https://owasp.org/www-project-noir)
 
@@ -21,39 +27,33 @@ Noir는 [Crystal](https://crystal-lang.org) 프로그래밍 언어로 구축되�
 
 *   **탐지기**: 코드베이스에서 사용되는 기술을 식별합니다.
 *   **분석기**: 코드를 파싱하여 엔드포인트, 매개변수 및 기타 흥미로운 정보를 찾습니다.
+*   **LLM 분석기**: AI를 사용하여 지원되지 않거나 익숙하지 않은 프레임워크에서 엔드포인트를 발견합니다.
 *   **패시브 스캐너 및 태거**: 규칙을 사용하여 잠재적 취약점을 식별하고 발견 사항에 컨텍스트 태그를 추가합니다.
 *   **전달**: 추가 분석을 위해 결과를 다른 도구로 전송합니다.
+*   **출력 빌더**: 다양한 형식으로 보고서를 생성합니다.
 
-## 지원되는 언어 및 프레임워크
+## 프로젝트 목표
 
-Noir는 다양한 프로그래밍 언어와 프레임워크를 지원합니다:
+Noir의 주요 목표는 정적 코드 분석과 동적 보안 테스트 간의 격차를 해소하는 것입니다. 숨겨지거나 문서화되지 않은 엔드포인트를 포함하여 애플리케이션의 포괄적이고 정확한 엔드포인트 목록을 제공함으로써 DAST 도구가 더 철저하고 효과적인 스캔을 수행할 수 있도록 합니다.
 
-*   **C#**: ASP.NET Core
-*   **Crystal**: Kemal, Lucky
-*   **Go**: Echo, Gin, Gorilla Mux, gRPC
-*   **Java**: Armeria, JSP, Spring
-*   **JavaScript**: Express, Koa
-*   **Kotlin**: Spring
-*   **PHP**: Pure PHP, Symfony
-*   **Python**: Django, FastAPI, Flask
-*   **Ruby**: Rails, Sinatra
-*   **Rust**: Actix Web, Axum, Gotham, Rocket 등
+Noir는 DevSecOps 파이프라인에서 중요한 연결 고리 역할을 하며, 소스 코드 분석을 보안 도구가 즉시 사용할 수 있는 실행 가능한 엔드포인트 데이터로 변환합니다.
 
-전체 목록은 [지원되는 언어 및 프레임워크](/noir/usage/supported/language_and_frameworks/) 페이지를 참조하세요.
+앞으로 더 많은 언어와 프레임워크 지원을 확대하고, 분석 정확도를 개선하며, AI와 LLM을 더욱 활용하여 기능을 향상시킬 계획입니다.
 
-## 주요 기능
+## 기여하기
 
-### 엔드포인트 발견
-Noir는 소스 코드에서 직접 API와 웹 엔드포인트를 추출하여 애플리케이션의 공격 표면에 대한 포괄적인 분석을 제공합니다.
+OWASP Noir는 커뮤니티 기여로 성장하는 오픈 소스 프로젝트입니다. 도구 개선에 관심이 있으시다면 [기여 가이드](https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md)를 확인해 주세요. 오타 수정부터 주요 새 기능 추가까지 모든 규모의 기여를 환영합니다.
 
-### 매개변수 분석
-엔드포인트와 함께 Noir는 쿼리 매개변수, 경로 매개변수, 헤더, 쿠키 및 요청 본문에서 매개변수를 식별합니다.
+### 기여자
 
-### 패시브 취약점 스캔
-Noir에는 일반적인 보안 문제를 식별하기 위한 내장된 패시브 스캐너가 포함되어 있습니다.
+Noir에 기여해 주신 모든 분께 감사드립니다! ♥️
 
-### 다양한 출력 형식
-결과는 JSON, YAML, OpenAPI 명세, cURL 명령 등 여러 형식으로 출력할 수 있습니다.
+![](https://raw.githubusercontent.com/owasp-noir/noir/refs/heads/main/CONTRIBUTORS.svg)
 
-### 도구 통합
-Noir는 ZAP, Burp Suite, Caido와 같은 인기 있는 보안 도구와 쉽게 통합됩니다.
+## 행동 강령
+
+우리는 환영하고 포용적인 커뮤니티를 육성하기 위해 최선을 다하고 있습니다. GitHub 저장소의 [행동 강령](https://github.com/owasp-noir/noir/blob/main/CODE_OF_CONDUCT.md)을 검토해 주세요.
+
+## 도움 및 피드백
+
+질문, 제안 또는 문제가 있으시면 GitHub [토론](https://github.com/orgs/owasp-noir/discussions) 또는 [이슈](https://github.com/owasp-noir/noir/issues) 페이지를 통해 연락해 주세요.

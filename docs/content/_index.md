@@ -7,7 +7,7 @@ version = "v0.25.1"
 [extra.hero]
 title = "NOIR"
 badge = "v0.25.1"
-description = "Noir is an attack surface detector that enhances white-box security testing and streamlines security pipelines by discovering endpoints and potential vulnerabilities through static analysis."
+description = "A hybrid static and AI-driven analyzer that detects every endpoint in your codebase, from shadow APIs to standard routes."
 image = "./images/noir-wallpaper.jpg"
 cta_buttons = [
     { text = "Get Started", url = "./get_started/overview", style = "primary" },
@@ -15,8 +15,8 @@ cta_buttons = [
 ]
 
 [[extra.features]]
-title = "Endpoint Discovery"
-desc = "Extracts API and web endpoints, along with their parameters, directly from your source code for a comprehensive analysis of your application's attack surface."
+title = "Attack Surface Discovery"
+desc = "Analyzes your source code to uncover the complete attack surface of your application, including hidden endpoints, shadow APIs, and other security blind spots."
 icon = "fa-solid fa-code"
 
 [[extra.features]]
@@ -25,24 +25,24 @@ desc = "Supports a wide range of programming languages and frameworks, ensuring 
 icon = "fa-solid fa-globe"
 
 [[extra.features]]
-title = "Vulnerability Detection"
-desc = "Performs rule-based passive scanning to identify potential security vulnerabilities and provides detailed insights to help you remediate them quickly."
-icon = "fa-solid fa-shield-halved"
+title = "DevSecOps Ready"
+desc = "Designed for seamless integration into CI/CD pipelines and security workflows, with support for popular tools like cURL, ZAP, Caido, and more."
+icon = "fa-solid fa-gears"
 
 [[extra.features]]
-title = "DevOps Integration"
-desc = "Seamlessly integrates with popular DevOps and security tools like cURL, ZAP, and Caido to enhance your existing security pipelines."
-icon = "fa-solid fa-gears"
+title = "AI-Powered Analysis"
+desc = "Leverages Large Language Models (LLMs) to detect endpoints in any language or framework—even those not natively supported—ensuring no endpoint goes undetected."
+icon = "fa-solid fa-robot"
+
+[[extra.features]]
+title = "SAST-to-DAST Bridge"
+desc = "Bridges static code analysis and dynamic testing by providing discovered endpoints to DAST tools like ZAP and Burp Suite, enabling more comprehensive security scans."
+icon = "fa-solid fa-bridge"
 
 [[extra.features]]
 title = "Flexible Output Formats"
 desc = "Generates clear and actionable results in a variety of formats, including JSON, YAML, and OpenAPI, making it easy to consume the data in other tools."
 icon = "fa-solid fa-file-export"
-
-[[extra.features]]
-title = "AI-Powered Analysis"
-desc = "Leverages the power of AI and Large Language Models (LLMs) to uncover hidden APIs and endpoints in unfamiliar or unsupported frameworks."
-icon = "fa-solid fa-robot"
 
 [extra.trust_section]
 title = "Built With"
