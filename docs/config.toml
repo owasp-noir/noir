@@ -32,7 +32,7 @@ sidebar_expand_depth = 0
 lang_aliases = { en = "English", ko = "한국어" }
 
 nav = [
-    { name = "Documents", url = "/noir/get_started/overview", type = "url", icon = "fa-solid fa-book" },
+    { name = "Get Started", url = "/noir/get_started/overview/", type = "url", icon = "fa-solid fa-rocket" },
     { name = "GitHub", url = "https://github.com/owasp-noir/noir", type = "url", icon = "fa-brands fa-github" },
     { name = "OWASP", type = "dropdown", icon = "fa-solid fa-globe", members = [
         { name = "OWASP Project", url = "https://owasp.org/www-project-noir/", type = "url" , icon = "fa-solid fa-flag"},
