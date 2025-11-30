@@ -11,8 +11,13 @@ OWASP Noir is a Crystal-based attack surface detector that identifies endpoints 
 
 1. **Install Crystal and dependencies:**
    ```bash
-   sudo apt update
-   sudo apt install -y crystal shards just
+   # Using Docker (recommended for consistent builds)
+   docker run --rm -v $(pwd):/app -w /app 84codes/crystal:latest-debian-12 shards build
+   docker run --rm -v $(pwd):/app -w /app 84codes/crystal:latest-debian-12 crystal spec
+
+   # Or install Crystal locally (Ubuntu/Debian)
+   curl -fsSL https://crystal-lang.org/install.sh | sudo bash
+   sudo apt install -y just
    ```
 
 2. **Build the application:**
@@ -20,14 +25,14 @@ OWASP Noir is a Crystal-based attack surface detector that identifies endpoints 
    just build
    # OR: shards build
    ```
-   - **Timing: 10 seconds. NEVER CANCEL. Set timeout to 60+ seconds.**
+   - **Timing: ~30 seconds. NEVER CANCEL. Set timeout to 120+ seconds.**
 
 3. **Run tests:**
    ```bash
    just test
    # OR: crystal spec
    ```
-   - **Timing: 7 seconds (1384 tests). NEVER CANCEL. Set timeout to 30+ seconds.**
+   - **Timing: ~10 seconds. NEVER CANCEL. Set timeout to 60+ seconds.**
 
 ### Run the Application
 
@@ -51,15 +56,15 @@ OWASP Noir is a Crystal-based attack surface detector that identifies endpoints 
 - **Formatting and linting:**
   ```bash
   crystal tool format              # Format code
-  # NOTE: ameba linter has compatibility issues with Crystal 1.11.2
+  ameba                            # Run linter
   ```
 
 - **Using just commands:**
   ```bash
   just --list                      # List available commands
-  just build                       # Build application (10s)
-  just test                        # Run tests (7s)
-  just check                       # Format check + lint (NOTE: ameba issues)
+  just build                       # Build application
+  just test                        # Run tests
+  just check                       # Format check + lint
   just fix                         # Auto-format + fix lint issues
   ```
 
@@ -71,7 +76,7 @@ OWASP Noir is a Crystal-based attack surface detector that identifies endpoints 
    just build && ./bin/noir -b spec/functional_test/fixtures/crystal
    ```
    - Should detect crystal_kemal and crystal_lucky technologies
-   - Should find ~10 endpoints with parameters
+   - Should find endpoints with parameters
 
 2. **Test JSON output:**
    ```bash
@@ -83,7 +88,7 @@ OWASP Noir is a Crystal-based attack surface detector that identifies endpoints 
    ```bash
    just test
    ```
-   - Should pass all 1384 tests in ~7 seconds
+   - Should pass all tests
 
 4. **Technology detection:**
    ```bash
@@ -103,7 +108,12 @@ src/                     # Core source code
 ├── llm/                 # AI/LLM integration
 ├── optimizer/           # Endpoint optimization (normalization/dedup) and LLM optimizer
 ├── tagger/              # Endpoint tagging and categorization
-└── deliver/             # Results delivery (proxy, elasticsearch)
+├── deliver/             # Results delivery (proxy, elasticsearch)
+├── minilexers/          # Custom lexers for parsing
+├── miniparsers/         # Custom parsers for parsing
+├── passive_scan/        # Passive scanning functionality
+├── techs/               # Supported technologies catalog
+└── utils/               # Utility functions
 
 spec/                    # Test code
 ├── functional_test/     # End-to-end tests
@@ -120,7 +130,7 @@ lib/                     # Dependencies (managed by shards)
 - `shard.yml`: Dependencies and project metadata
 - `justfile`: Task definitions and commands
 - `src/noir.cr`: Main application entry point
-- `.ameba.yml`: Linting configuration (compatibility issues)
+- `.ameba.yml`: Linting configuration
 
 ### Adding New Analyzers
 1. Create analyzer in `src/analyzer/analyzers/{language}/{framework}.cr`
@@ -139,15 +149,10 @@ lib/                     # Dependencies (managed by shards)
 
 ## Critical Notes
 
-### Known Issues
-- **http_proxy dependency**: Requires manual compatibility fix for Crystal 1.11.2+ (see bootstrap steps)
-- **ameba linter**: Has compatibility issues with Crystal 1.11.2, use `crystal tool format` instead
-- **Zola docs**: Not installed by default, install separately if needed for documentation work
-
 ### Timing Guidelines
 - **NEVER CANCEL** any build or test operations
-- Build: 10 seconds (set 60+ second timeout)
-- Tests: 7 seconds (set 30+ second timeout)
+- Build: ~30 seconds (set 120+ second timeout)
+- Tests: ~10 seconds (set 60+ second timeout)
 - Analysis: Sub-second for small projects
 
 ### Before Committing
@@ -158,6 +163,6 @@ lib/                     # Dependencies (managed by shards)
 5. If adding new analyzers/detectors, update documentation
 
 ### Environment
-- Crystal ~> 1.10 (tested with 1.11.2)
-- Ubuntu 24.04+ recommended
-- Requires manual dependency fixes as documented above
+- Crystal ~> 1.10 (CI tests with 1.15.0 - 1.18.0)
+- Uses Docker image `84codes/crystal:latest-debian-12` for CI tests
+- Ubuntu/Debian recommended for local development
