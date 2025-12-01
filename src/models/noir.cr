@@ -286,6 +286,9 @@ class NoirRunner
     when "oas3"
       buidler = OutputBuilderOas3.new @options
       buidler.print @endpoints
+    when "postman"
+      builder = OutputBuilderPostman.new @options
+      builder.print @endpoints
     when "only-url"
       builder = OutputBuilderOnlyUrl.new @options
       builder.print @endpoints
