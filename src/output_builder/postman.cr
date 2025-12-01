@@ -11,13 +11,10 @@ class OutputBuilderPostman < OutputBuilder
       uri = URI.parse(endpoint.url)
 
       # Build URL parts
-      host = uri.host || "localhost"
       path_parts = uri.path.split("/").reject(&.empty?)
       path_with_vars = path_parts.map do |part|
-        if part.starts_with?(":")
-          ":#{part[1..]}"
-        elsif part.starts_with?("<") && part.ends_with?(">") && part.includes?(":")
-          # Handle <type:param> format
+        if part.starts_with?("<") && part.ends_with?(">") && part.includes?(":")
+          # Handle <type:param> format - convert to :param
           match = part.match(/<[^:>]+:(\w+)>/)
           match ? ":#{match[1]}" : part
         else
