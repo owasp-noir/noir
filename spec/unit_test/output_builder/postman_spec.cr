@@ -101,7 +101,7 @@ describe "OutputBuilderPostman" do
     item4["name"].as_s.should eq("GET /search")
     item4["request"]["method"].as_s.should eq("GET")
     item4["request"]["url"]["query"].as_a.size.should eq(2)
-    query_keys = item4["request"]["url"]["query"].as_a.map { |q| q["key"].as_s }
+    query_keys = item4["request"]["url"]["query"].as_a.map(&.["key"].as_s)
     query_keys.should contain("q")
     query_keys.should contain("limit")
 
