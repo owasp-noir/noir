@@ -366,8 +366,8 @@ module Noir
       content.scan(/(?:server|app)\.(?:get|use)\s*\([^,]*,\s*restify\.plugins\.serveStatic\s*\(\s*\{[^}]*directory\s*:\s*['"]\.?\/?([\w-]+)['"]\s*\}/) do |match|
         if match.size >= 1
           dir_name = match[1]
-          # Check if this is already captured
-          unless static_paths.any? { |s| s["file_path"].includes?(dir_name) }
+          # Check if this is already captured (exact match on directory name)
+          unless static_paths.any? { |s| s["file_path"] == dir_name || s["file_path"].ends_with?("/#{dir_name}") }
             static_paths << {
               "static_path" => "/#{dir_name}",
               "file_path"   => match[1],
