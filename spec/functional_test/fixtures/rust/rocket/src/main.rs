@@ -2,6 +2,7 @@
 
 use rocket::serde::json::Json;
 use rocket::form::Form;
+use rocket::http::CookieJar;
 
 #[get("/")]
 fn index() -> &'static str {
@@ -58,6 +59,21 @@ fn update_item(id: i32, version: Option<String>, item: String) -> String {
     format!("Item {} updated", id)
 }
 
+// Cookie parameters
+#[get("/session")]
+fn session(cookies: &CookieJar<'_>) -> String {
+    let session_id = cookies.get("session_id");
+    let user_token = cookies.get("user_token");
+    format!("Session: {:?}", session_id)
+}
+
+// Cookie with private access
+#[get("/profile")]
+fn profile(cookies: &CookieJar<'_>) -> String {
+    let auth_token = cookies.get_private("auth_token");
+    format!("Profile: {:?}", auth_token)
+}
+
 #[launch]
 fn rocket() -> _ {
     rocket::build().mount("/", routes![
@@ -70,6 +86,8 @@ fn rocket() -> _ {
         create_user, 
         update_product,
         login,
-        update_item
+        update_item,
+        session,
+        profile
     ])
 }
