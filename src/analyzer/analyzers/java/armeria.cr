@@ -135,13 +135,15 @@ module Analyzer::Java
 
         # Handle @Get("/path") - single string literal
         if param_tokens.size == 1 && param_tokens[0].type == :STRING_LITERAL
-          return param_tokens[0].value[1..-2]
+          value = strip_quotes(param_tokens[0].value)
+          return value unless value.empty?
         end
 
         # Handle @Get(value = "/path") or named parameters
         param_tokens.each_with_index do |token, index|
           if token.type == :STRING_LITERAL
-            return token.value[1..-2]
+            value = strip_quotes(token.value)
+            return value unless value.empty?
           end
         end
       end
@@ -208,7 +210,8 @@ module Analyzer::Java
 
           # Handle @Param("name") - single string literal
           if param_tokens.size == 1 && param_tokens[0].type == :STRING_LITERAL
-            return param_tokens[0].value[1..-2]
+            value = strip_quotes(param_tokens[0].value)
+            return value unless value.empty?
           end
 
           # Handle @Header(value = "name") or @Header(name = "name")
@@ -216,13 +219,21 @@ module Analyzer::Java
             param_key = param_tokens[0].value
             param_value = param_tokens[-1]
             if (param_key == "value" || param_key == "name") && param_value.type == :STRING_LITERAL
-              return param_value.value[1..-2]
+              value = strip_quotes(param_value.value)
+              return value unless value.empty?
             end
           end
         end
       end
 
       default_name
+    end
+
+    # Safely strip surrounding quotes from a string literal
+    # Handles edge cases like empty strings or malformed literals
+    private def strip_quotes(value : String) : String
+      return "" if value.size < 2
+      value[1..-2]
     end
 
     # Extract path parameters from URLs like /users/{userId} or /items/{itemId}/comments
