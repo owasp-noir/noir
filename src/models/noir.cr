@@ -307,6 +307,9 @@ class NoirRunner
     when "mermaid"
       builder = OutputBuilderMermaid.new @options
       builder.print @endpoints, @passive_results
+    when "html"
+      builder = OutputBuilderHtml.new @options
+      builder.print @endpoints, @passive_results
     else
       builder = OutputBuilderCommon.new @options
 
