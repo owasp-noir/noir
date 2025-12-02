@@ -7,6 +7,7 @@ module Analyzer::Javascript
       # Source Analysis
       channel = Channel(String).new
       result = [] of Endpoint
+      static_dirs = [] of Hash(String, String)
 
       begin
         populate_channel_with_files(channel)
@@ -25,6 +26,7 @@ module Analyzer::Javascript
                   if File.exists?(path)
                     # First try to use the JS parser for more robust analysis
                     begin
+                      content = File.read(path)
                       parser_endpoints = Noir::JSRouteExtractor.extract_routes(path)
                       parser_endpoints.each do |endpoint|
                         # Add file location details
@@ -43,11 +45,16 @@ module Analyzer::Javascript
 
                         result << endpoint
                       end
+
+                      # Extract static path declarations
+                      Noir::JSRouteExtractor.extract_static_paths(content).each do |static_path|
+                        static_dirs << static_path unless static_dirs.any? { |s| s["static_path"] == static_path["static_path"] && s["file_path"] == static_path["file_path"] }
+                      end
                     rescue e
                       logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
 
                       # Fallback to the original regex-based approach if parser fails
-                      analyze_with_regex(path, result)
+                      analyze_with_regex(path, result, static_dirs)
                     end
                   end
                 rescue e : File::NotFoundError
@@ -63,7 +70,31 @@ module Analyzer::Javascript
         logger.debug "Error in Fastify analyzer: #{e.message}"
       end
 
+      # Process static directories to create endpoints for static files
+      process_static_dirs(static_dirs, result)
+
       result
+    end
+
+    # Process static directories and add endpoints for each file
+    private def process_static_dirs(static_dirs : Array(Hash(String, String)), result : Array(Endpoint))
+      static_dirs.each do |dir|
+        full_path = (base_path + "/" + dir["file_path"]).gsub_repeatedly("//", "/")
+        static_path = dir["static_path"]
+        static_path = static_path[0..-2] if static_path.ends_with?("/") && static_path != "/"
+
+        get_files_by_prefix(full_path).each do |file_path|
+          if File.exists?(file_path)
+            relative_path = file_path.gsub(full_path, "")
+            url = static_path == "/" ? relative_path : "#{static_path}#{relative_path}"
+            url = "/#{url}" unless url.starts_with?("/")
+
+            details = Details.new(PathInfo.new(file_path))
+            endpoint = Endpoint.new(url, "GET", details)
+            result << endpoint unless result.any? { |e| e.url == url && e.method == "GET" }
+          end
+        end
+      end
     end
 
     # Helper method to create an endpoint with details
@@ -76,7 +107,7 @@ module Analyzer::Javascript
       endpoint
     end
 
-    private def analyze_with_regex(path : String, result : Array(Endpoint))
+    private def analyze_with_regex(path : String, result : Array(Endpoint), static_dirs : Array(Hash(String, String)) = [] of Hash(String, String))
       # Original regex-based analysis as a fallback
       File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
         last_endpoint = Endpoint.new("", "")
@@ -85,6 +116,11 @@ module Analyzer::Javascript
         route_plugin_prefixes = {} of String => String
         plugin_functions = {} of String => Bool
         file_content = file.gets_to_end
+
+        # Extract static paths
+        Noir::JSRouteExtractor.extract_static_paths(file_content).each do |static_path|
+          static_dirs << static_path unless static_dirs.any? { |s| s["static_path"] == static_path["static_path"] && s["file_path"] == static_path["file_path"] }
+        end
 
         # First scan for fastify instances and plugin registrations
         file_content.each_line do |line|
