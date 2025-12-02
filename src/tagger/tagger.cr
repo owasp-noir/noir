@@ -28,6 +28,21 @@ module NoirTaggers
       desc:   "Identifies Websocket endpoints",
       runner: WebsocketTagger,
     },
+    graphql: {
+      name:   "GraphQL Tagger",
+      desc:   "Identifies GraphQL endpoints",
+      runner: GraphqlTagger,
+    },
+    jwt: {
+      name:   "JWT Tagger",
+      desc:   "Identifies JWT authentication endpoints",
+      runner: JwtTagger,
+    },
+    file_upload: {
+      name:   "FileUpload Tagger",
+      desc:   "Identifies file upload endpoints",
+      runner: FileUploadTagger,
+    },
   }
 
   def self.taggers

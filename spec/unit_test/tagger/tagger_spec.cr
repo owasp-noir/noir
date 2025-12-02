@@ -129,4 +129,56 @@ describe "Tagger" do
       end
     end
   end
+
+  it "graphql_tagger" do
+    config_init = ConfigInitializer.new
+    noir_options = config_init.default_options
+    expected_endpoints = [
+      Endpoint.new("/graphql", "POST", [
+        Param.new("query", "{ users { id } }", "form"),
+      ]),
+    ]
+    NoirTaggers.run_tagger(expected_endpoints, noir_options, "graphql")
+    expected_endpoints.each do |endpoint|
+      endpoint.tags.empty?.should be_false
+      endpoint.tags.each do |tag|
+        tag.name.should eq("graphql")
+      end
+    end
+  end
+
+  it "jwt_tagger" do
+    config_init = ConfigInitializer.new
+    noir_options = config_init.default_options
+    expected_endpoints = [
+      Endpoint.new("/auth/token", "POST", [
+        Param.new("token", "", "form"),
+        Param.new("refresh_token", "", "form"),
+      ]),
+    ]
+    NoirTaggers.run_tagger(expected_endpoints, noir_options, "jwt")
+    expected_endpoints.each do |endpoint|
+      endpoint.tags.empty?.should be_false
+      endpoint.tags.each do |tag|
+        tag.name.should eq("jwt")
+      end
+    end
+  end
+
+  it "file_upload_tagger" do
+    config_init = ConfigInitializer.new
+    noir_options = config_init.default_options
+    expected_endpoints = [
+      Endpoint.new("/api/upload", "POST", [
+        Param.new("file", "", "form"),
+      ]),
+    ]
+    NoirTaggers.run_tagger(expected_endpoints, noir_options, "file_upload")
+    expected_endpoints.each do |endpoint|
+      endpoint.tags.empty?.should be_false
+      endpoint.tags.each do |tag|
+        tag.name.should eq("file_upload")
+      end
+    end
+  end
 end
