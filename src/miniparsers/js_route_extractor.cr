@@ -352,12 +352,27 @@ module Noir
 
       # Restify patterns:
       # server.get(/\/public\/.*/, restify.plugins.serveStatic({directory: './public'}))
-      content.scan(/(?:server|app)\.(?:get|use)\s*\([^,]*,\s*restify\.plugins\.serveStatic\s*\(\s*\{[^}]*directory\s*:\s*['"]([^'"]+)['"]/) do |match|
-        if match.size >= 1
+      # Try to extract the path from the regex pattern first
+      content.scan(/(?:server|app)\.(?:get|use)\s*\(\s*\/\\?\/([^\/]+)\/[^,]*,\s*restify\.plugins\.serveStatic\s*\(\s*\{[^}]*directory\s*:\s*['"]([^'"]+)['"]/) do |match|
+        if match.size >= 2
           static_paths << {
-            "static_path" => "/public",
-            "file_path"   => match[1],
+            "static_path" => "/#{match[1]}",
+            "file_path"   => match[2],
           }
+        end
+      end
+
+      # Fallback: If no path in regex, use directory name as path
+      content.scan(/(?:server|app)\.(?:get|use)\s*\([^,]*,\s*restify\.plugins\.serveStatic\s*\(\s*\{[^}]*directory\s*:\s*['"]\.?\/?([\w-]+)['"]\s*\}/) do |match|
+        if match.size >= 1
+          dir_name = match[1]
+          # Check if this is already captured
+          unless static_paths.any? { |s| s["file_path"].includes?(dir_name) }
+            static_paths << {
+              "static_path" => "/#{dir_name}",
+              "file_path"   => match[1],
+            }
+          end
         end
       end
 

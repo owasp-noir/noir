@@ -89,7 +89,8 @@ module Analyzer::Javascript
 
         get_files_by_prefix(full_path).each do |file_path|
           if File.exists?(file_path)
-            relative_path = file_path.gsub(full_path, "")
+            # Use lchop to only remove from the beginning of the string
+            relative_path = file_path.starts_with?(full_path) ? file_path.lchop(full_path) : file_path
             url = static_path == "/" ? relative_path : "#{static_path}#{relative_path}"
             url = "/#{url}" unless url.starts_with?("/")
 
