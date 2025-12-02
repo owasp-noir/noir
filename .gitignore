@@ -11,3 +11,8 @@ ameba.sh
 
 # Ignore for Zola
 /docs/public/
+
+# Gradle build artifacts
+.gradle/
+**/build/
+**/out/
