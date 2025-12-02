@@ -16,3 +16,6 @@ ameba.sh
 .gradle/
 **/build/
 **/out/
+**/gradle/wrapper/
+**/gradlew
+**/gradlew.bat
