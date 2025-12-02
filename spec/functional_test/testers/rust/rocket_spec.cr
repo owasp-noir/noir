@@ -36,6 +36,13 @@ expected_endpoints = [
     Param.new("version", "", "query"),
     Param.new("item", "", "body"),
   ]),
+  Endpoint.new("/session", "GET", [
+    Param.new("session_id", "", "cookie"),
+    Param.new("user_token", "", "cookie"),
+  ]),
+  Endpoint.new("/profile", "GET", [
+    Param.new("auth_token", "", "cookie"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/rust/rocket/", {
