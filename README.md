@@ -48,7 +48,7 @@ noir -b <source_dir>
 
 If you use it with Github Action, please refer to this [document](/github-action) .
 
-![](/docs/static/images/basic.png)
+![](/docs/content/get_started/overview/noir-usage.jpg)
 
 JSON Result
 ```
