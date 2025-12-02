@@ -2,6 +2,9 @@ require "../../../models/analyzer"
 
 module Analyzer::Rust
   class Gotham < Analyzer
+    # Maximum lines to look ahead for handler name
+    MAX_HANDLER_LOOKUP_LINES = 5
+
     def analyze
       # Source Analysis for Gotham web framework
       # Gotham uses builder pattern: Router::builder().get("/path").to(handler)
@@ -78,8 +81,7 @@ module Analyzer::Rust
 
     # Find the handler function name from .to(handler) pattern
     private def find_handler_name(lines : Array(String), start_index : Int32) : String?
-      # Look in the current line and next few lines for .to(handler)
-      (start_index...[start_index + 5, lines.size].min).each do |i|
+      (start_index...[start_index + MAX_HANDLER_LOOKUP_LINES, lines.size].min).each do |i|
         line = lines[i]
         match = line.match(/\.to\s*\(\s*(\w+)\s*\)/)
         if match

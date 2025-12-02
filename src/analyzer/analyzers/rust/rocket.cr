@@ -2,6 +2,9 @@ require "../../../models/analyzer"
 
 module Analyzer::Rust
   class Rocket < Analyzer
+    # Maximum lines to scan ahead for function body analysis
+    MAX_FUNCTION_SCAN_LINES = 30
+
     def analyze
       # Source Analysis
       # Enhanced pattern to capture path, query parameters, and data parameters
@@ -108,13 +111,12 @@ module Analyzer::Rust
 
     # Extract parameters from function signature and body (cookies, headers)
     private def extract_function_params(lines : Array(String), start_index : Int32, endpoint : Endpoint)
-      # Look ahead up to 30 lines for the function definition and body
       in_function = false
       brace_count = 0
       seen_opening_brace = false
       has_cookie_jar = false
 
-      (start_index...[start_index + 30, lines.size].min).each do |i|
+      (start_index...[start_index + MAX_FUNCTION_SCAN_LINES, lines.size].min).each do |i|
         line = lines[i]
 
         # Track if we're inside the function
