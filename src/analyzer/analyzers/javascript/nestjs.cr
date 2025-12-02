@@ -1,10 +1,12 @@
 require "../../../models/analyzer"
+require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Javascript
   class Nestjs < Analyzer
     def analyze
       channel = Channel(String).new
       result = [] of Endpoint
+      static_dirs = [] of Hash(String, String)
 
       begin
         populate_channel_with_files(channel)
@@ -20,7 +22,7 @@ module Analyzer::Javascript
                   next unless [".js", ".ts", ".jsx", ".tsx"].any? { |ext| path.ends_with?(ext) }
 
                   if File.exists?(path)
-                    analyze_nestjs_file(path, result)
+                    analyze_nestjs_file(path, result, static_dirs)
                   end
                 rescue e : File::NotFoundError
                   logger.debug "File not found: #{path}"
@@ -37,12 +39,43 @@ module Analyzer::Javascript
         channel.close
       end
 
+      # Process static directories to create endpoints for static files
+      process_static_dirs(static_dirs, result)
+
       result
     end
 
-    private def analyze_nestjs_file(path : String, result : Array(Endpoint))
+    # Process static directories and add endpoints for each file
+    private def process_static_dirs(static_dirs : Array(Hash(String, String)), result : Array(Endpoint))
+      static_dirs.each do |dir|
+        full_path = (base_path + "/" + dir["file_path"]).gsub_repeatedly("//", "/")
+        static_path = dir["static_path"]
+        static_path = static_path[0..-2] if static_path.ends_with?("/") && static_path != "/"
+
+        get_files_by_prefix(full_path).each do |file_path|
+          if File.exists?(file_path)
+            # Use lchop to only remove from the beginning of the string
+            relative_path = file_path.starts_with?(full_path) ? file_path.lchop(full_path) : file_path
+            url = static_path == "/" ? relative_path : "#{static_path}#{relative_path}"
+            url = "/#{url}" unless url.starts_with?("/")
+
+            details = Details.new(PathInfo.new(file_path))
+            endpoint = Endpoint.new(url, "GET", details)
+            result << endpoint unless result.any? { |e| e.url == url && e.method == "GET" }
+          end
+        end
+      end
+    end
+
+    private def analyze_nestjs_file(path : String, result : Array(Endpoint), static_dirs : Array(Hash(String, String)))
       File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
         content = file.gets_to_end
+
+        # Extract static paths
+        Noir::JSRouteExtractor.extract_static_paths(content).each do |static_path|
+          static_dirs << static_path unless static_dirs.any? { |s| s["static_path"] == static_path["static_path"] && s["file_path"] == static_path["file_path"] }
+        end
+
         analyze_nestjs_controllers(content, path, result)
       end
     rescue e : Exception

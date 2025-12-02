@@ -212,8 +212,8 @@ class OutputBuilderHtml < OutputBuilder
   end
 
   private def build_summary(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult)) : String
-    methods = endpoints.map(&.method).uniq.size
-    total_params = endpoints.sum { |e| e.params.size }
+    methods = endpoints.map(&.method).uniq!.size
+    total_params = endpoints.sum(&.params.size)
 
     <<-HTML
     <div class="summary">
