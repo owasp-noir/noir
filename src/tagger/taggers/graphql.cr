@@ -19,7 +19,7 @@ class GraphqlTagger < Tagger
 
       # Check URL path for GraphQL indicators
       url_lower = endpoint.url.downcase
-      is_graphql_url = url_lower.includes?("graphql") || url_lower.ends_with?("/graphql") || url_lower.includes?("/gql")
+      is_graphql_url = url_lower.includes?("graphql") || url_lower.includes?("/gql")
 
       words_set = Set.new(WORDS)
       tmp_params_set = Set.new(tmp_params)
