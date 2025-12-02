@@ -140,7 +140,7 @@ module Analyzer::Java
         end
 
         # Handle @Get(value = "/path") or named parameters
-        param_tokens.each_with_index do |token, index|
+        param_tokens.each_with_index do |token, _|
           if token.type == :STRING_LITERAL
             value = strip_quotes(token.value)
             return value unless value.empty?
