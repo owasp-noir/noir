@@ -46,6 +46,7 @@ expected_endpoints = [
     Param.new("message", "", "form"),
     Param.new("sessionId", "", "cookie"),
   ]),
+  Endpoint.new("/mapped/ping", "GET"),
   Endpoint.new("/mapped/health", "GET"),
   Endpoint.new("/mapped/items/{id}", "POST", [
     Param.new("id", "", "path"),
@@ -101,7 +102,17 @@ expected_endpoints = [
   ]),
 ]
 
-FunctionalTester.new("fixtures/csharp/aspnet_core_mvc/", {
+tester = FunctionalTester.new("fixtures/csharp/aspnet_core_mvc/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
+}, expected_endpoints)
+
+tester.perform_tests
+
+describe "ASP.NET Core MVC analyzer edge cases" do
+  it "extracts expression-bodied MapGet endpoints without leaking params" do
+    ping = tester.app.endpoints.find { |e| e.url == "/mapped/ping" && e.method == "GET" }
+    ping.should_not be_nil
+    ping.not_nil!.params.empty?.should be_true
+  end
+end

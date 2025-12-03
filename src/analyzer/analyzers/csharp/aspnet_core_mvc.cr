@@ -60,22 +60,20 @@ module Analyzer::CSharp
 
     private def extract_map_block(lines : Array(String), start_index : Int32) : String
       io = String::Builder.new
-      brace = 0
-      seen_lambda = false
-      lambda_brace_start = nil
+      paren_depth = 0
+      brace_depth = 0
       i = start_index
 
       while i < lines.size
         line = lines[i]
-        brace += line.count('{') - line.count('}')
-        seen_lambda ||= line.includes?("=>")
-        if seen_lambda && line.includes?("{") && lambda_brace_start.nil?
-          lambda_brace_start = brace
-        end
+        paren_depth += line.count('(') - line.count(')')
+        brace_depth += line.count('{') - line.count('}')
         io << line
-        if lambda_brace_start && brace < lambda_brace_start && i > start_index
+
+        if paren_depth <= 0 && brace_depth <= 0 && line.includes?(";")
           break
         end
+
         i += 1
       end
 
@@ -567,13 +565,21 @@ module Analyzer::CSharp
     private def align_params_with_route(params : Array(Param), route : String) : Array(Param)
       path_keys = extract_route_placeholders(route)
 
-      params.map do |param|
+      mapped = params.map do |param|
         param_copy = Param.new(param.name, param.value, param.param_type)
         if path_keys.includes?(param.name)
           param_copy.param_type = "path"
         end
         param_copy
       end
+
+      path_keys.each do |key|
+        unless mapped.any? { |param| param.name == key }
+          mapped << Param.new(key, "", "path")
+        end
+      end
+
+      mapped
     end
 
     private def extract_route_placeholders(route : String) : Array(String)

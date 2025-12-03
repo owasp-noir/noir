@@ -8,6 +8,8 @@ namespace Demo.Endpoints
     {
         public void Register(Microsoft.AspNetCore.Routing.IEndpointRouteBuilder routeBuilder)
         {
+            routeBuilder.MapGet("/mapped/ping", () => "pong");
+
             routeBuilder.MapGet("/mapped/health", async context =>
             {
                 await context.Response.WriteAsync("ok");
