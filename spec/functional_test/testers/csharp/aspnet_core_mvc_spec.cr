@@ -46,6 +46,12 @@ expected_endpoints = [
     Param.new("message", "", "form"),
     Param.new("sessionId", "", "cookie"),
   ]),
+  Endpoint.new("/mapped/health", "GET"),
+  Endpoint.new("/mapped/items/{id}", "POST", [
+    Param.new("id", "", "path"),
+  ]),
+  Endpoint.new("/mapped/methods", "PUT"),
+  Endpoint.new("/mapped/methods", "DELETE"),
 ]
 
 FunctionalTester.new("fixtures/csharp/aspnet_core_mvc/", {

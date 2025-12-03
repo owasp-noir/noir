@@ -7,7 +7,37 @@ module Analyzer::CSharp
     def analyze
       route_patterns = load_route_patterns
       analyze_controllers(route_patterns)
+      analyze_route_builder_endpoints
       @result
+    end
+
+    private def analyze_route_builder_endpoints
+      map_regex = /Map(Get|Post|Put|Delete|Patch|Head|Options)\s*\(\s*"([^"]+)"/
+      map_methods_regex = /MapMethods\s*\(\s*"([^"]+)"\s*,\s*new\s*\[\]\s*\{([^\}]+)\}/
+
+      get_files_by_extension(".cs").each do |file|
+        next unless File.exists?(file)
+
+        lines = File.read(file, encoding: "utf-8", invalid: :skip).lines
+        lines.each_with_index do |line, index|
+          if (match = map_regex.match(line))
+            http_method = match[1].upcase
+            route = match[2]
+            endpoint = build_endpoint_from_route(route, http_method, file, index + 1)
+            @result << endpoint if endpoint
+          end
+
+          if (match = map_methods_regex.match(line))
+            route = match[1]
+            raw_methods = match[2]
+            methods = raw_methods.scan(/"([A-Za-z]+)"/).map { |m| m[1]?.to_s.upcase }.reject(&.empty?).uniq
+            methods.each do |http_method|
+              endpoint = build_endpoint_from_route(route, http_method, file, index + 1)
+              @result << endpoint if endpoint
+            end
+          end
+        end
+      end
     end
 
     private def load_route_patterns : Array(String)
@@ -352,6 +382,25 @@ module Analyzer::CSharp
       normalized = "/" + normalized unless normalized.starts_with?("/")
       normalized = "/" if normalized == "//" || normalized == "/"
       normalized
+    end
+
+    private def build_endpoint_from_route(raw_route : String, http_method : String, file : String, line : Int32) : Endpoint?
+      return nil if raw_route.empty?
+
+      route = normalize_route(raw_route)
+      params = build_path_params(route)
+      route = prune_optional_placeholders(route, params)
+
+      details = Details.new(PathInfo.new(file, line))
+      endpoint = Endpoint.new(route, http_method, details)
+      params.each { |param| endpoint.params << param }
+      endpoint
+    end
+
+    private def build_path_params(route : String) : Array(Param)
+      extract_route_placeholders(route).map do |name|
+        Param.new(name, "", "path")
+      end
     end
 
     private def prune_optional_placeholders(route : String, parameters : Array(Param)) : String
