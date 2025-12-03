@@ -49,9 +49,30 @@ expected_endpoints = [
   Endpoint.new("/mapped/health", "GET"),
   Endpoint.new("/mapped/items/{id}", "POST", [
     Param.new("id", "", "path"),
+    Param.new("filter", "", "query"),
+    Param.new("X-Trace-Id", "", "header"),
+    Param.new("sessionId", "", "cookie"),
   ]),
   Endpoint.new("/mapped/methods", "PUT"),
   Endpoint.new("/mapped/methods", "DELETE"),
+  Endpoint.new("/mapped/rich", "GET", [
+    Param.new("q", "", "query"),
+    Param.new("X-Test", "", "header"),
+    Param.new("cid", "", "cookie"),
+  ]),
+  Endpoint.new("/mapped/form", "POST", [
+    Param.new("name", "", "form"),
+  ]),
+  Endpoint.new("/expression/null", "GET", [
+    Param.new("intValue", "", "query"),
+    Param.new("strValue", "", "query"),
+    Param.new("boolValue", "", "query"),
+  ]),
+  Endpoint.new("/expression/nulldefault", "GET", [
+    Param.new("intValue", "", "query"),
+    Param.new("strValue", "", "query"),
+    Param.new("boolValue", "", "query"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/csharp/aspnet_core_mvc/", {

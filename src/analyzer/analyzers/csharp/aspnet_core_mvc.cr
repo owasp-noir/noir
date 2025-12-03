@@ -23,7 +23,9 @@ module Analyzer::CSharp
           if (match = map_regex.match(line))
             http_method = match[1].upcase
             route = match[2]
-            endpoint = build_endpoint_from_route(route, http_method, file, index + 1)
+            block = extract_map_block(lines, index)
+            extra_params = extract_params_from_block(block)
+            endpoint = build_endpoint_from_route(route, http_method, file, index + 1, extra_params)
             @result << endpoint if endpoint
           end
 
@@ -31,13 +33,57 @@ module Analyzer::CSharp
             route = match[1]
             raw_methods = match[2]
             methods = raw_methods.scan(/"([A-Za-z]+)"/).map { |m| m[1]?.to_s.upcase }.reject(&.empty?).uniq
+            block = extract_map_block(lines, index)
+            extra_params = extract_params_from_block(block)
             methods.each do |http_method|
-              endpoint = build_endpoint_from_route(route, http_method, file, index + 1)
+              endpoint = build_endpoint_from_route(route, http_method, file, index + 1, extra_params)
               @result << endpoint if endpoint
             end
           end
         end
       end
+    end
+
+    private def extract_map_block(lines : Array(String), start_index : Int32) : String
+      buffer = String.build do |io|
+        brace = 0
+        i = start_index
+        while i < lines.size
+          line = lines[i]
+          brace += line.count('{') - line.count('}')
+          io << line
+          break if brace <= 0 && i > start_index
+          i += 1
+        end
+      end
+      buffer
+    end
+
+    private def extract_params_from_block(block : String) : Array(Param)
+      params = [] of Param
+      query_regex = /Request\.Query\["([^"]+)"\]/
+      header_regex = /Request\.Headers\["([^"]+)"\]/
+      cookie_regex = /Request\.Cookies\["([^"]+)"\]/
+      form_regex = /Request\.Form\["([^"]+)"\]/
+
+      block.scan(query_regex) do |match|
+        key = match[1]? || match[0]
+        params << Param.new(key, "", "query") if key && !key.empty?
+      end
+      block.scan(header_regex) do |match|
+        key = match[1]? || match[0]
+        params << Param.new(key, "", "header") if key && !key.empty?
+      end
+      block.scan(cookie_regex) do |match|
+        key = match[1]? || match[0]
+        params << Param.new(key, "", "cookie") if key && !key.empty?
+      end
+      block.scan(form_regex) do |match|
+        key = match[1]? || match[0]
+        params << Param.new(key, "", "form") if key && !key.empty?
+      end
+
+      params.uniq { |p| p.name }
     end
 
     private def load_route_patterns : Array(String)
@@ -247,13 +293,10 @@ module Analyzer::CSharp
         cleaned_def, param_type = normalize_param_definition(param_def)
         next if cleaned_def.empty?
 
-        parts = cleaned_def.split(/\s+/)
-        next if parts.empty?
-
-        param_name = parts.last.gsub(/=.*$/, "").strip
-        next if param_name.empty?
-
-        parameters << Param.new(param_name, "", param_type || default_param_type)
+        if match = cleaned_def.match(/(\w+)\s*(?:=\s*[^,]+)?\s*$/)
+          param_name = match[1]
+          parameters << Param.new(param_name, "", param_type || default_param_type)
+        end
       end
 
       parameters
@@ -384,11 +427,14 @@ module Analyzer::CSharp
       normalized
     end
 
-    private def build_endpoint_from_route(raw_route : String, http_method : String, file : String, line : Int32) : Endpoint?
+    private def build_endpoint_from_route(raw_route : String, http_method : String, file : String, line : Int32, extra_params : Array(Param) = [] of Param) : Endpoint?
       return nil if raw_route.empty?
 
       route = normalize_route(raw_route)
       params = build_path_params(route)
+      extra_params.each do |param|
+        params << param unless params.any? { |p| p.name == param.name && p.param_type == param.param_type }
+      end
       route = prune_optional_placeholders(route, params)
 
       details = Details.new(PathInfo.new(file, line))
