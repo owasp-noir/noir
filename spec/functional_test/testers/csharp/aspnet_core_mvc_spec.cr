@@ -55,6 +55,16 @@ expected_endpoints = [
   ]),
   Endpoint.new("/mapped/methods", "PUT"),
   Endpoint.new("/mapped/methods", "DELETE"),
+  Endpoint.new("/mapped/multiline", "PATCH", [
+    Param.new("page", "", "query"),
+    Param.new("X-Mode", "", "header"),
+    Param.new("ml", "", "cookie"),
+  ]),
+  Endpoint.new("/mapped/multiline", "HEAD", [
+    Param.new("page", "", "query"),
+    Param.new("X-Mode", "", "header"),
+    Param.new("ml", "", "cookie"),
+  ]),
   Endpoint.new("/mapped/rich", "GET", [
     Param.new("q", "", "query"),
     Param.new("X-Test", "", "header"),

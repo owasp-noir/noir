@@ -26,6 +26,21 @@ namespace Demo.Endpoints
                 return Task.CompletedTask;
             });
 
+            routeBuilder.MapMethods(
+                "/mapped/multiline",
+                new string[]
+                {
+                    "PATCH",
+                    "HEAD"
+                },
+                async context =>
+                {
+                    var q = context.Request.Query["page"];
+                    var h = context.Request.Headers["X-Mode"];
+                    var c = context.Request.Cookies["ml"];
+                    await context.Response.WriteAsync($"{q}-{h}-{c}");
+                });
+
             routeBuilder.MapGet("/mapped/rich", async context =>
             {
                 var query = context.Request.Query["q"];

@@ -13,7 +13,7 @@ module Analyzer::CSharp
 
     private def analyze_route_builder_endpoints
       map_regex = /Map(Get|Post|Put|Delete|Patch|Head|Options)\s*\(\s*"([^"]+)"/
-      map_methods_regex = /MapMethods\s*\(\s*"([^"]+)"\s*,\s*new\s*\[\]\s*\{([^\}]+)\}/
+      map_methods_block_regex = /MapMethods\s*\(\s*"([^"]+)"\s*,\s*new\s*[^{]*\{([^}]+)\}/m
 
       get_files_by_extension(".cs").each do |file|
         next unless File.exists?(file)
@@ -29,15 +29,17 @@ module Analyzer::CSharp
             @result << endpoint if endpoint
           end
 
-          if (match = map_methods_regex.match(line))
-            route = match[1]
-            raw_methods = match[2]
-            methods = raw_methods.scan(/"([A-Za-z]+)"/).map { |m| m[1]?.to_s.upcase }.reject(&.empty?).uniq
+          if line.includes?("MapMethods")
             block = extract_map_block(lines, index)
-            extra_params = extract_params_from_block(block)
-            methods.each do |http_method|
-              endpoint = build_endpoint_from_route(route, http_method, file, index + 1, extra_params)
-              @result << endpoint if endpoint
+            if (match = map_methods_block_regex.match(block))
+              route = match[1]
+              raw_methods = match[2]
+              methods = raw_methods.scan(/"([A-Za-z]+)"/).map { |m| m[1]?.to_s.upcase }.reject(&.empty?).uniq
+              extra_params = extract_params_from_block(block)
+              methods.each do |http_method|
+                endpoint = build_endpoint_from_route(route, http_method, file, index + 1, extra_params)
+                @result << endpoint if endpoint
+              end
             end
           end
         end
@@ -45,18 +47,15 @@ module Analyzer::CSharp
     end
 
     private def extract_map_block(lines : Array(String), start_index : Int32) : String
-      buffer = String.build do |io|
-        brace = 0
-        i = start_index
-        while i < lines.size
-          line = lines[i]
-          brace += line.count('{') - line.count('}')
-          io << line
-          break if brace <= 0 && i > start_index
-          i += 1
-        end
+      io = String::Builder.new
+      i = start_index
+      while i < lines.size
+        line = lines[i]
+        io << line
+        break if line.includes?(");")
+        i += 1
       end
-      buffer
+      io.to_s
     end
 
     private def extract_params_from_block(block : String) : Array(Param)
