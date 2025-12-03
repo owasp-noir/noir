@@ -87,6 +87,18 @@ expected_endpoints = [
     Param.new("strValue", "", "query"),
     Param.new("boolValue", "", "query"),
   ]),
+  Endpoint.new("/debug/headers", "GET", [
+    Param.new("X-Debug", "", "header"),
+  ]),
+  Endpoint.new("/debug/cookies", "GET", [
+    Param.new("sessionId", "", "cookie"),
+  ]),
+  Endpoint.new("/debug/form", "POST", [
+    Param.new("extra", "", "form"),
+  ]),
+  Endpoint.new("/debug/json", "POST", [
+    Param.new("id", "", "json"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/csharp/aspnet_core_mvc/", {

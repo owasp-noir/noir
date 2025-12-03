@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
 
@@ -17,6 +18,36 @@ namespace Demo.Controllers
         {
             await Task.CompletedTask;
             return Content($"Defaults {intValue}-{strValue}-{boolValue}");
+        }
+
+        [HttpGet("debug/headers")]
+        public IActionResult Headers()
+        {
+            var header = Request.Headers["X-Debug"];
+            return Content(header);
+        }
+
+        [HttpGet("debug/cookies")]
+        public IActionResult Cookies()
+        {
+            var cookie = Request.Cookies["sessionId"];
+            return Content(cookie);
+        }
+
+        [HttpPost("debug/form")]
+        public IActionResult FormReader()
+        {
+            var val = Request.Form["extra"];
+            return Content(val);
+        }
+
+        [HttpPost("debug/json")]
+        public async Task<IActionResult> JsonReader()
+        {
+            using var doc = await System.Text.Json.JsonDocument.ParseAsync(Request.Body);
+            var root = doc.RootElement;
+            var id = root.GetProperty("id").GetString();
+            return Content(id);
         }
     }
 }

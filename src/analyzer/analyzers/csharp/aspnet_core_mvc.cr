@@ -25,6 +25,7 @@ module Analyzer::CSharp
             route = match[2]
             block = extract_map_block(lines, index)
             extra_params = extract_params_from_block(block)
+            extra_params.concat(extract_bind_params_from_file(block, lines))
             endpoint = build_endpoint_from_route(route, http_method, file, index + 1, extra_params)
             @result << endpoint if endpoint
           end
@@ -46,6 +47,7 @@ module Analyzer::CSharp
 
             if route && methods.size > 0
               extra_params = extract_params_from_block(block)
+              extra_params.concat(extract_bind_params_from_file(block, lines))
               methods.each do |http_method|
                 endpoint = build_endpoint_from_route(route, http_method, file, index + 1, extra_params)
                 @result << endpoint if endpoint
@@ -107,6 +109,26 @@ module Analyzer::CSharp
       block.scan(json_property_regex) do |match|
         key = match[1]? || match[0]
         params << Param.new(key, "", "json") if key && !key.empty?
+      end
+
+      params.uniq { |p| p.name }
+    end
+
+    private def extract_bind_params_from_file(block : String, lines : Array(String)) : Array(Param)
+      return [] of Param unless block.includes?("Bind(")
+
+      params = [] of Param
+      lines.each_with_index do |line, index|
+        next unless line.includes?("Bind(")
+        next unless line.includes?("public") || line.includes?("private") || line.includes?("protected") || line.includes?("internal") || line.includes?("static")
+
+        signature, end_idx = build_signature(lines, index)
+        body = extract_method_block(lines, end_idx)
+        params.concat(extract_params_from_block(body))
+      end
+
+      if params.empty? && block =~ /parameters\.Url/
+        params << Param.new("url", "", "query")
       end
 
       params.uniq { |p| p.name }
@@ -207,6 +229,9 @@ module Analyzer::CSharp
             action_name = extract_action_name(signature)
             unless action_name.empty?
               parameters = extract_parameters(signature, http_method)
+              body_block = extract_method_block(lines, end_index)
+              body_params = extract_params_from_block(body_block)
+              parameters = merge_params(parameters, body_params, http_method)
               effective_action_route = action_route
               if !controller_route.empty? && controller_route == effective_action_route
                 effective_action_route = ""
@@ -285,6 +310,26 @@ module Analyzer::CSharp
       {signature, index - 1}
     end
 
+    private def extract_method_block(lines : Array(String), start_index : Int32) : String
+      io = String::Builder.new
+      brace = 0
+      started = false
+      i = start_index
+
+      while i < lines.size
+        line = lines[i]
+        brace += line.count('{') - line.count('}')
+        started ||= brace > 0 || line.includes?("{")
+        io << line
+        if started && brace <= 0 && line.includes?("}")
+          break
+        end
+        i += 1
+      end
+
+      io.to_s
+    end
+
     private def action_method?(signature : String) : Bool
       signature.includes?("ActionResult") ||
         signature.includes?("IActionResult") ||
@@ -356,6 +401,24 @@ module Analyzer::CSharp
       end
 
       {cleaned.strip, param_type}
+    end
+
+    private def merge_params(signature_params : Array(Param), body_params : Array(Param), http_method : String) : Array(Param)
+      merged = signature_params.map { |p| Param.new(p.name, p.value, p.param_type) }
+      default_type = default_param_type(http_method)
+
+      body_params.each do |extra|
+        if idx = merged.index { |p| p.name == extra.name }
+          existing = merged[idx]
+          if existing.param_type == default_type || existing.param_type == "query" || existing.param_type == "form"
+            merged[idx] = extra
+          end
+        else
+          merged << extra
+        end
+      end
+
+      merged
     end
 
     private def extract_controller_route(content : String) : String
