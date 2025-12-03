@@ -12,3 +12,10 @@ ameba.sh
 # Ignore for Zola
 /docs/public/
 
+.crystal/
+# Build results
+[Dd]ebug/
+[Rr]elease/
+# Build Folders (you can keep bin if you'd like, to store dlls and pdbs)
+[Bb]in/
+[Oo]bj/

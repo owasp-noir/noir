@@ -1,0 +1,38 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.5.2.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "spec", "spec", "{9BE378C7-7189-187E-BE61-B4F76C8A79B9}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "functional_test", "functional_test", "{A8DBCBC8-0FCA-26B6-794A-240F8DCABA62}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "fixtures", "fixtures", "{BEB72A34-4E9F-FD35-02E6-21DA9457B2C6}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "csharp", "csharp", "{026A25C6-FDA7-5418-B925-FB124B169AC0}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MyApp", "spec\functional_test\fixtures\csharp\aspnet_core_mvc\MyApp.csproj", "{9A9F4DDA-4F26-FB39-46C7-929639823B2C}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{9A9F4DDA-4F26-FB39-46C7-929639823B2C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9A9F4DDA-4F26-FB39-46C7-929639823B2C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9A9F4DDA-4F26-FB39-46C7-929639823B2C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9A9F4DDA-4F26-FB39-46C7-929639823B2C}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{A8DBCBC8-0FCA-26B6-794A-240F8DCABA62} = {9BE378C7-7189-187E-BE61-B4F76C8A79B9}
+		{BEB72A34-4E9F-FD35-02E6-21DA9457B2C6} = {A8DBCBC8-0FCA-26B6-794A-240F8DCABA62}
+		{026A25C6-FDA7-5418-B925-FB124B169AC0} = {BEB72A34-4E9F-FD35-02E6-21DA9457B2C6}
+		{9A9F4DDA-4F26-FB39-46C7-929639823B2C} = {026A25C6-FDA7-5418-B925-FB124B169AC0}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {E2D186A6-B50D-4446-83DD-730130884082}
+	EndGlobalSection
+EndGlobal
