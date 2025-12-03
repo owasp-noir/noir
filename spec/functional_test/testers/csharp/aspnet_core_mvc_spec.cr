@@ -73,6 +73,10 @@ expected_endpoints = [
   Endpoint.new("/mapped/form", "POST", [
     Param.new("name", "", "form"),
   ]),
+  Endpoint.new("/mapped/json", "POST", [
+    Param.new("id", "", "json"),
+    Param.new("description", "", "json"),
+  ]),
   Endpoint.new("/expression/null", "GET", [
     Param.new("intValue", "", "query"),
     Param.new("strValue", "", "query"),

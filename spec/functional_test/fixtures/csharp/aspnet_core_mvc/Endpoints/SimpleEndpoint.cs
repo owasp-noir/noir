@@ -54,6 +54,15 @@ namespace Demo.Endpoints
                 var form = context.Request.Form["name"];
                 await context.Response.WriteAsync(form);
             });
+
+            routeBuilder.MapPost("/mapped/json", async context =>
+            {
+                using var doc = await System.Text.Json.JsonDocument.ParseAsync(context.Request.Body);
+                var root = doc.RootElement;
+                var id = root.GetProperty("id").GetString();
+                var desc = root.GetProperty("description").GetString();
+                await context.Response.WriteAsync($"{id}-{desc}");
+            });
         }
     }
 }

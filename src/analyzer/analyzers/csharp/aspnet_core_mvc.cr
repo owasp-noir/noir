@@ -13,7 +13,7 @@ module Analyzer::CSharp
 
     private def analyze_route_builder_endpoints
       map_regex = /Map(Get|Post|Put|Delete|Patch|Head|Options)\s*\(\s*"([^"]+)"/
-      map_methods_block_regex = /MapMethods\s*\(\s*"([^"]+)"\s*,\s*new\s*[^{]*\{([^}]+)\}/m
+      map_methods_block_regex = /MapMethods\s*\(\s*"([^"]+)"\s*,\s*([\s\S]+?)=>/
 
       get_files_by_extension(".cs").each do |file|
         next unless File.exists?(file)
@@ -31,10 +31,20 @@ module Analyzer::CSharp
 
           if line.includes?("MapMethods")
             block = extract_map_block(lines, index)
-            if (match = map_methods_block_regex.match(block))
+            route = nil
+            methods = [] of String
+
+            if match = block.match(/MapMethods\s*\(\s*"([^"]+)"\s*,\s*new[^{]*\{([^}]*)\}/m)
               route = match[1]
-              raw_methods = match[2]
-              methods = raw_methods.scan(/"([A-Za-z]+)"/).map { |m| m[1]?.to_s.upcase }.reject(&.empty?).uniq
+              methods_list = match[2].split(",")
+              methods = methods_list.map { |m| m.gsub(/["\s]/, "").upcase }.reject(&.empty?).uniq
+            elsif match = map_methods_block_regex.match(block)
+              route = match[1]
+              methods_section = match[2]
+              methods = methods_section.scan(/"([A-Za-z]+)"/).map { |m| m[1]?.to_s.upcase }.reject(&.empty?).uniq
+            end
+
+            if route && methods.size > 0
               extra_params = extract_params_from_block(block)
               methods.each do |http_method|
                 endpoint = build_endpoint_from_route(route, http_method, file, index + 1, extra_params)
@@ -48,13 +58,25 @@ module Analyzer::CSharp
 
     private def extract_map_block(lines : Array(String), start_index : Int32) : String
       io = String::Builder.new
+      brace = 0
+      seen_lambda = false
+      lambda_brace_start = nil
       i = start_index
+
       while i < lines.size
         line = lines[i]
+        brace += line.count('{') - line.count('}')
+        seen_lambda ||= line.includes?("=>")
+        if seen_lambda && line.includes?("{") && lambda_brace_start.nil?
+          lambda_brace_start = brace
+        end
         io << line
-        break if line.includes?(");")
+        if lambda_brace_start && brace < lambda_brace_start && i > start_index
+          break
+        end
         i += 1
       end
+
       io.to_s
     end
 
@@ -64,6 +86,7 @@ module Analyzer::CSharp
       header_regex = /Request\.Headers\["([^"]+)"\]/
       cookie_regex = /Request\.Cookies\["([^"]+)"\]/
       form_regex = /Request\.Form\["([^"]+)"\]/
+      json_property_regex = /GetProperty\s*\(\s*"([^"]+)"\s*\)/
 
       block.scan(query_regex) do |match|
         key = match[1]? || match[0]
@@ -80,6 +103,10 @@ module Analyzer::CSharp
       block.scan(form_regex) do |match|
         key = match[1]? || match[0]
         params << Param.new(key, "", "form") if key && !key.empty?
+      end
+      block.scan(json_property_regex) do |match|
+        key = match[1]? || match[0]
+        params << Param.new(key, "", "json") if key && !key.empty?
       end
 
       params.uniq { |p| p.name }
