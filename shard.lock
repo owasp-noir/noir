@@ -14,5 +14,5 @@ shards:
 
   http_proxy:
     git: https://github.com/mamantoha/http_proxy.git
-    version: 0.13.0
+    version: 0.13.1
 
