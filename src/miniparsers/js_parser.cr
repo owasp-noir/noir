@@ -221,8 +221,8 @@ module Noir
       # Look for app.METHOD or router.METHOD patterns - only at current position
       if idx < @tokens.size - 2 &&
          (@tokens[idx].value == "app" ||
-          @tokens[idx].value == "router" ||
-          @tokens[idx].value.ends_with?("Router")) &&
+         @tokens[idx].value == "router" ||
+         @tokens[idx].value.ends_with?("Router")) &&
          idx + 2 < @tokens.size &&
          @tokens[idx + 1].type == :dot &&
          @tokens[idx + 2].type == :http_method
@@ -279,8 +279,8 @@ module Noir
       # Look for fastify.METHOD patterns
       if idx < @tokens.size - 2 &&
          (@tokens[idx].value == "fastify" ||
-          @tokens[idx].value == "app" ||
-          @tokens[idx].value == "server") &&
+         @tokens[idx].value == "app" ||
+         @tokens[idx].value == "server") &&
          idx + 2 < @tokens.size &&
          @tokens[idx + 1].type == :dot &&
          @tokens[idx + 2].type == :http_method
@@ -318,8 +318,8 @@ module Noir
       # Look for server.METHOD patterns
       if idx < @tokens.size - 2 &&
          (@tokens[idx].value == "server" ||
-          @tokens[idx].value == "router" ||
-          @tokens[idx].value.ends_with?("Router")) &&
+         @tokens[idx].value == "router" ||
+         @tokens[idx].value.ends_with?("Router")) &&
          idx + 2 < @tokens.size &&
          @tokens[idx + 1].type == :dot &&
          @tokens[idx + 2].type == :http_method
@@ -484,8 +484,8 @@ module Noir
       # The main loop will iterate through all positions
       if idx < @tokens.size - 5 &&
          (@tokens[idx].value == "app" ||
-          @tokens[idx].value == "router" ||
-          @tokens[idx].value.ends_with?("Router")) &&
+         @tokens[idx].value == "router" ||
+         @tokens[idx].value.ends_with?("Router")) &&
          idx + 2 < @tokens.size &&
          @tokens[idx + 1].type == :dot &&
          @tokens[idx + 2].value == "route" &&
