@@ -200,12 +200,18 @@ module Noir
       case identifier
       when "function", "async", "const", "let", "var", "return", "if", "else", "for", "while"
         add_token(:keyword, identifier)
-      when "get", "post", "put", "delete", "options", "head", "patch", "del", "all"
-        add_token(:http_method, identifier)
       when "true", "false", "null", "undefined"
         add_token(:literal, identifier)
       else
-        add_token(:identifier, identifier)
+        # Check for HTTP methods case-insensitively
+        lower_identifier = identifier.downcase
+        if lower_identifier == "get" || lower_identifier == "post" || lower_identifier == "put" ||
+           lower_identifier == "delete" || lower_identifier == "options" || lower_identifier == "head" ||
+           lower_identifier == "patch" || lower_identifier == "del" || lower_identifier == "all"
+          add_token(:http_method, identifier)
+        else
+          add_token(:identifier, identifier)
+        end
       end
     end
   end

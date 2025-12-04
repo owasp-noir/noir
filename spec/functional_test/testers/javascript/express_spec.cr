@@ -26,6 +26,11 @@ expected_endpoints = [
   ]),
   # Added endpoints
   Endpoint.new("/products", "GET"),
+  Endpoint.new("/products", "POST", [
+    Param.new("title", "", "json"),
+    Param.new("price", "", "json"),
+    Param.new("Authorization", "", "header"),
+  ]),
   Endpoint.new("/profile/:userId", "GET", [
     Param.new("userId", "", "path"),
     Param.new("fields", "", "query"),

@@ -218,56 +218,54 @@ module Noir
     private def parse_express_route : JSRoutePattern?
       idx = @position
 
-      # Look for app.METHOD or router.METHOD patterns
-      while idx < @tokens.size - 2
-        if (@tokens[idx].value == "app" ||
-           @tokens[idx].value == "router" ||
-           @tokens[idx].value.ends_with?("Router")) &&
-           idx + 2 < @tokens.size &&
-           @tokens[idx + 1].type == :dot &&
-           @tokens[idx + 2].type == :http_method
-          method = @tokens[idx + 2].value.upcase
+      # Look for app.METHOD or router.METHOD patterns - only at current position
+      if idx < @tokens.size - 2 &&
+         (@tokens[idx].value == "app" ||
+         @tokens[idx].value == "router" ||
+         @tokens[idx].value.ends_with?("Router")) &&
+         idx + 2 < @tokens.size &&
+         @tokens[idx + 1].type == :dot &&
+         @tokens[idx + 2].type == :http_method
+        method = @tokens[idx + 2].value.upcase
 
-          # Look for the path string in parentheses
-          path_idx = idx + 3
-          if path_idx < @tokens.size &&
-             @tokens[path_idx].type == :lparen &&
-             path_idx + 1 < @tokens.size
-            path = nil
-            # Check for regular string
-            if @tokens[path_idx + 1].type == :string
-              path = @tokens[path_idx + 1].value
-              @position = path_idx + 2
-              # Check for template literal or dynamic path construction
-            elsif @tokens[path_idx + 1].type == :template_literal ||
-                  @tokens[path_idx + 1].type == :identifier
-              resolved_path = resolve_dynamic_path(path_idx + 1)
-              if resolved_path
-                path = resolved_path
-                # Skip past the resolved tokens - find the end of the expression
-                skip_idx = path_idx + 1
-                while skip_idx < @tokens.size &&
-                      (@tokens[skip_idx].type == :identifier ||
-                      @tokens[skip_idx].type == :plus ||
-                      @tokens[skip_idx].type == :string ||
-                      @tokens[skip_idx].type == :template_literal)
-                  skip_idx += 1
-                end
-                @position = skip_idx
+        # Look for the path string in parentheses
+        path_idx = idx + 3
+        if path_idx < @tokens.size &&
+           @tokens[path_idx].type == :lparen &&
+           path_idx + 1 < @tokens.size
+          path = nil
+          # Check for regular string
+          if @tokens[path_idx + 1].type == :string
+            path = @tokens[path_idx + 1].value
+            @position = path_idx + 2
+            # Check for template literal or dynamic path construction
+          elsif @tokens[path_idx + 1].type == :template_literal ||
+                @tokens[path_idx + 1].type == :identifier
+            resolved_path = resolve_dynamic_path(path_idx + 1)
+            if resolved_path
+              path = resolved_path
+              # Skip past the resolved tokens - find the end of the expression
+              skip_idx = path_idx + 1
+              while skip_idx < @tokens.size &&
+                    (@tokens[skip_idx].type == :identifier ||
+                    @tokens[skip_idx].type == :plus ||
+                    @tokens[skip_idx].type == :string ||
+                    @tokens[skip_idx].type == :template_literal)
+                skip_idx += 1
               end
-            end
-
-            if path
-              # Extract parameters from path
-              route = JSRoutePattern.new(method, path)
-              extract_path_params(path).each do |param|
-                route.push_param(param)
-              end
-              return route
+              @position = skip_idx
             end
           end
+
+          if path
+            # Extract parameters from path
+            route = JSRoutePattern.new(method, path)
+            extract_path_params(path).each do |param|
+              route.push_param(param)
+            end
+            return route
+          end
         end
-        idx += 1
       end
 
       nil
@@ -275,39 +273,38 @@ module Noir
 
     private def parse_fastify_route : JSRoutePattern?
       # Similar to Express but with fastify variable name
+      # Only check at current position
       idx = @position
 
       # Look for fastify.METHOD patterns
-      while idx < @tokens.size - 2
-        if (@tokens[idx].value == "fastify" ||
-           @tokens[idx].value == "app" ||
-           @tokens[idx].value == "server") &&
-           idx + 2 < @tokens.size &&
-           @tokens[idx + 1].type == :dot &&
-           @tokens[idx + 2].type == :http_method
-          method = @tokens[idx + 2].value.upcase
+      if idx < @tokens.size - 2 &&
+         (@tokens[idx].value == "fastify" ||
+         @tokens[idx].value == "app" ||
+         @tokens[idx].value == "server") &&
+         idx + 2 < @tokens.size &&
+         @tokens[idx + 1].type == :dot &&
+         @tokens[idx + 2].type == :http_method
+        method = @tokens[idx + 2].value.upcase
 
-          # Look for the path string in parentheses
-          path_idx = idx + 3
-          if path_idx < @tokens.size &&
-             @tokens[path_idx].type == :lparen &&
-             path_idx + 1 < @tokens.size &&
-             @tokens[path_idx + 1].type == :string
-            path = @tokens[path_idx + 1].value
+        # Look for the path string in parentheses
+        path_idx = idx + 3
+        if path_idx < @tokens.size &&
+           @tokens[path_idx].type == :lparen &&
+           path_idx + 1 < @tokens.size &&
+           @tokens[path_idx + 1].type == :string
+          path = @tokens[path_idx + 1].value
 
-            # Advance our position past what we've parsed
-            @position = path_idx + 2
+          # Advance our position past what we've parsed
+          @position = path_idx + 2
 
-            # Extract parameters from path
-            route = JSRoutePattern.new(method, path)
-            extract_path_params(path).each do |param|
-              route.push_param(param)
-            end
-
-            return route
+          # Extract parameters from path
+          route = JSRoutePattern.new(method, path)
+          extract_path_params(path).each do |param|
+            route.push_param(param)
           end
+
+          return route
         end
-        idx += 1
       end
 
       nil
@@ -315,58 +312,58 @@ module Noir
 
     private def parse_restify_route : JSRoutePattern?
       # Similar to Express but handle restify specific patterns like .del()
+      # Only check at current position
       idx = @position
 
       # Look for server.METHOD patterns
-      while idx < @tokens.size - 2
-        if (@tokens[idx].value == "server" ||
-           @tokens[idx].value == "router" ||
-           @tokens[idx].value.ends_with?("Router")) &&
-           idx + 2 < @tokens.size &&
-           @tokens[idx + 1].type == :dot &&
-           @tokens[idx + 2].type == :http_method
-          method = @tokens[idx + 2].value
-          # Handle restify's 'del' method which means DELETE
-          method = "DELETE" if method.downcase == "del"
-          method = method.upcase
+      if idx < @tokens.size - 2 &&
+         (@tokens[idx].value == "server" ||
+         @tokens[idx].value == "router" ||
+         @tokens[idx].value.ends_with?("Router")) &&
+         idx + 2 < @tokens.size &&
+         @tokens[idx + 1].type == :dot &&
+         @tokens[idx + 2].type == :http_method
+        method = @tokens[idx + 2].value
+        # Handle restify's 'del' method which means DELETE
+        method = "DELETE" if method.downcase == "del"
+        method = method.upcase
 
-          # Look for the path string in parentheses
-          path_idx = idx + 3
-          if path_idx < @tokens.size &&
-             @tokens[path_idx].type == :lparen &&
-             path_idx + 1 < @tokens.size
-            # Handle both string and object pattern { path: '/route' }
-            if @tokens[path_idx + 1].type == :string
-              path = @tokens[path_idx + 1].value
-              @position = path_idx + 2
-            elsif @tokens[path_idx + 1].type == :lbrace
-              # Look for path property in object
-              obj_idx = path_idx + 1
-              while obj_idx < @tokens.size && @tokens[obj_idx].type != :rbrace
-                if @tokens[obj_idx].value == "path" &&
-                   obj_idx + 1 < @tokens.size &&
-                   @tokens[obj_idx + 1].type == :colon &&
-                   obj_idx + 2 < @tokens.size &&
-                   @tokens[obj_idx + 2].type == :string
-                  path = @tokens[obj_idx + 2].value
-                  @position = obj_idx + 3
-                  break
-                end
-                obj_idx += 1
+        # Look for the path string in parentheses
+        path_idx = idx + 3
+        if path_idx < @tokens.size &&
+           @tokens[path_idx].type == :lparen &&
+           path_idx + 1 < @tokens.size
+          path = nil
+          # Handle both string and object pattern { path: '/route' }
+          if @tokens[path_idx + 1].type == :string
+            path = @tokens[path_idx + 1].value
+            @position = path_idx + 2
+          elsif @tokens[path_idx + 1].type == :lbrace
+            # Look for path property in object
+            obj_idx = path_idx + 1
+            while obj_idx < @tokens.size && @tokens[obj_idx].type != :rbrace
+              if @tokens[obj_idx].value == "path" &&
+                 obj_idx + 1 < @tokens.size &&
+                 @tokens[obj_idx + 1].type == :colon &&
+                 obj_idx + 2 < @tokens.size &&
+                 @tokens[obj_idx + 2].type == :string
+                path = @tokens[obj_idx + 2].value
+                @position = obj_idx + 3
+                break
               end
-            end
-
-            # If we found a path, create a route object
-            if path
-              route = JSRoutePattern.new(method, path)
-              extract_path_params(path).each do |param|
-                route.push_param(param)
-              end
-              return route
+              obj_idx += 1
             end
           end
+
+          # If we found a path, create a route object
+          if path
+            route = JSRoutePattern.new(method, path)
+            extract_path_params(path).each do |param|
+              route.push_param(param)
+            end
+            return route
+          end
         end
-        idx += 1
       end
 
       nil
@@ -374,55 +371,54 @@ module Noir
 
     private def parse_generic_route : JSRoutePattern?
       # For unknown frameworks, just look for HTTP method patterns
+      # Only check at current position
       idx = @position
 
       # Look for .METHOD patterns
-      while idx < @tokens.size - 2
-        if idx > 0 &&
-           @tokens[idx].type == :dot &&
-           @tokens[idx + 1].type == :http_method
-          method = @tokens[idx + 1].value.upcase
+      if idx > 0 &&
+         idx < @tokens.size - 2 &&
+         @tokens[idx].type == :dot &&
+         @tokens[idx + 1].type == :http_method
+        method = @tokens[idx + 1].value.upcase
 
-          # Look for the path string in parentheses
-          path_idx = idx + 2
-          if path_idx < @tokens.size &&
-             @tokens[path_idx].type == :lparen &&
-             path_idx + 1 < @tokens.size
-            path = nil
-            # Check for regular string
-            if @tokens[path_idx + 1].type == :string
-              path = @tokens[path_idx + 1].value
-              @position = path_idx + 2
-              # Check for template literal or dynamic path construction
-            elsif @tokens[path_idx + 1].type == :template_literal ||
-                  @tokens[path_idx + 1].type == :identifier
-              resolved_path = resolve_dynamic_path(path_idx + 1)
-              if resolved_path
-                path = resolved_path
-                # Skip past the resolved tokens - find the end of the expression
-                skip_idx = path_idx + 1
-                while skip_idx < @tokens.size &&
-                      (@tokens[skip_idx].type == :identifier ||
-                      @tokens[skip_idx].type == :plus ||
-                      @tokens[skip_idx].type == :string ||
-                      @tokens[skip_idx].type == :template_literal)
-                  skip_idx += 1
-                end
-                @position = skip_idx
+        # Look for the path string in parentheses
+        path_idx = idx + 2
+        if path_idx < @tokens.size &&
+           @tokens[path_idx].type == :lparen &&
+           path_idx + 1 < @tokens.size
+          path = nil
+          # Check for regular string
+          if @tokens[path_idx + 1].type == :string
+            path = @tokens[path_idx + 1].value
+            @position = path_idx + 2
+            # Check for template literal or dynamic path construction
+          elsif @tokens[path_idx + 1].type == :template_literal ||
+                @tokens[path_idx + 1].type == :identifier
+            resolved_path = resolve_dynamic_path(path_idx + 1)
+            if resolved_path
+              path = resolved_path
+              # Skip past the resolved tokens - find the end of the expression
+              skip_idx = path_idx + 1
+              while skip_idx < @tokens.size &&
+                    (@tokens[skip_idx].type == :identifier ||
+                    @tokens[skip_idx].type == :plus ||
+                    @tokens[skip_idx].type == :string ||
+                    @tokens[skip_idx].type == :template_literal)
+                skip_idx += 1
               end
-            end
-
-            if path
-              # Extract parameters from path
-              route = JSRoutePattern.new(method, path)
-              extract_path_params(path).each do |param|
-                route.push_param(param)
-              end
-              return route
+              @position = skip_idx
             end
           end
+
+          if path
+            # Extract parameters from path
+            route = JSRoutePattern.new(method, path)
+            extract_path_params(path).each do |param|
+              route.push_param(param)
+            end
+            return route
+          end
         end
-        idx += 1
       end
 
       nil
@@ -484,47 +480,46 @@ module Noir
         @current_route_start_idx = nil
       end
 
-      # Look for a new route() declaration
-      while idx < @tokens.size - 5
-        if (@tokens[idx].value == "app" ||
-           @tokens[idx].value == "router" ||
-           @tokens[idx].value.ends_with?("Router")) &&
-           idx + 2 < @tokens.size &&
-           @tokens[idx + 1].type == :dot &&
-           @tokens[idx + 2].value == "route" &&
-           idx + 3 < @tokens.size &&
-           @tokens[idx + 3].type == :lparen &&
-           idx + 4 < @tokens.size &&
-           @tokens[idx + 4].type == :string
-          path = @tokens[idx + 4].value
+      # Look for a new route() declaration - only at the current position
+      # The main loop will iterate through all positions
+      if idx < @tokens.size - 5 &&
+         (@tokens[idx].value == "app" ||
+         @tokens[idx].value == "router" ||
+         @tokens[idx].value.ends_with?("Router")) &&
+         idx + 2 < @tokens.size &&
+         @tokens[idx + 1].type == :dot &&
+         @tokens[idx + 2].value == "route" &&
+         idx + 3 < @tokens.size &&
+         @tokens[idx + 3].type == :lparen &&
+         idx + 4 < @tokens.size &&
+         @tokens[idx + 4].type == :string
+        path = @tokens[idx + 4].value
 
-          # Look for method chaining after .route('/path')
-          method_idx = idx + 6 # Skip past string and closing paren
-          while method_idx < @tokens.size - 1
-            if @tokens[method_idx].type == :dot &&
-               method_idx + 1 < @tokens.size &&
-               @tokens[method_idx + 1].type == :http_method
-              method = @tokens[method_idx + 1].value.upcase
+        # Look for method chaining after .route('/path')
+        method_idx = idx + 6 # Skip past string and closing paren
+        while method_idx < @tokens.size - 1
+          if @tokens[method_idx].type == :dot &&
+             method_idx + 1 < @tokens.size &&
+             @tokens[method_idx + 1].type == :http_method
+            method = @tokens[method_idx + 1].value.upcase
 
-              # Create a route for this HTTP method
-              route = JSRoutePattern.new(method, path)
-              extract_path_params(path).each do |param|
-                route.push_param(param)
-              end
-
-              # Set up for chain continuation
-              @current_route_path = path
-              @current_route_start_idx = idx
-              @position = method_idx + 2 # Move past dot and method
-              return route
-            elsif @tokens[method_idx].type == :semicolon
-              # End of statement without finding a method
-              break
+            # Create a route for this HTTP method
+            route = JSRoutePattern.new(method, path)
+            extract_path_params(path).each do |param|
+              route.push_param(param)
             end
-            method_idx += 1
+
+            # Set up for chain continuation
+            @current_route_path = path
+            @current_route_start_idx = idx
+            @position = method_idx + 2 # Move past dot and method
+            return route
+          elsif @tokens[method_idx].type == :semicolon
+            # End of statement without finding a method
+            break
           end
+          method_idx += 1
         end
-        idx += 1
       end
 
       nil
@@ -532,60 +527,59 @@ module Noir
 
     private def parse_fastify_register_route : JSRoutePattern?
       # Parse fastify.register(routes, { prefix: '/api/v1' }) patterns
+      # Only check at the current position to avoid skipping other routes
       idx = @position
 
-      while idx < @tokens.size - 3
-        if (@tokens[idx].value == "fastify" || @tokens[idx].value == "app" || @tokens[idx].value == "server") &&
-           idx + 2 < @tokens.size &&
-           @tokens[idx + 1].type == :dot &&
-           @tokens[idx + 2].value == "register" &&
-           idx + 3 < @tokens.size &&
-           @tokens[idx + 3].type == :lparen
-          # Skip to the options object
-          options_idx = idx + 4
-          prefix = ""
+      if idx < @tokens.size - 3 &&
+         (@tokens[idx].value == "fastify" || @tokens[idx].value == "app" || @tokens[idx].value == "server") &&
+         idx + 2 < @tokens.size &&
+         @tokens[idx + 1].type == :dot &&
+         @tokens[idx + 2].value == "register" &&
+         idx + 3 < @tokens.size &&
+         @tokens[idx + 3].type == :lparen
+        # Skip to the options object
+        options_idx = idx + 4
+        prefix = ""
 
-          # Look for { prefix: '/path' } pattern
-          while options_idx < @tokens.size && @tokens[options_idx].type != :rbrace
-            if @tokens[options_idx].value == "prefix" &&
-               options_idx + 1 < @tokens.size &&
-               @tokens[options_idx + 1].type == :colon &&
-               options_idx + 2 < @tokens.size &&
-               @tokens[options_idx + 2].type == :string
-              prefix = @tokens[options_idx + 2].value
-              break
-            end
-            options_idx += 1
+        # Look for { prefix: '/path' } pattern
+        while options_idx < @tokens.size && @tokens[options_idx].type != :rbrace
+          if @tokens[options_idx].value == "prefix" &&
+             options_idx + 1 < @tokens.size &&
+             @tokens[options_idx + 1].type == :colon &&
+             options_idx + 2 < @tokens.size &&
+             @tokens[options_idx + 2].type == :string
+            prefix = @tokens[options_idx + 2].value
+            break
           end
+          options_idx += 1
+        end
 
-          if !prefix.empty?
-            # Look ahead for potential routes within the registered module
-            ahead_idx = options_idx + 3 # Skip past the closing brace
-            while ahead_idx < @tokens.size - 3
-              if ahead_idx + 2 < @tokens.size &&
-                 @tokens[ahead_idx + 1].type == :dot &&
-                 @tokens[ahead_idx + 2].type == :http_method &&
-                 ahead_idx + 3 < @tokens.size &&
-                 @tokens[ahead_idx + 3].type == :lparen &&
-                 ahead_idx + 4 < @tokens.size &&
-                 @tokens[ahead_idx + 4].type == :string
-                method = @tokens[ahead_idx + 2].value.upcase
-                path = @tokens[ahead_idx + 4].value
+        if !prefix.empty?
+          # Look ahead for potential routes within the registered module
+          ahead_idx = options_idx + 3 # Skip past the closing brace
+          while ahead_idx < @tokens.size - 3
+            if ahead_idx + 2 < @tokens.size &&
+               @tokens[ahead_idx + 1].type == :dot &&
+               @tokens[ahead_idx + 2].type == :http_method &&
+               ahead_idx + 3 < @tokens.size &&
+               @tokens[ahead_idx + 3].type == :lparen &&
+               ahead_idx + 4 < @tokens.size &&
+               @tokens[ahead_idx + 4].type == :string
+              method = @tokens[ahead_idx + 2].value.upcase
+              path = @tokens[ahead_idx + 4].value
 
-                # Create route with the prefix
-                route = JSRoutePattern.new(method, "#{prefix}#{path}")
-                extract_path_params(path).each do |param|
-                  route.push_param(param)
-                end
-
-                @position = ahead_idx + 5
-                return route
+              # Create route with the prefix
+              route = JSRoutePattern.new(method, "#{prefix}#{path}")
+              extract_path_params(path).each do |param|
+                route.push_param(param)
               end
-              ahead_idx += 1
+
+              @position = ahead_idx + 5
+              return route
             end
+            ahead_idx += 1
           end
         end
-        idx += 1
       end
 
       nil
@@ -593,57 +587,56 @@ module Noir
 
     private def parse_restify_apply_routes : JSRoutePattern?
       # Parse router.applyRoutes(server, '/prefix') patterns
+      # Only check at the current position to avoid skipping other routes
       idx = @position
 
-      while idx < @tokens.size - 3
-        if (@tokens[idx].value.ends_with?("Router") || @tokens[idx].type == :identifier) &&
-           idx + 2 < @tokens.size &&
-           @tokens[idx + 1].type == :dot &&
-           @tokens[idx + 2].value == "applyRoutes" &&
-           idx + 3 < @tokens.size &&
-           @tokens[idx + 3].type == :lparen
-          # Look for prefix in second parameter
-          prefix = ""
-          if idx + 5 < @tokens.size && @tokens[idx + 5].type == :string
-            prefix = @tokens[idx + 5].value
-          end
-
-          # Look back for routes defined on this router
-          router_name = @tokens[idx].value
-          back_idx = idx - 1
-          route_count = 0
-
-          while back_idx > 0 && route_count < 20 # Limit backward search
-            if back_idx > 2 &&
-               @tokens[back_idx - 2].value == router_name &&
-               @tokens[back_idx - 1].type == :dot &&
-               (@tokens[back_idx].type == :http_method ||
-               @tokens[back_idx].value == "del") && # Restify uses 'del' for DELETE
-               back_idx + 1 < @tokens.size &&
-               @tokens[back_idx + 1].type == :lparen &&
-               back_idx + 2 < @tokens.size &&
-               @tokens[back_idx + 2].type == :string
-              method = @tokens[back_idx].value.upcase
-              # Handle restify's 'del' method which means DELETE
-              method = "DELETE" if method.downcase == "del"
-
-              path = @tokens[back_idx + 2].value
-              full_path = prefix.empty? ? path : "#{prefix}#{path}"
-
-              # Create route with the prefix
-              route = JSRoutePattern.new(method, full_path)
-              extract_path_params(path).each do |param|
-                route.push_param(param)
-              end
-
-              @position = back_idx + 3
-              return route
-            end
-            back_idx -= 1
-            route_count += 1
-          end
+      if idx < @tokens.size - 3 &&
+         (@tokens[idx].value.ends_with?("Router") || @tokens[idx].type == :identifier) &&
+         idx + 2 < @tokens.size &&
+         @tokens[idx + 1].type == :dot &&
+         @tokens[idx + 2].value == "applyRoutes" &&
+         idx + 3 < @tokens.size &&
+         @tokens[idx + 3].type == :lparen
+        # Look for prefix in second parameter
+        prefix = ""
+        if idx + 5 < @tokens.size && @tokens[idx + 5].type == :string
+          prefix = @tokens[idx + 5].value
         end
-        idx += 1
+
+        # Look back for routes defined on this router
+        router_name = @tokens[idx].value
+        back_idx = idx - 1
+        route_count = 0
+
+        while back_idx > 0 && route_count < 20 # Limit backward search
+          if back_idx > 2 &&
+             @tokens[back_idx - 2].value == router_name &&
+             @tokens[back_idx - 1].type == :dot &&
+             (@tokens[back_idx].type == :http_method ||
+             @tokens[back_idx].value == "del") && # Restify uses 'del' for DELETE
+             back_idx + 1 < @tokens.size &&
+             @tokens[back_idx + 1].type == :lparen &&
+             back_idx + 2 < @tokens.size &&
+             @tokens[back_idx + 2].type == :string
+            method = @tokens[back_idx].value.upcase
+            # Handle restify's 'del' method which means DELETE
+            method = "DELETE" if method.downcase == "del"
+
+            path = @tokens[back_idx + 2].value
+            full_path = prefix.empty? ? path : "#{prefix}#{path}"
+
+            # Create route with the prefix
+            route = JSRoutePattern.new(method, full_path)
+            extract_path_params(path).each do |param|
+              route.push_param(param)
+            end
+
+            @position = back_idx + 3
+            return route
+          end
+          back_idx -= 1
+          route_count += 1
+        end
       end
 
       nil
