@@ -1,9 +1,8 @@
+require "../../spec_helper"
 require "../../../src/models/analyzer.cr"
-require "../../../src/options.cr"
 
 describe "Initialize Analyzer" do
-  config_init = ConfigInitializer.new
-  options = config_init.default_options
+  options = create_test_options
   options["base"] = YAML::Any.new([YAML::Any.new("noir")])
   object = Analyzer.new(options)
 
@@ -22,8 +21,7 @@ describe "Initialize Analyzer" do
 end
 
 describe "Initialize FileAnalyzer" do
-  config_init = ConfigInitializer.new
-  options = config_init.default_options
+  options = create_test_options
   options["base"] = YAML::Any.new([YAML::Any.new("noir")])
   object = FileAnalyzer.new(options)
 

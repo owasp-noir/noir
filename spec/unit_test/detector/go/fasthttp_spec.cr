@@ -1,10 +1,8 @@
-require "spec"
-require "../../../../src/config_initializer"
+require "../../../spec_helper"
 require "../../../../src/detector/detectors/go/*"
 
 describe "Detect Go Fasthttp" do
-  config_init = ConfigInitializer.new
-  options = config_init.default_options
+  options = create_test_options
   instance = Detector::Go::Fasthttp.new options
 
   it "go.mod" do

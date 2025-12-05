@@ -1,9 +1,9 @@
-require "../../../../src/detector/detectors/*"
+require "../../../spec_helper"
+require "../../../../src/detector/detectors/specification/*"
 require "../../../../src/models/code_locator"
 
 describe "Detect OAS 2.0(Swagger) Docs" do
-  config_init = ConfigInitializer.new
-  options = config_init.default_options
+  options = create_test_options
   instance = Detector::Specification::Oas2.new options
 
   it "json format" do

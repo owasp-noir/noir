@@ -1,10 +1,8 @@
 require "../../../spec_helper"
 require "../../../../src/detector/detectors/go/*"
-require "../../../../src/config_initializer"
 
 describe "Detect Go Mux" do
-  config_init = ConfigInitializer.new
-  options = config_init.default_options
+  options = create_test_options
   instance = Detector::Go::Mux.new options
 
   it "go.mod" do

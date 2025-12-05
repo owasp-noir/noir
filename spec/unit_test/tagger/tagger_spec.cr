@@ -1,9 +1,9 @@
+require "../../spec_helper"
 require "../../../src/tagger/tagger"
 
 describe "Tagger" do
   it "hunt_tagger" do
-    config_init = ConfigInitializer.new
-    noir_options = config_init.default_options
+    noir_options = create_test_options
     expected_endpoints = [
       Endpoint.new("/api/me", "GET", [
         Param.new("q", "", "query"),
@@ -42,8 +42,7 @@ describe "Tagger" do
   end
 
   it "oauth_tagger" do
-    config_init = ConfigInitializer.new
-    noir_options = config_init.default_options
+    noir_options = create_test_options
     expected_endpoints = [
       Endpoint.new("/token", "GET", [
         Param.new("client_id", "", "query"),
@@ -61,8 +60,7 @@ describe "Tagger" do
   end
 
   it "cors_tagger" do
-    config_init = ConfigInitializer.new
-    noir_options = config_init.default_options
+    noir_options = create_test_options
     expected_endpoints = [
       Endpoint.new("/api/me", "GET", [
         Param.new("q", "", "query"),
@@ -79,8 +77,7 @@ describe "Tagger" do
   end
 
   it "soap_tagger" do
-    config_init = ConfigInitializer.new
-    noir_options = config_init.default_options
+    noir_options = create_test_options
     expected_endpoints = [
       Endpoint.new("/api/me", "GET", [
         Param.new("SOAPAction", "", "header"),
@@ -96,8 +93,7 @@ describe "Tagger" do
   end
 
   it "websocket_tagger_1" do
-    config_init = ConfigInitializer.new
-    noir_options = config_init.default_options
+    noir_options = create_test_options
     expected_endpoints = [
       Endpoint.new("/ws", "GET", [
         Param.new("sec-websocket-version", "", "header"),
@@ -114,8 +110,7 @@ describe "Tagger" do
   end
 
   it "websocket_tagger_2" do
-    config_init = ConfigInitializer.new
-    noir_options = config_init.default_options
+    noir_options = create_test_options
     e = Endpoint.new("/ws", "GET")
     e.protocol = "ws"
 
@@ -131,8 +126,7 @@ describe "Tagger" do
   end
 
   it "graphql_tagger" do
-    config_init = ConfigInitializer.new
-    noir_options = config_init.default_options
+    noir_options = create_test_options
     expected_endpoints = [
       Endpoint.new("/graphql", "POST", [
         Param.new("query", "{ users { id } }", "form"),
@@ -148,8 +142,7 @@ describe "Tagger" do
   end
 
   it "jwt_tagger" do
-    config_init = ConfigInitializer.new
-    noir_options = config_init.default_options
+    noir_options = create_test_options
     expected_endpoints = [
       Endpoint.new("/auth/token", "POST", [
         Param.new("token", "", "form"),
@@ -166,8 +159,7 @@ describe "Tagger" do
   end
 
   it "file_upload_tagger" do
-    config_init = ConfigInitializer.new
-    noir_options = config_init.default_options
+    noir_options = create_test_options
     expected_endpoints = [
       Endpoint.new("/api/upload", "POST", [
         Param.new("file", "", "form"),

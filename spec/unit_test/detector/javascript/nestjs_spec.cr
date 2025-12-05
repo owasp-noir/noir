@@ -1,10 +1,8 @@
-require "spec"
+require "../../../spec_helper"
 require "../../../../src/detector/detectors/javascript/nestjs"
-require "../../../../src/config_initializer"
 
 describe "Detect JS NestJS" do
-  config_init = ConfigInitializer.new
-  options = config_init.default_options
+  options = create_test_options
   instance = Detector::Javascript::Nestjs.new options
 
   it "require_nestjs_core_single_quot" do

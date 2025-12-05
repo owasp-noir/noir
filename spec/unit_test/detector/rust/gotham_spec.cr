@@ -1,10 +1,8 @@
-require "spec"
-require "../../../../src/detector/detectors/*"
-require "../../../../src/config_initializer"
+require "../../../spec_helper"
+require "../../../../src/detector/detectors/rust/*"
 
 describe "Detect Rust Gotham" do
-  config_init = ConfigInitializer.new
-  options = config_init.default_options
+  options = create_test_options
   instance = Detector::Rust::Gotham.new options
 
   it "Cargo.toml" do

@@ -1,9 +1,9 @@
-require "../../../../src/detector/detectors/*"
+require "../../../spec_helper"
+require "../../../../src/detector/detectors/specification/*"
 require "../../../../src/models/code_locator"
 
 describe "Detect OAS 3.0 Docs" do
-  config_init = ConfigInitializer.new
-  options = config_init.default_options
+  options = create_test_options
   instance = Detector::Specification::Oas3.new options
 
   it "json format" do

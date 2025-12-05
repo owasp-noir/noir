@@ -1,12 +1,10 @@
 require "../../spec_helper"
 require "../../../src/optimizer/llm_optimizer"
-require "../../../src/options"
 require "../../../src/models/endpoint"
 require "../../../src/models/logger"
 
 describe "LLMEndpointOptimizer" do
-  config_init = ConfigInitializer.new
-  options = config_init.default_options
+  options = create_test_options
   logger = NoirLogger.new(false, false, false, false)
 
   describe "initialization without LLM config" do

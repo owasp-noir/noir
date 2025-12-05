@@ -2,8 +2,7 @@ require "../../../spec_helper"
 require "../../../../src/detector/detectors/elixir/*"
 
 describe "Detect Elixir Plug" do
-  config_init = ConfigInitializer.new
-  options = config_init.default_options
+  options = create_test_options
   instance = Detector::Elixir::Plug.new options
 
   it "detects Plug in mix.exs with {:plug, dependency" do

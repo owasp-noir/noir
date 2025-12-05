@@ -1,9 +1,8 @@
+require "../../spec_helper"
 require "../../../src/analyzer/analyzers/ruby/sinatra.cr"
-require "../../../src/options"
 
 describe "mapping_to_path" do
-  config_init = ConfigInitializer.new
-  options = config_init.default_options
+  options = create_test_options
   instance = Analyzer::Ruby::Sinatra.new(options)
 
   it "line_to_param - param[]" do

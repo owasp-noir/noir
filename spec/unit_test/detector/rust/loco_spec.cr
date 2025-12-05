@@ -1,10 +1,8 @@
 require "../../../spec_helper"
-require "../../../../src/config_initializer"
 require "../../../../src/detector/detectors/rust/loco"
 
 describe "Detect Rust Loco" do
-  config_init = ConfigInitializer.new
-  options = config_init.default_options
+  options = create_test_options
   instance = Detector::Rust::Loco.new options
 
   it "Cargo.toml with loco-rs dependency" do

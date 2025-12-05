@@ -1,8 +1,8 @@
-require "../../../../src/detector/detectors/*"
+require "../../../spec_helper"
+require "../../../../src/detector/detectors/ruby/*"
 
 describe "Detect Ruby Sinatra" do
-  config_init = ConfigInitializer.new
-  options = config_init.default_options
+  options = create_test_options
   instance = Detector::Ruby::Sinatra.new options
 
   it "gemfile/single_quot" do
