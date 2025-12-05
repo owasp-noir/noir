@@ -48,7 +48,7 @@ OWASP Noir는 커뮤니티 기여로 성장하는 오픈 소스 프로젝트입�
 
 Noir에 기여해 주신 모든 분께 감사드립니다! ♥️
 
-![](https://raw.githubusercontent.com/owasp-noir/noir/refs/heads/main/CONTRIBUTORS.svg)
+![](https://raw.githubusercontent.com/owasp-noir/noir/refs/heads/main/docs/static/CONTRIBUTORS.svg)
 
 ## 행동 강령
 

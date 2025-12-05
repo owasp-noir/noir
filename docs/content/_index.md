@@ -55,5 +55,5 @@ logos = [
 title = "Open Source Project"
 description = "OWASP Noir is an open-source project built with ❤️ by the community. If you would like to contribute, please see our contributing guide and submit a pull request with your awesome changes!"
 button = { text = "View Contributing Guide", url = "https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md" }
-image = "https://github.com/owasp-noir/noir/raw/main/CONTRIBUTORS.svg"
+image = "https://github.com/owasp-noir/noir/raw/main/docs/static/CONTRIBUTORS.svg"
 +++

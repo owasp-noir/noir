@@ -86,7 +86,7 @@ OWASP Noir is an open-source project that thrives on community contributions. If
 
 Thank you to everyone who has contributed to Noir! ♥️
 
-![](https://raw.githubusercontent.com/owasp-noir/noir/refs/heads/main/CONTRIBUTORS.svg)
+![](https://raw.githubusercontent.com/owasp-noir/noir/refs/heads/main/docs/static/CONTRIBUTORS.svg)
 
 ## Code of Conduct
 

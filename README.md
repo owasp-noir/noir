@@ -120,7 +120,7 @@ Looking ahead, our ambition is for our tool to evolve into a crucial bridge, sea
 Noir is an open-source project made with ❤️.
 If you would like to contribute, please check [CONTRIBUTING.md](./CONTRIBUTING.md) and submit a Pull Request.
 
-[![](./CONTRIBUTORS.svg)](https://github.com/owasp-noir/noir/graphs/contributors)
+[![](./docs/static/CONTRIBUTORS.svg)](https://github.com/owasp-noir/noir/graphs/contributors)
 
 ## Mascot
 
