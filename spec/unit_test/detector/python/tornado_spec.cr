@@ -1,9 +1,8 @@
 require "../../../spec_helper"
-require "../../../../src/detector/detectors/*"
+require "../../../../src/detector/detectors/python/*"
 
 describe "Detect Python Tornado" do
-  config_init = ConfigInitializer.new
-  options = config_init.default_options
+  options = create_test_options
   instance = Detector::Python::Tornado.new options
 
   it "detect_tornado - app.py with import tornado" do

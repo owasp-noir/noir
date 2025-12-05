@@ -1,8 +1,8 @@
-require "../../../../src/detector/detectors/*"
+require "../../../spec_helper"
+require "../../../../src/detector/detectors/java/*"
 
 describe "Detect Java JSP" do
-  config_init = ConfigInitializer.new
-  options = config_init.default_options
+  options = create_test_options
   instance = Detector::Java::Jsp.new options
 
   it "case1" do

@@ -1,8 +1,8 @@
-require "../../../../src/detector/detectors/*"
+require "../../../spec_helper"
+require "../../../../src/detector/detectors/kotlin/*"
 
 describe "Detect Kotlin Ktor" do
-  config_init = ConfigInitializer.new
-  options = config_init.default_options
+  options = create_test_options
   instance = Detector::Kotlin::Ktor.new options
 
   it "test.kt with ktor server import" do

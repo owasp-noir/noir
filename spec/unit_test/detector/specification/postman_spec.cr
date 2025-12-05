@@ -1,11 +1,9 @@
-require "spec"
-require "../../../../src/config_initializer"
-require "../../../../src/detector/detectors/*"
+require "../../../spec_helper"
+require "../../../../src/detector/detectors/specification/*"
 require "../../../../src/models/code_locator"
 
 describe "Detect Postman Collection" do
-  config_init = ConfigInitializer.new
-  options = config_init.default_options
+  options = create_test_options
   instance = Detector::Specification::Postman.new options
 
   it "v2.1.0 format" do

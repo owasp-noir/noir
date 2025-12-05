@@ -1,8 +1,8 @@
+require "../../../spec_helper"
 require "../../../../src/detector/detectors/crystal/*"
 
 describe "Detect Crystal Lucky" do
-  config_init = ConfigInitializer.new
-  options = config_init.default_options
+  options = create_test_options
   instance = Detector::Crystal::Lucky.new options
 
   it "shard.yml" do

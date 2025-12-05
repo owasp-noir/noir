@@ -1,8 +1,8 @@
-require "../../../../src/detector/detectors/*"
+require "../../../spec_helper"
+require "../../../../src/detector/detectors/javascript/*"
 
 describe "Detect JS Express" do
-  config_init = ConfigInitializer.new
-  options = config_init.default_options
+  options = create_test_options
   instance = Detector::Javascript::Express.new options
 
   it "require_single_quot" do

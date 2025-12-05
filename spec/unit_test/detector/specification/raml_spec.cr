@@ -1,8 +1,8 @@
-require "../../../../src/detector/detectors/*"
+require "../../../spec_helper"
+require "../../../../src/detector/detectors/specification/*"
 
 describe "Detect RAML" do
-  config_init = ConfigInitializer.new
-  options = config_init.default_options
+  options = create_test_options
   instance = Detector::Specification::RAML.new options
 
   it "raml" do

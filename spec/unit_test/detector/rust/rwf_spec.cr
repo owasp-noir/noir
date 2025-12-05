@@ -1,8 +1,8 @@
-require "../../../../src/detector/detectors/*"
+require "../../../spec_helper"
+require "../../../../src/detector/detectors/rust/*"
 
 describe "Detect Rust RWF" do
-  config_init = ConfigInitializer.new
-  options = config_init.default_options
+  options = create_test_options
   instance = Detector::Rust::Rwf.new options
 
   it "Cargo.toml" do

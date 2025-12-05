@@ -2,8 +2,7 @@ require "../../../spec_helper"
 require "../../../../src/detector/detectors/go/*"
 
 describe "Detect Go go-zero" do
-  config_init = ConfigInitializer.new
-  options = config_init.default_options
+  options = create_test_options
   instance = Detector::Go::GoZero.new options
 
   it "go.mod with go-zero dependency" do
