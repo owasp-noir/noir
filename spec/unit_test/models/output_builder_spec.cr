@@ -1,9 +1,8 @@
+require "../../spec_helper"
 require "../../../src/models/output_builder.cr"
-require "../../../src/options.cr"
 
 describe "Initialize" do
-  config_init = ConfigInitializer.new
-  options = config_init.default_options
+  options = create_test_options
   options["base"] = YAML::Any.new([YAML::Any.new("noir")])
   options["format"] = YAML::Any.new("json")
   options["output"] = YAML::Any.new("output.json")
@@ -70,8 +69,7 @@ describe "Initialize" do
 end
 
 describe OutputBuilderDiff do
-  config_init = ConfigInitializer.new
-  options = config_init.default_options
+  options = create_test_options
   options["base"] = YAML::Any.new([YAML::Any.new("noir")])
   options["format"] = YAML::Any.new("json")
 

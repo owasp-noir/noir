@@ -1,12 +1,10 @@
 require "../../spec_helper"
 require "../../../src/models/noir.cr"
-require "../../../src/options.cr"
 require "../../../src/models/endpoint.cr"
 require "../../../src/utils/http_symbols.cr"
 
 describe "Initialize" do
-  config_init = ConfigInitializer.new
-  options = config_init.default_options
+  options = create_test_options
   options["base"] = YAML::Any.new([YAML::Any.new("noir")])
   runner = NoirRunner.new(options)
 
@@ -17,11 +15,9 @@ describe "Initialize" do
 end
 
 describe "Methods" do
-  config_init = ConfigInitializer.new
-  options = config_init.default_options
+  options = create_test_options
   options["base"] = YAML::Any.new([YAML::Any.new("noir")])
   options["url"] = YAML::Any.new("https://www.hahwul.com")
-  options["nolog"] = YAML::Any.new(true)
   runner = NoirRunner.new(options)
 
   runner.endpoints << Endpoint.new("/abcd", "GET")
@@ -35,8 +31,7 @@ describe "Methods" do
 end
 
 describe "set-pvalue" do
-  config_init = ConfigInitializer.new
-  options = config_init.default_options
+  options = create_test_options
   options["base"] = YAML::Any.new([YAML::Any.new("noir")])
   options["set_pvalue_query"] = YAML::Any.new([YAML::Any.new("FUZZ")])
   options["set_pvalue_header"] = YAML::Any.new([YAML::Any.new("name=FUZZ")])
@@ -70,9 +65,7 @@ describe "set-pvalue" do
 end
 
 describe "HTTP method validation" do
-  config_init = ConfigInitializer.new
-  options = config_init.default_options
-  options["nolog"] = YAML::Any.new(true)
+  options = create_test_options
   runner = NoirRunner.new(options)
 
   it "maintains valid HTTP methods" do

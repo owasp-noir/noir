@@ -1,14 +1,11 @@
-require "spec"
+require "../../spec_helper"
 require "../../../src/models/deliver.cr"
 require "../../../src/models/endpoint.cr"
-require "../../../src/options.cr"
 
 describe "Initialize" do
-  config_init = ConfigInitializer.new
-  options = config_init.default_options
+  options = create_test_options
   options["base"] = YAML::Any.new([YAML::Any.new("noir")])
   options["send_proxy"] = YAML::Any.new("http://localhost:8090")
-  options["nolog"] = YAML::Any.new(true)
 
   it "Deliver" do
     object = Deliver.new options
@@ -41,11 +38,9 @@ describe "Initialize" do
 end
 
 describe "Method-based filtering" do
-  config_init = ConfigInitializer.new
-  options = config_init.default_options
+  options = create_test_options
   options["base"] = YAML::Any.new([YAML::Any.new("noir")])
   options["send_proxy"] = YAML::Any.new("http://localhost:8090")
-  options["nolog"] = YAML::Any.new(true)
 
   # Create test endpoints
   endpoint1 = Endpoint.new("/api/users", "GET")

@@ -1,9 +1,8 @@
+require "../../spec_helper"
 require "../../../src/analyzer/analyzers/crystal/kemal.cr"
-require "../../../src/options"
 
 describe "mapping_to_path" do
-  config_init = ConfigInitializer.new
-  options = config_init.default_options
+  options = create_test_options
   instance = Analyzer::Crystal::Kemal.new(options)
 
   it "line_to_param - env.params.query" do

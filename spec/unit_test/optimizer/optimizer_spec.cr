@@ -1,12 +1,10 @@
 require "../../spec_helper"
 require "../../../src/optimizer/optimizer"
-require "../../../src/options"
 require "../../../src/models/endpoint"
 require "../../../src/models/logger"
 
 describe "EndpointOptimizer" do
-  config_init = ConfigInitializer.new
-  options = config_init.default_options
+  options = create_test_options
   logger = NoirLogger.new(false, false, false, false)
 
   describe "optimize_endpoints" do
