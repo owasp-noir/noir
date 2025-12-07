@@ -4,7 +4,7 @@
     <source media="(prefers-color-scheme: light)" srcset="https://github.com/owasp-noir/noir/assets/13212227/0577860e-3d7e-4294-8f1f-dc7b87ce2b2b" width="500px;">
     <img alt="OWASP Noir Logo" src="https://github.com/owasp-noir/noir/assets/13212227/04aee7d0-c224-481b-8d79-2dbdcf3ad84b" width="500px;">
   </picture>
-  <p>An advanced hybrid analyzer that automatically detects all endpoints in your codebase, <br>including shadow and undocumented APIs.</p>
+  <p>Hunt every Endpoint in your code, expose Shadow APIs, map the Attack Surface.</p>
 </div>
 
 <p align="center">
@@ -25,8 +25,9 @@
   <a href="#contributing">Contributing</a>
 </p>
 
-OWASP Noir is an open-source attack surface discovery tool that automatically finds every endpoint in your codebase by combining precise static code analysis with AI.
-It reveals shadow APIs, undocumented routes, and hidden vulnerabilities that traditional tools and manual methods consistently miss — giving security teams and developers complete, accurate visibility into the real attack surface.
+Noir bridges the gap between SAST and DAST by analyzing source code to generate accurate, authenticated endpoint inventories. It detects what others miss: shadow APIs, deprecated endpoints, and hidden routes.
+
+By bypassing outdated documentation and proxies, Noir provides a complete attack surface map that directly integrates with Burp, ZAP, and Nuclei, ensuring no endpoint is left untested in your DevSecOps pipeline.
 
 ## Why Noir?
 

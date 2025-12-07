@@ -1,6 +1,6 @@
 ---
 name: OWASP Noir Action
-description: An advanced hybrid analyzer that automatically detects all endpoints in your codebase, including shadow and undocumented APIs
+description: Hunt every Endpoint in your code, expose Shadow APIs, map the Attack Surface
 branding:
   icon: search
   color: purple
@@ -8,67 +8,67 @@ inputs:
   base_path:
     description: The base path to analyze for endpoints (equivalent to -b/--base-path)
     required: true
-    default: '.'
+    default: "."
   url:
     description: Set base url for endpoints (equivalent to -u/--url)
     required: false
-    default: ''
+    default: ""
   format:
     description: Set output format (plain, yaml, json, jsonl, markdown-table, curl, httpie, oas2, oas3, etc.)
     required: false
-    default: 'json'
+    default: "json"
   output_file:
     description: Write result to file (equivalent to -o/--output)
     required: false
-    default: ''
+    default: ""
   techs:
     description: Specify the technologies to use (equivalent to -t/--techs)
     required: false
-    default: ''
+    default: ""
   exclude_techs:
     description: Specify the technologies to be excluded (equivalent to --exclude-techs)
     required: false
-    default: ''
+    default: ""
   passive_scan:
     description: Perform a passive scan for security issues (equivalent to -P/--passive-scan)
     required: false
-    default: 'false'
+    default: "false"
   passive_scan_severity:
     description: Set minimum severity level for passive scan (critical, high, medium, low)
     required: false
-    default: 'high'
+    default: "high"
   use_all_taggers:
     description: Activates all taggers for full analysis coverage (equivalent to -T/--use-all-taggers)
     required: false
-    default: 'false'
+    default: "false"
   use_taggers:
     description: Activates specific taggers (equivalent to --use-taggers)
     required: false
-    default: ''
+    default: ""
   include_path:
     description: Include file path in the result (equivalent to --include-path)
     required: false
-    default: 'false'
+    default: "false"
   verbose:
     description: Show verbose messages (equivalent to --verbose)
     required: false
-    default: 'false'
+    default: "false"
   debug:
     description: Show debug messages (equivalent to -d/--debug)
     required: false
-    default: 'false'
+    default: "false"
   concurrency:
     description: Set concurrency level (equivalent to --concurrency)
     required: false
-    default: ''
+    default: ""
   exclude_codes:
     description: Exclude specific HTTP response codes (comma-separated, equivalent to --exclude-codes)
     required: false
-    default: ''
+    default: ""
   status_codes:
     description: Display HTTP status codes for discovered endpoints (equivalent to --status-codes)
     required: false
-    default: 'false'
+    default: "false"
 outputs:
   endpoints:
     description: JSON formatted result of the endpoint analysis
