@@ -7,7 +7,8 @@ sort_by = "weight"
 [extra]
 +++
 
-OWASP Noir is a hybrid static and AI-driven analyzer that detects every endpoint in your codebase—from shadow APIs to standard routes. By combining static code analysis with Large Language Model (LLM) capabilities, Noir uncovers hidden endpoints, shadow APIs, and other security blind spots that traditional tools often miss.
+OWASP Noir is an open-source attack surface discovery tool that automatically finds every endpoint in your codebase by combining precise static code analysis with AI.
+It reveals shadow APIs, undocumented routes, and hidden vulnerabilities that traditional tools and manual methods consistently miss — giving security teams and developers complete, accurate visibility into the real attack surface.
 
 ## Key Capabilities
 
