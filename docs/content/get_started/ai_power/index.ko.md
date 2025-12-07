@@ -11,6 +11,125 @@ Noir는 클라우드 기반 서비스와 로컬 인스턴스 모두의 대규모
 
 ![](./ai_integration.jpeg)
 
+## AI 기반 분석 작동 방식
+
+Noir의 AI 통합은 지능형 파일 필터링, 최적화된 번들링, 응답 캐싱, 엔드포인트 최적화를 결합한 정교한 워크플로우를 통해 포괄적인 분석 결과를 제공합니다.
+
+{% mermaid() %}
+flowchart TB
+    Start([AI 분석 시작]) --> InitAdapter[LLM 어댑터 초기화]
+    InitAdapter --> ProviderCheck{제공자 타입?}
+    
+    ProviderCheck -->|OpenAI/xAI/등| GeneralAdapter[General Adapter<br/>OpenAI 호환 API]
+    ProviderCheck -->|Ollama/Local| OllamaAdapter[Ollama Adapter<br/>컨텍스트 재사용]
+    
+    GeneralAdapter --> FileSelection
+    OllamaAdapter --> FileSelection
+    
+    FileSelection[파일 선택] --> FileCount{파일 개수?}
+    
+    FileCount -->|≤ 10개 파일| AnalyzeAll[모든 파일 분석]
+    FileCount -->|> 10개 파일| LLMFilter[LLM 기반 필터링]
+    
+    LLMFilter --> CacheCheck1{캐시 있음?}
+    CacheCheck1 -->|예| UseCached1[캐시된 필터 사용]
+    CacheCheck1 -->|아니오| FilterLLM[FILTER 프롬프트로<br/>LLM 호출]
+    FilterLLM --> StoreCache1[캐시에 저장]
+    UseCached1 --> TargetFiles
+    StoreCache1 --> TargetFiles
+    
+    TargetFiles[선택된 대상 파일] --> BundleCheck{대량 파일 및<br/>토큰 제한?}
+    
+    AnalyzeAll --> BundleCheck
+    
+    BundleCheck -->|예| BundleMode[번들 분석 모드]
+    BundleCheck -->|아니오| SingleMode[단일 파일 모드]
+    
+    BundleMode --> CreateBundles[토큰 제한 내에서<br/>파일 번들 생성]
+    CreateBundles --> ParallelBundles[번들 동시 처리]
+    
+    ParallelBundles --> BundleLoop{각 번들마다}
+    BundleLoop --> CacheCheck2{캐시 있음?}
+    CacheCheck2 -->|예| UseCached2[캐시된 분석 사용]
+    CacheCheck2 -->|아니오| BundleLLM[BUNDLE_ANALYZE<br/>프롬프트로 LLM 호출]
+    BundleLLM --> StoreCache2[캐시에 저장]
+    UseCached2 --> ParseEndpoints1
+    StoreCache2 --> ParseEndpoints1
+    ParseEndpoints1[응답에서<br/>엔드포인트 파싱] --> BundleLoop
+    BundleLoop -->|완료| Combine
+    
+    SingleMode --> FileLoop{각 파일마다}
+    FileLoop --> CacheCheck3{캐시 있음?}
+    CacheCheck3 -->|예| UseCached3[캐시된 분석 사용]
+    CacheCheck3 -->|아니오| AnalyzeLLM[ANALYZE 프롬프트로<br/>LLM 호출]
+    AnalyzeLLM --> StoreCache3[캐시에 저장]
+    UseCached3 --> ParseEndpoints2
+    StoreCache3 --> ParseEndpoints2
+    ParseEndpoints2[응답에서<br/>엔드포인트 파싱] --> FileLoop
+    FileLoop -->|완료| Combine
+    
+    Combine[모든 엔드포인트 결합] --> LLMOptCheck{LLM 최적화<br/>활성화?}
+    
+    LLMOptCheck -->|예| FindCandidates[최적화 후보 찾기]
+    FindCandidates --> OptLoop{각 후보마다}
+    OptLoop --> OptimizeLLM[OPTIMIZE 프롬프트로<br/>LLM 호출]
+    OptimizeLLM --> ApplyOpt[엔드포인트에<br/>최적화 적용]
+    ApplyOpt --> OptLoop
+    OptLoop -->|완료| FinalResults
+    
+    LLMOptCheck -->|아니오| FinalResults[최종 최적화 결과]
+    
+    FinalResults --> End([종료])
+    
+    style Start fill:#e1f5e1
+    style End fill:#e1f5e1
+    style LLMFilter fill:#fff4e1
+    style FilterLLM fill:#e1f0ff
+    style BundleLLM fill:#e1f0ff
+    style AnalyzeLLM fill:#e1f0ff
+    style OptimizeLLM fill:#e1f0ff
+    style CacheCheck1 fill:#ffe1e1
+    style CacheCheck2 fill:#ffe1e1
+    style CacheCheck3 fill:#ffe1e1
+    style UseCached1 fill:#e1ffe1
+    style UseCached2 fill:#e1ffe1
+    style UseCached3 fill:#e1ffe1
+{% end %}
+
+### 주요 구성 요소
+
+#### 1. LLM 어댑터 레이어
+Noir는 여러 LLM 제공자를 지원하는 제공자 독립적인 어댑터 패턴을 사용합니다:
+- **General Adapter**: OpenAI 호환 API용 (OpenAI, xAI, Azure, GitHub Models 등)
+- **Ollama Adapter**: 성능 향상을 위한 서버 측 컨텍스트 재사용 기능이 있는 전문 어댑터
+
+#### 2. 지능형 파일 필터링
+많은 파일(>10개)이 있는 프로젝트를 분석할 때 Noir는 LLM을 사용하여 엔드포인트를 포함할 가능성이 있는 파일을 지능적으로 필터링합니다:
+- FILTER 프롬프트와 함께 파일 경로 목록을 LLM에 전송
+- LLM이 잠재적 엔드포인트 파일 식별
+- 분석 시간 및 비용 절감
+
+#### 3. 번들 분석
+대규모 코드베이스의 경우 Noir는 여러 파일을 번들로 묶어 효율성을 극대화합니다:
+- 각 파일의 토큰 사용량 추정
+- 모델 토큰 제한 내에서 번들 생성 (80% 안전 마진 적용)
+- 속도를 위해 번들을 동시 처리
+- BUNDLE_ANALYZE 프롬프트를 사용하여 번들의 모든 파일에서 엔드포인트 추출
+
+#### 4. 응답 캐싱
+모든 LLM 응답은 성능 향상과 비용 절감을 위해 디스크에 캐시됩니다:
+- 캐시 키: (제공자 + 모델 + 작업 + 형식 + 페이로드)의 SHA256 해시
+- 캐시 위치: `~/.local/share/noir/cache/ai/` (또는 `NOIR_HOME` 설정 시)
+- 변경되지 않은 코드의 즉시 재분석 가능
+- `--cache-disable`로 비활성화하거나 `--cache-clear`로 삭제 가능
+
+#### 5. LLM 옵티마이저
+엔드포인트 결과를 개선하는 선택적 후처리 단계:
+- 비표준 패턴 식별 (와일드카드, 특이한 명명 등)
+- URL 및 파라미터 이름 정규화
+- RESTful 규칙 적용
+- 전반적인 엔드포인트 품질 향상
+
 ## AI 통합 사용 방법
 
 AI 기반 분석을 활성화하려면 AI 제공업체, 모델 및 API 키를 지정해야 합니다.
