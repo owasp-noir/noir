@@ -7,7 +7,7 @@ version = "v0.25.1"
 [extra.hero]
 title = "NOIR"
 badge = "v0.25.1"
-description = "정적 분석과 AI 기반 기술을 결합하여 코드베이스의 모든 엔드포인트를 탐지하는 하이브리드 분석기. Shadow API부터 일반 라우트까지 모두 찾아냅니다."
+description = "코드베이스 내 모든 엔드포인트를 자동으로 탐지하는 고급 하이브리드 분석 도구. 섀도우 API와 문서화되지 않은 엔드포인트까지 놓치지 않고 찾아냅니다."
 image = "../images/noir-wallpaper.jpg"
 cta_buttons = [
     { text = "시작하기", url = "./get_started/overview", style = "primary" },
