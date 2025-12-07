@@ -9,7 +9,7 @@ sort_by = "weight"
 
 Noir bridges the gap between SAST and DAST by analyzing source code to generate accurate, authenticated endpoint inventories. It detects what others miss: shadow APIs, deprecated endpoints, and hidden routes.
 
-By bypassing outdated documentation and proxies, Noir provides a complete attack surface map that directly integrates with DAST, ensuring no endpoint is left untested in your DevSecOps pipeline.
+By bypassing outdated documentation and proxies, Noir uses your source code to deliver a comprehensive, actionable attack surface inventory. This single source of truth empowers White-box security teams and Pentesters and integrates directly with DAST solutions, eliminating testing blind spots across your DevSecOps pipeline.
 
 ## Key Capabilities
 
