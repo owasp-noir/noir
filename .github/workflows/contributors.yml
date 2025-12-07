@@ -17,5 +17,5 @@ jobs:
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           round: false
-          includeBots: true
+          includeBots: false
           svgPath: docs/static/CONTRIBUTORS.svg
