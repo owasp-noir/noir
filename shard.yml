@@ -4,7 +4,7 @@ version: 0.25.1
 authors:
   - hahwul <hahwul@gmail.com>
   - ksg97031 <ksg97031@gmail.com>
-description: A hybrid static and AI-driven analyzer that detects every endpoint in your codebase, from shadow APIs to standard routes
+description: An advanced hybrid analyzer that automatically detects all endpoints in your codebase, including shadow and undocumented APIs
 repository: https://github.com/owasp-noir/noir
 license: MIT
 
