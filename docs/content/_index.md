@@ -7,7 +7,7 @@ version = "v0.25.1"
 [extra.hero]
 title = "NOIR"
 badge = "v0.25.1"
-description = "A hybrid static and AI-driven analyzer that detects every endpoint in your codebase, from shadow APIs to standard routes."
+description = "An advanced hybrid analyzer that automatically detects all endpoints in your codebase, including shadow and undocumented APIs."
 image = "./images/noir-wallpaper.jpg"
 cta_buttons = [
     { text = "Get Started", url = "./get_started/overview", style = "primary" },
