@@ -14,6 +14,10 @@ cta_buttons = [
     { text = "View on GitHub", url = "https://github.com/owasp-noir/noir", style = "secondary" },
 ]
 
+[extra.features_section]
+title = "Essential Features"
+description = "Discover Noir's essential features for comprehensive attack surface detection and analysis."
+
 [[extra.features]]
 title = "Attack Surface Discovery"
 desc = "Analyzes your source code to uncover the complete attack surface of your application, including hidden endpoints, shadow APIs, and other security blind spots."

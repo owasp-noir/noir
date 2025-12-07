@@ -14,6 +14,10 @@ cta_buttons = [
     { text = "GitHub에서 보기", url = "https://github.com/owasp-noir/noir", style = "secondary" },
 ]
 
+[extra.features_section]
+title = "주요 기능"
+description = "OWASP Noir의 공격 표면 탐지 및 분석을 위한 핵심 기능을 발견하세요."
+
 [[extra.features]]
 title = "공격 표면 발견"
 desc = "소스 코드를 분석하여 숨겨진 엔드포인트, Shadow API 및 기타 보안 사각지대를 포함한 애플리케이션의 전체 공격 표면을 발견합니다."
