@@ -1,6 +1,6 @@
 ---
 name: OWASP Noir Action
-description: A GitHub Action to detect attack surfaces by static analysis using OWASP Noir
+description: An advanced hybrid analyzer that automatically detects all endpoints in your codebase, including shadow and undocumented APIs
 branding:
   icon: search
   color: purple
