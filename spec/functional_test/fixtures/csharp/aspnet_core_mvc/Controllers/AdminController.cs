@@ -18,7 +18,7 @@ namespace Demo.Controllers
         }
 
         [HttpPost("[action]")]
-        public IActionResult Notify([FromForm] string subject, [FromForm] string message, [FromCookie] string sessionId)
+        public IActionResult Notify([FromForm] string subject, [FromForm] string message, string sessionId)
         {
             return View();
         }

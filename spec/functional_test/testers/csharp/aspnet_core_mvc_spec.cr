@@ -44,7 +44,7 @@ expected_endpoints = [
   Endpoint.new("/admin/Notify", "POST", [
     Param.new("subject", "", "form"),
     Param.new("message", "", "form"),
-    Param.new("sessionId", "", "cookie"),
+  Param.new("sessionId", "", "form"),
   ]),
   Endpoint.new("/mapped/ping", "GET"),
   Endpoint.new("/mapped/health", "GET"),

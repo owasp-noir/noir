@@ -390,7 +390,6 @@ module Analyzer::CSharp
         "FromBody"   => "json",
         "FromHeader" => "header",
         "FromForm"   => "form",
-        "FromCookie" => "cookie",
       }.each do |attr, type|
         if cleaned.includes?("[#{attr}")
           param_type = type
