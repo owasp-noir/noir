@@ -9,7 +9,19 @@ describe "Detect C# ASP.Net Core MVC" do
     instance.detect("MyApp.csproj", "<PackageReference Include=\"Microsoft.AspNetCore.Mvc\" />").should eq(true)
   end
 
+  it "csproj sdk attribute" do
+    instance.detect("MyApp.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Web\"></Project>").should eq(true)
+  end
+
   it "program setup" do
     instance.detect("Program.cs", "var builder = WebApplication.CreateBuilder(args);\napp.MapControllerRoute(name: \"default\", pattern: \"{controller=Home}/{action=Index}/{id?}\");").should eq(true)
+  end
+
+  it "program map controllers" do
+    instance.detect("Program.cs", "app.MapControllers();").should eq(true)
+  end
+
+  it "program add mvc" do
+    instance.detect("Program.cs", "builder.Services.AddMvc();").should eq(true)
   end
 end

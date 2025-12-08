@@ -10,15 +10,20 @@ module Detector::CSharp
       uses_aspnetcore = file_contents.includes?("Microsoft.AspNetCore.Mvc") ||
                         file_contents.includes?("Microsoft.AspNetCore.App") ||
                         file_contents.includes?("AspNetCore.Mvc")
+      uses_web_sdk = file_contents.includes?("Sdk=\"Microsoft.NET.Sdk.Web\"") ||
+                     file_contents.includes?("Sdk=\"Microsoft.NET.Sdk.Razor\"")
       has_mvc_setup = file_contents.includes?("AddControllersWithViews") ||
                       file_contents.includes?("AddControllers") ||
+                      file_contents.includes?("AddMvc(") ||
+                      file_contents.includes?("AddMvcCore") ||
                       file_contents.includes?("MapControllerRoute") ||
-                      file_contents.includes?("MapDefaultControllerRoute")
+                      file_contents.includes?("MapDefaultControllerRoute") ||
+                      file_contents.includes?("MapControllers")
 
       detected = false
       locator = CodeLocator.instance
 
-      if is_csproj && uses_aspnetcore
+      if is_csproj && (uses_aspnetcore || uses_web_sdk)
         detected = true
       elsif is_program_file && (uses_aspnetcore || has_mvc_setup)
         detected = true
