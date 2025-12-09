@@ -48,8 +48,8 @@ module Analyzer::CSharp
             if route && methods.size > 0
               extra_params = extract_params_from_block(block)
               extra_params.concat(extract_bind_params_from_file(block, lines))
-              methods.each do |http_method|
-                endpoint = build_endpoint_from_route(route, http_method, file, index + 1, extra_params)
+              methods.each do |method|
+                endpoint = build_endpoint_from_route(route, method, file, index + 1, extra_params)
                 @result << endpoint if endpoint
               end
             end
@@ -120,7 +120,7 @@ module Analyzer::CSharp
         next unless line.includes?("Bind(")
         next unless line.includes?("public") || line.includes?("private") || line.includes?("protected") || line.includes?("internal") || line.includes?("static")
 
-        signature, end_idx = build_signature(lines, index)
+        _, end_idx = build_signature(lines, index)
         body = extract_method_block(lines, end_idx)
         params.concat(extract_params_from_block(body))
       end

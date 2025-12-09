@@ -113,6 +113,6 @@ describe "ASP.NET Core MVC analyzer edge cases" do
   it "extracts expression-bodied MapGet endpoints without leaking params" do
     ping = tester.app.endpoints.find { |e| e.url == "/mapped/ping" && e.method == "GET" }
     ping.should_not be_nil
-    ping.not_nil!.params.empty?.should be_true
+    ping.as(Endpoint).params.empty?.should be_true
   end
 end
