@@ -17,6 +17,7 @@ def initialize_analyzers(logger : NoirLogger)
   # Mapping analyzers to their respective functions
   define_analyzers([
     {"c#-aspnet-mvc", CSharp::AspNetMvc},
+    {"c#-aspnet-core-mvc", CSharp::AspNetCoreMvc},
     {"crystal_amber", Crystal::Amber},
     {"crystal_grip", Crystal::Grip},
     {"crystal_kemal", Crystal::Kemal},
