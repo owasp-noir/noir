@@ -20,7 +20,7 @@ module Analyzer::CSharp
 
         lines = File.read(file, encoding: "utf-8", invalid: :skip).lines
         lines.each_with_index do |line, index|
-          if (match = map_regex.match(line))
+          if match = map_regex.match(line)
             http_method = match[1].upcase
             route = match[2]
             block = extract_map_block(lines, index)
@@ -38,11 +38,11 @@ module Analyzer::CSharp
             if match = block.match(/MapMethods\s*\(\s*"([^"]+)"\s*,\s*new[^{]*\{([^}]*)\}/m)
               route = match[1]
               methods_list = match[2].split(",")
-              methods = methods_list.map { |m| m.gsub(/["\s]/, "").upcase }.reject(&.empty?).uniq
+              methods = methods_list.map(&.gsub(/["\s]/, "").upcase).reject(&.empty?).uniq!
             elsif match = map_methods_block_regex.match(block)
               route = match[1]
               methods_section = match[2]
-              methods = methods_section.scan(/"([A-Za-z]+)"/).map { |m| m[1]?.to_s.upcase }.reject(&.empty?).uniq
+              methods = methods_section.scan(/"([A-Za-z]+)"/).map(&.[1]?.to_s.upcase).reject(&.empty?).uniq!
             end
 
             if route && methods.size > 0
@@ -109,7 +109,7 @@ module Analyzer::CSharp
         params << Param.new(key, "", "json") if key && !key.empty?
       end
 
-      params.uniq { |p| p.name }
+      params.uniq(&.name)
     end
 
     private def extract_bind_params_from_file(block : String, lines : Array(String)) : Array(Param)
@@ -129,7 +129,7 @@ module Analyzer::CSharp
         params << Param.new("url", "", "query")
       end
 
-      params.uniq { |p| p.name }
+      params.uniq(&.name)
     end
 
     private def load_route_patterns : Array(String)
@@ -440,12 +440,12 @@ module Analyzer::CSharp
     private def extract_attribute_route(line : String, attribute : String, current_route : String) : String
       # Try to extract the first string literal inside the attribute
       regex_with_value = Regex.new("\\[#{attribute}[^(]*\\(\\s*\"([^\"]+)\"")
-      if (match = regex_with_value.match(line))
+      if match = regex_with_value.match(line)
         return match[1]
       end
 
       template_regex = /Template\s*=\s*"([^"]+)"/
-      if (match = template_regex.match(line))
+      if match = template_regex.match(line)
         return match[1]
       end
 
