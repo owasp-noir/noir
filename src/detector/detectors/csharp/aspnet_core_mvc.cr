@@ -7,13 +7,11 @@ module Detector::CSharp
       is_program_file = filename.ends_with?("Program.cs") || filename.ends_with?("Startup.cs")
       is_controller = filename.ends_with?(".cs") && filename.includes?("Controller")
 
-      uses_aspnetcore = file_contents.includes?("Microsoft.AspNetCore.Mvc") ||
-                        file_contents.includes?("Microsoft.AspNetCore.App") ||
-                        file_contents.includes?("AspNetCore.Mvc")
+      uses_aspnetcore = file_contents.includes?("AspNetCore.Mvc") || # also matches "Microsoft.AspNetCore.Mvc"
+                        file_contents.includes?("Microsoft.AspNetCore.App")
       uses_web_sdk = file_contents.includes?("Sdk=\"Microsoft.NET.Sdk.Web\"") ||
                      file_contents.includes?("Sdk=\"Microsoft.NET.Sdk.Razor\"")
-      has_mvc_setup = file_contents.includes?("AddControllersWithViews") ||
-                      file_contents.includes?("AddControllers") ||
+      has_mvc_setup = file_contents.includes?("AddControllers") || # also matches "AddControllersWithViews"
                       file_contents.includes?("AddMvc(") ||
                       file_contents.includes?("AddMvcCore") ||
                       file_contents.includes?("MapControllerRoute") ||
