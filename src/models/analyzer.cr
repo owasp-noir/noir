@@ -83,6 +83,8 @@ class FileAnalyzer < Analyzer
                 next
               end
 
+              logger.debug "Analyzing: #{path}"
+
               @@hooks.each do |hook|
                 file_results = hook.call(path, @url)
                 if !file_results.nil?
