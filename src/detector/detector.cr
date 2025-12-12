@@ -109,9 +109,9 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
 
       # Common heavy/irrelevant directories to skip early
       ignored_dir_patterns = [
-        "/node_modules/", "/.git/", "/dist/", "/build/", "/target/", 
-        "/__pycache__/", "/.venv/", "/venv/", "/.idea/", "/.vscode/", 
-        "/tmp/", "/.next/", "/out/", "/vendor/"
+        "/node_modules/", "/.git/", "/dist/", "/build/", "/target/",
+        "/__pycache__/", "/.venv/", "/venv/", "/.idea/", "/.vscode/",
+        "/tmp/", "/.next/", "/out/", "/vendor/",
       ]
 
       base_paths.each do |base_path|
