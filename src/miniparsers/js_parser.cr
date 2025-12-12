@@ -48,6 +48,12 @@ module Noir
       :unknown
     end
 
+    @hit_max_iterations : Bool = false
+
+    def hit_max_iterations?
+      @hit_max_iterations
+    end
+
     def parse_routes : Array(JSRoutePattern)
       routes = [] of JSRoutePattern
       @framework = detect_framework
@@ -124,7 +130,7 @@ module Noir
 
       # Log a warning if we hit the iteration limit
       if iterations >= max_iterations
-        puts "Warning: Maximum iterations reached in JS parser, parsing may be incomplete"
+        @hit_max_iterations = true
       end
 
       # Ensure all routes have leading slash for consistency

@@ -5,13 +5,17 @@ require "../miniparsers/js_parser"
 module Noir
   # JSRouteExtractor provides a unified interface for extracting routes from JavaScript files
   class JSRouteExtractor
-    def self.extract_routes(file_path : String) : Array(Endpoint)
+    def self.extract_routes(file_path : String, content : String? = nil, debug : Bool = false) : Array(Endpoint)
       return [] of Endpoint unless File.exists?(file_path)
 
       begin
-        content = File.read(file_path)
+        content = content || File.read(file_path, encoding: "utf-8", invalid: :skip)
         parser = JSParser.new(content)
         route_patterns = parser.parse_routes
+
+        if debug && parser.hit_max_iterations?
+          STDERR.puts "Warning: Maximum iterations reached in JS parser, parsing may be incomplete"
+        end
 
         endpoints = [] of Endpoint
         route_patterns.each do |pattern|

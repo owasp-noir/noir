@@ -13,7 +13,10 @@ module Analyzer::Javascript
         populate_channel_with_files(channel)
 
         WaitGroup.wait do |wg|
-          @options["concurrency"].to_s.to_i.times do
+          worker_count = @options["concurrency"].to_s.to_i
+          worker_count = 16 if worker_count > 16
+          worker_count = 1 if worker_count < 1
+          worker_count.times do
             wg.spawn do
               loop do
                 begin
@@ -25,8 +28,8 @@ module Analyzer::Javascript
                   if File.exists?(path)
                     # First try to use the JS parser for more robust analysis
                     begin
-                      content = File.read(path)
-                      parser_endpoints = Noir::JSRouteExtractor.extract_routes(path)
+                      content = File.read(path, encoding: "utf-8", invalid: :skip)
+                      parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug)
                       parser_endpoints.each do |endpoint|
                         # Add file location details
                         details = Details.new(PathInfo.new(path, 1)) # Line number is approximate
