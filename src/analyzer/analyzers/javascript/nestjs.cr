@@ -12,7 +12,10 @@ module Analyzer::Javascript
         populate_channel_with_files(channel)
 
         WaitGroup.wait do |wg|
-          @options["concurrency"].to_s.to_i.times do
+          worker_count = @options["concurrency"].to_s.to_i
+          worker_count = 16 if worker_count > 16
+          worker_count = 1 if worker_count < 1
+          worker_count.times do
             wg.spawn do
               loop do
                 begin
@@ -35,8 +38,6 @@ module Analyzer::Javascript
         end
       rescue e : Exception
         logger.debug "Channel or wait group error: #{e.message}"
-      ensure
-        channel.close
       end
 
       # Process static directories to create endpoints for static files

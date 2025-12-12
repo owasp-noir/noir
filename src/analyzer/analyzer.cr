@@ -99,9 +99,23 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
     techs << "ai"
   end
 
-  techs.each do |tech|
-    next unless analyzer.has_key?(tech)
-    result = result + analyzer[tech].call(options)
+  # Run tech analyzers concurrently to avoid long stalls from a single analyzer
+  selected_techs = techs.select { |t| analyzer.has_key?(t) }
+  mutex = Mutex.new
+
+  WaitGroup.wait do |wg|
+    selected_techs.each do |tech|
+      wg.spawn do
+        begin
+          logger.debug "Analyzer[#{tech}] start"
+          endpoints = analyzer[tech].call(options)
+          mutex.synchronize { result.concat(endpoints) }
+          logger.debug "Analyzer[#{tech}] done (#{endpoints.size})"
+        rescue e
+          logger.warning "Analyzer[#{tech}] failed: #{e.message}"
+        end
+      end
+    end
   end
 
   if options["url"] != ""

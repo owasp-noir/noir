@@ -1,5 +1,6 @@
 require "../models/endpoint"
 require "../minilexers/js_lexer"
+require "set"
 
 module Noir
   # JSRoutePattern represents a JavaScript framework route pattern
@@ -48,6 +49,12 @@ module Noir
       :unknown
     end
 
+    @hit_max_iterations : Bool = false
+
+    def hit_max_iterations?
+      @hit_max_iterations
+    end
+
     def parse_routes : Array(JSRoutePattern)
       routes = [] of JSRoutePattern
       @framework = detect_framework
@@ -77,6 +84,9 @@ module Noir
         end
         idx += 1
       end
+
+      # First, run a fast token scan to quickly capture common patterns
+      routes.concat(fast_scan_routes)
 
       # Second pass: process routes with collected prefixes
       while !is_at_end && iterations < max_iterations
@@ -124,7 +134,7 @@ module Noir
 
       # Log a warning if we hit the iteration limit
       if iterations >= max_iterations
-        puts "Warning: Maximum iterations reached in JS parser, parsing may be incomplete"
+        @hit_max_iterations = true
       end
 
       # Ensure all routes have leading slash for consistency
@@ -132,7 +142,17 @@ module Noir
         route_item.path = "/#{route_item.path}" unless route_item.path.starts_with?("/")
       end
 
-      routes
+      # Dedupe by method + path
+      seen = Set(String).new
+      unique = [] of JSRoutePattern
+      routes.each do |r|
+        key = r.method + "\u0000" + r.path
+        next if seen.includes?(key)
+        seen.add(key)
+        unique << r
+      end
+
+      unique
     end
 
     private def apply_prefix(route : JSRoutePattern, prefix : String)
@@ -193,6 +213,88 @@ module Noir
         # Generic parsing for common patterns
         parse_generic_route
       end
+    end
+
+    # Fast path: scan tokens for the most common route patterns without full parsing
+    private def fast_scan_routes : Array(JSRoutePattern)
+      results = [] of JSRoutePattern
+
+      idx = 0
+      limit = @tokens.size
+
+      while idx < limit - 4
+        # Pattern 1: identifier . http_method ( 'path' | `tpl` | identifier/concat )
+        if @tokens[idx].type == :identifier &&
+           @tokens[idx + 1].type == :dot &&
+           @tokens[idx + 2].type == :http_method &&
+           @tokens[idx + 3].type == :lparen
+          method = @tokens[idx + 2].value
+          # read path at idx+4
+          path_token = @tokens[idx + 4]
+          path = nil
+          if path_token.type == :string || path_token.type == :template_literal || path_token.type == :identifier
+            path = resolve_dynamic_path(idx + 4)
+            path ||= (path_token.type == :string ? path_token.value : nil)
+          end
+
+          if path
+            m = method.upcase
+            m = "DELETE" if m.downcase == "del"
+            route = JSRoutePattern.new(m, path)
+            extract_path_params(path).each { |p| route.push_param(p) }
+            results << route
+          end
+
+          idx += 1
+          next
+        end
+
+        # Pattern 2: identifier . route ( 'path' | `tpl` | ident ) . http_method ... (chained)
+        if @tokens[idx].type == :identifier &&
+           @tokens[idx + 1].type == :dot &&
+           @tokens[idx + 2].value == "route" &&
+           @tokens[idx + 3].type == :lparen
+          # resolve path at idx+4
+          path = nil
+          if idx + 4 < limit
+            t = @tokens[idx + 4]
+            if t.type == :string || t.type == :template_literal || t.type == :identifier
+              path = resolve_dynamic_path(idx + 4)
+              path ||= (t.type == :string ? t.value : nil)
+            end
+          end
+
+          if path
+            # look ahead bounded to avoid O(n^2)
+            j = idx + 5
+            steps = 0
+            max_steps = 1000
+            while j < limit - 1 && steps < max_steps
+              if @tokens[j].type == :dot && @tokens[j + 1].type == :http_method
+                m = @tokens[j + 1].value.upcase
+                m = "DELETE" if m.downcase == "del"
+                route = JSRoutePattern.new(m, path)
+                extract_path_params(path).each { |p| route.push_param(p) }
+                results << route
+                j += 2
+                steps += 2
+                next
+              elsif @tokens[j].type == :semicolon
+                break
+              end
+              j += 1
+              steps += 1
+            end
+          end
+
+          idx += 1
+          next
+        end
+
+        idx += 1
+      end
+
+      results
     end
 
     private def extract_path_string(start_token_idx = @position) : String?
