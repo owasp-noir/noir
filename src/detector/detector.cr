@@ -105,11 +105,25 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
     begin
       skipped_files = 0
       total_files = 0
+      skipped_ignored_dirs = 0
+
+      # Common heavy/irrelevant directories to skip early
+      ignored_dir_patterns = [
+        "/node_modules/", "/.git/", "/dist/", "/build/", "/target/", 
+        "/__pycache__/", "/.venv/", "/venv/", "/.idea/", "/.vscode/", 
+        "/tmp/", "/.next/", "/out/", "/vendor/"
+      ]
 
       base_paths.each do |base_path|
         Dir.glob("#{base_path}/**/**") do |file|
           next if File.directory?(file)
           total_files += 1
+
+          # Skip files in ignored directories early
+          if ignored_dir_patterns.any? { |pat| file.includes?(pat) }
+            skipped_ignored_dirs += 1
+            next
+          end
 
           # Check if file should be skipped due to media type or size
           if MediaFilter.should_skip_file?(file)
@@ -127,6 +141,9 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
 
       if skipped_files > 0
         logger.info "Skipped #{skipped_files} media/large files out of #{total_files} total files"
+      end
+      if skipped_ignored_dirs > 0
+        logger.debug "Skipped #{skipped_ignored_dirs} files in ignored directories"
       end
     ensure
       channel.close
