@@ -8,6 +8,10 @@ ameba.sh
 
 # Build artifacts
 /build/
+.gradle/
+gradle-wrapper.jar
+gradlew
+gradlew.bat
 
 # Ignore for Zola
 /docs/public/
