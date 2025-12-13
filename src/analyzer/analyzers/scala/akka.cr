@@ -57,10 +57,17 @@ module Analyzer::Scala
           route_path = path_match[1]
           route_path = "/#{route_path}" unless route_path.starts_with?("/")
           
-          # Check for path parameter matchers
-          has_param = stripped_line =~ /\/\s*(IntNumber|LongNumber|Segment|Remaining|JavaUUID)/
-          if has_param
-            route_path = "#{route_path}/{id}"
+          # Check for path parameter matchers and extract parameter name
+          param_name = "id"
+          has_param = false
+          
+          if stripped_line =~ /\/\s*(IntNumber|LongNumber|Segment|Remaining|JavaUUID)/
+            has_param = true
+            # Try to extract parameter name from pattern like: { userId => or { (userId) =>
+            if param_var_match = stripped_line.match(/\{\s*\(?\s*(\w+)\s*\)?\s*=>/)
+              param_name = param_var_match[1]
+            end
+            route_path = "#{route_path}/{#{param_name}}"
           end
           
           # Build full path with prefix
@@ -75,7 +82,7 @@ module Analyzer::Scala
               
               # Add path parameter if detected
               if has_param
-                endpoint.push_param(Param.new("id", "", "path"))
+                endpoint.push_param(Param.new(param_name, "", "path"))
               end
               
               # Extract additional parameters from the block

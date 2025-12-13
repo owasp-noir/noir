@@ -2,8 +2,8 @@ require "../../func_spec.cr"
 
 expected_endpoints = [
   Endpoint.new("/hello", "GET"),
-  Endpoint.new("/users/{id}", "GET", [
-    Param.new("id", "", "path"),
+  Endpoint.new("/users/{userId}", "GET", [
+    Param.new("userId", "", "path"),
     Param.new("filter", "", "query"),
   ]),
   Endpoint.new("/users", "GET"),
@@ -13,14 +13,14 @@ expected_endpoints = [
     Param.new("category", "", "query"),
     Param.new("sort", "", "query"),
   ]),
-  Endpoint.new("/api/v1/items/{id}", "GET", [Param.new("id", "", "path")]),
-  Endpoint.new("/api/v1/items/{id}", "PUT", [
-    Param.new("id", "", "path"),
+  Endpoint.new("/api/v1/items/{itemId}", "GET", [Param.new("itemId", "", "path")]),
+  Endpoint.new("/api/v1/items/{itemId}", "PUT", [
+    Param.new("itemId", "", "path"),
     Param.new("body", "Item", "json"),
     Param.new("Authorization", "", "header"),
   ]),
-  Endpoint.new("/api/v1/items/{id}", "DELETE", [
-    Param.new("id", "", "path"),
+  Endpoint.new("/api/v1/items/{itemId}", "DELETE", [
+    Param.new("itemId", "", "path"),
     Param.new("X-API-Key", "", "header"),
   ]),
   Endpoint.new("/search", "POST", [Param.new("q", "", "query")]),
