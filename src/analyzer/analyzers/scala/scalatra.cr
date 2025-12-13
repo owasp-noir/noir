@@ -35,9 +35,11 @@ module Analyzer::Scala
         # Match Scalatra route definitions: get("/path") { ... }
         HTTP_METHODS.each do |method|
           # Match: get("/users/:id") { ... }
-          if route_match = stripped_line.match(/\b#{method}\s*\(\s*"([^"]+)"\s*\)/)
+          # Ensure it's not a method call on an object (e.g., cookies.get)
+          if route_match = stripped_line.match(/(?<!\.)#{method}\s*\(\s*"([^"]+)"\s*\)/)
             route_path = route_match[1]
-            route_path = "/#{route_path}" unless route_path.starts_with?("/")
+            # Only process if it looks like a URL path (starts with /)
+            next unless route_path.starts_with?("/")
 
             endpoint = create_endpoint(route_path, method.upcase, path)
 
@@ -62,10 +64,10 @@ module Analyzer::Scala
         endpoint.push_param(Param.new(param_name, "", "path"))
       end
 
-      # Match *splat parameters
-      route_path.scan(/\*(\w+)/) do |match|
-        param_name = match[1]
-        endpoint.push_param(Param.new(param_name, "", "path"))
+      # Match *splat parameters (even without name)
+      if route_path.includes?("*")
+        # Scalatra uses "splat" as the default name for wildcard parameters
+        endpoint.push_param(Param.new("splat", "", "path"))
       end
     end
 
@@ -96,16 +98,24 @@ module Analyzer::Scala
     # Extract parameters from a code block
     private def extract_params_from_block(endpoint : Endpoint, block : String)
       # Extract query parameters: params("name")
+      # Note: Only add as query param if it's not already a path param
       block.scan(/params\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
         param_name = match[1]
-        unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
-          endpoint.push_param(Param.new(param_name, "", "query"))
+        # Check if this is already a path parameter
+        is_path_param = endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
+        unless is_path_param
+          unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
+            endpoint.push_param(Param.new(param_name, "", "query"))
+          end
         end
       end
 
       # Extract multiParams: multiParams("tags")
+      # Note: Skip if it's "splat" as that's a path param
       block.scan(/multiParams\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
         param_name = match[1]
+        # Skip "splat" as it's a path parameter
+        next if param_name == "splat"
         unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
           endpoint.push_param(Param.new(param_name, "", "query"))
         end
