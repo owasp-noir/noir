@@ -112,3 +112,78 @@ This generates a Markdown table that you can easily copy into documentation or r
 | GET /socket | ws       |                                                                     |
 | GET /1.html | http     |                                                                     |
 | GET /2.html | http     |                                                                     |
+
+## JSON Lines (JSONL) Format
+
+For streaming or processing large datasets line-by-line, use the `jsonl` format:
+
+```bash
+noir -b . -f jsonl
+```
+
+This outputs one JSON object per line, where each line represents a single endpoint:
+
+```jsonl
+{"url":"/","method":"GET","params":[{"name":"x-api-key","type":"header","value":""}]}
+{"url":"/query","method":"POST","params":[{"name":"my_auth","type":"cookie","value":""},{"name":"query","type":"form","value":""}]}
+{"url":"/token","method":"GET","params":[{"name":"client_id","type":"form","value":""}]}
+```
+
+This format is particularly useful for:
+- Streaming processing of large result sets
+- Integration with log processing tools
+- Line-by-line analysis without loading the entire result set into memory
+
+## Postman Collection Format
+
+To generate a Postman collection that you can import directly into Postman, use the `postman` format:
+
+```bash
+noir -b . -f postman -u https://api.example.com
+```
+
+This creates a Postman Collection v2.1 format JSON file that includes all discovered endpoints with their methods, headers, and parameters. You can save this output to a file and import it into Postman for interactive API testing.
+
+```json
+{
+  "info": {
+    "name": "Noir Scan Results",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "GET /",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "x-api-key",
+            "value": ""
+          }
+        ],
+        "url": "https://api.example.com/"
+      }
+    }
+  ]
+}
+```
+
+## HTML Report Format
+
+To generate a visual HTML report of your scan results, use the `html` format:
+
+```bash
+noir -b . -f html -o report.html
+```
+
+This creates an interactive HTML document that you can open in a web browser. The report includes:
+- A summary of discovered endpoints
+- Detailed parameter information
+- Visual formatting for easy reading
+- Interactive elements for filtering and searching
+
+This format is ideal for:
+- Sharing results with non-technical stakeholders
+- Creating audit reports
+- Documentation purposes
+- Visual inspection of API surface
