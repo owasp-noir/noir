@@ -29,76 +29,116 @@ module Analyzer::Scala
     private def extract_routes_from_content(path : String, content : String)
       lines = content.split('\n')
       prefix_stack = [] of String
-
+      
       lines.each_with_index do |line, index|
         stripped_line = line.strip
-
-        # Handle path prefixes: path("api") { ... } or pathPrefix("api") { ... }
-        if path_match = stripped_line.match(/path(?:Prefix)?\s*\(\s*"([^"]+)"\s*\)\s*\{/)
+        
+        # Handle pathPrefix: pathPrefix("api") { ... }
+        if path_prefix_match = stripped_line.match(/pathPrefix\s*\(\s*"([^"]+)"\s*\)\s*\{/)
+          prefix = path_prefix_match[1]
+          prefix = "/#{prefix}" unless prefix.starts_with?("/")
+          prefix_stack.push(prefix)
+          next
+        end
+        
+        # Track closing braces to manage prefix stack
+        stripped_line.each_char do |char|
+          if char == '}'
+            prefix_stack.pop if !prefix_stack.empty?
+          end
+        end
+        
+        # Handle path with potential matchers: path("users" / IntNumber) { userId => ... }
+        if path_match = stripped_line.match(/path\s*\(\s*"([^"]+)"/)
           route_path = path_match[1]
-          # Normalize path to start with /
           route_path = "/#{route_path}" unless route_path.starts_with?("/")
-          prefix_stack.push(route_path)
-          next
-        end
-
-        # Check for closing braces to pop from prefix stack
-        if stripped_line == "}"
-          prefix_stack.pop if !prefix_stack.empty?
-          next
-        end
-
-        # Handle HTTP method directives: get { complete("response") }
-        HTTP_METHODS.each do |method|
-          # Pattern 1: get { ... } (no path, uses current prefix)
-          if stripped_line =~ /^#{method}\s*\{/
-            full_path = prefix_stack.empty? ? "/" : prefix_stack.join("")
-            endpoint = create_endpoint(full_path, method.upcase, path)
-            extract_parameters_from_context(endpoint, line, content, index)
-            @result << endpoint
-            next
+          
+          # Check for path parameter matchers
+          has_param = stripped_line =~ /\/\s*(IntNumber|LongNumber|Segment|Remaining|JavaUUID)/
+          if has_param
+            route_path = "#{route_path}/{id}"
           end
-
-          # Pattern 2: path("users" / IntNumber) { userId => get { ... } }
-          # Pattern 3: path("users") { get { ... } }
-          if method_match = stripped_line.match(/path\s*\(\s*"([^"]+)"(?:\s*\/\s*([^)]+))?\s*\)/)
-            route_path = method_match[1]
-            route_path = "/#{route_path}" unless route_path.starts_with?("/")
-            
-            # Check if there's a path parameter
-            param_matcher = method_match[2]?
-            if param_matcher
-              # Extract parameter name if present (e.g., IntNumber, Segment, etc.)
-              # For now, use a generic {id} pattern
-              route_path = "#{route_path}/{id}"
-            end
-
-            # Look ahead for the HTTP method on the same or next line
-            context_lines = lines[index..(index + 5).clamp(0, lines.size - 1)]
-            context = context_lines.join(" ")
-            
-            HTTP_METHODS.each do |m|
-              if context.includes?("#{m} {")
-                full_path = prefix_stack.empty? ? route_path : "#{prefix_stack.join("")}#{route_path}"
-                endpoint = create_endpoint(full_path, m.upcase, path)
-                extract_parameters_from_context(endpoint, context, content, index)
-                @result << endpoint
+          
+          # Build full path with prefix
+          full_path = prefix_stack.empty? ? route_path : "#{prefix_stack.join("")}#{route_path}"
+          
+          # Find HTTP methods in the following lines within the same block
+          block_content = extract_block_from_index(lines, index)
+          
+          HTTP_METHODS.each do |method|
+            if block_content =~ /\b#{method}\s*\{/
+              endpoint = create_endpoint(full_path, method.upcase, path)
+              
+              # Add path parameter if detected
+              if has_param
+                endpoint.push_param(Param.new("id", "", "path"))
               end
-            end
-          end
-
-          # Pattern 4: concat(get { ... }, post { ... })
-          if stripped_line.includes?("concat(")
-            HTTP_METHODS.each do |m|
-              if stripped_line.includes?("#{m} {")
-                full_path = prefix_stack.empty? ? "/" : prefix_stack.join("")
-                endpoint = create_endpoint(full_path, m.upcase, path)
-                extract_parameters_from_context(endpoint, line, content, index)
-                @result << endpoint
-              end
+              
+              # Extract additional parameters from the block
+              extract_params_from_block(endpoint, block_content)
+              
+              @result << endpoint
             end
           end
         end
+      end
+    end
+    
+    # Extract block content starting from a given index
+    private def extract_block_from_index(lines : Array(String), start_index : Int32) : String
+      block_lines = [] of String
+      brace_count = 0
+      started = false
+      
+      (start_index...lines.size).each do |i|
+        line = lines[i]
+        
+        brace_count += line.count('{')
+        
+        if brace_count > 0
+          started = true
+          block_lines << line
+        end
+        
+        brace_count -= line.count('}')
+        
+        break if started && brace_count <= 0
+      end
+      
+      block_lines.join(" ")
+    end
+    
+    # Extract parameters from a code block
+    private def extract_params_from_block(endpoint : Endpoint, block : String)
+      # Extract single parameter: parameter("name") { ... }
+      block.scan(/parameter\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
+        endpoint.push_param(Param.new(match[1], "", "query"))
+      end
+      
+      # Extract multiple parameters: parameters("name", "age") or parameters("name", "age".optional)
+      if block =~ /parameters\s*\(/
+        block.scan(/['"](\w+)['"]/) do |match|
+          param_name = match[1]
+          # Avoid duplicating parameters already added
+          unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
+            endpoint.push_param(Param.new(param_name, "", "query"))
+          end
+        end
+      end
+      
+      # Extract request body: entity(as[User]) { ... }
+      if entity_match = block.match(/entity\s*\(\s*as\[([^\]]+)\]/)
+        endpoint.push_param(Param.new("body", entity_match[1], "json"))
+      end
+      
+      # Extract headers: headerValueByName("Authorization") { ... }
+      block.scan(/headerValueByName\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
+        endpoint.push_param(Param.new(match[1], "", "header"))
+      end
+      
+      # Extract optional headers: optionalHeaderValueByName("X-API-Key") { ... }
+      block.scan(/optionalHeaderValueByName\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
+        endpoint.push_param(Param.new(match[1], "", "header"))
       end
     end
 
@@ -107,73 +147,7 @@ module Analyzer::Scala
       details = Details.new(PathInfo.new(source, 0))
       params = [] of Param
 
-      # Extract path parameters from the URL
-      path_params = extract_path_parameters(path)
-      params.concat(path_params)
-
       Endpoint.new(path, method, params, details)
-    end
-
-    # Extract path parameters from URL patterns like {id}
-    private def extract_path_parameters(path : String) : Array(Param)
-      params = [] of Param
-
-      # Match {param} patterns
-      path.scan(/\{([^}]+)\}/) do |match|
-        param_name = match[1]
-        param = Param.new(param_name, "", "path")
-        params << param
-      end
-
-      params
-    end
-
-    # Extract additional parameters from the route handler
-    private def extract_parameters_from_context(endpoint : Endpoint, line : String, content : String, line_index : Int32)
-      # Look for common parameter patterns in Akka HTTP handlers
-      
-      # Check for entity(as[Type]) patterns for request bodies
-      if line.includes?("entity(as[") && (type_match = line.match(/entity\(as\[([^\]]+)\]/))
-        param_type = type_match[1]
-        param = Param.new("body", param_type, "json")
-        endpoint.push_param(param)
-      end
-
-      # Check for parameter directives
-      if line.includes?("parameter(")
-        line.scan(/parameter\(['"]([^'"]+)['"]\)/) do |match|
-          param_name = match[1]
-          param = Param.new(param_name, "", "query")
-          endpoint.push_param(param)
-        end
-      end
-
-      # Check for parameters directive (multiple parameters)
-      if line.includes?("parameters(")
-        line.scan(/['"]([^'"]+)['"]\.as\[/) do |match|
-          param_name = match[1]
-          param = Param.new(param_name, "", "query")
-          endpoint.push_param(param)
-        end
-      end
-
-      # Check for headerValueByName patterns
-      if line.includes?("headerValueByName(")
-        line.scan(/headerValueByName\(['"]([^'"]+)['"]\)/) do |match|
-          header_name = match[1]
-          param = Param.new(header_name, "", "header")
-          endpoint.push_param(param)
-        end
-      end
-
-      # Check for optionalHeaderValueByName patterns
-      if line.includes?("optionalHeaderValueByName(")
-        line.scan(/optionalHeaderValueByName\(['"]([^'"]+)['"]\)/) do |match|
-          header_name = match[1]
-          param = Param.new(header_name, "", "header")
-          endpoint.push_param(param)
-        end
-      end
     end
   end
 end
