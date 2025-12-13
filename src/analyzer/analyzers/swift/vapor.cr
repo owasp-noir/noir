@@ -2,6 +2,9 @@ require "../../../models/analyzer"
 
 module Analyzer::Swift
   class Vapor < Analyzer
+    # Maximum number of lines to look ahead for function parameters
+    LOOKAHEAD_LIMIT = 20
+
     def analyze
       # Source Analysis
       # Patterns for route definitions in Vapor:
@@ -27,13 +30,13 @@ module Analyzer::Swift
                   if File.exists?(path) && File.extname(path) == ".swift"
                     lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
                     lines.each_with_index do |line, index|
-                      # Skip lines that are clearly parameter access (req.parameters, req.query, etc.)
-                      next if line.includes?("req.parameters") || line.includes?("req.query")
-                      
                       # Look for route definitions
-                      if line.includes?(".get(") || line.includes?(".post(") || 
-                         line.includes?(".put(") || line.includes?(".delete(") || 
-                         line.includes?(".patch(")
+                      # Check if this is a route definition (has app. or identifier. before the method)
+                      # and not a parameter access (req.parameters, req.query)
+                      if (line.includes?(".get(") || line.includes?(".post(") || 
+                          line.includes?(".put(") || line.includes?(".delete(") || 
+                          line.includes?(".patch(")) && !line.includes?("req.parameters") && 
+                          !line.includes?("req.query")
                         match = line.match(pattern)
                         if match
                           begin
@@ -116,12 +119,18 @@ module Analyzer::Swift
 
     # Extract parameters from function body
     def extract_function_params(lines : Array(String), start_index : Int32, endpoint : Endpoint)
-      # Look ahead up to 20 lines for the function body
+      # Look ahead for the function body
       in_function = false
       brace_count = 0
       seen_opening_brace = false
+      
+      # Track already-added path parameters to avoid duplicates
+      existing_path_params = Set(String).new
+      endpoint.params.each do |p|
+        existing_path_params.add(p.name) if p.param_type == "path"
+      end
 
-      (start_index...[start_index + 20, lines.size].min).each do |i|
+      (start_index...[start_index + LOOKAHEAD_LIMIT, lines.size].min).each do |i|
         line = lines[i]
 
         # Track if we're inside the function
@@ -175,8 +184,9 @@ module Analyzer::Swift
           if match
             param_name = match[1]
             # Only add if not already added from path pattern
-            if !endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
+            if !existing_path_params.includes?(param_name)
               endpoint.push_param(Param.new(param_name, "", "path"))
+              existing_path_params.add(param_name)
             end
           end
         end
