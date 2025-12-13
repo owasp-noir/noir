@@ -25,7 +25,6 @@ expected_endpoints = [
   Endpoint.new("/api/data", "POST"),
   Endpoint.new("/assets/*file", "GET", [
     Param.new("file", "", "path"),
-    Param.new("path", "", "query"),
   ]),
 ]
 

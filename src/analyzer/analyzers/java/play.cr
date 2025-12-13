@@ -87,21 +87,24 @@ module Analyzer::Java
       if params_match = action.match(/\((.*)\)/)
         params_str = params_match[1]
         
-        # Split by comma, but handle nested parentheses
+        # Split by comma for simple parsing (note: doesn't handle nested structures perfectly)
         params_str.split(',').each do |param_def|
           param_def = param_def.strip
           next if param_def.empty?
           
+          # Skip named parameters with literal values (e.g., path="/public")
+          next if param_def.includes?("=") && param_def.match(/=\s*"/)
+          
           # Extract parameter name and type
           # Formats: "id: Long", "name: String"
-          if param_match = param_def.match(/^(\w+)\s*:?\s*\w*/)
+          if param_match = param_def.match(/^(\w+)\s*:\s*\w+/)
             param_name = param_match[1]
             
             # Check if it's already a path parameter
             is_path_param = endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
             
             unless is_path_param
-              # Query parameters in Play
+              # Add as query parameter
               unless endpoint.params.any? { |p| p.name == param_name }
                 endpoint.push_param(Param.new(param_name, "", "query"))
               end
