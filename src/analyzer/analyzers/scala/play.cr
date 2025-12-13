@@ -37,7 +37,7 @@ module Analyzer::Scala
         
         # Match route definitions: METHOD /path controller.action
         # Example: GET /users/:id controllers.Users.show(id: Long)
-        if route_match = stripped_line.match(/^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+([^\s]+)\s+(\S+)/)
+        if route_match = stripped_line.match(/^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+([^\s]+)\s+(.+)/)
           method = route_match[1]
           route_path = route_match[2]
           action = route_match[3]
@@ -93,11 +93,13 @@ module Analyzer::Scala
           next if param_def.empty?
           
           # Skip named parameters with literal values (e.g., path="/public")
-          next if param_def.includes?("=") && param_def.match(/=\s*"/)
+          # But don't skip optional parameters with defaults (e.g., name: String ?= "default")
+          next if param_def.match(/^\w+\s*=\s*"/)
           
           # Extract parameter name and type
-          # Formats: "id: Long", "name: String ?= default", "q ?= None"
-          if param_match = param_def.match(/^(\w+)\s*:\s*\w+/)
+          # Formats: "id: Long", "name: String ?= default", "category: Option[String]"
+          # Match parameter name followed by colon and any type (including generics)
+          if param_match = param_def.match(/^(\w+)\s*:\s*/)
             param_name = param_match[1]
             
             # Check if it's already a path parameter

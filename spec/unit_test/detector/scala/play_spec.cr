@@ -5,12 +5,12 @@ describe "Detect Scala Play" do
   options = create_test_options
   instance = Detector::Scala::Play.new options
 
-  it "routes file with Play route definitions" do
-    instance.detect("routes", "GET /users controllers.Users.list()").should eq(true)
+  it "routes file with Scala-style route definitions (Option type)" do
+    instance.detect("routes", "GET /users controllers.Users.list(page: Option[Int])").should eq(true)
   end
 
-  it "routes.conf file with Play route definitions" do
-    instance.detect("routes.conf", "POST /users/:id controllers.Users.update(id: Long)").should eq(true)
+  it "routes.conf file with Scala-style route definitions (optional param)" do
+    instance.detect("routes.conf", "POST /users/:id controllers.Users.update(id: Long, name: String ?= \"default\")").should eq(true)
   end
 
   it "scala file with play.api.mvc import" do
