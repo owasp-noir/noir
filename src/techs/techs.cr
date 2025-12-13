@@ -954,6 +954,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :scala_scalatra => {
+      :framework => "Scalatra",
+      :language  => "Scala",
+      :similar   => ["scalatra", "scala-scalatra", "scala_scalatra"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
   }
 
   def self.techs
