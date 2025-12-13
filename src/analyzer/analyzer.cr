@@ -70,6 +70,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"rust_warp", Rust::Warp},
     {"rust_gotham", Rust::Gotham},
     {"scala_akka", Scala::Akka},
+    {"scala_scalatra", Scala::Scalatra},
     {"ai", AI::Unified},
   ])
 
