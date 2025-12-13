@@ -80,6 +80,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
     Scala::Scalatra,
     Scala::Play,
     Java::Play,
+    Swift::Vapor,
   ])
 
   if options["techs"].to_s.size > 0
