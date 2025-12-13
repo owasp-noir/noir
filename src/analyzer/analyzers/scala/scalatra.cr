@@ -41,7 +41,7 @@ module Analyzer::Scala
             # Only process if it looks like a URL path (starts with /)
             next unless route_path.starts_with?("/")
 
-            endpoint = create_endpoint(route_path, method.upcase, path)
+            endpoint = create_endpoint(route_path, method.upcase, path, index + 1)
 
             # Extract path parameters from the route
             extract_path_params(endpoint, route_path)
@@ -92,7 +92,7 @@ module Analyzer::Scala
         break if started && brace_count <= 0
       end
 
-      block_lines.join(" ")
+      block_lines.join("\n")
     end
 
     # Extract parameters from a code block
@@ -149,8 +149,8 @@ module Analyzer::Scala
     end
 
     # Create an endpoint with the given path and method
-    private def create_endpoint(path : String, method : String, source : String)
-      details = Details.new(PathInfo.new(source, 0))
+    private def create_endpoint(path : String, method : String, source : String, line_number : Int32)
+      details = Details.new(PathInfo.new(source, line_number))
       params = [] of Param
 
       Endpoint.new(path, method, params, details)
