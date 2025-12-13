@@ -52,52 +52,6 @@ If you use it with Github Action, please refer to this [document](/github-action
 
 ![](/docs/content/get_started/overview/noir-usage.jpg)
 
-JSON Result
-```
-noir -b . -u https://testapp.internal.domains -f json -T
-```
-
-```json
-{
-  "endpoints": [
-    {
-      "url": "https://testapp.internal.domains/query",
-      "method": "POST",
-      "params": [
-        {
-          "name": "my_auth",
-          "value": "",
-          "param_type": "cookie",
-          "tags": []
-        },
-        {
-          "name": "query",
-          "value": "",
-          "param_type": "form",
-          "tags": [
-            {
-              "name": "sqli",
-              "description": "This parameter may be vulnerable to SQL Injection attacks.",
-              "tagger": "Hunt"
-            }
-          ]
-        }
-      ],
-      "details": {
-        "code_paths": [
-          {
-            "path": "spec/functional_test/fixtures/crystal_kemal/src/testapp.cr",
-            "line": 8
-          }
-        ]
-      },
-      "protocol": "http",
-      "tags": []
-    }
-  ]
-}
-```
-
 For more details, please visit our [documentation](https://owasp-noir.github.io/noir/) page.
 
 ## Roadmap

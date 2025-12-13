@@ -3,17 +3,17 @@ require "./config_initializer.cr"
 require "./banner.cr"
 require "yaml"
 
-macro append_to_yaml_array(hash, key, value)
-  tmp = [] of YAML::Any
-  {{hash.id}}[{{key.stringify}}].as_a.each do |item|
-    tmp << item
-  end
-  tmp << YAML::Any.new({{value}})
-  {{hash.id}}[{{key.stringify}}] = YAML::Any.new(tmp)
+private def append_to_yaml_array(hash : Hash(String, YAML::Any), key : String, value : String)
+  arr = (hash[key]? || YAML::Any.new([] of YAML::Any)).as_a.dup
+  arr << YAML::Any.new(value)
+  hash[key] = YAML::Any.new(arr)
 end
 
-# Helper method to process override prompt flags
-private def process_override_flag(flag : String, option_key : String, noir_options : Hash(String, YAML::Any), args : Array(String), i : Int32) : Int32
+private def process_override_flag(
+  flag : String, option_key : String,
+  noir_options : Hash(String, YAML::Any),
+  args : Array(String), i : Int32
+) : Int32
   if i + 1 < args.size && !args[i + 1].starts_with?("-")
     noir_options[option_key] = YAML::Any.new(args[i + 1])
     i + 2
@@ -25,9 +25,8 @@ end
 
 def extract_hidden_prompt_flags(noir_options : Hash(String, YAML::Any)) : Array(String)
   args = ARGV.dup
-  filtered_args = [] of String
+  filtered = [] of String
   i = 0
-
   override_flags = {
     "--override-analyze-prompt"        => "override_analyze_prompt",
     "--override-llm-optimize-prompt"   => "override_llm_optimize_prompt",
@@ -40,265 +39,340 @@ def extract_hidden_prompt_flags(noir_options : Hash(String, YAML::Any)) : Array(
     if override_flags.has_key?(arg)
       i = process_override_flag(arg, override_flags[arg], noir_options, args, i)
     else
-      filtered_args << arg
+      filtered << arg
       i += 1
     end
   end
+  filtered
+end
 
-  filtered_args
+private def base_help : String
+  <<-HELP
+  #{"Hunt every Endpoint, expose Shadow APIs, map the Attack Surface.".colorize(:cyan)}
+
+  #{"USAGE:".colorize(:green)}
+    noir -b BASE_PATH [flags]
+
+  #{"EXAMPLES:".colorize(:green)}
+    #{"Basic scan".colorize(:yellow)}
+      noir -b ./myapp
+
+    #{"JSON output to file".colorize(:yellow)}
+      noir -b ./myapp -f json -o endpoints.json
+
+    #{"Enable passive security scan".colorize(:yellow)}
+      noir -b ./myapp -P
+
+    #{"AI integration".colorize(:yellow)}
+      $ noir -b . --ai-provider openai --ai-model gpt-5.1 --ai-key YOUR_API_KEY
+
+    #{"Forward results via proxy (Burp/ZAP)".colorize(:yellow)}
+      noir -b ./myapp --send-proxy http://127.0.0.1:8080
+
+  HELP
+end
+
+private def full_examples_and_env : String
+  <<-EXTRA
+  \n#{"EXAMPLES:".colorize(:green)}
+    #{"Basic run".colorize(:yellow)}
+      $ noir -b .
+
+    #{"With base URL and proxy".colorize(:yellow)}
+      $ noir -b . -u http://example.com --send-proxy http://localhost:8090
+
+    #{"Detailed analysis".colorize(:yellow)}
+      $ noir -b . -T --include-path
+
+    #{"JSON or YAML output without logs".colorize(:yellow)}
+      $ noir -b . -f json --no-log
+      $ noir -b . -f yaml --no-log
+
+    #{"Specific technology".colorize(:yellow)}
+      $ noir -b . -t rails
+      $ noir -b . -t rails --exclude-techs php
+
+  #{"ENVIRONMENT VARIABLES:".colorize(:green)}
+    NOIR_HOME          Path to directory containing config file
+    NOIR_AI_KEY        API key for AI providers (OpenAI, xAI, etc.)
+    NOIR_MAX_FILE_SIZE Maximum file size for analysis (e.g. 5MB or 1048576)
+  EXTRA
 end
 
 def run_options_parser
-  # Check config file
   config_init = ConfigInitializer.new
   noir_options = config_init.read_config
 
-  # Pre-process ARGV to extract hidden prompt override flags
   extracted_args = extract_hidden_prompt_flags(noir_options)
 
   OptionParser.parse(extracted_args) do |parser|
-    parser.banner = "Attack surface detector that identifies endpoints by static analysis."
-    parser.separator "USAGE:".colorize(:green)
-    parser.separator "  noir -b BASE_PATH <flags>\n"
+    parser.banner = base_help
+
     parser.separator "FLAGS:".colorize(:green)
-    parser.separator "  BASE:".colorize(:blue)
-    parser.on "-b PATH", "--base-path ./app", "(Required) Set base path" do |var|
-      append_to_yaml_array(noir_options, base, var)
-    end
-    parser.on "-u URL", "--url http://..", "Set base url for endpoints" { |var| noir_options["url"] = YAML::Any.new(var) }
 
-    parser.separator "\n  OUTPUT:".colorize(:blue)
-    parser.on "-f FORMAT", "--format json", "Set output format\n  * plain yaml json jsonl markdown-table sarif html\n  * curl httpie oas2 oas3 postman\n  * only-url only-param only-header only-cookie only-tag\n  * mermaid" { |var| noir_options["format"] = YAML::Any.new(var) }
-    parser.on "-o PATH", "--output out.txt", "Write result to file" { |var| noir_options["output"] = YAML::Any.new(var) }
-    parser.on "--set-pvalue VALUE", "Specifies the value of the identified parameter for all types" do |var|
-      append_to_yaml_array(noir_options, set_pvalue, var)
+    parser.separator " BASE:".colorize(:blue)
+    parser.on "-b PATH", "--base-path ./app", "(Required) Set base path" do |v|
+      append_to_yaml_array(noir_options, "base", v)
+    end
+    parser.on "-u URL", "--url http://..", "Set base URL for endpoints" do |v|
+      noir_options["url"] = YAML::Any.new(v)
     end
 
-    parser.on "--set-pvalue-header VALUE", "Specifies the value of the identified parameter for headers" do |var|
-      append_to_yaml_array(noir_options, set_pvalue_header, var)
+    parser.separator "\n OUTPUT:".colorize(:blue)
+    parser.on "-f FMT", "--format json", <<-DESC do |v|
+      Output format:
+        plain                Plain text (default)
+        yaml                 YAML
+        json                 JSON
+        jsonl                JSON Lines
+        markdown-table       Markdown table
+        sarif                SARIF format
+        html                 HTML report
+        curl                 cURL commands
+        httpie               HTTPie commands
+        oas2                 OpenAPI 2.0 (Swagger)
+        oas3                 OpenAPI 3.0
+        postman              Postman collection
+        only-url             Only endpoint URLs
+        only-param           Only parameters
+        only-header          Only headers
+        only-cookie          Only cookies
+        only-tag             Only tags
+        mermaid              Mermaid diagram
+      DESC
+      noir_options["format"] = YAML::Any.new(v)
+    end
+    parser.on "-o PATH", "--output out.txt", "Write result to file" do |v|
+      noir_options["output"] = YAML::Any.new(v)
     end
 
-    parser.on "--set-pvalue-cookie VALUE", "Specifies the value of the identified parameter for cookies" do |var|
-      append_to_yaml_array(noir_options, set_pvalue_cookie, var)
+    parser.on "--set-pvalue VALUE", "Set parameter value for all types" do |v|
+      append_to_yaml_array(noir_options, "set_pvalue", v)
+    end
+    parser.on "--set-pvalue-header VALUE", "Set parameter value for headers" do |v|
+      append_to_yaml_array(noir_options, "set_pvalue_header", v)
+    end
+    parser.on "--set-pvalue-cookie VALUE", "Set parameter value for cookies" do |v|
+      append_to_yaml_array(noir_options, "set_pvalue_cookie", v)
+    end
+    parser.on "--set-pvalue-query VALUE", "Set parameter value for query parameters" do |v|
+      append_to_yaml_array(noir_options, "set_pvalue_query", v)
+    end
+    parser.on "--set-pvalue-form VALUE", "Set parameter value for form data" do |v|
+      append_to_yaml_array(noir_options, "set_pvalue_form", v)
+    end
+    parser.on "--set-pvalue-json VALUE", "Set parameter value for JSON body" do |v|
+      append_to_yaml_array(noir_options, "set_pvalue_json", v)
+    end
+    parser.on "--set-pvalue-path VALUE", "Set parameter value for path parameters" do |v|
+      append_to_yaml_array(noir_options, "set_pvalue_path", v)
     end
 
-    parser.on "--set-pvalue-query VALUE", "Specifies the value of the identified parameter for query parameters" do |var|
-      append_to_yaml_array(noir_options, set_pvalue_query, var)
-    end
-
-    parser.on "--set-pvalue-form VALUE", "Specifies the value of the identified parameter for form data" do |var|
-      append_to_yaml_array(noir_options, set_pvalue_form, var)
-    end
-
-    parser.on "--set-pvalue-json VALUE", "Specifies the value of the identified parameter for JSON data" do |var|
-      append_to_yaml_array(noir_options, set_pvalue_json, var)
-    end
-
-    parser.on "--set-pvalue-path VALUE", "Specifies the value of the identified parameter for path parameters" do |var|
-      append_to_yaml_array(noir_options, set_pvalue_path, var)
-    end
-
-    parser.on "--status-codes", "Display HTTP status codes for discovered endpoints" do
+    parser.on "--status-codes", "Display HTTP status codes" do
       noir_options["status_codes"] = YAML::Any.new(true)
     end
-
-    parser.on "--exclude-codes 404,500", "Exclude specific HTTP response codes (comma-separated)" { |var| noir_options["exclude_codes"] = YAML::Any.new(var) }
-
-    parser.on "--include-path", "Include file path in the plain result" do
+    parser.on "--exclude-codes 404,500", "Exclude HTTP codes (comma-separated)" do |v|
+      noir_options["exclude_codes"] = YAML::Any.new(v)
+    end
+    parser.on "--include-path", "Include file path in plain output" do
       noir_options["include_path"] = YAML::Any.new(true)
     end
-
     parser.on "--no-color", "Disable color output" do
       noir_options["color"] = YAML::Any.new(false)
     end
-
-    parser.on "--no-log", "Displaying only the results" do
+    parser.on "--no-log", "Show only results" do
       noir_options["nolog"] = YAML::Any.new(true)
     end
 
-    parser.separator "\n  PASSIVE SCAN:".colorize(:blue)
-
-    parser.on "-P", "--passive-scan", "Perform a passive scan for security issues using rules from the specified path" { |_| noir_options["passive_scan"] = YAML::Any.new(true) }
-    parser.on "--passive-scan-path PATH", "Specify the path for the rules used in the passive security scan" do |var|
-      append_to_yaml_array(noir_options, passive_scan_path, var)
+    parser.separator "\n PASSIVE SCAN:".colorize(:blue)
+    parser.on "-P", "--passive-scan", "Enable passive security scan" do
+      noir_options["passive_scan"] = YAML::Any.new(true)
     end
-    parser.on "--passive-scan-severity SEVERITY", "Set minimum severity level for passive scan (critical, high, medium, low). Default: high" do |var|
-      valid_severities = ["critical", "high", "medium", "low"]
-      if valid_severities.includes?(var.downcase)
-        noir_options["passive_scan_severity"] = YAML::Any.new(var.downcase)
+    parser.on "--passive-scan-path PATH", "Path to passive scan rules" do |v|
+      append_to_yaml_array(noir_options, "passive_scan_path", v)
+    end
+    parser.on "--passive-scan-severity LVL", "Min severity (critical|high|medium|low, default: high)" do |v|
+      lvl = v.downcase
+      if %w[critical high medium low].includes?(lvl)
+        noir_options["passive_scan_severity"] = YAML::Any.new(lvl)
       else
-        STDERR.puts "ERROR: Invalid severity level '#{var}'. Valid options are: #{valid_severities.join(", ")}".colorize(:yellow)
+        STDERR.puts "ERROR: Invalid severity '#{v}'. Valid: critical, high, medium, low".colorize(:yellow)
         exit(1)
       end
     end
-    parser.on "--passive-scan-auto-update", "Automatically update passive scan rules from the remote repository at startup" { |_| noir_options["passive_scan_auto_update"] = YAML::Any.new(true) }
-    parser.on "--passive-scan-no-update-check", "Skip checking for passive scan rules updates at startup" { |_| noir_options["passive_scan_no_update_check"] = YAML::Any.new(true) }
+    parser.on "--passive-scan-auto-update", "Auto-update rules at startup" do
+      noir_options["passive_scan_auto_update"] = YAML::Any.new(true)
+    end
+    parser.on "--passive-scan-no-update-check", "Skip rule update check" do
+      noir_options["passive_scan_no_update_check"] = YAML::Any.new(true)
+    end
 
-    parser.separator "\n  TAGGER:".colorize(:blue)
-    parser.on "-T", "--use-all-taggers", "Activates all taggers for full analysis coverage" { |_| noir_options["all_taggers"] = YAML::Any.new(true) }
-    parser.on "--use-taggers VALUES", "Activates specific taggers (e.g., --use-taggers hunt,oauth)" { |var| noir_options["use_taggers"] = YAML::Any.new(var) }
-    parser.on "--list-taggers", "Lists all available taggers" do
+    parser.separator "\n TAGGER:".colorize(:blue)
+    parser.on "-T", "--use-all-taggers", "Activate all taggers" do
+      noir_options["all_taggers"] = YAML::Any.new(true)
+    end
+    parser.on "--use-taggers LIST", "Activate specific taggers (comma-separated)" do |v|
+      noir_options["use_taggers"] = YAML::Any.new(v)
+    end
+    parser.on "--list-taggers", "List available taggers" do
       puts "Available taggers:"
-      techs = NoirTaggers.taggers
-      techs.each do |tagger, value|
-        puts "  #{tagger.to_s.colorize(:green)}"
-        value.each do |k, v|
-          puts "    #{k.to_s.colorize(:blue)}: #{v}"
-        end
+      NoirTaggers.taggers.each do |tagger, info|
+        puts " #{tagger.to_s.colorize(:green)}"
+        info.each { |k, v| puts "   #{k.to_s.colorize(:blue)}: #{v}" }
       end
       exit
     end
 
-    parser.separator "\n  DELIVER:".colorize(:blue)
-    parser.on "--send-req", "Send results to a web request" { |_| noir_options["send_req"] = YAML::Any.new(true) }
-    parser.on "--send-proxy http://proxy..", "Send results to a web request via an HTTP proxy" { |var| noir_options["send_proxy"] = YAML::Any.new(var) }
-    parser.on "--send-es http://es..", "Send results to Elasticsearch" { |var| noir_options["send_es"] = YAML::Any.new(var) }
-    parser.on "--with-headers X-Header:Value", "Add custom headers to be included in the delivery" do |var|
-      append_to_yaml_array(noir_options, send_with_headers, var)
+    parser.separator "\n DELIVER:".colorize(:blue)
+    parser.on "--send-req", "Send results via HTTP request" do
+      noir_options["send_req"] = YAML::Any.new(true)
     end
-    parser.on "--use-matchers string", "Send endpoints that match specific conditions to the Deliver (supports URL, method, or method:URL patterns)" do |var|
-      append_to_yaml_array(noir_options, use_matchers, var)
+    parser.on "--send-proxy URL", "Proxy for delivery" do |v|
+      noir_options["send_proxy"] = YAML::Any.new(v)
     end
-    parser.on "--use-filters string", "Exclude endpoints that match specified conditions and send the rest to Deliver (supports URL, method, or method:URL patterns)" do |var|
-      append_to_yaml_array(noir_options, use_filters, var)
+    parser.on "--send-es URL", "Send to Elasticsearch" do |v|
+      noir_options["send_es"] = YAML::Any.new(v)
+    end
+    parser.on "--with-headers VAL", "Add custom headers (repeatable)" do |v|
+      append_to_yaml_array(noir_options, "send_with_headers", v)
+    end
+    parser.on "--use-matchers VAL", "Matchers for delivery (repeatable)" do |v|
+      append_to_yaml_array(noir_options, "use_matchers", v)
+    end
+    parser.on "--use-filters VAL", "Filters for delivery (repeatable)" do |v|
+      append_to_yaml_array(noir_options, "use_filters", v)
     end
 
-    parser.separator "\n  AI Integration:".colorize(:blue)
-    parser.on "--ai-provider PREFIX|URL", "Specify the AI (LLM) provider or directly set a custom API URL. Required for AI features.\n" \
-                                          "  [Prefixes and Default URLs]\n" \
-                                          "  * openai: https://api.openai.com\n" \
-                                          "  * xai: https://api.x.ai\n" \
-                                          "  * github: https://models.github.ai\n" \
-                                          "  * azure: https://models.inference.ai.azure.com\n" \
-                                          "  * vllm: http://localhost:8000\n" \
-                                          "  * ollama: http://localhost:11434\n" \
-                                          "  * lmstudio: http://localhost:1234\n" \
-                                          "  [Custom URL] You can also provide a full URL directly (e.g., http://my-custom-api:9000).\n" \
-                                          "  [Examples] --ai-provider=openai, --ai-provider=http://localhost:9100/v1/chat/completions" { |var| noir_options["ai_provider"] = YAML::Any.new(var) }
-    parser.on "--ai-model MODEL", "Set the model name to use for AI analysis. Required for AI features.\n" \
-                                  "  [Example] --ai-model=gpt-4" { |var| noir_options["ai_model"] = YAML::Any.new(var) }
-    parser.on "--ai-key KEY", "Provide the API key for authenticating with the AI provider's API. Alternatively, use the NOIR_AI_KEY environment variable.\n" \
-                              "  [Example] --ai-key=your-api-key  or  export NOIR_AI_KEY=your-api-key" { |var| noir_options["ai_key"] = YAML::Any.new(var) }
-    parser.on "--ai-max-token INT", "Set the maximum number of tokens for AI requests. This affects the length of generated text and context window for analysis.\n" \
-                                    "  [Example] --ai-max-token=2048" { |var| noir_options["ai_max_token"] = YAML::Any.new(var.to_i) }
-    parser.on "--ollama http://localhost:11434", "(Deprecated) Set the Ollama server URL. Use --ai-provider instead." { |var| noir_options["ollama"] = YAML::Any.new(var) }
-    parser.on "--ollama-model MODEL", "(Deprecated) Specify the model for the Ollama server. Use --ai-model instead." { |var| noir_options["ollama_model"] = YAML::Any.new(var) }
+    parser.separator "\n AI Integration:".colorize(:blue)
+    parser.on "--ai-provider PREFIX|URL", <<-DESC do |v|
+      Specify AI provider prefix or full custom URL (required for AI features).
 
-    parser.separator "\n  DIFF:".colorize(:blue)
-    parser.on "--diff-path ./app2", "Specify the path to the old version of the source code for comparison" { |var| noir_options["diff"] = YAML::Any.new(var) }
+      Supported prefixes:
+        openai   → https://api.openai.com/v1
+        xai      → https://api.x.ai/v1
+        github   → https://models.github.ai/inference
+        azure    → https://models.inference.ai.azure.com
+        ollama   → http://localhost:11434/v1
+        lmstudio → http://localhost:1234/v1
+        vllm     → http://localhost:8000/v1
 
-    parser.separator "\n  TECHNOLOGIES:".colorize(:blue)
-    parser.on "-t TECHS", "--techs rails,php", "Specify the technologies to use" { |var| noir_options["techs"] = YAML::Any.new(var) }
-    parser.on "--exclude-techs rails,php", "Specify the technologies to be excluded" { |var| noir_options["exclude_techs"] = YAML::Any.new(var) }
-    parser.on "--list-techs", "Show all technologies" do
-      puts "⚑ Available technologies:"
-      techs = NoirTechs.techs
-      techs.each do |tech, value|
-        puts "    #{tech.to_s.colorize(:green)}"
-        value.each do |k, v|
+      Or use a custom URL directly:
+        --ai-provider http://localhost:8000/v1
+      DESC
+      noir_options["ai_provider"] = YAML::Any.new(v)
+    end
+    parser.on "--ai-model NAME", "Model name" do |v|
+      noir_options["ai_model"] = YAML::Any.new(v)
+    end
+    parser.on "--ai-key KEY", "API key (or set NOIR_AI_KEY env)" do |v|
+      noir_options["ai_key"] = YAML::Any.new(v)
+    end
+    parser.on "--ai-max-token N", "Max tokens per request" do |v|
+      noir_options["ai_max_token"] = YAML::Any.new(v.to_i)
+    end
+    parser.on "--ollama URL", "(Deprecated) Use --ai-provider instead" do |v|
+      noir_options["ollama"] = YAML::Any.new(v)
+    end
+    parser.on "--ollama-model NAME", "(Deprecated) Use --ai-model instead" do |v|
+      noir_options["ollama_model"] = YAML::Any.new(v)
+    end
+
+    parser.separator "\n DIFF:".colorize(:blue)
+    parser.on "--diff-path PATH", "Old code version for diff" do |v|
+      noir_options["diff"] = YAML::Any.new(v)
+    end
+
+    parser.separator "\n TECHNOLOGIES:".colorize(:blue)
+    parser.on "-t LIST", "--techs rails,php", "Enable specific technologies" do |v|
+      noir_options["techs"] = YAML::Any.new(v)
+    end
+    parser.on "--exclude-techs LIST", "Exclude technologies" do |v|
+      noir_options["exclude_techs"] = YAML::Any.new(v)
+    end
+    parser.on "--list-techs", "List available technologies" do
+      puts "Available technologies:"
+      NoirTechs.techs.each do |tech, info|
+        puts " #{tech.to_s.colorize(:green)}"
+        info.each do |k, v|
           if v.is_a?(Hash)
-            puts "      ➔ #{k.to_s.colorize(:blue)}:"
-            v.each do |sub_k, sub_v|
-              puts "        └── #{sub_k.to_s.colorize(:cyan)}: #{sub_v}"
-            end
+            puts "   #{k.to_s.colorize(:blue)}:"
+            v.each { |sk, sv| puts "     #{sk.to_s.colorize(:cyan)}: #{sv}" }
           else
-            puts "      ➔ #{k.to_s.colorize(:blue)}: #{v}"
+            puts "   #{k.to_s.colorize(:blue)}: #{v}"
           end
         end
       end
       exit
     end
 
-    parser.separator "\n  CONFIG:".colorize(:blue)
-    parser.on "--config-file ./config.yaml", "Specify the path to a configuration file in YAML format" { |var| noir_options["config_file"] = YAML::Any.new(var) }
-    parser.on "--concurrency 20", "Set concurrency" { |var| noir_options["concurrency"] = YAML::Any.new(var) }
-    parser.on "--generate-completion zsh", "Generate Zsh/Bash/Fish completion script" do |var|
-      case var
-      when "zsh"
-        puts generate_zsh_completion_script
-      when "bash"
-        puts generate_bash_completion_script
-      when "fish"
-        puts generate_fish_completion_script
+    parser.separator "\n CONFIG:".colorize(:blue)
+    parser.on "--config-file PATH", "YAML config file" do |v|
+      noir_options["config_file"] = YAML::Any.new(v)
+    end
+    parser.on "--concurrency N", "Concurrency level" do |v|
+      noir_options["concurrency"] = YAML::Any.new(v.to_i)
+    end
+    parser.on "--generate-completion SHELL", "Generate completion script (zsh|bash|fish)" do |shell|
+      case shell
+      when "zsh"  then puts generate_zsh_completion_script
+      when "bash" then puts generate_bash_completion_script
+      when "fish" then puts generate_fish_completion_script
       else
-        puts "ERROR: Invalid completion type.".colorize(:yellow)
-        puts "e.g., noir --generate-completion zsh"
-        puts "e.g., noir --generate-completion bash"
-        puts "e.g., noir --generate-completion fish"
+        STDERR.puts "ERROR: Unsupported shell '#{shell}'".colorize(:yellow)
       end
-
       exit
     end
 
-    parser.separator "\n  CACHE:".colorize(:blue)
-    parser.on "--cache-disable", "Disable LLM cache for this run" do
+    parser.separator "\n CACHE:".colorize(:blue)
+    parser.on "--cache-disable", "Disable LLM cache" do
       noir_options["cache_disable"] = YAML::Any.new(true)
     end
-    parser.on "--cache-clear", "Clear LLM cache directory before run" do
+    parser.on "--cache-clear", "Clear LLM cache before run" do
       noir_options["cache_clear"] = YAML::Any.new(true)
     end
 
-    parser.separator "\n  DEBUG:".colorize(:blue)
-    parser.on "-d", "--debug", "Show debug messages" do
+    parser.separator "\n DEBUG:".colorize(:blue)
+    parser.on "-d", "--debug", "Enable debug messages" do
       noir_options["debug"] = YAML::Any.new(true)
     end
     parser.on "-v", "--version", "Show version" do
       puts Noir::VERSION
       exit
     end
-    parser.on "--build-info", "Show version and Build info" do
-      puts "Noir Version:      #{Noir::VERSION}"
-      puts "Crystal Version:   #{Crystal::VERSION}"
-      puts "LLVM Version:      #{Crystal::LLVM_VERSION}"
-      puts "TARGET:            #{Crystal::TARGET_TRIPLE}"
+    parser.on "--build-info", "Show build information" do
+      puts "Noir: #{Noir::VERSION}"
+      puts "Crystal: #{Crystal::VERSION}"
+      puts "LLVM: #{Crystal::LLVM_VERSION}"
+      puts "Target: #{Crystal::TARGET_TRIPLE}"
       exit
     end
-    parser.on "--verbose", "Show verbose messages (+ automatically enable --include-path, --use-all-taggers)" do
+    parser.on "--verbose", "Verbose mode (+ --include-path + --use-all-taggers)" do
       noir_options["verbose"] = YAML::Any.new(true)
       noir_options["include_path"] = YAML::Any.new(true)
       noir_options["all_taggers"] = YAML::Any.new(true)
     end
-    parser.separator "\n  OTHERS:".colorize(:blue)
-    parser.on "-h", "--help", "Show help" do
+
+    parser.on "-h", "--help", "Show this help" do
       banner()
       puts parser
       exit
     end
-    parser.on "--help-all", "Show all help" do
+
+    parser.on "--help-all", "Show all help (examples + env vars)" do
       banner()
       puts parser
-      puts ""
-      puts "ENVIRONMENT VARIABLES:".colorize(:green)
-      puts "  NOIR_HOME: Path to a directory containing the configuration file."
-      puts "  NOIR_AI_KEY: API key for authenticating with an AI provider (e.g., OpenAI, xAI)"
-      puts "  NOIR_MAX_FILE_SIZE: Maximum file size for code analysis (e.g., 5MB, 1048576). Larger or media files are skipped."
-      puts ""
-      puts "EXAMPLES:".colorize(:green)
-      puts "  Basic run of noir:"
-      puts "      $ noir -b ."
-      puts "  Running noir targeting a specific URL and forwarding results through a proxy:"
-      puts "      $ noir -b . -u http://example.com"
-      puts "      $ noir -b . -u http://example.com --send-proxy http://localhost:8090"
-      puts "  Running noir for detailed analysis:"
-      puts "      $ noir -b . -T --include-path"
-      puts "  Running noir with output limited to JSON or YAML format, without logs:"
-      puts "      $ noir -b . -f json --no-log"
-      puts "      $ noir -b . -f yaml --no-log"
-      puts "  Running noir with a specific technology:"
-      puts "      $ noir -b . -t rails"
-      puts "  Running noir with a specific technology and excluding another:"
-      puts "      $ noir -b . -t rails --exclude-techs php"
-      puts "  Running noir with AI integration:"
-      puts "      $ noir -b . --ollama http://localhost:11434 --ollama-model llama3"
+      puts full_examples_and_env
       exit
     end
+
     parser.invalid_option do |flag|
       STDERR.puts "ERROR: #{flag} is not a valid option.".colorize(:yellow)
       STDERR.puts parser
       exit(1)
     end
+
     parser.missing_option do |flag|
-      STDERR.puts "ERROR: #{flag} is missing an argument.".colorize(:yellow)
+      STDERR.puts "ERROR: #{flag} requires an argument.".colorize(:yellow)
       exit(1)
     end
   end
