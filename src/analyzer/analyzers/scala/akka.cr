@@ -42,8 +42,12 @@ module Analyzer::Scala
         end
         
         # Track closing braces to manage prefix stack
-        stripped_line.each_char do |char|
-          if char == '}'
+        closing_braces = stripped_line.count('}')
+        opening_braces = stripped_line.count('{')
+        net_braces = closing_braces - opening_braces
+        
+        if net_braces > 0
+          net_braces.times do
             prefix_stack.pop if !prefix_stack.empty?
           end
         end
@@ -116,8 +120,9 @@ module Analyzer::Scala
       end
       
       # Extract multiple parameters: parameters("name", "age") or parameters("name", "age".optional)
-      if block =~ /parameters\s*\(/
-        block.scan(/['"](\w+)['"]/) do |match|
+      if params_match = block.match(/parameters\s*\(([^)]+)\)/)
+        params_content = params_match[1]
+        params_content.scan(/['"](\w+)['"]/) do |match|
           param_name = match[1]
           # Avoid duplicating parameters already added
           unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
