@@ -1,0 +1,34 @@
+# Routes for Scala Play test application
+# This file defines all application routes (Higher priority routes first)
+
+# Home page
+GET     /                           controllers.HomeController.index()
+
+# User routes with path parameters
+GET     /users                      controllers.Users.list()
+GET     /users/:id                  controllers.Users.show(id: Long)
+POST    /users                      controllers.Users.create()
+PUT     /users/:id                  controllers.Users.update(id: Long)
+DELETE  /users/:id                  controllers.Users.delete(id: Long)
+
+# Search with query parameters
+GET     /search                     controllers.Search.search(q: String, filter: String ?= "all")
+
+# Posts with nested path parameters
+GET     /users/:userId/posts/:postId    controllers.Posts.show(userId: Long, postId: Long)
+
+# Items with optional query parameters
+GET     /items                      controllers.Items.list(category: Option[String], page: Int ?= 1)
+
+# Advanced path parameter with regex
+GET     /files/$path<.+>            controllers.Files.download(path: String)
+
+# Upload endpoint
+POST    /upload                     controllers.Upload.file()
+
+# API with headers
+GET     /api/protected              controllers.Api.protected()
+POST    /api/data                   controllers.Api.postData()
+
+# Wildcard route (should be last)
+GET     /assets/*file               controllers.Assets.at(path="/public", file)
