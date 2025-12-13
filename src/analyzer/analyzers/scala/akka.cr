@@ -29,27 +29,19 @@ module Analyzer::Scala
     private def extract_routes_from_content(path : String, content : String)
       lines = content.split('\n')
       prefix_stack = [] of String
+      brace_depth = 0
+      prefix_depths = [] of Int32  # Track at which depth each prefix was added
       
       lines.each_with_index do |line, index|
         stripped_line = line.strip
         
         # Handle pathPrefix: pathPrefix("api") { ... }
-        if path_prefix_match = stripped_line.match(/pathPrefix\s*\(\s*"([^"]+)"\s*\)\s*\{/)
+        if path_prefix_match = stripped_line.match(/pathPrefix\s*\(\s*"([^"]+)"\s*\)/)
           prefix = path_prefix_match[1]
           prefix = "/#{prefix}" unless prefix.starts_with?("/")
           prefix_stack.push(prefix)
-          next
-        end
-        
-        # Track closing braces to manage prefix stack
-        closing_braces = stripped_line.count('}')
-        opening_braces = stripped_line.count('{')
-        net_braces = closing_braces - opening_braces
-        
-        if net_braces > 0
-          net_braces.times do
-            prefix_stack.pop if !prefix_stack.empty?
-          end
+          # Record the depth at which this prefix was added (after we count the opening brace)
+          prefix_depths.push(brace_depth + 1)
         end
         
         # Handle path with potential matchers: path("users" / IntNumber) { userId => ... }
@@ -91,6 +83,19 @@ module Analyzer::Scala
               @result << endpoint
             end
           end
+        end
+        
+        # Track brace depth to manage prefix stack
+        opening_braces = stripped_line.count('{')
+        closing_braces = stripped_line.count('}')
+        
+        brace_depth += opening_braces
+        brace_depth -= closing_braces
+        
+        # Pop prefixes when we exit their depth level
+        while !prefix_depths.empty? && brace_depth < prefix_depths.last
+          prefix_stack.pop
+          prefix_depths.pop
         end
       end
     end
