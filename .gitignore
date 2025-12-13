@@ -1,5 +1,4 @@
 /lib/
-/bin/
 /.shards/
 *.dwarf
 .DS_Store
@@ -7,7 +6,7 @@
 ameba.sh
 
 # Build artifacts
-/build/
+/bin/
 
 # Ignore for Zola
 /docs/public/

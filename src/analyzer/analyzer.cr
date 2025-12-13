@@ -71,6 +71,8 @@ def initialize_analyzers(logger : NoirLogger)
     {"rust_gotham", Rust::Gotham},
     {"scala_akka", Scala::Akka},
     {"scala_scalatra", Scala::Scalatra},
+    {"scala_play", Scala::Play},
+    {"java_play", Java::Play},
     {"ai", AI::Unified},
   ])
 
