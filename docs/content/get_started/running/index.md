@@ -37,4 +37,58 @@ To see a full list of all available commands and flags, you can use the `-h` or 
 noir -h
 ```
 
+or
+
+```bash
+noir --help
+```
+
 This will display the help documentation, which provides a comprehensive overview of Noir's capabilities.
+
+## Checking Supported Technologies
+
+To see which languages and frameworks Noir supports:
+
+```bash
+noir --list-techs
+```
+
+## Output Formats
+
+By default, Noir outputs results in a table format. However, you can output in various other formats:
+
+### JSON Output
+
+```bash
+noir -b . -f json
+```
+
+### YAML Output
+
+```bash
+noir -b . -f yaml
+```
+
+### OpenAPI Specification
+
+```bash
+noir -b . -f oas3
+```
+
+## Suppressing Logs
+
+If you want clean output without log messages, you can suppress them:
+
+```bash
+noir -b . --no-log
+```
+
+## Verbose Output
+
+For more detailed information, use the verbose flag:
+
+```bash
+noir -b . --verbose
+```
+
+Now that you know the basic usage of Noir, you can explore more advanced features!

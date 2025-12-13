@@ -14,6 +14,7 @@ This section provides detailed guides on how to set up and use Noir with each of
 *   **Cloud-Based Providers**:
     *   [OpenAI](openai/)
     *   [xAI](xai/)
+    *   [Azure AI](azure/)
     *   [GitHub Marketplace](github_marketplace/)
 *   **Local Model Providers**:
     *   [Ollama](ollama/)
