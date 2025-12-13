@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xml:lang="ko">
+    <title>OWASP Noir</title>
+    <link rel="self" type="application/atom+xml" href="https://owasp-noir.github.io/noir/ko/atom.xml"/>
+    <link rel="alternate" type="text/html" href="https://owasp-noir.github.io/noir/"/>
+    <generator uri="https://www.getzola.org/">Zola</generator>
+    
+    <id>https://owasp-noir.github.io/noir/ko/atom.xml</id>
+</feed>
