@@ -936,6 +936,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :scala_akka => {
+      :framework => "Akka HTTP",
+      :language  => "Scala",
+      :similar   => ["akka", "akka-http", "akka_http", "scala-akka", "scala_akka"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
   }
 
   def self.techs
