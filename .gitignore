@@ -1,5 +1,4 @@
 /lib/
-/bin/
 /.shards/
 *.dwarf
 .DS_Store
@@ -7,11 +6,7 @@
 ameba.sh
 
 # Build artifacts
-/build/
-.gradle/
-gradle-wrapper.jar
-gradlew
-gradlew.bat
+/bin/
 
 # Ignore for Zola
 /docs/public/
