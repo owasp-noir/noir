@@ -15,6 +15,7 @@ Noir is a tool designed to analyze and understand codebases by identifying endpo
 
 | Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
 |-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
+| ASP.NET Core MVC | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
 | ASP.NET MVC | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
 
 ## Crystal
@@ -53,6 +54,7 @@ Noir is a tool designed to analyze and understand codebases by identifying endpo
 |-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
 | Armeria | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
 | JSP | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ❌ |
+| Play Framework | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Spring | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
 | Vert.x | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 
@@ -111,4 +113,12 @@ Noir is a tool designed to analyze and understand codebases by identifying endpo
 | Rocket | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ |
 | Tide | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
 | Warp | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+
+## Scala
+
+| Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
+|-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
+| Akka HTTP | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Play Framework | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Scalatra | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
 
