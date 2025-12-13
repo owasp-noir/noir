@@ -58,9 +58,8 @@ func routes(_ app: Application) throws {
         return updateArticle(articleID, updates, on: req.db)
     }
     
-    // Grouped routes
-    let api = app.grouped("api", "v1")
-    api.get("status") { req -> String in
+    // Another simple GET route
+    app.get("status") { req -> String in
         return "API is running"
     }
 }

@@ -8,7 +8,8 @@ module Analyzer::Swift
       # app.get("path") { ... }
       # app.post("path", "segment") { ... }
       # routes.get("path", ":param") { ... }
-      pattern = /\.(get|post|put|delete|patch)\(([^)]+)\)/
+      # Route pattern should have app. or routes. or any grouped route before the method
+      pattern = /(\w+)\.(get|post|put|delete|patch)\(([^)]+)\)/
       channel = Channel(String).new
 
       begin
@@ -26,6 +27,9 @@ module Analyzer::Swift
                   if File.exists?(path) && File.extname(path) == ".swift"
                     lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
                     lines.each_with_index do |line, index|
+                      # Skip lines that are clearly parameter access (req.parameters, req.query, etc.)
+                      next if line.includes?("req.parameters") || line.includes?("req.query")
+                      
                       # Look for route definitions
                       if line.includes?(".get(") || line.includes?(".post(") || 
                          line.includes?(".put(") || line.includes?(".delete(") || 
@@ -33,11 +37,14 @@ module Analyzer::Swift
                         match = line.match(pattern)
                         if match
                           begin
+                            # Extract route object (app, routes, api, etc.)
+                            route_obj = match[1]
+                            
                             # Extract HTTP method
-                            method = match[1].upcase
+                            method = match[2].upcase
                             
                             # Extract route arguments (can be multiple path segments)
-                            route_args = match[2]
+                            route_args = match[3]
                             
                             # Parse route path from arguments
                             route_path = parse_route_path(route_args)
@@ -81,19 +88,13 @@ module Analyzer::Swift
       # Remove whitespace and split by comma
       segments = route_args.split(',').map(&.strip)
       
-      # Remove quotes from each segment
-      segments = segments.map do |seg|
-        # Remove surrounding quotes
-        seg = seg.gsub(/^["']|["']$/, "")
-        seg
-      end
-      
-      # Filter out non-path segments (like closures, requests)
-      path_segments = segments.select do |seg|
-        # Keep segments that look like path components
-        # Skip if it contains 'req' or 'in' or '->' (closure indicators)
-        !seg.includes?("req") && !seg.includes?("in") && !seg.includes?("->") && 
-        !seg.includes?("{") && !seg.includes?("}") && seg.size > 0
+      # Extract quoted strings only (path segments)
+      path_segments = [] of String
+      segments.each do |seg|
+        # Match quoted strings
+        if match = seg.match(/^["']([^"']+)["']/)
+          path_segments << match[1]
+        end
       end
       
       # Build the path

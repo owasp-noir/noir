@@ -10,7 +10,7 @@ expected_endpoints = [
   Endpoint.new("/profile", "GET"),
   Endpoint.new("/users/:id", "DELETE"),
   Endpoint.new("/articles/:articleID", "PATCH"),
-  Endpoint.new("/api/v1/status", "GET"),
+  Endpoint.new("/status", "GET"),
 ]
 
 FunctionalTester.new("fixtures/swift/vapor/", {
