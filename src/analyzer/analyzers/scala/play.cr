@@ -70,6 +70,14 @@ module Analyzer::Scala
           endpoint.push_param(Param.new(param_name, "", "path"))
         end
       end
+      
+      # Match *param wildcard style parameters
+      route_path.scan(/\*(\w+)/) do |match|
+        param_name = match[1]
+        unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
+          endpoint.push_param(Param.new(param_name, "", "path"))
+        end
+      end
     end
 
     # Extract query parameters from action signature
