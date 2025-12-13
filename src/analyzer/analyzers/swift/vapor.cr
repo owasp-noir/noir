@@ -33,25 +33,22 @@ module Analyzer::Swift
                       # Look for route definitions
                       # Check if this is a route definition (has app. or identifier. before the method)
                       # and not a parameter access (req.parameters, req.query)
-                      if (line.includes?(".get(") || line.includes?(".post(") || 
-                          line.includes?(".put(") || line.includes?(".delete(") || 
-                          line.includes?(".patch(")) && !line.includes?("req.parameters") && 
-                          !line.includes?("req.query")
+                      if (line.includes?(".get(") || line.includes?(".post(") ||
+                         line.includes?(".put(") || line.includes?(".delete(") ||
+                         line.includes?(".patch(")) && !line.includes?("req.parameters") &&
+                         !line.includes?("req.query")
                         match = line.match(pattern)
                         if match
                           begin
-                            # Extract route object (app, routes, api, etc.)
-                            route_obj = match[1]
-                            
                             # Extract HTTP method
                             method = match[2].upcase
-                            
+
                             # Extract route arguments (can be multiple path segments)
                             route_args = match[3]
-                            
+
                             # Parse route path from arguments
                             route_path = parse_route_path(route_args)
-                            
+
                             details = Details.new(PathInfo.new(path, index + 1))
                             endpoint = Endpoint.new(route_path, method, details)
 
@@ -90,7 +87,7 @@ module Analyzer::Swift
     def parse_route_path(route_args : String) : String
       # Remove whitespace and split by comma
       segments = route_args.split(',').map(&.strip)
-      
+
       # Extract quoted strings only (path segments)
       path_segments = [] of String
       segments.each do |seg|
@@ -99,12 +96,12 @@ module Analyzer::Swift
           path_segments << match[1]
         end
       end
-      
+
       # Build the path
       if path_segments.empty?
         return "/"
       end
-      
+
       path = "/" + path_segments.join("/")
       path
     end
@@ -123,7 +120,7 @@ module Analyzer::Swift
       in_function = false
       brace_count = 0
       seen_opening_brace = false
-      
+
       # Track already-added path parameters to avoid duplicates
       existing_path_params = Set(String).new
       endpoint.params.each do |p|
@@ -147,7 +144,7 @@ module Analyzer::Swift
 
         # Extract query parameters from req.query
         if line.includes?("req.query[") || line.includes?("req.query.get(")
-          match = line.match(/req\.query\[["']([^"']+)["']\]/) || 
+          match = line.match(/req\.query\[["']([^"']+)["']\]/) ||
                   line.match(/req\.query\.get\(["']([^"']+)["']\)/)
           if match
             query_name = match[1]
@@ -197,7 +194,7 @@ module Analyzer::Swift
         end
 
         # Also stop if we hit another route definition
-        if i > start_index && (line.includes?(".get(") || line.includes?(".post(") || 
+        if i > start_index && (line.includes?(".get(") || line.includes?(".post(") ||
            line.includes?(".put(") || line.includes?(".delete(") || line.includes?(".patch("))
           break
         end
