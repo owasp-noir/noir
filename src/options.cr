@@ -28,10 +28,10 @@ def extract_hidden_prompt_flags(noir_options : Hash(String, YAML::Any)) : Array(
   filtered = [] of String
   i = 0
   override_flags = {
-    "--override-analyze-prompt"       => "override_analyze_prompt",
-    "--override-llm-optimize-prompt"  => "override_llm_optimize_prompt",
-    "--override-bundle-analyze-prompt"=> "override_bundle_analyze_prompt",
-    "--override-filter-prompt"        => "override_filter_prompt",
+    "--override-analyze-prompt"        => "override_analyze_prompt",
+    "--override-llm-optimize-prompt"   => "override_llm_optimize_prompt",
+    "--override-bundle-analyze-prompt" => "override_bundle_analyze_prompt",
+    "--override-filter-prompt"         => "override_filter_prompt",
   }
 
   while i < args.size
@@ -48,25 +48,25 @@ end
 
 private def base_help : String
   <<-HELP
-  #{ "Hunt every Endpoint, expose Shadow APIs, map the Attack Surface.".colorize(:cyan) }
+  #{"Hunt every Endpoint, expose Shadow APIs, map the Attack Surface.".colorize(:cyan)}
 
-  #{ "USAGE:".colorize(:green) }
+  #{"USAGE:".colorize(:green)}
     noir -b BASE_PATH [flags]
 
-  #{ "EXAMPLES:".colorize(:green) }
-    #{ "Basic scan".colorize(:yellow) }
+  #{"EXAMPLES:".colorize(:green)}
+    #{"Basic scan".colorize(:yellow)}
       noir -b ./myapp
 
-    #{ "JSON output to file".colorize(:yellow) }
+    #{"JSON output to file".colorize(:yellow)}
       noir -b ./myapp -f json -o endpoints.json
 
-    #{ "Enable passive security scan".colorize(:yellow) }
+    #{"Enable passive security scan".colorize(:yellow)}
       noir -b ./myapp -P
 
-    #{ "AI integration".colorize(:yellow) }
+    #{"AI integration".colorize(:yellow)}
       $ noir -b . --ai-provider openai --ai-model gpt-5.1 --ai-key YOUR_API_KEY
 
-    #{ "Forward results via proxy (Burp/ZAP)".colorize(:yellow) }
+    #{"Forward results via proxy (Burp/ZAP)".colorize(:yellow)}
       noir -b ./myapp --send-proxy http://127.0.0.1:8080
 
   HELP
@@ -74,25 +74,25 @@ end
 
 private def full_examples_and_env : String
   <<-EXTRA
-  \n#{ "EXAMPLES:".colorize(:green) }
-    #{ "Basic run".colorize(:yellow) }
+  \n#{"EXAMPLES:".colorize(:green)}
+    #{"Basic run".colorize(:yellow)}
       $ noir -b .
 
-    #{ "With base URL and proxy".colorize(:yellow) }
+    #{"With base URL and proxy".colorize(:yellow)}
       $ noir -b . -u http://example.com --send-proxy http://localhost:8090
 
-    #{ "Detailed analysis".colorize(:yellow) }
+    #{"Detailed analysis".colorize(:yellow)}
       $ noir -b . -T --include-path
 
-    #{ "JSON or YAML output without logs".colorize(:yellow) }
+    #{"JSON or YAML output without logs".colorize(:yellow)}
       $ noir -b . -f json --no-log
       $ noir -b . -f yaml --no-log
 
-    #{ "Specific technology".colorize(:yellow) }
+    #{"Specific technology".colorize(:yellow)}
       $ noir -b . -t rails
       $ noir -b . -t rails --exclude-techs php
 
-  #{ "ENVIRONMENT VARIABLES:".colorize(:green) }
+  #{"ENVIRONMENT VARIABLES:".colorize(:green)}
     NOIR_HOME          Path to directory containing config file
     NOIR_AI_KEY        API key for AI providers (OpenAI, xAI, etc.)
     NOIR_MAX_FILE_SIZE Maximum file size for analysis (e.g. 5MB or 1048576)
