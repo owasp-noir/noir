@@ -73,6 +73,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"scala_scalatra", Scala::Scalatra},
     {"scala_play", Scala::Play},
     {"java_play", Java::Play},
+    {"swift_vapor", Swift::Vapor},
     {"ai", AI::Unified},
   ])
 

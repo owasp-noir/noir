@@ -1008,6 +1008,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :swift_vapor => {
+      :framework => "Vapor",
+      :language  => "Swift",
+      :similar   => ["vapor", "swift-vapor", "swift_vapor"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
   }
 
   def self.techs
