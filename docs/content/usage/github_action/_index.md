@@ -7,13 +7,11 @@ sort_by = "weight"
 [extra]
 +++
 
-OWASP Noir provides a first‑class GitHub Action to analyze your codebase for attack surfaces during CI. It discovers endpoints across many languages and frameworks, and (optionally) performs passive security checks.
-
-This page shows how to add Noir to a workflow, configure inputs, consume outputs, and troubleshoot common issues.
+Run OWASP Noir in GitHub Actions for endpoint discovery and optional passive security scanning during CI.
 
 ## Quick Start
 
-Add a minimal workflow that runs on pushes and pull requests:
+Minimal workflow:
 
 ~~~yaml
 name: Noir Security Analysis
@@ -35,8 +33,8 @@ jobs:
         run: echo '${{ steps.noir.outputs.endpoints }}' | jq .
 ~~~
 
-- `base_path` points to the directory you want to analyze (equivalent to `-b/--base-path`).
-- The `endpoints` output contains JSON you can post‑process with tools like `jq`.
+- `base_path`: Directory to analyze (`-b/--base-path`)
+- `endpoints`: JSON output for post-processing
 
 ## Inputs
 
@@ -59,9 +57,9 @@ jobs:
 | `exclude_codes` | Exclude HTTP response codes (comma‑separated) (`--exclude-codes`) | No | `` |
 | `status_codes` | Display HTTP status codes for discovered endpoints (`--status-codes`) | No | `false` |
 
-Notes:
-- Pass boolean options as strings (`'true'`/`'false'`) in YAML to avoid type coercion issues.
-- When `output_file` is set, Noir also writes results to that file in addition to providing outputs.
+**Notes:**
+- Pass boolean options as strings (`'true'`/`'false'`)
+- `output_file` writes to file and provides outputs
 
 ## Outputs
 
@@ -70,7 +68,7 @@ Notes:
 | `endpoints` | JSON‑formatted endpoint analysis |
 | `passive_results` | JSON‑formatted passive scan findings (present when `passive_scan` is enabled) |
 
-Example of consuming outputs:
+Consuming outputs:
 
 ~~~yaml
 - name: Count endpoints
@@ -82,7 +80,7 @@ Example of consuming outputs:
 
 ## Examples
 
-### Advanced scan with passive checks and artifacts
+### Advanced Scan
 
 ~~~yaml
 name: Comprehensive Security Analysis
@@ -122,9 +120,7 @@ jobs:
           path: noir-results.json
 ~~~
 
-### Monorepo/matrix example
-
-Analyze multiple services in parallel:
+### Monorepo Matrix
 
 ~~~yaml
 name: Monorepo Noir
@@ -148,9 +144,7 @@ jobs:
           include_path: 'true'
 ~~~
 
-### Framework‑specific scans
-
-When auto‑detection is insufficient, explicitly set technologies:
+### Framework-Specific Scans
 
 ~~~yaml
 - uses: owasp-noir/noir@main
@@ -177,7 +171,7 @@ When auto‑detection is insufficient, explicitly set technologies:
     passive_scan_severity: 'medium'
 ~~~
 
-### Status code enrichment and exclusions
+### Status Code Configuration
 
 ~~~yaml
 - uses: owasp-noir/noir@main
@@ -187,9 +181,7 @@ When auto‑detection is insufficient, explicitly set technologies:
     exclude_codes: '404,429'   # suppress noisy codes
 ~~~
 
-### Alternate formats for reporting
-
-Produce a markdown table or cURL commands:
+### Alternate Formats
 
 ~~~yaml
 - uses: owasp-noir/noir@main
@@ -205,29 +197,34 @@ Produce a markdown table or cURL commands:
 2. Tune noise with `passive_scan_severity` and `exclude_codes`.
 3. Include paths (`include_path: 'true'`) to speed up triage and code navigation.
 4. Pin frameworks with `techs` when auto‑detection isn’t enough; use `exclude_techs` to avoid irrelevant analyzers.
-5. Persist results with `actions/upload-artifact` or publish as a comment/status in your PR workflow.
+5. Persist results with `actions/upload-artifact`
 
 ## Troubleshooting
 
-- No endpoints found
-  - Verify `base_path` points to actual source (e.g., `src/` vs project root).
-  - Check that the repository contains supported languages/frameworks.
-  - Try specifying `techs` explicitly (e.g., `rails`, `express`, `django`).
+**No endpoints found:**
+- Verify `base_path` points to source directory
+- Check repository contains supported frameworks
+- Specify `techs` explicitly
 
-- Output too large or slow to process
-  - Use `format: 'jsonl'` for streaming/line‑oriented processing.
-  - Reduce scope by narrowing `base_path` or filtering with `techs`/`exclude_techs`.
+**Output too large or slow:**
+- Use `format: 'jsonl'` for streaming
+- Narrow `base_path` or use `techs`/`exclude_techs`
 
-- Hard to diagnose behavior
-  - Turn on `debug: 'true'` and `verbose: 'true'` to see detailed logs.
-  - Include file paths via `include_path: 'true'` for better traceability.
+**Hard to diagnose:**
+- Enable `debug: 'true'` and `verbose: 'true'`
+- Use `include_path: 'true'` for traceability
 
-- HTTP status noise
-  - Disable with `status_codes: 'false'` or exclude known noisy codes using `exclude_codes`.
+**HTTP status noise:**
+- Disable with `status_codes: 'false'` or use `exclude_codes`
+
+
+
+
+
+
 
 ## Implementation Notes
 
-- The Action runs in a Docker container, so it works consistently across GitHub‑hosted runners.
-- Inputs correspond directly to Noir CLI flags; you can map existing CLI usage to the Action by setting the same options.
-
-For a complete set of supported technologies, you can run Noir locally with `--list-techs` or consult the project’s tech list.
+- Runs in Docker container for consistency
+- Inputs map directly to CLI flags
+- See supported technologies: `noir --list-techs`

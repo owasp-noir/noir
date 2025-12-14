@@ -7,33 +7,29 @@ sort_by = "weight"
 [extra]
 +++
 
-The Tagger is a powerful feature in Noir that automatically adds descriptive tags to the endpoints and parameters it discovers. These tags can provide valuable context about the functionality or potential security risks associated with a particular part of your application. This helps you quickly focus your attention on the areas that matter most.
-
-For example, the Tagger can identify parameters that might be vulnerable to SQL injection, or endpoints that are related to authentication.
+Automatically add descriptive tags to endpoints and parameters to identify functionality and potential security risks (e.g., SQL injection, authentication endpoints).
 
 ![](./tagger.png)
 
-## How to Use the Tagger
+## Usage
 
-The Tagger is disabled by default. You can enable it in a few different ways:
+Tagger is disabled by default. Enable it:
 
-*   **Enable all taggers**: To run all available taggers, use the `-T` or `--use-all-taggers` flag.
+**Enable all taggers**:
 
-    ```bash
-    noir -b <BASE_PATH> -T
-    ```
+```bash
+noir -b <BASE_PATH> -T
+```
 
-*   **Enable specific taggers**: If you only want to run certain taggers, you can specify them with the `--use-taggers` flag. You can find a list of all available taggers by running `noir --list-taggers`.
+**Enable specific taggers** (list available with `noir --list-taggers`):
 
-    ```bash
-    noir -b <BASE_PATH> --use-taggers hunt,oauth
-    ```
+```bash
+noir -b <BASE_PATH> --use-taggers hunt,oauth
+```
 
-## Understanding the Output
+## Output
 
-When you use the Tagger, the tags will be included in the output. If you are using the JSON or YAML formats, the tags will be added to the `tags` array for each endpoint and parameter.
-
-Here is an example of what the JSON output looks like with tags:
+Tags are added to the `tags` array for each endpoint and parameter:
 
 ```json
 {
@@ -69,5 +65,3 @@ Here is an example of what the JSON output looks like with tags:
   ]
 }
 ```
-
-By using the Tagger, you can enrich your scan results with valuable context, making it easier to understand your application and prioritize your security efforts.

@@ -7,21 +7,17 @@ sort_by = "weight"
 [extra]
 +++
 
-YAML (YAML Ain't Markup Language) is a popular data serialization format known for its human-readable syntax. Noir can output its findings in YAML, which is useful for a variety of purposes, from manual inspection to automated processing with other tools.
+Output scan results in human-readable YAML format for manual inspection or automated processing.
 
-## How to Generate YAML Output
+## Usage
 
-To get your scan results in YAML format, use the `-f yaml` or `--format yaml` flag when running Noir. It's also a good practice to use the `--no-log` flag to suppress any additional logging information and keep the output clean.
+Generate YAML output:
 
 ```bash
 noir -b . -f yaml --no-log
 ```
 
-This command will produce a well-structured YAML document containing all the information about the discovered endpoints.
-
-## Example YAML Output
-
-Here is a sample of what the YAML output looks like:
+## Example Output
 
 ```yaml
 endpoints:
@@ -55,7 +51,4 @@ endpoints:
           line: 8
     protocol: http
     tags: []
-# ... and so on for all other endpoints
 ```
-
-As you can see, the YAML output provides a clear and detailed breakdown of each endpoint, including its URL, HTTP method, parameters, and the exact location in the source code where it was found. This makes it easy to integrate Noir's findings into your existing CI/CD pipelines, reporting tools, or any other part of your development workflow.
