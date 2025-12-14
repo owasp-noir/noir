@@ -7,36 +7,32 @@ sort_by = "weight"
 [extra]
 +++
 
-The "Deliver" feature in Noir is a powerful way to integrate your code analysis with other tools in your security workflow. Instead of just viewing the results in your terminal, you can send the discovered endpoints directly to proxy tools like Burp Suite or ZAP, or to a data analysis platform like Elasticsearch.
+Send discovered endpoints directly to security tools like Burp Suite, ZAP, or Elasticsearch for further analysis.
 
-This makes it much easier to move from code analysis to active security testing or to store and analyze your findings over time.
+## Usage
 
-## How to Use the Deliver Feature
+Command-line flags:
 
-The Deliver feature is controlled by a set of command-line flags:
-
-*   `--send-req`: Send the results as a web request.
-*   `--send-proxy http://proxy...`: Send the results through an HTTP proxy.
-*   `--send-es http://es...`: Send the results to an Elasticsearch instance.
-*   `--with-headers X-Header:Value`: Add custom headers to the requests.
-*   `--use-matchers string`: Only send endpoints that match a specific pattern (URL, method, or method:URL combination).
-*   `--use-filters string`: Exclude endpoints that match a specific pattern (URL, method, or method:URL combination).
+*   `--send-req`: Send as web request
+*   `--send-proxy http://proxy...`: Send through HTTP proxy
+*   `--send-es http://es...`: Send to Elasticsearch
+*   `--with-headers X-Header:Value`: Add custom headers
+*   `--use-matchers string`: Only send matching endpoints (URL, method, or method:URL)
+*   `--use-filters string`: Exclude matching endpoints (URL, method, or method:URL)
 
 ### Sending to a Proxy
 
-To send all discovered endpoints to a proxy like Burp Suite or ZAP running on `http://localhost:8080`, you would use the `--send-proxy` flag:
+Send all endpoints to proxy (e.g., Burp Suite, ZAP):
 
 ```bash
 noir -b ./source --send-proxy http://localhost:8080
 ```
 
-This will populate your proxy's history with all the endpoints found by Noir, so you can immediately start testing them.
-
 ![](./deliver-proxy.png)
 
 ### Adding Custom Headers
 
-You can also add custom headers to the requests that Noir sends. This is useful if you need to include an authentication token or other specific headers.
+Add custom headers (e.g., authentication tokens):
 
 ```bash
 noir -b ./source --send-proxy http://localhost:8080 --with-headers "Authorization: Bearer your-token"
@@ -46,51 +42,49 @@ noir -b ./source --send-proxy http://localhost:8080 --with-headers "Authorizatio
 
 ### Filtering and Matching
 
-If you only want to send a subset of the discovered endpoints, you can use the `--use-matchers` and `--use-filters` flags. The filtering supports several patterns:
+Send specific endpoints using matchers and filters:
 
-#### URL-based Filtering (Backward Compatible)
-To only send endpoints that contain the word "api" in their URL:
+#### URL-based Filtering
+Send endpoints containing "api":
 
 ```bash
 noir -b ./source --send-proxy http://localhost:8080 --use-matchers "api"
 ```
 
 #### Method-based Filtering
-To only send GET requests:
+Send only GET requests:
 
 ```bash
 noir -b ./source --send-proxy http://localhost:8080 --use-matchers "GET"
 ```
 
-To exclude all POST requests:
+Exclude POST requests:
 
 ```bash
 noir -b ./source --send-proxy http://localhost:8080 --use-filters "POST"
 ```
 
 #### Method and URL Combination
-To only send POST requests to API endpoints:
+Send POST requests to API endpoints:
 
 ```bash
 noir -b ./source --send-proxy http://localhost:8080 --use-matchers "POST:/api"
 ```
 
-To exclude GET requests to admin pages:
+Exclude GET requests to admin pages:
 
 ```bash
 noir -b ./source --send-proxy http://localhost:8080 --use-filters "GET:/admin"
 ```
 
 #### Supported HTTP Methods
-The method-based filtering supports all standard HTTP methods: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, TRACE, CONNECT (case insensitive).
+GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, TRACE, CONNECT (case insensitive)
 
 #### Multiple Patterns
-You can use multiple matchers or filters:
+Use multiple matchers or filters:
 
 ```bash
 noir -b ./source --send-proxy http://localhost:8080 --use-matchers "GET" --use-matchers "POST:/api"
 ```
 
 ![](./deliver-mf.png)
-
-By using the Deliver feature, you can create a seamless workflow between code analysis and security testing, saving you time and effort.

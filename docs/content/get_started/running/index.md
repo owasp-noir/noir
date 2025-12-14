@@ -7,47 +7,35 @@ sort_by = "weight"
 [extra]
 +++
 
-Once you have Noir installed, you can start using it to analyze your code. The most fundamental command is running a scan on a directory.
-
 ## Basic Scan
 
-To analyze a codebase, you need to tell Noir where to find the source code. You can do this with the `-b` or `--base-path` flag, followed by the path to the directory you want to scan.
+Analyze a codebase using the `-b` or `--base-path` flag:
 
-For example, to scan the current directory, you would run:
+Scan current directory:
 
 ```bash
 noir -b .
 ```
 
-If your code is in a subdirectory named `my_app`, you would use:
+Scan subdirectory:
 
 ```bash
 noir -b ./my_app
 ```
 
-When you run this command, Noir will analyze the code in the specified directory and output a list of the endpoints it discovers.
-
 ![](./running.png)
 
 ## Viewing Help Information
 
-To see a full list of all available commands and flags, you can use the `-h` or `--help` flag:
+View all available commands and flags:
 
 ```bash
 noir -h
 ```
 
-or
-
-```bash
-noir --help
-```
-
-This will display the help documentation, which provides a comprehensive overview of Noir's capabilities.
-
 ## Checking Supported Technologies
 
-To see which languages and frameworks Noir supports:
+List supported languages and frameworks:
 
 ```bash
 noir --list-techs
@@ -55,7 +43,7 @@ noir --list-techs
 
 ## Output Formats
 
-By default, Noir outputs results in a table format. However, you can output in various other formats:
+Default output is table format. Available formats:
 
 ### JSON Output
 
@@ -77,7 +65,7 @@ noir -b . -f oas3
 
 ## Suppressing Logs
 
-If you want clean output without log messages, you can suppress them:
+Clean output without log messages:
 
 ```bash
 noir -b . --no-log
@@ -85,10 +73,8 @@ noir -b . --no-log
 
 ## Verbose Output
 
-For more detailed information, use the verbose flag:
+Detailed information output:
 
 ```bash
 noir -b . --verbose
 ```
-
-Now that you know the basic usage of Noir, you can explore more advanced features!
