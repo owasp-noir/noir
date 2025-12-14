@@ -7,21 +7,17 @@ sort_by = "weight"
 [extra]
 +++
 
-Diff mode is a powerful feature in Noir that allows you to compare two versions of a codebase and see exactly what has changed in terms of the discovered endpoints. This can be incredibly useful for code reviews, security assessments, and for understanding the impact of a new feature.
+Compare two versions of a codebase to identify endpoint changes. Useful for code reviews, security assessments, and understanding feature impacts.
 
-To use diff mode, you provide a base path with the `-b` flag (representing the new version of the code) and a comparison path with the `--diff-path` flag (representing the old version).
+Usage:
 
 ```bash
 noir -b <NEW_VERSION_PATH> --diff-path <OLD_VERSION_PATH>
 ```
 
-## Understanding the Output
-
-The output of the diff mode will show you which endpoints have been added, removed, or changed between the two versions.
+## Output
 
 ### Plain Output
-
-In the default plain text output, you will get a simple summary of the changes:
 
 ```
 [*] ============== DIFF ==============
@@ -33,26 +29,14 @@ In the default plain text output, you will get a simple summary of the changes:
 
 ### JSON and YAML Output
 
-For a more detailed and machine-readable output, you can use the JSON or YAML formats (`-f json` or `-f yaml`). This will provide a structured view of the added, removed, and changed endpoints, including their full details.
+Use `-f json` or `-f yaml` for structured output:
 
 ```json
 {
-  "added": [
-    {
-      "url": "/",
-      "method": "GET",
-      // ... full endpoint details
-    }
-  ],
-  "removed": [
-    {
-      "url": "/secret.html",
-      "method": "GET",
-      // ... full endpoint details
-    }
-  ],
-  "changed": []
+  "added": [...],
+  "removed": [...],
+  "changed": [...]
 }
 ```
 
-By using diff mode, you can build more efficient CI/CD pipelines. For example, you could configure a DAST (Dynamic Application Security Testing) tool to only scan the endpoints that have been added or modified in a new release, saving time and resources.
+Use diff mode in CI/CD to configure DAST tools to scan only modified endpoints.
