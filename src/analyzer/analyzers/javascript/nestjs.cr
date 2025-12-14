@@ -22,7 +22,7 @@ module Analyzer::Javascript
                   path = channel.receive?
                   break if path.nil?
                   next if File.directory?(path)
-                  next unless [".js", ".ts", ".jsx", ".tsx"].any? { |ext| path.ends_with?(ext) }
+                  next unless [".js", ".jsx"].any? { |ext| path.ends_with?(ext) }
 
                   if File.exists?(path)
                     analyze_nestjs_file(path, result, static_dirs)

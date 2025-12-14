@@ -3,7 +3,7 @@ require "../../../models/detector"
 module Detector::Javascript
   class Nestjs < Detector
     def detect(filename : String, file_contents : String) : Bool
-      if (filename.ends_with?(".js") || filename.ends_with?(".ts") || filename.ends_with?(".jsx") || filename.ends_with?(".tsx")) &&
+      if (filename.ends_with?(".js") || filename.ends_with?(".jsx")) &&
          (file_contents.match(/require\(['"]@nestjs\/core['"]\)/) ||
          file_contents.match(/require\(['"]@nestjs\/common['"]\)/) ||
          file_contents.match(/import.*from ['"]@nestjs\/core['"]/) ||
