@@ -122,3 +122,15 @@ Noir는 엔드포인트와 해당 명세를 식별하여 코드베이스를 분�
 | Play Framework | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Scalatra | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
 
+## Swift
+
+| Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
+|-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
+| Vapor | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+
+## TypeScript
+
+| Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
+|-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
+| NestJS | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+

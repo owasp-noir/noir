@@ -122,3 +122,15 @@ Noir is a tool designed to analyze and understand codebases by identifying endpo
 | Play Framework | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Scalatra | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
 
+## Swift
+
+| Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
+|-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
+| Vapor | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+
+## TypeScript
+
+| Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
+|-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
+| NestJS | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+
