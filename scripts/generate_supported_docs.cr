@@ -163,7 +163,7 @@ def parse_tech_blocks(text : String) : Array(Tech)
   current : Tech? = nil
   block_lines = [] of String
 
-  id_regex = /^\s{4}([a-z0-9_]+)\s*$/
+  id_regex = /^\s+([a-z0-9_]+)\s*$/
 
   while i < lines.size
     line = lines[i]
