@@ -7,31 +7,27 @@ sort_by = "weight"
 [extra]
 +++
 
-The OpenAPI Specification (OAS) is a standard, language-agnostic interface for describing RESTful APIs. By generating an OAS document from your codebase, you can easily create interactive API documentation, set up automated testing, or import your API definition into a variety of other tools.
+Generate OpenAPI Specification (OAS) documents from your codebase for API documentation, testing, and tool integration.
 
-Noir can generate both OAS 2.0 (formerly known as Swagger) and OAS 3.0 specifications.
+Noir supports both OAS 2.0 (Swagger) and OAS 3.0.
 
-## How to Generate an OpenAPI Specification
+## Usage
 
-To generate an OAS document, use the `-f` or `--format` flag with either `oas2` or `oas3`.
+Generate OAS document:
 
-*   **For OAS 3.0 (recommended)**:
+**OAS 3.0 (recommended)**:
 
-    ```bash
-    noir -b . -f oas3
-    ```
+```bash
+noir -b . -f oas3
+```
 
-*   **For OAS 2.0**:
+**OAS 2.0**:
 
-    ```bash
-    noir -b . -f oas2
-    ```
+```bash
+noir -b . -f oas2
+```
 
-This will output a JSON document that conforms to the specified OpenAPI version.
-
-## Example OAS 3.0 Output
-
-Here is a sample of the output for the `oas3` format:
+## Example Output
 
 ```json
 {
@@ -75,9 +71,6 @@ Here is a sample of the output for the `oas3` format:
         ]
       }
     }
-    // ... and so on for all other endpoints
   }
 }
 ```
-
-By using this feature, you can automatically generate a comprehensive and accurate API specification directly from your source code, saving you time and ensuring that your documentation is always up-to-date.

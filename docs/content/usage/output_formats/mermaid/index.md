@@ -7,23 +7,19 @@ sort_by = "weight"
 [extra]
 +++
 
-The Mermaid output format allows you to visualize your API endpoints as an interactive mindmap. This is especially useful for quickly understanding the structure of your API, identifying available endpoints, and sharing a high-level overview with your team.
+Visualize API endpoints as an interactive [Mermaid mindmap](https://mermaid-js.github.io/mermaid/#/mindmap) for understanding API structure.
 
-Noir can generate a [Mermaid mindmap](https://mermaid-js.github.io/mermaid/#/mindmap) directly from your codebase analysis.
+## Usage
 
-## How to Generate a Mermaid Mindmap
-
-To generate a Mermaid mindmap, use the `-f` or `--format` flag with `mermaid`:
+Generate mindmap:
 
 ```bash
 noir -b . -f mermaid
 ```
 
-This will output a Mermaid mindmap definition that you can copy and paste into any Mermaid live editor, documentation, or compatible tool.
+Copy output to Mermaid live editor or compatible tools.
 
-## Example Mermaid Output
-
-Here is a sample of the output for the `mermaid` format:
+## Example Output
 
 <details>
     <summary>Mermaid Output</summary>

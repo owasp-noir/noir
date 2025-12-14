@@ -7,13 +7,13 @@ sort_by = "weight"
 [extra]
 +++
 
-Noir can connect to Large Language Models (LLMs)—both cloud-based services and local instances—to provide a deeper level of analysis for your codebase. By leveraging AI, Noir can often identify endpoints in languages and frameworks that it doesn't natively support, and can provide additional insights into the functionality of your application.
+Connect Noir to Large Language Models (cloud-based or local) for deeper code analysis. AI helps identify endpoints in unsupported languages and frameworks.
 
 ![](./ai_integration.jpeg)
 
-## How to Use the AI Integration
+## Usage
 
-To enable AI-powered analysis, you need to specify an AI provider, a model, and an API key.
+Specify an AI provider, model, and API key:
 
 ```bash
 noir -b . --ai-provider <PROVIDER> --ai-model <MODEL_NAME> --ai-key <YOUR_API_KEY>
@@ -21,14 +21,14 @@ noir -b . --ai-provider <PROVIDER> --ai-model <MODEL_NAME> --ai-key <YOUR_API_KE
 
 ### Command-Line Flags
 
-*   `--ai-provider`: The AI provider you want to use. This can be a preset prefix (like `openai` or `ollama`) or the full URL of a custom API endpoint.
-*   `--ai-model`: The name of the model you want to use for the analysis (e.g., `gpt-4o`).
-*   `--ai-key`: Your API key for the AI provider. You can also set this using the `NOIR_AI_KEY` environment variable.
-*   `--ai-max-token`: (Optional) The maximum number of tokens to use for AI requests. This can affect the length of the generated text.
-*   `--cache-disable`: Disable the on-disk LLM cache for this run.
-*   `--cache-clear`: Clear the LLM cache directory before the run.
+*   `--ai-provider`: AI provider prefix (e.g., `openai`, `ollama`) or custom API URL
+*   `--ai-model`: Model name (e.g., `gpt-4o`)
+*   `--ai-key`: API key (or use `NOIR_AI_KEY` environment variable)
+*   `--ai-max-token`: Maximum tokens for AI requests (optional)
+*   `--cache-disable`: Disable LLM cache
+*   `--cache-clear`: Clear LLM cache before run
 
-By default, Noir caches AI responses on disk to speed up repeated analyses and reduce costs. Use the cache flags above to bypass or purge the cache when needed.
+AI responses are cached on disk by default to speed up analysis and reduce costs.
 
 ### Supported AI Providers
 
@@ -44,15 +44,13 @@ Noir has built-in presets for several popular AI providers:
 | `ollama` | `http://localhost:11434` |
 | `lmstudio` | `http://localhost:1234` |
 
-If you are using a provider that is not on this list, you can provide the full URL to its API endpoint, for example: `--ai-provider=http://my-custom-api:9000`.
+For custom providers, use the full API URL: `--ai-provider=http://my-custom-api:9000`.
 
 ### Benefits and Considerations
 
-*   **Expanded Support**: LLMs can help Noir analyze frameworks and languages that are not yet natively supported.
-*   **Deeper Insights**: AI models can often identify subtle or complex endpoints that might be missed by traditional static analysis.
-*   **Potential Downsides**: Be aware that AI analysis can sometimes produce false positives (hallucinations) and may be slower than a standard scan, depending on the model and hardware.
-
-By integrating AI into your workflow, you can significantly enhance Noir's analytical capabilities and gain a more comprehensive understanding of your codebase.
+*   **Expanded Support**: Analyze unsupported frameworks and languages
+*   **Deeper Insights**: Identify subtle or complex endpoints
+*   **Trade-offs**: May produce false positives and slower performance
 
 ## How AI-Powered Analysis Works
 

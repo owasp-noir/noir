@@ -7,17 +7,17 @@ sort_by = "weight"
 [extra]
 +++
 
-Noir bridges the gap between SAST and DAST by analyzing source code to generate accurate, authenticated endpoint inventories. It detects what others miss: shadow APIs, deprecated endpoints, and hidden routes.
+Noir bridges SAST and DAST by analyzing source code to discover endpoints—including shadow APIs, deprecated routes, and hidden paths that other tools miss.
 
-By bypassing outdated documentation and proxies, Noir uses your source code to deliver a comprehensive, actionable attack surface inventory. This single source of truth empowers White-box security teams and Pentesters and integrates directly with DAST solutions, eliminating testing blind spots across your DevSecOps pipeline.
+Using source code as the single source of truth, Noir delivers comprehensive attack surface data that integrates with DAST tools, eliminating blind spots in your DevSecOps pipeline.
 
 ## Key Capabilities
 
-- **Attack Surface Discovery**: Analyzes source code to identify your application's complete attack surface, including hidden endpoints, shadow APIs, and other security weaknesses.
-- **AI-Powered Analysis**: Leverages LLMs to detect endpoints in any language or framework—even those not natively supported—ensuring comprehensive coverage.
-- **SAST-to-DAST Bridge**: Acts as a bridge between static code analysis and dynamic testing by providing discovered endpoints to DAST tools, enabling more accurate and comprehensive security scans.
-- **DevSecOps Ready**: Designed for seamless integration into CI/CD pipelines with support for popular security tools like ZAP, Burp Suite, and Caido.
-- **Multi-Format Output**: Delivers results in JSON, YAML, OpenAPI Specification, and other formats for easy integration with your existing workflow.
+- **Attack Surface Discovery**: Identifies complete attack surface including hidden endpoints and shadow APIs
+- **AI-Powered Analysis**: Uses LLMs to detect endpoints in unsupported languages and frameworks
+- **SAST-to-DAST Bridge**: Provides discovered endpoints to DAST tools for comprehensive security scans
+- **DevSecOps Ready**: Integrates with CI/CD pipelines and tools like ZAP, Burp Suite, and Caido
+- **Multi-Format Output**: Exports in JSON, YAML, OpenAPI, and other formats
 
 [GitHub](https://github.com/owasp-noir/noir) | [OWASP Project Page](https://owasp.org/www-project-noir)
 
@@ -25,14 +25,14 @@ By bypassing outdated documentation and proxies, Noir uses your source code to d
 
 ## How It Works
 
-Noir is built with the [Crystal](https://crystal-lang.org) programming language and is composed of several key components that work together to analyze code:
+Noir is built with [Crystal](https://crystal-lang.org) and uses these components:
 
-*   **Detectors**: Identify the technologies used in a codebase.
-*   **Analyzers**: Parse the code to find endpoints, parameters, and other interesting information.
-*   **LLM Analyzer**: Uses AI to discover endpoints in unsupported or unfamiliar frameworks.
-*   **Passive Scanner & Tagger**: Use rules to identify potential vulnerabilities and add contextual tags to the findings.
-*   **Deliver**: Send the results to other tools for further analysis.
-*   **Output Builder**: Generate reports in various formats.
+*   **Detectors**: Identify technologies in the codebase
+*   **Analyzers**: Parse code to find endpoints and parameters
+*   **LLM Analyzer**: Discover endpoints using AI for unsupported frameworks
+*   **Passive Scanner & Tagger**: Identify vulnerabilities and add contextual tags
+*   **Deliver**: Send results to external tools
+*   **Output Builder**: Generate reports in multiple formats
 
 {% mermaid() %}
 flowchart LR
@@ -74,15 +74,13 @@ flowchart LR
 
 ## Project Goals
 
-The primary goal of Noir is to bridge the gap between static code analysis and dynamic security testing. By providing a comprehensive and accurate list of an application's endpoints—including those that are hidden or undocumented—Noir enables DAST tools to perform more thorough and effective scans.
+Bridge static code analysis and dynamic security testing by providing comprehensive endpoint discovery—including hidden and undocumented endpoints—enabling more effective DAST scans.
 
-Noir serves as the critical link in DevSecOps pipelines, transforming source code analysis into actionable endpoint data that security tools can consume immediately.
-
-In the future, we plan to expand our support for more languages and frameworks, improve the accuracy of our analysis, and further leverage AI and LLMs to enhance our capabilities.
+Future plans include expanding language support, improving analysis accuracy, and enhancing AI capabilities.
 
 ## Contributing
 
-OWASP Noir is an open-source project that thrives on community contributions. If you are interested in helping us improve the tool, please check out our [Contributing Guide](https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md). We welcome contributions of all sizes, from fixing typos to adding major new features.
+Noir is open-source and welcomes contributions. See our [Contributing Guide](https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md) for details.
 
 ### Contributors
 
@@ -92,8 +90,8 @@ Thank you to everyone who has contributed to Noir! ♥️
 
 ## Code of Conduct
 
-We are committed to fostering a welcoming and inclusive community. Please review our [Code of Conduct](https://github.com/owasp-noir/noir/blob/main/CODE_OF_CONDUCT.md) on our GitHub repository.
+Review our [Code of Conduct](https://github.com/owasp-noir/noir/blob/main/CODE_OF_CONDUCT.md) on GitHub.
 
 ## Help and Feedback
 
-If you have any questions, suggestions, or issues, please don't hesitate to reach out to us on the GitHub [discussions](https://github.com/orgs/owasp-noir/discussions) or [issues](https://github.com/owasp-noir/noir/issues) page.
+Questions or feedback? Use GitHub [discussions](https://github.com/orgs/owasp-noir/discussions) or [issues](https://github.com/owasp-noir/noir/issues).

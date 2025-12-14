@@ -7,18 +7,16 @@ sort_by = "weight"
 [extra]
 +++
 
-By connecting Noir with [xAI](https://x.ai), you can leverage the advanced reasoning capabilities of models like Grok to perform in-depth analysis of your codebase. This integration allows you to go beyond simple endpoint discovery and gain a deeper understanding of your application's functionality and potential security posture.
+Use [xAI](https://x.ai) Grok models for advanced code analysis and endpoint discovery.
 
-## Setting Up the xAI Integration
+## Setup
 
-To get started, you'll need an API key from xAI.
+1.  **API Key**: Get from [xAI website](https://x.ai/api)
+2.  **Model**: Choose model (e.g., `grok-2-1212`)
 
-1.  **Obtain an API Key**: Visit the [official xAI website](https://x.ai/api) and follow the instructions to get your API key.
-2.  **Choose a Model**: Select the xAI model you want to use for analysis. In this example, we'll use `grok-2-1212`, but you can choose any available model.
+## Usage
 
-## Running Noir with xAI
-
-Once you have your API key, you can run Noir with the `--ai-provider` flag set to `xai`. You will also need to provide your API key with the `--ai-key` flag and specify the model you wish to use with `--ai-model`.
+Run Noir with xAI:
 
 ```bash
 noir -b ./spec/functional_test/fixtures/hahwul \
@@ -27,11 +25,8 @@ noir -b ./spec/functional_test/fixtures/hahwul \
      --ai-key=xai-...
 ```
 
-When you run this command, Noir will first scan your code to identify all the endpoints. It will then pass this information to the xAI API, which will analyze the code and return detailed insights. This can help you:
-
-*   Understand the purpose of complex endpoints.
-*   Identify potential security vulnerabilities.
-*   Get suggestions for improving your code.
-
-This powerful combination brings the cutting-edge capabilities of xAI's models directly into your development workflow, helping you build more secure and robust applications.
+xAI provides:
+*   Complex endpoint analysis
+*   Security vulnerability identification
+*   Code improvement suggestions
 

@@ -7,23 +7,23 @@ sort_by = "weight"
 [extra]
 +++
 
-There are several ways to install OWASP Noir, so you can choose the method that works best for your operating system and workflow.
+Choose your preferred installation method:
 
 ## Homebrew (macOS and Linux)
 
-If you are on macOS or Linux, the easiest way to install Noir is with [Homebrew](https://brew.sh/).
+Install using [Homebrew](https://brew.sh/):
 
 ```bash
 brew install noir
 ```
 
 {% alert_info() %}
-For Homebrew users, shell completions for Zsh, Bash, and Fish are automatically installed, so you can start using them right away.
+Shell completions for Zsh, Bash, and Fish are automatically installed.
 {% end %}
 
 ## Snapcraft (Linux)
 
-If you are on a Linux distribution that supports [Snap](https://snapcraft.io/), you can install Noir from the Snap Store.
+Install from [Snap Store](https://snapcraft.io/):
 
 ```bash
 sudo snap install noir
@@ -31,30 +31,28 @@ sudo snap install noir
 
 ## Docker
 
-If you prefer to use Docker, you can pull the official Noir image from the GitHub Container Registry (GHCR).
+Pull from GitHub Container Registry:
 
 ```bash
 docker pull ghcr.io/owasp-noir/noir:latest
 ```
 
-You can find a list of all available tags on the [GitHub Packages page](https://github.com/owasp-noir/noir/pkgs/container/noir).
+See all available tags on the [GitHub Packages page](https://github.com/owasp-noir/noir/pkgs/container/noir).
 
 ## Unofficial
 
 ### Arch AUR
 
-If you are on Arch Linux, you can install Noir from the [AUR](https://aur.archlinux.org/packages/noir).
+Install from [AUR](https://aur.archlinux.org/packages/noir):
 
 ```bash
 yay -S noir
 ```
 
-Or use any other AUR helper.
-
 ## Build from Source
 
 {% alert_warning() %}
-If you want to build Noir from source, you will need to have the Crystal programming language installed.
+Requires Crystal programming language installed.
 {% end %}
 
 1.  **Clone the repository**:

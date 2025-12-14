@@ -7,18 +7,16 @@ sort_by = "weight"
 [extra]
 +++
 
-By integrating Noir with [Azure AI](https://azure.microsoft.com/en-us/products/ai-services), you can leverage powerful language models hosted on Microsoft's Azure platform. Azure AI provides access to various models through the GitHub Models inference endpoint, making it easy to get AI-powered analysis of your codebase.
+Use [Azure AI](https://azure.microsoft.com/en-us/products/ai-services) language models through GitHub Models inference endpoint.
 
-## Setting Up the Azure AI Integration
+## Setup
 
-To use Noir with Azure AI, you'll need access to Azure AI services through GitHub Models.
+1.  **API Key**: Get from [Azure AI Inference portal](https://models.inference.ai.azure.com)
+2.  **Model**: Select available Azure AI model
 
-1.  **Get an API Key**: Sign up for Azure AI services and obtain an API key from the [Azure AI Inference portal](https://models.inference.ai.azure.com).
-2.  **Choose a Model**: Select an appropriate model available through Azure AI. Models vary in capability and pricing.
+## Usage
 
-## Running Noir with Azure AI
-
-Once you have your API key, you can run Noir with the `--ai-provider` flag set to `azure`. You'll also need to provide your API key using the `--ai-key` flag and specify the model with `--ai-model`.
+Run Noir with Azure AI:
 
 ```bash
 noir -b ./myapp \
@@ -27,21 +25,16 @@ noir -b ./myapp \
      --ai-key=YOUR_API_KEY
 ```
 
-The `azure` provider prefix automatically uses the Azure AI inference endpoint at `https://models.inference.ai.azure.com`.
+The `azure` provider uses endpoint: `https://models.inference.ai.azure.com`
 
-## Using Environment Variables
-
-To avoid passing your API key on the command line, you can set it as an environment variable:
+Using environment variable:
 
 ```bash
 export NOIR_AI_KEY=YOUR_API_KEY
 noir -b ./myapp --ai-provider=azure --ai-model=YOUR_MODEL_NAME
 ```
 
-When you run this command, Noir will first scan your code to identify endpoints. Then, it will send this information to the Azure AI API for advanced analysis. This can include:
-
-*   **Natural language descriptions** of what each endpoint does.
-*   **Identification of potential security vulnerabilities**.
-*   **Suggestions for improving code quality** and adherence to best practices.
-
-This integration provides a powerful way to enhance your development workflow with enterprise-grade AI analysis.
+Azure AI provides:
+*   Natural language endpoint descriptions
+*   Security vulnerability identification
+*   Code quality improvement suggestions

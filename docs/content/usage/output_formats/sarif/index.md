@@ -7,32 +7,30 @@ sort_by = "weight"
 [extra]
 +++
 
-SARIF (Static Analysis Results Interchange Format) is an OASIS standard for representing the output of static analysis tools. Noir can generate SARIF v2.1.0 compliant output, making it easy to integrate your scan results with modern CI/CD platforms and security dashboards.
+Generate SARIF v2.1.0 (Static Analysis Results Interchange Format) output for CI/CD integration.
 
-## Why Use SARIF?
+## Why SARIF?
 
-*   **Standards Compliant**: SARIF is an OASIS standard widely supported across the security tooling ecosystem.
-*   **CI/CD Integration**: Native support in GitHub Code Scanning, GitLab Security Dashboard, Azure DevOps, and more.
-*   **Rich Metadata**: Includes detailed information about findings, including severity levels, file locations, and rule descriptions.
-*   **Machine Readable**: Structured format enables automated security gates and policy enforcement in pipelines.
+*   OASIS standard supported across security tooling ecosystem
+*   Native support in GitHub Code Scanning, GitLab, Azure DevOps
+*   Rich metadata with severity levels and file locations
+*   Enables automated security gates in pipelines
 
-## How to Generate SARIF Output
+## Usage
 
-To get your scan results in SARIF format, use the `-f sarif` or `--format sarif` flag when running Noir. It's recommended to use the `--no-log` flag to keep the output clean.
+Generate SARIF output:
 
 ```bash
 noir -b . -f sarif --no-log
 ```
 
-You can also save the output to a file for uploading to security platforms:
+Save to file:
 
 ```bash
 noir -b . -f sarif -o results.sarif --no-log
 ```
 
-## Example SARIF Output
-
-Here is a sample of what the SARIF output looks like:
+## Example Output
 
 ```json
 {
