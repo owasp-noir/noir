@@ -7,45 +7,36 @@ sort_by = "weight"
 [extra]
 +++
 
-OWASP Noir is a community-driven project, and we welcome contributions of all kinds. Whether you are fixing a bug, adding a new feature, or improving the documentation, your help is greatly appreciated.
+OWASP Noir welcomes all contributions—bug fixes, features, and documentation improvements.
 
 ## How to Contribute
 
-The best way to contribute is to follow these steps:
-
-1.  **Fork the repository**: Start by creating your own copy of the [Noir repository](https://github.com/owasp-noir/noir) on GitHub.
-2.  **Create a new branch**: Create a new branch in your fork for your changes.
+1.  **Fork** the [Noir repository](https://github.com/owasp-noir/noir)
+2.  **Create branch**:
     ```sh
-    git checkout -b your-feature-or-fix-name
+    git checkout -b your-feature-name
     ```
-3.  **Make your changes**: Make your changes to the code or documentation.
-4.  **Commit your changes**: Commit your changes with a clear and descriptive commit message.
-5.  **Push your changes**: Push your changes to your fork.
+3.  **Make changes**
+4.  **Commit** with clear message
+5.  **Push** to your fork:
     ```sh
-    git push origin your-feature-or-fix-name
+    git push origin your-feature-name
     ```
-6.  **Create a Pull Request**: Open a pull request from your fork to the main Noir repository. Please provide a clear description of the changes you have made.
+6.  **Open Pull Request** with description
 
-For more detailed guidelines, please see our official [CONTRIBUTING.md](https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md) file.
+See [CONTRIBUTING.md](https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md) for detailed guidelines.
 
 ## Development Setup
 
-If you are contributing to the code, you will need to set up a local development environment.
-
 ### Installing Crystal
 
-Noir is built with the Crystal programming language. To install it, please follow the official [Crystal installation guide](https://crystal-lang.org/install/).
+Install from [Crystal installation guide](https://crystal-lang.org/install/).
 
 ### Building and Testing
 
-Once you have Crystal installed, you can clone the repository and install the dependencies:
-
 ```sh
-# Clone your fork
 git clone https://github.com/<YOUR-USERNAME>/noir
 cd noir
-
-# Install dependencies
 shards install
 ```
 

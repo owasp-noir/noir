@@ -7,11 +7,9 @@ sort_by = "weight"
 [extra]
 +++
 
-To make running Noir easier and more consistent, you can use a configuration file to set default values for many of the command-line flags. This saves you from having to type the same options every time you run a scan.
+Use a `config.yaml` file to set default options for consistent scans.
 
-## Configuration File Location
-
-Noir looks for a file named `config.yaml` in a specific directory depending on your operating system:
+## File Location
 
 | OS | Path |
 |---|---|
@@ -19,23 +17,17 @@ Noir looks for a file named `config.yaml` in a specific directory depending on y
 | Linux | `~/.config/noir/` |
 | Windows | `%APPDATA%\noir\` |
 
-Any settings you define in this file will be used as the default, but you can always override them by providing a different value on the command line.
+Settings in config file are defaults and can be overridden via command line.
 
-## Noir Home Directory Structure
-
-Noir stores configuration and cache under the same home directory (see the paths above). A typical structure looks like:
+## Directory Structure
 
 ```
 ~/.config/noir/
-├── config.yaml          # Main configuration file
+├── config.yaml          # Configuration file
 ├── cache/
-│   └── ai/              # LLM response cache (used by AI-powered analysis)
-└── passive_rules/       # Rules directory for Passive Scan
+│   └── ai/              # LLM response cache
+└── passive_rules/       # Passive scan rules
 ```
-
-- config.yaml: Your main configuration file.
-- cache/ai: Stores AI response cache to speed up repeated analyses and reduce costs.
-- passive_rules: Contains rule files for Passive Scan.
 
 ## Example `config.yaml`
 
