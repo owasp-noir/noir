@@ -1,9 +1,9 @@
 require "../../../models/detector"
 
-module Detector::Javascript
+module Detector::Typescript
   class Nestjs < Detector
     def detect(filename : String, file_contents : String) : Bool
-      if (filename.ends_with?(".js") || filename.ends_with?(".jsx")) &&
+      if (filename.ends_with?(".ts") || filename.ends_with?(".tsx")) &&
          (file_contents.match(/require\(['"]@nestjs\/core['"]\)/) ||
          file_contents.match(/require\(['"]@nestjs\/common['"]\)/) ||
          file_contents.match(/import.*from ['"]@nestjs\/core['"]/) ||
@@ -18,7 +18,7 @@ module Detector::Javascript
     end
 
     def set_name
-      @name = "js_nestjs"
+      @name = "ts_nestjs"
     end
   end
 end
