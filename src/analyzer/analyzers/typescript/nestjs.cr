@@ -99,7 +99,7 @@ module Analyzer::Typescript
       controllers = [] of Hash(Symbol, String)
 
       # Find all @Controller decorators and their associated class content
-      lines = content.split('\n')
+      lines = content.split("\n")
       current_controller : Hash(Symbol, String) | Nil = nil
       brace_count = 0
       in_class = false
