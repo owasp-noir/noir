@@ -7,71 +7,39 @@ sort_by = "weight"
 [extra]
 +++
 
-OWASP Noir welcomes all contributions—bug fixes, features, and documentation improvements.
+OWASP Noir welcomes all contributions—bug fixes, features, and documentation.
 
-## How to Contribute
+## Quick Start
 
-1.  **Fork** the [Noir repository](https://github.com/owasp-noir/noir)
-2.  **Create branch**:
-    ```sh
-    git checkout -b your-feature-name
-    ```
-3.  **Make changes**
-4.  **Commit** with clear message
-5.  **Push** to your fork:
-    ```sh
-    git push origin your-feature-name
-    ```
-6.  **Open Pull Request** with description
+1. **Fork** the [repository](https://github.com/owasp-noir/noir)
+2. **Create branch**: `git checkout -b feature-name`
+3. **Make changes** and test
+4. **Commit** with clear message
+5. **Push**: `git push origin feature-name`
+6. **Open PR** with description
 
-See [CONTRIBUTING.md](https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md) for detailed guidelines.
+See [CONTRIBUTING.md](https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md) for more details.
 
 ## Development Setup
 
-### Installing Crystal
+### Install Crystal
 
-Install from [Crystal installation guide](https://crystal-lang.org/install/).
+Follow the [Crystal installation guide](https://crystal-lang.org/install/).
 
-### Building and Testing
+### Setup, Build & Test
 
 ```sh
 git clone https://github.com/<YOUR-USERNAME>/noir
 cd noir
-shards install
-```
-
-To build the project, run:
-
-```sh
-shards build
-# The binary will be located at ./bin/noir
-```
-
-To run the unit and functional tests:
-
-```sh
-crystal spec
-
-# For more detailed output
-crystal spec -v
+shards install    # Install dependencies
+shards build      # Binary: ./bin/noir
+crystal spec      # Run tests (-v for verbose)
 ```
 
 ### Linting
 
-We use `ameba` for linting our code. To check the code for style issues, run:
-
 ```sh
-ameba
-```
-
-To automatically fix any style issues, you can run:
-
-```sh
-ameba --fix
-```
-
-Alternatively, you can use the `just` command to run the linter:
-
-```sh
-just fix
+ameba --fix       # Auto-fix style issues
+# or
+just fix          # Format and fix
 ```

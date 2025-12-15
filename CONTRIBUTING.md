@@ -1,114 +1,66 @@
-# ❤️ Contribution Guidelines
+# ❤️ Contributing to Noir
 
-Thank you for considering contributing to our project! Here are some guidelines to help you get started and ensure a smooth contribution process.
+Thank you for contributing to OWASP Noir!
 
-1. Fork and Code
-- Begin by forking the repository.
-- Write your code within your forked repository.
+## Quick Start
 
-2. Pull Request
-- Once your contribution is ready, create a Pull Request (PR) to the main branch of the main repository.
-- Provide a clear and concise description of your changes in the PR.
+1. **Fork** the repository
+2. **Create branch** and make changes
+3. **Test** your changes locally
+4. **Submit PR** to main branch with clear description
 
-3. Completion
-- That's it! You're done. Await feedback and further instructions from the maintainers.
+## 🛠️ Development
 
-```mermaid
-graph TD
-    subgraph Forked Branches
-        fork1["forked branch 1"]
-        fork2["forked branch 2"]
-        fork3["forked branch 3"]
-    end
-    fork1 --> main["main branch"]
-    fork2 --> main
-    fork3 --> main
-
-    main --> deployments["documentation deployments (https://owasp-noir.github.io)"]
-
-    main -->|release| homebrew["homebrew"]
-    main -->|release| snapcraft["snapcraft"]
-    main -->|release| docker["docker (ghcr)"]
-```
-
-## 🛠️ Building and Testing
-### Clone and Install Dependencies
+### Setup
 
 ```bash
-# If you've forked this repository, clone to https://github.com/<YOU>/noir
-git clone https://github.com/hahwul/noir
+git clone https://github.com/<YOUR-USERNAME>/noir
 cd noir
 shards install
 ```
 
 ### Build
+
 ```bash
-shards build
-# ./bin/noir
+shards build  # Binary: ./bin/noir
 ```
 
-### Unit/Functional Test
-```bash
-crystal spec
+### Test
 
-# Want more details?
-crystal spec -v
+```bash
+crystal spec       # Run tests
+crystal spec -v    # Verbose output
 ```
 
 ### Lint
-```bash
-crystal tool format
-ameba --fix
-
-# Ameba installation
-# https://github.com/crystal-ameba/ameba#installation
-```
-
-or
 
 ```bash
+crystal tool format && ameba --fix
+# or
 just fix
 ```
 
-## 🧭 Code Structure
+## 📁 Repository Structure
 
-- spec:
-  - unit_test: Unit test codes (for `crystal spec` command).
-  - functional_test: Functional test codes.
-- src: Contains the source code.
-  - analyzer: Code analyzers for Endpoint URL and Parameter analysis.
-  - detector: Code for language and framework identification.
-  - models: Contains everything related to models, such as classes and structures.
-- noir.cr: Main file and command-line parser.
-
-Feel free to reach out to us if you have any questions or need further assistance!
-
-## Document Contributing
-
-Please note that [our web page](https://owasp-noir.github.io/noir/) operates based on the main branch. If you make any changes, kindly send a Pull Request (PR) to the main branch.
-
-To ensure a smooth integration of your contributions, please follow these steps:
-
-* Fork the repository and create your feature branch from main.
-* Make your changes, ensuring they are thoroughly tested.
-* Submit your PR to the main branch for review.
-
-By doing so, you'll help us keep our project up-to-date and well-organized. Your efforts are greatly appreciated, and we're excited to see what you'll bring to the project!
-
-### Setting up the Documentation Site
-
-To set up the documentation site locally, follow these steps:
-
-#### Install Zola
-
-> https://www.getzola.org/documentation/getting-started/installation/
-
-#### Serve the Documentation Site
-
-After installing Zola, you can serve the documentation site locally using the following Just task:
-
-```sh
-just docs-serve
+```
+spec/               # Tests
+  unit_test/        # Unit tests
+  functional_test/  # Functional tests
+src/                # Source code
+  analyzer/         # Endpoint & parameter analysis
+  detector/         # Language & framework detection
+  models/           # Data structures
 ```
 
-This will start a local server, and you can view the documentation by navigating to http://localhost:1313 in your web browser.
+## 📚 Documentation
+
+Website: [owasp-noir.github.io/noir](https://owasp-noir.github.io/noir/)
+
+### Local Development
+
+```bash
+# Install Zola: https://www.getzola.org/documentation/getting-started/installation/
+just docs-serve  # Serves at http://localhost:1313
+```
+
+Submit documentation PRs to the main branch.
