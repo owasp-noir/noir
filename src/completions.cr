@@ -5,7 +5,7 @@ def generate_zsh_completion_script
 _arguments \\
   '-b[Set base path]:path:_files' \\
   '-u[Set base URL for endpoints]:URL:_urls' \\
-  '-f[Set output format]:format:(plain yaml json jsonl markdown-table curl httpie oas2 oas3 only-url only-param only-header only-cookie only-tag)' \\
+  '-f[Set output format]:format:(plain yaml json jsonl markdown-table sarif html curl httpie oas2 oas3 postman only-url only-param only-header only-cookie only-tag mermaid)' \\
   '-o[Write result to file]:path:_files' \\
   '--set-pvalue[Specifies the value of the identified parameter]:value:' \\
   '--set-pvalue-header[Specifies the value of the identified parameter for headers]:value:' \\
@@ -20,7 +20,11 @@ _arguments \\
   '--no-color[Disable color output]' \\
   '--no-log[Displaying only the results]' \\
   '-P[Perform a passive scan for security issues using rules from the specified path]' \\
+  '--passive-scan[Enable passive security scan]' \\
   '--passive-scan-path[Specify the path for the rules used in the passive security scan]:path:_files' \\
+  '--passive-scan-severity[Min severity (critical|high|medium|low, default: high)]:severity:(critical high medium low)' \\
+  '--passive-scan-auto-update[Auto-update rules at startup]' \\
+  '--passive-scan-no-update-check[Skip rule update check]' \\
   '-T[Activates all taggers for full analysis coverage]' \\
   '--use-taggers[Activates specific taggers]:values:' \\
   '--list-taggers[Lists all available taggers]' \\
@@ -37,6 +41,8 @@ _arguments \\
   '--config-file[Specify the path to a configuration file in YAML format]:path:_files' \\
   '--concurrency[Set concurrency]:concurrency:' \\
   '--generate-completion[Generate Zsh/Bash/Fish completion script]:completion:(zsh bash fish)' \\
+  '--cache-disable[Disable LLM cache]' \\
+  '--cache-clear[Clear LLM cache before run]' \\
   '--ai-provider[Specify the AI (LLM) provider or custom API URL]:provider:' \\
   '--ai-model[Set the model name to use for AI analysis]:model:' \\
   '--ai-key[Provide the API key for the AI provider]:key:' \\
@@ -78,6 +84,9 @@ _noir_completions() {
         --no-log
         -P --passive-scan
         --passive-scan-path
+        --passive-scan-severity
+        --passive-scan-auto-update
+        --passive-scan-no-update-check
         -T --use-all-taggers
         --use-taggers
         --list-taggers
@@ -94,6 +103,8 @@ _noir_completions() {
         --config-file
         --concurrency
         --generate-completion
+        --cache-disable
+        --cache-clear
         --ai-provider
         --ai-model
         --ai-key
@@ -110,7 +121,7 @@ _noir_completions() {
 
     case "${prev}" in
         -f|--format)
-            COMPREPLY=( $(compgen -W "plain yaml json jsonl markdown-table curl httpie oas2 oas3 only-url only-param only-header only-cookie only-tag" -- "${cur}") )
+            COMPREPLY=( $(compgen -W "plain yaml json jsonl markdown-table sarif html curl httpie oas2 oas3 postman only-url only-param only-header only-cookie only-tag mermaid" -- "${cur}") )
             return 0
             ;;
         --send-proxy|--send-es|--with-headers|--use-matchers|--use-filters|--diff-path|--config-file|--set-pvalue|--techs|--exclude-techs|--ollama|--ollama-model|-o|-b|-u)
@@ -119,6 +130,10 @@ _noir_completions() {
             ;;
         --generate-completion)
             COMPREPLY=( $(compgen -W "zsh bash fish" -- "${cur}") )
+            return 0
+            ;;
+        --passive-scan-severity)
+            COMPREPLY=( $(compgen -W "critical high medium low" -- "${cur}") )
             return 0
             ;;
         --ai-provider|--ai-model|--ai-key|--ai-max-token|--ollama|--ollama-model)
@@ -164,7 +179,11 @@ complete -c noir -n '__fish_noir_needs_command' -a '--include-path' -d 'Include 
 complete -c noir -n '__fish_noir_needs_command' -a '--no-color' -d 'Disable color output'
 complete -c noir -n '__fish_noir_needs_command' -a '--no-log' -d 'Displaying only the results'
 complete -c noir -n '__fish_noir_needs_command' -a '-P' -d 'Perform a passive scan for security issues using rules from the specified path'
+complete -c noir -n '__fish_noir_needs_command' -a '--passive-scan' -d 'Enable passive security scan'
 complete -c noir -n '__fish_noir_needs_command' -a '--passive-scan-path' -d 'Specify the path for the rules used in the passive security scan'
+complete -c noir -n '__fish_noir_needs_command' -a '--passive-scan-severity' -d 'Min severity (critical|high|medium|low, default: high)'
+complete -c noir -n '__fish_noir_needs_command' -a '--passive-scan-auto-update' -d 'Auto-update rules at startup'
+complete -c noir -n '__fish_noir_needs_command' -a '--passive-scan-no-update-check' -d 'Skip rule update check'
 complete -c noir -n '__fish_noir_needs_command' -a '-T' -d 'Activates all taggers for full analysis coverage'
 complete -c noir -n '__fish_noir_needs_command' -a '--use-taggers' -d 'Activates specific taggers'
 complete -c noir -n '__fish_noir_needs_command' -a '--list-taggers' -d 'Lists all available taggers'
@@ -181,6 +200,8 @@ complete -c noir -n '__fish_noir_needs_command' -a '--list-techs' -d 'Show all t
 complete -c noir -n '__fish_noir_needs_command' -a '--config-file' -d 'Specify the path to a configuration file in YAML format'
 complete -c noir -n '__fish_noir_needs_command' -a '--concurrency' -d 'Set concurrency'
 complete -c noir -n '__fish_noir_needs_command' -a '--generate-completion' -d 'Generate Zsh/Bash/Fish completion script'
+complete -c noir -n '__fish_noir_needs_command' -a '--cache-disable' -d 'Disable LLM cache'
+complete -c noir -n '__fish_noir_needs_command' -a '--cache-clear' -d 'Clear LLM cache before run'
 complete -c noir -n '__fish_noir_needs_command' -a '--ai-provider' -d 'Specify the AI (LLM) provider or custom API URL'
 complete -c noir -n '__fish_noir_needs_command' -a '--ai-model' -d 'Set the model name to use for AI analysis'
 complete -c noir -n '__fish_noir_needs_command' -a '--ai-key' -d 'Provide the API key for the AI provider'
