@@ -32,6 +32,13 @@
               runHook postBuild
             '';
 
+          installPhase = ''
+              runHook preInstall
+              mkdir -p $out/bin
+              cp bin/noir $out/bin/noir
+              runHook postInstall
+            '';
+
           doCheck = false;
 
           meta = with pkgs.lib; {
