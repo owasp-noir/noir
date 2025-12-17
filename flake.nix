@@ -26,6 +26,25 @@
           nativeBuildInputs = [ pkgs.crystal pkgs.shards ];
           buildInputs = [ ];  # 필요 시 추가 (e.g., pkgs.openssl)
 
+          # Override buildPhase to use shards build instead of make build
+          buildPhase = ''
+            runHook preBuild
+            
+            echo "Building with shards..."
+            shards build --release --no-debug
+            
+            runHook postBuild
+          '';
+
+          installPhase = ''
+            runHook preInstall
+            
+            mkdir -p $out/bin
+            cp bin/noir $out/bin/
+            
+            runHook postInstall
+          '';
+
           meta = with pkgs.lib; {
             description = "OWASP Noir: Hunt every Endpoint in your code, expose Shadow APIs, map the Attack Surface";
             homepage = "https://github.com/owasp-noir/noir";
