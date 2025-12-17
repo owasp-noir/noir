@@ -25,6 +25,13 @@
 
           nativeBuildInputs = [ pkgs.crystal pkgs.shards ];
           buildInputs = [ ];  # 필요 시 추가 (e.g., pkgs.openssl)
+
+          buildPhase = ''
+              runHook preBuild
+              shards build --release
+              runHook postBuild
+            '';
+
           doCheck = false;
 
           meta = with pkgs.lib; {
