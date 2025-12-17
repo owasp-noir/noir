@@ -36,6 +36,8 @@ OWASP Noir는 커뮤니티 주도 프로젝트이며, 모든 종류의 기여를
 
 Noir는 Crystal 프로그래밍 언어로 구축되었습니다. 설치하려면 공식 [Crystal 설치 가이드](https://crystal-lang.org/install/)를 따르세요.
 
+
+
 ### 빌드 및 테스트
 
 Crystal이 설치되면 저장소를 클론하고 종속성을 설치할 수 있습니다:
@@ -83,4 +85,18 @@ ameba --fix
 
 ```sh
 just fix
+```
+
+## 선택 사항: Nix를 사용한 개발
+
+Nix와 Docker를 사용하여 재현 가능한 개발 환경을 설정할 수 있습니다:
+
+```sh
+docker run -it --rm -v $(pwd):/workspace -w /workspace nixos/nix bash
+```
+
+컨테이너 내부에서 개발 환경을 활성화합니다:
+
+```sh
+nix develop
 ```

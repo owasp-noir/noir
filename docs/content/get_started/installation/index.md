@@ -1,6 +1,6 @@
 +++
 title = "Installation"
-description = "Learn how to install OWASP Noir on your system. This guide provides instructions for installing Noir using Homebrew, Snapcraft, Docker, or by building from source."
+description = "Learn how to install OWASP Noir on your system. This guide provides instructions for installing Noir using Homebrew, Snapcraft, Docker, Nix, or by building from source."
 weight = 2
 sort_by = "weight"
 
@@ -38,6 +38,20 @@ docker pull ghcr.io/owasp-noir/noir:latest
 ```
 
 See all available tags on the [GitHub Packages page](https://github.com/owasp-noir/noir/pkgs/container/noir).
+
+## Nix
+
+Install using [Nix](https://nixos.org/):
+
+```bash
+nix profile install github:owasp-noir/noir
+```
+
+Or run directly:
+
+```bash
+nix run github:owasp-noir/noir -- -h
+```
 
 ## Unofficial
 

@@ -32,6 +32,8 @@ See [CONTRIBUTING.md](https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.
 
 Install from [Crystal installation guide](https://crystal-lang.org/install/).
 
+
+
 ### Building and Testing
 
 ```sh
@@ -74,4 +76,18 @@ Alternatively, you can use the `just` command to run the linter:
 
 ```sh
 just fix
+```
+
+## Optional: Development with Nix
+
+You can set up a reproducible development environment using Nix and Docker:
+
+```sh
+docker run -it --rm -v $(pwd):/workspace -w /workspace nixos/nix bash
+```
+
+Inside the container, activate the development environment:
+
+```sh
+nix develop
 ```

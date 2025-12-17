@@ -11,3 +11,5 @@ ameba.sh
 # Ignore for Zola
 /docs/public/
 
+# Nix
+/flake.lock
