@@ -78,7 +78,7 @@ Alternatively, you can use the `just` command to run the linter:
 just fix
 ```
 
-## Optional: Development with Nix
+## Optional: Nix Development
 
 You can set up a reproducible development environment using Nix and Docker:
 
