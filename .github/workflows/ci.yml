@@ -89,8 +89,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform:
-          - amd64
+        platform: [amd64]
     steps:
       - name: Check out Git repository
         uses: actions/checkout@v5
@@ -103,3 +102,34 @@ jobs:
         uses: diddlesnaps/snapcraft-review-action@v1
         with:
           snap: ${{ steps.build.outputs.snap }}
+  build-nix-flake:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v14
+        with:
+          extra-conf: |
+            experimental-features = nix-command flakes
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+      - name: Enable magic-nix-cache
+        uses: DeterminateSystems/magic-nix-cache-action@v8
+      - name: Check Nix flake
+        run: |
+          echo "Checking Nix flake inputs..."
+          nix flake check --show-trace
+      - name: Build with Nix (release binary)
+        run: |
+          echo "Building Noir with Nix..."
+          nix build .#default --print-build-logs
+      - name: Run Noir binary (smoke test)
+        run: |
+          echo "Running smoke test..."
+          ./result/bin/noir --version
+          ./result/bin/noir --help | head -n 10
+      - name: Enter dev shell (optional sanity check)
+        run: |-
+          echo "Testing dev shell..."
+          nix develop --command crystal --version
+          nix develop --command shards --version
