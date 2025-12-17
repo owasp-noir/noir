@@ -1,6 +1,6 @@
 +++
 title = "설치"
-description = "시스템에 OWASP Noir를 설치하는 방법을 알아보세요. 이 가이드는 Homebrew, Snapcraft, Docker를 사용하거나 소스에서 빌드하여 Noir를 설치하는 지침을 제공합니다."
+description = "시스템에 OWASP Noir를 설치하는 방법을 알아보세요. 이 가이드는 Homebrew, Snapcraft, Docker, Nix를 사용하거나 소스에서 빌드하여 Noir를 설치하는 지침을 제공합니다."
 weight = 2
 sort_by = "weight"
 
@@ -38,6 +38,20 @@ docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest -b /tmp
 ```
 
 이 명령은 현재 디렉토리를 Docker 컨테이너에 마운트하고 Noir를 실행하여 코드를 분석합니다.
+
+## Nix
+
+[Nix](https://nixos.org/)를 사용하여 설치합니다:
+
+```bash
+nix profile install github:owasp-noir/noir
+```
+
+또는 직접 실행할 수 있습니다:
+
+```bash
+nix run github:owasp-noir/noir -- -h
+```
 
 ## Unofficial
 
