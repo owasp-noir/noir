@@ -30,7 +30,7 @@
             description = "OWASP Noir: Hunt every Endpoint in your code, expose Shadow APIs, map the Attack Surface";
             homepage = "https://github.com/owasp-noir/noir";
             license = licenses.mit;
-            maintainers = [ ];
+            maintainers = [ "hahwul" "ksg97031" ];
             mainProgram = "noir";
           };
         };
