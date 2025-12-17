@@ -53,6 +53,67 @@ nix profile install github:owasp-noir/noir
 nix run github:owasp-noir/noir -- -h
 ```
 
+## 직접 바이너리 사용
+
+GitHub Releases에서 Noir 바이너리를 직접 다운로드하여 사용할 수 있습니다.
+
+1. GitHub Releases 페이지에 접속합니다:
+
+   https://github.com/owasp-noir/noir/releases/latest
+
+2. 사용하는 운영체제와 아키텍처에 맞는 압축 파일(예: `noir-x86_64-unknown-linux-gnu.tar.gz`, `noir-x86_64-apple-darwin.tar.gz` 등)을 다운로드합니다.
+3. 압축을 해제합니다:
+
+   ```bash
+   tar -xzf noir-*.tar.gz
+   ```
+
+4. 실행 파일에 실행 권한을 부여합니다:
+
+   ```bash
+   chmod +x noir
+   ```
+
+5. PATH에 있는 디렉터리로 옮기면 어디서나 실행할 수 있습니다:
+
+   ```bash
+   sudo mv noir /usr/local/bin/
+   ```
+
+이제 다음과 같이 실행하여 버전을 확인할 수 있습니다:
+
+```bash
+noir --version
+```
+
+## Debian 패키지(.deb)
+
+Debian 또는 Ubuntu 계열 배포판을 사용하는 경우 `.deb` 패키지를 설치할 수 있습니다.
+
+1. GitHub Releases 페이지에서 최신 `.deb` 패키지를 다운로드합니다:
+
+   https://github.com/owasp-noir/noir/releases/latest
+
+   예: `noir_latest_amd64.deb` 와 같은 파일
+
+2. `dpkg`로 패키지를 설치합니다:
+
+   ```bash
+   sudo dpkg -i noir_*_amd64.deb
+   ```
+
+3. 필요한 경우 누락된 의존성을 자동으로 설치합니다:
+
+   ```bash
+   sudo apt-get install -f
+   ```
+
+설치가 완료되면 다음 명령으로 설치 여부를 확인할 수 있습니다:
+
+```bash
+noir --version
+```
+
 ## Unofficial
 
 ### Arch AUR
