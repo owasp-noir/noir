@@ -50,10 +50,13 @@ class OutputBuilderPowershell < OutputBuilder
   end
 
   # Escape special PowerShell characters in strings
+  # Note: We wrap values in double quotes, so single quotes don't need escaping
   private def escape_powershell(str : String) : String
     str
       .gsub("`", "``")   # Escape backticks
       .gsub("$", "`$")   # Escape dollar signs
       .gsub("\"", "`\"") # Escape double quotes
+      .gsub("\r", "`r")  # Escape carriage return
+      .gsub("\n", "`n")  # Escape newline
   end
 end
