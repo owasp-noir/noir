@@ -1,7 +1,7 @@
 +++
 title = "Contact Us"
 description = "Find out how to get in touch with the OWASP Noir team. Whether you have a question, a suggestion, or want to report an issue, this page will point you in the right direction."
-weight = 4
+weight = 5
 sort_by = "weight"
 
 [extra]
