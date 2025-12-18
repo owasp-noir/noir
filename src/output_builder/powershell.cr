@@ -6,46 +6,54 @@ class OutputBuilderPowershell < OutputBuilder
     endpoints.each do |endpoint|
       baked = bake_endpoint(endpoint.url, endpoint.params)
 
-      cmd = "Invoke-WebRequest -Method #{endpoint.method} -Uri \"#{baked[:url]}\""
+      cmd = "Invoke-WebRequest -Method #{endpoint.method} -Uri \"#{escape_powershell(baked[:url])}\""
 
-      # Add headers
-      if !baked[:header].empty?
-        headers = baked[:header].map { |h|
-          parts = h.split(": ", 2)
-          if parts.size == 2
-            "\"#{parts[0]}\"=\"#{parts[1]}\""
-          else
-            "\"#{h}\"=\"\""
-          end
-        }.join("; ")
-        cmd += " -Headers @{#{headers}}"
+      # Build headers hash including cookies
+      header_parts = [] of String
+
+      # Add cookies as Cookie header
+      if !baked[:cookie].empty?
+        cookie_header = baked[:cookie].map { |c| escape_powershell(c) }.join("; ")
+        header_parts << "\"Cookie\"=\"#{cookie_header}\""
       end
 
-      # Add cookies
-      if !baked[:cookie].empty?
-        # Create a WebRequestSession for cookies
-        cookie_header = baked[:cookie].join("; ")
-        if baked[:header].empty?
-          cmd += " -Headers @{\"Cookie\"=\"#{cookie_header}\"}"
+      # Add other headers
+      baked[:header].each do |h|
+        parts = h.split(": ", 2)
+        if parts.size == 2
+          header_parts << "\"#{escape_powershell(parts[0])}\"=\"#{escape_powershell(parts[1])}\""
         else
-          # Add cookie to existing headers
-          cmd = cmd.sub(" -Headers @{", " -Headers @{\"Cookie\"=\"#{cookie_header}\"; ")
+          header_parts << "\"#{escape_powershell(h)}\"=\"\""
         end
+      end
+
+      # Add headers if present
+      if !header_parts.empty?
+        cmd += " -Headers @{#{header_parts.join("; ")}}"
       end
 
       # Add body
       if baked[:body] != ""
         if baked[:body_type] == "json"
-          # Escape double quotes in JSON body
-          escaped_body = baked[:body].gsub("\"", "`\"")
+          # Escape for PowerShell string
+          escaped_body = escape_powershell(baked[:body])
           cmd += " -Body \"#{escaped_body}\" -ContentType \"application/json\""
         else
           # Form data
-          cmd += " -Body \"#{baked[:body]}\" -ContentType \"application/x-www-form-urlencoded\""
+          escaped_body = escape_powershell(baked[:body])
+          cmd += " -Body \"#{escaped_body}\" -ContentType \"application/x-www-form-urlencoded\""
         end
       end
 
       ob_puts cmd
     end
+  end
+
+  # Escape special PowerShell characters in strings
+  private def escape_powershell(str : String) : String
+    str
+      .gsub("`", "``")   # Escape backticks
+      .gsub("$", "`$")   # Escape dollar signs
+      .gsub("\"", "`\"") # Escape double quotes
   end
 end
