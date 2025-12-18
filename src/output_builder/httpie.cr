@@ -10,7 +10,7 @@ class OutputBuilderHttpie < OutputBuilder
 
       # Quote the URL properly
       cmd = "http #{endpoint.method} '#{escape_shell(baked[:url])}'"
-      
+
       # For HTTPie, we need to handle JSON differently
       if baked[:body] != ""
         if baked[:body_type] == "json"
