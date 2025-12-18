@@ -12,21 +12,21 @@ class OutputBuilderCurl < OutputBuilder
       if baked[:body] != ""
         if baked[:body_type] == "json"
           # For JSON, use single quotes to avoid shell interpolation issues
-          cmd += " -d '#{escape_shell_single_quote(baked[:body])}'"
+          cmd += " -d '#{escape_shell(baked[:body])}'"
           cmd += " -H 'Content-Type: application/json'"
         else
           # For form data, escape properly
-          cmd += " -d '#{escape_shell_single_quote(baked[:body])}'"
+          cmd += " -d '#{escape_shell(baked[:body])}'"
           cmd += " -H 'Content-Type: application/x-www-form-urlencoded'"
         end
       end
 
       baked[:header].each do |header|
-        cmd += " -H '#{escape_shell_single_quote(header)}'"
+        cmd += " -H '#{escape_shell(header)}'"
       end
 
       baked[:cookie].each do |cookie|
-        cmd += " --cookie '#{escape_shell_single_quote(cookie)}'"
+        cmd += " --cookie '#{escape_shell(cookie)}'"
       end
 
       ob_puts cmd
@@ -35,11 +35,6 @@ class OutputBuilderCurl < OutputBuilder
 
   # Escape special characters for shell (using single quotes)
   private def escape_shell(str : String) : String
-    str.gsub("'", "'\\''")
-  end
-
-  # Escape for shell with single quotes (same as escape_shell for consistency)
-  private def escape_shell_single_quote(str : String) : String
     str.gsub("'", "'\\''")
   end
 end

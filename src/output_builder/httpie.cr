@@ -1,6 +1,7 @@
 require "../models/output_builder"
 require "../models/endpoint"
 require "json"
+require "uri"
 
 class OutputBuilderHttpie < OutputBuilder
   def print(endpoints : Array(Endpoint))
@@ -18,17 +19,22 @@ class OutputBuilderHttpie < OutputBuilder
             json_data = JSON.parse(baked[:body])
             if json_data.as_h?
               json_data.as_h.each do |key, value|
-                # Use := for JSON fields
-                escaped_value = escape_shell(value.to_json)
-                cmd += " #{key}:='#{escaped_value}'"
+                # Use := for JSON fields (only use to_json for non-string types)
+                if value.raw.is_a?(String)
+                  escaped_value = escape_shell(value.as_s)
+                  cmd += " #{key}:='#{escaped_value}'"
+                else
+                  escaped_value = escape_shell(value.to_json)
+                  cmd += " #{key}:='#{escaped_value}'"
+                end
               end
             else
-              # If not an object, use raw JSON
-              cmd += " --raw '#{escape_shell(baked[:body])}'"
+              # For arrays and primitives, HTTPie can handle them directly
+              cmd += " '#{escape_shell(baked[:body])}'"
             end
           rescue
-            # If parsing fails, use raw JSON
-            cmd += " --raw '#{escape_shell(baked[:body])}'"
+            # If parsing fails, use the body as-is
+            cmd += " '#{escape_shell(baked[:body])}'"
           end
         else
           # For form data, use key=value syntax
@@ -36,7 +42,14 @@ class OutputBuilderHttpie < OutputBuilder
           form_parts.each do |part|
             if part.includes?('=')
               key_value = part.split('=', 2)
-              cmd += " #{key_value[0]}='#{escape_shell(key_value[1])}'"
+              # URL decode the value before escaping for HTTPie
+              begin
+                decoded_value = URI.decode_www_form(key_value[1])
+                cmd += " #{key_value[0]}='#{escape_shell(decoded_value)}'"
+              rescue
+                # If decoding fails, use the value as-is
+                cmd += " #{key_value[0]}='#{escape_shell(key_value[1])}'"
+              end
             end
           end
         end
