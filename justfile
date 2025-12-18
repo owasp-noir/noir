@@ -2,11 +2,12 @@
 alias b := build
 alias ds := docs-serve
 alias dsup := docs-supported
+alias vc := version-check
 
 # Default task, lists all available tasks.
 default:
     @echo "Listing available tasks..."
-    @echo "Aliases: b (build), ds (docs-serve), dsup (docs-supported)"
+    @echo "Aliases: b (build), ds (docs-serve), dsup (docs-supported), vc (version-check)"
     @just --list
 
 # Build the application using Crystal Shards.
