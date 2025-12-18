@@ -178,17 +178,14 @@ class VersionChecker
     check_file(".github/copilot-instructions.md", /shard\.yml.*version:\s*([^\)]+)\)/, @shard_version)
   end
   
-  private def check_how_to_release_file(file_path : String) : CheckResult
-    # Check for example version in brew command
-    check_file(file_path, /brew bump-formula-pr --strict --version\s+([\d.]+)\s+noir/, @shard_version)
-  end
-  
   private def check_how_to_release_md : CheckResult
-    check_how_to_release_file("docs/content/development/how_to_release/index.md")
+    # Check for example version in brew command
+    check_file("docs/content/development/how_to_release/index.md", /brew bump-formula-pr --strict --version\s+([\d.]+)\s+noir/, @shard_version)
   end
   
   private def check_how_to_release_ko_md : CheckResult
-    check_how_to_release_file("docs/content/development/how_to_release/index.ko.md")
+    # Check for example version in brew command
+    check_file("docs/content/development/how_to_release/index.ko.md", /brew bump-formula-pr --strict --version\s+([\d.]+)\s+noir/, @shard_version)
   end
 end
 
