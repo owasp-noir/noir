@@ -1,7 +1,7 @@
 +++
 title = "연락처"
 description = "OWASP Noir 팀과 연락하는 방법을 알아보세요. 질문, 제안 또는 이슈 보고가 있으시든, 이 페이지가 올바른 방향을 안내해 드립니다."
-weight = 4
+weight = 5
 sort_by = "weight"
 
 [extra]
