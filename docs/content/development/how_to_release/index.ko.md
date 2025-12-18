@@ -1,7 +1,7 @@
 +++
-title = "릴리스 절차"
+title = "릴리스 방법"
 description = "Noir의 새로운 릴리스를 생성하고 게시하는 방법에 대한 관리자 가이드입니다. 이 페이지는 Homebrew, Snapcraft, Docker Hub와 같은 플랫폼에 릴리스하는 수동 및 자동화된 단계를 설명합니다."
-weight = 1
+weight = 4
 sort_by = "weight"
 
 [extra]
