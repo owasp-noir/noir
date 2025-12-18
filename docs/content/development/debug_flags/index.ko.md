@@ -1,7 +1,7 @@
 +++
-title = "Hidden Flags"
-description = "CLI에 표시되지 않는 개발자용 숨겨진 플래그"
-weight = 2
+title = "숨겨진 플래그로 디버그"
+description = "디버깅과 실험을 위한 CLI에 표시되지 않는 개발자용 숨겨진 플래그"
+weight = 3
 sort_by = "weight"
 
 [extra]

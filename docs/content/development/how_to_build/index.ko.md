@@ -1,6 +1,6 @@
 +++
-title = "Noir에 기여하기"
-description = "OWASP Noir 프로젝트에 기여하는 방법을 알아보세요. 이 가이드는 개발 환경 설정, 프로젝트 빌드, 첫 번째 풀 리퀘스트 제출 방법에 대한 지침을 제공합니다."
+title = "빌드 방법"
+description = "개발 환경 설정, 소스에서 프로젝트 빌드, 테스트 실행 및 OWASP Noir에 기여하는 방법을 알아보세요."
 weight = 1
 sort_by = "weight"
 
@@ -85,18 +85,4 @@ ameba --fix
 
 ```sh
 just fix
-```
-
-## 선택 사항: Nix 개발 환경
-
-Nix와 Docker를 사용하여 재현 가능한 개발 환경을 설정할 수 있습니다:
-
-```sh
-docker run -it --rm -v $(pwd):/workspace -w /workspace nixos/nix bash
-```
-
-컨테이너 내부에서 개발 환경을 활성화합니다:
-
-```sh
-nix develop
 ```

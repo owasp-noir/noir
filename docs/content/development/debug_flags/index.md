@@ -1,7 +1,7 @@
 +++
-title = "Hidden Flags"
-description = "Developer-only flags not shown in --help"
-weight = 2
+title = "Debug with hidden flags"
+description = "Developer-only flags not shown in --help for debugging and experimentation"
+weight = 3
 sort_by = "weight"
 
 [extra]

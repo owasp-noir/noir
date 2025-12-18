@@ -1,6 +1,6 @@
 +++
-title = "Contributing to Noir"
-description = "Learn how to contribute to the OWASP Noir project. This guide provides instructions on how to set up your development environment, build the project, and submit your first pull request."
+title = "How to Build"
+description = "Learn how to set up your development environment, build the project from source, run tests, and contribute to OWASP Noir."
 weight = 1
 sort_by = "weight"
 
@@ -76,18 +76,4 @@ Alternatively, you can use the `just` command to run the linter:
 
 ```sh
 just fix
-```
-
-## Optional: Nix Development
-
-You can set up a reproducible development environment using Nix and Docker:
-
-```sh
-docker run -it --rm -v $(pwd):/workspace -w /workspace nixos/nix bash
-```
-
-Inside the container, activate the development environment:
-
-```sh
-nix develop
 ```
