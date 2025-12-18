@@ -44,8 +44,15 @@ See all available tags on the [GitHub Packages page](https://github.com/owasp-no
 Install using [Nix](https://nixos.org/):
 
 ```bash
-nix profile install github:owasp-noir/noir
+nix profile add --no-write-lock-file github:owasp-noir/noir
 ```
+
+{% alert_info() %}
+**Tip:** In Docker or restricted environments, you may need to enable experimental features:
+```bash
+nix --extra-experimental-features "nix-command flakes" profile add --no-write-lock-file github:owasp-noir/noir
+```
+{% end %}
 
 Or run directly:
 
