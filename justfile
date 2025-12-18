@@ -2,11 +2,12 @@
 alias b := build
 alias ds := docs-serve
 alias dsup := docs-supported
+alias vc := version-check
 
 # Default task, lists all available tasks.
 default:
     @echo "Listing available tasks..."
-    @echo "Aliases: b (build), ds (docs-serve), dsup (docs-supported)"
+    @echo "Aliases: b (build), ds (docs-serve), dsup (docs-supported), vc (version-check)"
     @just --list
 
 # Build the application using Crystal Shards.
@@ -51,3 +52,8 @@ check:
 test:
     @echo "Running tests..."
     crystal spec
+
+# Check version consistency across all files using shard.yml as source of truth.
+version-check:
+    @echo "Checking version consistency..."
+    crystal run scripts/check_version_consistency.cr

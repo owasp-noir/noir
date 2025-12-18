@@ -24,8 +24,18 @@ Noir is distributed through several channels. Some are updated automatically via
 ## General Procedure
 
 1.  **Update Version**: Ensure the package version in the Noir source code and any relevant documentation has been updated.
-2.  **Create GitHub Release**: Create a new release on the [GitHub releases page](https://github.com/owasp-noir/noir/releases). This will trigger the automated release workflows.
-3.  **Manual Releases**: Follow the manual release procedures for any channels that are not automated.
+2.  **Verify Version Consistency**: Before creating a release, run the version consistency check to ensure all files have matching version numbers:
+
+    ```bash
+    just version-check
+    # or
+    just vc
+    ```
+
+    This will validate that version strings across all 13 tracked files match the version in `shard.yml`. All checks must pass (show ✅) before proceeding with the release.
+
+3.  **Create GitHub Release**: Create a new release on the [GitHub releases page](https://github.com/owasp-noir/noir/releases). This will trigger the automated release workflows.
+4.  **Manual Releases**: Follow the manual release procedures for any channels that are not automated.
 
 ## Manual Release Instructions
 
