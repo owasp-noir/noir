@@ -26,15 +26,6 @@ You can find all official OWASP Noir artwork in our GitHub repository:
 
 **[OWASP Noir Artwork Repository](https://github.com/owasp-noir/noir-artwork)**
 
-### Usage Guidelines
-
-When using OWASP Noir artwork:
-
-*   Please follow the brand guidelines provided in the repository
-*   Ensure proper attribution when using the artwork
-*   Do not modify the logos without permission
-*   Contact the project team if you have specific requirements or questions
-
 ### Contributing
 
 If you have suggestions for new artwork or improvements to existing designs, please feel free to open an issue or discussion in the artwork repository.
