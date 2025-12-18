@@ -44,13 +44,13 @@ docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest -b /tmp
 [Nix](https://nixos.org/)를 사용하여 설치합니다:
 
 ```bash
-nix profile add --no-write-lock-file github:owasp-noir/noir
+nix profile add github:owasp-noir/noir
 ```
 
 {% alert_info() %}
 **팁:** Docker 또는 제한된 환경에서는 실험적 기능을 활성화해야 할 수 있습니다:
 ```bash
-nix --extra-experimental-features "nix-command flakes" profile add --no-write-lock-file github:owasp-noir/noir
+nix --extra-experimental-features "nix-command flakes" profile add github:owasp-noir/noir
 ```
 {% end %}
 
