@@ -7,11 +7,9 @@ sort_by = "weight"
 [extra]
 +++
 
-## OWASP Noir Artwork Repository
-
 The OWASP Noir project maintains a dedicated repository for official artwork, including logos, mascots, and other visual resources. This repository serves as a central location for all branding materials related to the project.
 
-### What's Available
+## What's Available
 
 The artwork repository includes:
 
@@ -20,12 +18,12 @@ The artwork repository includes:
 *   **Brand Guidelines**: Information on proper usage of Noir branding
 *   **Other Resources**: Additional visual assets for presentations and documentation
 
-### Accessing the Artwork
+## Accessing the Artwork
 
 You can find all official OWASP Noir artwork in our GitHub repository:
 
 **[OWASP Noir Artwork Repository](https://github.com/owasp-noir/noir-artwork)**
 
-### Contributing
+## Contributing
 
 If you have suggestions for new artwork or improvements to existing designs, please feel free to open an issue or discussion in the artwork repository.
