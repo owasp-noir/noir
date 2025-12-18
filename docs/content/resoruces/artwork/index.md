@@ -9,6 +9,8 @@ sort_by = "weight"
 
 The OWASP Noir project maintains a dedicated repository for official artwork, including logos, mascots, and other visual resources. This repository serves as a central location for all branding materials related to the project.
 
+![](banner.jpg)
+
 ## What's Available
 
 The artwork repository includes:
