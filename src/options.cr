@@ -12,7 +12,7 @@ end
 private def process_override_flag(
   flag : String, option_key : String,
   noir_options : Hash(String, YAML::Any),
-  args : Array(String), i : Int32
+  args : Array(String), i : Int32,
 ) : Int32
   if i + 1 < args.size && !args[i + 1].starts_with?("-")
     noir_options[option_key] = YAML::Any.new(args[i + 1])
@@ -130,6 +130,7 @@ def run_options_parser
         html                 HTML report
         curl                 cURL commands
         httpie               HTTPie commands
+        powershell           PowerShell Invoke-WebRequest commands
         oas2                 OpenAPI 2.0 (Swagger)
         oas3                 OpenAPI 3.0
         postman              Postman collection
