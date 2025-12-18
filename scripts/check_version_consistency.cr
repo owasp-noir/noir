@@ -118,18 +118,17 @@ class VersionChecker
   end
   
   private def check_sarif_cr : CheckResult
-    # Match the tool version, not the SARIF schema version
-    # The tool version comes after "name", "OWASP Noir"
-    check_file("src/output_builder/sarif.cr", /json\.field\s+"name",\s+"OWASP Noir"\s+json\.field\s+"version",\s+"([^"]+)"/m, @shard_version)
+    # Match the tool version in the driver section, not the SARIF schema version
+    # Look for "driver" followed by "name" and "version" fields
+    check_file("src/output_builder/sarif.cr", /"driver".*?"name",\s*"OWASP Noir".*?"version",\s*"([^"]+)"/m, @shard_version)
   end
   
   private def check_snapcraft_yaml : CheckResult
     check_file("snap/snapcraft.yaml", /^version:\s*([\d.]+)\s*$/m, @shard_version)
   end
   
-  private def check_docs_index_md : CheckResult
-    # Check both version and badge fields
-    file_path = "docs/content/_index.md"
+  private def check_docs_index_file(file_path : String) : CheckResult
+    # Check both version and badge fields in documentation index files
     expected = "v#{@shard_version}"
     
     if File.exists?(file_path)
@@ -155,32 +154,12 @@ class VersionChecker
     end
   end
   
+  private def check_docs_index_md : CheckResult
+    check_docs_index_file("docs/content/_index.md")
+  end
+  
   private def check_docs_index_ko_md : CheckResult
-    # Same as check_docs_index_md but for Korean version
-    file_path = "docs/content/_index.ko.md"
-    expected = "v#{@shard_version}"
-    
-    if File.exists?(file_path)
-      content = File.read(file_path)
-      version_match = content.match(/version\s*=\s*"v([^"]+)"/)
-      badge_match = content.match(/badge\s*=\s*"v([^"]+)"/)
-      
-      if version_match && badge_match
-        version_value = "v#{version_match[1]}"
-        badge_value = "v#{badge_match[1]}"
-        
-        if version_value == expected && badge_value == expected
-          CheckResult.new(file_path, "version and badge", expected, expected, true)
-        else
-          actual = "version=#{version_value}, badge=#{badge_value}"
-          CheckResult.new(file_path, "version and badge", expected, actual, false)
-        end
-      else
-        CheckResult.new(file_path, "version and badge", expected, nil, false)
-      end
-    else
-      CheckResult.new(file_path, "version and badge", expected, nil, false)
-    end
+    check_docs_index_file("docs/content/_index.ko.md")
   end
   
   private def check_github_action_dockerfile : CheckResult
@@ -199,14 +178,17 @@ class VersionChecker
     check_file(".github/copilot-instructions.md", /shard\.yml.*version:\s*([^\)]+)\)/, @shard_version)
   end
   
+  private def check_how_to_release_file(file_path : String) : CheckResult
+    # Check for example version in brew command
+    check_file(file_path, /brew bump-formula-pr --strict --version\s+([\d.]+)\s+noir/, @shard_version)
+  end
+  
   private def check_how_to_release_md : CheckResult
-    # Check for example version in command
-    check_file("docs/content/development/how_to_release/index.md", /brew bump-formula-pr --strict --version\s+([\d.]+)\s+noir/, @shard_version)
+    check_how_to_release_file("docs/content/development/how_to_release/index.md")
   end
   
   private def check_how_to_release_ko_md : CheckResult
-    # Check for example version in command
-    check_file("docs/content/development/how_to_release/index.ko.md", /brew bump-formula-pr --strict --version\s+([\d.]+)\s+noir/, @shard_version)
+    check_how_to_release_file("docs/content/development/how_to_release/index.ko.md")
   end
 end
 
