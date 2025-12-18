@@ -34,9 +34,20 @@ OWASP Noir는 커뮤니티 주도 프로젝트이며, 모든 종류의 기여를
 
 ### Crystal 설치
 
-Noir는 Crystal 프로그래밍 언어로 구축되었습니다. 설치하려면 공식 [Crystal 설치 가이드](https://crystal-lang.org/install/)를 따르세요.
+Noir는 Crystal 프로그래밍 언어로 구축되었습니다. 주요 플랫폼에 대한 빠른 설치 방법은 다음과 같습니다:
 
+#### Ubuntu/Debian
+```sh
+curl -fsSL https://crystal-lang.org/install.sh | sudo bash
+```
 
+#### macOS (Homebrew)
+```sh
+brew install crystal
+```
+
+#### 기타 플랫폼
+다른 플랫폼의 경우 공식 [Crystal 설치 가이드](https://crystal-lang.org/install/)를 참조하세요.
 
 ### 빌드 및 테스트
 

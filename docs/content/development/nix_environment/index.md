@@ -7,11 +7,46 @@ sort_by = "weight"
 [extra]
 +++
 
-You can set up a reproducible development environment using Nix and Docker. This approach ensures consistency across different development machines and simplifies dependency management.
+You can set up a reproducible development environment using Nix. This approach ensures consistency across different development machines and simplifies dependency management.
 
-## Setup
+## Installing Nix
 
-Run a Nix container with the project directory mounted:
+If you don't have Nix installed, install it with:
+
+```sh
+# Multi-user installation (recommended for Linux/macOS)
+sh <(curl -L https://nixos.org/nix/install) --daemon
+
+# Single-user installation
+sh <(curl -L https://nixos.org/nix/install) --no-daemon
+```
+
+For more details, see the [official Nix installation guide](https://nixos.org/download.html).
+
+## Setup with Nix Flakes
+
+The project uses Nix Flakes for development environment management.
+
+### Enable Flakes
+
+Add to `~/.config/nix/nix.conf` (or `/etc/nix/nix.conf`):
+
+```
+experimental-features = nix-command flakes
+```
+
+### Enter Development Shell
+
+```sh
+cd noir
+nix develop
+```
+
+This will automatically set up Crystal, shards, and all dependencies.
+
+## Alternative: Using Docker with Nix
+
+For a completely isolated environment, you can use Docker:
 
 ```sh
 docker run -it --rm -v $(pwd):/workspace -w /workspace nixos/nix bash

@@ -30,9 +30,20 @@ See [CONTRIBUTING.md](https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.
 
 ### Installing Crystal
 
-Install from [Crystal installation guide](https://crystal-lang.org/install/).
+Noir is built with the Crystal programming language. Here are the quick installation methods for common platforms:
 
+#### Ubuntu/Debian
+```sh
+curl -fsSL https://crystal-lang.org/install.sh | sudo bash
+```
 
+#### macOS (Homebrew)
+```sh
+brew install crystal
+```
+
+#### Other Platforms
+For other platforms, see the [official Crystal installation guide](https://crystal-lang.org/install/).
 
 ### Building and Testing
 
