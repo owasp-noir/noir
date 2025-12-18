@@ -1,6 +1,6 @@
 +++
 title = "HTTP 클라이언트 명령어"
-description = "Noir 스캔 결과에서 cURL 및 HTTPie와 같은 인기 있는 HTTP 클라이언트용 실행 가능한 명령어를 직접 생성하는 방법을 알아보세요. 이를 통해 발견된 엔드포인트를 쉽게 테스트하고 상호작용할 수 있습니다."
+description = "Noir 스캔 결과에서 cURL, HTTPie 및 PowerShell과 같은 인기 있는 HTTP 클라이언트용 실행 가능한 명령어를 직접 생성하는 방법을 알아보세요. 이를 통해 발견된 엔드포인트를 쉽게 테스트하고 상호작용할 수 있습니다."
 weight = 1
 sort_by = "weight"
 
@@ -45,4 +45,22 @@ http GET https://www.example.com/token "client_id=&redirect_url=&grant_type="
 # ... 계속
 ```
 
-이 기능을 사용하면 각 요청을 수동으로 구성할 필요 없이 빠르고 쉽게 엔드포인트 테스트를 시작할 수 있습니다.
+## PowerShell
+
+Windows 환경이나 DevOps 파이프라인에서 PowerShell을 사용하는 경우, Noir는 [Invoke-WebRequest](https://learn.microsoft.com/ko-kr/powershell/module/microsoft.powershell.utility/invoke-webrequest) 명령어도 생성할 수 있습니다. `-f powershell` 플래그를 사용하세요.
+
+```bash
+noir -b . -f powershell -u https://www.example.com
+```
+
+이렇게 하면 Windows PowerShell 또는 PowerShell Core에서 실행할 수 있는 `Invoke-WebRequest` 명령어 목록이 생성됩니다.
+
+```powershell
+# 예제 출력
+Invoke-WebRequest -Method GET -Uri "https://www.example.com/" -Headers @{"x-api-key"=""}
+Invoke-WebRequest -Method POST -Uri "https://www.example.com/query" -Headers @{"Cookie"="my_auth="} -Body "query=" -ContentType "application/x-www-form-urlencoded"
+Invoke-WebRequest -Method GET -Uri "https://www.example.com/token" -Body "client_id=&redirect_url=&grant_type=" -ContentType "application/x-www-form-urlencoded"
+# ... 계속
+```
+
+이 기능을 사용하면 각 요청을 수동으로 구성할 필요 없이 빠르고 쉽게 엔드포인트 테스트를 시작할 수 있습니다. PowerShell 형식은 Azure 파이프라인, GitHub Actions 및 기타 CI/CD 시스템에서 특히 유용합니다.

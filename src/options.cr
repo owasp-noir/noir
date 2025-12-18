@@ -130,6 +130,7 @@ def run_options_parser
         html                 HTML report
         curl                 cURL commands
         httpie               HTTPie commands
+        powershell           PowerShell Invoke-WebRequest commands
         oas2                 OpenAPI 2.0 (Swagger)
         oas3                 OpenAPI 3.0
         postman              Postman collection
