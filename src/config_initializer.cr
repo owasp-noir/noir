@@ -116,6 +116,7 @@ class ConfigInitializer
       "ai_provider"                  => YAML::Any.new(""),
       "ai_model"                     => YAML::Any.new(""),
       "ai_key"                       => YAML::Any.new(""),
+      "ai_max_token"                 => YAML::Any.new(0),
       "cache_disable"                => YAML::Any.new(false),
       "cache_clear"                  => YAML::Any.new(false),
       "analyze_feign"                => YAML::Any.new(false),
@@ -244,6 +245,9 @@ class ConfigInitializer
 
     # The API key for the AI server
     ai_key: "#{options["ai_key"]}"
+
+    # The maximum number of tokens for AI requests (0 = no limit)
+    ai_max_token: #{options["ai_max_token"]}
 
     # CACHE:
     # Disable LLM disk cache for this run
