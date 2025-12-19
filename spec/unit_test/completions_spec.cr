@@ -20,6 +20,7 @@ describe "Completion Script Generation" do
       script.should contain("sarif")
       script.should contain("html")
       script.should contain("postman")
+      script.should contain("powershell")
       script.should contain("mermaid")
     end
 
@@ -43,6 +44,7 @@ describe "Completion Script Generation" do
       script.should contain("sarif")
       script.should contain("html")
       script.should contain("postman")
+      script.should contain("powershell")
       script.should contain("mermaid")
     end
 

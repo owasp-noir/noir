@@ -5,7 +5,7 @@ def generate_zsh_completion_script
 _arguments \\
   '-b[Set base path]:path:_files' \\
   '-u[Set base URL for endpoints]:URL:_urls' \\
-  '-f[Set output format]:format:(plain yaml json jsonl markdown-table sarif html curl httpie oas2 oas3 postman only-url only-param only-header only-cookie only-tag mermaid)' \\
+  '-f[Set output format]:format:(plain yaml json jsonl markdown-table sarif html curl httpie powershell oas2 oas3 postman only-url only-param only-header only-cookie only-tag mermaid)' \\
   '-o[Write result to file]:path:_files' \\
   '--set-pvalue[Specifies the value of the identified parameter]:value:' \\
   '--set-pvalue-header[Specifies the value of the identified parameter for headers]:value:' \\
@@ -121,7 +121,7 @@ _noir_completions() {
 
     case "${prev}" in
         -f|--format)
-            COMPREPLY=( $(compgen -W "plain yaml json jsonl markdown-table sarif html curl httpie oas2 oas3 postman only-url only-param only-header only-cookie only-tag mermaid" -- "${cur}") )
+            COMPREPLY=( $(compgen -W "plain yaml json jsonl markdown-table sarif html curl httpie powershell oas2 oas3 postman only-url only-param only-header only-cookie only-tag mermaid" -- "${cur}") )
             return 0
             ;;
         --send-proxy|--send-es|--with-headers|--use-matchers|--use-filters|--diff-path|--config-file|--set-pvalue|--techs|--exclude-techs|--ollama|--ollama-model|-o|-b|-u)
