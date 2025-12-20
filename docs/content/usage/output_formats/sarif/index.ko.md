@@ -43,7 +43,7 @@ noir -b . -f sarif -o results.sarif --no-log
       "tool": {
         "driver": {
           "name": "OWASP Noir",
-          "version": "0.25.1",
+          "version": "0.26.0",
           "informationUri": "https://github.com/owasp-noir/noir",
           "rules": [
             {

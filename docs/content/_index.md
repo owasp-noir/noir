@@ -2,11 +2,11 @@
 template = "landing.html"
 
 [extra]
-version = "v0.25.1"
+version = "v0.26.0"
 
 [extra.hero]
 title = "NOIR"
-badge = "v0.25.1"
+badge = "v0.26.0"
 description = "Hunt every Endpoint in your code, expose Shadow APIs, map the Attack Surface."
 image = "./images/noir-wallpaper.jpg"
 cta_buttons = [
