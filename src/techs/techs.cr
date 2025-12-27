@@ -1044,6 +1044,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :swift_kitura => {
+      :framework => "Kitura",
+      :language  => "Swift",
+      :similar   => ["kitura", "swift-kitura", "swift_kitura"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
   }
 
   def self.techs
