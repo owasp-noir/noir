@@ -31,20 +31,13 @@ module Analyzer::Swift
                     lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
                     lines.each_with_index do |line, index|
                       # Look for route definitions
-                      # Check if this is a route definition (has router. or identifier. before the method)
-                      # and not a parameter access (request.parameters, request.queryParameters)
-                      if (line.includes?(".get(") || line.includes?(".post(") ||
-                         line.includes?(".put(") || line.includes?(".delete(") ||
-                         line.includes?(".patch(") || line.includes?(".all(")) &&
-                         !line.includes?("request.parameters") &&
-                         !line.includes?("request.queryParameters")
+                      if is_route_definition_line?(line)
                         match = line.match(pattern)
                         if match
                           begin
                             # Extract HTTP method
+                            # Note: 'all' matches all HTTP methods, defaulting to GET for representation
                             method_str = match[2]
-                            # Skip 'all' method as it's not a specific HTTP method
-                            # but we'll handle it later if needed
                             method = method_str == "all" ? "GET" : method_str.upcase
 
                             # Extract route arguments
@@ -78,6 +71,7 @@ module Analyzer::Swift
           end
         end
       rescue e
+        logger.debug "Error in analyze: #{e.message}"
       end
 
       result
@@ -188,12 +182,24 @@ module Analyzer::Swift
         end
 
         # Also stop if we hit another route definition
-        if i > start_index && (line.includes?(".get(") || line.includes?(".post(") ||
-           line.includes?(".put(") || line.includes?(".delete(") || line.includes?(".patch(") ||
-           line.includes?(".all("))
+        if i > start_index && is_route_definition?(line)
           break
         end
       end
+    end
+
+    # Check if a line contains a route definition
+    private def is_route_definition?(line : String) : Bool
+      (line.includes?(".get(") || line.includes?(".post(") ||
+       line.includes?(".put(") || line.includes?(".delete(") ||
+       line.includes?(".patch(") || line.includes?(".all("))
+    end
+
+    # Check if a line is a route definition but not a parameter access
+    private def is_route_definition_line?(line : String) : Bool
+      is_route_definition?(line) &&
+        !line.includes?("request.parameters") &&
+        !line.includes?("request.queryParameters")
     end
   end
 end
