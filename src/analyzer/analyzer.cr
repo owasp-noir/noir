@@ -74,6 +74,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"scala_play", Scala::Play},
     {"java_play", Java::Play},
     {"swift_vapor", Swift::Vapor},
+    {"swift_kitura", Swift::Kitura},
     {"ts_nestjs", Typescript::Nestjs},
     {"ai", AI::Unified},
   ])

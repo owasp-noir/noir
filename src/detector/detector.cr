@@ -81,6 +81,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
     Scala::Play,
     Java::Play,
     Swift::Vapor,
+    Swift::Kitura,
     Typescript::Nestjs,
   ])
 
