@@ -31,7 +31,7 @@ module Analyzer::Swift
                     lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
                     lines.each_with_index do |line, index|
                       # Look for route definitions
-                      if is_route_definition_line?(line)
+                      if route_definition_line?(line)
                         match = line.match(pattern)
                         if match
                           begin
@@ -182,22 +182,22 @@ module Analyzer::Swift
         end
 
         # Also stop if we hit another route definition
-        if i > start_index && is_route_definition?(line)
+        if i > start_index && route_definition?(line)
           break
         end
       end
     end
 
     # Check if a line contains a route definition
-    private def is_route_definition?(line : String) : Bool
+    private def route_definition?(line : String) : Bool
       (line.includes?(".get(") || line.includes?(".post(") ||
-       line.includes?(".put(") || line.includes?(".delete(") ||
-       line.includes?(".patch(") || line.includes?(".all("))
+        line.includes?(".put(") || line.includes?(".delete(") ||
+        line.includes?(".patch(") || line.includes?(".all("))
     end
 
     # Check if a line is a route definition but not a parameter access
-    private def is_route_definition_line?(line : String) : Bool
-      is_route_definition?(line) &&
+    private def route_definition_line?(line : String) : Bool
+      route_definition?(line) &&
         !line.includes?("request.parameters") &&
         !line.includes?("request.queryParameters")
     end
