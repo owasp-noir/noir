@@ -1062,6 +1062,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :swift_hummingbird => {
+      :framework => "Hummingbird",
+      :language  => "Swift",
+      :similar   => ["hummingbird", "swift-hummingbird", "swift_hummingbird"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
   }
 
   def self.techs
