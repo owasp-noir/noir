@@ -129,7 +129,7 @@ module Analyzer::Swift
         brace_count -= line.count('}')
 
         # Extract query parameters from request.uri.queryParameters
-        if line.includes?("request.uri.queryParameters.get(") || 
+        if line.includes?("request.uri.queryParameters.get(") ||
            line.includes?("request.uri.queryParameters[")
           match = line.match(/request\.uri\.queryParameters\.get\(["']([^"']+)["']\)/) ||
                   line.match(/request\.uri\.queryParameters\[["']([^"']+)["']\]/)
@@ -163,7 +163,7 @@ module Analyzer::Swift
         end
 
         # Extract path parameters from context.parameters.require or context.parameters.get
-        if line.includes?("context.parameters.require(") || 
+        if line.includes?("context.parameters.require(") ||
            line.includes?("context.parameters.get(")
           match = line.match(/context\.parameters\.(require|get)\(["']([^"']+)["']\)/)
           if match
