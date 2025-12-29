@@ -60,6 +60,18 @@ nix develop
 
 이렇게 하면 Noir 개발에 필요한 모든 종속성과 도구가 격리되고 재현 가능한 환경에 설정됩니다.
 
+## 종속성 업데이트
+
+`shard.yml` 파일을 업데이트할 때 (종속성 추가, 제거 또는 업데이트 시), `shards.nix` 파일도 함께 재생성해야 합니다. 이를 통해 Nix 환경이 프로젝트 종속성과 동기화 상태를 유지할 수 있습니다.
+
+`shard.yml`을 수정한 후 `shards.nix`를 업데이트하려면:
+
+```sh
+nix-shell -p crystal2nix --run crystal2nix
+```
+
+이 명령은 `crystal2nix` 도구를 사용하여 `shard.yml` 구성을 기반으로 `shards.nix` 파일을 자동으로 생성합니다.
+
 ## 장점
 
 - **재현성**: 모든 머신에서 동일한 환경
