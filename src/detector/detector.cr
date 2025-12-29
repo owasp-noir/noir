@@ -92,7 +92,8 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
     end.reject(&.empty?)
 
     if only_techs_list.empty?
-      logger.error "No valid technologies specified in --only-techs."
+      logger.error "No valid technologies specified in --only-techs. No detectors will be run."
+      detector_list.clear
     else
       logger.info "Filtering detectors to: #{only_techs_list.join(", ")}"
       detector_list = detector_list.select do |detector|
