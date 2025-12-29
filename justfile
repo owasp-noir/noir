@@ -1,4 +1,5 @@
 # Alias
+
 alias b := build
 alias ds := docs-serve
 alias dsup := docs-supported
@@ -16,6 +17,7 @@ build:
     shards build
 
 # Serve the documentation site using Zola.
+
 # This requires you to be in the 'docs' directory.
 docs-serve:
     @echo "Serving the documentation site at http://localhost:1111/ ..."
@@ -57,3 +59,7 @@ test:
 version-check:
     @echo "Checking version consistency..."
     crystal run scripts/check_version_consistency.cr
+
+# Update shards.nix
+nix-update:
+    nix-shell -p crystal2nix --run crystal2nix
