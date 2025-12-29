@@ -2,18 +2,18 @@
 
 ## Reporting a Vulnerability
 
-Found a security issue? Let us know so we can fix it.
+If you've found a security issue, please report it so we can address it promptly.
 
 ### How to Report
 
-* **For general security concerns**, please open a [GitHub issue](https://github.com/owasp-noir/noir/issues). Use the `🛡️ security` label and describe the issue in as much detail as you can. This helps us to understand and address the problem more effectively.
-* **For sensitive matters**, we encourage you to directly email the [noir team members](https://github.com/orgs/owasp-noir/people). Handling these issues discreetly is vital for everyone's safety.
+- **General concerns**: Open a [GitHub issue](https://github.com/owasp-noir/noir/issues) with the `🛡️ security` label. Provide as much detail as possible to help us understand and fix the problem.
+
+- **Sensitive matters**: Email the noir team directly: hahwul (hahwul@gmail.com or h.lee@owasp.org) or ksg97031 (ksg97031@gmail.com or seonggi.kim@owasp.org). We handle these discreetly to ensure safety.
 
 ### Our Team
 
-Beyond being passionate open source contributors, we are also seasoned Red Team security engineers. Our dual expertise means we're not only ready but also keen to address any security issues you might identify. Consider us your approachable security allies. Whether you notice something minor or more significant, we encourage you to get in touch. Open dialogue is key to us, and we're here to address any security concerns you might have—together.
+We're open source contributors and experienced Red Team security engineers. We're equipped to tackle any issues you spot, big or small. Feel free to reach out; we're approachable and value open communication.
 
 ## Conclusion
-Your vigilance and willingness to report security issues are what help keep our project robust and secure. We appreciate the time and effort you put into making our community a safer place. Remember, no concern is too small; we're here to listen and act. Together, we can ensure a secure environment for all our users and contributors. Thank you for being an essential part of our project's security.
 
-Thank you for your support in maintaining the security and integrity of our project!
+Your reports help keep the project secure. No issue is too minor. We appreciate your effort and will respond. Thanks for contributing to a safer community.
