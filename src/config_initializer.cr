@@ -83,6 +83,7 @@ class ConfigInitializer
       "verbose"                      => YAML::Any.new(false),
       "exclude_codes"                => YAML::Any.new(""),
       "exclude_techs"                => YAML::Any.new(""),
+      "only_techs"                   => YAML::Any.new(""),
       "format"                       => YAML::Any.new("plain"),
       "include_path"                 => YAML::Any.new(false),
       "nolog"                        => YAML::Any.new(false),
