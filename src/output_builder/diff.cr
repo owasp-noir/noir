@@ -56,4 +56,53 @@ class OutputBuilderDiff < OutputBuilder
     result = diff(endpoints, diff_app.endpoints)
     @logger.puts "\n" + result.to_yaml
   end
+
+  def print_toml(endpoints : Array(Endpoint), diff_app : NoirRunner)
+    result = diff(endpoints, diff_app.endpoints)
+    json_str = result.to_json
+    json_obj = JSON.parse(json_str)
+    toml_output = generate_toml_from_diff(json_obj.as_h)
+    @logger.puts "\n" + toml_output
+  end
+
+  private def generate_toml_from_diff(data : Hash(String, JSON::Any)) : String
+    result = String.build do |io|
+      data.each do |section, endpoints|
+        if endpoints.as_a.size > 0
+          io << "[#{section}]\n"
+          endpoints.as_a.each_with_index do |endpoint, idx|
+            io << "\n[[#{section}.endpoint]]\n"
+            endpoint.as_h.each do |key, value|
+              case value.raw
+              when String, Int64, Float64, Bool
+                io << "#{key} = #{toml_value(value)}\n"
+              when Array
+                io << "#{key} = ["
+                items = value.as_a.map { |item| toml_value(item) }
+                io << items.join(", ")
+                io << "]\n"
+              end
+            end
+          end
+          io << "\n"
+        end
+      end
+    end
+    result
+  end
+
+  private def toml_value(value : JSON::Any) : String
+    case raw = value.raw
+    when String
+      %("#{raw.gsub("\\", "\\\\").gsub("\"", "\\\"")}")
+    when Int64, Float64
+      raw.to_s
+    when Bool
+      raw.to_s
+    when Nil
+      %("")
+    else
+      %("#{raw}")
+    end
+  end
 end

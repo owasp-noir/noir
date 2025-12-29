@@ -251,6 +251,8 @@ class NoirRunner
       builder.print_yaml @endpoints, diff_app
     when "json"
       builder.print_json @endpoints, diff_app
+    when "toml"
+      builder.print_toml @endpoints, diff_app
     else
       # Print diff output
       builder.print @endpoints, diff_app
@@ -268,6 +270,9 @@ class NoirRunner
     when "jsonl"
       builder = OutputBuilderJsonl.new @options
       builder.print @endpoints
+    when "toml"
+      builder = OutputBuilderToml.new @options
+      builder.print @endpoints, @passive_results
     when "markdown-table"
       builder = OutputBuilderMarkdownTable.new @options
       builder.print @endpoints

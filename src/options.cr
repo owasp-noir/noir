@@ -125,6 +125,7 @@ def run_options_parser
         yaml                 YAML
         json                 JSON
         jsonl                JSON Lines
+        toml                 TOML
         markdown-table       Markdown table
         sarif                SARIF format
         html                 HTML report
