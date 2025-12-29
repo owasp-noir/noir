@@ -60,6 +60,18 @@ nix develop
 
 This will set up all the necessary dependencies and tools for developing Noir in an isolated, reproducible environment.
 
+## Updating Dependencies
+
+When you update the `shard.yml` file (adding, removing, or updating dependencies), you must also regenerate the `shards.nix` file. This ensures that the Nix environment stays in sync with your project dependencies.
+
+To update `shards.nix` after modifying `shard.yml`:
+
+```sh
+nix-shell -p crystal2nix --run crystal2nix
+```
+
+This command uses the `crystal2nix` tool to automatically generate the `shards.nix` file based on your `shard.yml` configuration.
+
 ## Benefits
 
 - **Reproducibility**: Same environment across all machines
