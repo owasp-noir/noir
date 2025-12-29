@@ -1,6 +1,6 @@
 +++
 title = "Output Formats"
-description = "Noir supports a wide range of output formats to help you make the most of your scan results. This section provides an overview of the available formats, including JSON, YAML, OpenAPI Specification (OAS), and more."
+description = "Noir supports a wide range of output formats to help you make the most of your scan results. This section provides an overview of the available formats, including JSON, YAML, TOML, OpenAPI Specification (OAS), and more."
 weight = 2
 sort_by = "weight"
 
@@ -13,6 +13,7 @@ In this section, you'll find detailed information on the different output format
 
 *   **JSON**: A widely used format that's perfect for integrating with other tools and scripts.
 *   **YAML**: A human-readable format that's great for configuration files and manual inspection.
+*   **TOML**: A minimal configuration format that's easy to read and write.
 *   **OpenAPI Specification (OAS)**: Generate an OpenAPI document from your code to easily create API documentation or set up security testing.
 *   **SARIF**: Industry-standard format for security tool output with native CI/CD platform integration.
 *   **Mermaid**: Generate diagrams for visualizing your API structure.
