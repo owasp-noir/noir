@@ -96,7 +96,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
       detector_list.clear
     else
       logger.info "Filtering detectors to: #{only_techs_list.join(", ")}"
-      detector_list = detector_list.select do |detector|
+      detector_list.select! do |detector|
         only_techs_list.includes?(detector.name)
       end
       logger.debug "Using #{detector_list.size} detector(s)"
