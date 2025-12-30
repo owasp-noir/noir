@@ -25,6 +25,8 @@ dependencies:
     github: NeuraLegion/har
   http_proxy:
     github: mamantoha/http_proxy
+  toml:
+    github: crystal-community/toml.cr
 
 # Development Dependencies
 development_dependencies:

@@ -24,4 +24,9 @@
     rev = "v0.13.1";
     sha256 = "0ah895a9hpmflf1hpqfk43kai0qgd51bpws44hb3wihya65n1qya";
   };
+  "toml" = {
+    url = "https://github.com/crystal-community/toml.cr.git";
+    rev = "v0.8.1";
+    sha256 = "1v1hpx7f772ky09r9fzyx5d1gvw8kih5msvp0h81dg4cpgmy8lv5";
+  };
 }
