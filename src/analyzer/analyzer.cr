@@ -119,7 +119,9 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
           endpoints = analyzer[tech].call(options)
           # Set technology on each endpoint using map to handle struct copy
           endpoints_with_tech = endpoints.map do |ep|
-            ep.details.technology = tech
+            details = ep.details
+            details.technology = tech
+            ep.details = details
             ep
           end
           mutex.synchronize { result.concat(endpoints_with_tech) }

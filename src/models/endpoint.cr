@@ -142,10 +142,6 @@ struct Details
     @status_code = status_code
   end
 
-  def technology=(technology : String)
-    @technology = technology
-  end
-
   def ==(other : Details) : Bool
     return false if @status_code != other.status_code
     return false if @technology != other.technology
