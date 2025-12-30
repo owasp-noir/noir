@@ -11,7 +11,7 @@ module Analyzer::Kotlin
     def analyze
       parser_map = Hash(String, KotlinParser).new
 
-      file_list = get_all_files()
+      file_list = all_files()
       file_list.each do |path|
         next unless File.exists?(path)
 

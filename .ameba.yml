@@ -13,3 +13,65 @@ Lint/RedundantWithIndex:
 Lint/UnusedArgument:
   Excluded:
     - "src/analyzer/analyzers/analyzer_example.cr"
+
+# Disable TODO warnings as they are intentional
+Documentation/DocumentationAdmonition:
+  Enabled: false
+
+# Disable spec filename check for fixture files (they represent real code)
+Lint/SpecFilename:
+  Excluded:
+    - "spec/functional_test/fixtures/**/*"
+
+# Disable useless assign warnings for fixture files
+Lint/UselessAssign:
+  Excluded:
+    - "spec/functional_test/fixtures/**/*"
+
+# Allow common short block parameter names used throughout the codebase
+Naming/BlockParameterName:
+  Enabled: true
+  MinNameLength: 3
+  AllowNamesEndingInNumbers: true
+  AllowedNames:
+    - e      # element/entry/error
+    - i      # index/item
+    - j      # index (nested loop)
+    - k      # key
+    - v      # value
+    - x      # coordinate/variable
+    - y      # coordinate/variable
+    - ex     # exception
+    - io     # input/output
+    - ws     # websocket
+    - op     # operation/option
+    - tx     # transaction
+    - id     # identifier
+    - ip     # IP address
+    - k1     # key 1
+    - k2     # key 2
+    - v1     # value 1
+    - v2     # value 2
+    - ep     # endpoint
+    - p      # param/parameter
+    - h      # header/handler
+    - r      # result/record/rule
+    - t      # tech/token/type
+    - c      # cookie/consumes/config
+    - m      # message/method/match
+    - s      # static/string/severity
+    - f      # file/field
+    - l      # language/line
+    - wg     # wait group
+    - sk     # sub-key
+    - sv     # sub-value
+    - em     # endpoint match
+    - qm     # query match
+    - hm     # header match
+    - bm     # body match
+    - cm     # cookie match
+
+# Boolean properties in scripts use non-predicate style for backward compatibility
+Naming/QueryBoolMethods:
+  Excluded:
+    - "scripts/**/*"

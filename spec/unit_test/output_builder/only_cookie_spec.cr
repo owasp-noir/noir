@@ -13,7 +13,7 @@ describe "OutputBuilderOnlyCookie" do
       "output"  => YAML::Any.new(""),
     }
     builder = OutputBuilderOnlyCookie.new(options)
-    builder.set_io IO::Memory.new
+    builder.io = IO::Memory.new
 
     # Create endpoints with various parameters including cookies
     endpoint1 = Endpoint.new("/test", "GET")

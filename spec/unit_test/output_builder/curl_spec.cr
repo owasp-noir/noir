@@ -13,7 +13,7 @@ describe "OutputBuilderCurl" do
       "output"  => YAML::Any.new(""),
     }
     builder = OutputBuilderCurl.new(options)
-    builder.set_io IO::Memory.new
+    builder.io = IO::Memory.new
 
     # Create endpoints with various HTTP methods and parameters
     endpoint1 = Endpoint.new("/test", "GET")

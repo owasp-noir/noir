@@ -9,7 +9,7 @@ module LLM
   end
 
   # Helper to set the mock return value for get_max_tokens
-  def self.set_mock_max_tokens(value : Int32)
+  def self.mock_max_tokens=(value : Int32)
     @@mock_max_tokens_value = value
   end
 

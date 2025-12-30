@@ -15,7 +15,7 @@ describe "OutputBuilderPostman" do
       "url"     => YAML::Any.new(""),
     }
     builder = OutputBuilderPostman.new(options)
-    builder.set_io IO::Memory.new
+    builder.io = IO::Memory.new
 
     # Create endpoints with various HTTP methods and parameters
     endpoint1 = Endpoint.new("/pets/:petId", "GET")
@@ -121,7 +121,7 @@ describe "OutputBuilderPostman" do
       "url"     => YAML::Any.new("https://api.example.com"),
     }
     builder = OutputBuilderPostman.new(options)
-    builder.set_io IO::Memory.new
+    builder.io = IO::Memory.new
 
     endpoint = Endpoint.new("/test", "GET")
     builder.print([endpoint])

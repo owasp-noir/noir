@@ -27,67 +27,21 @@ struct Tech
   property key : String
   property framework : String
   property language : String?
-  getter? is_format : Bool
-  setter is_format : Bool
+  property is_format : Bool
   property formats : Array(String)?
-  getter? endpoint : Bool
-  setter endpoint : Bool
-  getter? method : Bool
-  setter method : Bool
-  getter? query : Bool
-  setter query : Bool
-  getter? path : Bool
-  setter path : Bool
-  getter? body : Bool
-  setter body : Bool
-  getter? header : Bool
-  setter header : Bool
-  getter? cookie : Bool
-  setter cookie : Bool
-  getter? static_path : Bool
-  setter static_path : Bool
-  getter? websocket : Bool
-  setter websocket : Bool
+  property endpoint : Bool
+  property method : Bool
+  property query : Bool
+  property path : Bool
+  property body : Bool
+  property header : Bool
+  property cookie : Bool
+  property static_path : Bool
+  property websocket : Bool
 
-  # Backwards-compatible non-predicate getters
-  def is_format
+  # Predicate methods for boolean properties
+  def format?
     @is_format
-  end
-
-  def endpoint
-    @endpoint
-  end
-
-  def method
-    @method
-  end
-
-  def query
-    @query
-  end
-
-  def path
-    @path
-  end
-
-  def body
-    @body
-  end
-
-  def header
-    @header
-  end
-
-  def cookie
-    @cookie
-  end
-
-  def static_path
-    @static_path
-  end
-
-  def websocket
-    @websocket
   end
 
   def initialize(@key : String)
@@ -258,7 +212,7 @@ def finalize_block(tech : Tech, block_lines : Array(String)) : Tech
     tech.language = t_language unless t_language.empty?
   end
   if is_format
-    tech.is_format = true
+    tech.format? = true
     tech.formats = formats unless formats.empty?
   end
 
@@ -300,7 +254,7 @@ def generate_language_tables(techs : Array(Tech)) : String
   by_language = Hash(String, Array(Tech)).new { |h, k| h[k] = [] of Tech }
 
   techs.each do |t|
-    next if t.is_format || t.language.nil?
+    next if t.format? || t.language.nil?
     if lang = t.language
       by_language[lang] << t
     end
@@ -369,7 +323,7 @@ This section provides a compatibility table for the different specifications tha
 MD
 
 def generate_specs_markdown(techs : Array(Tech)) : String
-  specs = techs.select { |t| t.is_format || t.language.nil? }
+  specs = techs.select { |t| t.format? || t.language.nil? }
   entries = specs.map { |t| {name: friendly_format_name(t.key, t), tech: t} }.sort_by! { |e| e[:name] }
 
   io = IO::Memory.new

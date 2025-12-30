@@ -35,7 +35,7 @@ class OutputBuilder
     # After inheriting the class, write an action code here.
   end
 
-  def set_io(io : IO)
+  def io=(io : IO)
     @io = io
   end
 

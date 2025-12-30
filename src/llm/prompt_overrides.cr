@@ -38,11 +38,11 @@ module LLM::PromptOverrides
   end
 
   def self.llm_optimize_prompt
-    @@llm_optimize_prompt_override || get_default_llm_optimize_prompt
+    @@llm_optimize_prompt_override || default_llm_optimize_prompt
   end
 
   # Default LLM_OPTIMIZE_PROMPT value from the optimizer module
-  private def self.get_default_llm_optimize_prompt
+  private def self.default_llm_optimize_prompt
     <<-PROMPT
     Analyze the provided endpoint and optimize it for better structure, naming conventions, and parameter handling.
 

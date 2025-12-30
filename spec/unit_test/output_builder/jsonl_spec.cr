@@ -14,7 +14,7 @@ describe "OutputBuilderJsonl" do
       "output"  => YAML::Any.new(""),
     }
     builder = OutputBuilderJsonl.new(options)
-    builder.set_io IO::Memory.new
+    builder.io = IO::Memory.new
 
     # Create multiple endpoints to test JSONL format
     endpoint1 = Endpoint.new("/test", "GET")
