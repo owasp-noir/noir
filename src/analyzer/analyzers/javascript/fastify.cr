@@ -269,7 +269,7 @@ module Analyzer::Javascript
     end
 
     def line_to_endpoint(line : String) : Endpoint
-      http_methods = %w(get post put delete patch options head)
+      http_methods = %w[get post put delete patch options head]
 
       http_methods.each do |method|
         # Match fastify.method patterns

@@ -9,7 +9,7 @@ require "yaml"
 
 macro defind_detectors(detectors)
   {% for detector, index in detectors %}
-    instance = Detector::{{detector}}.new(options)
+    instance = Detector::{{ detector }}.new(options)
     instance.set_name
     detector_list << instance
   {% end %}

@@ -40,8 +40,8 @@ class Analyzer
 
   macro define_getter_methods(names)
     {% for name, index in names %}
-      def {{name.id}}
-        @{{name.id}}
+      def {{ name.id }}
+        @{{ name.id }}
       end
     {% end %}
   end

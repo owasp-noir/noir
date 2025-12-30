@@ -106,7 +106,7 @@ module MediaFilter
 
   # Get a human-readable reason why a file was skipped
   def self.skip_reason(file_path : String, max_size : Int32 = MAX_FILE_SIZE) : String?
-    return nil unless should_skip_file?(file_path, max_size)
+    return unless should_skip_file?(file_path, max_size)
 
     if media_file?(file_path)
       "media file (#{File.extname(file_path).downcase})"

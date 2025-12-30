@@ -129,7 +129,7 @@ module Analyzer::Crystal
       scope_prefix = scopes.join("")
 
       # Match HTTP method calls: get "/path", Controller
-      %w(get post put patch delete options head).each do |method|
+      %w[get post put patch delete options head].each do |method|
         if content.includes?("#{method} ") && content.includes?("\"")
           if match = content.match(/#{method}\s+['"](.+?)['"]/)
             path = match[1]

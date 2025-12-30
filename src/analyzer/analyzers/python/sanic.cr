@@ -340,11 +340,11 @@ module Analyzer::Python
     end
 
     private def parse_code_block(lines : Array(String)) : String?
-      return nil if lines.empty?
+      return if lines.empty?
 
       # Find the indentation of the function definition
       def_line = lines.first
-      return nil unless def_line.includes?("def ")
+      return unless def_line.includes?("def ")
 
       base_indent = def_line.index(/\S/) || 0
       codeblock_lines = [] of String

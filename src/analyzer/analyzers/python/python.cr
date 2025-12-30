@@ -16,7 +16,7 @@ module Analyzer::Python
     def parse_function_def(source_lines : Array(::String), start_index : Int32) : FunctionDefinition | Nil
       parameters = [] of FunctionParameter
       def_line = source_lines[start_index]
-      return nil unless def_line.includes?("def ")
+      return unless def_line.includes?("def ")
 
       # Extract the function name and parameter line
       name = def_line.split("def ", 2)[1].split("(", 2)[0].strip
@@ -267,7 +267,7 @@ module Analyzer::Python
         end
 
         # If no line starts with "after", return nil
-        return nil if line_size == lines.size
+        return if line_size == lines.size
       end
 
       # Infer indentation size

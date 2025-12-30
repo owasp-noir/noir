@@ -117,7 +117,7 @@ class KotlinParser
     next_direction = true
     open_bracket = token.type
     close_bracket = BRACKET_PAIRS[open_bracket]?
-    return nil if close_bracket.nil?
+    return if close_bracket.nil?
 
     # Determine the direction of search based on the type of bracket
     if [:RPAREN, :RCURL, :RSQUARE, :RANGLE].includes?(token.type)
@@ -190,7 +190,7 @@ class KotlinParser
 
   # Find the end of an annotation
   def find_annotation_end(start_index)
-    return nil if @tokens[start_index].type != :ANNOTATION
+    return if @tokens[start_index].type != :ANNOTATION
 
     annotation_token = @tokens[start_index]
     annotation_name = annotation_token.value
@@ -208,12 +208,12 @@ class KotlinParser
           index += 1
         elsif token_type == :LANGLE
           index = find_bracket_partner(index)
-          return nil if index.nil?
+          return if index.nil?
           index += 1
           index += 1 if @tokens[index].type == :QUEST
         elsif token_type == :LPAREN || token_type == :LSQUARE
           index = find_bracket_partner(index)
-          return nil if index.nil?
+          return if index.nil?
           index += 1
         else
           while index > 0 && @tokens[index].type == :NEWLINE
@@ -237,12 +237,12 @@ class KotlinParser
           index += 1
         elsif token_type == :LANGLE
           index = find_bracket_partner(index)
-          return nil if index.nil?
+          return if index.nil?
           index += 1
           index += 1 if @tokens[index].type == :QUEST
         elsif token_type == :LPAREN || token_type == :LSQUARE
           index = find_bracket_partner(index)
-          return nil if index.nil?
+          return if index.nil?
           index += 1
         else
           while index > 0 && @tokens[index].type == :NEWLINE
@@ -257,7 +257,7 @@ class KotlinParser
 
   # Find the start of an annotation
   def find_annotation_start(end_index)
-    return nil unless end_index < @tokens.size && end_index >= 0
+    return unless end_index < @tokens.size && end_index >= 0
     cursor = end_index - 1
 
     while cursor >= 0
@@ -271,10 +271,10 @@ class KotlinParser
         cursor -= 1
       when :RANGLE, :RPAREN, :RSQUARE
         partner = find_bracket_partner(cursor)
-        return nil unless partner
+        return unless partner
         cursor = partner - 1
       else
-        return nil
+        return
       end
     end
     nil

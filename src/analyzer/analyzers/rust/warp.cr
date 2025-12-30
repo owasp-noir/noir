@@ -94,7 +94,7 @@ module Analyzer::Rust
       end
 
       if path_parts.empty?
-        return nil
+        return
       end
 
       route_path = "/" + path_parts.join("/")

@@ -3,8 +3,8 @@ require "./analyzers/file_analyzers/*"
 
 macro define_analyzers(analyzers)
   {% for analyzer in analyzers %}
-    analyzers[{{analyzer[0].id.stringify}}] = ->(options : Hash(String, YAML::Any)) do
-      instance = Analyzer::{{analyzer[1].id}}.new(options)
+    analyzers[{{ analyzer[0].id.stringify }}] = ->(options : Hash(String, YAML::Any)) do
+      instance = Analyzer::{{ analyzer[1].id }}.new(options)
       instance.analyze
     end
   {% end %}
