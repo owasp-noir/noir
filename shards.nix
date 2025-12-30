@@ -1,4 +1,9 @@
 {
+  "ameba" = {
+    url = "https://github.com/crystal-ameba/ameba.git";
+    rev = "v1.6.4";
+    sha256 = "1kzr4ynd4r5w87y2czzrlir1dvqmv43ijm07804kgsy1g20k00fs";
+  };
   "crest" = {
     url = "https://github.com/mamantoha/crest.git";
     rev = "v1.4.1";
@@ -18,10 +23,5 @@
     url = "https://github.com/mamantoha/http_proxy.git";
     rev = "v0.13.1";
     sha256 = "0ah895a9hpmflf1hpqfk43kai0qgd51bpws44hb3wihya65n1qya";
-  };
-  "toml" = {
-    url = "https://github.com/crystal-community/toml.cr.git";
-    rev = "v0.8.1";
-    sha256 = "1v1hpx7f772ky09r9fzyx5d1gvw8kih5msvp0h81dg4cpgmy8lv5";
   };
 }
