@@ -4,7 +4,8 @@ WORKDIR /noir
 COPY . .
 
 RUN apt-get update && \
-    apt-get install -y libyaml-dev libzstd-dev zlib1g-dev pkg-config && \
+    apt-get install -y --no-install-recommends libyaml-dev libzstd-dev zlib1g-dev pkg-config && \
+    apt-get clean && rm -rf /var/lib/apt/lists/* && \
     mv /usr/bin/pkg-config /usr/bin/pkg-config-original && \
     echo '#!/bin/sh' > /usr/bin/pkg-config && \
     echo 'if echo "$@" | grep -q -- "--libs"; then' >> /usr/bin/pkg-config && \
