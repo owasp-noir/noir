@@ -70,9 +70,9 @@ module LLM
     end
 
     def self.fetch(key : String) : String?
-      return nil unless enabled?
+      return unless enabled?
       path = path_for(key)
-      return nil unless File.exists?(path)
+      return unless File.exists?(path)
       File.read(path)
     rescue
       nil

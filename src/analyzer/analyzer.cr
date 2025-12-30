@@ -3,8 +3,8 @@ require "./analyzers/file_analyzers/*"
 
 macro define_analyzers(analyzers)
   {% for analyzer in analyzers %}
-    analyzers[{{analyzer[0].id.stringify}}] = ->(options : Hash(String, YAML::Any)) do
-      instance = Analyzer::{{analyzer[1].id}}.new(options)
+    analyzers[{{ analyzer[0].id.stringify }}] = ->(options : Hash(String, YAML::Any)) do
+      instance = Analyzer::{{ analyzer[1].id }}.new(options)
       instance.analyze
     end
   {% end %}
@@ -16,8 +16,8 @@ def initialize_analyzers(logger : NoirLogger)
 
   # Mapping analyzers to their respective functions
   define_analyzers([
-    {"c#-aspnet-mvc", CSharp::AspNetMvc},
-    {"c#-aspnet-core-mvc", CSharp::AspNetCoreMvc},
+    {"cs_aspnet_mvc", CSharp::AspNetMvc},
+    {"cs_aspnet_core_mvc", CSharp::AspNetCoreMvc},
     {"crystal_amber", Crystal::Amber},
     {"crystal_grip", Crystal::Grip},
     {"crystal_kemal", Crystal::Kemal},

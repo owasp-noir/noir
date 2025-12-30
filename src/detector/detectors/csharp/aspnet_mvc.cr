@@ -20,7 +20,7 @@ module Detector::CSharp
     end
 
     def set_name
-      @name = "c#-aspnet-mvc"
+      @name = "cs_aspnet_mvc"
     end
   end
 end

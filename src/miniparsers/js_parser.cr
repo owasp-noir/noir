@@ -764,7 +764,7 @@ module Noir
 
     # Resolve dynamic path construction (template literals and concatenation)
     private def resolve_dynamic_path(start_idx : Int32) : String?
-      return nil if start_idx >= @tokens.size
+      return if start_idx >= @tokens.size
 
       # Handle pure template literal case: `${variable}/path`
       if @tokens[start_idx].type == :template_literal &&

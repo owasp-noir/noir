@@ -12,7 +12,7 @@ end
 private def process_override_flag(
   flag : String, option_key : String,
   noir_options : Hash(String, YAML::Any),
-  args : Array(String), i : Int32
+  args : Array(String), i : Int32,
 ) : Int32
   if i + 1 < args.size && !args[i + 1].starts_with?("-")
     noir_options[option_key] = YAML::Any.new(args[i + 1])
@@ -290,6 +290,9 @@ def run_options_parser
     end
     parser.on "--exclude-techs LIST", "Exclude technologies" do |v|
       noir_options["exclude_techs"] = YAML::Any.new(v)
+    end
+    parser.on "--only-techs LIST", "Run only specified tech detectors" do |v|
+      noir_options["only_techs"] = YAML::Any.new(v)
     end
     parser.on "--list-techs", "List available technologies" do
       puts "Available technologies:"

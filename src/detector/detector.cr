@@ -9,7 +9,7 @@ require "yaml"
 
 macro defind_detectors(detectors)
   {% for detector, index in detectors %}
-    instance = Detector::{{detector}}.new(options)
+    instance = Detector::{{ detector }}.new(options)
     instance.set_name
     detector_list << instance
   {% end %}
@@ -86,6 +86,26 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
     Typescript::Nestjs,
   ])
 
+  # Handle --only-techs: filter detector_list to only specified techs
+  only_techs_value = options["only_techs"]?.to_s
+  if only_techs_value.size > 0
+    only_techs_list = only_techs_value.split(",").map do |tech|
+      NoirTechs.similar_to_tech(tech.strip)
+    end.reject(&.empty?)
+
+    if only_techs_list.empty?
+      logger.error "No valid technologies specified in --only-techs. No detectors will be run."
+      detector_list.clear
+    else
+      logger.info "Filtering detectors to: #{only_techs_list.join(", ")}"
+      detector_list.select! do |detector|
+        only_techs_list.includes?(detector.name)
+      end
+      logger.debug "Using #{detector_list.size} detector(s)"
+    end
+  end
+
+  # Handle -t/--techs: add techs directly (without detection validation)
   if options["techs"].to_s.size > 0
     techs_tmp = options["techs"].to_s.split(",")
     logger.success "Setting #{techs_tmp.size} techs from command line."

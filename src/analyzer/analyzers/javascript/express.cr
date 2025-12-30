@@ -256,7 +256,7 @@ module Analyzer::Javascript
           prefix = m[2]
 
           # Now find all endpoints defined on this router
-          http_methods = %w(get post put delete patch options head all)
+          http_methods = %w[get post put delete patch options head all]
 
           http_methods.each do |http_method|
             endpoint_pattern = /#{router_var}\.#{http_method}\s*\(\s*['"]([^'"]+)['"][^{]*\{([^}]*)\}/m
@@ -398,7 +398,7 @@ module Analyzer::Javascript
         next if router_prefix.empty?
 
         # Look for route handlers on this router
-        http_methods = %w(get post put delete patch options head all)
+        http_methods = %w[get post put delete patch options head all]
 
         http_methods.each do |method|
           # Enhanced pattern to catch more route handler formats
@@ -448,7 +448,7 @@ module Analyzer::Javascript
 
     # Special method to process versioned routers like v1Router
     private def process_versioned_router(content : String, result : Array(Endpoint), path : String, router_name : String, prefix : String)
-      http_methods = %w(get post put delete patch options head all)
+      http_methods = %w[get post put delete patch options head all]
 
       http_methods.each do |method|
         pattern = /#{router_name}\.#{method}\s*\(\s*['"]([^'"]+)['"](?:[^{]*)\{([^}]*(?:\{[^}]*\})*[^}]*)\}/m

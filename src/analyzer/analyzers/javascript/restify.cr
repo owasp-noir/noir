@@ -269,7 +269,7 @@ module Analyzer::Javascript
               function_body = content[function_start...function_end]
 
               # Now extract routes from the function body
-              http_methods = %w(get post put delete patch options head del)
+              http_methods = %w[get post put delete patch options head del]
 
               http_methods.each do |method|
                 # Handle both string paths and object patterns with path property
@@ -334,7 +334,7 @@ module Analyzer::Javascript
           end
 
           # For each router (with or without a prefix), find all its route handlers
-          http_methods = %w(get post put delete patch options head del)
+          http_methods = %w[get post put delete patch options head del]
 
           http_methods.each do |method|
             # Look for route handlers on this router
@@ -389,7 +389,7 @@ module Analyzer::Javascript
         prefix = router_paths.fetch(router_name, "")
 
         # Look for route definitions on this router
-        http_methods = %w(get post put delete patch options head del)
+        http_methods = %w[get post put delete patch options head del]
 
         http_methods.each do |method|
           pattern = /#{router_name}\.#{method}\s*\(\s*['"]([^'"]+)['"][^{]*\{([^}]*)\}/m
@@ -565,7 +565,7 @@ module Analyzer::Javascript
     end
 
     def line_to_endpoint(line : String, server_vars = [] of String, router_vars = [] of String) : Endpoint
-      http_methods = %w(get post put delete patch options head del)
+      http_methods = %w[get post put delete patch options head del]
 
       # Build a regex pattern that includes all server and router variable names
       var_pattern = (server_vars + router_vars).join("|")

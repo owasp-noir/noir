@@ -326,7 +326,7 @@ module Analyzer::Python
   # Extend ::String class to check if a string is numeric
   class ::String
     def numeric?
-      self.to_f != nil rescue false
+      to_f != nil rescue false
     end
   end
 end

@@ -514,7 +514,7 @@ module Analyzer::CSharp
     end
 
     private def build_endpoint_from_route(raw_route : String, http_method : String, file : String, line : Int32, extra_params : Array(Param) = [] of Param) : Endpoint?
-      return nil if raw_route.empty?
+      return if raw_route.empty?
 
       route = normalize_route(raw_route)
       params = build_path_params(route)
