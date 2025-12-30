@@ -117,7 +117,12 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
         begin
           logger.debug "Analyzer[#{tech}] start"
           endpoints = analyzer[tech].call(options)
-          mutex.synchronize { result.concat(endpoints) }
+          # Set technology on each endpoint using map to handle struct copy
+          endpoints_with_tech = endpoints.map do |ep|
+            ep.details.technology = tech
+            ep
+          end
+          mutex.synchronize { result.concat(endpoints_with_tech) }
           logger.debug "Analyzer[#{tech}] done (#{endpoints.size})"
         rescue e
           logger.warning "Analyzer[#{tech}] failed: #{e.message}"

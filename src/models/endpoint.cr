@@ -123,6 +123,7 @@ struct Details
   include YAML::Serializable
   property code_paths : Array(PathInfo) = [] of PathInfo
   property status_code : Int32 | Nil
+  property technology : String | Nil
 
   # + New details types to be added in the future..
 
@@ -141,8 +142,13 @@ struct Details
     @status_code = status_code
   end
 
+  def technology=(technology : String)
+    @technology = technology
+  end
+
   def ==(other : Details) : Bool
     return false if @status_code != other.status_code
+    return false if @technology != other.technology
     return false if @code_paths.size != other.code_paths.size
     return false unless @code_paths.all? { |path| other.code_paths.any? { |other_path| path == other_path } }
     true
