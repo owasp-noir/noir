@@ -58,7 +58,7 @@ crystal spec -v
 ### Lint
 ```bash
 crystal tool format
-ameba --fix
+bin/ameba -c .ameba.yml --fix
 
 # Ameba installation
 # https://github.com/crystal-ameba/ameba#installation
