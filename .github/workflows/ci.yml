@@ -62,15 +62,15 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
   lint:
     runs-on: ubuntu-latest
-    container:
-      image: crystallang/crystal
     steps:
       - uses: actions/checkout@v5
-      - name: Crystal Ameba Linter
-        id: crystal-ameba
-        uses: crystal-ameba/github-action@v0.8.0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: MeilCli/setup-crystal-action@v4
+        with:
+          crystal_version: 1.18.0
+      - name: Install dependencies
+        run: shards install
+      - name: Ameba
+        run: ./bin/ameba -c .ameba.yml
   tests:
     runs-on: ubuntu-latest
     container:
