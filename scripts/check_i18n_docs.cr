@@ -71,7 +71,7 @@ class I18nDocsChecker
     @languages : Array(String) = ["ko"],
     @quiet : Bool = false,
     @format : String = "text",
-    @fail_on_missing : Bool = true,
+    @fail_on_missing : Bool = true
   )
   end
 
