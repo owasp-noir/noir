@@ -25,3 +25,8 @@ dependencies:
     github: NeuraLegion/har
   http_proxy:
     github: mamantoha/http_proxy
+
+# Development Dependencies
+development_dependencies:
+  ameba:
+    github: crystal-ameba/ameba
