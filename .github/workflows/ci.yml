@@ -70,7 +70,7 @@ jobs:
       - name: Install dependencies
         run: shards install
       - name: Ameba
-        run: bin/ameba
+        run: ./bin/ameba -c .ameba.yml
   tests:
     runs-on: ubuntu-latest
     container:
