@@ -63,7 +63,6 @@ describe "--only-techs and --exclude-techs functionality" do
 
     it "returns empty list when all techs are invalid" do
       only_techs_value = "invalid_tech,nonexistent"
-      detector_names = ["ruby_rails", "python_flask"]
 
       only_techs_list = only_techs_value.split(",").map do |tech|
         NoirTechs.similar_to_tech(tech.strip)
