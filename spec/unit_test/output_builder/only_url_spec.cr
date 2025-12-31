@@ -13,7 +13,7 @@ describe "OutputBuilderOnlyUrl" do
       "output"  => YAML::Any.new(""),
     }
     builder = OutputBuilderOnlyUrl.new(options)
-    builder.set_io IO::Memory.new
+    builder.io = IO::Memory.new
 
     # Create multiple endpoints with different URLs
     endpoint1 = Endpoint.new("/test", "GET")

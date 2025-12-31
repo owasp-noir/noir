@@ -13,7 +13,7 @@ describe "OutputBuilderOnlyParam" do
       "output"  => YAML::Any.new(""),
     }
     builder = OutputBuilderOnlyParam.new(options)
-    builder.set_io IO::Memory.new
+    builder.io = IO::Memory.new
 
     # Create endpoints with various parameter types
     endpoint1 = Endpoint.new("/test", "GET")

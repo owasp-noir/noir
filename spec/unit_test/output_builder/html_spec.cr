@@ -14,7 +14,7 @@ describe "OutputBuilderHtml" do
       "output"  => YAML::Any.new(""),
     }
     builder = OutputBuilderHtml.new(options)
-    builder.set_io IO::Memory.new
+    builder.io = IO::Memory.new
 
     endpoint = Endpoint.new("/test", "GET")
     endpoint.push_param(Param.new("id", "1", "query"))
@@ -41,7 +41,7 @@ describe "OutputBuilderHtml" do
       "output"  => YAML::Any.new(""),
     }
     builder = OutputBuilderHtml.new(options)
-    builder.set_io IO::Memory.new
+    builder.io = IO::Memory.new
 
     endpoint = Endpoint.new("/api/users", "POST")
     endpoint.push_param(Param.new("username", "test", "json"))
@@ -97,7 +97,7 @@ describe "OutputBuilderHtml" do
       "output"  => YAML::Any.new(""),
     }
     builder = OutputBuilderHtml.new(options)
-    builder.set_io IO::Memory.new
+    builder.io = IO::Memory.new
 
     endpoint1 = Endpoint.new("/users", "GET")
     endpoint2 = Endpoint.new("/users", "POST")
@@ -123,7 +123,7 @@ describe "OutputBuilderHtml" do
       "output"  => YAML::Any.new(""),
     }
     builder = OutputBuilderHtml.new(options)
-    builder.set_io IO::Memory.new
+    builder.io = IO::Memory.new
 
     # Create endpoint with characters that need escaping
     endpoint = Endpoint.new("/test?a=<script>", "GET")
@@ -148,7 +148,7 @@ describe "OutputBuilderHtml" do
       "output"  => YAML::Any.new(""),
     }
     builder = OutputBuilderHtml.new(options)
-    builder.set_io IO::Memory.new
+    builder.io = IO::Memory.new
 
     endpoints = [] of Endpoint
 
@@ -169,7 +169,7 @@ describe "OutputBuilderHtml" do
       "output"  => YAML::Any.new(""),
     }
     builder = OutputBuilderHtml.new(options)
-    builder.set_io IO::Memory.new
+    builder.io = IO::Memory.new
 
     details = Details.new(PathInfo.new("src/controllers/users.cr", 42))
     endpoint = Endpoint.new("/users", "GET", [] of Param, details)
@@ -192,7 +192,7 @@ describe "OutputBuilderHtml" do
       "output"  => YAML::Any.new(""),
     }
     builder = OutputBuilderHtml.new(options)
-    builder.set_io IO::Memory.new
+    builder.io = IO::Memory.new
 
     endpoints = [
       Endpoint.new("/test", "GET"),
@@ -224,7 +224,7 @@ describe "OutputBuilderHtml" do
       "output"  => YAML::Any.new(""),
     }
     builder = OutputBuilderHtml.new(options)
-    builder.set_io IO::Memory.new
+    builder.io = IO::Memory.new
 
     endpoint = Endpoint.new("/test", "POST")
     endpoint.push_param(Param.new("q", "search", "query"))
@@ -256,7 +256,7 @@ describe "OutputBuilderHtml" do
       "output"  => YAML::Any.new(""),
     }
     builder = OutputBuilderHtml.new(options)
-    builder.set_io IO::Memory.new
+    builder.io = IO::Memory.new
 
     endpoint = Endpoint.new("/api/admin", "GET")
     endpoint.add_tag(Tag.new("admin", "Admin endpoint", "tagger"))
@@ -281,7 +281,7 @@ describe "OutputBuilderHtml" do
       "output"  => YAML::Any.new(""),
     }
     builder = OutputBuilderHtml.new(options)
-    builder.set_io IO::Memory.new
+    builder.io = IO::Memory.new
 
     endpoint = Endpoint.new("/ws/chat", "GET")
     endpoint.protocol = "ws"

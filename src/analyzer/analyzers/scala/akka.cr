@@ -6,7 +6,7 @@ module Analyzer::Scala
     HTTP_METHODS    = %w[get post put delete patch head options]
 
     def analyze
-      file_list = get_all_files()
+      file_list = all_files()
       file_list.each do |path|
         next unless File.exists?(path)
 

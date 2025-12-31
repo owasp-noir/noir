@@ -13,7 +13,7 @@ describe "OutputBuilderOnlyTag" do
       "output"  => YAML::Any.new(""),
     }
     builder = OutputBuilderOnlyTag.new(options)
-    builder.set_io IO::Memory.new
+    builder.io = IO::Memory.new
 
     # Create endpoints with tags
     endpoint1 = Endpoint.new("/test", "GET")

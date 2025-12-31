@@ -89,7 +89,7 @@ module Noir
       routes.concat(fast_scan_routes)
 
       # Second pass: process routes with collected prefixes
-      while !is_at_end && iterations < max_iterations
+      while !at_end? && iterations < max_iterations
         start_position = @position
 
         # Try to parse route with current or no prefix
@@ -166,26 +166,26 @@ module Noir
     end
 
     private def current_token
-      return JSToken.new(:eof, "", @position) if is_at_end
+      return JSToken.new(:eof, "", @position) if at_end?
       @tokens[@position]
     end
 
     private def advance
-      @position += 1 if !is_at_end
+      @position += 1 if !at_end?
       @tokens[@position - 1]
     end
 
-    private def is_at_end
+    private def at_end?
       @position >= @tokens.size
     end
 
     private def peek
-      return JSToken.new(:eof, "", @position) if is_at_end
+      return JSToken.new(:eof, "", @position) if at_end?
       @tokens[@position]
     end
 
     private def check(type : Symbol)
-      return false if is_at_end
+      return false if at_end?
       peek.type == type
     end
 

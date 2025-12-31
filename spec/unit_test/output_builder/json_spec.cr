@@ -15,7 +15,7 @@ describe "OutputBuilderJson" do
       "output"  => YAML::Any.new(""),
     }
     builder = OutputBuilderJson.new(options)
-    builder.set_io IO::Memory.new
+    builder.io = IO::Memory.new
 
     endpoint = Endpoint.new("/test", "GET")
     endpoint.push_param(Param.new("id", "1", "query"))
@@ -44,7 +44,7 @@ describe "OutputBuilderJson" do
       "output"  => YAML::Any.new(""),
     }
     builder = OutputBuilderJson.new(options)
-    builder.set_io IO::Memory.new
+    builder.io = IO::Memory.new
 
     endpoint = Endpoint.new("/api/users", "POST")
     endpoint.push_param(Param.new("username", "test", "json"))

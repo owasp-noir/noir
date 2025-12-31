@@ -15,7 +15,7 @@ describe "FileHelper" do
     locator.clear_all
   end
 
-  describe "get_all_files" do
+  describe "all_files" do
     it "returns all files from CodeLocator" do
       helper = TestHelper.new
       locator = CodeLocator.instance
@@ -23,7 +23,7 @@ describe "FileHelper" do
       locator.push("file_map", "/test/file1.cr")
       locator.push("file_map", "/test/file2.cr")
 
-      files = helper.get_all_files
+      files = helper.all_files
       files.should contain("/test/file1.cr")
       files.should contain("/test/file2.cr")
     end

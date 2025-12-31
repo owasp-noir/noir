@@ -6,7 +6,7 @@ module LLM
     @@mock_max_tokens_value || 1024
   end
 
-  def self.set_mock_max_tokens(value : Int32)
+  def self.mock_max_tokens=(value : Int32)
     @@mock_max_tokens_value = value
   end
 

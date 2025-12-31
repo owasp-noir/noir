@@ -3,7 +3,7 @@ require "../../../models/analyzer"
 module Analyzer::Scala
   class Play < Analyzer
     def analyze
-      file_list = get_all_files()
+      file_list = all_files()
       routes_files = [] of String
 
       # First pass: find all routes files

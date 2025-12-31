@@ -15,7 +15,7 @@ describe "Output Builders Edge Cases" do
       "output"  => YAML::Any.new(""),
     }
     builder = OutputBuilderCurl.new(options)
-    builder.set_io IO::Memory.new
+    builder.io = IO::Memory.new
 
     # Test with special characters
     endpoint = Endpoint.new("/api/test", "POST")
@@ -39,7 +39,7 @@ describe "Output Builders Edge Cases" do
       "output"  => YAML::Any.new(""),
     }
     builder = OutputBuilderHttpie.new(options)
-    builder.set_io IO::Memory.new
+    builder.io = IO::Memory.new
 
     # Test with special characters
     endpoint = Endpoint.new("/api/test", "POST")
@@ -63,7 +63,7 @@ describe "Output Builders Edge Cases" do
       "output"  => YAML::Any.new(""),
     }
     builder = OutputBuilderPowershell.new(options)
-    builder.set_io IO::Memory.new
+    builder.io = IO::Memory.new
 
     # Test with special characters
     endpoint = Endpoint.new("/api/test", "POST")
@@ -93,21 +93,21 @@ describe "Output Builders Edge Cases" do
 
     # Test curl with empty values
     curl = OutputBuilderCurl.new(options)
-    curl.set_io IO::Memory.new
+    curl.io = IO::Memory.new
     curl.print([endpoint])
     curl_output = curl.io.to_s
     curl_output.should contain("curl -i -X GET")
 
     # Test httpie with empty values
     httpie = OutputBuilderHttpie.new(options)
-    httpie.set_io IO::Memory.new
+    httpie.io = IO::Memory.new
     httpie.print([endpoint])
     httpie_output = httpie.io.to_s
     httpie_output.should contain("http GET")
 
     # Test powershell with empty values
     ps = OutputBuilderPowershell.new(options)
-    ps.set_io IO::Memory.new
+    ps.io = IO::Memory.new
     ps.print([endpoint])
     ps_output = ps.io.to_s
     ps_output.should contain("Invoke-WebRequest -Method GET")

@@ -14,7 +14,7 @@ describe "OutputBuilderMermaid" do
       "output"  => YAML::Any.new(""),
     }
     builder = OutputBuilderMermaid.new(options)
-    builder.set_io IO::Memory.new
+    builder.io = IO::Memory.new
 
     endpoint1 = Endpoint.new("/", "GET")
     endpoint1.push_param(Param.new("x-api-key", "", "header"))
@@ -58,7 +58,7 @@ describe "OutputBuilderMermaid" do
       "output"  => YAML::Any.new(""),
     }
     builder = OutputBuilderMermaid.new(options)
-    builder.set_io IO::Memory.new
+    builder.io = IO::Memory.new
 
     endpoint1 = Endpoint.new("/app/data", "GET")
     endpoint1.push_param(Param.new("auth_token", "", "header"))
@@ -122,7 +122,7 @@ describe "OutputBuilderMermaid" do
       "output"  => YAML::Any.new(""),
     }
     builder = OutputBuilderMermaid.new(options)
-    builder.set_io IO::Memory.new
+    builder.io = IO::Memory.new
 
     endpoint = Endpoint.new("/test", "GET")
     endpoint.push_param(Param.new("test_param", "", "query"))

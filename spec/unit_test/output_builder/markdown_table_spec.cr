@@ -13,7 +13,7 @@ describe "OutputBuilderMarkdownTable" do
       "output"  => YAML::Any.new(""),
     }
     builder = OutputBuilderMarkdownTable.new(options)
-    builder.set_io IO::Memory.new
+    builder.io = IO::Memory.new
 
     # Create endpoints with various parameters and methods
     endpoint1 = Endpoint.new("/test", "GET")
