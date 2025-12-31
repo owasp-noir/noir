@@ -148,7 +148,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
           total_files += 1
 
           # Skip files in ignored directories early
-          # Only check the relative path 
+          # Only check the relative path
           relative_path = "/" + Path.new(file).relative_to(Path.new(base_path)).to_s
           if ignored_dir_patterns.any? { |pat| relative_path.includes?(pat) }
             skipped_ignored_dirs += 1
