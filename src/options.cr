@@ -250,13 +250,14 @@ def run_options_parser
       Specify AI provider prefix or full custom URL (required for AI features).
 
       Supported prefixes:
-        openai   → https://api.openai.com/v1
-        xai      → https://api.x.ai/v1
-        github   → https://models.github.ai/inference
-        azure    → https://models.inference.ai.azure.com
-        ollama   → http://localhost:11434/v1
-        lmstudio → http://localhost:1234/v1
-        vllm     → http://localhost:8000/v1
+        openai     → https://api.openai.com/v1
+        xai        → https://api.x.ai/v1
+        github     → https://models.github.ai/inference
+        azure      → https://models.inference.ai.azure.com
+        openrouter → https://openrouter.ai/api/v1
+        ollama     → http://localhost:11434/v1
+        lmstudio   → http://localhost:1234/v1
+        vllm       → http://localhost:8000/v1
 
       Or use a custom URL directly:
         --ai-provider http://localhost:8000/v1

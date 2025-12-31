@@ -24,6 +24,8 @@ module LLM
                  "https://models.inference.ai.azure.com/chat/completions"
                when "github"
                  "https://models.github.ai/inference/chat/completions"
+               when "openrouter"
+                 "https://openrouter.ai/api/v1/chat/completions"
                else
                  url
                end
