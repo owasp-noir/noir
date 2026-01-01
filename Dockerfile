@@ -29,6 +29,5 @@ LABEL org.opencontainers.image.documentation="https://owasp-noir.github.io/noir/
 LABEL org.opencontainers.image.licenses=MIT
 
 COPY --from=builder /noir/bin/noir /usr/local/bin/noir
-#COPY --from=builder /etc/ssl/cert.pem /etc/ssl/
 
 CMD ["noir"]
