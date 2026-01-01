@@ -4,6 +4,7 @@ require "../models/endpoint"
 
 require "json"
 require "yaml"
+require "colorize"
 
 class OutputBuilderDiff < OutputBuilder
   def diff(new_endpoints : Array(Endpoint), old_endpoints : Array(Endpoint))
@@ -32,17 +33,20 @@ class OutputBuilderDiff < OutputBuilder
     result = diff(endpoints, diff_app.endpoints)
 
     if result[:added].size > 0
-      @logger.puts "============== Added ================"
+      added_header = "============== Added ================".colorize(:green).toggle(@is_color)
+      @logger.puts added_header
       OutputBuilderCommon.new(@options).print(result[:added])
     end
 
     if result[:removed].size > 0
-      @logger.puts "\n============== Removed =============="
+      removed_header = "============== Removed ==============".colorize(:red).toggle(@is_color)
+      @logger.puts "\n#{removed_header}"
       OutputBuilderCommon.new(@options).print(result[:removed])
     end
 
     if result[:changed].size > 0
-      @logger.puts "\n============== Changed =============="
+      changed_header = "============== Changed ==============".colorize(:yellow).toggle(@is_color)
+      @logger.puts "\n#{changed_header}"
       OutputBuilderCommon.new(@options).print(result[:changed])
     end
   end
