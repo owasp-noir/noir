@@ -1,5 +1,4 @@
 require "../models/output_builder"
-require "./diff"
 require "../models/endpoint"
 
 require "json"
