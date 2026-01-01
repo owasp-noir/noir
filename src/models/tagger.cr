@@ -36,7 +36,9 @@ class Tagger
   # Results are cached to avoid repeated file reads.
   # Returns nil if the file cannot be read.
   protected def read_source_code(path : String) : String?
-    return @file_content_cache[path] if @file_content_cache.has_key?(path)
+    if cached = @file_content_cache[path]?
+      return cached
+    end
 
     begin
       content = File.read(path, encoding: "utf-8", invalid: :skip)
@@ -75,6 +77,8 @@ class Tagger
 
   # Gets all source code content for an endpoint.
   # Returns an array of tuples containing (path_info, content) for each code_path.
+  # Note: Code paths where the file cannot be read are filtered out from results.
+  # The result array may have fewer elements than endpoint.details.code_paths.
   protected def get_endpoint_source_code(endpoint : Endpoint) : Array(Tuple(PathInfo, String))
     result = [] of Tuple(PathInfo, String)
 

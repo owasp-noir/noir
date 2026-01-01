@@ -57,8 +57,8 @@ class SourceCodeCommentTagger < Tagger
     "rate-limited" => TagDefinition.new(
       [
         /@rate[_\-]?limit/i,
-        /\bthrottle\b/i,
-        /@Throttle/i,
+        /@throttle/i,
+        /\bthrottle[_\-]?limit/i,
         /\bRateLimit\b/i,
       ],
       "Endpoint has rate limiting applied."
