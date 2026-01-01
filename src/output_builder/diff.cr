@@ -1,9 +1,9 @@
 require "../models/output_builder"
-require "./diff"
 require "../models/endpoint"
 
 require "json"
 require "yaml"
+require "colorize"
 
 class OutputBuilderDiff < OutputBuilder
   def diff(new_endpoints : Array(Endpoint), old_endpoints : Array(Endpoint))
@@ -32,19 +32,33 @@ class OutputBuilderDiff < OutputBuilder
     result = diff(endpoints, diff_app.endpoints)
 
     if result[:added].size > 0
-      @logger.puts "============== Added ================"
+      @logger.puts format_section_header("✚", "Added", result[:added].size, :green)
       OutputBuilderCommon.new(@options).print(result[:added])
     end
 
     if result[:removed].size > 0
-      @logger.puts "\n============== Removed =============="
+      @logger.puts "\n#{format_section_header("✖", "Removed", result[:removed].size, :red)}"
       OutputBuilderCommon.new(@options).print(result[:removed])
     end
 
     if result[:changed].size > 0
-      @logger.puts "\n============== Changed =============="
+      @logger.puts "\n#{format_section_header("≠", "Changed", result[:changed].size, :yellow)}"
       OutputBuilderCommon.new(@options).print(result[:changed])
     end
+  end
+
+  private def format_section_header(icon : String, text : String, count : Int32, color : Symbol) : String
+    title = "#{icon} #{text} (#{count})"
+    line_length = 40
+    padding = line_length - title.size - 2
+    left_pad = (padding / 2).to_i
+    right_pad = padding - left_pad
+
+    separator = "─" * left_pad
+    separator_right = "─" * right_pad
+
+    header_line = "#{separator} #{title} #{separator_right}".colorize(color).toggle(@is_color)
+    header_line.to_s
   end
 
   def print_json(endpoints : Array(Endpoint), diff_app : NoirRunner)
