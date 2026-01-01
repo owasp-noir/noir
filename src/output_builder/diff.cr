@@ -32,28 +32,26 @@ class OutputBuilderDiff < OutputBuilder
     result = diff(endpoints, diff_app.endpoints)
 
     if result[:added].size > 0
-      added_icon = "✚".colorize(:green).toggle(@is_color)
-      added_text = "Added".colorize(:green).toggle(@is_color)
-      added_count = "(#{result[:added].size})".colorize(:dark_gray).toggle(@is_color)
-      @logger.puts "#{added_icon} #{added_text} #{added_count}"
+      @logger.puts format_section_header("✚", "Added", result[:added].size, :green)
       OutputBuilderCommon.new(@options).print(result[:added])
     end
 
     if result[:removed].size > 0
-      removed_icon = "✖".colorize(:red).toggle(@is_color)
-      removed_text = "Removed".colorize(:red).toggle(@is_color)
-      removed_count = "(#{result[:removed].size})".colorize(:dark_gray).toggle(@is_color)
-      @logger.puts "\n#{removed_icon} #{removed_text} #{removed_count}"
+      @logger.puts "\n#{format_section_header("✖", "Removed", result[:removed].size, :red)}"
       OutputBuilderCommon.new(@options).print(result[:removed])
     end
 
     if result[:changed].size > 0
-      changed_icon = "≠".colorize(:yellow).toggle(@is_color)
-      changed_text = "Changed".colorize(:yellow).toggle(@is_color)
-      changed_count = "(#{result[:changed].size})".colorize(:dark_gray).toggle(@is_color)
-      @logger.puts "\n#{changed_icon} #{changed_text} #{changed_count}"
+      @logger.puts "\n#{format_section_header("≠", "Changed", result[:changed].size, :yellow)}"
       OutputBuilderCommon.new(@options).print(result[:changed])
     end
+  end
+
+  private def format_section_header(icon : String, text : String, count : Int32, color : Symbol) : String
+    formatted_icon = icon.colorize(color).toggle(@is_color)
+    formatted_text = text.colorize(color).toggle(@is_color)
+    formatted_count = "(#{count})".colorize(:dark_gray).toggle(@is_color)
+    "#{formatted_icon} #{formatted_text} #{formatted_count}"
   end
 
   def print_json(endpoints : Array(Endpoint), diff_app : NoirRunner)
