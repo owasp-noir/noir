@@ -48,10 +48,17 @@ class OutputBuilderDiff < OutputBuilder
   end
 
   private def format_section_header(icon : String, text : String, count : Int32, color : Symbol) : String
-    formatted_icon = icon.colorize(color).toggle(@is_color)
-    formatted_text = text.colorize(color).toggle(@is_color)
-    formatted_count = "(#{count})".colorize(:dark_gray).toggle(@is_color)
-    "#{formatted_icon} #{formatted_text} #{formatted_count}"
+    title = "#{icon} #{text} (#{count})"
+    line_length = 40
+    padding = line_length - title.size - 2
+    left_pad = (padding / 2).to_i
+    right_pad = padding - left_pad
+
+    separator = "─" * left_pad
+    separator_right = "─" * right_pad
+
+    header_line = "#{separator} #{title} #{separator_right}".colorize(color).toggle(@is_color)
+    header_line.to_s
   end
 
   def print_json(endpoints : Array(Endpoint), diff_app : NoirRunner)
