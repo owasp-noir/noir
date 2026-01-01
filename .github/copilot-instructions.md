@@ -60,11 +60,13 @@ OWASP Noir is a Crystal-based attack surface detector that identifies endpoints 
   - `json` - JSON format
   - `jsonl` - JSON Lines
   - `yaml` - YAML format
+  - `toml` - TOML format
   - `markdown-table` - Markdown table
   - `sarif` - SARIF format
   - `html` - HTML report
   - `curl` - cURL commands
   - `httpie` - HTTPie commands
+  - `powershell` - PowerShell Invoke-WebRequest commands
   - `oas2` - OpenAPI 2.0 (Swagger)
   - `oas3` - OpenAPI 3.0
   - `postman` - Postman collection
@@ -262,18 +264,20 @@ snap/                    # Snap package configuration
 ### Supported Languages and Frameworks
 Noir supports endpoint detection across multiple languages and frameworks:
 - **Python**: Flask, FastAPI, Django, Sanic, Tornado
-- **JavaScript/TypeScript**: Express, Fastify, Koa, Restify, NestJS
-- **Ruby**: Rails, Sinatra, Hanami, Grape
+- **JavaScript**: Express, Fastify, Koa, Restify, NestJS
+- **TypeScript**: NestJS
+- **Ruby**: Rails, Sinatra, Hanami
 - **Crystal**: Kemal, Lucky, Amber, Grip, Marten
-- **Go**: Echo, Gin, Fiber, Gorilla Mux, Chi
-- **Rust**: Actix-web, Axum, Rocket, Warp, RWF
-- **Java/Kotlin**: Spring, JAX-RS, Ktor, Armeria
-- **C#**: ASP.NET (Core, WebAPI, MVC)
-- **PHP**: Laravel, Symfony, CodeIgniter
-- **Elixir**: Phoenix
-- **Swift**: Vapor
-- **Scala**: Play Framework
-- **Specifications**: OpenAPI (2.0/3.0), Postman Collections, HAR files, RAML, ZAP Sites Tree
+- **Go**: Echo, Gin, Fiber, Gorilla Mux, Chi, Beego, fasthttp, go-zero
+- **Rust**: Actix-web, Axum, Rocket, Warp, RWF, Loco, Tide, Gotham
+- **Java**: Spring, JSP, Armeria, Vert.x, Play Framework
+- **Kotlin**: Spring, Ktor
+- **C#**: ASP.NET (Core MVC, MVC)
+- **PHP**: Laravel, Symfony, Pure PHP
+- **Elixir**: Phoenix, Plug
+- **Swift**: Vapor, Kitura, Hummingbird
+- **Scala**: Akka HTTP, Scalatra, Play Framework
+- **Specifications**: OpenAPI (2.0/3.0), Postman Collections, HAR files, RAML, GraphQL
 
 See `./bin/noir --list-techs` for the complete current list.
 
