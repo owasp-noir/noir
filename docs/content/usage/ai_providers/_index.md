@@ -16,6 +16,7 @@ This section provides detailed guides on how to set up and use Noir with each of
     *   [xAI](xai/)
     *   [Azure AI](azure/)
     *   [GitHub Marketplace](github_marketplace/)
+    *   [OpenRouter](openrouter/)
 *   **Local Model Providers**:
     *   [Ollama](ollama/)
     *   [vLLM](vllm/)
