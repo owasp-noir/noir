@@ -16,6 +16,7 @@ Noir의 AI 기반 분석은 다양한 대규모 언어 모델(LLM) 제공업체�
     *   [xAI](xai/)
     *   [Azure AI](azure/)
     *   [GitHub Marketplace](github_marketplace/)
+    *   [OpenRouter](openrouter/)
 *   **로컬 모델 제공업체**:
     *   [Ollama](ollama/)
     *   [vLLM](vllm/)
