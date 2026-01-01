@@ -43,6 +43,11 @@ module NoirTaggers
       desc:   "Identifies file upload endpoints",
       runner: FileUploadTagger,
     },
+    source_code_comment: {
+      name:   "SourceCodeComment Tagger",
+      desc:   "Identifies endpoints based on source code comments and annotations (e.g., @deprecated, @admin, @internal)",
+      runner: SourceCodeCommentTagger,
+    },
   }
 
   def self.taggers

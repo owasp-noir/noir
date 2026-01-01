@@ -173,4 +173,21 @@ describe "Tagger" do
       end
     end
   end
+
+  it "source_code_comment_tagger" do
+    noir_options = create_test_options
+    fixture_path = File.join(__DIR__, "taggers", "fixtures", "sample_python_app.py")
+
+    # Test endpoint with @deprecated annotation
+    details = Details.new(PathInfo.new(fixture_path, 8))
+    expected_endpoints = [
+      Endpoint.new("/api/v1/old_endpoint", "GET", [] of Param, details),
+    ]
+    NoirTaggers.run_tagger(expected_endpoints, noir_options, "source_code_comment")
+    expected_endpoints.each do |endpoint|
+      endpoint.tags.empty?.should be_false
+      tag_names = endpoint.tags.map(&.name)
+      tag_names.should contain("deprecated")
+    end
+  end
 end
