@@ -66,8 +66,9 @@ class Upload extends Controller {
 class Api extends Controller {
     public Result protectedEndpoint() {
         String authToken = request().header("Authorization");
-        String sessionId = request().cookie("session_id").value();
-        return ok("Protected endpoint - Auth: " + authToken + ", Session: " + sessionId);
+        Http.Cookie sessionCookie = request().cookie("session_id");
+        String sessionId = sessionCookie != null ? sessionCookie.value() : "none";
+        return ok("Protected endpoint - Auth: " + (authToken != null ? authToken : "none") + ", Session: " + sessionId);
     }
 
     public Result postData() {

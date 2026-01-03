@@ -66,7 +66,7 @@ module Analyzer::Java
           method_regex = /(?:public|protected)\s+(?:Result|CompletionStage<Result>)\s+(\w+)\s*\([^)]*\)\s*\{/
           class_content.scan(method_regex) do |match|
             method_name = match[1]
-            full_method_name = "#{package_name}.#{class_name}.#{method_name}"
+            full_method_name = package_name.empty? ? "#{class_name}.#{method_name}" : "#{package_name}.#{class_name}.#{method_name}"
 
             # Find the method body
             method_body = extract_method_body(class_content, method_name)
@@ -91,8 +91,8 @@ module Analyzer::Java
               cookies << cookie_match[1] unless cookies.includes?(cookie_match[1])
             end
 
-            # Extract body type: request().body().asJson(), asFormUrlEncoded(), asText()
-            if method_body.includes?("request().body().asJson") || method_body.includes?("request().body().as(")
+            # Extract body type: request().body().asJson(), asFormUrlEncoded(), asText(), as(JsonNode.class)
+            if method_body.includes?("request().body().asJson") || method_body.includes?("request().body().as(JsonNode")
               body_type = "json"
             elsif method_body.includes?("request().body().asFormUrlEncoded")
               body_type = "form"

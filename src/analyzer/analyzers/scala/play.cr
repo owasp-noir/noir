@@ -66,7 +66,7 @@ module Analyzer::Scala
           method_regex = /def\s+(\w+)(?:\s*\([^)]*\))?\s*=\s*Action/
           class_content.scan(method_regex) do |match|
             method_name = match[1]
-            full_method_name = "#{package_name}.#{class_name}.#{method_name}"
+            full_method_name = package_name.empty? ? "#{class_name}.#{method_name}" : "#{package_name}.#{class_name}.#{method_name}"
 
             # Find the method body (from def to the matching closing brace)
             method_body = extract_method_body(class_content, method_name)
