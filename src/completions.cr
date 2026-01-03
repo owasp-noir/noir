@@ -17,6 +17,7 @@ _arguments \\
   '--status-codes[Display HTTP status codes for discovered endpoints]' \\
   '--exclude-codes[Exclude specific HTTP response codes (comma-separated)]:status:' \\
   '--include-path[Include file path in the plain result]' \\
+  '--include-techs[Include technology in the plain result]' \\
   '--no-color[Disable color output]' \\
   '--no-log[Displaying only the results]' \\
   '-P[Perform a passive scan for security issues using rules from the specified path]' \\
@@ -80,6 +81,7 @@ _noir_completions() {
         --status-codes
         --exclude-codes
         --include-path
+        --include-techs
         --no-color
         --no-log
         -P --passive-scan
@@ -176,6 +178,7 @@ complete -c noir -n '__fish_noir_needs_command' -a '--set-pvalue-path' -d 'Speci
 complete -c noir -n '__fish_noir_needs_command' -a '--status-codes' -d 'Display HTTP status codes for discovered endpoints'
 complete -c noir -n '__fish_noir_needs_command' -a '--exclude-codes' -d 'Exclude specific HTTP response codes (comma-separated)'
 complete -c noir -n '__fish_noir_needs_command' -a '--include-path' -d 'Include file path in the plain result'
+complete -c noir -n '__fish_noir_needs_command' -a '--include-techs' -d 'Include technology in the plain result'
 complete -c noir -n '__fish_noir_needs_command' -a '--no-color' -d 'Disable color output'
 complete -c noir -n '__fish_noir_needs_command' -a '--no-log' -d 'Displaying only the results'
 complete -c noir -n '__fish_noir_needs_command' -a '-P' -d 'Perform a passive scan for security issues using rules from the specified path'
