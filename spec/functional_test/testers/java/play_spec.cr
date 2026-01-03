@@ -21,8 +21,14 @@ expected_endpoints = [
   ]),
   Endpoint.new("/files/$path<.+>", "GET", [Param.new("path", "", "path")]),
   Endpoint.new("/upload", "POST"),
-  Endpoint.new("/api/protected", "GET"),
-  Endpoint.new("/api/data", "POST"),
+  Endpoint.new("/api/protected", "GET", [
+    Param.new("Authorization", "", "header"),
+    Param.new("session_id", "", "cookie"),
+  ]),
+  Endpoint.new("/api/data", "POST", [
+    Param.new("Content-Type", "", "header"),
+    Param.new("body", "", "json"),
+  ]),
   Endpoint.new("/assets/*file", "GET", [
     Param.new("file", "", "path"),
   ]),
