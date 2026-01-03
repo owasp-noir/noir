@@ -13,3 +13,10 @@ ameba.sh
 
 # Nix
 # /flake.lock
+
+# Gradle build artifacts
+.gradle/
+**/build/
+**/gradle-wrapper.jar
+**/gradlew
+**/gradlew.bat
