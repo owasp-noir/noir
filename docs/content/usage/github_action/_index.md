@@ -51,6 +51,7 @@ jobs:
 | `use_all_taggers` | Enable all taggers for comprehensive analysis (`-T/--use-all-taggers`) | No | `false` |
 | `use_taggers` | Enable specific taggers (`--use-taggers`) | No | `` |
 | `include_path` | Include source file paths in results (`--include-path`) | No | `false` |
+| `include_techs` | Include technology information in results (`--include-techs`) | No | `false` |
 | `verbose` | Verbose output (`--verbose`) | No | `false` |
 | `debug` | Debug output (`-d/--debug`) | No | `false` |
 | `concurrency` | Concurrency level (`--concurrency`) | No | `` |
@@ -102,6 +103,7 @@ jobs:
           passive_scan_severity: 'medium'
           use_all_taggers: 'true'
           include_path: 'true'
+          include_techs: 'true'
           verbose: 'true'
           output_file: 'noir-results.json'
 
@@ -212,7 +214,7 @@ jobs:
 
 **Hard to diagnose:**
 - Enable `debug: 'true'` and `verbose: 'true'`
-- Use `include_path: 'true'` for traceability
+- Use `include_path: 'true'` and `include_techs: 'true'` for traceability
 
 **HTTP status noise:**
 - Disable with `status_codes: 'false'` or use `exclude_codes`

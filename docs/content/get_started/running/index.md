@@ -78,3 +78,29 @@ Detailed information output:
 ```bash
 noir -b . --verbose
 ```
+
+## Output Customization
+
+Control what information is displayed in plain text output:
+
+### Include File Paths
+
+Show source file paths in results:
+
+```bash
+noir -b . --include-path
+```
+
+### Include Technology Information
+
+Show detected technology/framework for each endpoint:
+
+```bash
+noir -b . --include-techs
+```
+
+Both flags can be combined:
+
+```bash
+noir -b . --include-path --include-techs
+```

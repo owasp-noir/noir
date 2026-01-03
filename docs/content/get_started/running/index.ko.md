@@ -83,4 +83,30 @@ noir -b . --no-log
 noir -b . --verbose
 ```
 
+## 출력 사용자 정의
+
+일반 텍스트 출력에 표시되는 정보를 제어할 수 있습니다:
+
+### 파일 경로 포함
+
+결과에 소스 파일 경로를 표시합니다:
+
+```bash
+noir -b . --include-path
+```
+
+### 기술 정보 포함
+
+각 엔드포인트에 대해 감지된 기술/프레임워크를 표시합니다:
+
+```bash
+noir -b . --include-techs
+```
+
+두 플래그를 함께 사용할 수 있습니다:
+
+```bash
+noir -b . --include-path --include-techs
+```
+
 이제 Noir의 기본 사용법을 알았으므로 더 고급 기능을 탐색할 수 있습니다!
