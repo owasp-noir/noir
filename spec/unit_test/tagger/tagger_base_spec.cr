@@ -52,7 +52,7 @@ describe "Tagger" do
 
         content = tagger.test_read_source_code(TAGGER_BASE_FIXTURE_PATH)
         content.should_not be_nil
-        content.not_nil!.should contain("from flask import Flask")
+        content.should contain("from flask import Flask")
 
         # Second read should return cached content
         content2 = tagger.test_read_source_code(TAGGER_BASE_FIXTURE_PATH)
@@ -75,13 +75,13 @@ describe "Tagger" do
         context = tagger.test_read_source_context(path_info, 3)
 
         context.should_not be_nil
-        lines_before, target_line, lines_after = context.not_nil!
+        lines_before, target_line, lines_after = context
 
         # Should have lines before
         lines_before.size.should be > 0
 
         # Target line should be the route decorator
-        target_line.not_nil!.should contain("@app.route")
+        target_line.should contain("@app.route")
 
         # Should have lines after
         lines_after.size.should be > 0
@@ -112,7 +112,7 @@ describe "Tagger" do
         context = tagger.test_read_source_context(path_info, 5)
 
         context.should_not be_nil
-        lines_before, _target_line, _lines_after = context.not_nil!
+        lines_before, _target_line, _lines_after = context
 
         lines_before.size.should eq(0) # No lines before first line
       end

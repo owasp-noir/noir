@@ -60,7 +60,7 @@ class Tagger
     return nil if content.nil?
 
     lines = content.lines
-    line_index = path_info.line.not_nil! - 1 # Convert to 0-based index
+    line_index = path_info.line - 1 # Convert to 0-based index
 
     return nil if line_index < 0 || line_index >= lines.size
 
