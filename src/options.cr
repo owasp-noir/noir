@@ -179,6 +179,9 @@ def run_options_parser
     parser.on "--include-path", "Include file path in plain output" do
       noir_options["include_path"] = YAML::Any.new(true)
     end
+    parser.on "--include-techs", "Include technology in plain output" do
+      noir_options["include_techs"] = YAML::Any.new(true)
+    end
     parser.on "--no-color", "Disable color output" do
       noir_options["color"] = YAML::Any.new(false)
     end

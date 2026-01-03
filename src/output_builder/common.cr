@@ -82,8 +82,8 @@ class OutputBuilderCommon < OutputBuilder
         r_buffer += "\n  ○ tags: #{r_tags}"
       end
 
-      # Always show technology if available
-      if endpoint.details.technology
+      # Show technology only if include_techs flag is set
+      if any_to_bool(@options["include_techs"]) && endpoint.details.technology
         r_tech = endpoint.details.technology.to_s.colorize(:light_blue).toggle(@is_color)
         r_buffer += "\n  ○ tech: #{r_tech}"
       end
