@@ -53,7 +53,6 @@ jobs:
 | `use_all_taggers` | 모든 태거 활성화(광범위 분석) (`-T/--use-all-taggers`) | 아니오 | `false` |
 | `use_taggers` | 특정 태거만 활성화 (`--use-taggers`) | 아니오 | `` |
 | `include_path` | 결과에 소스 파일 경로 포함 (`--include-path`) | 아니오 | `false` |
-| `include_techs` | 결과에 기술 정보 포함 (`--include-techs`) | 아니오 | `false` |
 | `verbose` | 상세 출력 (`--verbose`) | 아니오 | `false` |
 | `debug` | 디버그 출력 (`-d/--debug`) | 아니오 | `false` |
 | `concurrency` | 동시성 수준 (`--concurrency`) | 아니오 | `` |
@@ -105,7 +104,6 @@ jobs:
           passive_scan_severity: 'medium'
           use_all_taggers: 'true'
           include_path: 'true'
-          include_techs: 'true'
           verbose: 'true'
           output_file: 'noir-results.json'
 
@@ -205,7 +203,7 @@ jobs:
 
 1. 수동 점검(`passive_scan: 'true'`)을 활성화하여 보안 스멜을 조기에 확인하세요.
 2. `passive_scan_severity`와 `exclude_codes`로 노이즈를 조절하세요.
-3. `include_path: 'true'` 및 `include_techs: 'true'`로 파일 경로와 기술 정보를 포함해 트라이애지와 코드 탐색을 빠르게 하세요.
+3. `include_path: 'true'`로 파일 경로를 포함해 트라이애지와 코드 탐색을 빠르게 하세요.
 4. 자동 감지가 부족하면 `techs`로 기술 스택을 고정하고, 불필요한 분석은 `exclude_techs`로 배제하세요.
 5. `actions/upload-artifact`로 결과를 보존하거나, PR 코멘트/상태로 게시해 협업을 촉진하세요.
 
@@ -222,7 +220,7 @@ jobs:
 
 - 동작을 진단하기 어려움
   - `debug: 'true'` 및 `verbose: 'true'`를 켜서 상세 로그를 확인하세요.
-  - `include_path: 'true'` 및 `include_techs: 'true'`로 파일 경로와 기술 정보를 포함해 추적 가능성을 높이세요.
+  - `include_path: 'true'`로 파일 경로를 포함해 추적 가능성을 높이세요.
 
 - HTTP 상태코드로 인한 노이즈
   - `status_codes: 'false'`로 비활성화하거나 `exclude_codes`로 소음이 많은 코드를 제외하세요.
