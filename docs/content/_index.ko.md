@@ -5,7 +5,7 @@ template = "landing.html"
 version = "v0.26.0"
 
 [extra.hero]
-title = "NOIR"
+title = " "
 badge = "v0.26.0"
 description = "코드베이스 내 모든 엔드포인트를 자동으로 탐지하는 고급 하이브리드 분석 도구. 섀도우 API와 문서화되지 않은 엔드포인트까지 놓치지 않고 찾아냅니다."
 image = "../images/noir-wallpaper.jpg"
