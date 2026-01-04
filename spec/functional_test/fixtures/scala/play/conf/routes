@@ -27,7 +27,7 @@ GET     /files/$path<.+>            controllers.Files.download(path: String)
 POST    /upload                     controllers.Upload.file()
 
 # API with headers
-GET     /api/protected              controllers.Api.protected()
+GET     /api/protected              controllers.Api.protectedEndpoint()
 POST    /api/data                   controllers.Api.postData()
 
 # Wildcard route (should be last)
