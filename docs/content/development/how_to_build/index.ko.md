@@ -83,13 +83,13 @@ crystal spec -v
 코드 린팅에는 `ameba`를 사용합니다. 스타일 이슈를 확인하려면 다음을 실행하세요:
 
 ```sh
-bin/ameba -c .ameba.yml
+bin/ameba.cr
 ```
 
 스타일 이슈를 자동으로 수정하려면 다음을 실행할 수 있습니다:
 
 ```sh
-bin/ameba -c .ameba.yml --fix
+bin/ameba.cr --fix
 ```
 
 또는 `just` 명령을 사용하여 린터를 실행할 수 있습니다:

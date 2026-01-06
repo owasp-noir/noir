@@ -42,13 +42,13 @@ docs-i18n-check:
 fix:
     @echo "Formatting code and fixing linting issues..."
     crystal tool format
-    bin/ameba -c .ameba.yml --fix
+    bin/ameba.cr --fix
 
 # Check code formatting and run linter without making changes.
 check:
     @echo "Checking code format and running linter..."
     crystal tool format --check
-    bin/ameba -c .ameba.yml
+    bin/ameba.cr
 
 # Run all Crystal spec tests.
 test:
