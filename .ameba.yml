@@ -67,8 +67,3 @@ Naming/BlockParameterName:
     - hm     # header match
     - bm     # body match
     - cm     # cookie match
-
-# Boolean properties in scripts use non-predicate style for backward compatibility
-Naming/QueryBoolMethods:
-  Excluded:
-    - "scripts/**/*"
