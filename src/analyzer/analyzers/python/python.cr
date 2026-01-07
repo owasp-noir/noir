@@ -337,16 +337,16 @@ module Analyzer::Python
     def return_literal_value(data : ::String) : ::String
       # Check if the data is numeric
       if data.numeric?
-        data
+        return data
       else
         # Check if the data is a string
         if data.size != 0
-          if data[0] == data[-1] && ['"', '\''].includes? data[0]
-            data = data[1..-2]
-            data
+          if data[0] == data[-1] && ['"', "'"].includes? data[0]
+            return data[1..-2]
           end
         end
       end
+      data
     end
 
     module PackageType
