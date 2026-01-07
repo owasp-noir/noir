@@ -20,9 +20,9 @@ jobs:
         crystal-version: [1.15.0, 1.16.0, 1.17.0, 1.18.0]
     steps:
       - uses: actions/checkout@v6
-      - uses: MeilCli/setup-crystal-action@v4
+      - uses: crystal-lang/install-crystal@v1
         with:
-          crystal_version: ${{ matrix.crystal-version }}
+          crystal: ${{ matrix.crystal-version }}
       - name: Install dependencies
         run: shards install
       - name: Build
