@@ -122,8 +122,8 @@ struct Details
   include JSON::Serializable
   include YAML::Serializable
   property code_paths : Array(PathInfo) = [] of PathInfo
-  property status_code : Int32 | Nil
-  property technology : String | Nil
+  property status_code : Int32?
+  property technology : String?
 
   # + New details types to be added in the future..
 
@@ -160,7 +160,7 @@ struct PathInfo
     @line = nil
   end
 
-  def initialize(@path : String, @line : Int32 | Nil)
+  def initialize(@path : String, @line : Int32?)
   end
 
   def ==(other : PathInfo) : Bool

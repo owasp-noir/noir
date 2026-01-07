@@ -195,7 +195,7 @@ module Analyzer::Kotlin
     end
 
     # Extract HTTP methods and parameter format from annotation
-    private def extract_request_methods_and_format(parser : KotlinParser, annotation_model : KotlinParser::AnnotationModel) : Tuple(Hash(String, Array(String)), String | Nil)
+    private def extract_request_methods_and_format(parser : KotlinParser, annotation_model : KotlinParser::AnnotationModel) : Tuple(Hash(String, Array(String)), String?)
       parameter_format = nil
       request_optional = Hash(String, Array(String)).new
       request_optional["methods"] = Array(String).new
@@ -279,7 +279,7 @@ module Analyzer::Kotlin
     end
 
     # Create endpoints for the extracted HTTP methods and paths
-    private def create_endpoints(webflux_base_path : String, url : String, url_paths : Array(String), request_optional : Hash(String, Array(String)), parser : KotlinParser, method : KotlinParser::MethodModel, parameter_format : String | Nil, class_map : Hash(String, KotlinParser::ClassModel), details : Details)
+    private def create_endpoints(webflux_base_path : String, url : String, url_paths : Array(String), request_optional : Hash(String, Array(String)), parser : KotlinParser, method : KotlinParser::MethodModel, parameter_format : String?, class_map : Hash(String, KotlinParser::ClassModel), details : Details)
       # Iterate over each URL path to create full URLs
       url_paths.each do |url_path|
         full_url = join_path(webflux_base_path, url, url_path)
@@ -360,7 +360,7 @@ module Analyzer::Kotlin
     end
 
     # Get endpoint parameters from the method's annotation and signature
-    private def get_endpoint_parameters(parser : KotlinParser, method : KotlinParser::MethodModel, parameter_format : String | Nil, package_class_map : Hash(String, KotlinParser::ClassModel)) : Array(Param)
+    private def get_endpoint_parameters(parser : KotlinParser, method : KotlinParser::MethodModel, parameter_format : String?, package_class_map : Hash(String, KotlinParser::ClassModel)) : Array(Param)
       endpoint_parameters = Array(Param).new
       method.params.each do |tokens|
         next if tokens.size < 3
@@ -409,7 +409,7 @@ module Analyzer::Kotlin
     end
 
     # Get parameter format based on annotation name
-    private def get_parameter_format(name : String, current_format : String | Nil) : String | Nil
+    private def get_parameter_format(name : String, current_format : String?) : String?
       case name
       when "@RequestBody"
         current_format || "json"
@@ -468,7 +468,7 @@ module Analyzer::Kotlin
     end
 
     # Add parameters from user-defined class fields
-    private def add_user_defined_class_params(package_class_map : Hash(String, KotlinParser::ClassModel), parameter_type : String, default_value : String?, parameter_name : String, parameter_format : String | Nil, endpoint_parameters : Array(Param))
+    private def add_user_defined_class_params(package_class_map : Hash(String, KotlinParser::ClassModel), parameter_type : String, default_value : String?, parameter_name : String, parameter_format : String?, endpoint_parameters : Array(Param))
       if package_class_map.has_key?(parameter_type)
         package_class = package_class_map[parameter_type]
         if package_class.enum_class?

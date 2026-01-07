@@ -9,7 +9,7 @@ require "process" # Ensure Process is available at top
 struct TestPathInfo
   include JSON::Serializable
   property path : String
-  property line : Int32 | Nil
+  property line : Int32?
 end
 
 struct TestDetails

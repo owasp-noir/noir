@@ -7,7 +7,7 @@ require "../llm/prompt_overrides"
 # for refining non-standard or unconventional paths and parameters
 class LLMEndpointOptimizer < EndpointOptimizer
   @use_llm : Bool = false
-  @adapter : LLM::Adapter | Nil = nil
+  @adapter : LLM::Adapter? = nil
 
   def initialize(@logger : NoirLogger, @options : Hash(String, YAML::Any))
     super(@logger, @options)

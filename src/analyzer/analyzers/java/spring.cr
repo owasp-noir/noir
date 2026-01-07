@@ -355,7 +355,7 @@ module Analyzer::Java
       url_paths
     end
 
-    def get_endpoint_parameters(parser : JavaParser, request_method : String, method : MethodModel, parameter_format : String | Nil, package_class_map : Hash(String, ClassModel)) : Array(Param)
+    def get_endpoint_parameters(parser : JavaParser, request_method : String, method : MethodModel, parameter_format : String?, package_class_map : Hash(String, ClassModel)) : Array(Param)
       endpoint_parameters = Array(Param).new
       method.params.each do |method_param_tokens|
         next if method_param_tokens.size == 0

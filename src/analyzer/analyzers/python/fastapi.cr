@@ -220,7 +220,7 @@ module Analyzer::Python
     end
 
     # Infers the type of the parameter based on its default value or type annotation
-    def infer_parameter_type(data : ::String, is_param_type = false) : ::String | Nil
+    def infer_parameter_type(data : ::String, is_param_type = false) : ::String?
       if data.match(/(\b)*Cookie(\b)*/)
         "cookie"
       elsif data.match(/(\b)*Header(\b)*/) != nil

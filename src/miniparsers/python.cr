@@ -257,7 +257,7 @@ class PythonParser
     @tokens[index].value
   end
 
-  def extract_assign_data(index) : Tuple(String | Nil, String)
+  def extract_assign_data(index) : Tuple(String?, String)
     rawdata = ""
     variable_type = nil # unknown
     sindex = index
@@ -335,10 +335,10 @@ class PythonParser
   # Class to model annotations
   class ImportModel
     property name : String
-    property path : String | Nil
-    property as_name : String | Nil
+    property path : String?
+    property as_name : String?
 
-    def initialize(@name : String, @path : String | Nil, @as_name : String | Nil)
+    def initialize(@name : String, @path : String?, @as_name : String?)
     end
 
     def to_s
@@ -354,11 +354,11 @@ class PythonParser
 
   class GlobalVariables
     property name : String
-    property type : String | Nil
+    property type : String?
     property value : String
     property path : String
 
-    def initialize(@name : String, @type : String | Nil, @value : String, @path : String)
+    def initialize(@name : String, @type : String?, @value : String, @path : String)
     end
 
     def to_s

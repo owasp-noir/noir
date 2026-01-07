@@ -100,7 +100,7 @@ module Analyzer::Javascript
 
       # Find all @Controller decorators and their associated class content
       lines = content.split("\n")
-      current_controller : Hash(Symbol, String) | Nil = nil
+      current_controller : Hash(Symbol, String)? = nil
       brace_count = 0
       in_class = false
 
