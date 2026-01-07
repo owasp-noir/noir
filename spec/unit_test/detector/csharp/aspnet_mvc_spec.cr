@@ -6,6 +6,6 @@ describe "Detect C# ASP.Net MVC" do
   instance = Detector::CSharp::AspNetMvc.new options
 
   it "packages" do
-    instance.detect("packages.config", "Microsoft.AspNet.Mvc").should eq(true)
+    instance.detect("packages.config", "Microsoft.AspNet.Mvc").should be_true
   end
 end

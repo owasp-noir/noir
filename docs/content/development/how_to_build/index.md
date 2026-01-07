@@ -74,13 +74,13 @@ crystal spec -v
 We use `ameba` for linting our code. To check the code for style issues, run:
 
 ```sh
-bin/ameba -c .ameba.yml
+bin/ameba.cr
 ```
 
 To automatically fix any style issues, you can run:
 
 ```sh
-bin/ameba -c .ameba.yml --fix
+bin/ameba.cr --fix
 ```
 
 Alternatively, you can use the `just` command to run the linter:

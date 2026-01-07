@@ -6,6 +6,6 @@ describe "Detect Java Spring" do
   instance = Detector::Java::Spring.new options
 
   it "test.java" do
-    instance.detect("test.java", "import org.springframework.boot.SpringApplication;").should eq(true)
+    instance.detect("test.java", "import org.springframework.boot.SpringApplication;").should be_true
   end
 end

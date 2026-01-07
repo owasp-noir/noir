@@ -97,7 +97,7 @@ module Analyzer::Rust
       brace_count = 0
       seen_opening_brace = false
 
-      lines.each_with_index do |line, _|
+      lines.each do |line|
         # Find the handler function definition
         if !in_function && line.includes?("fn #{handler_name}")
           in_function = true

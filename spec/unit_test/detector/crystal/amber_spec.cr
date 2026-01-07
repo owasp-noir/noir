@@ -6,6 +6,6 @@ describe "Detect Crystal Amber" do
   instance = Detector::Crystal::Amber.new options
 
   it "shard.yml" do
-    instance.detect("shard.yml", "amberframework/amber").should eq(true)
+    instance.detect("shard.yml", "amberframework/amber").should be_true
   end
 end

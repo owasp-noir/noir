@@ -6,6 +6,6 @@ describe "Detect Kotlin Spring" do
   instance = Detector::Kotlin::Spring.new options
 
   it "test.kt" do
-    instance.detect("test.kt", "import org.springframework.boot.SpringApplication").should eq(true)
+    instance.detect("test.kt", "import org.springframework.boot.SpringApplication").should be_true
   end
 end

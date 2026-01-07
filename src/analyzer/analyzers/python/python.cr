@@ -13,7 +13,7 @@ module Analyzer::Python
     DOT_NATION = /[a-zA-Z_][a-zA-Z0-9_.]*/
 
     # Parses the definition of a function from the source lines starting at a given index
-    def parse_function_def(source_lines : Array(::String), start_index : Int32) : FunctionDefinition | Nil
+    def parse_function_def(source_lines : Array(::String), start_index : Int32) : FunctionDefinition?
       parameters = [] of FunctionParameter
       def_line = source_lines[start_index]
       return unless def_line.includes?("def ")
@@ -244,7 +244,7 @@ module Analyzer::Python
     end
 
     # Parses a function or class definition from a string or an array of strings
-    def parse_code_block(data : ::String | Array(::String), after : Regex | Nil = nil) : ::String | Nil
+    def parse_code_block(data : ::String | Array(::String), after : Regex? = nil) : ::String?
       content = ""
       lines = [] of ::String
       if data.is_a?(::String)
@@ -336,19 +336,16 @@ module Analyzer::Python
     # Returns the literal value from a string if it represents a number or a quoted string
     def return_literal_value(data : ::String) : ::String
       # Check if the data is numeric
-      if data.numeric?
-        data
-      else
-        # Check if the data is a string
-        if data.size != 0
-          if data[0] == data[-1] && ['"', '\''].includes? data[0]
-            data = data[1..-2]
-            data
-          end
+      return data if data.numeric?
+
+      # Check if the data is a string
+      if data.size != 0
+        if data[0] == data[-1] && data[0].in?('"', '\'')
+          return data[1..-2]
         end
       end
 
-      ""
+      data
     end
 
     module PackageType

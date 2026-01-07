@@ -8,119 +8,119 @@ module LLM
   SYSTEM_BUNDLE  = "#{SHARED_RULES} Given a bundle of files, include endpoints from ALL files; return the same JSON schema."
 
   FILTER_PROMPT = <<-PROMPT
-  Analyze the following list of file paths and identify which files are likely to represent endpoints, including API endpoints, web pages, or static resources.
+    Analyze the following list of file paths and identify which files are likely to represent endpoints, including API endpoints, web pages, or static resources.
 
-  Guidelines:
-  - Focus only on individual files.
-  - Do not include directories.
-  - Do not include any explanations, comments, or additional text.
-  - Output only the JSON result.
-  - Return the result strictly in valid JSON format according to the schema provided below.
+    Guidelines:
+    - Focus only on individual files.
+    - Do not include directories.
+    - Do not include any explanations, comments, or additional text.
+    - Output only the JSON result.
+    - Return the result strictly in valid JSON format according to the schema provided below.
 
-  Input Files:
-  PROMPT
+    Input Files:
+    PROMPT
 
-  FILTER_FORMAT = <<-FORMAT
-  {
-    "type": "json_schema",
-    "json_schema": {
-      "name": "filter_files",
-      "schema": {
-        "type": "object",
-        "properties": {
-          "files": {
-            "type": "array",
-            "items": {
-              "type": "string"
+  FILTER_FORMAT = <<-JSON
+    {
+      "type": "json_schema",
+      "json_schema": {
+        "name": "filter_files",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "files": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
-          }
+          },
+          "required": ["files"],
+          "additionalProperties": false
         },
-        "required": ["files"],
-        "additionalProperties": false
-      },
-      "strict": true
+        "strict": true
+      }
     }
-  }
-  FORMAT
+    JSON
 
   ANALYZE_PROMPT = <<-PROMPT
-  Analyze the provided source code to extract details about the endpoints and their parameters.
+    Analyze the provided source code to extract details about the endpoints and their parameters.
 
-  Guidelines:
-  - The "method" field should strictly use one of these values: "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD".
-  - The "param_type" must strictly use one of these values: "query", "json", "form", "header", "cookie", "path".
-  - Do not include any explanations, comments, or additional text.
-  - Output only the JSON result.
-  - Return the result strictly in valid JSON format according to the schema provided below.
+    Guidelines:
+    - The "method" field should strictly use one of these values: "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD".
+    - The "param_type" must strictly use one of these values: "query", "json", "form", "header", "cookie", "path".
+    - Do not include any explanations, comments, or additional text.
+    - Output only the JSON result.
+    - Return the result strictly in valid JSON format according to the schema provided below.
 
-  Input Code:
-  PROMPT
+    Input Code:
+    PROMPT
 
-  ANALYZE_FORMAT = <<-FORMAT
-  {
-    "type": "json_schema",
-    "json_schema": {
-      "name": "analyze_endpoints",
-      "schema": {
-        "type": "object",
-        "properties": {
-          "endpoints": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "url": {
-                  "type": "string"
-                },
-                "method": {
-                  "type": "string"
-                },
-                "params": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "name": {
-                        "type": "string"
+  ANALYZE_FORMAT = <<-JSON
+    {
+      "type": "json_schema",
+      "json_schema": {
+        "name": "analyze_endpoints",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "endpoints": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string"
+                  },
+                  "method": {
+                    "type": "string"
+                  },
+                  "params": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "param_type": {
+                          "type": "string"
+                        },
+                        "value": {
+                          "type": "string"
+                        }
                       },
-                      "param_type": {
-                        "type": "string"
-                      },
-                      "value": {
-                        "type": "string"
-                      }
-                    },
-                    "required": ["name", "param_type", "value"],
-                    "additionalProperties": false
+                      "required": ["name", "param_type", "value"],
+                      "additionalProperties": false
+                    }
                   }
-                }
-              },
-              "required": ["url", "method", "params"],
-              "additionalProperties": false
+                },
+                "required": ["url", "method", "params"],
+                "additionalProperties": false
+              }
             }
-          }
+          },
+          "required": ["endpoints"],
+          "additionalProperties": false
         },
-        "required": ["endpoints"],
-        "additionalProperties": false
-      },
-      "strict": true
+        "strict": true
+      }
     }
-  }
-  FORMAT
+    JSON
 
   BUNDLE_ANALYZE_PROMPT = <<-PROMPT
-  Analyze the following bundle of source code files to extract details about the endpoints and their parameters.
+    Analyze the following bundle of source code files to extract details about the endpoints and their parameters.
 
-  Guidelines:
-  - The "method" field should strictly use one of these values: "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD".
-  - The "param_type" must strictly use one of these values: "query", "json", "form", "header", "cookie", "path".
-  - Include endpoints from ALL files in the bundle.
-  - Do not include any explanations, comments, or additional text.
-  - Output only the JSON result.
-  - Return the result strictly in valid JSON format according to the schema provided below.
+    Guidelines:
+    - The "method" field should strictly use one of these values: "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD".
+    - The "param_type" must strictly use one of these values: "query", "json", "form", "header", "cookie", "path".
+    - Include endpoints from ALL files in the bundle.
+    - Do not include any explanations, comments, or additional text.
+    - Output only the JSON result.
+    - Return the result strictly in valid JSON format according to the schema provided below.
 
-  Bundle of files:
-  PROMPT
+    Bundle of files:
+    PROMPT
 
   # Map of LLM providers and their models to their max token limits
   # This helps determine how many files can be bundled together

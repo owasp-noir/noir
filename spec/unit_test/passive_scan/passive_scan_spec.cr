@@ -7,7 +7,7 @@ describe NoirPassiveScan do
   it "detects matches with 'and' condition" do
     logger = NoirLogger.new(false, false, false, true)
     rules = [
-      PassiveScan.new(YAML.parse(%(
+      PassiveScan.new(YAML.parse(<<-YAML)),
         id: hahwul-test
         info:
           name: use x-api-key
@@ -29,7 +29,7 @@ describe NoirPassiveScan do
         techs:
           - '*'
           - ruby-rails
-      ))),
+        YAML
     ]
     file_content = "This is a test content.\nAnother test line."
     results = NoirPassiveScan.detect("test_file.txt", file_content, rules, logger)
@@ -41,7 +41,7 @@ describe NoirPassiveScan do
   it "detects matches with 'or' condition" do
     logger = NoirLogger.new(false, false, false, true)
     rules = [
-      PassiveScan.new(YAML.parse(%(
+      PassiveScan.new(YAML.parse(<<-YAML)),
         id: hahwul-test
         info:
           name: use x-api-key
@@ -63,7 +63,7 @@ describe NoirPassiveScan do
         techs:
           - '*'
           - ruby-rails
-      ))),
+        YAML
     ]
     file_content = "This is a test content.\nAnother test line."
     results = NoirPassiveScan.detect("test_file.txt", file_content, rules, logger)
@@ -76,7 +76,7 @@ describe NoirPassiveScan do
   it "detects regex matches" do
     logger = NoirLogger.new(false, false, false, true)
     rules = [
-      PassiveScan.new(YAML.parse(%(
+      PassiveScan.new(YAML.parse(<<-YAML)),
         id: hahwul-test
         info:
           name: use x-api-key
@@ -97,7 +97,7 @@ describe NoirPassiveScan do
         techs:
           - '*'
           - ruby-rails
-      ))),
+        YAML
     ]
     file_content = "This is a test content.\nAnother test line."
     results = NoirPassiveScan.detect("test_file.txt", file_content, rules, logger)
@@ -110,7 +110,7 @@ describe NoirPassiveScan do
     it "filters by critical severity only" do
       logger = NoirLogger.new(false, false, false, true)
       rules = [
-        PassiveScan.new(YAML.parse(%(
+        PassiveScan.new(YAML.parse(<<-YAML)),
           id: test-critical
           info:
             name: Critical Issue
@@ -129,8 +129,8 @@ describe NoirPassiveScan do
           category: security
           techs:
             - '*'
-        ))),
-        PassiveScan.new(YAML.parse(%(
+          YAML
+        PassiveScan.new(YAML.parse(<<-YAML)),
           id: test-high
           info:
             name: High Issue
@@ -149,7 +149,7 @@ describe NoirPassiveScan do
           category: security
           techs:
             - '*'
-        ))),
+          YAML
       ]
       file_content = "This is a critical issue and a high priority item."
 
@@ -162,7 +162,7 @@ describe NoirPassiveScan do
     it "filters by high severity and above" do
       logger = NoirLogger.new(false, false, false, true)
       rules = [
-        PassiveScan.new(YAML.parse(%(
+        PassiveScan.new(YAML.parse(<<-YAML)),
           id: test-critical
           info:
             name: Critical Issue
@@ -181,8 +181,8 @@ describe NoirPassiveScan do
           category: security
           techs:
             - '*'
-        ))),
-        PassiveScan.new(YAML.parse(%(
+          YAML
+        PassiveScan.new(YAML.parse(<<-YAML)),
           id: test-high
           info:
             name: High Issue
@@ -201,8 +201,8 @@ describe NoirPassiveScan do
           category: security
           techs:
             - '*'
-        ))),
-        PassiveScan.new(YAML.parse(%(
+          YAML
+        PassiveScan.new(YAML.parse(<<-YAML)),
           id: test-medium
           info:
             name: Medium Issue
@@ -221,7 +221,7 @@ describe NoirPassiveScan do
           category: security
           techs:
             - '*'
-        ))),
+          YAML
       ]
       file_content = "This is a critical issue, a high priority item, and a medium concern."
 
@@ -237,7 +237,7 @@ describe NoirPassiveScan do
     it "filters by medium severity and above" do
       logger = NoirLogger.new(false, false, false, true)
       rules = [
-        PassiveScan.new(YAML.parse(%(
+        PassiveScan.new(YAML.parse(<<-YAML)),
           id: test-critical
           info:
             name: Critical Issue
@@ -256,8 +256,8 @@ describe NoirPassiveScan do
           category: security
           techs:
             - '*'
-        ))),
-        PassiveScan.new(YAML.parse(%(
+          YAML
+        PassiveScan.new(YAML.parse(<<-YAML)),
           id: test-medium
           info:
             name: Medium Issue
@@ -276,8 +276,8 @@ describe NoirPassiveScan do
           category: security
           techs:
             - '*'
-        ))),
-        PassiveScan.new(YAML.parse(%(
+          YAML
+        PassiveScan.new(YAML.parse(<<-YAML)),
           id: test-low
           info:
             name: Low Issue
@@ -296,7 +296,7 @@ describe NoirPassiveScan do
           category: info
           techs:
             - '*'
-        ))),
+          YAML
       ]
       file_content = "This is a critical issue, a medium concern, and a low priority item."
 
@@ -312,7 +312,7 @@ describe NoirPassiveScan do
     it "includes all severities with low threshold" do
       logger = NoirLogger.new(false, false, false, true)
       rules = [
-        PassiveScan.new(YAML.parse(%(
+        PassiveScan.new(YAML.parse(<<-YAML)),
           id: test-critical
           info:
             name: Critical Issue
@@ -331,8 +331,8 @@ describe NoirPassiveScan do
           category: security
           techs:
             - '*'
-        ))),
-        PassiveScan.new(YAML.parse(%(
+          YAML
+        PassiveScan.new(YAML.parse(<<-YAML)),
           id: test-low
           info:
             name: Low Issue
@@ -351,7 +351,7 @@ describe NoirPassiveScan do
           category: info
           techs:
             - '*'
-        ))),
+          YAML
       ]
       file_content = "This is a critical issue and a low priority item."
 

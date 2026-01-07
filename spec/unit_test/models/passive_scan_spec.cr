@@ -6,7 +6,7 @@ require "yaml"
 describe "PassiveScan" do
   describe "Info" do
     it "initializes from YAML" do
-      yaml_str = %(
+      yaml_str = <<-YAML
         name: "Test Rule"
         author:
           - "Test Author"
@@ -14,7 +14,7 @@ describe "PassiveScan" do
         description: "Test description"
         reference:
           - "https://example.com"
-      )
+        YAML
       yaml = YAML.parse(yaml_str)
       info = PassiveScan::Info.new(yaml)
 
@@ -28,12 +28,12 @@ describe "PassiveScan" do
 
   describe "Matcher" do
     it "initializes from YAML" do
-      yaml_str = %(
+      yaml_str = <<-YAML
         type: "regex"
         patterns:
           - "test.*pattern"
         condition: "or"
-      )
+        YAML
       yaml = YAML.parse(yaml_str)
       matcher = PassiveScan::Matcher.new(yaml)
 
@@ -45,7 +45,7 @@ describe "PassiveScan" do
 
   describe "PassiveScan" do
     it "initializes complete scan from YAML" do
-      yaml_str = %(
+      yaml_str = <<-YAML
         id: "test-scan-001"
         info:
           name: "Test Rule"
@@ -64,7 +64,7 @@ describe "PassiveScan" do
         category: "security"
         techs:
           - "javascript"
-      )
+        YAML
       yaml = YAML.parse(yaml_str)
       scan = PassiveScan.new(yaml)
 
@@ -77,7 +77,7 @@ describe "PassiveScan" do
     end
 
     it "validates valid scan" do
-      yaml_str = %(
+      yaml_str = <<-YAML
         id: "test-scan-001"
         info:
           name: "Test Rule"
@@ -96,17 +96,17 @@ describe "PassiveScan" do
         category: "security"
         techs:
           - "javascript"
-      )
+        YAML
       yaml = YAML.parse(yaml_str)
       scan = PassiveScan.new(yaml)
 
-      scan.valid?.should eq(true)
+      scan.valid?.should be_true
     end
   end
 
   describe "PassiveScanResult" do
     it "initializes from PassiveScan" do
-      yaml_str = %(
+      yaml_str = <<-YAML
         id: "test-scan-001"
         info:
           name: "Test Rule"
@@ -125,7 +125,7 @@ describe "PassiveScan" do
         category: "security"
         techs:
           - "javascript"
-      )
+        YAML
       yaml = YAML.parse(yaml_str)
       scan = PassiveScan.new(yaml)
 
@@ -145,7 +145,7 @@ describe "PassiveScan" do
     end
 
     it "serializes to JSON" do
-      yaml_str = %(
+      yaml_str = <<-YAML
         id: "test-scan-001"
         info:
           name: "Test Rule"
@@ -164,7 +164,7 @@ describe "PassiveScan" do
         category: "security"
         techs:
           - "javascript"
-      )
+        YAML
       yaml = YAML.parse(yaml_str)
       scan = PassiveScan.new(yaml)
 

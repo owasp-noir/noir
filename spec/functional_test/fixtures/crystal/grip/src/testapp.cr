@@ -44,7 +44,7 @@ end
 class ChatController
   include Grip::Controllers::WebSocket
 
-  def on_message(context : Context, message : String) : Void
+  def on_message(context : Context, message : String) : Nil
     context.send(message)
   end
 end

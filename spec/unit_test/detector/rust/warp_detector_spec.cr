@@ -6,6 +6,6 @@ describe "Detect Rust Warp" do
   instance = Detector::Rust::Warp.new options
 
   it "Cargo.toml" do
-    instance.detect("Cargo.toml", "[dependencies]\nwarp = {}").should eq(true)
+    instance.detect("Cargo.toml", "[dependencies]\nwarp = {}").should be_true
   end
 end

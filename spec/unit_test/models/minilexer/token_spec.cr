@@ -30,8 +30,8 @@ describe "Token" do
     it "checks token type correctly" do
       token = Token.new(:keyword, "if", 0)
 
-      token.is?(:keyword).should eq(true)
-      token.is?(:string).should eq(false)
+      token.is?(:keyword).should be_true
+      token.is?(:string).should be_false
     end
   end
 

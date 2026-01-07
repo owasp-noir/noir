@@ -6,9 +6,9 @@ describe "Detect Ruby Hanami" do
   instance = Detector::Ruby::Hanami.new options
 
   it "gemfile/single_quot" do
-    instance.detect("Gemfile", "gem 'hanami'").should eq(true)
+    instance.detect("Gemfile", "gem 'hanami'").should be_true
   end
   it "gemfile/double_quot" do
-    instance.detect("Gemfile", "gem \"hanami\"").should eq(true)
+    instance.detect("Gemfile", "gem \"hanami\"").should be_true
   end
 end

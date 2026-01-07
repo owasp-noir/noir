@@ -129,139 +129,139 @@ class ConfigInitializer
 
   def generate_config_file
     options = default_options
-    content = <<-CONTENT
-    ---
-    # Noir configuration file
-    # This file is used to store the configuration options for Noir.
-    # You can edit this file to change the configuration options.
+    content = <<-YAML
+      ---
+      # Noir configuration file
+      # This file is used to store the configuration options for Noir.
+      # You can edit this file to change the configuration options.
 
-    # Config values are defaults; CLI options take precedence.
-    # **************************************************************
+      # Config values are defaults; CLI options take precedence.
+      # **************************************************************
 
-    # Base directory for the application (can be an array for multiple paths)
-    base: []
+      # Base directory for the application (can be an array for multiple paths)
+      base: []
 
-    # Whether to use color in the output
-    color: #{options["color"]}
+      # Whether to use color in the output
+      color: #{options["color"]}
 
-    # The configuration file to use
-    config_file: "#{options["config_file"]}"
+      # The configuration file to use
+      config_file: "#{options["config_file"]}"
 
-    # The number of concurrent operations to perform
-    concurrency: "#{options["concurrency"]}"
+      # The number of concurrent operations to perform
+      concurrency: "#{options["concurrency"]}"
 
-    # Whether to enable debug mode
-    debug: #{options["debug"]}
+      # Whether to enable debug mode
+      debug: #{options["debug"]}
 
-    # Whether to enable verbose mode
-    verbose: #{options["verbose"]}
+      # Whether to enable verbose mode
+      verbose: #{options["verbose"]}
 
-    # The status codes to exclude
-    exclude_codes: "#{options["exclude_codes"]}"
+      # The status codes to exclude
+      exclude_codes: "#{options["exclude_codes"]}"
 
-    # Technologies to exclude
-    exclude_techs: "#{options["exclude_techs"]}"
+      # Technologies to exclude
+      exclude_techs: "#{options["exclude_techs"]}"
 
-    # The format to use for the output
-    format: "#{options["format"]}"
+      # The format to use for the output
+      format: "#{options["format"]}"
 
-    # Whether to include the path in the output
-    include_path: #{options["include_path"]}
+      # Whether to include the path in the output
+      include_path: #{options["include_path"]}
 
-    # Whether to include the technology in the output
-    include_techs: #{options["include_techs"]}
+      # Whether to include the technology in the output
+      include_techs: #{options["include_techs"]}
 
-    # Whether to disable logging
-    nolog: #{options["nolog"]}
+      # Whether to disable logging
+      nolog: #{options["nolog"]}
 
-    # The output file to write to
-    output: "#{options["output"]}"
+      # The output file to write to
+      output: "#{options["output"]}"
 
-    # The Elasticsearch server to send data to
-    # e.g http://localhost:9200
-    send_es: "#{options["send_es"]}"
+      # The Elasticsearch server to send data to
+      # e.g http://localhost:9200
+      send_es: "#{options["send_es"]}"
 
-    # The proxy server to use
-    # e.g http://localhost:8080
-    send_proxy: "#{options["send_proxy"]}"
+      # The proxy server to use
+      # e.g http://localhost:8080
+      send_proxy: "#{options["send_proxy"]}"
 
-    # Whether to send a request
-    send_req: #{options["send_req"]}
+      # Whether to send a request
+      send_req: #{options["send_req"]}
 
-    # Whether to send headers with the request (Array of strings)
-    # e.g "Authorization: Bearer token"
-    send_with_headers:
+      # Whether to send headers with the request (Array of strings)
+      # e.g "Authorization: Bearer token"
+      send_with_headers:
 
-    # The value to set for pvalue (Array of strings)
-    set_pvalue:
-    set_pvalue_header:
-    set_pvalue_cookie:
-    set_pvalue_query:
-    set_pvalue_form:
-    set_pvalue_json:
-    set_pvalue_path:
+      # The value to set for pvalue (Array of strings)
+      set_pvalue:
+      set_pvalue_header:
+      set_pvalue_cookie:
+      set_pvalue_query:
+      set_pvalue_form:
+      set_pvalue_json:
+      set_pvalue_path:
 
-    # The status codes to use
-    status_codes: #{options["status_codes"]}
+      # The status codes to use
+      status_codes: #{options["status_codes"]}
 
-    # The technologies to use
-    techs: "#{options["techs"]}"
+      # The technologies to use
+      techs: "#{options["techs"]}"
 
-    # The URL to use
-    url: "#{options["url"]}"
+      # The URL to use
+      url: "#{options["url"]}"
 
-    # Whether to use filters (Array of strings)
-    use_filters:
+      # Whether to use filters (Array of strings)
+      use_filters:
 
-    # Whether to use matchers (Array of strings)
-    use_matchers:
+      # Whether to use matchers (Array of strings)
+      use_matchers:
 
-    # Whether to use all taggers
-    all_taggers: #{options["all_taggers"]}
+      # Whether to use all taggers
+      all_taggers: #{options["all_taggers"]}
 
-    # The taggers to use
-    # e.g "tagger1,tagger2"
-    # To see the list of all taggers, please use the noir command with --list-taggers
-    use_taggers: "#{options["use_taggers"]}"
+      # The taggers to use
+      # e.g "tagger1,tagger2"
+      # To see the list of all taggers, please use the noir command with --list-taggers
+      use_taggers: "#{options["use_taggers"]}"
 
-    # The diff file to use
-    diff: "#{options["diff"]}"
+      # The diff file to use
+      diff: "#{options["diff"]}"
 
-    # The passive rules to use
-    # e.g /path/to/rules
-    passive_scan: false
-    passive_scan_path: []
+      # The passive rules to use
+      # e.g /path/to/rules
+      passive_scan: false
+      passive_scan_path: []
 
-    # Minimum severity level for passive scan (critical, high, medium, low)
-    # Default: high (detects high and critical severity issues)
-    passive_scan_severity: "high"
+      # Minimum severity level for passive scan (critical, high, medium, low)
+      # Default: high (detects high and critical severity issues)
+      passive_scan_severity: "high"
 
-    # Automatically update passive rules from repository at startup
-    passive_scan_auto_update: false
+      # Automatically update passive rules from repository at startup
+      passive_scan_auto_update: false
 
-    # Skip checking for passive rules updates at startup
-    passive_scan_no_update_check: false
+      # Skip checking for passive rules updates at startup
+      passive_scan_no_update_check: false
 
-    # The AI server URL
-    ai_provider: "#{options["ai_provider"]}"
+      # The AI server URL
+      ai_provider: "#{options["ai_provider"]}"
 
-    # The AI model to use
-    ai_model: "#{options["ai_model"]}"
+      # The AI model to use
+      ai_model: "#{options["ai_model"]}"
 
-    # The API key for the AI server
-    ai_key: "#{options["ai_key"]}"
+      # The API key for the AI server
+      ai_key: "#{options["ai_key"]}"
 
-    # The maximum number of tokens for AI requests (0 = no limit)
-    ai_max_token: #{options["ai_max_token"]}
+      # The maximum number of tokens for AI requests (0 = no limit)
+      ai_max_token: #{options["ai_max_token"]}
 
-    # CACHE:
-    # Disable LLM disk cache for this run
-    cache_disable: #{options["cache_disable"]}
+      # CACHE:
+      # Disable LLM disk cache for this run
+      cache_disable: #{options["cache_disable"]}
 
-    # Clear LLM cache directory before run
-    cache_clear: #{options["cache_clear"]}
+      # Clear LLM cache directory before run
+      cache_clear: #{options["cache_clear"]}
 
-    CONTENT
+      YAML
 
     content
   end

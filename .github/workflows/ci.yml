@@ -67,10 +67,8 @@ jobs:
       - uses: MeilCli/setup-crystal-action@v4
         with:
           crystal_version: 1.18.0
-      - name: Install dependencies
-        run: shards install
-      - name: Ameba
-        run: ./bin/ameba -c .ameba.yml
+      - name: Run Ameba linter
+        uses: crystal-ameba/github-action@master
   tests:
     runs-on: ubuntu-latest
     container:

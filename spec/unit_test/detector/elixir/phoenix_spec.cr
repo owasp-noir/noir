@@ -6,6 +6,6 @@ describe "Detect Elixir Phoenix" do
   instance = Detector::Elixir::Phoenix.new options
 
   it "mix" do
-    instance.detect("mix.exs", "ElixirPhoenix").should eq(true)
+    instance.detect("mix.exs", "ElixirPhoenix").should be_true
   end
 end

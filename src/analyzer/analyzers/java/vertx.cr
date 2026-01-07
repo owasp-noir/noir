@@ -38,7 +38,7 @@ module Analyzer::Java
                       method = match[1].upcase
                       endpoint = match[2]
 
-                      next if !["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "CONNECT", "TRACE"].includes?(method)
+                      next if !method.in?(%w[GET POST PUT DELETE PATCH HEAD OPTIONS CONNECT TRACE])
                       next if endpoint.empty?
 
                       @result << Endpoint.new(endpoint, method, details)
@@ -50,7 +50,7 @@ module Analyzer::Java
                       endpoint = match[1]
                       method = match[2].upcase
 
-                      next if !["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "CONNECT", "TRACE"].includes?(method)
+                      next if !method.in?(%w[GET POST PUT DELETE PATCH HEAD OPTIONS CONNECT TRACE])
                       next if endpoint.empty?
 
                       @result << Endpoint.new(endpoint, method, details)

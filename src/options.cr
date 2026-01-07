@@ -48,55 +48,55 @@ end
 
 private def base_help : String
   <<-HELP
-  #{"Hunt every Endpoint, expose Shadow APIs, map the Attack Surface.".colorize(:cyan)}
+    #{"Hunt every Endpoint, expose Shadow APIs, map the Attack Surface.".colorize(:cyan)}
 
-  #{"USAGE:".colorize(:green)}
-    noir -b BASE_PATH [flags]
+    #{"USAGE:".colorize(:green)}
+      noir -b BASE_PATH [flags]
 
-  #{"EXAMPLES:".colorize(:green)}
-    #{"Basic scan".colorize(:yellow)}
-      noir -b ./myapp
+    #{"EXAMPLES:".colorize(:green)}
+      #{"Basic scan".colorize(:yellow)}
+        noir -b ./myapp
 
-    #{"JSON output to file".colorize(:yellow)}
-      noir -b ./myapp -f json -o endpoints.json
+      #{"JSON output to file".colorize(:yellow)}
+        noir -b ./myapp -f json -o endpoints.json
 
-    #{"Enable passive security scan".colorize(:yellow)}
-      noir -b ./myapp -P
+      #{"Enable passive security scan".colorize(:yellow)}
+        noir -b ./myapp -P
 
-    #{"AI integration".colorize(:yellow)}
-      $ noir -b . --ai-provider openai --ai-model gpt-5.1 --ai-key YOUR_API_KEY
+      #{"AI integration".colorize(:yellow)}
+        $ noir -b . --ai-provider openai --ai-model gpt-5.1 --ai-key YOUR_API_KEY
 
-    #{"Forward results via proxy (Burp/ZAP)".colorize(:yellow)}
-      noir -b ./myapp --send-proxy http://127.0.0.1:8080
+      #{"Forward results via proxy (Burp/ZAP)".colorize(:yellow)}
+        noir -b ./myapp --send-proxy http://127.0.0.1:8080
 
-  HELP
+    HELP
 end
 
 private def full_examples_and_env : String
   <<-EXTRA
-  \n#{"EXAMPLES:".colorize(:green)}
-    #{"Basic run".colorize(:yellow)}
-      $ noir -b .
+    \n#{"EXAMPLES:".colorize(:green)}
+      #{"Basic run".colorize(:yellow)}
+        $ noir -b .
 
-    #{"With base URL and proxy".colorize(:yellow)}
-      $ noir -b . -u http://example.com --send-proxy http://localhost:8090
+      #{"With base URL and proxy".colorize(:yellow)}
+        $ noir -b . -u http://example.com --send-proxy http://localhost:8090
 
-    #{"Detailed analysis".colorize(:yellow)}
-      $ noir -b . -T --include-path
+      #{"Detailed analysis".colorize(:yellow)}
+        $ noir -b . -T --include-path
 
-    #{"JSON or YAML output without logs".colorize(:yellow)}
-      $ noir -b . -f json --no-log
-      $ noir -b . -f yaml --no-log
+      #{"JSON or YAML output without logs".colorize(:yellow)}
+        $ noir -b . -f json --no-log
+        $ noir -b . -f yaml --no-log
 
-    #{"Specific technology".colorize(:yellow)}
-      $ noir -b . -t rails
-      $ noir -b . -t rails --exclude-techs php
+      #{"Specific technology".colorize(:yellow)}
+        $ noir -b . -t rails
+        $ noir -b . -t rails --exclude-techs php
 
-  #{"ENVIRONMENT VARIABLES:".colorize(:green)}
-    NOIR_HOME          Path to directory containing config file
-    NOIR_AI_KEY        API key for AI providers (OpenAI, xAI, etc.)
-    NOIR_MAX_FILE_SIZE Maximum file size for analysis (e.g. 5MB or 1048576)
-  EXTRA
+    #{"ENVIRONMENT VARIABLES:".colorize(:green)}
+      NOIR_HOME          Path to directory containing config file
+      NOIR_AI_KEY        API key for AI providers (OpenAI, xAI, etc.)
+      NOIR_MAX_FILE_SIZE Maximum file size for analysis (e.g. 5MB or 1048576)
+    EXTRA
 end
 
 def run_options_parser
@@ -198,7 +198,7 @@ def run_options_parser
     end
     parser.on "--passive-scan-severity LVL", "Min severity (critical|high|medium|low, default: high)" do |v|
       lvl = v.downcase
-      if %w[critical high medium low].includes?(lvl)
+      if lvl.in?(%w[critical high medium low])
         noir_options["passive_scan_severity"] = YAML::Any.new(lvl)
       else
         STDERR.puts "ERROR: Invalid severity '#{v}'. Valid: critical, high, medium, low".colorize(:yellow)

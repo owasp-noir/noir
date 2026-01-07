@@ -24,7 +24,7 @@ class WaitGroup
     @channel.receive
   end
 
-  def spawn(&block : -> Void)
+  def spawn(&block)
     add(1)
     ::spawn do
       begin

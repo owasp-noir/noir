@@ -179,11 +179,11 @@ module Analyzer::Java
                         annotation_parameter_key = annotation_parameter_tokens[0].value
                         annotation_parameter_value = annotation_parameter_tokens[-1].value
                         if annotation_parameter_key == "method"
-                          if ["}", "]"].includes?(annotation_parameter_value)
+                          if annotation_parameter_value.in?("}", "]")
                             # Handle methods declared with multiple HTTP verbs
                             annotation_parameter_tokens.reverse_each do |token|
                               break if token.value == "method"
-                              next if [:LBRACE, :RBRACE, :LBRACK, :RBRACK, :COMMA, :DOT].includes?(token.type)
+                              next if token.type.in?(:LBRACE, :RBRACE, :LBRACK, :RBRACK, :COMMA, :DOT)
                               http_methods = ["GET", "POST", "PUT", "DELETE", "PATCH"]
                               if http_methods.includes?(token.value)
                                 request_methods.push(token.value)
@@ -355,7 +355,7 @@ module Analyzer::Java
       url_paths
     end
 
-    def get_endpoint_parameters(parser : JavaParser, request_method : String, method : MethodModel, parameter_format : String | Nil, package_class_map : Hash(String, ClassModel)) : Array(Param)
+    def get_endpoint_parameters(parser : JavaParser, request_method : String, method : MethodModel, parameter_format : String?, package_class_map : Hash(String, ClassModel)) : Array(Param)
       endpoint_parameters = Array(Param).new
       method.params.each do |method_param_tokens|
         next if method_param_tokens.size == 0

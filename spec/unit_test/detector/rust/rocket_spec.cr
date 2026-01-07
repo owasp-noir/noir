@@ -6,6 +6,6 @@ describe "Detect Rust Rocket" do
   instance = Detector::Rust::Rocket.new options
 
   it "Gargo.toml" do
-    instance.detect("Cargo.toml", "[dependencies]\nrocket = {}").should eq(true)
+    instance.detect("Cargo.toml", "[dependencies]\nrocket = {}").should be_true
   end
 end

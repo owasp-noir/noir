@@ -27,27 +27,22 @@ struct Tech
   property key : String
   property framework : String
   property language : String?
-  property is_format : Bool
+  property? format : Bool
   property formats : Array(String)?
-  property endpoint : Bool
-  property method : Bool
-  property query : Bool
-  property path : Bool
-  property body : Bool
-  property header : Bool
-  property cookie : Bool
-  property static_path : Bool
-  property websocket : Bool
-
-  # Predicate methods for boolean properties
-  def format?
-    @is_format
-  end
+  property? endpoint : Bool
+  property? method : Bool
+  property? query : Bool
+  property? path : Bool
+  property? body : Bool
+  property? header : Bool
+  property? cookie : Bool
+  property? static_path : Bool
+  property? websocket : Bool
 
   def initialize(@key : String)
     @framework = ""
     @language = nil
-    @is_format = false
+    @format = false
     @formats = nil
     @endpoint = false
     @method = false
@@ -93,18 +88,18 @@ def run_list_techs(root : String) : {Int32, String}
 end
 
 TECH_HEADER = <<-MD
-+++
-title = "Supported Languages and Frameworks"
-description = "A detailed overview of the programming languages and frameworks supported by Noir, including feature compatibility for each."
-weight = 1
-sort_by = "weight"
+  +++
+  title = "Supported Languages and Frameworks"
+  description = "A detailed overview of the programming languages and frameworks supported by Noir, including feature compatibility for each."
+  weight = 1
+  sort_by = "weight"
 
-[extra]
-+++
+  [extra]
+  +++
 
-Noir is a tool designed to analyze and understand codebases by identifying endpoints and their specifications. This section provides a comprehensive list of the programming languages that Noir supports. For each language, this page shows a single table with a Framework column and the following fields: endpoint, method, query, path, body, header, cookie, static_path, websocket.
+  Noir is a tool designed to analyze and understand codebases by identifying endpoints and their specifications. This section provides a comprehensive list of the programming languages that Noir supports. For each language, this page shows a single table with a Framework column and the following fields: endpoint, method, query, path, body, header, cookie, static_path, websocket.
 
-MD
+  MD
 
 def parse_tech_blocks(text : String) : Array(Tech)
   lines = text.lines
@@ -212,7 +207,7 @@ def finalize_block(tech : Tech, block_lines : Array(String)) : Tech
     tech.language = t_language unless t_language.empty?
   end
   if is_format
-    tech.format? = true
+    tech.format = true
     tech.formats = formats unless formats.empty?
   end
 
@@ -272,7 +267,7 @@ def generate_language_tables(techs : Array(Tech)) : String
     io << "| Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |\n"
     io << "|-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|\n"
     by_language[lang].each do |t|
-      io << "| #{t.framework} | #{check(t.endpoint)} | #{check(t.method)} | #{check(t.query)} | #{check(t.path)} | #{check(t.body)} | #{check(t.header)} | #{check(t.cookie)} | #{check(t.static_path)} | #{check(t.websocket)} |\n"
+      io << "| #{t.framework} | #{check(t.endpoint?)} | #{check(t.method?)} | #{check(t.query?)} | #{check(t.path?)} | #{check(t.body?)} | #{check(t.header?)} | #{check(t.cookie?)} | #{check(t.static_path?)} | #{check(t.websocket?)} |\n"
     end
     io << "\n"
   end
@@ -307,20 +302,20 @@ def default_spec_output_path(root : String) : String
 end
 
 SPEC_HEADER = <<-MD
-+++
-title = "Supported Specifications"
-description = "This page provides a detailed overview of the API and data specifications that Noir supports, including OpenAPI (Swagger), RAML, HAR, and GraphQL. See the compatibility table for more information."
-weight = 2
-sort_by = "weight"
+  +++
+  title = "Supported Specifications"
+  description = "This page provides a detailed overview of the API and data specifications that Noir supports, including OpenAPI (Swagger), RAML, HAR, and GraphQL. See the compatibility table for more information."
+  weight = 2
+  sort_by = "weight"
 
-[extra]
-+++
+  [extra]
+  +++
 
-In addition to analyzing source code directly, Noir can also parse various API and data specification formats. This allows you to use Noir to analyze existing API documentation, captured network traffic, and more.
+  In addition to analyzing source code directly, Noir can also parse various API and data specification formats. This allows you to use Noir to analyze existing API documentation, captured network traffic, and more.
 
-This section provides a compatibility table for the different specifications that Noir supports.
+  This section provides a compatibility table for the different specifications that Noir supports.
 
-MD
+  MD
 
 def generate_specs_markdown(techs : Array(Tech)) : String
   specs = techs.select { |t| t.format? || t.language.nil? }
@@ -335,10 +330,10 @@ def generate_specs_markdown(techs : Array(Tech)) : String
     name = entry[:name]
     formats = t.formats || [] of String
     if formats.empty?
-      io << "| #{name} |  | #{check(t.endpoint)} | #{check(t.method)} | #{check(t.query)} | #{check(t.path)} | #{check(t.body)} | #{check(t.header)} | #{check(t.cookie)} | #{check(t.static_path)} | #{check(t.websocket)} |\n"
+      io << "| #{name} |  | #{check(t.endpoint?)} | #{check(t.method?)} | #{check(t.query?)} | #{check(t.path?)} | #{check(t.body?)} | #{check(t.header?)} | #{check(t.cookie?)} | #{check(t.static_path?)} | #{check(t.websocket?)} |\n"
     else
       formats.each do |fmt|
-        io << "| #{name} | #{fmt} | #{check(t.endpoint)} | #{check(t.method)} | #{check(t.query)} | #{check(t.path)} | #{check(t.body)} | #{check(t.header)} | #{check(t.cookie)} | #{check(t.static_path)} | #{check(t.websocket)} |\n"
+        io << "| #{name} | #{fmt} | #{check(t.endpoint?)} | #{check(t.method?)} | #{check(t.query?)} | #{check(t.path?)} | #{check(t.body?)} | #{check(t.header?)} | #{check(t.cookie?)} | #{check(t.static_path?)} | #{check(t.websocket?)} |\n"
       end
     end
   end

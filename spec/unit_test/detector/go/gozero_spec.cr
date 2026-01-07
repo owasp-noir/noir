@@ -6,14 +6,14 @@ describe "Detect Go go-zero" do
   instance = Detector::Go::GoZero.new options
 
   it "go.mod with go-zero dependency" do
-    instance.detect("go.mod", "github.com/zeromicro/go-zero").should eq(true)
+    instance.detect("go.mod", "github.com/zeromicro/go-zero").should be_true
   end
 
   it "go.mod without go-zero dependency" do
-    instance.detect("go.mod", "github.com/gin-gonic/gin").should eq(false)
+    instance.detect("go.mod", "github.com/gin-gonic/gin").should be_false
   end
 
   it "non go.mod file" do
-    instance.detect("main.go", "github.com/zeromicro/go-zero").should eq(false)
+    instance.detect("main.go", "github.com/zeromicro/go-zero").should be_false
   end
 end

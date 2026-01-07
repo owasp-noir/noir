@@ -44,21 +44,21 @@ module LLM::PromptOverrides
   # Default LLM_OPTIMIZE_PROMPT value from the optimizer module
   private def self.default_llm_optimize_prompt
     <<-PROMPT
-    Analyze the provided endpoint and optimize it for better structure, naming conventions, and parameter handling.
+      Analyze the provided endpoint and optimize it for better structure, naming conventions, and parameter handling.
 
-    Focus on:
-    - Normalizing unusual URL patterns
-    - Improving parameter naming conventions
-    - Standardizing path structures
-    - Removing redundant or confusing elements
+      Focus on:
+      - Normalizing unusual URL patterns
+      - Improving parameter naming conventions
+      - Standardizing path structures
+      - Removing redundant or confusing elements
 
-    Guidelines:
-    - Keep the core functionality and meaning intact
-    - Use RESTful conventions where appropriate
-    - Ensure parameter types are accurate
-    - Maintain endpoint uniqueness
-    - Do not include explanations or comments
-    - Output only the JSON result according to the schema
-    PROMPT
+      Guidelines:
+      - Keep the core functionality and meaning intact
+      - Use RESTful conventions where appropriate
+      - Ensure parameter types are accurate
+      - Maintain endpoint uniqueness
+      - Do not include explanations or comments
+      - Output only the JSON result according to the schema
+      PROMPT
   end
 end

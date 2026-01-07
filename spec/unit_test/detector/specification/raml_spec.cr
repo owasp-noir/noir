@@ -6,7 +6,7 @@ describe "Detect RAML" do
   instance = Detector::Specification::RAML.new options
 
   it "raml" do
-    instance.detect("app.yaml", "#%RAML\nApp: 1").should eq(true)
+    instance.detect("app.yaml", "#%RAML\nApp: 1").should be_true
   end
 
   it "code_locator" do

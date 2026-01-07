@@ -6,6 +6,6 @@ describe "Detect Go Mux" do
   instance = Detector::Go::Mux.new options
 
   it "go.mod" do
-    instance.detect("go.mod", "github.com/gorilla/mux").should eq(true)
+    instance.detect("go.mod", "github.com/gorilla/mux").should be_true
   end
 end

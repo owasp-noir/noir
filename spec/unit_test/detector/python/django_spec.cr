@@ -6,6 +6,6 @@ describe "Detect Python Django" do
   instance = Detector::Python::Django.new options
 
   it "settings.py" do
-    instance.detect("settings.py", "from django.apps import AppConfig").should eq(true)
+    instance.detect("settings.py", "from django.apps import AppConfig").should be_true
   end
 end

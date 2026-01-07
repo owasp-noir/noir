@@ -6,6 +6,6 @@ describe "Detect Python Sanic" do
   instance = Detector::Python::Sanic.new options
 
   it "detect_sanic - app.py" do
-    instance.detect("app.py", "from sanic import Sanic").should eq(true)
+    instance.detect("app.py", "from sanic import Sanic").should be_true
   end
 end

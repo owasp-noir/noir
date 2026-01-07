@@ -6,9 +6,9 @@ describe "Detect Java Armeria" do
   instance = Detector::Java::Armeria.new options
 
   it "pom.xml" do
-    instance.detect("pom.xml", "com.linecorp.armeria").should eq(true)
+    instance.detect("pom.xml", "com.linecorp.armeria").should be_true
   end
   it "build.gradle" do
-    instance.detect("build.gradle", "com.linecorp.armeria").should eq(true)
+    instance.detect("build.gradle", "com.linecorp.armeria").should be_true
   end
 end

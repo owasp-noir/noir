@@ -6,9 +6,9 @@ describe "Detect JS Restify" do
   instance = Detector::Javascript::Restify.new options
 
   it "require_single_quot" do
-    instance.detect("index.js", "require('restify')").should eq(true)
+    instance.detect("index.js", "require('restify')").should be_true
   end
   it "require_double_quot" do
-    instance.detect("index.js", "require(\"restify\")").should eq(true)
+    instance.detect("index.js", "require(\"restify\")").should be_true
   end
 end

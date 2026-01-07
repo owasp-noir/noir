@@ -6,6 +6,6 @@ describe "Detect Go Chi" do
   instance = Detector::Go::Chi.new options
 
   it "go.mod" do
-    instance.detect("go.mod", "github.com/go-chi/chi").should eq(true)
+    instance.detect("go.mod", "github.com/go-chi/chi").should be_true
   end
 end

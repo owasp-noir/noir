@@ -7,7 +7,7 @@ require "../llm/prompt_overrides"
 # for refining non-standard or unconventional paths and parameters
 class LLMEndpointOptimizer < EndpointOptimizer
   @use_llm : Bool = false
-  @adapter : LLM::Adapter | Nil = nil
+  @adapter : LLM::Adapter? = nil
 
   def initialize(@logger : NoirLogger, @options : Hash(String, YAML::Any))
     super(@logger, @options)
@@ -122,16 +122,16 @@ class LLMEndpointOptimizer < EndpointOptimizer
     end.join("\n")
 
     <<-PROMPT
-    #{LLM::PromptOverrides.llm_optimize_prompt}
+      #{LLM::PromptOverrides.llm_optimize_prompt}
 
-    Endpoint to optimize:
-    - Method: #{endpoint.method}
-    - URL: #{endpoint.url}
-    - Parameters:
-    #{params_info}
+      Endpoint to optimize:
+      - Method: #{endpoint.method}
+      - URL: #{endpoint.url}
+      - Parameters:
+      #{params_info}
 
-    Please provide optimized versions with improved naming, structure, and parameter handling.
-    PROMPT
+      Please provide optimized versions with improved naming, structure, and parameter handling.
+      PROMPT
   end
 
   # Apply LLM optimization suggestions to an endpoint
@@ -214,60 +214,60 @@ class LLMEndpointOptimizer < EndpointOptimizer
 
   # LLM prompt for optimization
   LLM_OPTIMIZE_PROMPT = <<-PROMPT
-  Analyze the provided endpoint and optimize it for better structure, naming conventions, and parameter handling.
+    Analyze the provided endpoint and optimize it for better structure, naming conventions, and parameter handling.
 
-  Focus on:
-  - Normalizing unusual URL patterns
-  - Improving parameter naming conventions
-  - Standardizing path structures
-  - Removing redundant or confusing elements
+    Focus on:
+    - Normalizing unusual URL patterns
+    - Improving parameter naming conventions
+    - Standardizing path structures
+    - Removing redundant or confusing elements
 
-  Guidelines:
-  - Keep the core functionality and meaning intact
-  - Use RESTful conventions where appropriate
-  - Ensure parameter types are accurate
-  - Maintain endpoint uniqueness
-  - Do not include explanations or comments
-  - Output only the JSON result according to the schema
-  PROMPT
+    Guidelines:
+    - Keep the core functionality and meaning intact
+    - Use RESTful conventions where appropriate
+    - Ensure parameter types are accurate
+    - Maintain endpoint uniqueness
+    - Do not include explanations or comments
+    - Output only the JSON result according to the schema
+    PROMPT
 
   # LLM response format for optimization
-  LLM_OPTIMIZE_FORMAT = <<-FORMAT
-  {
-    "type": "json_schema",
-    "json_schema": {
-      "name": "optimize_endpoint",
-      "schema": {
-        "type": "object",
-        "properties": {
-          "optimized_url": {
-            "type": "string"
-          },
-          "optimized_params": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "name": {
-                  "type": "string"
+  LLM_OPTIMIZE_FORMAT = <<-JSON
+    {
+      "type": "json_schema",
+      "json_schema": {
+        "name": "optimize_endpoint",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "optimized_url": {
+              "type": "string"
+            },
+            "optimized_params": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "param_type": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  }
                 },
-                "param_type": {
-                  "type": "string"
-                },
-                "value": {
-                  "type": "string"
-                }
-              },
-              "required": ["name", "param_type", "value"],
-              "additionalProperties": false
+                "required": ["name", "param_type", "value"],
+                "additionalProperties": false
+              }
             }
-          }
+          },
+          "required": ["optimized_url", "optimized_params"],
+          "additionalProperties": false
         },
-        "required": ["optimized_url", "optimized_params"],
-        "additionalProperties": false
-      },
-      "strict": true
+        "strict": true
+      }
     }
-  }
-  FORMAT
+    JSON
 end

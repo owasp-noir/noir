@@ -1,10 +1,10 @@
 def banner
   content = <<-CONTENT
-░█▄─░█ ░█▀▀▀█ ▀█▀ ░█▀▀█
-░█░█░█ ░█──░█ ░█─ ░█▄▄▀
-░█──▀█ ░█▄▄▄█ ▄█▄ ░█─░█ {v#{Noir::VERSION}}
+    ░█▄─░█ ░█▀▀▀█ ▀█▀ ░█▀▀█
+    ░█░█░█ ░█──░█ ░█─ ░█▄▄▀
+    ░█──▀█ ░█▄▄▄█ ▄█▄ ░█─░█ {v#{Noir::VERSION}}
 
-CONTENT
+    CONTENT
   STDERR.puts ""
   STDERR.puts content
   STDERR.puts ""

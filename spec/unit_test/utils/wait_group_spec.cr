@@ -25,7 +25,7 @@ describe "WaitGroup" do
       end
       wg.wait
       # If we get here, wait completed successfully
-      true.should eq(true)
+      true.should be_true
     end
 
     it "wait blocks until count reaches zero" do
@@ -61,7 +61,7 @@ describe "WaitGroup" do
       end
 
       wg.wait
-      executed.should eq(true)
+      executed.should be_true
     end
 
     it "handles multiple spawned tasks" do
@@ -88,7 +88,7 @@ describe "WaitGroup" do
 
       # This should not hang even though the task raised an error
       wg.wait
-      true.should eq(true)
+      true.should be_true
     end
   end
 
@@ -125,14 +125,14 @@ describe "WaitGroup" do
       end
 
       wg.wait
-      true.should eq(true)
+      true.should be_true
     end
 
     it "handles zero additions" do
       wg = WaitGroup.new
       wg.add(0)
       # Should not block
-      true.should eq(true)
+      true.should be_true
     end
   end
 end

@@ -33,7 +33,7 @@ module LLM
     def self.disabled_by_env? : Bool
       return false unless ENV.has_key?("NOIR_CACHE_DISABLE")
       val = ENV["NOIR_CACHE_DISABLE"]
-      ["1", "true", "yes", "on"].includes?(val.downcase)
+      val.downcase.in?(%w[1 true yes on])
     end
 
     def self.cache_dir : String

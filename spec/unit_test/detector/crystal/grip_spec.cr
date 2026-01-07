@@ -6,6 +6,6 @@ describe "Detect Crystal Grip" do
   instance = Detector::Crystal::Grip.new options
 
   it "shard.yml" do
-    instance.detect("shard.yml", "grip-framework/grip").should eq(true)
+    instance.detect("shard.yml", "grip-framework/grip").should be_true
   end
 end

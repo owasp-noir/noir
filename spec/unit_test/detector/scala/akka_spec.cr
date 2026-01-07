@@ -6,18 +6,18 @@ describe "Detect Scala Akka" do
   instance = Detector::Scala::Akka.new options
 
   it "test.scala with akka.http.scaladsl import" do
-    instance.detect("test.scala", "import akka.http.scaladsl.server.Directives._").should eq(true)
+    instance.detect("test.scala", "import akka.http.scaladsl.server.Directives._").should be_true
   end
 
   it "test.scala with akka.http import" do
-    instance.detect("test.scala", "import akka.http.scaladsl.Http").should eq(true)
+    instance.detect("test.scala", "import akka.http.scaladsl.Http").should be_true
   end
 
   it "test.scala without akka.http import" do
-    instance.detect("test.scala", "import scala.concurrent.Future").should eq(false)
+    instance.detect("test.scala", "import scala.concurrent.Future").should be_false
   end
 
   it "non-scala file with akka.http import" do
-    instance.detect("test.java", "import akka.http.scaladsl.server.Directives._").should eq(false)
+    instance.detect("test.java", "import akka.http.scaladsl.server.Directives._").should be_false
   end
 end

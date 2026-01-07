@@ -120,7 +120,7 @@ class KotlinParser
     return if close_bracket.nil?
 
     # Determine the direction of search based on the type of bracket
-    if [:RPAREN, :RCURL, :RSQUARE, :RANGLE].includes?(token.type)
+    if token.type.in?(:RPAREN, :RCURL, :RSQUARE, :RANGLE)
       next_direction = false
       open_bracket = BRACKET_PAIRS[token.type]?
       close_bracket = token.type
@@ -194,7 +194,7 @@ class KotlinParser
 
     annotation_token = @tokens[start_index]
     annotation_name = annotation_token.value
-    if ["@field", "@file", "@property", "@get", "@set", "@receiver", "@param", "@setparam", "@delegate"].includes?(annotation_name)
+    if annotation_name.in?(%w[@field @file @property @get @set @receiver @param @setparam @delegate])
       index = start_index + 1
       while index < @tokens.size
         token = @tokens[index]
@@ -282,10 +282,7 @@ class KotlinParser
 
   # Check if a token value indicates the start of an annotation
   def annotation_start?(annotation_name)
-    [
-      "@field", "@file", "@property", "@get", "@set", "@receiver",
-      "@param", "@setparam", "@delegate",
-    ].includes?(annotation_name) || annotation_name.starts_with?("@")
+    annotation_name.starts_with?("@")
   end
 
   # Parse annotations backwards from a given index
@@ -396,12 +393,12 @@ class KotlinParser
     if token_type == :NEWLINE
       true
     else
-      %w[
+      token_value.in? %w[
         enum sealed annotation data inner override lateinit
         public protected private internal in out tailrec operator
         infix inline external suspend const abstract final open
         vararg noinline crossinline reified
-      ].includes?(token_value)
+      ]
     end
   end
 
@@ -490,7 +487,7 @@ class KotlinParser
 
         if modifier?(token)
           reset_fields
-          access_modifier = token_value if %i[PRIVATE PUBLIC PROTECTED INTERNAL].includes?(token_type)
+          access_modifier = token_value if token_type.in?(%i[PRIVATE PUBLIC PROTECTED INTERNAL])
         else
           case token_type
           when :ANNOTATION
@@ -555,7 +552,7 @@ class KotlinParser
     while index < end_index
       token = @tokens[index]
       if modifier?(token)
-        access_modifier = token.value if %i[PRIVATE PUBLIC PROTECTED INTERNAL].includes?(token.type)
+        access_modifier = token.value if token.type.in?(%i[PRIVATE PUBLIC PROTECTED INTERNAL])
       else
         case token.type
         when :ANNOTATION

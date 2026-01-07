@@ -82,7 +82,7 @@ OWASP Noir is a Crystal-based attack surface detector that identifies endpoints 
 - **Formatting and linting:**
   ```bash
   crystal tool format              # Format code
-  ameba                            # Run linter
+  bin/ameba.cr                     # Run linter
   ```
 
 - **Using just commands:**
