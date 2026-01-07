@@ -39,11 +39,10 @@ describe "Detect Laravel" do
   end
 
   it "detects Laravel from artisan command" do
-    # ameba:disable Style/HeredocEscape
-    artisan_content = <<-'PHP'
+    artisan_content = <<-PHP
       #!/usr/bin/env php
       <?php
-      use Illuminate\Foundation\Application;
+      use Illuminate\\Foundation\\Application;
       require __DIR__.'/vendor/autoload.php';
       PHP
     instance.detect("artisan", artisan_content).should be_true
@@ -52,9 +51,9 @@ describe "Detect Laravel" do
   it "detects Laravel from Illuminate namespace usage" do
     controller_content = <<-'PHP'
       <?php
-      namespace App\\Http\\Controllers;
-      use Illuminate\\Http\\Request;
-      use Illuminate\\Http\\Response;
+      namespace App\Http\Controllers;
+      use Illuminate\Http\Request;
+      use Illuminate\Http\Response;
 
       class UserController extends Controller {}
       PHP
@@ -64,7 +63,7 @@ describe "Detect Laravel" do
   it "detects Laravel from controller in app/Http/Controllers/" do
     controller_content = <<-'PHP'
       <?php
-      namespace App\\Http\\Controllers;
+      namespace App\Http\Controllers;
 
       class ProductController extends Controller {
         public function index() {}
