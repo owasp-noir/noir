@@ -43,7 +43,7 @@ describe "Detect Laravel" do
     artisan_content = <<-'PHP'
       #!/usr/bin/env php
       <?php
-      use Illuminate\\Foundation\\Application;
+      use Illuminate\Foundation\Application;
       require __DIR__.'/vendor/autoload.php';
       PHP
     instance.detect("artisan", artisan_content).should be_true
