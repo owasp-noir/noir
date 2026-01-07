@@ -47,7 +47,7 @@ describe "OutputBuilderHtml" do
     endpoint.push_param(Param.new("username", "test", "json"))
 
     # Create passive scan result using the actual model structure
-    scan_yaml = YAML.parse(%(
+    scan_yaml = YAML.parse <<-YAML
       id: test-rule
       info:
         name: "Test Rule Name"
@@ -62,7 +62,7 @@ describe "OutputBuilderHtml" do
           condition: "or"
       category: "secret"
       techs: ["*"]
-    ))
+      YAML
     passive_scan = PassiveScan.new(scan_yaml)
     passive_result = PassiveScanResult.new(
       passive_scan,

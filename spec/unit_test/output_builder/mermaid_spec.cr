@@ -129,7 +129,7 @@ describe "OutputBuilderMermaid" do
     endpoints = [endpoint]
 
     # Create passive scan result
-    scan_yaml = YAML.parse(%(
+    scan_yaml = YAML.parse <<-YAML
       id: test-rule
       info:
         name: "Test Rule Name"
@@ -144,7 +144,7 @@ describe "OutputBuilderMermaid" do
           condition: "or"
       category: "secret"
       techs: ["*"]
-    ))
+      YAML
     passive_scan = PassiveScan.new(scan_yaml)
     passive_result = PassiveScanResult.new(
       passive_scan,

@@ -21,13 +21,13 @@ describe "tokenize" do
   lexer = GolangLexer.new
 
   it "simple" do
-    output = lexer.tokenize("
-      users := rg.Group(\"/users\")
+    output = lexer.tokenize <<-GO
+      users := rg.Group("/users")
 
-      users.GET(\"/\", func(c *gin.Context) {
-        c.JSON(http.StatusOK, \"users\")
+      users.GET("/", func(c *gin.Context) {
+        c.JSON(http.StatusOK, "users")
       })
-    ")
+      GO
     output[0].type.should eq(:newline)
     output[1].type.should eq(:code)
     output[2].type.should eq(:assign)
