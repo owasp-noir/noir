@@ -282,10 +282,7 @@ class KotlinParser
 
   # Check if a token value indicates the start of an annotation
   def annotation_start?(annotation_name)
-    [
-      "@field", "@file", "@property", "@get", "@set", "@receiver",
-      "@param", "@setparam", "@delegate",
-    ].includes?(annotation_name) || annotation_name.starts_with?("@")
+    annotation_name.starts_with?("@")
   end
 
   # Parse annotations backwards from a given index
