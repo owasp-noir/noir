@@ -340,7 +340,7 @@ module Analyzer::Python
 
       # Check if the data is a string
       if data.size != 0
-        if data[0] == data[-1] && data[0].in?(['"', "'"])
+        if data[0] == data[-1] && data[0].in?('"', '\'')
           return data[1..-2]
         end
       end
