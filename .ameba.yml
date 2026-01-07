@@ -4,9 +4,6 @@ Metrics/CyclomaticComplexity:
   Enabled: true
   Severity: Warning
 
-Lint/RedundantWithIndex:
-  Enabled: false
-
 # Disable TODO warnings as they are intentional
 Documentation/DocumentationAdmonition:
   Enabled: false
