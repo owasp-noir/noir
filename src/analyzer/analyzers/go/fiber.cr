@@ -205,6 +205,8 @@ module Analyzer::Go
       map.each do |token|
         if token.type == :string
           final_path = token.value.to_s
+          # Route path must start with "/" to be a valid HTTP endpoint
+          next unless final_path.starts_with?("/")
           groups.each do |group|
             group.each do |key, value|
               if before.value.to_s.includes? key

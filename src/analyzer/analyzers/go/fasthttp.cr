@@ -47,7 +47,8 @@ module Analyzer::Go
     private def analyze_route_line(line : String, details : Details) : Endpoint
       # Pattern 1: Direct handler registration with router
       # router.GET("/path", handler) or router.POST("/path", handler)
-      if match = line.match(/(?:router|r|app|server)\.(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*\(\s*"([^"]+)"\s*,/)
+      # Route path must start with "/" to be a valid HTTP endpoint
+      if match = line.match(/(?:router|r|app|server)\.(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*\(\s*"(\/[^"]*)"\s*,/)
         path = match[1]
         method = extract_method_from_router_call(line)
         return Endpoint.new(path, method, details)
@@ -55,7 +56,8 @@ module Analyzer::Go
 
       # Pattern 2: fasthttprouter patterns
       # router.GET("/path", handler)
-      if match = line.match(/\.(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*\(\s*"([^"]+)"\s*,/)
+      # Route path must start with "/" to be a valid HTTP endpoint
+      if match = line.match(/\.(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*\(\s*"(\/[^"]*)"\s*,/)
         path = match[1]
         method = extract_method_from_router_call(line)
         return Endpoint.new(path, method, details)
