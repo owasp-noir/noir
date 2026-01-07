@@ -37,7 +37,7 @@ jobs:
         run: |
           mkdir -p build
           # Use Crystal container to build static binary
-          docker run --rm -v $(pwd):/noir -w /noir --entrypoint="" 84codes/crystal:latest-debian-12 sh -c "
+          docker run --rm -v $(pwd):/noir -w /noir --entrypoint="" 84codes/crystal:latest-debian-13 sh -c "
             apt-get update && apt-get install -y libyaml-dev ca-certificates git curl &&
             shards install --production &&
             mkdir -p build &&

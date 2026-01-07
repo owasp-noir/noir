@@ -12,9 +12,8 @@ OWASP Noir is a Crystal-based attack surface detector that identifies endpoints 
 1. **Install Crystal and dependencies:**
    ```bash
    # Using Docker (recommended for consistent builds)
-   # Note: CI uses debian-12, Dockerfile uses debian-13
-   docker run --rm -v $(pwd):/app -w /app 84codes/crystal:latest-debian-12 sh -c "shards install && shards build"
-   docker run --rm -v $(pwd):/app -w /app 84codes/crystal:latest-debian-12 crystal spec
+   docker run --rm -v $(pwd):/app -w /app 84codes/crystal:latest-debian-13 sh -c "shards install && shards build"
+   docker run --rm -v $(pwd):/app -w /app 84codes/crystal:latest-debian-13 crystal spec
 
    # Or install Crystal locally (Ubuntu/Debian)
    curl -fsSL https://crystal-lang.org/install.sh | sudo bash
@@ -198,7 +197,7 @@ snap/                    # Snap package configuration
 - `src/options.cr`: CLI options and argument parsing
 - `.ameba.yml`: Linting configuration
 - `Dockerfile`: Docker build configuration (uses debian-13)
-- `.github/workflows/ci.yml`: CI configuration (uses debian-12, Crystal 1.15.0-1.18.0)
+- `.github/workflows/ci.yml`: CI configuration (uses debian-13, Crystal 1.15.0-1.18.0)
 
 ### Adding New Analyzers
 1. Create analyzer in `src/analyzer/analyzers/{language}/{framework}.cr`
@@ -256,7 +255,7 @@ snap/                    # Snap package configuration
 ### Environment
 - Crystal ~> 1.10 (CI tests with 1.15.0, 1.16.0, 1.17.0, 1.18.0)
 - Docker images:
-  - CI tests: `84codes/crystal:latest-debian-12`
+  - CI tests: `84codes/crystal:latest-debian-13`
   - Dockerfile build: `84codes/crystal:latest-debian-13`
 - Ubuntu/Debian recommended for local development
 - Required dependencies: `libyaml-dev`, `libzstd-dev`, `zlib1g-dev`, `pkg-config`

@@ -69,7 +69,7 @@ jobs:
   tests:
     runs-on: ubuntu-latest
     container:
-      image: 84codes/crystal:latest-debian-12
+      image: 84codes/crystal:latest-debian-13
     steps:
       - uses: actions/checkout@v6
       - name: Install dependencies
