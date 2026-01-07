@@ -7,10 +7,6 @@ Metrics/CyclomaticComplexity:
 Lint/RedundantWithIndex:
   Enabled: false
 
-Lint/UnusedArgument:
-  Excluded:
-    - "src/analyzer/analyzers/analyzer_example.cr"
-
 # Disable TODO warnings as they are intentional
 Documentation/DocumentationAdmonition:
   Enabled: false
