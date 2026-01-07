@@ -8,7 +8,8 @@ class OutputBuilder
   @is_color : Bool
   @is_log : Bool
   @output_file : String
-  @io : IO
+
+  property io : IO
 
   def initialize(options : Hash(String, YAML::Any))
     @is_debug = any_to_bool(options["debug"])
@@ -33,14 +34,6 @@ class OutputBuilder
 
   def print
     # After inheriting the class, write an action code here.
-  end
-
-  def io=(io : IO)
-    @io = io
-  end
-
-  def io
-    @io
   end
 
   def bake_endpoint(url : String, params : Array(Param))
