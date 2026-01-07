@@ -229,7 +229,7 @@ module Analyzer::Rust
             line.scan(/\.get\("([^"]+)"\)/) do |match|
               header_name = match[1]
               # Only add if it looks like a header name (contains dashes or is common header)
-              if header_name.includes?("-") || ["Authorization", "Content-Type", "Accept"].includes?(header_name)
+              if header_name.includes?("-") || header_name.in?(%w[Authorization Content-Type Accept])
                 endpoint.push_param(Param.new(header_name, "", "header"))
               end
             end

@@ -69,7 +69,7 @@ module Analyzer::Java
                           method = "GET"
                         end
 
-                        next if !["GET", "POST", "DELETE", "PUT", "PATCH", "HEAD", "OPTIONS"].includes?(method)
+                        next if !method.in?(%w[GET POST DELETE PUT PATCH HEAD OPTIONS])
 
                         endpoint = route_code_match[2].split(")")[0].strip
                         next if endpoint[0] != endpoint[-1]

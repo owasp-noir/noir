@@ -68,7 +68,7 @@ module Analyzer::Python
               line.scan(/@#{instance_name}\.([a-zA-Z]+)\([rf]?['"]([^'"]*)['"](.*)/) do |match|
                 if match.size > 0
                   http_method_name = match[1].downcase
-                  if ["websocket", "route", "api_route"].includes?(http_method_name)
+                  if http_method_name.in?(%w[websocket route api_route])
                     http_method_name = "GET"
                   elsif !HTTP_METHODS.includes?(http_method_name)
                     next
@@ -122,7 +122,7 @@ module Analyzer::Python
                           if param_type.nil?
                             if /^#{PYTHON_VAR_NAME_REGEX}$/.match(param.type)
                               new_params = nil
-                              if ["Request", "dict"].includes?(param.type)
+                              if param.type.in?(%w[Request dict])
                                 function_codeblock = parse_code_block(codelines[index + 1..])
                                 next if function_codeblock.nil?
                                 new_params = find_dictionary_params(function_codeblock, param)

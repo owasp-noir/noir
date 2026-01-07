@@ -198,7 +198,7 @@ def run_options_parser
     end
     parser.on "--passive-scan-severity LVL", "Min severity (critical|high|medium|low, default: high)" do |v|
       lvl = v.downcase
-      if %w[critical high medium low].includes?(lvl)
+      if lvl.in?(%w[critical high medium low])
         noir_options["passive_scan_severity"] = YAML::Any.new(lvl)
       else
         STDERR.puts "ERROR: Invalid severity '#{v}'. Valid: critical, high, medium, low".colorize(:yellow)

@@ -52,7 +52,7 @@ module Analyzer::Rust
 
     def callback_to_method(str)
       method = str.split("(").first
-      if !["get", "post", "put", "delete"].includes?(method)
+      if !method.in?(%w[get post put delete])
         method = "get"
       end
 

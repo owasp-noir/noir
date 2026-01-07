@@ -394,7 +394,7 @@ module Analyzer::Kotlin
           next if parameter_name.empty? || parameter_type.nil?
 
           param_default_value = default_value.nil? ? "" : default_value
-          if ["long", "int", "integer", "char", "boolean", "string", "multipartfile"].includes?(parameter_type.downcase)
+          if parameter_type.downcase.in?(%w[long int integer char boolean string multipartfile])
             endpoint_parameters << Param.new(parameter_name, param_default_value, parameter_format)
           else
             add_user_defined_class_params(package_class_map, parameter_type, default_value, parameter_name, parameter_format, endpoint_parameters)
