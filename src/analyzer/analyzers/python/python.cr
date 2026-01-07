@@ -347,8 +347,6 @@ module Analyzer::Python
           end
         end
       end
-
-      ""
     end
 
     module PackageType
