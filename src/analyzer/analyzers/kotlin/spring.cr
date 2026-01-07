@@ -224,8 +224,6 @@ module Analyzer::Kotlin
                                      "form"
                                    when "APPLICATION/JSON"
                                      "json"
-                                   else
-                                     nil
                                    end
                 break
               end
@@ -311,8 +309,6 @@ module Analyzer::Kotlin
         "form"
       when "GET"
         "query"
-      else
-        nil
       end
     end
 
