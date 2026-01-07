@@ -336,16 +336,15 @@ module Analyzer::Python
     # Returns the literal value from a string if it represents a number or a quoted string
     def return_literal_value(data : ::String) : ::String
       # Check if the data is numeric
-      if data.numeric?
-        return data
-      else
-        # Check if the data is a string
-        if data.size != 0
-          if data[0] == data[-1] && ['"', "'"].includes? data[0]
-            return data[1..-2]
-          end
+      return data if data.numeric?
+
+      # Check if the data is a string
+      if data.size != 0
+        if data[0] == data[-1] && data[0].in?(['"', "'"])
+          return data[1..-2]
         end
       end
+
       data
     end
 
