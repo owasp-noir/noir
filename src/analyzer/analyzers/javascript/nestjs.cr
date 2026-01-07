@@ -104,7 +104,7 @@ module Analyzer::Javascript
       brace_count = 0
       in_class = false
 
-      lines.each_with_index do |line, _|
+      lines.each do |line|
         # Check for @Controller decorator
         if line =~ /@Controller\s*\(\s*['"`]([^'"`]*?)['"`]\s*\)/
           controller_path = $1

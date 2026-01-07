@@ -87,7 +87,7 @@ module Analyzer::Rust
       brace_count = 0
       seen_opening_brace = false
 
-      lines.each_with_index do |line, _|
+      lines.each do |line|
         # Check if we're entering the controller definition
         if line.includes?("struct #{controller_name}")
           in_controller = true
@@ -149,7 +149,7 @@ module Analyzer::Rust
       # Track path parameters already added from route to avoid duplicates
       existing_path_params = endpoint.params.select { |p| p.param_type == "path" }.map(&.name).to_set
 
-      lines.each_with_index do |line, _|
+      lines.each do |line|
         # Check if we're entering the controller definition
         if line.includes?("struct #{controller_name}")
           in_controller = true

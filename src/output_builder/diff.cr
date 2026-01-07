@@ -84,7 +84,7 @@ class OutputBuilderDiff < OutputBuilder
       data.each do |section, endpoints|
         if endpoints.as_a.size > 0
           io << "[#{section}]\n"
-          endpoints.as_a.each_with_index do |endpoint, _|
+          endpoints.as_a.each do |endpoint|
             io << "\n[[#{section}.endpoint]]\n"
             endpoint.as_h.each do |key, value|
               case value.raw
