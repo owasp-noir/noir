@@ -6,22 +6,22 @@ describe "Detect Python Tornado" do
   instance = Detector::Python::Tornado.new options
 
   it "detect_tornado - app.py with import tornado" do
-    instance.detect("app.py", "import tornado").should eq(true)
+    instance.detect("app.py", "import tornado").should be_true
   end
 
   it "detect_tornado - app.py with from tornado import web" do
-    instance.detect("app.py", "from tornado import web").should eq(true)
+    instance.detect("app.py", "from tornado import web").should be_true
   end
 
   it "detect_tornado - app.py with from tornado.web import Application" do
-    instance.detect("app.py", "from tornado.web import Application").should eq(true)
+    instance.detect("app.py", "from tornado.web import Application").should be_true
   end
 
   it "detect_tornado - app.py without tornado" do
-    instance.detect("app.py", "from flask import Flask").should eq(false)
+    instance.detect("app.py", "from flask import Flask").should be_false
   end
 
   it "detect_tornado - non-python file" do
-    instance.detect("app.js", "import tornado").should eq(false)
+    instance.detect("app.js", "import tornado").should be_false
   end
 end

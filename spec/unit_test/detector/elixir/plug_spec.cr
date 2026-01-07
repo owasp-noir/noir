@@ -28,7 +28,7 @@ describe "Detect Elixir Plug" do
     end
     MIX
 
-    instance.detect("mix.exs", mix_content).should eq(true)
+    instance.detect("mix.exs", mix_content).should be_true
   end
 
   it "detects Plug in mix.exs with plug: dependency" do
@@ -44,7 +44,7 @@ describe "Detect Elixir Plug" do
     end
     MIX
 
-    instance.detect("mix.exs", mix_content).should eq(true)
+    instance.detect("mix.exs", mix_content).should be_true
   end
 
   it "detects Plug Router in Elixir file" do
@@ -65,7 +65,7 @@ describe "Detect Elixir Plug" do
     end
     ELIXIR
 
-    instance.detect("lib/router.ex", router_content).should eq(true)
+    instance.detect("lib/router.ex", router_content).should be_true
   end
 
   it "detects Plug import in Elixir file" do
@@ -79,7 +79,7 @@ describe "Detect Elixir Plug" do
     end
     ELIXIR
 
-    instance.detect("lib/handler.ex", plug_content).should eq(true)
+    instance.detect("lib/handler.ex", plug_content).should be_true
   end
 
   it "detects forward statements in Elixir file" do
@@ -93,7 +93,7 @@ describe "Detect Elixir Plug" do
     end
     ELIXIR
 
-    instance.detect("lib/router.ex", router_content).should eq(true)
+    instance.detect("lib/router.ex", router_content).should be_true
   end
 
   it "does not detect non-Plug files" do
@@ -105,10 +105,10 @@ describe "Detect Elixir Plug" do
     end
     ELIXIR
 
-    instance.detect("lib/utils.ex", non_plug_content).should eq(false)
+    instance.detect("lib/utils.ex", non_plug_content).should be_false
   end
 
   it "does not detect non-mix.exs files without Plug patterns" do
-    instance.detect("mix.exs", "# Just a comment").should eq(false)
+    instance.detect("mix.exs", "# Just a comment").should be_false
   end
 end

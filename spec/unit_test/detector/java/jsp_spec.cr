@@ -6,6 +6,6 @@ describe "Detect Java JSP" do
   instance = Detector::Java::Jsp.new options
 
   it "case1" do
-    instance.detect("1.jsp", "<% info(); %>").should eq(true)
+    instance.detect("1.jsp", "<% info(); %>").should be_true
   end
 end

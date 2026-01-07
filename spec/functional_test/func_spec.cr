@@ -82,7 +82,7 @@ class FunctionalTester
         actual = @app.endpoints.find { |e| e.method == expected.method && e.url == expected.url }
         if actual.nil?
           it "expected endpoint [#{key}] not found in tester: #{@path}" do
-            false.should eq true
+            false.should be_true
           end
         else
           describe "endpoint check [#{key}]" do
@@ -100,7 +100,7 @@ class FunctionalTester
                   found_params = actual.params.select { |found_p| found_p.name == param.name }
                   if found_params.size == 0
                     it "param '#{param.name}' not found for [#{key}] in tester: #{@path}" do
-                      false.should eq true
+                      false.should be_true
                     end
                   else
                     it "check '#{param.name}' name " do

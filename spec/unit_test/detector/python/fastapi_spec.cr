@@ -6,6 +6,6 @@ describe "Detect Python FastAPI" do
   instance = Detector::Python::FastAPI.new options
 
   it "settings.py" do
-    instance.detect("settings.py", "from fastapi").should eq(true)
+    instance.detect("settings.py", "from fastapi").should be_true
   end
 end

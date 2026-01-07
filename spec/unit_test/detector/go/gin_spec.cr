@@ -6,6 +6,6 @@ describe "Detect Go Gin" do
   instance = Detector::Go::Gin.new options
 
   it "go.mod" do
-    instance.detect("go.mod", "github.com/gin-gonic/gin").should eq(true)
+    instance.detect("go.mod", "github.com/gin-gonic/gin").should be_true
   end
 end

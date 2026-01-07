@@ -6,6 +6,6 @@ describe "Detect Go Echo" do
   instance = Detector::Go::Echo.new options
 
   it "go.mod" do
-    instance.detect("go.mod", "github.com/labstack/echo").should eq(true)
+    instance.detect("go.mod", "github.com/labstack/echo").should be_true
   end
 end

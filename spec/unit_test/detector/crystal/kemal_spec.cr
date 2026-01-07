@@ -6,6 +6,6 @@ describe "Detect Crystal Kemal" do
   instance = Detector::Crystal::Kemal.new options
 
   it "shard.yml" do
-    instance.detect("shard.yml", "kemalcr/kemal").should eq(true)
+    instance.detect("shard.yml", "kemalcr/kemal").should be_true
   end
 end

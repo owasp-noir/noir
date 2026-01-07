@@ -6,6 +6,6 @@ describe "Detect Rust RWF" do
   instance = Detector::Rust::Rwf.new options
 
   it "Cargo.toml" do
-    instance.detect("Cargo.toml", "[dependencies]\nrwf = {}").should eq(true)
+    instance.detect("Cargo.toml", "[dependencies]\nrwf = {}").should be_true
   end
 end

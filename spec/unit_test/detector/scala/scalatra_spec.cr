@@ -6,18 +6,18 @@ describe "Detect Scala Scalatra" do
   instance = Detector::Scala::Scalatra.new options
 
   it "test.scala with org.scalatra import" do
-    instance.detect("test.scala", "import org.scalatra._").should eq(true)
+    instance.detect("test.scala", "import org.scalatra._").should be_true
   end
 
   it "test.scala with ScalatraServlet" do
-    instance.detect("test.scala", "class MyServlet extends ScalatraServlet").should eq(true)
+    instance.detect("test.scala", "class MyServlet extends ScalatraServlet").should be_true
   end
 
   it "test.scala without scalatra import" do
-    instance.detect("test.scala", "import scala.concurrent.Future").should eq(false)
+    instance.detect("test.scala", "import scala.concurrent.Future").should be_false
   end
 
   it "non-scala file with scalatra import" do
-    instance.detect("test.java", "import org.scalatra._").should eq(false)
+    instance.detect("test.java", "import org.scalatra._").should be_false
   end
 end

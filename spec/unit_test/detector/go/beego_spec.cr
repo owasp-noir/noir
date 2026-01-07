@@ -6,6 +6,6 @@ describe "Detect Go BeegoEcho" do
   instance = Detector::Go::Beego.new options
 
   it "go.mod" do
-    instance.detect("go.mod", "github.com/beego/beego").should eq(true)
+    instance.detect("go.mod", "github.com/beego/beego").should be_true
   end
 end

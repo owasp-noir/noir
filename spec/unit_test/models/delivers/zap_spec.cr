@@ -5,6 +5,6 @@ describe "Initialize" do
   zap = ZAP.new "http://localhost:8090"
 
   it "init" do
-    zap.nil?.should eq(false)
+    zap.nil?.should be_false
   end
 end

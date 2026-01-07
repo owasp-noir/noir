@@ -55,30 +55,30 @@ end
 
 describe "any_to_bool" do
   it true do
-    any_to_bool(true).should eq(true)
+    any_to_bool(true).should be_true
   end
   it false do
-    any_to_bool(false).should eq(false)
+    any_to_bool(false).should be_false
   end
   it "any string" do
-    any_to_bool("hahwul").should eq(false)
+    any_to_bool("hahwul").should be_false
   end
 end
 
 describe "valid_json?" do
   it "valid json" do
-    valid_json?("{\"test\":\"test\"}").should eq(true)
+    valid_json?("{\"test\":\"test\"}").should be_true
   end
   it "invalid json" do
-    valid_json?("{\"test\":\"test\"").should eq(false)
+    valid_json?("{\"test\":\"test\"").should be_false
   end
 end
 
 describe "valid_yaml?" do
   it "valid yaml" do
-    valid_yaml?("test: test").should eq(true)
+    valid_yaml?("test: test").should be_true
   end
   it "invalid yaml" do
-    valid_yaml?(":").should eq(false)
+    valid_yaml?(":").should be_false
   end
 end

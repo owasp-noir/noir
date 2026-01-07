@@ -67,30 +67,30 @@ describe "Endpoint equality" do
   it "same endpoints" do
     endpoint1 = Endpoint.new("/abcd", "GET")
     endpoint2 = Endpoint.new("/abcd", "GET")
-    (endpoint1 == endpoint2).should eq(true)
+    (endpoint1 == endpoint2).should be_true
   end
 
   it "different endpoints" do
     endpoint1 = Endpoint.new("/abcd", "GET")
     endpoint2 = Endpoint.new("/abcd", "POST")
-    (endpoint1 == endpoint2).should eq(false)
+    (endpoint1 == endpoint2).should be_false
   end
 
   it "same endpoints with params" do
     endpoint1 = Endpoint.new("/abcd", "GET", [Param.new("a", "b", "query")])
     endpoint2 = Endpoint.new("/abcd", "GET", [Param.new("a", "b", "query")])
-    (endpoint1 == endpoint2).should eq(true)
+    (endpoint1 == endpoint2).should be_true
   end
 
   it "different endpoints with params" do
     endpoint1 = Endpoint.new("/abcd", "GET", [Param.new("a", "b", "query")])
     endpoint2 = Endpoint.new("/abcd", "GET", [Param.new("a", "b", "json")])
-    (endpoint1 == endpoint2).should eq(false)
+    (endpoint1 == endpoint2).should be_false
   end
 
   it "same endpoints and suffled params" do
     endpoint1 = Endpoint.new("/abcd", "GET", [Param.new("a", "b", "query"), Param.new("c", "d", "json")])
     endpoint2 = Endpoint.new("/abcd", "GET", [Param.new("c", "d", "json"), Param.new("a", "b", "query")])
-    (endpoint1 == endpoint2).should eq(true)
+    (endpoint1 == endpoint2).should be_true
   end
 end

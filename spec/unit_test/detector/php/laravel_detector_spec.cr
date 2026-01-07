@@ -15,15 +15,15 @@ describe "Detect Laravel" do
         "laravel/framework": "^10.0"
       }
     })
-    instance.detect("composer.json", composer_content).should eq(true)
+    instance.detect("composer.json", composer_content).should be_true
   end
 
   it "detects Laravel from routes/web.php" do
-    instance.detect("routes/web.php", "<?php Route::get('/', function() {});").should eq(true)
+    instance.detect("routes/web.php", "<?php Route::get('/', function() {});").should be_true
   end
 
   it "detects Laravel from routes/api.php" do
-    instance.detect("routes/api.php", "<?php Route::get('/api/users', [UserController::class, 'index']);").should eq(true)
+    instance.detect("routes/api.php", "<?php Route::get('/api/users', [UserController::class, 'index']);").should be_true
   end
 
   it "detects Laravel from bootstrap/app.php" do
@@ -32,7 +32,7 @@ describe "Detect Laravel" do
         dirname(__DIR__)
       );
     }
-    instance.detect("bootstrap/app.php", bootstrap_content).should eq(true)
+    instance.detect("bootstrap/app.php", bootstrap_content).should be_true
   end
 
   it "detects Laravel from artisan command" do
@@ -41,7 +41,7 @@ describe "Detect Laravel" do
       use Illuminate\\Foundation\\Application;
       require __DIR__.'/vendor/autoload.php';
     )
-    instance.detect("artisan", artisan_content).should eq(true)
+    instance.detect("artisan", artisan_content).should be_true
   end
 
   it "detects Laravel from Illuminate namespace usage" do
@@ -52,7 +52,7 @@ describe "Detect Laravel" do
 
       class UserController extends Controller {}
     }
-    instance.detect("app/Http/Controllers/UserController.php", controller_content).should eq(true)
+    instance.detect("app/Http/Controllers/UserController.php", controller_content).should be_true
   end
 
   it "detects Laravel from controller in app/Http/Controllers/" do
@@ -63,7 +63,7 @@ describe "Detect Laravel" do
         public function index() {}
       }
     }
-    instance.detect("app/Http/Controllers/ProductController.php", controller_content).should eq(true)
+    instance.detect("app/Http/Controllers/ProductController.php", controller_content).should be_true
   end
 
   it "detects Laravel from config/app.php" do
@@ -73,12 +73,12 @@ describe "Detect Laravel" do
         'env' => env('APP_ENV', 'production'),
       ];
     }
-    instance.detect("config/app.php", config_content).should eq(true)
+    instance.detect("config/app.php", config_content).should be_true
   end
 
   it "does not detect Laravel from non-Laravel files" do
-    instance.detect("index.php", "<?php echo 'Hello World';").should_not eq(true)
-    instance.detect("admin.js", "console.log('not laravel')").should_not eq(true)
-    instance.detect("composer.json", %({"name": "app", "require": {"php": "^8.0"}})).should_not eq(true)
+    instance.detect("index.php", "<?php echo 'Hello World';").should_not be_true
+    instance.detect("admin.js", "console.log('not laravel')").should_not be_true
+    instance.detect("composer.json", %({"name": "app", "require": {"php": "^8.0"}})).should_not be_true
   end
 end

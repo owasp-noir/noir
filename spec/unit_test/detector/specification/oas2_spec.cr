@@ -14,7 +14,7 @@ describe "Detect OAS 2.0(Swagger) Docs" do
     }
     EOS
 
-    instance.detect("docs.json", content).should eq(true)
+    instance.detect("docs.json", content).should be_true
   end
   it "yaml format" do
     content = <<-EOS
@@ -23,7 +23,7 @@ describe "Detect OAS 2.0(Swagger) Docs" do
       version: 1.0.0
     EOS
 
-    instance.detect("docs.yml", content).should eq(true)
+    instance.detect("docs.yml", content).should be_true
   end
 
   it "code_locator" do

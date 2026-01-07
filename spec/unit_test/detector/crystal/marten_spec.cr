@@ -6,6 +6,6 @@ describe "Detect Crystal Marten" do
   instance = Detector::Crystal::Marten.new options
 
   it "shard.yml" do
-    instance.detect("shard.yml", "martenframework/marten").should eq(true)
+    instance.detect("shard.yml", "martenframework/marten").should be_true
   end
 end

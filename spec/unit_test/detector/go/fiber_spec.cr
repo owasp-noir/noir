@@ -6,6 +6,6 @@ describe "Detect Go Fiber" do
   instance = Detector::Go::Fiber.new options
 
   it "go.mod" do
-    instance.detect("go.mod", "github.com/gofiber/fiber").should eq(true)
+    instance.detect("go.mod", "github.com/gofiber/fiber").should be_true
   end
 end

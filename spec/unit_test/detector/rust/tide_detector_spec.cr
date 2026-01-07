@@ -6,6 +6,6 @@ describe "Detect Rust Tide" do
   instance = Detector::Rust::Tide.new options
 
   it "Cargo.toml" do
-    instance.detect("Cargo.toml", "[dependencies]\ntide = {}").should eq(true)
+    instance.detect("Cargo.toml", "[dependencies]\ntide = {}").should be_true
   end
 end

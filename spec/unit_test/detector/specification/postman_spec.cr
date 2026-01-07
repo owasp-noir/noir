@@ -18,7 +18,7 @@ describe "Detect Postman Collection" do
     }
     EOS
 
-    instance.detect("collection.json", content).should eq(true)
+    instance.detect("collection.json", content).should be_true
   end
 
   it "v2.0.0 format" do
@@ -32,7 +32,7 @@ describe "Detect Postman Collection" do
     }
     EOS
 
-    instance.detect("collection.json", content).should eq(true)
+    instance.detect("collection.json", content).should be_true
   end
 
   it "code_locator" do
@@ -62,6 +62,6 @@ describe "Detect Postman Collection" do
     }
     EOS
 
-    instance.detect("not_postman.json", content).should eq(false)
+    instance.detect("not_postman.json", content).should be_false
   end
 end

@@ -6,6 +6,6 @@ describe "Detect Crystal Lucky" do
   instance = Detector::Crystal::Lucky.new options
 
   it "shard.yml" do
-    instance.detect("shard.yml", "luckyframework/lucky").should eq(true)
+    instance.detect("shard.yml", "luckyframework/lucky").should be_true
   end
 end

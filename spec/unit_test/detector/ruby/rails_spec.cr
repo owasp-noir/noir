@@ -6,9 +6,9 @@ describe "Detect Ruby Rails" do
   instance = Detector::Ruby::Rails.new options
 
   it "gemfile/single_quot" do
-    instance.detect("Gemfile", "gem 'rails'").should eq(true)
+    instance.detect("Gemfile", "gem 'rails'").should be_true
   end
   it "gemfile/double_quot" do
-    instance.detect("Gemfile", "gem \"rails\"").should eq(true)
+    instance.detect("Gemfile", "gem \"rails\"").should be_true
   end
 end

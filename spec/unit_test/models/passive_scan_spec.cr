@@ -100,7 +100,7 @@ describe "PassiveScan" do
       yaml = YAML.parse(yaml_str)
       scan = PassiveScan.new(yaml)
 
-      scan.valid?.should eq(true)
+      scan.valid?.should be_true
     end
   end
 

@@ -6,9 +6,9 @@ describe "Detect Ruby Sinatra" do
   instance = Detector::Ruby::Sinatra.new options
 
   it "gemfile/single_quot" do
-    instance.detect("Gemfile", "gem 'sinatra'").should eq(true)
+    instance.detect("Gemfile", "gem 'sinatra'").should be_true
   end
   it "gemfile/double_quot" do
-    instance.detect("Gemfile", "gem \"sinatra\"").should eq(true)
+    instance.detect("Gemfile", "gem \"sinatra\"").should be_true
   end
 end

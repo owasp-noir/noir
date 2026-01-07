@@ -12,7 +12,7 @@ describe "Detect ZAP Sites Tree" do
       - node: https://www.hahwul.com
     EOS
 
-    instance.detect("sites.yml", content).should eq(true)
+    instance.detect("sites.yml", content).should be_true
   end
 
   it "code_locator" do

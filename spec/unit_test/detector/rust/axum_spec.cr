@@ -6,6 +6,6 @@ describe "Detect Rust Axum" do
   instance = Detector::Rust::Axum.new options
 
   it "Gargo.toml" do
-    instance.detect("Cargo.toml", "[dependencies]\naxum = {}").should eq(true)
+    instance.detect("Cargo.toml", "[dependencies]\naxum = {}").should be_true
   end
 end
