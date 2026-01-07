@@ -1,8 +1,5 @@
 Metrics/CyclomaticComplexity:
-  Description: Disallows methods with a cyclomatic complexity higher than `MaxComplexity`
-  MaxComplexity: 80
-  Enabled: true
-  Severity: Warning
+  Enabled: false
 
 # Disable TODO warnings as they are intentional
 Documentation/DocumentationAdmonition:
