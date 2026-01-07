@@ -66,11 +66,11 @@ module Analyzer::Go
 
                       # First try to match method with route on same line
                       # Route path must start with "/" to be a valid HTTP endpoint
-                      if match = line.match(/[a-zA-Z]\w*\.(GET|Get|get|POST|Post|post|PUT|Put|put|DELETE|Delete|delete|PATCH|Patch|patch)\(\s*"(\/[^"]*)"/i)
+                      if match = line.match(/[a-zA-Z]\w*\.(GET|POST|PUT|DELETE|PATCH)\(\s*"(\/[^"]*)"/i)
                         method = match[1].upcase
                         route_path = match[2]
                         # Then try to match method without route (for multi-line cases)
-                      elsif match = line.match(/[a-zA-Z]\w*\.(GET|Get|get|POST|Post|post|PUT|Put|put|DELETE|Delete|delete|PATCH|Patch|patch)\s*\(/i)
+                      elsif match = line.match(/[a-zA-Z]\w*\.(GET|POST|PUT|DELETE|PATCH)\s*\(/i)
                         method = match[1].upcase
                         # Look for route in next line - must start with "/" to be valid
                         if index + 1 < lines.size
@@ -245,7 +245,7 @@ module Analyzer::Go
             route_path = ""
             # Support case-insensitive method names
             # Route path must start with "/" to be a valid HTTP endpoint
-            if match = line.match(/[a-zA-Z]\w*\.(GET|Get|get|POST|Post|post|PUT|Put|put|DELETE|Delete|delete|PATCH|Patch|patch)\(\s*"(\/[^"]*)"/i)
+            if match = line.match(/[a-zA-Z]\w*\.(GET|POST|PUT|DELETE|PATCH)\(\s*"(\/[^"]*)"/i)
               method = match[1].upcase
               route_path = match[2]
             end

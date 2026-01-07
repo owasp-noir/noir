@@ -63,7 +63,7 @@ module Analyzer::Go
                       # Matches patterns like: .GET(, .Get(, .get(, .POST(, .Post(, .post(, etc.
                       # Exclude parameter extraction patterns
                       if !line.includes?("Header.Get") && !line.includes?("Cookie.Get") &&
-                         (match = line.match(/\.(GET|Get|get|POST|Post|post|PUT|Put|put|DELETE|Delete|delete|PATCH|Patch|patch|OPTIONS|Options|options|HEAD|Head|head)\s*\(/i))
+                         (match = line.match(/\.(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\s*\(/i))
                         method = match[1].upcase
                         get_route_path(line, groups).tap do |route_path|
                           # Handle multi-line routes - check next lines if route is empty
