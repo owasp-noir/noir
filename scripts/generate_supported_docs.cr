@@ -27,27 +27,22 @@ struct Tech
   property key : String
   property framework : String
   property language : String?
-  property is_format : Bool
+  property? format : Bool
   property formats : Array(String)?
-  property endpoint : Bool
-  property method : Bool
-  property query : Bool
-  property path : Bool
-  property body : Bool
-  property header : Bool
-  property cookie : Bool
-  property static_path : Bool
-  property websocket : Bool
-
-  # Predicate methods for boolean properties
-  def format?
-    @is_format
-  end
+  property? endpoint : Bool
+  property? method : Bool
+  property? query : Bool
+  property? path : Bool
+  property? body : Bool
+  property? header : Bool
+  property? cookie : Bool
+  property? static_path : Bool
+  property? websocket : Bool
 
   def initialize(@key : String)
     @framework = ""
     @language = nil
-    @is_format = false
+    @format = false
     @formats = nil
     @endpoint = false
     @method = false
@@ -212,7 +207,7 @@ def finalize_block(tech : Tech, block_lines : Array(String)) : Tech
     tech.language = t_language unless t_language.empty?
   end
   if is_format
-    tech.format? = true
+    tech.format = true
     tech.formats = formats unless formats.empty?
   end
 
@@ -272,7 +267,7 @@ def generate_language_tables(techs : Array(Tech)) : String
     io << "| Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |\n"
     io << "|-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|\n"
     by_language[lang].each do |t|
-      io << "| #{t.framework} | #{check(t.endpoint)} | #{check(t.method)} | #{check(t.query)} | #{check(t.path)} | #{check(t.body)} | #{check(t.header)} | #{check(t.cookie)} | #{check(t.static_path)} | #{check(t.websocket)} |\n"
+      io << "| #{t.framework} | #{check(t.endpoint?)} | #{check(t.method?)} | #{check(t.query?)} | #{check(t.path?)} | #{check(t.body?)} | #{check(t.header?)} | #{check(t.cookie?)} | #{check(t.static_path?)} | #{check(t.websocket?)} |\n"
     end
     io << "\n"
   end
@@ -335,10 +330,10 @@ def generate_specs_markdown(techs : Array(Tech)) : String
     name = entry[:name]
     formats = t.formats || [] of String
     if formats.empty?
-      io << "| #{name} |  | #{check(t.endpoint)} | #{check(t.method)} | #{check(t.query)} | #{check(t.path)} | #{check(t.body)} | #{check(t.header)} | #{check(t.cookie)} | #{check(t.static_path)} | #{check(t.websocket)} |\n"
+      io << "| #{name} |  | #{check(t.endpoint?)} | #{check(t.method?)} | #{check(t.query?)} | #{check(t.path?)} | #{check(t.body?)} | #{check(t.header?)} | #{check(t.cookie?)} | #{check(t.static_path?)} | #{check(t.websocket?)} |\n"
     else
       formats.each do |fmt|
-        io << "| #{name} | #{fmt} | #{check(t.endpoint)} | #{check(t.method)} | #{check(t.query)} | #{check(t.path)} | #{check(t.body)} | #{check(t.header)} | #{check(t.cookie)} | #{check(t.static_path)} | #{check(t.websocket)} |\n"
+        io << "| #{name} | #{fmt} | #{check(t.endpoint?)} | #{check(t.method?)} | #{check(t.query?)} | #{check(t.path?)} | #{check(t.body?)} | #{check(t.header?)} | #{check(t.cookie?)} | #{check(t.static_path?)} | #{check(t.websocket?)} |\n"
       end
     end
   end
