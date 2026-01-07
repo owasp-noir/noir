@@ -7,32 +7,32 @@ describe "Detect OAS 3.0 Docs" do
   instance = Detector::Specification::Oas3.new options
 
   it "json format" do
-    content = <<-EOS
-    {
-      "openapi": "3.0.0",
-      "info": "test"
-    }
-    EOS
+    content = <<-JSON
+      {
+        "openapi": "3.0.0",
+        "info": "test"
+      }
+      JSON
 
     instance.detect("docs.json", content).should be_true
   end
   it "yaml format" do
-    content = <<-EOS
-    openapi: 3.0.0
-    info:
-      version: 1.0.0
-    EOS
+    content = <<-YAML
+      openapi: 3.0.0
+      info:
+        version: 1.0.0
+      YAML
 
     instance.detect("docs.yml", content).should be_true
   end
 
   it "code_locator" do
-    content = <<-EOS
-    {
-      "openapi": "3.0.0",
-      "info": "test"
-    }
-    EOS
+    content = <<-JSON
+      {
+        "openapi": "3.0.0",
+        "info": "test"
+      }
+      JSON
 
     locator = CodeLocator.instance
     locator.clear "oas3-json"

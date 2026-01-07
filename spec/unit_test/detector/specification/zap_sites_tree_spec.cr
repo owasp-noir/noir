@@ -6,21 +6,21 @@ describe "Detect ZAP Sites Tree" do
   instance = Detector::Specification::ZapSitesTree.new options
 
   it "detect" do
-    content = <<-EOS
-    - node: Sites
-      children:
-      - node: https://www.hahwul.com
-    EOS
+    content = <<-YAML
+      - node: Sites
+        children:
+        - node: https://www.hahwul.com
+      YAML
 
     instance.detect("sites.yml", content).should be_true
   end
 
   it "code_locator" do
-    content = <<-EOS
-    - node: Sites
-      children:
-      - node: https://www.hahwul.com
-    EOS
+    content = <<-YAML
+      - node: Sites
+        children:
+        - node: https://www.hahwul.com
+      YAML
 
     locator = CodeLocator.instance
     locator.clear "zap-sites-tree"

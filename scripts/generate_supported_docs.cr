@@ -88,18 +88,18 @@ def run_list_techs(root : String) : {Int32, String}
 end
 
 TECH_HEADER = <<-MD
-+++
-title = "Supported Languages and Frameworks"
-description = "A detailed overview of the programming languages and frameworks supported by Noir, including feature compatibility for each."
-weight = 1
-sort_by = "weight"
+  +++
+  title = "Supported Languages and Frameworks"
+  description = "A detailed overview of the programming languages and frameworks supported by Noir, including feature compatibility for each."
+  weight = 1
+  sort_by = "weight"
 
-[extra]
-+++
+  [extra]
+  +++
 
-Noir is a tool designed to analyze and understand codebases by identifying endpoints and their specifications. This section provides a comprehensive list of the programming languages that Noir supports. For each language, this page shows a single table with a Framework column and the following fields: endpoint, method, query, path, body, header, cookie, static_path, websocket.
+  Noir is a tool designed to analyze and understand codebases by identifying endpoints and their specifications. This section provides a comprehensive list of the programming languages that Noir supports. For each language, this page shows a single table with a Framework column and the following fields: endpoint, method, query, path, body, header, cookie, static_path, websocket.
 
-MD
+  MD
 
 def parse_tech_blocks(text : String) : Array(Tech)
   lines = text.lines
@@ -302,20 +302,20 @@ def default_spec_output_path(root : String) : String
 end
 
 SPEC_HEADER = <<-MD
-+++
-title = "Supported Specifications"
-description = "This page provides a detailed overview of the API and data specifications that Noir supports, including OpenAPI (Swagger), RAML, HAR, and GraphQL. See the compatibility table for more information."
-weight = 2
-sort_by = "weight"
+  +++
+  title = "Supported Specifications"
+  description = "This page provides a detailed overview of the API and data specifications that Noir supports, including OpenAPI (Swagger), RAML, HAR, and GraphQL. See the compatibility table for more information."
+  weight = 2
+  sort_by = "weight"
 
-[extra]
-+++
+  [extra]
+  +++
 
-In addition to analyzing source code directly, Noir can also parse various API and data specification formats. This allows you to use Noir to analyze existing API documentation, captured network traffic, and more.
+  In addition to analyzing source code directly, Noir can also parse various API and data specification formats. This allows you to use Noir to analyze existing API documentation, captured network traffic, and more.
 
-This section provides a compatibility table for the different specifications that Noir supports.
+  This section provides a compatibility table for the different specifications that Noir supports.
 
-MD
+  MD
 
 def generate_specs_markdown(techs : Array(Tech)) : String
   specs = techs.select { |t| t.format? || t.language.nil? }

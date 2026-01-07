@@ -32,7 +32,7 @@ describe "GraphQL Analyzer Logic (InternalGraphqlParser.parse_content)" do
     }
 
     query AnotherQuery{field} # Test multiple queries and no body
-  GRAPHQL
+    GRAPHQL
 
   # Note: The original subtask mentioned that the hook itself should filter for .graphql files.
   # The InternalGraphqlParser.parse_content method itself does not (and should not) filter by filename,
@@ -48,7 +48,7 @@ describe "GraphQL Analyzer Logic (InternalGraphqlParser.parse_content)" do
     content_no_ops = <<-GRAPHQL
       # Only comments
       # type User { name: String }
-    GRAPHQL
+      GRAPHQL
     endpoints = InternalGraphqlParser.parse_content("no_ops.graphql", content_no_ops)
     endpoints.should be_empty
   end

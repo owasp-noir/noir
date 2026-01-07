@@ -11,15 +11,15 @@ describe "Detect Rust Gotham" do
 
   it "Cargo.toml with other dependencies" do
     cargo_content = <<-TOML
-    [package]
-    name = "my-app"
-    version = "0.1.0"
+      [package]
+      name = "my-app"
+      version = "0.1.0"
 
-    [dependencies]
-    gotham = "0.7"
-    serde = "1.0"
-    tokio = "1.0"
-    TOML
+      [dependencies]
+      gotham = "0.7"
+      serde = "1.0"
+      tokio = "1.0"
+      TOML
     instance.detect("Cargo.toml", cargo_content).should be_true
   end
 
