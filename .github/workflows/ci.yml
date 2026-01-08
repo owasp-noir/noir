@@ -114,7 +114,7 @@ jobs:
             experimental-features = nix-command flakes
             access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
       - name: Enable magic-nix-cache
-        uses: DeterminateSystems/magic-nix-cache-action@v8
+        uses: DeterminateSystems/magic-nix-cache-action@v13
       - name: Check Nix flake
         run: |
           echo "Checking Nix flake inputs..."
