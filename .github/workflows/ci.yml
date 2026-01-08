@@ -3,7 +3,12 @@ name: CI
 on:
   pull_request:
     branches: [main]
-    paths: ["**/*.cr", shard.yml, Dockerfile]
+    paths:
+      - .github/workflows/ci.yml
+      - shard.yml
+      - shard.lock
+      - Dockerfile
+      - "**/*.cr"
   push:
     branches: [main]
   workflow_dispatch:
@@ -19,10 +24,10 @@ jobs:
       matrix:
         crystal-version: [1.15.0, 1.16.0, 1.17.0, 1.18.0]
     steps:
-      - uses: actions/checkout@v5
-      - uses: MeilCli/setup-crystal-action@v4
+      - uses: actions/checkout@v6
+      - uses: crystal-lang/install-crystal@v1
         with:
-          crystal_version: ${{ matrix.crystal-version }}
+          crystal: ${{ matrix.crystal-version }}
       - name: Install dependencies
         run: shards install
       - name: Build
@@ -34,7 +39,7 @@ jobs:
         arch: [linux/amd64, linux/arm64]
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
       - name: Install cosign
         if: github.event_name != 'pull_request'
         uses: sigstore/cosign-installer@v3.1.1
@@ -63,18 +68,15 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: MeilCli/setup-crystal-action@v4
-        with:
-          crystal_version: 1.18.0
+      - uses: actions/checkout@v6
       - name: Run Ameba linter
         uses: crystal-ameba/github-action@master
   tests:
     runs-on: ubuntu-latest
     container:
-      image: 84codes/crystal:latest-debian-12
+      image: 84codes/crystal:latest-debian-13
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Install dependencies
         run: shards install
       - name: Run tests
@@ -90,7 +92,7 @@ jobs:
         platform: [amd64]
     steps:
       - name: Check out Git repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
       - name: Build snapcraft package
         uses: diddlesnaps/snapcraft-multiarch-action@v1
         with:
@@ -104,7 +106,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@v14
         with:

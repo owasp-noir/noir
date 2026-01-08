@@ -21,7 +21,7 @@ jobs:
   noir-analysis:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Run OWASP Noir
         id: noir
@@ -90,7 +90,7 @@ jobs:
   security-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Run OWASP Noir with Passive Scanning
         id: noir
@@ -133,7 +133,7 @@ jobs:
       matrix:
         service: [service-a, service-b, service-c]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Run Noir for ${{ matrix.service }}
         id: noir
