@@ -1,0 +1,23 @@
+[default]
+extend-ignore-re = [
+  # numeric literals
+  '0x[0-9a-fA-F_\.\+]+([fiu](8|16|32|64|128))?',
+  '\\u\{[0-9a-fA-F]+\}',
+  # words including a number are likely some kind of identifier
+  "[a-zA-Z]+[0-9]+",
+]
+
+[default.extend-words]
+vertx = "vertx"
+Verticle = "Verticle"
+nd = "nd"
+
+[files]
+extend-exclude = [
+  # git and dependencies
+  ".git/**",
+  "lib/**",
+  "docs/themes/goyo/**",
+  # individual files to exclude
+  "spec/functional_test/fixtures/python/django/djangoblog/settings.py",
+]
