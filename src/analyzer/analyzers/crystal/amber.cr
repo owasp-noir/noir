@@ -45,17 +45,17 @@ module Analyzer::Crystal
 
                         if line.includes?("public_folder")
                           begin
-                            splited = line.split("public_folder")
+                            split = line.split("public_folder")
                             public_folder = ""
 
-                            if splited.size > 1
+                            if split.size > 1
                               # Extract path more carefully handling quotes and spaces
-                              match_data = splited[1].match(/[=\(]\s*['"]?(.*?)['"]?\s*[\),]/)
+                              match_data = split[1].match(/[=\(]\s*['"]?(.*?)['"]?\s*[\),]/)
                               if match_data && match_data[1]?
                                 public_folder = match_data[1].strip
                               else
                                 # Fallback to the previous approach
-                                public_folder = splited[1].gsub("(", "").gsub(")", "").gsub(" ", "").gsub("\"", "").gsub("'", "")
+                                public_folder = split[1].gsub("(", "").gsub(")", "").gsub(" ", "").gsub("\"", "").gsub("'", "")
                               end
 
                               if public_folder != ""

@@ -7,7 +7,7 @@ require "../utils/wait_group"
 require "../utils/media_filter"
 require "yaml"
 
-macro defind_detectors(detectors)
+macro define_detectors(detectors)
   {% for detector, index in detectors %}
     instance = Detector::{{ detector }}.new(options)
     instance.set_name
@@ -22,7 +22,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
   mutex = Mutex.new
 
   # Define detectors
-  defind_detectors([
+  define_detectors([
     CSharp::AspNetMvc,
     CSharp::AspNetCoreMvc,
     Crystal::Amber,

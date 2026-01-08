@@ -3,7 +3,7 @@ require "../models/minilexer/*"
 class PythonLexer < MiniLexer
   # Python Keywords
   # Regular Expressions for Tokens
-  IDENTIFIER = /^[a-zA-Z_]\w*/ # Unsupport unicode characters for now
+  IDENTIFIER = /^[a-zA-Z_]\w*/ # Unsupported unicode characters for now
 
   # Token Definitions
   PUNCTUATION = {

@@ -289,11 +289,11 @@ class NoirRunner
       builder = OutputBuilderSarif.new @options
       builder.print @endpoints, @passive_results
     when "oas2"
-      buidler = OutputBuilderOas2.new @options
-      buidler.print @endpoints
+      builder = OutputBuilderOas2.new @options
+      builder.print @endpoints
     when "oas3"
-      buidler = OutputBuilderOas3.new @options
-      buidler.print @endpoints
+      builder = OutputBuilderOas3.new @options
+      builder.print @endpoints
     when "postman"
       builder = OutputBuilderPostman.new @options
       builder.print @endpoints

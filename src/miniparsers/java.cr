@@ -284,7 +284,7 @@ class JavaParser
 
     lbrace = 0
     rbrace = 0
-    semi_indexs = Array(Int32).new
+    semi_indices = Array(Int32).new
     class_tokens.each_with_index do |token, index|
       if token.type == :LBRACE
         lbrace += 1
@@ -299,11 +299,11 @@ class JavaParser
       end
 
       if class_body_start && token.type == :SEMI && class_tokens[index + 1].type == :NEWLINE
-        semi_indexs << index
+        semi_indices << index
       end
     end
 
-    semi_indexs.each do |semi_index|
+    semi_indices.each do |semi_index|
       is_method_token = false
       methods.values.each do |method|
         method_start = method.@tokens[0].index
@@ -383,7 +383,7 @@ class JavaParser
                 has_setter = true
               end
 
-              # lombok annotaitons
+              # lombok annotations
               if annotations.has_key?("Data")
                 has_getter = true
                 has_setter = true
