@@ -1,10 +1,6 @@
 Metrics/CyclomaticComplexity:
   Enabled: false
 
-# Disable TODO warnings as they are intentional
-Documentation/DocumentationAdmonition:
-  Enabled: false
-
 # Disable spec filename check for fixture files (they represent real code)
 Lint/SpecFilename:
   Excluded:
