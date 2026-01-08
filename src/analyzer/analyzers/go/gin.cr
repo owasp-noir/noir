@@ -63,7 +63,7 @@ module Analyzer::Go
                       # Matches patterns like: .GET(, .Get(, .get(, .POST(, .Post(, .post(, etc.
                       # Exclude parameter extraction patterns like Header.Get(, Cookie.Get(, etc.
                       if !line.includes?("Header.Get") && !line.includes?("Cookie.Get") &&
-                         (match = line.match(/\.(GET|Get|get|POST|Post|post|PUT|Put|put|DELETE|Delete|delete|PATCH|Patch|patch|OPTIONS|Options|options|HEAD|Head|head)\s*\(/i))
+                         (match = line.match(/\.(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\s*\(/i))
                         method = match[1].upcase
                         get_route_path(line, groups).tap do |route_path|
                           # Handle multi-line routes - check next lines if route is empty
@@ -195,6 +195,8 @@ module Analyzer::Go
       map.each do |token|
         if token.type == :string
           final_path = token.value.to_s
+          # Route path must start with "/" to be a valid HTTP endpoint
+          next unless final_path.starts_with?("/")
           groups.each do |group|
             group.each do |key, value|
               if before.value.to_s.includes? key

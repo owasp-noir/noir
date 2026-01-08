@@ -65,16 +65,17 @@ module Analyzer::Go
                       route_path = ""
 
                       # First try to match method with route on same line
-                      if match = line.match(/[a-zA-Z]\w*\.(GET|Get|get|POST|Post|post|PUT|Put|put|DELETE|Delete|delete|PATCH|Patch|patch)\(\s*"([^"]+)"/i)
+                      # Route path must start with "/" to be a valid HTTP endpoint
+                      if match = line.match(/[a-zA-Z]\w*\.(GET|POST|PUT|DELETE|PATCH)\(\s*"(\/[^"]*)"/i)
                         method = match[1].upcase
                         route_path = match[2]
                         # Then try to match method without route (for multi-line cases)
-                      elsif match = line.match(/[a-zA-Z]\w*\.(GET|Get|get|POST|Post|post|PUT|Put|put|DELETE|Delete|delete|PATCH|Patch|patch)\s*\(/i)
+                      elsif match = line.match(/[a-zA-Z]\w*\.(GET|POST|PUT|DELETE|PATCH)\s*\(/i)
                         method = match[1].upcase
-                        # Look for route in next line
+                        # Look for route in next line - must start with "/" to be valid
                         if index + 1 < lines.size
                           next_line = lines[index + 1]
-                          if next_match = next_line.match(/"([^"]+)"/)
+                          if next_match = next_line.match(/"(\/[^"]*)"/)
                             route_path = next_match[1]
                           end
                         end
@@ -243,7 +244,8 @@ module Analyzer::Go
             method = ""
             route_path = ""
             # Support case-insensitive method names
-            if match = line.match(/[a-zA-Z]\w*\.(GET|Get|get|POST|Post|post|PUT|Put|put|DELETE|Delete|delete|PATCH|Patch|patch)\(\s*"([^"]+)"/i)
+            # Route path must start with "/" to be a valid HTTP endpoint
+            if match = line.match(/[a-zA-Z]\w*\.(GET|POST|PUT|DELETE|PATCH)\(\s*"(\/[^"]*)"/i)
               method = match[1].upcase
               route_path = match[2]
             end
