@@ -50,11 +50,11 @@ module Analyzer::Javascript
       # server/api/users/[id].ts -> /api/users/:id
       # server/api/users.get.ts -> /api/users (GET only)
       # server/routes/custom.ts -> /custom
-      
+
       relative_path = path
       base_path_idx = path.index("/server/api/")
       is_api_route = true
-      
+
       if base_path_idx.nil?
         base_path_idx = path.index("/server/routes/")
         is_api_route = false
@@ -75,7 +75,7 @@ module Analyzer::Javascript
       # Check for HTTP method-specific files (e.g., users.get.ts)
       http_methods = ["get", "post", "put", "delete", "patch", "head", "options"]
       specific_method = nil
-      
+
       http_methods.each do |method|
         if relative_path.ends_with?(".#{method}")
           specific_method = method.upcase
@@ -93,10 +93,10 @@ module Analyzer::Javascript
             else
               "/#{relative_path}"
             end
-      
+
       # Clean up double slashes
       url = url.gsub("//", "/")
-      
+
       # Handle index routes
       url = url.gsub(/\/index$/, "")
       url = "/" if url.empty?
@@ -107,7 +107,7 @@ module Analyzer::Javascript
       # Read file content to extract parameters
       begin
         content = File.read(path, encoding: "utf-8", invalid: :skip)
-        
+
         methods.each do |method|
           endpoint = Endpoint.new(url, method)
           details = Details.new(PathInfo.new(path, 1))
@@ -128,7 +128,7 @@ module Analyzer::Javascript
             param = Param.new(param_name, "", "query")
             endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
           end
-          
+
           # Pattern 2: Variable assignment - const query = getQuery(event); query.param
           if content.match(/(?:const|let|var)\s+(\w+)\s*=\s*(?:getQuery|useQuery)\s*\(\s*event\s*\)/)
             query_var = $1

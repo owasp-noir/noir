@@ -21,8 +21,8 @@ module Detector::Javascript
 
       # Check for server/api or server/routes directory patterns
       if (filename.includes?("/server/api/") || filename.includes?("/server/routes/")) &&
-         (filename.ends_with?(".js") || filename.ends_with?(".ts") || 
-          filename.ends_with?(".mjs") || filename.ends_with?(".mts"))
+         (filename.ends_with?(".js") || filename.ends_with?(".ts") ||
+         filename.ends_with?(".mjs") || filename.ends_with?(".mts"))
         return true
       end
 
