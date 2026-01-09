@@ -233,14 +233,14 @@ class EndpointOptimizer
         first_colon = pvalue_str.index(":")
 
         if first_equal && (!first_colon || first_equal < first_colon)
-          splited = pvalue_str.split("=", 2)
-          if splited[0] == param_name || splited[0] == "*"
-            return splited[1].to_s
+          split = pvalue_str.split("=", 2)
+          if split[0] == param_name || split[0] == "*"
+            return split[1].to_s
           end
         elsif first_colon
-          splited = pvalue_str.split(":", 2)
-          if splited[0] == param_name || splited[0] == "*"
-            return splited[1].to_s
+          split = pvalue_str.split(":", 2)
+          if split[0] == param_name || split[0] == "*"
+            return split[1].to_s
           end
         end
       else

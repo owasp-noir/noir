@@ -64,7 +64,7 @@ def create_record():
     return jsonify(record)
 
 @app.route('/delete_record', methods=['DELETE'])
-def delte_record():
+def delete_record():
     record = json.loads(request.data)
     new_records = []
     with open('/tmp/data.txt', 'r') as f:

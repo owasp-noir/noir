@@ -240,7 +240,7 @@ class PythonParser
   end
 
   # Normalize the string or fstring
-  def normallize(index) : String
+  def normalize(index) : String
     if @tokens[index].type == :STRING
       str = @tokens[index].value[1..-2]
       return str
@@ -284,7 +284,7 @@ class PythonParser
       elsif sindex == index
         # Start of the assignment
         if token_type == :STRING || token_type == :FSTRING
-          return Tuple.new("str", normallize(index))
+          return Tuple.new("str", normalize(index))
         else
           rawdata += token_value
         end

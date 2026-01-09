@@ -24,9 +24,9 @@ module Analyzer::Ruby
             stripped_line = line.strip
             if stripped_line.size > 0 && stripped_line[0] != '#'
               line.scan(/resources?\s+:.*/) do |match|
-                splited = match[0].split(":")
-                if splited.size > 1
-                  resource = splited[1].split(",")[0]
+                split = match[0].split(":")
+                if split.size > 1
+                  resource = split[1].split(",")[0]
 
                   @result += controller_to_endpoint("#{@base_path}/app/controllers/#{resource}_controller.rb", @url, resource)
                   @result += controller_to_endpoint("#{@base_path}/app/controllers/#{resource}s_controller.rb", @url, resource)
@@ -99,9 +99,9 @@ module Analyzer::Ruby
             end
 
             if controller_line.includes? "params.require"
-              splited_param = controller_line.strip.split("permit")
-              if splited_param.size > 1
-                tparam = splited_param[1].gsub("(", "").gsub(")", "").gsub("s", "").gsub(":", "")
+              split_param = controller_line.strip.split("permit")
+              if split_param.size > 1
+                tparam = split_param[1].gsub("(", "").gsub(")", "").gsub("s", "").gsub(":", "")
                 tparam.split(",").each do |param|
                   params_body << Param.new(param.strip, "", param_type)
                   params_query << Param.new(param.strip, "", "query")
@@ -110,18 +110,18 @@ module Analyzer::Ruby
             end
 
             if controller_line.includes? "params[:"
-              splited_param = controller_line.strip.split("params[:")[1]
-              if splited_param
-                param = splited_param.split("]")[0]
+              split_param = controller_line.strip.split("params[:")[1]
+              if split_param
+                param = split_param.split("]")[0]
                 params_body << Param.new(param.strip, "", param_type)
                 params_query << Param.new(param.strip, "", "query")
               end
             end
 
             if controller_line.includes? "request.headers["
-              splited_param = controller_line.strip.split("request.headers[")[1]
-              if splited_param
-                param = splited_param.split("]")[0].gsub("'", "").gsub("\"", "")
+              split_param = controller_line.strip.split("request.headers[")[1]
+              if split_param
+                param = split_param.split("]")[0].gsub("'", "").gsub("\"", "")
                 param_line = Param.new(param.strip, "", "header")
                 if params_method.has_key? this_method
                   params_method[this_method] << param_line
@@ -133,9 +133,9 @@ module Analyzer::Ruby
             end
 
             if controller_line.includes? "cookies[:"
-              splited_param = controller_line.strip.split("cookies[:")[1]
-              if splited_param
-                param = splited_param.split("]")[0].gsub("'", "").gsub("\"", "")
+              split_param = controller_line.strip.split("cookies[:")[1]
+              if split_param
+                param = split_param.split("]")[0].gsub("'", "").gsub("\"", "")
                 if this_method != ""
                   param_line = Param.new(param.strip, "", "cookie")
                   if params_method.has_key? this_method
@@ -149,9 +149,9 @@ module Analyzer::Ruby
             end
 
             if controller_line.includes? "cookies.signed[:"
-              splited_param = controller_line.strip.split("cookies.signed[:")[1]
-              if splited_param
-                param = splited_param.split("]")[0].gsub("'", "").gsub("\"", "")
+              split_param = controller_line.strip.split("cookies.signed[:")[1]
+              if split_param
+                param = split_param.split("]")[0].gsub("'", "").gsub("\"", "")
                 if this_method != ""
                   param_line = Param.new(param.strip, "", "cookie")
                   if params_method.has_key? this_method
@@ -165,9 +165,9 @@ module Analyzer::Ruby
             end
 
             if controller_line.includes? "cookies.encrypted[:"
-              splited_param = controller_line.strip.split("cookies.encrypted[:")[1]
-              if splited_param
-                param = splited_param.split("]")[0].gsub("'", "").gsub("\"", "")
+              split_param = controller_line.strip.split("cookies.encrypted[:")[1]
+              if split_param
+                param = split_param.split("]")[0].gsub("'", "").gsub("\"", "")
                 if this_method != ""
                   param_line = Param.new(param.strip, "", "cookie")
                   if params_method.has_key? this_method

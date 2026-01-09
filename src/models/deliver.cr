@@ -24,19 +24,19 @@ class Deliver
 
     options["send_with_headers"].as_a.each do |set_header|
       if set_header.to_s.includes? ":"
-        splited = set_header.to_s.split(":")
+        split = set_header.to_s.split(":")
         value = ""
         begin
-          if splited[1][0].to_s == " "
-            value = splited[1][1..-1].to_s
+          if split[1][0].to_s == " "
+            value = split[1][1..-1].to_s
           else
-            value = splited[1].to_s
+            value = split[1].to_s
           end
         rescue
-          value = splited[1].to_s
+          value = split[1].to_s
         end
 
-        @headers[splited[0]] = value
+        @headers[split[0]] = value
       end
     end
 
