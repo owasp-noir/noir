@@ -2,7 +2,7 @@ name: Spell checker
 
 on:
   push:
-    branches: [master]
+    branches: [main]
   pull_request:
     types: [opened, synchronize, reopened]
 
