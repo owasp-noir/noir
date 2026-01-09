@@ -42,6 +42,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"js_fastify", Javascript::Fastify},
     {"js_koa", Javascript::Koa},
     {"js_nestjs", Javascript::Nestjs},
+    {"js_nuxtjs", Javascript::Nuxtjs},
     {"js_restify", Javascript::Restify},
     {"kotlin_spring", Kotlin::Spring},
     {"kotlin_ktor", Kotlin::Ktor},
