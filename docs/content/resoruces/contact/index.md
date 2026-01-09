@@ -20,5 +20,7 @@ The best way to get in touch with us is through our [GitHub repository](https://
 
 OWASP Noir is led by two co-leads. You can follow them for updates or reach out directly:
 
-* **hahwul** (co-lead, creator): [𝕏](https://x.com/hahwul), [GitHub](https://github.com/hahwul)
-* **ksg** (co-lead): [GitHub](https://github.com/ksg97031)
+{% members(cols=2) %}
+HAHWUL | Co-Lead, Creator | ./hahwul.jpeg | [𝕏](https://x.com/hahwul), [GitHub](https://github.com/hahwul)
+KSG | Co-Lead | ./ksg.jpeg | [GitHub](https://github.com/ksg97031)
+{% end %}

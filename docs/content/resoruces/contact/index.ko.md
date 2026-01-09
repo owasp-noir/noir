@@ -20,5 +20,7 @@ sort_by = "weight"
 
 OWASP Noir는 두 명의 공동 리더가 이끌고 있습니다. 업데이트를 받아보거나 직접 연락할 수 있습니다:
 
-* **hahwul** (공동 리더, 창시자): [𝕏](https://x.com/hahwul), [GitHub](https://github.com/hahwul)
-* **ksg** (공동 리더): [GitHub](https://github.com/ksg97031)
+{% members(cols=2) %}
+HAHWUL | 공동 리더, 창시자 | ./hahwul.jpeg | [𝕏](https://x.com/hahwul) [GitHub](https://github.com/hahwul)
+KSG | 공동 리더 | ./ksg.jpeg | [GitHub](https://github.com/ksg97031)
+{% end %}
