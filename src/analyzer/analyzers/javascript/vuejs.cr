@@ -59,7 +59,8 @@ module Analyzer::Javascript
       # Pattern: routes: [ { path: '/path', ... }, ... ]
       # or const routes = [ { path: '/path', ... }, ... ]
       
-      routes_match = content.match(/(?:routes\s*:\s*\[|const\s+routes\s*=\s*\[)(.*?)(?:\n\s*\])/m)
+      # More flexible regex that handles various bracket placements
+      routes_match = content.match(/(?:routes\s*:\s*\[|const\s+routes\s*=\s*\[)(.*?)(?:\])/m)
       return unless routes_match && routes_match.size > 1
       
       routes_content = routes_match[1]
