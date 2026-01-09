@@ -20,10 +20,6 @@ module Detector::Javascript
         return true if file_contents.match(/createRouter\s*\(/)
         return true if file_contents.match(/new VueRouter\s*\(/)
         return true if file_contents.match(/Vue\.use\s*\(\s*VueRouter\s*\)/)
-        
-        # Check for route definitions
-        return true if file_contents.match(/routes\s*:\s*\[/)
-        return true if file_contents.match(/path\s*:\s*['"]\//)
       end
       
       false
