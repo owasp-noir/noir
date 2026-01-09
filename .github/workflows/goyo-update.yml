@@ -24,6 +24,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: true
+          persist-credentials: false
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Update Goyo submodule
