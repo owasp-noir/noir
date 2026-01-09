@@ -124,8 +124,9 @@ module Analyzer::Javascript
       # However, components may make API calls with different methods
       
       # Check if there are explicit method specifications (custom pattern)
-      if route_config.match(/methods?\s*:\s*\[([^\]]+)\]/)
-        methods_str = $1
+      methods_match = route_config.match(/methods?\s*:\s*\[([^\]]+)\]/)
+      if methods_match && methods_match.size > 1
+        methods_str = methods_match[1]
         methods = methods_str.scan(/['"`](\w+)['"`]/).map { |m| m[1].upcase }
         return methods if methods.size > 0
       end
@@ -153,8 +154,9 @@ module Analyzer::Javascript
       # Pattern: query: ['param1', 'param2'] or props: route => ({ query: route.query.param })
       
       # Direct query array definition
-      if route_config.match(/query\s*:\s*\[([^\]]+)\]/)
-        query_str = $1
+      query_match = route_config.match(/query\s*:\s*\[([^\]]+)\]/)
+      if query_match && query_match.size > 1
+        query_str = query_match[1]
         query_str.scan(/['"`](\w+)['"`]/) do |match|
           if match.size > 0
             param_name = match[1]
