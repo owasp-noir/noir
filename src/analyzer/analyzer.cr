@@ -43,6 +43,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"js_koa", Javascript::Koa},
     {"js_nestjs", Javascript::Nestjs},
     {"js_restify", Javascript::Restify},
+    {"js_vuejs", Javascript::Vuejs},
     {"kotlin_spring", Kotlin::Spring},
     {"kotlin_ktor", Kotlin::Ktor},
     {"oas2", Specification::Oas2},

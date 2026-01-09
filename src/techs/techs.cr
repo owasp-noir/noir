@@ -501,6 +501,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :js_vuejs => {
+      :framework => "Vue.js",
+      :language  => "JavaScript",
+      :similar   => ["vuejs", "vue", "vue.js", "js-vuejs", "js_vuejs"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :kotlin_spring => {
       :framework => "Spring",
       :language  => "Kotlin",
