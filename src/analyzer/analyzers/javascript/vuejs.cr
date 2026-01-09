@@ -68,7 +68,7 @@ module Analyzer::Javascript
       # Extract individual route objects
       # Match route objects: { path: '...', ... }
       routes_content.scan(/\{\s*path\s*:\s*['"`]([^'"`]+)['"`]([^}]*)\}/m) do |match|
-        next unless match.size > 1
+        next unless match.size > 2
         
         route_path = match[1]
         route_config = match[2]
@@ -101,7 +101,7 @@ module Analyzer::Javascript
       
       # addRoute pattern
       content.scan(/router\.addRoute\s*\(\s*\{\s*path\s*:\s*['"`]([^'"`]+)['"`]([^}]*)\}/m) do |match|
-        next unless match.size > 1
+        next unless match.size > 2
         
         route_path = match[1]
         route_config = match[2]
@@ -127,7 +127,7 @@ module Analyzer::Javascript
       methods_match = route_config.match(/methods?\s*:\s*\[([^\]]+)\]/)
       if methods_match && methods_match.size > 1
         methods_str = methods_match[1]
-        methods = methods_str.scan(/['"`](\w+)['"`]/).map { |m| m[1].upcase }
+        methods = methods_str.scan(/['"`](\w+)['"`]/).map { |m| m.size > 1 ? m[1].upcase : "" }.reject(&.empty?)
         return methods if methods.size > 0
       end
       
