@@ -77,6 +77,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"swift_kitura", Swift::Kitura},
     {"swift_hummingbird", Swift::Hummingbird},
     {"ts_nestjs", Typescript::Nestjs},
+    {"ts_tanstack_router", Typescript::TanstackRouter},
     {"ai", AI::Unified},
   ])
 
