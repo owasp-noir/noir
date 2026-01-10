@@ -14,7 +14,7 @@
       # Steps represent a sequence of tasks that will be executed as part of the job
       steps:
         - name: Find Broken Link
-          uses: hahwul/deadfinder@1.9.1
+          uses: hahwul/deadfinder@1.10.0
           id: broken-link
           with:
             command: sitemap
