@@ -501,6 +501,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :ts_tanstack_router => {
+      :framework => "TanStack Router",
+      :language  => "TypeScript",
+      :similar   => ["tanstack-router", "tanstack_router", "ts-tanstack-router", "ts_tanstack_router", "@tanstack/router", "@tanstack/react-router"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :kotlin_spring => {
       :framework => "Spring",
       :language  => "Kotlin",
