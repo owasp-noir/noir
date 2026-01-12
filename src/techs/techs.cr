@@ -483,6 +483,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :js_nuxtjs => {
+      :framework => "NuxtJS",
+      :language  => "JavaScript",
+      :similar   => ["nuxtjs", "nuxt", "js-nuxtjs", "js_nuxtjs"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :ts_nestjs => {
       :framework => "NestJS",
       :language  => "TypeScript",
