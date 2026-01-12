@@ -84,7 +84,7 @@ module Analyzer::Java
               if import_path.ends_with?("/*")
                 import_directory = root_source_directory.join(import_path[..-3])
                 if Dir.exists?(import_directory)
-                  Dir.glob("#{import_directory}/*.java") do |_path|
+                  Dir.glob("#{escape_glob_path(import_directory.to_s)}/*.java") do |_path|
                     next if path == _path
                     if !parser_map.has_key?(_path)
                       _parser = create_parser(Path.new(_path))
@@ -120,7 +120,7 @@ module Analyzer::Java
             package_class_map = package_map[package_directory]?
             if package_class_map.nil?
               package_class_map = Hash(String, ClassModel).new
-              Dir.glob("#{package_directory}/*.java") do |_path|
+              Dir.glob("#{escape_glob_path(package_directory)}/*.java") do |_path|
                 next if path == _path
                 if !parser_map.has_key?(_path)
                   _parser = create_parser(Path.new(_path))

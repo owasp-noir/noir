@@ -35,7 +35,7 @@ module Analyzer::Python
 
       # Iterate through all Python files in all base paths
       base_paths.each do |current_base_path|
-        Dir.glob("#{current_base_path}/**/*.py") do |path|
+        Dir.glob("#{escape_glob_path(current_base_path)}/**/*.py") do |path|
           next if File.directory?(path)
           next if path.includes?("/site-packages/")
           @logger.debug "Analyzing #{path}"

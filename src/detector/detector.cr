@@ -145,7 +145,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
       ]
 
       base_paths.each do |base_path|
-        Dir.glob("#{base_path}/**/**") do |file|
+        Dir.glob("#{escape_glob_path(base_path)}/**/**") do |file|
           next if File.directory?(file)
           total_files += 1
 

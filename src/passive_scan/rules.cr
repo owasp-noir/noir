@@ -7,7 +7,7 @@ module NoirPassiveScan
     rules = [] of PassiveScan
 
     # Read all .yml and .yaml files from the specified path
-    Dir.glob("#{path}/**/*.{yml,yaml}").each do |file|
+    Dir.glob("#{escape_glob_path(path)}/**/*.{yml,yaml}").each do |file|
       begin
         # Deserialize each file into a PassiveScan object
         yaml_rule = YAML.parse(File.read(file))
