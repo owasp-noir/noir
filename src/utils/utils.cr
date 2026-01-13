@@ -35,3 +35,11 @@ def any_to_bool(any) : Bool
     false
   end
 end
+
+# Escapes glob metacharacters in a path string.
+# This is necessary when the path contains characters like { } [ ] * ? \
+# which would otherwise be interpreted as glob patterns.
+# Example: "/path/{{cookiecutter}}/file" -> "/path/\\{\\{cookiecutter\\}\\}/file"
+def escape_glob_path(path : String) : String
+  path.gsub(/([{}\[\]*?\\])/) { |match| "\\#{match}" }
+end

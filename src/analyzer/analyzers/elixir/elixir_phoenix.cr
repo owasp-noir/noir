@@ -61,7 +61,7 @@ module Analyzer::Elixir
 
     def extract_controller_params
       # Find all controller files and extract parameters
-      controller_files = Dir.glob(File.join(@base_path, "**", "*_controller.ex"))
+      controller_files = Dir.glob(File.join(escape_glob_path(@base_path), "**", "*_controller.ex"))
 
       controller_files.each do |controller_path|
         next unless File.exists?(controller_path)

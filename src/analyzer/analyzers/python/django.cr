@@ -81,7 +81,7 @@ module Analyzer::Python
                     dotted_as_urlconf = match[1].split(".")
                     relative_path = "#{dotted_as_urlconf.join("/")}.py"
 
-                    Dir.glob("#{search_dir}/**/#{relative_path}") do |filepath|
+                    Dir.glob("#{escape_glob_path(search_dir)}/**/#{relative_path}") do |filepath|
                       basepath = filepath.split("/")[..-(dotted_as_urlconf.size + 1)].join("/")
                       root_django_urls_list << DjangoUrls.new("", filepath, basepath)
                     end

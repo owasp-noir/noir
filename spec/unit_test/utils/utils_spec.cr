@@ -1,3 +1,4 @@
+require "../../spec_helper"
 require "../../../src/utils/*"
 
 describe "remove_start_slash" do
@@ -80,5 +81,27 @@ describe "valid_yaml?" do
   end
   it "invalid yaml" do
     valid_yaml?(":").should be_false
+  end
+end
+
+describe "escape_glob_path" do
+  it "no special chars" do
+    escape_glob_path("/tmp/test-noir/app").should eq("/tmp/test-noir/app")
+  end
+
+  it "curly braces" do
+    escape_glob_path("/tmp/test-noir/{{project_name}}/app").should eq("/tmp/test-noir/\\{\\{project_name\\}\\}/app")
+  end
+
+  it "square brackets" do
+    escape_glob_path("/data/[abc]/file").should eq("/data/\\[abc\\]/file")
+  end
+
+  it "asterisk and question" do
+    escape_glob_path("/data/a*/b?c").should eq("/data/a\\*/b\\?c")
+  end
+
+  it "mixed specials" do
+    escape_glob_path("/x/{a}[b]*?\\c").should eq("/x/\\{a\\}\\[b\\]\\*\\?\\\\c")
   end
 end

@@ -7,7 +7,7 @@ module Analyzer::Go
       # Source Analysis
       begin
         base_paths.each do |current_base_path|
-          Dir.glob("#{current_base_path}/**/*.go") do |path|
+          Dir.glob("#{escape_glob_path(current_base_path)}/**/*.go") do |path|
             next if File.directory?(path)
             if File.exists?(path)
               File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|

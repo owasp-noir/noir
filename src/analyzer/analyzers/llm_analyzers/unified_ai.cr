@@ -144,7 +144,7 @@ module Analyzer::AI
     private def get_all_source_files : Array(String)
       files = [] of String
       base_paths.each do |current_base_path|
-        files.concat(Dir.glob("#{current_base_path}/**/*").reject do |p|
+        files.concat(Dir.glob("#{escape_glob_path(current_base_path)}/**/*").reject do |p|
           File.directory?(p) || ignore_extensions.includes?(File.extname(p))
         end)
       end
