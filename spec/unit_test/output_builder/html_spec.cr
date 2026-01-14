@@ -310,7 +310,7 @@ describe "OutputBuilderHtml" do
     # but make it unreadable by pointing to a directory instead
     ENV["NOIR_HOME"] = "/tmp/noir_test_#{Process.pid}_#{Time.utc.to_unix_ms}"
     Dir.mkdir_p(ENV["NOIR_HOME"])
-    
+
     # Create a file that will fail to read (e.g., a directory)
     template_path = File.join(ENV["NOIR_HOME"], "report-template.html")
     Dir.mkdir(template_path)
