@@ -33,3 +33,6 @@ development_dependencies:
   ameba:
     github: crystal-ameba/ameba
     branch: master
+  cyclonedx-cr:
+    github: hahwul/cyclonedx-cr
+    branch: main

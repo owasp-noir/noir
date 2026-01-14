@@ -168,19 +168,6 @@ This creates a Postman Collection v2.1 format JSON file that includes all discov
 }
 ```
 
-## HTML Report Format
-
-To generate a visual HTML report of your scan results, use the `html` format:
-
-```bash
-noir -b . -f html -o report.html
-```
-
-This creates an interactive HTML document that you can open in a web browser. The report includes:
-- A summary of discovered endpoints
-- Detailed parameter information
-- Visual formatting for easy reading
-- Interactive elements for filtering and searching
 
 This format is ideal for:
 - Sharing results with non-technical stakeholders
