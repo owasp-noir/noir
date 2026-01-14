@@ -26,7 +26,7 @@ class OutputBuilderSarif < OutputBuilder
                   json.field "driver" do
                     json.object do
                       json.field "name", "OWASP Noir"
-                      json.field "version", "0.26.0"
+                      json.field "version", "0.27.0"
                       json.field "informationUri", "https://github.com/owasp-noir/noir"
                       json.field "rules" do
                         build_rules(json, endpoints, passive_results)
