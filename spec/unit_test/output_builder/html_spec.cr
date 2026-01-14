@@ -308,11 +308,12 @@ describe "OutputBuilderHtml" do
 
     # Create a directory where we expect the template file to be
     # but make it unreadable by pointing to a directory instead
-    ENV["NOIR_HOME"] = "/tmp/noir_test_#{Process.pid}_#{Time.utc.to_unix_ms}"
-    Dir.mkdir_p(ENV["NOIR_HOME"])
+    temp_dir = File.join(Dir.tempdir, "noir_test_#{Process.pid}_#{Time.utc.to_unix_ms}")
+    ENV["NOIR_HOME"] = temp_dir
+    Dir.mkdir_p(temp_dir)
 
     # Create a file that will fail to read (e.g., a directory)
-    template_path = File.join(ENV["NOIR_HOME"], "report-template.html")
+    template_path = File.join(temp_dir, "report-template.html")
     Dir.mkdir(template_path)
 
     begin
@@ -330,7 +331,7 @@ describe "OutputBuilderHtml" do
       output.should contain("GET")
     ensure
       # Clean up
-      FileUtils.rm_rf(ENV["NOIR_HOME"]) if ENV.has_key?("NOIR_HOME")
+      FileUtils.rm_rf(temp_dir)
       ENV.delete("NOIR_HOME")
     end
   end
