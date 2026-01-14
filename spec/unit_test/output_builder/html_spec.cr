@@ -294,4 +294,45 @@ describe "OutputBuilderHtml" do
     output.should contain("protocol-badge")
     output.should contain("ws")
   end
+
+  it "falls back to default HTML when template reading fails" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    # Create a directory where we expect the template file to be
+    # but make it unreadable by pointing to a directory instead
+    temp_dir = File.join(Dir.tempdir, "noir_test_#{Process.pid}_#{Time.utc.to_unix_ms}")
+    ENV["NOIR_HOME"] = temp_dir
+    Dir.mkdir_p(temp_dir)
+
+    # Create a file that will fail to read (e.g., a directory)
+    template_path = File.join(temp_dir, "report-template.html")
+    Dir.mkdir(template_path)
+
+    begin
+      endpoint = Endpoint.new("/test", "GET")
+      endpoint.push_param(Param.new("id", "1", "query"))
+      endpoints = [endpoint]
+
+      builder.print(endpoints)
+      output = builder.io.to_s
+
+      # Should still produce valid HTML output (fallback to default)
+      output.should contain("<!DOCTYPE html>")
+      output.should contain("OWASP Noir")
+      output.should contain("/test")
+      output.should contain("GET")
+    ensure
+      # Clean up
+      FileUtils.rm_rf(temp_dir)
+      ENV.delete("NOIR_HOME")
+    end
+  end
 end

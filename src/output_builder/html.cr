@@ -25,16 +25,21 @@ class OutputBuilderHtml < OutputBuilder
   end
 
   private def apply_template(template_path : String, endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult)) : String
-    template = File.read(template_path)
+    begin
+      template = File.read(template_path)
 
-    template = template.gsub("<%= noir_head %>", build_head)
-    template = template.gsub("<%= noir_header %>", build_header)
-    template = template.gsub("<%= noir_summary %>", build_summary(endpoints, passive_results))
-    template = template.gsub("<%= noir_endpoints %>", build_endpoints_section(endpoints))
-    template = template.gsub("<%= noir_passive_scans %>", build_passive_results_section(passive_results))
-    template = template.gsub("<%= noir_footer %>", build_footer)
+      template = template.gsub("<%= noir_head %>", build_head)
+      template = template.gsub("<%= noir_header %>", build_header)
+      template = template.gsub("<%= noir_summary %>", build_summary(endpoints, passive_results))
+      template = template.gsub("<%= noir_endpoints %>", build_endpoints_section(endpoints))
+      template = template.gsub("<%= noir_passive_scans %>", build_passive_results_section(passive_results))
+      template = template.gsub("<%= noir_footer %>", build_footer)
 
-    template
+      template
+    rescue
+      # If template reading fails (permissions, encoding, corruption), fall back to default
+      build_default_html(endpoints, passive_results)
+    end
   end
 
   private def build_default_html(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult)) : String
