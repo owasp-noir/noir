@@ -308,7 +308,7 @@ describe "OutputBuilderHtml" do
 
     # Create a directory where we expect the template file to be
     # but make it unreadable by pointing to a directory instead
-    ENV["NOIR_HOME"] = "/tmp/noir_test_#{Random.rand(100000)}"
+    ENV["NOIR_HOME"] = "/tmp/noir_test_#{Process.pid}_#{Time.utc.to_unix_ms}"
     Dir.mkdir_p(ENV["NOIR_HOME"])
     
     # Create a file that will fail to read (e.g., a directory)

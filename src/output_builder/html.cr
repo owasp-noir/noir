@@ -36,7 +36,7 @@ class OutputBuilderHtml < OutputBuilder
       template = template.gsub("<%= noir_footer %>", build_footer)
 
       template
-    rescue ex
+    rescue
       # If template reading fails (permissions, encoding, corruption), fall back to default
       build_default_html(endpoints, passive_results)
     end
