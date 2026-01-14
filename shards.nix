@@ -9,6 +9,11 @@
     rev = "v1.4.1";
     sha256 = "1dh6bk8zwkg3d7jvz10r0yydznbxhynjyja010bis42qwryx42rl";
   };
+  "cyclonedx-cr" = {
+    url = "https://github.com/hahwul/cyclonedx-cr.git";
+    rev = "d38333bc3d2bcf0e4ecd12ee94700112c80ce6b7";
+    sha256 = "1va2ivkrkri9mrvna2vpynl19ln48j7cblmal5h2sg3xrvssq8ql";
+  };
   "har" = {
     url = "https://github.com/neuralegion/har.git";
     rev = "v1.2.0";

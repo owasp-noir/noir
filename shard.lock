@@ -8,6 +8,10 @@ shards:
     git: https://github.com/mamantoha/crest.git
     version: 1.4.1
 
+  cyclonedx-cr:
+    git: https://github.com/hahwul/cyclonedx-cr.git
+    version: 1.0.2+git.commit.d38333bc3d2bcf0e4ecd12ee94700112c80ce6b7
+
   har:
     git: https://github.com/neuralegion/har.git
     version: 1.2.0

@@ -1,5 +1,6 @@
 require "../models/output_builder"
 require "../models/endpoint"
+require "../utils/home"
 require "html"
 
 class OutputBuilderHtml < OutputBuilder
@@ -14,10 +15,38 @@ class OutputBuilderHtml < OutputBuilder
   end
 
   private def build_html(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult)) : String
+    template_path = File.join(get_home, "report-template.html")
+
+    if File.exists?(template_path)
+      apply_template(template_path, endpoints, passive_results)
+    else
+      build_default_html(endpoints, passive_results)
+    end
+  end
+
+  private def apply_template(template_path : String, endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult)) : String
+    template = File.read(template_path)
+
+    template = template.gsub("<%= noir_head %>", build_head)
+    template = template.gsub("<%= noir_header %>", build_header)
+    template = template.gsub("<%= noir_summary %>", build_summary(endpoints, passive_results))
+    template = template.gsub("<%= noir_endpoints %>", build_endpoints_section(endpoints))
+    template = template.gsub("<%= noir_passive_scans %>", build_passive_results_section(passive_results))
+    template = template.gsub("<%= noir_footer %>", build_footer)
+
+    template
+  rescue
+    # If template reading fails (permissions, encoding, corruption), fall back to default
+    build_default_html(endpoints, passive_results)
+  end
+
+  private def build_default_html(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult)) : String
     String.build do |html|
       html << "<!DOCTYPE html>\n"
       html << "<html lang=\"en\">\n"
+      html << "<head>\n"
       html << build_head
+      html << "</head>\n"
       html << "<body>\n"
       html << build_header
       html << "<main class=\"container\">\n"
@@ -33,7 +62,6 @@ class OutputBuilderHtml < OutputBuilder
 
   private def build_head : String
     <<-HTML
-      <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>OWASP Noir - Attack Surface Report</title>
@@ -194,7 +222,6 @@ class OutputBuilderHtml < OutputBuilder
           .collapsible { cursor: pointer; }
           .collapsible:hover { background: #f1f5f9; }
         </style>
-      </head>
 
       HTML
   end
