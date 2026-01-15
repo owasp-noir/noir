@@ -65,6 +65,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: noir_${{ env.VERSION }}_${{ matrix.arch }}.deb
+          path: ./
       - name: Upload .deb to Release
         uses: softprops/action-gh-release@v2
         with:
