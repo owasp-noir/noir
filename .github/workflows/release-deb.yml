@@ -46,7 +46,7 @@ jobs:
           Version: ${{ env.VERSION }}
           Architecture: ${{ matrix.arch }}
           maintainer: HAHWUL <hahwul@gmail.com>, KSG <ksg97031@gmail.com>
-          Description: A hybrid static and AI-driven analyzer that detects every endpoint in your codebase, from shadow APIs to standard routes.
+          Description: Hunt every Endpoint in your code, expose Shadow APIs, map the Attack Surface.
           Depends: libc6 (>= 2.17)
           EOF
       - name: Build .deb Package
