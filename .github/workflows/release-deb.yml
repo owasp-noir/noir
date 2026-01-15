@@ -61,6 +61,10 @@ jobs:
       - name: Build .deb Package
         run: |
           dpkg-deb --build noir_${{ env.VERSION }}_${{ matrix.arch }}
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: noir_${{ env.VERSION }}_${{ matrix.arch }}.deb
       - name: Upload .deb to Release
         uses: softprops/action-gh-release@v2
         with:
