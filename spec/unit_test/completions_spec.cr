@@ -22,6 +22,7 @@ describe "Completion Script Generation" do
       script.should contain("postman")
       script.should contain("powershell")
       script.should contain("mermaid")
+      script.should contain("toml")
     end
 
     it "includes passive scan options" do
@@ -36,6 +37,11 @@ describe "Completion Script Generation" do
       script.should contain("--cache-disable")
       script.should contain("--cache-clear")
     end
+
+    it "includes technology options" do
+      script = generate_zsh_completion_script
+      script.should contain("--only-techs")
+    end
   end
 
   describe "Bash completion" do
@@ -46,6 +52,7 @@ describe "Completion Script Generation" do
       script.should contain("postman")
       script.should contain("powershell")
       script.should contain("mermaid")
+      script.should contain("toml")
     end
 
     it "includes passive scan options" do
@@ -65,6 +72,11 @@ describe "Completion Script Generation" do
       script = generate_bash_completion_script
       script.should contain("critical high medium low")
     end
+
+    it "includes technology options" do
+      script = generate_bash_completion_script
+      script.should contain("--only-techs")
+    end
   end
 
   describe "Fish completion" do
@@ -79,6 +91,11 @@ describe "Completion Script Generation" do
       script = generate_fish_completion_script
       script.should contain("--cache-disable")
       script.should contain("--cache-clear")
+    end
+
+    it "includes technology options" do
+      script = generate_fish_completion_script
+      script.should contain("--only-techs")
     end
   end
 end
