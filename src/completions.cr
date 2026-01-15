@@ -5,7 +5,7 @@ def generate_zsh_completion_script
     _arguments \\
       '-b[Set base path]:path:_files' \\
       '-u[Set base URL for endpoints]:URL:_urls' \\
-      '-f[Set output format]:format:(plain yaml json jsonl markdown-table sarif html curl httpie powershell oas2 oas3 postman only-url only-param only-header only-cookie only-tag mermaid)' \\
+      '-f[Set output format]:format:(plain yaml json jsonl toml markdown-table sarif html curl httpie powershell oas2 oas3 postman only-url only-param only-header only-cookie only-tag mermaid)' \\
       '-o[Write result to file]:path:_files' \\
       '--set-pvalue[Specifies the value of the identified parameter]:value:' \\
       '--set-pvalue-header[Specifies the value of the identified parameter for headers]:value:' \\
@@ -38,6 +38,7 @@ def generate_zsh_completion_script
       '--diff-path[Specify the path to the old version of the source code for comparison]:path:_files' \\
       '-t[Specify the technologies to use]:techs:' \\
       '--exclude-techs[Specify the technologies to be excluded]:techs:' \\
+      '--only-techs[Run only specified tech detectors]:techs:' \\
       '--list-techs[Show all technologies]' \\
       '--config-file[Specify the path to a configuration file in YAML format]:path:_files' \\
       '--concurrency[Set concurrency]:concurrency:' \\
@@ -101,6 +102,7 @@ def generate_bash_completion_script
             --diff-path
             -t --techs
             --exclude-techs
+            --only-techs
             --list-techs
             --config-file
             --concurrency
@@ -123,10 +125,10 @@ def generate_bash_completion_script
 
         case "${prev}" in
             -f|--format)
-                COMPREPLY=( $(compgen -W "plain yaml json jsonl markdown-table sarif html curl httpie powershell oas2 oas3 postman only-url only-param only-header only-cookie only-tag mermaid" -- "${cur}") )
+                COMPREPLY=( $(compgen -W "plain yaml json jsonl toml markdown-table sarif html curl httpie powershell oas2 oas3 postman only-url only-param only-header only-cookie only-tag mermaid" -- "${cur}") )
                 return 0
                 ;;
-            --send-proxy|--send-es|--with-headers|--use-matchers|--use-filters|--diff-path|--config-file|--set-pvalue|--techs|--exclude-techs|--ollama|--ollama-model|-o|-b|-u)
+            --send-proxy|--send-es|--with-headers|--use-matchers|--use-filters|--diff-path|--config-file|--set-pvalue|--techs|--exclude-techs|--only-techs|--ollama|--ollama-model|-o|-b|-u)
                 COMPREPLY=( $(compgen -f -- "${cur}") )
                 return 0
                 ;;
@@ -199,6 +201,7 @@ def generate_fish_completion_script
     complete -c noir -n '__fish_noir_needs_command' -a '--diff-path' -d 'Specify the path to the old version of the source code for comparison'
     complete -c noir -n '__fish_noir_needs_command' -a '-t' -d 'Specify the technologies to use'
     complete -c noir -n '__fish_noir_needs_command' -a '--exclude-techs' -d 'Specify the technologies to be excluded'
+    complete -c noir -n '__fish_noir_needs_command' -a '--only-techs' -d 'Run only specified tech detectors'
     complete -c noir -n '__fish_noir_needs_command' -a '--list-techs' -d 'Show all technologies'
     complete -c noir -n '__fish_noir_needs_command' -a '--config-file' -d 'Specify the path to a configuration file in YAML format'
     complete -c noir -n '__fish_noir_needs_command' -a '--concurrency' -d 'Set concurrency'
