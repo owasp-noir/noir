@@ -26,7 +26,7 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_ENV
       - name: Build noir Binary
         run: |
-          docker run --rm --platform linux/${{ matrix.arch }} -v $(pwd):/noir -w /noir --entrypoint="" 84codes/crystal:latest-debian-13 sh -c "
+          docker run --rm --platform linux/${{ matrix.arch }} -v $(pwd):/noir -w /noir --entrypoint="" 84codes/crystal:latest-debian-12 sh -c "
             apt-get update && apt-get install -y libyaml-dev ca-certificates git curl &&
             shards install --production &&
             /usr/bin/crystal build src/noir.cr -o noir --release --no-debug --static
