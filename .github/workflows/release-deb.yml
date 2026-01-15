@@ -2,6 +2,11 @@
 name: Build and Release .deb Package
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g., 1.0.0)'
+        required: true
+        type: string
   release:
     types: [published]
 permissions:
@@ -22,7 +27,11 @@ jobs:
       - name: Get Version
         id: get_version
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          fi
           echo "VERSION=$VERSION" >> $GITHUB_ENV
       - name: Build noir Binary
         run: |
@@ -45,7 +54,7 @@ jobs:
           Package: noir
           Version: ${{ env.VERSION }}
           Architecture: ${{ matrix.arch }}
-          maintainer: HAHWUL <hahwul@gmail.com>, KSG <ksg97031@gmail.com>
+          Maintainer: HAHWUL <hahwul@gmail.com>, KSG <ksg97031@gmail.com>
           Description: Hunt every Endpoint in your code, expose Shadow APIs, map the Attack Surface.
           Depends: libc6 (>= 2.17)
           EOF
