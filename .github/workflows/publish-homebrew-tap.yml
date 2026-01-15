@@ -26,5 +26,6 @@ jobs:
             bin.install "bin/noir"
           test: system "{bin}/noir", "-v"
           update_readme_table: false
+          ignore_warnings: true
           skip_commit: false
           debug: false
