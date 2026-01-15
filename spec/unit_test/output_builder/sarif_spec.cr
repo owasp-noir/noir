@@ -34,7 +34,7 @@ describe "OutputBuilderSarif" do
 
     tool = runs[0]["tool"]["driver"]
     tool["name"].as_s.should eq("OWASP Noir")
-    tool["version"].as_s.should eq("0.26.0")
+    tool["version"].as_s.should eq("0.27.0")
 
     results = runs[0]["results"].as_a
     results.size.should eq(1)
