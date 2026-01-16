@@ -197,7 +197,7 @@ snap/                    # Snap package configuration
 - `src/options.cr`: CLI options and argument parsing
 - `.ameba.yml`: Linting configuration
 - `Dockerfile`: Docker build configuration (uses debian-13)
-- `.github/workflows/ci.yml`: CI configuration (uses debian-13, Crystal 1.15.0-1.18.0)
+- `.github/workflows/ci.yml`: CI configuration (uses debian-13, Crystal 1.17.0-1.19.0)
 
 ### Adding New Analyzers
 1. Create analyzer in `src/analyzer/analyzers/{language}/{framework}.cr`
@@ -253,7 +253,7 @@ snap/                    # Snap package configuration
 5. If adding new analyzers/detectors, update documentation
 
 ### Environment
-- Crystal ~> 1.10 (CI tests with 1.15.0, 1.16.0, 1.17.0, 1.18.0)
+- Crystal ~> 1.10 (CI tests with 1.17.0, 1.18.0, 1.19.0)
 - Docker images:
   - CI tests: `84codes/crystal:latest-debian-13`
   - Dockerfile build: `84codes/crystal:latest-debian-13`
