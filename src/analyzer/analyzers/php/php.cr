@@ -64,14 +64,14 @@ module Analyzer::Php
                       result << Endpoint.new("/#{relative_path}", "GET", params_query, details)
                     end
                   end
-                rescue File::NotFoundError
+                rescue e : File::NotFoundError
                   logger.debug "File not found: #{path}"
                 end
               end
             end
           end
         end
-      rescue
+      rescue e
         logger.debug e
       end
       Fiber.yield

@@ -193,7 +193,7 @@ class NoirRunner
             final << endpoint
           end
         end
-      rescue
+      rescue e
         @logger.error "Failed to get status code for #{endpoint.url} (#{e.message})."
         final << endpoint
       end

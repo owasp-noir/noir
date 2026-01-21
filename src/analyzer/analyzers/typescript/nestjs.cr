@@ -27,16 +27,16 @@ module Analyzer::Typescript
                   if File.exists?(path)
                     analyze_nestjs_file(path, result, static_dirs)
                   end
-                rescue File::NotFoundError
+                rescue e : File::NotFoundError
                   logger.debug "File not found: #{path}"
-                rescue Exception
+                rescue e : Exception
                   logger.debug "Error processing file #{path}: #{e.message}"
                 end
               end
             end
           end
         end
-      rescue Exception
+      rescue e : Exception
         logger.debug "Channel or wait group error: #{e.message}"
       end
 
@@ -79,7 +79,7 @@ module Analyzer::Typescript
 
         analyze_nestjs_controllers(content, path, result)
       end
-    rescue Exception
+    rescue e : Exception
       logger.debug "Error analyzing NestJS file #{path}: #{e.message}"
     end
 

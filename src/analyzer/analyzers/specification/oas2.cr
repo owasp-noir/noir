@@ -18,7 +18,7 @@ module Analyzer::Specification
               if json_obj["basePath"].to_s != ""
                 base_path = json_obj["basePath"].to_s
               end
-            rescue
+            rescue e
               @logger.debug "Exception of #{swagger_json}/basePath"
               @logger.debug_sub e
             end
@@ -50,15 +50,15 @@ module Analyzer::Specification
                   else
                     @result << Endpoint.new(base_path + path, method.upcase, details)
                   end
-                rescue
+                rescue e
                   @logger.debug "Exception of #{swagger_json}/paths/path/method"
                   @logger.debug_sub e
                 end
-              rescue
+              rescue e
                 @logger.debug "Exception of #{swagger_json}/paths/path"
                 @logger.debug_sub e
               end
-            rescue
+            rescue e
               @logger.debug "Exception of #{swagger_json}/paths"
               @logger.debug_sub e
             end
@@ -77,7 +77,7 @@ module Analyzer::Specification
               if yaml_obj["basePath"].to_s != ""
                 base_path = yaml_obj["basePath"].to_s
               end
-            rescue
+            rescue e
               @logger.debug "Exception of #{swagger_yaml}/basePath"
               @logger.debug_sub e
             end
@@ -109,15 +109,15 @@ module Analyzer::Specification
                   else
                     @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, details)
                   end
-                rescue
+                rescue e
                   @logger.debug "Exception of #{swagger_yaml}/paths/path/method"
                   @logger.debug_sub e
                 end
-              rescue
+              rescue e
                 @logger.debug "Exception of #{swagger_yaml}/paths/path"
                 @logger.debug_sub e
               end
-            rescue
+            rescue e
               @logger.debug "Exception of #{swagger_yaml}/paths"
               @logger.debug_sub e
             end

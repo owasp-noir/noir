@@ -57,23 +57,23 @@ module Analyzer::Javascript
                       Noir::JSRouteExtractor.extract_static_paths(content).each do |static_path|
                         static_dirs << static_path unless static_dirs.any? { |s| s["static_path"] == static_path["static_path"] && s["file_path"] == static_path["file_path"] }
                       end
-                    rescue
+                    rescue e
                       logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
 
                       # Fallback to the original regex-based approach if parser fails
                       analyze_with_regex(path, result, static_dirs)
                     end
                   end
-                rescue File::NotFoundError
+                rescue e : File::NotFoundError
                   logger.debug "File not found: #{path}"
-                rescue Exception
+                rescue e : Exception
                   logger.debug "Error processing file #{path}: #{e.message}"
                 end
               end
             end
           end
         end
-      rescue
+      rescue e
         logger.debug "Error in Express analyzer: #{e.message}"
       end
 

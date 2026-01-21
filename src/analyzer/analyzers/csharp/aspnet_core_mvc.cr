@@ -143,7 +143,7 @@ module Analyzer::CSharp
         begin
           content = File.read(file, encoding: "utf-8", invalid: :skip)
           patterns.concat(extract_route_patterns(content))
-        rescue
+        rescue e
           logger.debug "Failed to read #{file}: #{e.message}"
         end
       end

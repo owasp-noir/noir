@@ -28,16 +28,16 @@ module Analyzer::Javascript
                       analyze_nuxt_file(path, result)
                     end
                   end
-                rescue File::NotFoundError
+                rescue e : File::NotFoundError
                   logger.debug "File not found: #{path}"
-                rescue Exception
+                rescue e : Exception
                   logger.debug "Error processing file #{path}: #{e.message}"
                 end
               end
             end
           end
         end
-      rescue Exception
+      rescue e : Exception
         logger.debug "Channel or wait group error: #{e.message}"
       end
 
@@ -167,7 +167,7 @@ module Analyzer::Javascript
 
           result << endpoint unless result.any? { |e| e.url == url && e.method == method }
         end
-      rescue Exception
+      rescue e : Exception
         logger.debug "Error reading file #{path}: #{e.message}"
       end
     end

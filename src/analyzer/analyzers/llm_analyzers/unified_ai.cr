@@ -135,7 +135,7 @@ module Analyzer::AI
       begin
         filtered = JSON.parse(response.to_s)
         filtered["files"].as_a.map(&.as_s)
-      rescue Exception
+      rescue e : Exception
         logger.debug "Error parsing filter response: #{e.message}"
         get_all_source_files
       end
@@ -160,7 +160,7 @@ module Analyzer::AI
         content = file.gets_to_end
         process_file_content(content, relative_path, path, adapter)
       end
-    rescue Exception
+    rescue ex : Exception
       logger.debug "Error processing file: #{path}"
       logger.debug "Error: #{ex.message}"
     end
@@ -186,7 +186,7 @@ module Analyzer::AI
         endpoint = create_endpoint_from_json(ep, default_path)
         @result << endpoint
       end
-    rescue Exception
+    rescue e : Exception
       logger.debug "Error parsing response: #{e.message}"
     end
 

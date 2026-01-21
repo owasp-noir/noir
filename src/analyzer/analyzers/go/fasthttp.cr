@@ -37,7 +37,7 @@ module Analyzer::Go
             end
           end
         end
-      rescue
+      rescue e
         logger.debug e
       end
 

@@ -22,16 +22,16 @@ module Analyzer::Php
                   if File.exists?(path)
                     result.concat(analyze_file(path))
                   end
-                rescue File::NotFoundError
+                rescue e : File::NotFoundError
                   logger.debug "File not found: #{path}"
-                rescue
+                rescue e
                   logger.debug "Error analyzing #{path}: #{e}"
                 end
               end
             end
           end
         end
-      rescue
+      rescue e
         logger.debug e
       end
 
@@ -193,7 +193,7 @@ module Analyzer::Php
             end
           end
         end
-      rescue
+      rescue e
         logger.debug "Error parsing YAML routes in #{path}: #{e}"
       end
 

@@ -33,7 +33,7 @@ module Analyzer::Specification
 
             begin
               base_path = get_base_path json_obj["servers"]
-            rescue
+            rescue e
               @logger.debug "Exception of #{oas3_json}/servers"
               @logger.debug_sub e
             end
@@ -79,7 +79,7 @@ module Analyzer::Specification
                         end
                       end
                     end
-                  rescue
+                  rescue e
                     @logger.debug "Exception of #{oas3_json}/paths/parameters"
                     @logger.debug_sub e
                   end
@@ -103,7 +103,7 @@ module Analyzer::Specification
                         end
                       end
                     end
-                  rescue
+                  rescue e
                     @logger.debug "Exception of #{oas3_json}/paths/method/parameters"
                     @logger.debug_sub e
                   end
@@ -124,7 +124,7 @@ module Analyzer::Specification
                         end
                       end
                     end
-                  rescue
+                  rescue e
                     @logger.debug "Exception of #{oas3_json}/paths/method/parameters"
                     @logger.debug_sub e
                   end
@@ -136,7 +136,7 @@ module Analyzer::Specification
                     @result << Endpoint.new(base_path + path, method.upcase, details)
                     methods_of_path << method.to_s.upcase
                   end
-                rescue
+                rescue e
                   @logger.debug "Exception of #{oas3_json}/paths/endpoint"
                   @logger.debug_sub e
                 end
@@ -146,7 +146,7 @@ module Analyzer::Specification
                   end
                 end
               end
-            rescue
+            rescue e
               @logger.debug "Exception of #{oas3_json}/paths"
               @logger.debug_sub e
             end
@@ -163,7 +163,7 @@ module Analyzer::Specification
 
             begin
               base_path = get_base_path yaml_obj["servers"]
-            rescue
+            rescue e
               @logger.debug "Exception of #{oas3_yaml}/servers"
               @logger.debug_sub e
             end
@@ -209,7 +209,7 @@ module Analyzer::Specification
                         end
                       end
                     end
-                  rescue
+                  rescue e
                     @logger.debug "Exception of #{oas3_yaml}/paths/parameters"
                     @logger.debug_sub e
                   end
@@ -249,7 +249,7 @@ module Analyzer::Specification
                         end
                       end
                     end
-                  rescue
+                  rescue e
                     @logger.debug "Exception of #{oas3_yaml}/paths/method/parameters"
                     @logger.debug_sub e
                   end
@@ -268,11 +268,11 @@ module Analyzer::Specification
                     @result << Endpoint.new(base_path + path.to_s, method_path.to_s.upcase, params_of_path, details)
                   end
                 end
-              rescue
+              rescue e
                 @logger.debug "Exception of #{oas3_yaml}/paths/endpoint"
                 @logger.debug_sub e
               end
-            rescue
+            rescue e
               @logger.debug "Exception of #{oas3_yaml}/paths"
               @logger.debug_sub e
             end

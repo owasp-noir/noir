@@ -218,7 +218,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
                 passive_result.concat(results)
               end
             end
-          rescue File::NotFoundError
+          rescue e : File::NotFoundError
             logger.debug "File not found: #{file}"
           end
         end

@@ -134,7 +134,7 @@ module Analyzer::Go
                       end
                     end
                   end
-                rescue
+                rescue e
                   # Skip problematic files
                   next
                 end
@@ -142,7 +142,7 @@ module Analyzer::Go
             end
           end
         end
-      rescue
+      rescue e
         logger.debug e
       end
 

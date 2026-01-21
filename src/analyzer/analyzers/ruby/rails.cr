@@ -13,7 +13,7 @@ module Analyzer::Ruby
             @result << Endpoint.new("/#{relative_path}", "GET", details)
           end
         end
-      rescue
+      rescue e
         logger.debug e
       end
 

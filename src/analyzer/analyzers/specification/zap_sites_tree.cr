@@ -19,7 +19,7 @@ module Analyzer::Specification
               children.each do |child|
                 process_node(child, details)
               end
-            rescue
+            rescue e
               @logger.debug "Exception of #{sites_tree}/paths"
               @logger.debug_sub e
             end

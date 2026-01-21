@@ -18,7 +18,7 @@ module Analyzer::Specification
               if json_obj["item"]?
                 process_items(json_obj["item"], details)
               end
-            rescue
+            rescue e
               @logger.debug "Exception processing #{postman_file}"
               @logger.debug_sub e
             end
@@ -42,7 +42,7 @@ module Analyzer::Specification
             # It's a request, process it
             process_request(item, details)
           end
-        rescue
+        rescue e
           @logger.debug "Exception processing item"
           @logger.debug_sub e
         end
@@ -177,7 +177,7 @@ module Analyzer::Specification
       if !url_path.empty?
         @result << Endpoint.new(url_path, method, params, details)
       end
-    rescue
+    rescue e
       @logger.debug "Exception processing request"
       @logger.debug_sub e
     end

@@ -109,7 +109,7 @@ class LLMEndpointOptimizer < EndpointOptimizer
 
       # Parse response and apply optimizations
       apply_llm_optimizations(endpoint, response_str)
-    rescue Exception
+    rescue ex : Exception
       @logger.debug "LLM optimization failed for endpoint #{endpoint.method} #{endpoint.url}: #{ex.message}"
       endpoint
     end
@@ -168,7 +168,7 @@ class LLMEndpointOptimizer < EndpointOptimizer
     end
 
     optimized_endpoint
-  rescue Exception
+  rescue ex : Exception
     @logger.debug "Failed to parse LLM optimization response: #{ex.message}"
     endpoint
   end
