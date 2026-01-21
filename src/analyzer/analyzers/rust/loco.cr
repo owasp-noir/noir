@@ -56,7 +56,7 @@ module Analyzer::Rust
                     end
                   end
                 rescue e : File::NotFoundError
-                  logger.debug "File not found: #{path}"
+                  logger.debug "File not found: #{path}, error: #{e}"
                 rescue e
                   logger.debug "Error in Loco analyzer: #{e.message}"
                 end

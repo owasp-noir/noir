@@ -28,7 +28,7 @@ module Analyzer::Javascript
                     analyze_nestjs_file(path, result, static_dirs)
                   end
                 rescue e : File::NotFoundError
-                  logger.debug "File not found: #{path}"
+                  logger.debug "File not found: #{path}, error: #{e}"
                 rescue e : Exception
                   logger.debug "Error processing file #{path}: #{e.message}"
                 end

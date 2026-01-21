@@ -53,7 +53,7 @@ module Analyzer::Crystal
                     end
                   end
                 rescue e : File::NotFoundError
-                  logger.debug "File not found: #{path}"
+                  logger.debug "File not found: #{path}, error: #{e}"
                 end
               end
             end

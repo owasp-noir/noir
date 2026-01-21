@@ -26,6 +26,7 @@ module LLM
 
       response_json["response"].to_s
     rescue ex : Exception
+      logger.debug ex
       ""
     end
 
@@ -65,6 +66,7 @@ module LLM
 
       response_json["response"].to_s
     rescue ex : Exception
+      logger.debug ex
       ""
     end
   end

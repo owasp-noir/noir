@@ -23,7 +23,7 @@ module Analyzer::Php
                     result.concat(analyze_file(path))
                   end
                 rescue e : File::NotFoundError
-                  logger.debug "File not found: #{path}"
+                  logger.debug "File not found: #{path}, error: #{e}"
                 rescue e
                   logger.debug "Error analyzing #{path}: #{e}"
                 end

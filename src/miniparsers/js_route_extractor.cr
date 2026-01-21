@@ -55,6 +55,7 @@ module Noir
 
         endpoints
       rescue e
+        logger.debug e
         # If parser fails, return empty array
         [] of Endpoint
       end

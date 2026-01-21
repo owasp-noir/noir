@@ -29,7 +29,7 @@ module Analyzer::Javascript
                     end
                   end
                 rescue e : File::NotFoundError
-                  logger.debug "File not found: #{path}"
+                  logger.debug "File not found: #{path}, error: #{e}"
                 rescue e : Exception
                   logger.debug "Error processing file #{path}: #{e.message}"
                 end

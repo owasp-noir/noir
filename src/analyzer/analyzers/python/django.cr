@@ -88,7 +88,7 @@ module Analyzer::Python
                   end
                 end
               rescue e : File::NotFoundError
-                logger.debug "File not found: #{file}"
+                logger.debug "File not found: #{file}, error: #{e}"
               end
             end
           end

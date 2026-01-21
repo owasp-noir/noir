@@ -123,6 +123,7 @@ module Analyzer::Go
                     end
                   end
                 rescue e
+                  logger.debug "Error processing file: #{e}"
                   # Skip problematic files
                   next
                 end
@@ -131,6 +132,7 @@ module Analyzer::Go
           end
         end
       rescue e
+        logger.debug "Channel error: #{e}"
         # Handle channel errors
       end
 

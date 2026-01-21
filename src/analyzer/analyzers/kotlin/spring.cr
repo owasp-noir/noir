@@ -50,6 +50,7 @@ module Analyzer::Kotlin
               end
             end
           rescue e
+            logger.debug "Error parsing YAML: #{e}"
             # Handle parsing errors if necessary
           end
         end
@@ -64,6 +65,7 @@ module Analyzer::Kotlin
               webflux_base_path_map[path] = webflux_base_path if webflux_base_path
             end
           rescue e
+            logger.debug "Error parsing properties: #{e}"
             # Handle parsing errors if necessary
           end
         end

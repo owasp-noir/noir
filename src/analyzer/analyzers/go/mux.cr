@@ -135,6 +135,7 @@ module Analyzer::Go
                     end
                   end
                 rescue e
+                  logger.debug "Error processing file: #{e}"
                   # Skip problematic files
                   next
                 end

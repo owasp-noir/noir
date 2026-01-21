@@ -32,6 +32,7 @@ module Analyzer::Java
                   webflux_base_path_map[path] = webflux_base_path.as_s
                 end
               rescue e
+                logger.debug "Error parsing YAML: #{e}"
                 # Handle parsing errors if necessary
               end
             end
@@ -46,6 +47,7 @@ module Analyzer::Java
                   webflux_base_path_map[path] = webflux_base_path if webflux_base_path
                 end
               rescue e
+                logger.debug "Error parsing properties: #{e}"
                 # Handle parsing errors if necessary
               end
             end

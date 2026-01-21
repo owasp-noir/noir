@@ -69,6 +69,7 @@ class ConfigInitializer
       final_options = default_options.merge(symbolized_hash) { |_, _, new_val| new_val }
       final_options
     rescue e : Exception
+      logger.debug e
       default_options
     end
   end
