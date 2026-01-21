@@ -2,7 +2,7 @@ version: 2.0
 shards:
   ameba:
     git: https://github.com/crystal-ameba/ameba.git
-    version: 1.7.0-dev+git.commit.920630c58f5aa91a1db10be35a62d21b69d54905
+    version: 1.7.0-dev+git.commit.7aaae7bb2bcb5e8a252509ab31c709047eb60ce8
 
   crest:
     git: https://github.com/mamantoha/crest.git
@@ -10,7 +10,7 @@ shards:
 
   cyclonedx-cr:
     git: https://github.com/hahwul/cyclonedx-cr.git
-    version: 1.0.2+git.commit.d38333bc3d2bcf0e4ecd12ee94700112c80ce6b7
+    version: 1.0.2+git.commit.03ed8dd299aeeb8f94db0fbd97e09605843e9b3a
 
   har:
     git: https://github.com/neuralegion/har.git
