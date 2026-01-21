@@ -25,7 +25,7 @@ module LLM
       response_json = JSON.parse response.body
 
       response_json["response"].to_s
-    rescue ex : Exception
+    rescue Exception
       ""
     end
 
@@ -64,7 +64,7 @@ module LLM
       end
 
       response_json["response"].to_s
-    rescue ex : Exception
+    rescue Exception
       ""
     end
   end

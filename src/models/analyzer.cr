@@ -93,7 +93,7 @@ class FileAnalyzer < Analyzer
                   end
                 end
               end
-            rescue e
+            rescue
               logger.debug e
             end
           end

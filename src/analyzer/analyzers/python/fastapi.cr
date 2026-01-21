@@ -52,7 +52,7 @@ module Analyzer::Python
             end
           end
         end
-      rescue e : Exception
+      rescue Exception
         logger.debug e.message
       end
 
@@ -161,7 +161,7 @@ module Analyzer::Python
               end
             end
           end
-        rescue e : Exception
+        rescue Exception
           logger.debug e.message
         end
       end

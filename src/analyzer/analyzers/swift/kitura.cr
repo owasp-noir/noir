@@ -56,21 +56,21 @@ module Analyzer::Swift
                             extract_function_params(lines, index + 1, endpoint)
 
                             result << endpoint
-                          rescue e
+                          rescue
                             logger.debug "Error processing endpoint: #{e.message}"
                           end
                         end
                       end
                     end
                   end
-                rescue e : File::NotFoundError
+                rescue File::NotFoundError
                   logger.debug "File not found: #{path}"
                 end
               end
             end
           end
         end
-      rescue e
+      rescue
         logger.debug "Error in analyze: #{e.message}"
       end
 

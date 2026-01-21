@@ -25,16 +25,16 @@ module Analyzer::Typescript
                   if File.exists?(path)
                     analyze_tanstack_file(path, result)
                   end
-                rescue e : File::NotFoundError
+                rescue File::NotFoundError
                   logger.debug "File not found: #{path}"
-                rescue e : Exception
+                rescue Exception
                   logger.debug "Error processing file #{path}: #{e.message}"
                 end
               end
             end
           end
         end
-      rescue e : Exception
+      rescue Exception
         logger.debug "Channel or wait group error: #{e.message}"
       end
 
@@ -54,7 +54,7 @@ module Analyzer::Typescript
         # Extract routes from createLazyFileRoute
         analyze_lazy_file_routes(content, path, result)
       end
-    rescue e : Exception
+    rescue Exception
       logger.debug "Error analyzing TanStack Router file #{path}: #{e.message}"
     end
 

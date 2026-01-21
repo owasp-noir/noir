@@ -128,7 +128,7 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
           end
           mutex.synchronize { result.concat(endpoints_with_tech) }
           logger.debug "Analyzer[#{tech}] done (#{endpoints.size})"
-        rescue e
+        rescue
           logger.warning "Analyzer[#{tech}] failed: #{e.message}"
         end
       end

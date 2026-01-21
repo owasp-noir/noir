@@ -122,7 +122,7 @@ module Analyzer::Go
                       end
                     end
                   end
-                rescue e
+                rescue
                   # Skip problematic files
                   next
                 end
@@ -130,7 +130,7 @@ module Analyzer::Go
             end
           end
         end
-      rescue e
+      rescue
         # Handle channel errors
       end
 

@@ -42,14 +42,14 @@ module Analyzer::Elixir
                       end
                     end
                   end
-                rescue e : File::NotFoundError
+                rescue File::NotFoundError
                   logger.debug "File not found: #{path}"
                 end
               end
             end
           end
         end
-      rescue e
+      rescue
         logger.debug e
       end
 
@@ -72,7 +72,7 @@ module Analyzer::Elixir
 
           # Extract parameters from each action in the controller
           extract_params_from_controller(content, controller_name, controller_path)
-        rescue e
+        rescue
           logger.debug "Error reading controller file #{controller_path}: #{e}"
         end
       end

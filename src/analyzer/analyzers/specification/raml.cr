@@ -49,11 +49,11 @@ module Analyzer::Specification
                   end
 
                   @result << Endpoint.new(path.to_s, method.to_s.upcase, params, details)
-                rescue e
+                rescue
                   @logger.debug "Exception of #{raml_spec}/paths/#{path}/#{method}"
                   @logger.debug_sub e
                 end
-              rescue e
+              rescue
                 @logger.debug "Exception of #{raml_spec}/paths/#{path}"
                 @logger.debug_sub e
               end

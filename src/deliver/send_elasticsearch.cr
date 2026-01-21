@@ -28,7 +28,7 @@ class SendElasticSearch < Deliver
         headers: @headers,
         json: true
       )
-    rescue e
+    rescue
       @logger.debug "Exception of ES Delivery"
       @logger.debug_sub e
     end

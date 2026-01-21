@@ -66,7 +66,7 @@ module PassiveRulesUpdater
         logger.debug "Failed to check passive rules update status"
         false
       end
-    rescue ex : Exception
+    rescue Exception
       logger.debug "Error checking for passive rules updates: #{ex.message}"
       false
     end
@@ -77,7 +77,7 @@ module PassiveRulesUpdater
     result = Process.run("git", args: ["pull", "--quiet"], chdir: rules_path,
       output: Process::Redirect::Close, error: Process::Redirect::Close)
     result.success?
-  rescue ex : Exception
+  rescue Exception
     logger.debug "Error updating passive rules: #{ex.message}"
     false
   end
@@ -98,7 +98,7 @@ module PassiveRulesUpdater
       # For now, we'll just assume rules are up to date if revision file exists
       # A more sophisticated implementation could fetch the latest revision from GitHub API
       true
-    rescue ex : Exception
+    rescue Exception
       logger.debug "Error reading revision file: #{ex.message}"
       false
     end
@@ -142,7 +142,7 @@ module PassiveRulesUpdater
         Dir.mkdir_p(rules_path) unless Dir.exists?(rules_path)
         false
       end
-    rescue ex : Exception
+    rescue Exception
       logger.debug "Error initializing passive rules: #{ex.message}"
 
       # Create empty directory as fallback

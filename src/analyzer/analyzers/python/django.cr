@@ -50,7 +50,7 @@ module Analyzer::Python
           relative_path = file.sub("#{@base_path}/static/", "")
           endpoints << Endpoint.new("/#{relative_path}", "GET")
         end
-      rescue e
+      rescue
         logger.debug e
       end
 
@@ -87,7 +87,7 @@ module Analyzer::Python
                     end
                   end
                 end
-              rescue e : File::NotFoundError
+              rescue File::NotFoundError
                 logger.debug "File not found: #{file}"
               end
             end

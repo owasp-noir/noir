@@ -18,7 +18,7 @@ class AnalyzerExample < Analyzer
           end
         end
       end
-    rescue e
+    rescue
       logger.debug e
     end
 

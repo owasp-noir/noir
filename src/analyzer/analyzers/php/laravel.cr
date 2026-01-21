@@ -22,16 +22,16 @@ module Analyzer::Php
                   if File.exists?(path)
                     result.concat(analyze_file(path))
                   end
-                rescue e : File::NotFoundError
+                rescue File::NotFoundError
                   logger.debug "File not found: #{path}"
-                rescue e
+                rescue
                   logger.debug "Error analyzing #{path}: #{e}"
                 end
               end
             end
           end
         end
-      rescue e
+      rescue
         logger.debug e
       end
 
@@ -62,7 +62,7 @@ module Analyzer::Php
           content = file.gets_to_end
           endpoints = analyze_routes_content(content, "", path)
         end
-      rescue e
+      rescue
         logger.debug "Error analyzing routes file #{path}: #{e}"
       end
       endpoints

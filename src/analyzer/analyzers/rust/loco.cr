@@ -47,7 +47,7 @@ module Analyzer::Rust
                             extract_function_params(lines, index, endpoint)
 
                             result << endpoint
-                          rescue e
+                          rescue
                             # Log the exception for debugging
                             logger.debug "Error parsing Loco endpoint: #{e.message}"
                           end
@@ -55,16 +55,16 @@ module Analyzer::Rust
                       end
                     end
                   end
-                rescue e : File::NotFoundError
+                rescue File::NotFoundError
                   logger.debug "File not found: #{path}"
-                rescue e
+                rescue
                   logger.debug "Error in Loco analyzer: #{e.message}"
                 end
               end
             end
           end
         end
-      rescue e
+      rescue
         logger.debug "Error in Loco analyzer setup: #{e.message}"
       end
 

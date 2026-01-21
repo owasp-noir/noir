@@ -49,7 +49,7 @@ module Analyzer::Kotlin
                 end
               end
             end
-          rescue e
+          rescue
             # Handle parsing errors if necessary
           end
         end
@@ -63,7 +63,7 @@ module Analyzer::Kotlin
               webflux_base_path = base_path[1]
               webflux_base_path_map[path] = webflux_base_path if webflux_base_path
             end
-          rescue e
+          rescue
             # Handle parsing errors if necessary
           end
         end
