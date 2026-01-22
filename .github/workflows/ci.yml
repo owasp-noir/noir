@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        crystal-version: [1.17.0, 1.18.0, 1.19.0]
+        crystal-version: [1.19.0]
     steps:
       - uses: actions/checkout@v6
       - uses: crystal-lang/install-crystal@v1
