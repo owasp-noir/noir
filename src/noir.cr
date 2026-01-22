@@ -87,7 +87,7 @@ if noir_options["nolog"] == false
 end
 
 app = NoirRunner.new noir_options
-start_time = Time.monotonic
+start_time = Time.instant
 
 app.logger.debug("Start Debug mode")
 app.logger.debug("Noir version: #{Noir::VERSION}")
@@ -156,7 +156,7 @@ app.analyze
 app.logger.success "Finally identified #{app.endpoints.size} endpoints."
 
 # Check and print scan time
-end_time = Time.monotonic
+end_time = Time.instant
 elapsed_time = end_time - start_time
 
 app.logger.info "Scan completed in #{(elapsed_time.total_milliseconds / 1000.0).round(4)} s."
