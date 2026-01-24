@@ -73,10 +73,14 @@ jobs:
         uses: crystal-ameba/github-action@master
   tests:
     runs-on: ubuntu-latest
-    container:
-      image: 84codes/crystal:latest-debian-13
+    strategy:
+      matrix:
+        crystal-version: [1.19.0]
     steps:
       - uses: actions/checkout@v6
+      - uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: ${{ matrix.crystal-version }}
       - name: Install dependencies
         run: shards install
       - name: Run tests
