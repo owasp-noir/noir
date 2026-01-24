@@ -3,14 +3,24 @@ def remove_start_slash(input_path : String) : String
 end
 
 def get_relative_path(base_path : String, path : String) : String
+  # Handle special case where base_path is "." (current directory)
+  # Without this, .sub(".", "") would remove the first "." found anywhere in the path
+  # (e.g., removing the "." from ".php" extension)
+  if base_path == "."
+    return path
+      .sub(/^\.\//, "") # Remove leading "./" only at the start
+      .sub("//", "/")
+      .lstrip('/')
+  end
+
   # Ensure base_path ends with slash for consistent substitution
   base = base_path.ends_with?("/") ? base_path : "#{base_path}/"
 
   # Remove base path and normalize
   relative_path = path
     .sub(base, "")
-    .sub(base_path, "") # Fallback if base doesn't end with /
-    .sub("./", "")
+    .sub(base_path, "")  # Fallback if base doesn't end with /
+    .sub(/^\.\//, "")    # Remove leading "./" only at the start
     .sub("//", "/")
 
   remove_start_slash(relative_path)

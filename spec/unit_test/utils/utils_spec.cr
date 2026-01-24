@@ -22,6 +22,25 @@ describe "get_relative_path" do
   it "end with /" do
     get_relative_path("/abcd/", "1.cr").should eq("1.cr")
   end
+
+  # Bug fix: https://github.com/owasp-noir/noir/issues/980
+  # When base_path is ".", file extensions were being removed
+  # because .sub(".", "") matched the "." in ".php"
+  it "dot base path with file extension" do
+    get_relative_path(".", "./test.php").should eq("test.php")
+  end
+
+  it "dot base path with nested path and extension" do
+    get_relative_path(".", "./vulnerabilities/api/echo.php").should eq("vulnerabilities/api/echo.php")
+  end
+
+  it "dot base path without leading ./" do
+    get_relative_path(".", "vulnerabilities/api/echo.php").should eq("vulnerabilities/api/echo.php")
+  end
+
+  it "normal base path preserves extension" do
+    get_relative_path("/home/user/DVWA", "/home/user/DVWA/vulnerabilities/api/echo.php").should eq("vulnerabilities/api/echo.php")
+  end
 end
 
 describe "get_symbol" do
