@@ -3,14 +3,22 @@ def remove_start_slash(input_path : String) : String
 end
 
 def get_relative_path(base_path : String, path : String) : String
-  # Ensure base_path ends with slash for consistent substitution
-  base = base_path.ends_with?("/") ? base_path : "#{base_path}/"
+  # First, determine the path relative to the base_path, without other normalization.
+  unstripped_path = if base_path == "."
+                      # When base_path is ".", the path is already relative.
+                      # This avoids an issue where `.sub(".", "")` would remove the dot from file extensions.
+                      path
+                    else
+                      # For other base paths, remove the base path prefix.
+                      base = base_path.ends_with?("/") ? base_path : "#{base_path}/"
+                      path
+                        .sub(base, "")
+                        .sub(base_path, "") # Fallback if base doesn't end with /
+                    end
 
-  # Remove base path and normalize
-  relative_path = path
-    .sub(base, "")
-    .sub(base_path, "") # Fallback if base doesn't end with /
-    .sub("./", "")
+  # Then, normalize the resulting path.
+  relative_path = unstripped_path
+    .sub(/^\.\//, "") # Remove leading "./" only at the start
     .sub("//", "/")
 
   remove_start_slash(relative_path)
