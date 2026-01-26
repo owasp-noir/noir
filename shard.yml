@@ -9,7 +9,7 @@ repository: https://github.com/owasp-noir/noir
 license: MIT
 
 # Crystal version requirement
-crystal: ~> 1.10
+crystal: ~> 1.19
 
 # Build Targets
 targets:
