@@ -34,6 +34,9 @@ module Analyzer::Kotlin
     # Process directory to extract WebFlux base path from 'application.yml'
     private def process_directory(path : String, webflux_base_path_map : Hash(String, String))
       if path.ends_with?("/src")
+        webflux_base_path = ""
+        static_locations = [] of String
+
         application_yml_path = File.join(path, "main/resources/application.yml")
         if File.exists?(application_yml_path)
           begin
@@ -46,6 +49,24 @@ module Analyzer::Kotlin
                 if base_path
                   webflux_base_path = base_path.as_s
                   webflux_base_path_map[path] = webflux_base_path if webflux_base_path
+                end
+              end
+              resources = spring["resources"] || spring["web"]
+              if resources
+                if resources["resources"]
+                    resources = resources["resources"]
+                end
+                static_locations_yaml = resources["static-locations"]
+                if static_locations_yaml
+                  if static_locations_yaml.as_a?
+                    static_locations_yaml.as_a.each do |loc|
+                      static_locations << loc.as_s
+                    end
+                  elsif static_locations_yaml.as_s?
+                    static_locations_yaml.as_s.split(",").each do |loc|
+                      static_locations << loc.strip
+                    end
+                  end
                 end
               end
             end
@@ -63,9 +84,49 @@ module Analyzer::Kotlin
               webflux_base_path = base_path[1]
               webflux_base_path_map[path] = webflux_base_path if webflux_base_path
             end
+
+            static_locs = properties.match(/spring(\.web)?\.resources\.static-locations\s*=\s*(.*)/)
+            if static_locs
+              static_locs[2].split(",").each do |loc|
+                static_locations << loc.strip
+              end
+            end
           rescue e
             # Handle parsing errors if necessary
           end
+        end
+
+        if static_locations.empty?
+          static_locations = ["classpath:/META-INF/resources/", "classpath:/resources/", "classpath:/static/", "classpath:/public/"]
+        end
+
+        process_static_locations(path, static_locations, webflux_base_path)
+      end
+    end
+
+    private def process_static_locations(src_path : String, static_locations : Array(String), webflux_base_path : String)
+      static_locations.each do |location|
+        if location.starts_with?("classpath:")
+          resource_path = location.sub("classpath:", "").strip
+          full_resource_path = File.join(src_path, "main/resources", resource_path)
+          if Dir.exists?(full_resource_path)
+            Dir.glob("#{escape_glob_path(full_resource_path)}/**/*") do |file|
+              next if File.directory?(file)
+              relative_path = file.sub(full_resource_path, "")
+              full_url = join_path(webflux_base_path, relative_path)
+              @result << Endpoint.new(full_url, "GET", Details.new(PathInfo.new(file)))
+            end
+          end
+        elsif location.starts_with?("file:")
+            file_path = location.sub("file:", "").strip
+            if Dir.exists?(file_path)
+                Dir.glob("#{escape_glob_path(file_path)}/**/*") do |file|
+                    next if File.directory?(file)
+                    relative_path = file.sub(file_path, "")
+                    full_url = join_path(webflux_base_path, relative_path)
+                    @result << Endpoint.new(full_url, "GET", Details.new(PathInfo.new(file)))
+                end
+            end
         end
       end
     end
@@ -408,7 +469,7 @@ module Analyzer::Kotlin
     private def get_parameter_format(name : String, current_format : String?) : String?
       case name
       when "@RequestBody"
-        current_format || "json"
+        "json"
       when "@RequestParam"
         "query"
       when "@RequestHeader"
