@@ -32,6 +32,15 @@ expected_endpoints = [
   Endpoint.new("/assets/*file", "GET", [
     Param.new("file", "", "path"),
   ]),
+  Endpoint.new("/multipart", "POST", [
+    Param.new("body", "", "form"),
+  ]),
+  Endpoint.new("/xml", "POST", [
+    Param.new("body", "", "xml"),
+  ]),
+  Endpoint.new("/whitespace", "POST", [
+    Param.new("body", "", "json"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/scala/play/", {

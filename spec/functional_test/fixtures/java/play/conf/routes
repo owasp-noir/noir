@@ -1,34 +1,23 @@
-# Routes for Java Play test application
-# This file defines all application routes (Higher priority routes first)
+GET / controllers.HomeController.index
+GET /users controllers.Users.list
+GET /users/:id controllers.Users.show(id: Long)
+POST /users controllers.Users.create
+PUT /users/:id controllers.Users.update(id: Long)
+DELETE /users/:id controllers.Users.delete(id: Long)
 
-# Home page
-GET     /                           controllers.HomeController.index()
+GET /search controllers.Search.search(q: String, filter: String)
+GET /users/:userId/posts/:postId controllers.Posts.show(userId: Long, postId: Long)
 
-# User routes with path parameters
-GET     /users                      controllers.Users.list()
-GET     /users/:id                  controllers.Users.show(id: Long)
-POST    /users                      controllers.Users.create()
-PUT     /users/:id                  controllers.Users.update(id: Long)
-DELETE  /users/:id                  controllers.Users.delete(id: Long)
+GET /items controllers.Items.list(category: String, page: Integer)
 
-# Search with query parameters
-GET     /search                     controllers.Search.search(q: String, filter: String)
+GET /files/$path<.+> controllers.Files.download(path: String)
+POST /upload controllers.Upload.file
 
-# Posts with nested path parameters
-GET     /users/:userId/posts/:postId    controllers.Posts.show(userId: Long, postId: Long)
+GET /api/protected controllers.Api.protectedEndpoint
+POST /api/data controllers.Api.postData
 
-# Items with query parameters
-GET     /items                      controllers.Items.list(category: String, page: Integer)
+GET /assets/*file controllers.Assets.at(path="/public", file)
 
-# Advanced path parameter with regex
-GET     /files/$path<.+>            controllers.Files.download(path: String)
-
-# Upload endpoint
-POST    /upload                     controllers.Upload.file()
-
-# API endpoints
-GET     /api/protected              controllers.Api.protectedEndpoint()
-POST    /api/data                   controllers.Api.postData()
-
-# Wildcard route (should be last)
-GET     /assets/*file               controllers.Assets.at(path="/public", file: String)
+POST /multipart controllers.MissingController.multipart
+POST /bytes controllers.MissingController.bytes
+POST /whitespace controllers.MissingController.whitespace

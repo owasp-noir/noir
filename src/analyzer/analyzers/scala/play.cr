@@ -77,31 +77,33 @@ module Analyzer::Scala
             body_type : String? = nil
 
             # Extract headers: request.headers.get("Header-Name") or request.headers("Header-Name")
-            method_body.scan(/request\.headers(?:\.get)?\s*\(\s*["']([^"']+)["']\s*\)/) do |header_match|
+            method_body.scan(/request\s*\.\s*headers(?:\s*\.\s*get)?\s*\(\s*["']([^"']+)["']\s*\)/) do |header_match|
               headers << header_match[1] unless headers.includes?(header_match[1])
             end
 
             # Also match implicit request patterns: headers.get("Header-Name")
-            method_body.scan(/headers\.get\s*\(\s*["']([^"']+)["']\s*\)/) do |header_match|
+            method_body.scan(/headers\s*\.\s*get\s*\(\s*["']([^"']+)["']\s*\)/) do |header_match|
               headers << header_match[1] unless headers.includes?(header_match[1])
             end
 
             # Extract cookies: request.cookies.get("cookie-name")
-            method_body.scan(/request\.cookies\.get\s*\(\s*["']([^"']+)["']\s*\)/) do |cookie_match|
+            method_body.scan(/request\s*\.\s*cookies\s*\.\s*get\s*\(\s*["']([^"']+)["']\s*\)/) do |cookie_match|
               cookies << cookie_match[1] unless cookies.includes?(cookie_match[1])
             end
 
             # Also match: cookies.get("cookie-name")
-            method_body.scan(/cookies\.get\s*\(\s*["']([^"']+)["']\s*\)/) do |cookie_match|
+            method_body.scan(/cookies\s*\.\s*get\s*\(\s*["']([^"']+)["']\s*\)/) do |cookie_match|
               cookies << cookie_match[1] unless cookies.includes?(cookie_match[1])
             end
 
             # Extract body type: request.body.asJson, request.body.asFormUrlEncoded, parse.json, parse.form
-            if method_body.includes?("request.body.asJson") || method_body.includes?("parse.json") || method_body.includes?("Json.parse") || method_body.includes?(".body.asJson")
+            if method_body.match(/request\s*\.\s*body\s*\.\s*asJson|parse\s*\.\s*json|Json\s*\.\s*parse|\.body\s*\.\s*asJson/)
               body_type = "json"
-            elsif method_body.includes?("request.body.asFormUrlEncoded") || method_body.includes?("parse.form")
+            elsif method_body.match(/request\s*\.\s*body\s*\.\s*as(?:FormUrlEncoded|MultipartFormData)|parse\s*\.\s*form/)
               body_type = "form"
-            elsif method_body.includes?("request.body.asText") || method_body.includes?("parse.text") || method_body.includes?("request.body.asRaw")
+            elsif method_body.match(/request\s*\.\s*body\s*\.\s*asXml/)
+              body_type = "xml"
+            elsif method_body.match(/request\s*\.\s*body\s*\.\s*as(?:Text|Raw|Bytes)|parse\s*\.\s*text/)
               body_type = "body"
             end
 
