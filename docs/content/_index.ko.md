@@ -51,8 +51,8 @@ icon = "fa-solid fa-file-export"
 [extra.trust_section]
 title = "개발 환경"
 logos = [
-    { src = "./resoruces/owasp.png", alt = "OWASP" },
-    { src = "./resoruces/crystal.png", alt = "Crystal" },
+    { src = "./resources/owasp.png", alt = "OWASP" },
+    { src = "./resources/crystal.png", alt = "Crystal" },
 ]
 
 [extra.final_cta_section]
