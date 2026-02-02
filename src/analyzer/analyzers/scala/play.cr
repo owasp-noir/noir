@@ -97,13 +97,13 @@ module Analyzer::Scala
             end
 
             # Extract body type: request.body.asJson, request.body.asFormUrlEncoded, parse.json, parse.form
-            if method_body.match(/request\s*\.\s*body\s*\.\s*asJson/) || method_body.match(/parse\s*\.\s*json/) || method_body.match(/Json\s*\.\s*parse/) || method_body.match(/\.body\s*\.\s*asJson/)
+            if method_body.match(/request\s*\.\s*body\s*\.\s*asJson|parse\s*\.\s*json|Json\s*\.\s*parse|\.body\s*\.\s*asJson/)
               body_type = "json"
-            elsif method_body.match(/request\s*\.\s*body\s*\.\s*asFormUrlEncoded/) || method_body.match(/parse\s*\.\s*form/) || method_body.match(/request\s*\.\s*body\s*\.\s*asMultipartFormData/)
+            elsif method_body.match(/request\s*\.\s*body\s*\.\s*as(?:FormUrlEncoded|MultipartFormData)|parse\s*\.\s*form/)
               body_type = "form"
             elsif method_body.match(/request\s*\.\s*body\s*\.\s*asXml/)
               body_type = "xml"
-            elsif method_body.match(/request\s*\.\s*body\s*\.\s*as(?:Text|Raw|Bytes)/) || method_body.match(/parse\s*\.\s*text/)
+            elsif method_body.match(/request\s*\.\s*body\s*\.\s*as(?:Text|Raw|Bytes)|parse\s*\.\s*text/)
               body_type = "body"
             end
 

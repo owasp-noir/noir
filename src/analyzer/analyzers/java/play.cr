@@ -92,9 +92,9 @@ module Analyzer::Java
             end
 
             # Extract body type
-            if method_body.match(/request\(\)\s*\.\s*body\(\)\s*\.\s*asJson/) || method_body.match(/request\(\)\s*\.\s*body\(\)\s*\.\s*as\(\s*JsonNode/)
+            if method_body.match(/request\(\)\s*\.\s*body\(\)\s*\.\s*(?:asJson|as\(\s*JsonNode)/)
               body_type = "json"
-            elsif method_body.match(/request\(\)\s*\.\s*body\(\)\s*\.\s*asFormUrlEncoded/) || method_body.match(/request\(\)\s*\.\s*body\(\)\s*\.\s*asMultipartFormData/)
+            elsif method_body.match(/request\(\)\s*\.\s*body\(\)\s*\.\s*(?:asFormUrlEncoded|asMultipartFormData)/)
               body_type = "form"
             elsif method_body.match(/request\(\)\s*\.\s*body\(\)\s*\.\s*asXml/)
               body_type = "xml"
