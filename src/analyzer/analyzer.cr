@@ -32,6 +32,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"go_gin", Go::Gin},
     {"go_chi", Go::Chi},
     {"go_gozero", Go::GoZero},
+    {"go_goyave", Go::Goyave},
     {"go_mux", Go::Mux},
     {"har", Specification::Har},
     {"java_armeria", Java::Armeria},
