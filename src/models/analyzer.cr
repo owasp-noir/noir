@@ -3,6 +3,7 @@ require "./endpoint"
 require "./file_helper"
 require "../utils/wait_group"
 require "../utils/media_filter"
+require "../utils/utils"
 
 class Analyzer
   include FileHelper
