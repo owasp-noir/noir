@@ -29,6 +29,7 @@ module Analyzer::Python
     @file_content_cache = Hash(::String, ::String).new
     @parsers = Hash(::String, PythonParser).new
     @routes = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String))).new
+    @class_views = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String)))).new
 
     def analyze
       flask_instances = Hash(::String, ::String).new
@@ -36,6 +37,7 @@ module Analyzer::Python
       blueprint_prefixes = Hash(::String, ::String).new
       path_api_instances = Hash(::String, Hash(::String, ::String)).new
       register_blueprint = Hash(::String, Hash(::String, ::String)).new
+      view_assignments = Hash(::String, ::String).new  # Maps view_var -> ClassName
 
       # Iterate through all Python files in all base paths
       base_paths.each do |current_base_path|
@@ -164,6 +166,75 @@ module Analyzer::Python
                   @routes[router_name] << router_info
                 end
               end
+
+              # Also detect method-specific decorators like @app.get, @app.post, etc.
+              HTTP_METHODS.each do |method|
+                line.scan(/@(#{PYTHON_VAR_NAME_REGEX})\.#{method.downcase}\([rf]?['"]([^'"]*)['"](.*)/) do |_match|
+                  if _match.size > 0
+                    router_name = _match[1]
+                    route_path = _match[2]
+                    extra_params = "methods=['#{method.upcase}']"
+                    router_info = Tuple(Int32, ::String, ::String, ::String).new(line_index, path, route_path, extra_params)
+                    @routes[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String)
+                    @routes[router_name] << router_info
+                  end
+                end
+              end
+
+              # Identify view assignments: view_var = ClassName.as_view('name')
+              # Note: spaces are already removed from line at this point
+              view_assign_match = line.match /(#{PYTHON_VAR_NAME_REGEX})=(#{PYTHON_VAR_NAME_REGEX})\.as_view\(/
+              if view_assign_match
+                view_var = view_assign_match[1]
+                class_name = view_assign_match[2]
+                view_assignments[view_var] = class_name
+              end
+
+              # Identify add_url_rule() registrations for class-based views
+              line.scan(/(#{PYTHON_VAR_NAME_REGEX})\.add_url_rule\([rf]?['"]([^'"]*)['"]/) do |_match|
+                if _match.size > 0
+                  router_name = _match[1]
+                  route_path = _match[2]
+                  class_name = ""
+                  view_name = ""
+
+                  # Check for direct pattern: view_func=ClassName.as_view('name')
+                  view_func_match = line.match /view_func=(#{PYTHON_VAR_NAME_REGEX})\.as_view\([rf]?['"]([^'"]*)['"]\)/
+                  if view_func_match
+                    class_name = view_func_match[1]
+                    view_name = view_func_match[2]
+                  else
+                    # Check for indirect pattern: view_func=view_var (where view_var was assigned earlier)
+                    view_var_match = line.match /view_func=(#{PYTHON_VAR_NAME_REGEX})[,\)]/
+                    if view_var_match
+                      view_var = view_var_match[1]
+                      if view_assignments.has_key?(view_var)
+                        class_name = view_assignments[view_var]
+                        view_name = view_var
+                      end
+                    end
+                  end
+
+                  if !class_name.empty?
+                    # Extract methods list
+                    methods = [] of ::String
+                    methods_match = line.match /methods\s*=\s*\[(.*?)\]/
+                    if methods_match
+                      methods_str = methods_match[1]
+                      methods_str.scan(/['"]([A-Z]+)['"]/) do |method_match|
+                        methods << method_match[1]
+                      end
+                    end
+
+                    # Store class view registration
+                    class_view_info = Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String)).new(
+                      line_index, path, route_path, class_name, view_name, methods
+                    )
+                    @class_views[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String))
+                    @class_views[router_name] << class_view_info
+                  end
+                end
+              end
             end
           end
         end
@@ -262,6 +333,128 @@ module Analyzer::Python
               end
               result << endpoint
             end
+          end
+        end
+      end
+
+      # Process class-based views from add_url_rule() registrations
+      @class_views.each do |router_name, class_view_list|
+        class_view_list.each do |class_view_info|
+          line_index, path, route_path, class_name, view_name, methods = class_view_info
+
+          api_instances = path_api_instances[path]
+          prefix = api_instances.has_key?(router_name) ? api_instances[router_name] : ""
+
+          # Try to use parser to find class definition, otherwise assume same file
+          class_file = path
+          parser = get_parser(path)
+          if parser.@global_variables.has_key?(class_name)
+            gv = parser.@global_variables[class_name]
+            class_file = gv.path
+          end
+
+          class_lines = fetch_file_content(class_file).lines
+
+          # Find class definition line
+          class_def_index = -1
+          class_lines.each_with_index do |line, idx|
+            if line.lstrip.starts_with?("class #{class_name}")
+              class_def_index = idx
+              break
+            end
+          end
+
+          next if class_def_index == -1
+
+          # Process each declared method
+          methods.each do |http_method|
+            method_name = http_method.downcase
+
+            # Find method definition in class
+            method_def_index = -1
+            indent = class_lines[class_def_index].index("class") || 0
+            i = class_def_index + 1
+
+            while i < class_lines.size
+              method_match = class_lines[i].match /(\s*)def\s+#{method_name}\s*\(/
+              if method_match
+                # Check it's a method of this class (correct indentation)
+                method_indent = method_match[1].size
+                if method_indent > indent
+                  method_def_index = i
+                  break
+                end
+              end
+
+              # Stop if we hit another class at same or higher level
+              class_match = class_lines[i].match /(\s*)class\s+/
+              if class_match && class_match[1].size <= indent
+                break
+              end
+
+              i += 1
+            end
+
+            next if method_def_index == -1
+
+            # Parse method code block
+            codeblock = parse_code_block(class_lines[method_def_index..])
+            next if codeblock.nil?
+            codeblock_lines = codeblock.split("\n")
+
+            # Generate endpoint with parameters
+            route_url = "#{prefix}#{route_path}"
+            route_url = "/#{route_url}" unless route_url.starts_with?("/")
+            route_url = route_url.gsub("//", "/")
+
+            # Extract parameters from method body (reuse existing logic)
+            suspicious_params = [] of Param
+            json_variable_names = [] of ::String
+
+            # Parse JSON variable names
+            codeblock_lines.each do |codeblock_line|
+              match = codeblock_line.match /([a-zA-Z_][a-zA-Z0-9_]*).*=\s*json\.loads\(request\.data/
+              if !match.nil? && match.size == 2 && !json_variable_names.includes?(match[1])
+                json_variable_names << match[1]
+              end
+              match = codeblock_line.match /([a-zA-Z_][a-zA-Z0-9_]*).*=\s*request\.json/
+              if !match.nil? && match.size == 2 && !json_variable_names.includes?(match[1])
+                json_variable_names << match[1]
+              end
+            end
+
+            # Parse declared parameters
+            codeblock_lines.each do |codeblock_line|
+              REQUEST_PARAM_FIELDS.each do |field_name, tuple|
+                _, noir_param_type = tuple
+                matches = codeblock_line.scan(/request\.#{field_name}\[[rf]?['"]([^'"]*)['"]\]/)
+                if matches.size == 0
+                  matches = codeblock_line.scan(/request\.#{field_name}\.get\([rf]?['"]([^'"]*)['"]/)
+                end
+                if matches.size == 0
+                  noir_param_type = "json"
+                  json_variable_names.each do |json_variable_name|
+                    matches = codeblock_line.scan(/[^a-zA-Z_]#{json_variable_name}\[[rf]?['"]([^'"]*)['"]\]/)
+                    if matches.size == 0
+                      matches = codeblock_line.scan(/[^a-zA-Z_]#{json_variable_name}\.get\([rf]?['"]([^'"]*)['"]/)
+                    end
+                    break if matches.size > 0
+                  end
+                end
+
+                matches.each do |parameter_match|
+                  next if parameter_match.size != 2
+                  param_name = parameter_match[1]
+                  suspicious_params << Param.new(param_name, "", noir_param_type)
+                end
+              end
+            end
+
+            params = get_filtered_params(http_method, suspicious_params)
+            details = Details.new(PathInfo.new(class_file, method_def_index + 1))
+            endpoint = Endpoint.new(route_url, http_method, params)
+            endpoint.details = details
+            result << endpoint
           end
         end
       end
