@@ -1,6 +1,7 @@
 require "../models/endpoint"
 require "../minilexers/js_lexer"
 require "../miniparsers/js_parser"
+require "../models/code_locator"
 
 module Noir
   # JSRouteExtractor provides a unified interface for extracting routes from JavaScript files
@@ -17,16 +18,123 @@ module Noir
           STDERR.puts "Warning: Maximum iterations reached in JS parser, parsing may be incomplete"
         end
 
+        # Check if this file has a router prefix from cross-file mounting
+        locator = CodeLocator.instance
+
+        # Normalize file path to absolute path for consistent lookup
+        absolute_file_path = File.expand_path(file_path)
+        lookup_key = "express_router_prefix:#{absolute_file_path}"
+        file_prefix_value = locator.get(lookup_key)
+        file_prefix = file_prefix_value.is_a?(String) && !file_prefix_value.empty? ? file_prefix_value : nil
+
+        # Build function ranges to support function-scoped router prefixes
+        function_ranges = [] of Tuple(String, Int32, Int32)
+        function_names = Set(String).new
+        content.scan(/function\s+(\w+)\s*\(/) do |m|
+          if m.size >= 2
+            func_name = m[1]
+            match_start = m.begin(0)
+            open_brace_idx = content.index("{", match_start)
+            next unless open_brace_idx
+            close_brace_idx = find_matching_brace(content, open_brace_idx)
+            next unless close_brace_idx
+            function_ranges << {func_name, open_brace_idx, close_brace_idx}
+            function_names.add(func_name)
+          end
+        end
+
+        # Build internal mount relationships: parent function -> child function with prefix
+        internal_mounts = [] of Tuple(String, String, String)
+        function_ranges.each do |func_name, start_idx, end_idx|
+          body = content[start_idx..end_idx]
+          body.scan(/\b\w+\.use\s*\(\s*['"]([^'"]+)['"]\s*,\s*(\w+)\s*(?:\(\s*\))?/) do |m|
+            if m.size >= 3
+              prefix = m[1]
+              child_func = m[2]
+              if function_names.includes?(child_func)
+                internal_mounts << {func_name, child_func, prefix}
+              end
+            end
+          end
+        end
+
+        # Seed function-specific prefixes from CodeLocator
+        prefixes_by_function = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
+        function_names.each do |func_name|
+          func_key = "express_router_prefix:#{absolute_file_path}:#{func_name}"
+          values = locator.all(func_key)
+          if values.size > 0
+            values.each do |prefix|
+              prefixes_by_function[func_name] << prefix unless prefix.empty?
+            end
+          else
+            value = locator.get(func_key)
+            if value.is_a?(String) && !value.empty?
+              prefixes_by_function[func_name] << value
+            end
+          end
+        end
+
+        # Propagate prefixes through internal mounts
+        changed = true
+        while changed
+          changed = false
+          internal_mounts.each do |parent, child, mount_prefix|
+            parent_prefixes = prefixes_by_function[parent]
+            if parent_prefixes.empty? && file_prefix
+              parent_prefixes = [file_prefix]
+            end
+            parent_prefixes.each do |p|
+              combined = join_paths(p, mount_prefix)
+              unless prefixes_by_function[child].includes?(combined)
+                prefixes_by_function[child] << combined
+                changed = true
+              end
+            end
+          end
+        end
+
         endpoints = [] of Endpoint
         route_patterns.each do |pattern|
+          # Apply cross-file router prefix if present (function-scoped first)
+          prefixes = [] of String
+          if pattern.start_pos >= 0
+            function_ranges.each do |func_name, start_idx, end_idx|
+              if start_idx <= pattern.start_pos && pattern.start_pos <= end_idx
+                prefixes = prefixes_by_function[func_name]
+                break
+              end
+            end
+          end
+          if prefixes.empty? && file_prefix && !file_prefix.empty?
+            prefixes = [file_prefix]
+          end
+          prefixes = [""] if prefixes.empty?
+
           # Normalize HTTP method (e.g., DEL -> DELETE)
           normalized_method = normalize_http_method(pattern.method)
 
           # Handle router.all by expanding to all HTTP methods
-          if normalized_method == "ALL"
-            all_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
-            all_methods.each do |method|
-              endpoint = Endpoint.new(pattern.path, method)
+          prefixes.each do |prefix|
+            path_with_prefix = prefix.empty? ? pattern.path : join_paths(prefix, pattern.path)
+
+            if normalized_method == "ALL"
+              all_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
+              all_methods.each do |method|
+                endpoint = Endpoint.new(path_with_prefix, method)
+
+                # Add path parameters detected in the URL
+                pattern.params.each do |param|
+                  endpoint.push_param(param)
+                end
+
+                # Extract other parameters like body, query, etc. from the content around this route
+                extract_params_from_context(content, pattern, endpoint)
+
+                endpoints << endpoint
+              end
+            else
+              endpoint = Endpoint.new(path_with_prefix, normalized_method)
 
               # Add path parameters detected in the URL
               pattern.params.each do |param|
@@ -38,18 +146,6 @@ module Noir
 
               endpoints << endpoint
             end
-          else
-            endpoint = Endpoint.new(pattern.path, normalized_method)
-
-            # Add path parameters detected in the URL
-            pattern.params.each do |param|
-              endpoint.push_param(param)
-            end
-
-            # Extract other parameters like body, query, etc. from the content around this route
-            extract_params_from_context(content, pattern, endpoint)
-
-            endpoints << endpoint
           end
         end
 
@@ -57,6 +153,21 @@ module Noir
       rescue e
         # If parser fails, return empty array
         [] of Endpoint
+      end
+    end
+
+    # Helper to join two path segments properly
+    def self.join_paths(parent : String, child : String) : String
+      return child if parent.empty?
+      return parent if child.empty?
+      return parent if child == "/"
+
+      if parent.ends_with?("/") && child.starts_with?("/")
+        "#{parent[0..-2]}#{child}"
+      elsif !parent.ends_with?("/") && !child.starts_with?("/")
+        "#{parent}/#{child}"
+      else
+        "#{parent}#{child}"
       end
     end
 
@@ -97,20 +208,21 @@ module Noir
 
       # Generate all possible route declarations with different syntax patterns
       route_declarations = [] of String
+      lookup_path = pattern.raw_path
       method_variations.each do |method|
         # Standard method call with single quotes
-        route_declarations << "#{method}('#{pattern.path}'"
+        route_declarations << "#{method}('#{lookup_path}'"
         # Method call with double quotes
-        route_declarations << "#{method}(\"#{pattern.path}\""
+        route_declarations << "#{method}(\"#{lookup_path}\""
         # Method call with template literals
-        route_declarations << "#{method}(`#{pattern.path}`"
+        route_declarations << "#{method}(`#{lookup_path}`"
       end
 
       # Also handle app.route('/path').method() pattern
       # In this case, search for route('/path')...method(
-      route_declarations << "route('#{pattern.path}'"
-      route_declarations << "route(\"#{pattern.path}\""
-      route_declarations << "route(`#{pattern.path}`"
+      route_declarations << "route('#{lookup_path}'"
+      route_declarations << "route(\"#{lookup_path}\""
+      route_declarations << "route(`#{lookup_path}`"
 
       # Find the index of any matching route declaration
       idx = nil

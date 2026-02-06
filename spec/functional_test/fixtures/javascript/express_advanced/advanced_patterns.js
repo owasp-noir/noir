@@ -104,6 +104,11 @@ router.get(/^\/regex-(\d+)$/, (req, res) => {
   res.json({ regexMatch: true });
 });
 
+// Array of paths (express supports array routes)
+router.get(['/array-a', '/array-b'], (req, res) => {
+  res.json({ arrayMatch: true });
+});
+
 // Different parameter extraction patterns
 router.post('/extract-variations', (req, res) => {
   // Destructuring from body

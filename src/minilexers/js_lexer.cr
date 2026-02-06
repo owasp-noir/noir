@@ -43,6 +43,12 @@ module Noir
         when '}'
           add_token(:rbrace, "}")
           advance
+        when '['
+          add_token(:lbracket, "[")
+          advance
+        when ']'
+          add_token(:rbracket, "]")
+          advance
         when ','
           add_token(:comma, ",")
           advance
@@ -67,6 +73,8 @@ module Noir
             skip_line_comment
           elsif peek == '*' # Multi line comment
             skip_multiline_comment
+          elsif looks_like_regex? # Regex literal
+            tokenize_regex
           else
             add_token(:operator, "/")
             advance
@@ -213,6 +221,53 @@ module Noir
           add_token(:identifier, identifier)
         end
       end
+    end
+
+    # Heuristic to determine if '/' starts a regex literal
+    private def looks_like_regex? : Bool
+      # Heuristic: regex if preceded by ( , = [ or http_method token
+      return false if @tokens.empty?
+
+      last_token = @tokens.last
+      return true if last_token.type == :lparen
+      return true if last_token.type == :comma
+      return true if last_token.value == "="
+      return true if last_token.type == :http_method
+      return true if last_token.type == :lbracket
+
+      false
+    end
+
+    # Tokenize a regex literal
+    private def tokenize_regex
+      advance # Skip opening /
+
+      regex_pattern = ""
+      while @current_char != '/' && @current_char != '\0'
+        if @current_char == '\\'  # Handle escape sequences
+          regex_pattern += @current_char
+          advance
+          regex_pattern += @current_char if @current_char != '\0'
+          advance
+        else
+          regex_pattern += @current_char
+          advance
+        end
+      end
+
+      advance if @current_char == '/'  # Skip closing /
+
+      # Read regex flags (g, i, m, s, u, y)
+      regex_flags = ""
+      while @current_char == 'g' || @current_char == 'i' ||
+            @current_char == 'm' || @current_char == 's' ||
+            @current_char == 'u' || @current_char == 'y'
+        regex_flags += @current_char
+        advance
+      end
+
+      # Store pattern and flags separately to preserve regex form
+      add_token(:regex, "#{regex_pattern}\n#{regex_flags}")
     end
   end
 end
