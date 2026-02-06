@@ -96,10 +96,13 @@ module Noir
           end
         end
 
-        # Propagate prefixes through internal mounts
+        # Propagate prefixes through internal mounts with max iteration protection
         changed = true
-        while changed
+        max_iterations = 100 # Prevent infinite loops in case of cyclic references
+        iterations = 0
+        while changed && iterations < max_iterations
           changed = false
+          iterations += 1
           internal_mounts.each do |parent, child, mount_prefix|
             parent_prefixes = prefixes_by_function[parent]
             if parent_prefixes.empty? && file_prefix
@@ -257,14 +260,57 @@ module Noir
         end
       end
 
-      # Find the opening brace of the handler function
-      open_brace_idx = content.index("{", idx)
-      return unless open_brace_idx
+      # Find the bounds of the method call arguments to keep the search scoped
+      open_paren_idx = content.index("(", idx)
+      return unless open_paren_idx
+      close_paren_idx = find_matching_paren(content, open_paren_idx)
+      return unless close_paren_idx
+
+      args_start = open_paren_idx + 1
+      args_end = close_paren_idx - 1
+      return if args_end < args_start
+
+      args_slice = content[args_start..args_end]
+      function_idx = args_slice.rindex(/\bfunction\b/)
+      arrow_idx = args_slice.rindex("=>")
+
+      anchor_idx = nil
+      anchor_kind = :function
+      if function_idx && arrow_idx
+        if function_idx > arrow_idx
+          anchor_idx = function_idx
+          anchor_kind = :function
+        else
+          anchor_idx = arrow_idx
+          anchor_kind = :arrow
+        end
+      elsif function_idx
+        anchor_idx = function_idx
+        anchor_kind = :function
+      elsif arrow_idx
+        anchor_idx = arrow_idx
+        anchor_kind = :arrow
+      end
+
+      return unless anchor_idx
+
+      anchor_abs = args_start + anchor_idx
+      open_brace_idx = content.index("{", anchor_abs)
+      return unless open_brace_idx && open_brace_idx < close_paren_idx
+
+      # Avoid treating concise arrow returning object literals as a block body.
+      if anchor_kind == :arrow
+        prev = open_brace_idx - 1
+        while prev > anchor_abs && content[prev].whitespace?
+          prev -= 1
+        end
+        return if prev >= anchor_abs && content[prev] == '('
+      end
 
       # Extract the handler function body
       # (This is a simplified approach - a more robust approach would count braces)
       close_brace_idx = find_matching_brace(content, open_brace_idx)
-      return unless close_brace_idx
+      return unless close_brace_idx && close_brace_idx < close_paren_idx
 
       handler_body = content[open_brace_idx..close_brace_idx]
 

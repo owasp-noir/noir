@@ -1061,8 +1061,9 @@ module Analyzer::Javascript
               end
             end
           end
-        rescue e
-          logger.debug "Error scanning #{main_file} for router mounts: #{e.message}"
+        rescue e : Exception
+          # Log at info level so issues are visible but don't fail the scan
+          logger.info "Error scanning #{main_file} for router mounts (#{e.class}): #{e.message}"
         end
       end
     end

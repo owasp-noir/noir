@@ -223,17 +223,38 @@ module Noir
       end
     end
 
-    # Heuristic to determine if '/' starts a regex literal
+    # Heuristic to determine if '/' starts a regex literal.
+    # In JavaScript, regex literals can appear after certain tokens that cannot
+    # be followed by a division operator. This covers the most common cases
+    # for route definitions but is not exhaustive for all JS contexts.
     private def looks_like_regex? : Bool
-      # Heuristic: regex if preceded by ( , = [ or http_method token
       return false if @tokens.empty?
 
       last_token = @tokens.last
+
+      # Regex can follow opening brackets and parentheses
       return true if last_token.type == :lparen
-      return true if last_token.type == :comma
-      return true if last_token.value == "="
-      return true if last_token.type == :http_method
       return true if last_token.type == :lbracket
+      return true if last_token.type == :lbrace
+
+      # Regex can follow punctuation that expects an expression
+      return true if last_token.type == :comma
+      return true if last_token.type == :colon
+      return true if last_token.type == :semicolon
+
+      # Regex can follow assignment and comparison operators
+      return true if last_token.value == "="
+
+      # Regex can follow HTTP method identifiers (common in route definitions)
+      return true if last_token.type == :http_method
+
+      # Regex can follow keywords that expect an expression
+      if last_token.type == :keyword
+        case last_token.value
+        when "return", "case", "throw", "in", "of", "typeof", "instanceof", "void", "delete", "new"
+          return true
+        end
+      end
 
       false
     end
@@ -266,8 +287,8 @@ module Noir
         advance
       end
 
-      # Store pattern and flags separately to preserve regex form
-      add_token(:regex, "#{regex_pattern}\n#{regex_flags}")
+      # Store pattern and flags using \x00 delimiter (cannot appear in valid regex)
+      add_token(:regex, "#{regex_pattern}\x00#{regex_flags}")
     end
   end
 end

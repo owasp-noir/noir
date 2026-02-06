@@ -85,7 +85,7 @@ module Noir
 
       # First pass: scan for router.use("/prefix", routerVariable) patterns
       idx = 0
-      while idx < @tokens.size - 6
+      while idx < @tokens.size - 7
         # Pattern: app.use('/prefix', routerVariable) or router.use('/prefix', childRouter)
         if (@tokens[idx].type == :identifier) &&
            (idx + 1 < @tokens.size) && (@tokens[idx + 1].type == :dot) &&
@@ -93,7 +93,8 @@ module Noir
            (idx + 3 < @tokens.size) && (@tokens[idx + 3].type == :lparen) &&
            (idx + 4 < @tokens.size) && (@tokens[idx + 4].type == :string) &&
            (idx + 5 < @tokens.size) && (@tokens[idx + 5].type == :comma) &&
-           (idx + 6 < @tokens.size) && (@tokens[idx + 6].type == :identifier)
+           (idx + 6 < @tokens.size) && (@tokens[idx + 6].type == :identifier) &&
+           (idx + 7 < @tokens.size) && (@tokens[idx + 7].type == :rparen)
 
           parent_router = @tokens[idx].value
           prefix = @tokens[idx + 4].value
@@ -208,8 +209,10 @@ module Noir
       prefix
     end
 
+    # Format a regex token value into a path string.
+    # The token value uses \x00 as delimiter between pattern and flags.
     private def format_regex_path(value : String) : String
-      parts = value.split("\n", 2)
+      parts = value.split("\x00", 2)
       pattern = parts[0]
       flags = parts.size > 1 ? parts[1] : ""
 
