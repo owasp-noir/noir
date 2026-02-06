@@ -54,7 +54,7 @@ module Analyzer::Kotlin
               resources = spring["resources"] || spring["web"]
               if resources
                 if resources["resources"]
-                    resources = resources["resources"]
+                  resources = resources["resources"]
                 end
                 static_locations_yaml = resources["static-locations"]
                 if static_locations_yaml
@@ -118,15 +118,15 @@ module Analyzer::Kotlin
             end
           end
         elsif location.starts_with?("file:")
-            file_path = location.sub("file:", "").strip
-            if Dir.exists?(file_path)
-                Dir.glob("#{escape_glob_path(file_path)}/**/*") do |file|
-                    next if File.directory?(file)
-                    relative_path = file.sub(file_path, "")
-                    full_url = join_path(webflux_base_path, relative_path)
-                    @result << Endpoint.new(full_url, "GET", Details.new(PathInfo.new(file)))
-                end
+          file_path = location.sub("file:", "").strip
+          if Dir.exists?(file_path)
+            Dir.glob("#{escape_glob_path(file_path)}/**/*") do |file|
+              next if File.directory?(file)
+              relative_path = file.sub(file_path, "")
+              full_url = join_path(webflux_base_path, relative_path)
+              @result << Endpoint.new(full_url, "GET", Details.new(PathInfo.new(file)))
             end
+          end
         end
       end
     end
