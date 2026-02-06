@@ -73,7 +73,7 @@ module Analyzer::Go
                       end
 
                       # HTTP Methods
-                      if (match = line.match(/\.(Get|Post|Put|Delete|Patch|Options|Route)\s*\(/i))
+                      if match = line.match(/\.(Get|Post|Put|Delete|Patch|Options|Route)\s*\(/i)
                         method = match[1].upcase
                         if method == "ROUTE"
                           method = "ANY"
@@ -109,7 +109,6 @@ module Analyzer::Go
                           end
                         end
                       end
-
                     end
                   end
                 rescue e : File::NotFoundError
