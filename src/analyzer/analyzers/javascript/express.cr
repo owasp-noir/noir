@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "../../../miniparsers/js_route_extractor"
+require "../../../utils/url_path"
 
 module Analyzer::Javascript
   class Express < Analyzer
@@ -188,14 +189,7 @@ module Analyzer::Javascript
                 # Apply nested router prefix if applicable
                 if !current_router.empty? && nested_routers.has_key?(current_router) && !nested_routers[current_router].empty?
                   router_prefix = nested_routers[current_router]
-                  # Handle path joining properly
-                  if expanded_endpoint.url.starts_with?("/") && router_prefix.ends_with?("/")
-                    expanded_endpoint.url = "#{router_prefix[0..-2]}#{expanded_endpoint.url}"
-                  elsif !expanded_endpoint.url.starts_with?("/") && !router_prefix.ends_with?("/")
-                    expanded_endpoint.url = "#{router_prefix}/#{expanded_endpoint.url}"
-                  else
-                    expanded_endpoint.url = "#{router_prefix}#{expanded_endpoint.url}"
-                  end
+                  expanded_endpoint.url = Noir::URLPath.join(router_prefix, expanded_endpoint.url)
                   # If we have a router base path and the endpoint doesn't already include it
                 elsif !current_router_base.empty? && !expanded_endpoint.url.starts_with?("/")
                   expanded_endpoint.url = "#{current_router_base}/#{expanded_endpoint.url}"
@@ -211,14 +205,7 @@ module Analyzer::Javascript
               # Apply nested router prefix if applicable
               if !current_router.empty? && nested_routers.has_key?(current_router) && !nested_routers[current_router].empty?
                 router_prefix = nested_routers[current_router]
-                # Handle path joining properly
-                if endpoint.url.starts_with?("/") && router_prefix.ends_with?("/")
-                  endpoint.url = "#{router_prefix[0..-2]}#{endpoint.url}"
-                elsif !endpoint.url.starts_with?("/") && !router_prefix.ends_with?("/")
-                  endpoint.url = "#{router_prefix}/#{endpoint.url}"
-                else
-                  endpoint.url = "#{router_prefix}#{endpoint.url}"
-                end
+                endpoint.url = Noir::URLPath.join(router_prefix, endpoint.url)
                 # If we have a router base path and the endpoint doesn't already include it
               elsif !current_router_base.empty? && !endpoint.url.starts_with?("/")
                 endpoint.url = "#{current_router_base}/#{endpoint.url}"
@@ -271,13 +258,7 @@ module Analyzer::Javascript
                 method_upper = http_method.upcase
 
                 # Combine the prefix with the path
-                full_path = if route_path.starts_with?("/") && prefix.ends_with?("/")
-                              "#{prefix[0..-2]}#{route_path}"
-                            elsif !route_path.starts_with?("/") && !prefix.ends_with?("/")
-                              "#{prefix}/#{route_path}"
-                            else
-                              "#{prefix}#{route_path}"
-                            end
+                full_path = Noir::URLPath.join(prefix, route_path)
 
                 # Create the endpoint with prefixed path
                 endpoint = Endpoint.new(full_path, method_upper)
@@ -379,13 +360,7 @@ module Analyzer::Javascript
             parent_prefix = router_prefixes[parent]
 
             # Concatenate prefixes properly
-            if parent_prefix.ends_with?("/") && full_prefix.starts_with?("/")
-              full_prefix = "#{parent_prefix[0..-2]}#{full_prefix}"
-            elsif !parent_prefix.ends_with?("/") && !full_prefix.starts_with?("/")
-              full_prefix = "#{parent_prefix}/#{full_prefix}"
-            else
-              full_prefix = "#{parent_prefix}#{full_prefix}"
-            end
+            full_prefix = Noir::URLPath.join(parent_prefix, full_prefix)
           end
 
           current_router = parent
@@ -413,13 +388,7 @@ module Analyzer::Javascript
               method_upper = method.upcase
 
               # Combine the prefix with the path
-              full_path = if route_path.starts_with?("/") && router_prefix.ends_with?("/")
-                            "#{router_prefix[0..-2]}#{route_path}"
-                          elsif !route_path.starts_with?("/") && !router_prefix.ends_with?("/")
-                            "#{router_prefix}/#{route_path}"
-                          else
-                            "#{router_prefix}#{route_path}"
-                          end
+              full_path = Noir::URLPath.join(router_prefix, route_path)
 
               # Create endpoint and add to results
               endpoint = Endpoint.new(full_path, method_upper)
@@ -463,13 +432,7 @@ module Analyzer::Javascript
             method_upper = method.upcase
 
             # Combine the prefix with the path
-            full_path = if route_path.starts_with?("/") && prefix.ends_with?("/")
-                          "#{prefix[0..-2]}#{route_path}"
-                        elsif !route_path.starts_with?("/") && !prefix.ends_with?("/")
-                          "#{prefix}/#{route_path}"
-                        else
-                          "#{prefix}#{route_path}"
-                        end
+            full_path = Noir::URLPath.join(prefix, route_path)
 
             # Create endpoint and add to results
             endpoint = Endpoint.new(full_path, method_upper)
@@ -961,23 +924,14 @@ module Analyzer::Javascript
           end
 
           # Pattern: const { funcA, funcB: aliasB } = require('./path/to/file')
-          content.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
+          content.scan(/(?:const|let|var)\s*\{\s*([\s\S]*?)\s*\}\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
             if m.size >= 3
               names = m[1]
               require_path = m[2]
               resolved_path = resolve_require_path(main_file, require_path)
               if resolved_path
-                names.split(",").each do |name|
-                  cleaned = name.strip
-                  next if cleaned.empty?
-                  if cleaned.includes?(" as ")
-                    parts = cleaned.split(/\s+as\s+/, 2)
-                    cleaned = parts.size == 2 ? parts[1].strip : cleaned
-                  elsif cleaned.includes?(":")
-                    parts = cleaned.split(":", 2)
-                    cleaned = parts.size == 2 ? parts[1].strip : cleaned
-                  end
-                  function_map[cleaned] = resolved_path unless cleaned.empty?
+                parse_destructured_names(names).each do |name|
+                  function_map[name] = resolved_path unless name.empty?
                 end
               end
             end
@@ -994,23 +948,14 @@ module Analyzer::Javascript
           end
 
           # Pattern: import { funcA, funcB as aliasB } from './path/to/file'
-          content.scan(/import\s*\{\s*([^}]+)\s*\}\s*from\s*['"]([^'"]+)['"]/) do |m|
+          content.scan(/import\s*\{\s*([\s\S]*?)\s*\}\s*from\s*['"]([^'"]+)['"]/) do |m|
             if m.size >= 3
               names = m[1]
               require_path = m[2]
               resolved_path = resolve_require_path(main_file, require_path)
               if resolved_path
-                names.split(",").each do |name|
-                  cleaned = name.strip
-                  next if cleaned.empty?
-                  if cleaned.includes?(" as ")
-                    parts = cleaned.split(/\s+as\s+/, 2)
-                    cleaned = parts.size == 2 ? parts[1].strip : cleaned
-                  elsif cleaned.includes?(":")
-                    parts = cleaned.split(":", 2)
-                    cleaned = parts.size == 2 ? parts[1].strip : cleaned
-                  end
-                  function_map[cleaned] = resolved_path unless cleaned.empty?
+                parse_destructured_names(names).each do |name|
+                  function_map[name] = resolved_path unless name.empty?
                 end
               end
             end
@@ -1059,24 +1004,12 @@ module Analyzer::Javascript
                 if parent_prefix
                   if func_name = var_to_function[router_var]?
                     if router_file = function_map[func_name]?
-                      combined = if parent_prefix.ends_with?("/") && prefix.starts_with?("/")
-                                   "#{parent_prefix[0..-2]}#{prefix}"
-                                 elsif !parent_prefix.ends_with?("/") && !prefix.starts_with?("/")
-                                   "#{parent_prefix}/#{prefix}"
-                                 else
-                                   "#{parent_prefix}#{prefix}"
-                                 end
+                      combined = Noir::URLPath.join(parent_prefix, prefix)
                       locator.push("express_router_prefix:#{router_file}:#{func_name}", combined)
                       logger.debug "Mapped nested router prefix: #{router_file}:#{func_name} => #{combined}"
                     end
                   elsif router_file = function_map[router_var]?
-                    combined = if parent_prefix.ends_with?("/") && prefix.starts_with?("/")
-                                 "#{parent_prefix[0..-2]}#{prefix}"
-                               elsif !parent_prefix.ends_with?("/") && !prefix.starts_with?("/")
-                                 "#{parent_prefix}/#{prefix}"
-                               else
-                                 "#{parent_prefix}#{prefix}"
-                               end
+                    combined = Noir::URLPath.join(parent_prefix, prefix)
                     locator.push("express_router_prefix:#{router_file}:#{router_var}", combined)
                     logger.debug "Mapped nested router prefix: #{router_file}:#{router_var} => #{combined}"
                   end
@@ -1108,13 +1041,7 @@ module Analyzer::Javascript
               router_file = function_map[child_func]?
 
               if parent_prefix && router_file
-                combined = if parent_prefix.ends_with?("/") && child_prefix.starts_with?("/")
-                             "#{parent_prefix[0..-2]}#{child_prefix}"
-                           elsif !parent_prefix.ends_with?("/") && !child_prefix.starts_with?("/")
-                             "#{parent_prefix}/#{child_prefix}"
-                           else
-                             "#{parent_prefix}#{child_prefix}"
-                           end
+                combined = Noir::URLPath.join(parent_prefix, child_prefix)
                 locator.push("express_router_prefix:#{router_file}:#{child_func}", combined)
                 logger.debug "Mapped nested router prefix: #{router_file}:#{child_func} => #{combined}"
               end
@@ -1140,12 +1067,90 @@ module Analyzer::Javascript
       end
     end
 
+    private def parse_destructured_names(names : String) : Array(String)
+      cleaned = names
+        .gsub(/\/\*.*?\*\//m, "")
+        .gsub(/\/\/[^\n]*/, "")
+
+      items = [] of String
+      current = ""
+      depth_brace = 0
+      depth_bracket = 0
+      depth_paren = 0
+
+      cleaned.each_char do |ch|
+        case ch
+        when '{'
+          depth_brace += 1
+        when '}'
+          depth_brace -= 1 if depth_brace > 0
+        when '['
+          depth_bracket += 1
+        when ']'
+          depth_bracket -= 1 if depth_bracket > 0
+        when '('
+          depth_paren += 1
+        when ')'
+          depth_paren -= 1 if depth_paren > 0
+        when ','
+          if depth_brace == 0 && depth_bracket == 0 && depth_paren == 0
+            items << current
+            current = ""
+            next
+          end
+        end
+
+        current += ch
+      end
+
+      items << current unless current.empty?
+
+      extracted = [] of String
+      items.each do |item|
+        name = item.strip
+        next if name.empty?
+
+        name = name.sub(/^\.\.\./, "").strip
+        name = name.split("=", 2)[0].strip
+
+        if name.includes?(" as ")
+          parts = name.split(/\s+as\s+/, 2)
+          name = parts.size == 2 ? parts[1].strip : name
+        elsif name.includes?(":")
+          parts = name.split(":", 2)
+          name = parts.size == 2 ? parts[1].strip : name
+        end
+
+        if name.starts_with?("{") && name.ends_with?("}")
+          inner = name[1..-2]
+          extracted.concat(parse_destructured_names(inner))
+          next
+        elsif name.starts_with?("[") && name.ends_with?("]")
+          inner = name[1..-2]
+          extracted.concat(parse_destructured_names(inner))
+          next
+        end
+
+        name = name.split("=", 2)[0].strip
+        extracted << name unless name.empty?
+      end
+
+      extracted
+    end
+
     # Resolve a require path relative to the requiring file
     private def resolve_require_path(from_file : String, require_path : String) : String?
-      return nil if require_path.starts_with?(".")  == false  # Skip node_modules
+      is_relative = require_path.starts_with?(".")
+      is_root_alias = require_path.starts_with?("@/") || require_path.starts_with?("~/")
+      return nil unless is_relative || is_root_alias
 
-      base_dir = File.dirname(from_file)
-      resolved = File.expand_path(require_path, base_dir)
+      resolved = if is_root_alias
+                   alias_path = require_path.starts_with?("@/") ? require_path.lchop("@/") : require_path.lchop("~/")
+                   File.expand_path(alias_path, base_path)
+                 else
+                   base_dir = File.dirname(from_file)
+                   File.expand_path(require_path, base_dir)
+                 end
 
       # Try with common extensions if file doesn't exist
       return resolved if File.exists?(resolved)

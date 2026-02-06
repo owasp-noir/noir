@@ -1,5 +1,6 @@
 require "../models/endpoint"
 require "../minilexers/js_lexer"
+require "../utils/url_path"
 require "set"
 
 module Noir
@@ -198,28 +199,13 @@ module Noir
 
         # Concatenate paths properly
         if !parent_prefix.empty?
-          prefix = join_paths(parent_prefix, prefix)
+          prefix = URLPath.join(parent_prefix, prefix)
         end
 
         current = parent
       end
 
       prefix
-    end
-
-    # Helper to join two path segments properly
-    private def join_paths(parent : String, child : String) : String
-      return child if parent.empty?
-      return parent if child.empty?
-      return parent if child == "/"
-
-      if parent.ends_with?("/") && child.starts_with?("/")
-        "#{parent[0..-2]}#{child}"
-      elsif !parent.ends_with?("/") && !child.starts_with?("/")
-        "#{parent}/#{child}"
-      else
-        "#{parent}#{child}"
-      end
     end
 
     private def format_regex_path(value : String) : String
@@ -346,7 +332,7 @@ module Noir
             # Apply router prefix if this router has one
             if router_prefixes.has_key?(router_var)
               prefix = router_prefixes[router_var]
-              path = join_paths(prefix, path)
+              path = URLPath.join(prefix, path)
             end
 
             m = method.upcase
@@ -392,7 +378,7 @@ module Noir
             # Apply router prefix if this router has one
             if router_prefixes.has_key?(router_var)
               prefix = router_prefixes[router_var]
-              path = join_paths(prefix, path)
+              path = URLPath.join(prefix, path)
             end
 
             # look ahead bounded to avoid O(n^2)
@@ -502,7 +488,7 @@ module Noir
             start_pos = @tokens[idx].position
             if @router_prefixes.has_key?(router_var)
               prefix = @router_prefixes[router_var]
-              path = join_paths(prefix, path)
+              path = URLPath.join(prefix, path)
             end
 
             # Extract parameters from path
@@ -666,7 +652,7 @@ module Noir
               router_var = @tokens[idx - 1].value
               if @router_prefixes.has_key?(router_var)
                 prefix = @router_prefixes[router_var]
-                path = join_paths(prefix, path)
+                path = URLPath.join(prefix, path)
               end
             end
 
@@ -762,7 +748,7 @@ module Noir
         start_pos = @tokens[idx].position
         if @router_prefixes.has_key?(router_var)
           prefix = @router_prefixes[router_var]
-          path = join_paths(prefix, path)
+          path = URLPath.join(prefix, path)
         end
 
         # Look for method chaining after .route('/path')

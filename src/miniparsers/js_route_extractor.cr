@@ -2,6 +2,7 @@ require "../models/endpoint"
 require "../minilexers/js_lexer"
 require "../miniparsers/js_parser"
 require "../models/code_locator"
+require "../utils/url_path"
 
 module Noir
   # JSRouteExtractor provides a unified interface for extracting routes from JavaScript files
@@ -30,11 +31,31 @@ module Noir
         # Build function ranges to support function-scoped router prefixes
         function_ranges = [] of Tuple(String, Int32, Int32)
         function_names = Set(String).new
-        content.scan(/function\s+(\w+)\s*\(/) do |m|
-          if m.size >= 2
+        function_patterns = {
+          /function\s+(\w+)\s*\(/ => :function,
+          /(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?function\b/ => :function,
+          /(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?\([^)]*\)\s*=>/ => :arrow,
+          /(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?\w+\s*=>/ => :arrow,
+        }
+        function_patterns.each do |pattern, kind|
+          content.scan(pattern) do |m|
+            next unless m.size >= 2
             func_name = m[1]
             match_start = m.begin(0)
-            open_brace_idx = content.index("{", match_start)
+            next unless match_start
+
+            open_brace_idx = nil
+            if kind == :arrow
+              arrow_idx = content.index("=>", match_start)
+              next unless arrow_idx
+              open_brace_idx = content.index("{", arrow_idx + 2)
+            else
+              param_start = content.index("(", match_start)
+              next unless param_start
+              param_end = find_matching_paren(content, param_start) || param_start
+              open_brace_idx = content.index("{", param_end + 1)
+            end
+
             next unless open_brace_idx
             close_brace_idx = find_matching_brace(content, open_brace_idx)
             next unless close_brace_idx
@@ -85,7 +106,7 @@ module Noir
               parent_prefixes = [file_prefix]
             end
             parent_prefixes.each do |p|
-              combined = join_paths(p, mount_prefix)
+              combined = URLPath.join(p, mount_prefix)
               unless prefixes_by_function[child].includes?(combined)
                 prefixes_by_function[child] << combined
                 changed = true
@@ -116,7 +137,7 @@ module Noir
 
           # Handle router.all by expanding to all HTTP methods
           prefixes.each do |prefix|
-            path_with_prefix = prefix.empty? ? pattern.path : join_paths(prefix, pattern.path)
+            path_with_prefix = prefix.empty? ? pattern.path : URLPath.join(prefix, pattern.path)
 
             if normalized_method == "ALL"
               all_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
@@ -153,21 +174,6 @@ module Noir
       rescue e
         # If parser fails, return empty array
         [] of Endpoint
-      end
-    end
-
-    # Helper to join two path segments properly
-    def self.join_paths(parent : String, child : String) : String
-      return child if parent.empty?
-      return parent if child.empty?
-      return parent if child == "/"
-
-      if parent.ends_with?("/") && child.starts_with?("/")
-        "#{parent[0..-2]}#{child}"
-      elsif !parent.ends_with?("/") && !child.starts_with?("/")
-        "#{parent}/#{child}"
-      else
-        "#{parent}#{child}"
       end
     end
 
@@ -287,6 +293,27 @@ module Noir
       end
 
       # No matching brace found
+      nil
+    end
+
+    def self.find_matching_paren(content : String, open_paren_idx : Int32) : Int32?
+      paren_count = 1
+      idx = open_paren_idx + 1
+
+      while idx < content.size && paren_count > 0
+        case content[idx]
+        when '('
+          paren_count += 1
+        when ')'
+          paren_count -= 1
+        end
+        idx += 1
+
+        # Return the position of the matching closing paren
+        return idx - 1 if paren_count == 0
+      end
+
+      # No matching paren found
       nil
     end
 
