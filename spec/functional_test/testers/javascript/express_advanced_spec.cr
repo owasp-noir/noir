@@ -28,6 +28,13 @@ expected_endpoints = [
     Param.new("filter", "", "query"),
   ]),
 
+  # Regex routes (NOW WORKING)
+  Endpoint.new("/^\\/regex-(\\d+)$/", "GET"),
+
+  # Array of paths (NOW WORKING)
+  Endpoint.new("/array-a", "GET"),
+  Endpoint.new("/array-b", "GET"),
+
   # Different parameter extraction patterns (WORKING)
   Endpoint.new("/extract-variations", "POST", [
     Param.new("field1", "", "json"),
@@ -50,16 +57,24 @@ expected_endpoints = [
   # Multiple middleware (WORKING)
   Endpoint.new("/multiple-middleware", "PUT"),
 
-  # Nested router with prefix (WORKING - but needs router.use() support)
-  Endpoint.new("/profile", "GET", [
+  # Nested router with prefix (NOW WORKING)
+  Endpoint.new("/user/profile", "GET", [
     Param.new("fields", "", "query"),
     Param.new("X-User-Id", "", "header"),
   ]),
-  Endpoint.new("/settings", "POST", [
+  Endpoint.new("/user/settings", "POST", [
     Param.new("theme", "", "json"),
     Param.new("language", "", "json"),
     Param.new("notifications", "", "json"),
     Param.new("sessionToken", "", "cookie"),
+  ]),
+
+  # Cross-file router mount (NOW WORKING)
+  Endpoint.new("/api/users", "GET", [
+    Param.new("limit", "", "query"),
+  ]),
+  Endpoint.new("/api/users", "POST", [
+    Param.new("name", "", "json"),
   ]),
 ]
 

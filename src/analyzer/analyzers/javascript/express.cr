@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "../../../miniparsers/js_route_extractor"
+require "../../../utils/url_path"
 
 module Analyzer::Javascript
   class Express < Analyzer
@@ -14,6 +15,9 @@ module Analyzer::Javascript
       static_dirs = [] of Hash(String, String)
 
       begin
+        # Phase 1: Pre-scan to build router mount map
+        scan_for_router_mounts
+
         populate_channel_with_files(channel)
 
         WaitGroup.wait do |wg|
@@ -185,14 +189,7 @@ module Analyzer::Javascript
                 # Apply nested router prefix if applicable
                 if !current_router.empty? && nested_routers.has_key?(current_router) && !nested_routers[current_router].empty?
                   router_prefix = nested_routers[current_router]
-                  # Handle path joining properly
-                  if expanded_endpoint.url.starts_with?("/") && router_prefix.ends_with?("/")
-                    expanded_endpoint.url = "#{router_prefix[0..-2]}#{expanded_endpoint.url}"
-                  elsif !expanded_endpoint.url.starts_with?("/") && !router_prefix.ends_with?("/")
-                    expanded_endpoint.url = "#{router_prefix}/#{expanded_endpoint.url}"
-                  else
-                    expanded_endpoint.url = "#{router_prefix}#{expanded_endpoint.url}"
-                  end
+                  expanded_endpoint.url = Noir::URLPath.join(router_prefix, expanded_endpoint.url)
                   # If we have a router base path and the endpoint doesn't already include it
                 elsif !current_router_base.empty? && !expanded_endpoint.url.starts_with?("/")
                   expanded_endpoint.url = "#{current_router_base}/#{expanded_endpoint.url}"
@@ -208,14 +205,7 @@ module Analyzer::Javascript
               # Apply nested router prefix if applicable
               if !current_router.empty? && nested_routers.has_key?(current_router) && !nested_routers[current_router].empty?
                 router_prefix = nested_routers[current_router]
-                # Handle path joining properly
-                if endpoint.url.starts_with?("/") && router_prefix.ends_with?("/")
-                  endpoint.url = "#{router_prefix[0..-2]}#{endpoint.url}"
-                elsif !endpoint.url.starts_with?("/") && !router_prefix.ends_with?("/")
-                  endpoint.url = "#{router_prefix}/#{endpoint.url}"
-                else
-                  endpoint.url = "#{router_prefix}#{endpoint.url}"
-                end
+                endpoint.url = Noir::URLPath.join(router_prefix, endpoint.url)
                 # If we have a router base path and the endpoint doesn't already include it
               elsif !current_router_base.empty? && !endpoint.url.starts_with?("/")
                 endpoint.url = "#{current_router_base}/#{endpoint.url}"
@@ -268,13 +258,7 @@ module Analyzer::Javascript
                 method_upper = http_method.upcase
 
                 # Combine the prefix with the path
-                full_path = if route_path.starts_with?("/") && prefix.ends_with?("/")
-                              "#{prefix[0..-2]}#{route_path}"
-                            elsif !route_path.starts_with?("/") && !prefix.ends_with?("/")
-                              "#{prefix}/#{route_path}"
-                            else
-                              "#{prefix}#{route_path}"
-                            end
+                full_path = Noir::URLPath.join(prefix, route_path)
 
                 # Create the endpoint with prefixed path
                 endpoint = Endpoint.new(full_path, method_upper)
@@ -376,13 +360,7 @@ module Analyzer::Javascript
             parent_prefix = router_prefixes[parent]
 
             # Concatenate prefixes properly
-            if parent_prefix.ends_with?("/") && full_prefix.starts_with?("/")
-              full_prefix = "#{parent_prefix[0..-2]}#{full_prefix}"
-            elsif !parent_prefix.ends_with?("/") && !full_prefix.starts_with?("/")
-              full_prefix = "#{parent_prefix}/#{full_prefix}"
-            else
-              full_prefix = "#{parent_prefix}#{full_prefix}"
-            end
+            full_prefix = Noir::URLPath.join(parent_prefix, full_prefix)
           end
 
           current_router = parent
@@ -410,13 +388,7 @@ module Analyzer::Javascript
               method_upper = method.upcase
 
               # Combine the prefix with the path
-              full_path = if route_path.starts_with?("/") && router_prefix.ends_with?("/")
-                            "#{router_prefix[0..-2]}#{route_path}"
-                          elsif !route_path.starts_with?("/") && !router_prefix.ends_with?("/")
-                            "#{router_prefix}/#{route_path}"
-                          else
-                            "#{router_prefix}#{route_path}"
-                          end
+              full_path = Noir::URLPath.join(router_prefix, route_path)
 
               # Create endpoint and add to results
               endpoint = Endpoint.new(full_path, method_upper)
@@ -460,13 +432,7 @@ module Analyzer::Javascript
             method_upper = method.upcase
 
             # Combine the prefix with the path
-            full_path = if route_path.starts_with?("/") && prefix.ends_with?("/")
-                          "#{prefix[0..-2]}#{route_path}"
-                        elsif !route_path.starts_with?("/") && !prefix.ends_with?("/")
-                          "#{prefix}/#{route_path}"
-                        else
-                          "#{prefix}#{route_path}"
-                        end
+            full_path = Noir::URLPath.join(prefix, route_path)
 
             # Create endpoint and add to results
             endpoint = Endpoint.new(full_path, method_upper)
@@ -905,6 +871,302 @@ module Analyzer::Javascript
       Noir::JSRouteExtractor.extract_body_params(handler_body, endpoint)
       Noir::JSRouteExtractor.extract_header_params(handler_body, endpoint)
       Noir::JSRouteExtractor.extract_cookie_params(handler_body, endpoint)
+    end
+
+    # Scan for router mount patterns and store them in CodeLocator
+    # This enables cross-file router prefix tracking
+    private def scan_for_router_mounts
+      locator = CodeLocator.instance
+
+      # Prefer scanning all JS/TS files discovered by the detector (file_map) to avoid missing mounts.
+      main_files = [] of String
+      all_files.each do |file|
+        next if File.directory?(file)
+        next unless [".js", ".ts", ".jsx", ".tsx"].any? { |ext| file.ends_with?(ext) }
+        next unless @base_paths.any? { |base| file.starts_with?(base) }
+        main_files << file
+      end
+
+      # Fallback: if file_map is empty, scan common entrypoints only.
+      if main_files.empty?
+        ["server.js", "app.js", "index.js", "main.js", "server.ts", "app.ts", "index.ts", "main.ts"].each do |filename|
+          potential_path = File.join(base_path, filename)
+          main_files << potential_path if File.exists?(potential_path)
+
+          # Also check in common subdirectories
+          ["src", "lib", "app"].each do |subdir|
+            subdir_path = File.join(base_path, subdir, filename)
+            main_files << subdir_path if File.exists?(subdir_path)
+          end
+        end
+      end
+
+      # Scan each main file for router mount patterns
+      main_files.each do |main_file|
+        begin
+          content = File.read(main_file, encoding: "utf-8", invalid: :skip)
+
+          # Track require/import statements to map variable names to file paths
+          # Pattern: const varName = require('./path/to/file')
+          require_map = Hash(String, String).new
+          function_map = Hash(String, String).new
+          var_to_function = Hash(String, String).new
+          var_prefix = Hash(String, String).new
+
+          content.scan(/(?:const|let|var)\s+(\w+)\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
+            if m.size >= 3
+              var_name = m[1]
+              require_path = m[2]
+              # Resolve relative paths
+              resolved_path = resolve_require_path(main_file, require_path)
+              require_map[var_name] = resolved_path if resolved_path
+            end
+          end
+
+          # Pattern: const { funcA, funcB: aliasB } = require('./path/to/file')
+          content.scan(/(?:const|let|var)\s*\{\s*([\s\S]*?)\s*\}\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
+            if m.size >= 3
+              names = m[1]
+              require_path = m[2]
+              resolved_path = resolve_require_path(main_file, require_path)
+              if resolved_path
+                parse_destructured_names(names).each do |name|
+                  function_map[name] = resolved_path unless name.empty?
+                end
+              end
+            end
+          end
+
+          # Pattern: import varName from './path/to/file'
+          content.scan(/import\s+(\w+)\s+from\s+['"]([^'"]+)['"]/) do |m|
+            if m.size >= 3
+              var_name = m[1]
+              require_path = m[2]
+              resolved_path = resolve_require_path(main_file, require_path)
+              require_map[var_name] = resolved_path if resolved_path
+            end
+          end
+
+          # Pattern: import { funcA, funcB as aliasB } from './path/to/file'
+          content.scan(/import\s*\{\s*([\s\S]*?)\s*\}\s*from\s*['"]([^'"]+)['"]/) do |m|
+            if m.size >= 3
+              names = m[1]
+              require_path = m[2]
+              resolved_path = resolve_require_path(main_file, require_path)
+              if resolved_path
+                parse_destructured_names(names).each do |name|
+                  function_map[name] = resolved_path unless name.empty?
+                end
+              end
+            end
+          end
+
+          # Pattern: const varName = functionName()
+          content.scan(/(?:const|let|var)\s+(\w+)\s*=\s*(\w+)\s*\(\s*\)/) do |m|
+            if m.size >= 3
+              var_name = m[1]
+              func_name = m[2]
+              if function_map.has_key?(func_name)
+                var_to_function[var_name] = func_name
+              end
+            end
+          end
+
+          # Now scan for app.use('/prefix', routerVar) patterns
+          content.scan(/(\w+)\.use\s*\(\s*['"]([^'"]+)['"]\s*,\s*(\w+)/) do |m|
+            if m.size >= 4
+              caller = m[1]
+              prefix = m[2]
+              router_var = m[3]
+
+              # Only treat app/router as top-level mounts
+              if caller == "app" || caller == "router"
+                # Look up the file path for this router variable
+                if router_file = require_map[router_var]?
+                  # Store in CodeLocator with key format: "express_router_prefix:<file_path>"
+                  locator.set("express_router_prefix:#{router_file}", prefix)
+                  logger.debug "Mapped router prefix: #{router_file} => #{prefix}"
+                  var_prefix[router_var] = prefix
+                elsif func_name = var_to_function[router_var]?
+                  if router_file = function_map[func_name]?
+                    locator.push("express_router_prefix:#{router_file}:#{func_name}", prefix)
+                    logger.debug "Mapped router prefix (factory var): #{router_file}:#{func_name} => #{prefix}"
+                    var_prefix[router_var] = prefix
+                  end
+                elsif router_file = function_map[router_var]?
+                  locator.push("express_router_prefix:#{router_file}:#{router_var}", prefix)
+                  logger.debug "Mapped router prefix (factory direct): #{router_file}:#{router_var} => #{prefix}"
+                  var_prefix[router_var] = prefix
+                end
+              else
+                # Nested mounts: parent router variable should already have a prefix
+                parent_prefix = var_prefix[caller]?
+                if parent_prefix
+                  if func_name = var_to_function[router_var]?
+                    if router_file = function_map[func_name]?
+                      combined = Noir::URLPath.join(parent_prefix, prefix)
+                      locator.push("express_router_prefix:#{router_file}:#{func_name}", combined)
+                      logger.debug "Mapped nested router prefix: #{router_file}:#{func_name} => #{combined}"
+                    end
+                  elsif router_file = function_map[router_var]?
+                    combined = Noir::URLPath.join(parent_prefix, prefix)
+                    locator.push("express_router_prefix:#{router_file}:#{router_var}", combined)
+                    logger.debug "Mapped nested router prefix: #{router_file}:#{router_var} => #{combined}"
+                  end
+                end
+              end
+            end
+          end
+
+          # Handle inline factory call: app.use('/prefix', createRouter())
+          content.scan(/(\w+)\.use\s*\(\s*['"]([^'"]+)['"]\s*,\s*(\w+)\s*\(\s*\)\s*\)/) do |m|
+            if m.size >= 4
+              caller = m[1]
+              prefix = m[2]
+              func_name = m[3]
+              if (caller == "app" || caller == "router") && (router_file = function_map[func_name]?)
+                locator.push("express_router_prefix:#{router_file}:#{func_name}", prefix)
+                logger.debug "Mapped router prefix (inline factory): #{router_file}:#{func_name} => #{prefix}"
+              end
+            end
+          end
+
+          # Handle nested router factories with parent prefix: parent.use('/sub', createChild())
+          content.scan(/(\w+)\.use\s*\(\s*['"]([^'"]+)['"]\s*,\s*(\w+)\s*\(\s*\)\s*\)/) do |m|
+            if m.size >= 4
+              parent_var = m[1]
+              child_func = m[3]
+              child_prefix = m[2]
+              parent_prefix = var_prefix[parent_var]?
+              router_file = function_map[child_func]?
+
+              if parent_prefix && router_file
+                combined = Noir::URLPath.join(parent_prefix, child_prefix)
+                locator.push("express_router_prefix:#{router_file}:#{child_func}", combined)
+                logger.debug "Mapped nested router prefix: #{router_file}:#{child_func} => #{combined}"
+              end
+            end
+          end
+
+          # Also handle inline require: app.use('/prefix', require('./path'))
+          content.scan(/(?:app|router|\w+)\.use\s*\(\s*['"]([^'"]+)['"]\s*,\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
+            if m.size >= 3
+              prefix = m[1]
+              require_path = m[2]
+              resolved_path = resolve_require_path(main_file, require_path)
+
+              if resolved_path
+                locator.set("express_router_prefix:#{resolved_path}", prefix)
+                logger.debug "Mapped router prefix (inline): #{resolved_path} => #{prefix}"
+              end
+            end
+          end
+        rescue e
+          logger.debug "Error scanning #{main_file} for router mounts: #{e.message}"
+        end
+      end
+    end
+
+    private def parse_destructured_names(names : String) : Array(String)
+      cleaned = names
+        .gsub(/\/\*.*?\*\//m, "")
+        .gsub(/\/\/[^\n]*/, "")
+
+      items = [] of String
+      current = ""
+      depth_brace = 0
+      depth_bracket = 0
+      depth_paren = 0
+
+      cleaned.each_char do |ch|
+        case ch
+        when '{'
+          depth_brace += 1
+        when '}'
+          depth_brace -= 1 if depth_brace > 0
+        when '['
+          depth_bracket += 1
+        when ']'
+          depth_bracket -= 1 if depth_bracket > 0
+        when '('
+          depth_paren += 1
+        when ')'
+          depth_paren -= 1 if depth_paren > 0
+        when ','
+          if depth_brace == 0 && depth_bracket == 0 && depth_paren == 0
+            items << current
+            current = ""
+            next
+          end
+        end
+
+        current += ch
+      end
+
+      items << current unless current.empty?
+
+      extracted = [] of String
+      items.each do |item|
+        name = item.strip
+        next if name.empty?
+
+        name = name.sub(/^\.\.\./, "").strip
+        name = name.split("=", 2)[0].strip
+
+        if name.includes?(" as ")
+          parts = name.split(/\s+as\s+/, 2)
+          name = parts.size == 2 ? parts[1].strip : name
+        elsif name.includes?(":")
+          parts = name.split(":", 2)
+          name = parts.size == 2 ? parts[1].strip : name
+        end
+
+        if name.starts_with?("{") && name.ends_with?("}")
+          inner = name[1..-2]
+          extracted.concat(parse_destructured_names(inner))
+          next
+        elsif name.starts_with?("[") && name.ends_with?("]")
+          inner = name[1..-2]
+          extracted.concat(parse_destructured_names(inner))
+          next
+        end
+
+        name = name.split("=", 2)[0].strip
+        extracted << name unless name.empty?
+      end
+
+      extracted
+    end
+
+    # Resolve a require path relative to the requiring file
+    private def resolve_require_path(from_file : String, require_path : String) : String?
+      is_relative = require_path.starts_with?(".")
+      is_root_alias = require_path.starts_with?("@/") || require_path.starts_with?("~/")
+      return nil unless is_relative || is_root_alias
+
+      resolved = if is_root_alias
+                   alias_path = require_path.starts_with?("@/") ? require_path.lchop("@/") : require_path.lchop("~/")
+                   File.expand_path(alias_path, base_path)
+                 else
+                   base_dir = File.dirname(from_file)
+                   File.expand_path(require_path, base_dir)
+                 end
+
+      # Try with common extensions if file doesn't exist
+      return resolved if File.exists?(resolved)
+
+      [".js", ".ts", ".jsx", ".tsx"].each do |ext|
+        with_ext = "#{resolved}#{ext}"
+        return with_ext if File.exists?(with_ext)
+      end
+
+      # Try as directory with index file
+      ["index.js", "index.ts", "index.jsx", "index.tsx"].each do |index_file|
+        index_path = File.join(resolved, index_file)
+        return index_path if File.exists?(index_path)
+      end
+
+      nil
     end
   end
 end
