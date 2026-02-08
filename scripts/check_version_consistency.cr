@@ -175,7 +175,7 @@ class VersionChecker
   end
 
   private def check_copilot_instructions : CheckResult
-    check_file(".github/copilot-instructions.md", /shard\.yml.*version:\s*([^\)]+)\)/, @shard_version)
+    check_file("AGENTS.md", /shard\.yml.*version:\s*([^\)]+)\)/, @shard_version)
   end
 
   private def check_how_to_release_md : CheckResult
