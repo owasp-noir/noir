@@ -84,6 +84,11 @@ module Noir
       router_parents = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }  # For nested routers (child => parents)
       router_variables = Set(String).new  # Track which identifiers are routers
 
+      # Pre-scan: identify router variables by looking for:
+      # 1. Variables assigned from express.Router()
+      # 2. Variables that have route methods called on them (.get, .post, etc.)
+      identify_router_variables(router_variables)
+
       # First pass: scan for router.use("/prefix", ..., routerVariable) patterns
       # Handles middleware chains like app.use('/api', auth, router)
       idx = 0
@@ -274,6 +279,36 @@ module Noir
       end
 
       paths
+    end
+
+    # Pre-scan tokens to identify router variables
+    # Routers are identified by:
+    # 1. Assignment from express.Router(): const router = express.Router()
+    # 2. Having route methods called on them: router.get(...)
+    private def identify_router_variables(router_variables : Set(String))
+      idx = 0
+      while idx < @tokens.size - 4
+        # Pattern 1: identifier = express.Router()
+        # Matches: const router = express.Router() or router = express.Router()
+        if @tokens[idx].type == :identifier &&
+           idx + 1 < @tokens.size && @tokens[idx + 1].type == :assign &&
+           idx + 2 < @tokens.size && @tokens[idx + 2].value == "express" &&
+           idx + 3 < @tokens.size && @tokens[idx + 3].type == :dot &&
+           idx + 4 < @tokens.size && @tokens[idx + 4].value == "Router"
+          router_variables.add(@tokens[idx].value)
+        end
+
+        # Pattern 2: identifier.get/post/put/delete/patch/all/head/options(
+        # This identifies variables used as routers
+        if @tokens[idx].type == :identifier &&
+           idx + 1 < @tokens.size && @tokens[idx + 1].type == :dot &&
+           idx + 2 < @tokens.size && @tokens[idx + 2].type == :http_method &&
+           idx + 3 < @tokens.size && @tokens[idx + 3].type == :lparen
+          router_variables.add(@tokens[idx].value)
+        end
+
+        idx += 1
+      end
     end
 
     # Find the best router candidate from a list of identifiers

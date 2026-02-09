@@ -243,35 +243,38 @@ module Analyzer::Javascript
       router_var : String? = nil
       router_file_direct : String? = nil
 
-      # First check for inline require('./path') at the end of args
-      if args =~ /require\s*\(\s*['"]([^'"]+)['"]\s*\)\s*$/
+      # Check for inline require('./path') ANYWHERE in args (not just at end)
+      # This handles patterns like: app.use('/x', require('./routes'), middleware)
+      if args =~ /require\s*\(\s*['"]([^'"]+)['"]\s*\)/
         router_file_direct = $1
-      # Check for factory function call: createRouter() etc.
-      elsif args =~ /(\w+)\s*\(\s*\)\s*$/
-        factory_name = $1
-        if function_map[factory_name]? || require_map[factory_name]? || var_to_function[factory_name]?
-          router_var = factory_name
-        end
       end
 
-      # If no inline require/factory, look for identifier or property access
-      unless router_file_direct || router_var
-        if args =~ /(\w+)\.(\w+)\s*$/ || args =~ /(\w+)\[['"](\w+)['"]\]\s*$/
-          router_var = "#{$1}.#{$2}"
-        else
-          # Collect all candidate identifiers
-          candidates = [] of String
-          args.scan(/(?<![.=])\b(\w+)\b(?!\s*[(\[=>])/) do |id_match|
-            candidate = id_match[1]
-            next if ExpressConstants::SKIP_IDENTIFIERS.includes?(candidate)
-            candidates << candidate
+      # If no inline require, check for factory function call or identifiers
+      unless router_file_direct
+        # Check for factory function call: createRouter() etc.
+        if args =~ /(\w+)\s*\(\s*\)\s*$/
+          factory_name = $1
+          if function_map[factory_name]? || require_map[factory_name]? || var_to_function[factory_name]?
+            router_var = factory_name
           end
+        end
 
-          # Find the best router candidate using heuristics:
-          # 1. First, look for a known router (in require_map pointing to routes, not middleware)
-          # 2. Then, look for router-like naming (contains "route" or "router")
-          # 3. Fallback to last identifier (original Express convention)
-          router_var = find_best_router_candidate(candidates, require_map, function_map, var_to_function)
+        # If no factory call, look for identifier or property access
+        unless router_var
+          if args =~ /(\w+)\.(\w+)\s*$/ || args =~ /(\w+)\[['"](\w+)['"]\]\s*$/
+            router_var = "#{$1}.#{$2}"
+          else
+            # Collect all candidate identifiers
+            candidates = [] of String
+            args.scan(/(?<![.=])\b(\w+)\b(?!\s*[(\[=>])/) do |id_match|
+              candidate = id_match[1]
+              next if ExpressConstants::SKIP_IDENTIFIERS.includes?(candidate)
+              candidates << candidate
+            end
+
+            # Find the best router candidate by checking which file has routes
+            router_var = find_best_router_candidate(candidates, require_map, function_map, var_to_function)
+          end
         end
       end
 
@@ -279,6 +282,7 @@ module Analyzer::Javascript
     end
 
     # Find the best router candidate from a list of identifiers
+    # Uses file content analysis to distinguish routers (files with routes) from middleware
     private def find_best_router_candidate(
       candidates : Array(String),
       require_map : Hash(String, String),
@@ -288,43 +292,61 @@ module Analyzer::Javascript
       return nil if candidates.empty?
       return candidates.first if candidates.size == 1
 
-      # First pass: find identifiers that resolve to route files (not middleware)
+      # Primary approach: check which files actually contain route definitions
+      # Routers have .get(), .post(), etc. calls; middleware files don't
       candidates.each do |candidate|
-        if file_path = require_map[candidate]?
-          # Prefer files in routes directories, skip middleware
-          if file_path.includes?("/routes/") || file_path.ends_with?("routes.js") || file_path.ends_with?("routes.ts")
-            return candidate
-          end
-          next if file_path.includes?("/middleware/")
-        end
-        if file_path = function_map[candidate]?
-          if file_path.includes?("/routes/") || file_path.ends_with?("routes.js") || file_path.ends_with?("routes.ts")
-            return candidate
-          end
-          next if file_path.includes?("/middleware/")
+        file_path = require_map[candidate]? || function_map[candidate]?
+        if file_path && file_has_routes?(file_path)
+          return candidate
         end
       end
 
-      # Second pass: look for router-like naming convention
+      # Secondary: check var_to_function mappings
       candidates.each do |candidate|
+        if func_name = var_to_function[candidate]?
+          if file_path = function_map[func_name]?
+            return candidate if file_has_routes?(file_path)
+          end
+        end
+      end
+
+      # Tertiary: naming/path heuristics as fallback
+      # Check for /routes/ directory or route-like naming
+      candidates.each do |candidate|
+        if file_path = require_map[candidate]? || function_map[candidate]?
+          if file_path.includes?("/routes/") || file_path.ends_with?("routes.js") || file_path.ends_with?("routes.ts")
+            return candidate
+          end
+        end
         lower = candidate.downcase
         if lower.includes?("route") || lower.includes?("router")
           return candidate
         end
       end
 
-      # Third pass: pick first known import that's not middleware
+      # Final fallback: first candidate that's a known import
       candidates.each do |candidate|
-        if file_path = require_map[candidate]?
-          return candidate unless file_path.includes?("/middleware/")
-        end
-        if function_map[candidate]? || var_to_function[candidate]?
+        if require_map[candidate]? || function_map[candidate]? || var_to_function[candidate]?
           return candidate
         end
       end
 
-      # Fallback: last identifier (original Express convention for middleware-first patterns)
+      # Ultimate fallback: last identifier
       candidates.last
+    end
+
+    # Check if a file contains route definitions (get/post/put/delete/patch/all)
+    private def file_has_routes?(file_path : String) : Bool
+      return false unless File.file?(file_path)
+
+      begin
+        content = File.read(file_path, encoding: "utf-8", invalid: :skip)
+        # Look for common route definition patterns
+        # Matches: router.get(, router.post(, .get(, .post(, etc.
+        content.matches?(/\.(get|post|put|delete|patch|all|head|options)\s*\(/)
+      rescue
+        false
+      end
     end
 
     # Push prefix to CodeLocator with deduplication
