@@ -64,13 +64,28 @@ module Analyzer::Javascript
       # Store arrays of prefixes per router variable to support multi-mount scenarios
       var_prefix = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
 
-      # Scan for .use('/prefix', ...) patterns
+      # Scan for .use('/prefix', ...) patterns with explicit path prefix
       content.scan(/(\w+)\.use\s*\(\s*['"]([^'"]+)['"]\s*,\s*/) do |m|
         next unless m.size >= 3
 
         caller = m[1]
         prefix = m[2]
         match_end = m.end(0) || 0
+
+        process_use_call(content, match_end, caller, prefix, main_file, locator,
+                         require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
+      end
+
+      # Scan for .use(router) patterns where prefix is omitted (defaults to '/')
+      # The negative lookahead `(?!\s*['"])` prevents matching calls that have a
+      # string literal as the first argument, avoiding double processing with the above scan.
+      content.scan(/(\w+)\.use\s*\((?!\s*['"])/) do |m|
+        next unless m.size >= 2
+
+        caller = m[1]
+        prefix = "/"
+        # Position scanner to start right after the opening parenthesis
+        match_end = (m.begin(0) || 0) + m[0].size
 
         process_use_call(content, match_end, caller, prefix, main_file, locator,
                          require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
@@ -609,7 +624,59 @@ module Analyzer::Javascript
         .gsub(/\/\/[^\n]*/, "")    # Line comments
 
       # Step 2: Split into items at top-level commas
-      # We track nesting depth to avoid splitting inside nested structures
+      items = split_at_top_level_commas(cleaned)
+
+      # Step 3: Extract variable names from each item
+      extracted = [] of String
+      items.each do |item|
+        name = item.strip
+        next if name.empty?
+
+        # Remove spread operator: `...rest` → `rest`
+        name = name.sub(/^\.\.\./, "").strip
+
+        # Remove default value (first pass): `a = 1` → `a`
+        name = name.split("=", 2)[0].strip
+
+        # Handle ES6 import alias syntax: `original as alias` → `alias`
+        if name.includes?(" as ")
+          parts = name.split(/\s+as\s+/, 2)
+          name = parts.size == 2 ? parts[1].strip : name
+        # Handle object property renaming: `key: localName` → `localName`
+        elsif name.includes?(":")
+          parts = name.split(":", 2)
+          name = parts.size == 2 ? parts[1].strip : name
+        end
+
+        # Handle nested object destructuring: `{ inner }` → recurse
+        if name.starts_with?("{") && name.ends_with?("}")
+          inner = name[1..-2]
+          extracted.concat(parse_destructured_names(inner))
+          next
+        # Handle nested array destructuring: `[ first, second ]` → recurse
+        elsif name.starts_with?("[") && name.ends_with?("]")
+          inner = name[1..-2]
+          extracted.concat(parse_destructured_names(inner))
+          next
+        end
+
+        # Remove any remaining default value after alias/rename processing
+        # This handles cases like `key: localName = default`
+        name = name.split("=", 2)[0].strip
+        extracted << name unless name.empty?
+      end
+
+      extracted
+    end
+
+    # Split a string at top-level commas, respecting nesting and string literals.
+    #
+    # This is a literal-aware tokenizer that splits on commas only when they are
+    # not inside nested structures (braces, brackets, parentheses) or string literals.
+    #
+    # Example: "a, b = {x: 1, y: 2}, c" → ["a", " b = {x: 1, y: 2}", " c"]
+    #
+    private def split_at_top_level_commas(input : String) : Array(String)
       items = [] of String
       current = ""
       depth_brace = 0    # Tracks {} nesting (objects, blocks)
@@ -618,7 +685,7 @@ module Analyzer::Javascript
       in_string : Char? = nil  # Tracks if we're inside a string and which quote char
       prev_char : Char? = nil  # For detecting escaped quotes
 
-      cleaned.each_char do |ch|
+      input.each_char do |ch|
         # --- String literal handling ---
         # When inside a string, accumulate characters until we hit the closing quote
         if in_string
@@ -671,47 +738,7 @@ module Analyzer::Javascript
       # Don't forget the last item (no trailing comma)
       items << current unless current.empty?
 
-      # Step 3: Extract variable names from each item
-      extracted = [] of String
-      items.each do |item|
-        name = item.strip
-        next if name.empty?
-
-        # Remove spread operator: `...rest` → `rest`
-        name = name.sub(/^\.\.\./, "").strip
-
-        # Remove default value (first pass): `a = 1` → `a`
-        name = name.split("=", 2)[0].strip
-
-        # Handle ES6 import alias syntax: `original as alias` → `alias`
-        if name.includes?(" as ")
-          parts = name.split(/\s+as\s+/, 2)
-          name = parts.size == 2 ? parts[1].strip : name
-        # Handle object property renaming: `key: localName` → `localName`
-        elsif name.includes?(":")
-          parts = name.split(":", 2)
-          name = parts.size == 2 ? parts[1].strip : name
-        end
-
-        # Handle nested object destructuring: `{ inner }` → recurse
-        if name.starts_with?("{") && name.ends_with?("}")
-          inner = name[1..-2]
-          extracted.concat(parse_destructured_names(inner))
-          next
-        # Handle nested array destructuring: `[ first, second ]` → recurse
-        elsif name.starts_with?("[") && name.ends_with?("]")
-          inner = name[1..-2]
-          extracted.concat(parse_destructured_names(inner))
-          next
-        end
-
-        # Remove any remaining default value after alias/rename processing
-        # This handles cases like `key: localName = default`
-        name = name.split("=", 2)[0].strip
-        extracted << name unless name.empty?
-      end
-
-      extracted
+      items
     end
 
     # Resolve a require path relative to the requiring file
