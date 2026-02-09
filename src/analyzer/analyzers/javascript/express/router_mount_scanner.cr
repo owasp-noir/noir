@@ -91,10 +91,6 @@ module Analyzer::Javascript
                          require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
       end
 
-      # Handle inline factory calls and inline require calls
-      process_inline_factory_mounts(content, locator, main_file, function_map, require_map, var_to_function, var_prefix)
-      process_inline_require_mounts(content, locator, main_file)
-
       # Store file context for second pass
       file_contexts[main_file] = {
         require_map:     require_map,
@@ -450,61 +446,6 @@ module Analyzer::Javascript
       end
 
       true
-    end
-
-    # Process inline factory calls: app.use('/prefix', createRouter())
-    private def process_inline_factory_mounts(
-      content : String,
-      locator : CodeLocator,
-      main_file : String,
-      function_map : Hash(String, String),
-      require_map : Hash(String, String),
-      var_to_function : Hash(String, String),
-      var_prefix : Hash(String, Array(String))
-    )
-      content.scan(/(\w+)\.use\s*\(\s*['"]([^'"]+)['"]\s*,\s*(\w+)\s*\(\s*\)\s*\)/) do |m|
-        next unless m.size >= 4
-
-        caller = m[1]
-        prefix = m[2]
-        func_name = m[3]
-        router_file = function_map[func_name]?
-
-        if caller == "app"
-          # Top-level mount
-          if router_file
-            key = ExpressConstants.function_key(router_file, func_name)
-            push_prefix_to_locator(locator, key, prefix, "Mapped router prefix (inline factory): #{router_file}:#{func_name} => #{prefix}")
-          end
-        else
-          # Nested mount
-          parent_prefixes = get_parent_prefixes(caller, var_prefix, require_map, function_map, var_to_function, main_file, locator)
-
-          if !parent_prefixes.empty? && router_file
-            parent_prefixes.each do |parent_prefix|
-              combined = Noir::URLPath.join(parent_prefix, prefix)
-              key = ExpressConstants.function_key(router_file, func_name)
-              push_prefix_to_locator(locator, key, combined, "Mapped nested router prefix: #{router_file}:#{func_name} => #{combined}")
-            end
-          end
-        end
-      end
-    end
-
-    # Process inline require calls: app.use('/prefix', require('./path'))
-    private def process_inline_require_mounts(content : String, locator : CodeLocator, main_file : String)
-      content.scan(/app\.use\s*\(\s*['"]([^'"]+)['"]\s*,\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
-        next unless m.size >= 3
-
-        prefix = m[1]
-        require_path = m[2]
-        resolved_path = resolve_require_path(main_file, require_path)
-
-        if resolved_path
-          key = ExpressConstants.file_key(resolved_path)
-          push_prefix_to_locator(locator, key, prefix, "Mapped router prefix (inline): #{resolved_path} => #{prefix}")
-        end
-      end
     end
 
     # Process deferred mounts in pass 2
