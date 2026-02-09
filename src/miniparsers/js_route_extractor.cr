@@ -87,7 +87,7 @@ module Noir
         # Seed function-specific prefixes from CodeLocator
         prefixes_by_function = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
         function_names.each do |func_name|
-          func_key = "express_router_prefix:#{absolute_file_path}:#{func_name}"
+          func_key = Analyzer::Javascript::ExpressConstants.function_key(absolute_file_path, func_name)
           values = locator.all(func_key)
           if values.size > 0
             values.each do |prefix|
