@@ -37,7 +37,6 @@ module Analyzer::Python
       blueprint_prefixes = Hash(::String, ::String).new
       path_api_instances = Hash(::String, Hash(::String, ::String)).new
       register_blueprint = Hash(::String, Hash(::String, ::String)).new
-      view_assignments = Hash(::String, ::String).new  # Maps view_var -> ClassName
 
       # Iterate through all Python files in all base paths
       base_paths.each do |current_base_path|
@@ -51,6 +50,7 @@ module Analyzer::Python
             next unless lines.any?(&.includes?("flask"))
             api_instances = Hash(::String, ::String).new
             path_api_instances[path] = api_instances
+            view_assignments = Hash(::String, ::String).new  # Maps view_var -> ClassName (per-file scope)
 
             lines.each_with_index do |line, line_index|
               line = line.gsub(" ", "") # remove spaces for easier regex matching
@@ -267,8 +267,8 @@ module Analyzer::Python
           end
 
           is_class_router = false
-          indent = lines[class_def_index].index("def") || 0
-          unless lines[class_def_index].lstrip.starts_with?("def ")
+          indent = lines[class_def_index].size - lines[class_def_index].lstrip.size
+          unless lines[class_def_index].lstrip.starts_with?("def ") || lines[class_def_index].lstrip.starts_with?("async def ")
             if lines[class_def_index].lstrip.starts_with?("class ")
               indent = lines[class_def_index].index("class") || 0
               is_class_router = true
@@ -280,13 +280,13 @@ module Analyzer::Python
           i = class_def_index
           function_name_locations = Array(Tuple(Int32, ::String)).new
           while i < lines.size
-            def_match = lines[i].match /(\s*)def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/
+            def_match = lines[i].match /(\s*)(async\s+)?def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/
             if def_match
               # Stop when the indentation is less than or equal to the class indentation
               break if is_class_router && def_match[1].size <= indent
 
               # Stop when the first function is found
-              function_name_locations << Tuple.new(i, def_match[2])
+              function_name_locations << Tuple.new(i, def_match[3])
               break unless is_class_router
             end
 
@@ -376,7 +376,7 @@ module Analyzer::Python
             i = class_def_index + 1
 
             while i < class_lines.size
-              method_match = class_lines[i].match /(\s*)def\s+#{method_name}\s*\(/
+              method_match = class_lines[i].match /(\s*)(async\s+)?def\s+#{method_name}\s*\(/
               if method_match
                 # Check it's a method of this class (correct indentation)
                 method_indent = method_match[1].size
@@ -407,49 +407,8 @@ module Analyzer::Python
             route_url = "/#{route_url}" unless route_url.starts_with?("/")
             route_url = route_url.gsub("//", "/")
 
-            # Extract parameters from method body (reuse existing logic)
-            suspicious_params = [] of Param
-            json_variable_names = [] of ::String
-
-            # Parse JSON variable names
-            codeblock_lines.each do |codeblock_line|
-              match = codeblock_line.match /([a-zA-Z_][a-zA-Z0-9_]*).*=\s*json\.loads\(request\.data/
-              if !match.nil? && match.size == 2 && !json_variable_names.includes?(match[1])
-                json_variable_names << match[1]
-              end
-              match = codeblock_line.match /([a-zA-Z_][a-zA-Z0-9_]*).*=\s*request\.json/
-              if !match.nil? && match.size == 2 && !json_variable_names.includes?(match[1])
-                json_variable_names << match[1]
-              end
-            end
-
-            # Parse declared parameters
-            codeblock_lines.each do |codeblock_line|
-              REQUEST_PARAM_FIELDS.each do |field_name, tuple|
-                _, noir_param_type = tuple
-                matches = codeblock_line.scan(/request\.#{field_name}\[[rf]?['"]([^'"]*)['"]\]/)
-                if matches.size == 0
-                  matches = codeblock_line.scan(/request\.#{field_name}\.get\([rf]?['"]([^'"]*)['"]/)
-                end
-                if matches.size == 0
-                  noir_param_type = "json"
-                  json_variable_names.each do |json_variable_name|
-                    matches = codeblock_line.scan(/[^a-zA-Z_]#{json_variable_name}\[[rf]?['"]([^'"]*)['"]\]/)
-                    if matches.size == 0
-                      matches = codeblock_line.scan(/[^a-zA-Z_]#{json_variable_name}\.get\([rf]?['"]([^'"]*)['"]/)
-                    end
-                    break if matches.size > 0
-                  end
-                end
-
-                matches.each do |parameter_match|
-                  next if parameter_match.size != 2
-                  param_name = parameter_match[1]
-                  suspicious_params << Param.new(param_name, "", noir_param_type)
-                end
-              end
-            end
-
+            # Extract parameters from method body
+            suspicious_params = extract_request_params(codeblock_lines)
             params = get_filtered_params(http_method, suspicious_params)
             details = Details.new(PathInfo.new(class_file, method_def_index + 1))
             endpoint = Endpoint.new(route_url, http_method, params)
@@ -490,7 +449,6 @@ module Analyzer::Python
     def get_endpoints(method : ::String, route_path : ::String, extra_params : ::String, codeblock_lines : Array(::String), prefix : ::String)
       endpoints = [] of Endpoint
       methods = [] of ::String
-      suspicious_params = [] of Param
 
       if !prefix.ends_with?("/") && !route_path.starts_with?("/")
         prefix = "#{prefix}/"
@@ -509,21 +467,38 @@ module Analyzer::Python
         methods << method.upcase
       end
 
+      suspicious_params = extract_request_params(codeblock_lines)
+
+      methods.uniq.each do |http_method_name|
+        route_url = "#{prefix}#{route_path}"
+        route_url = "/#{route_url}" unless route_url.starts_with?("/")
+
+        params = get_filtered_params(http_method_name, suspicious_params)
+        endpoints << Endpoint.new(route_url.gsub("//", "/"), http_method_name, params)
+      end
+
+      endpoints
+    end
+
+    # Extracts request parameters from a code block by detecting JSON variable
+    # assignments and scanning for request.field access patterns.
+    private def extract_request_params(codeblock_lines : Array(::String)) : Array(Param)
+      params = [] of Param
       json_variable_names = [] of ::String
-      # Parse JSON variable names
+
+      # Parse JSON variable names (e.g. data = json.loads(request.data), data = request.json)
       codeblock_lines.each do |codeblock_line|
         match = codeblock_line.match /([a-zA-Z_][a-zA-Z0-9_]*).*=\s*json\.loads\(request\.data/
         if !match.nil? && match.size == 2 && !json_variable_names.includes?(match[1])
           json_variable_names << match[1]
         end
-
         match = codeblock_line.match /([a-zA-Z_][a-zA-Z0-9_]*).*=\s*request\.json/
         if !match.nil? && match.size == 2 && !json_variable_names.includes?(match[1])
           json_variable_names << match[1]
         end
       end
 
-      # Parse declared parameters
+      # Parse declared parameters from request field access patterns
       codeblock_lines.each do |codeblock_line|
         REQUEST_PARAM_FIELDS.each do |field_name, tuple|
           _, noir_param_type = tuple
@@ -538,31 +513,19 @@ module Analyzer::Python
               if matches.size == 0
                 matches = codeblock_line.scan(/[^a-zA-Z_]#{json_variable_name}\.get\([rf]?['"]([^'"]*)['"]/)
               end
-
-              if matches.size > 0
-                break
-              end
+              break if matches.size > 0
             end
           end
 
           matches.each do |parameter_match|
             next if parameter_match.size != 2
             param_name = parameter_match[1]
-
-            suspicious_params << Param.new(param_name, "", noir_param_type)
+            params << Param.new(param_name, "", noir_param_type)
           end
         end
       end
 
-      methods.uniq.each do |http_method_name|
-        route_url = "#{prefix}#{route_path}"
-        route_url = "/#{route_url}" unless route_url.starts_with?("/")
-
-        params = get_filtered_params(http_method_name, suspicious_params)
-        endpoints << Endpoint.new(route_url.gsub("//", "/"), http_method_name, params)
-      end
-
-      endpoints
+      params
     end
 
     # Filters the parameters based on the HTTP method

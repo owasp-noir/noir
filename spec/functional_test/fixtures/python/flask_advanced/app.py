@@ -87,6 +87,19 @@ class ItemAPI(MethodView):
         name = request.json.get('name')
         return jsonify({'name': name})
 
+class AsyncAPI(MethodView):
+    """Async MethodView (Flask 2.0+)"""
+
+    async def get(self):
+        """Async GET method"""
+        category = request.args.get('category')
+        return jsonify({'category': category})
+
+    async def post(self):
+        """Async POST method"""
+        title = request.json.get('title')
+        return jsonify({'title': title})
+
 # Register MethodView with add_url_rule
 user_view = UserAPI.as_view('user_api')
 bp.add_url_rule('/users', view_func=user_view, methods=['GET', 'POST'])
@@ -94,6 +107,9 @@ bp.add_url_rule('/users/<int:user_id>', view_func=user_view, methods=['GET', 'PU
 
 item_view = ItemAPI.as_view('item_api')
 bp.add_url_rule('/items', view_func=item_view, methods=['GET', 'POST'])
+
+async_view = AsyncAPI.as_view('async_api')
+bp.add_url_rule('/async', view_func=async_view, methods=['GET', 'POST'])
 
 # Register blueprint
 app.register_blueprint(bp)

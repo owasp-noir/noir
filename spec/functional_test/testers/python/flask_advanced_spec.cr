@@ -13,7 +13,7 @@ expected_endpoints = [
   Endpoint.new("/api/bp-delete", "DELETE"),
 
   # MethodView - UserAPI
-  Endpoint.new("/api/users", "GET"),
+  Endpoint.new("/api/users", "GET", [Param.new("username", "", "query")]),
   Endpoint.new("/api/users", "POST", [Param.new("username", "", "form"), Param.new("email", "", "json")]),
   Endpoint.new("/api/users/<int:user_id>", "GET", [Param.new("username", "", "query")]),
   Endpoint.new("/api/users/<int:user_id>", "PUT"),
@@ -22,6 +22,10 @@ expected_endpoints = [
   # MethodView - ItemAPI
   Endpoint.new("/api/items", "GET", [Param.new("page", "", "query")]),
   Endpoint.new("/api/items", "POST", [Param.new("name", "", "json")]),
+
+  # MethodView - AsyncAPI (async def)
+  Endpoint.new("/api/async", "GET", [Param.new("category", "", "query")]),
+  Endpoint.new("/api/async", "POST", [Param.new("title", "", "json")]),
 ]
 
 FunctionalTester.new("fixtures/python/flask_advanced/", {
