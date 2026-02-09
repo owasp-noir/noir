@@ -245,9 +245,6 @@ module Noir
       # Regex can follow assignment and comparison operators
       return true if last_token.value == "="
 
-      # Regex can follow HTTP method identifiers (common in route definitions)
-      return true if last_token.type == :http_method
-
       # Regex can follow keywords that expect an expression
       if last_token.type == :keyword
         case last_token.value
@@ -264,11 +261,24 @@ module Noir
       advance # Skip opening /
 
       regex_pattern = ""
-      while @current_char != '/' && @current_char != '\0'
-        if @current_char == '\\'  # Handle escape sequences
+      in_char_class = false
+
+      while @current_char != '\0'
+        # Check for end of regex (only if not in character class)
+        break if @current_char == '/' && !in_char_class
+
+        if @current_char == '\\' # Handle escape sequences
           regex_pattern += @current_char
           advance
           regex_pattern += @current_char if @current_char != '\0'
+          advance
+        elsif @current_char == '[' && !in_char_class
+          in_char_class = true
+          regex_pattern += @current_char
+          advance
+        elsif @current_char == ']' && in_char_class
+          in_char_class = false
+          regex_pattern += @current_char
           advance
         else
           regex_pattern += @current_char
@@ -276,13 +286,13 @@ module Noir
         end
       end
 
-      advance if @current_char == '/'  # Skip closing /
+      advance if @current_char == '/' # Skip closing /
 
-      # Read regex flags (g, i, m, s, u, y)
+      # Read regex flags (g, i, m, s, u, y, d)
       regex_flags = ""
       while @current_char == 'g' || @current_char == 'i' ||
             @current_char == 'm' || @current_char == 's' ||
-            @current_char == 'u' || @current_char == 'y'
+            @current_char == 'u' || @current_char == 'y' || @current_char == 'd'
         regex_flags += @current_char
         advance
       end

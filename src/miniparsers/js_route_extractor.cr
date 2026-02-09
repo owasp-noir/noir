@@ -3,10 +3,14 @@ require "../minilexers/js_lexer"
 require "../miniparsers/js_parser"
 require "../models/code_locator"
 require "../utils/url_path"
+require "../analyzer/analyzers/javascript/express_constants"
 
 module Noir
   # JSRouteExtractor provides a unified interface for extracting routes from JavaScript files
   class JSRouteExtractor
+    # Import constants for key generation
+    ROUTER_PREFIX_KEY = Analyzer::Javascript::ExpressConstants::ROUTER_PREFIX_KEY
+
     def self.extract_routes(file_path : String, content : String? = nil, debug : Bool = false) : Array(Endpoint)
       return [] of Endpoint unless File.exists?(file_path)
 
@@ -24,9 +28,9 @@ module Noir
 
         # Normalize file path to absolute path for consistent lookup
         absolute_file_path = File.expand_path(file_path)
-        lookup_key = "express_router_prefix:#{absolute_file_path}"
-        file_prefix_value = locator.get(lookup_key)
-        file_prefix = file_prefix_value.is_a?(String) && !file_prefix_value.empty? ? file_prefix_value : nil
+        lookup_key = Analyzer::Javascript::ExpressConstants.file_key(absolute_file_path)
+        # Use all() since routers can be mounted at multiple prefixes
+        file_prefixes = locator.all(lookup_key)
 
         # Build function ranges to support function-scoped router prefixes
         function_ranges = [] of Tuple(String, Int32, Int32)
@@ -105,8 +109,8 @@ module Noir
           iterations += 1
           internal_mounts.each do |parent, child, mount_prefix|
             parent_prefixes = prefixes_by_function[parent]
-            if parent_prefixes.empty? && file_prefix
-              parent_prefixes = [file_prefix]
+            if parent_prefixes.empty? && !file_prefixes.empty?
+              parent_prefixes = file_prefixes
             end
             parent_prefixes.each do |p|
               combined = URLPath.join(p, mount_prefix)
@@ -123,15 +127,27 @@ module Noir
           # Apply cross-file router prefix if present (function-scoped first)
           prefixes = [] of String
           if pattern.start_pos >= 0
+            # Find all functions containing this route, sorted by span (innermost first)
+            containing_functions = [] of Tuple(String, Int32)
             function_ranges.each do |func_name, start_idx, end_idx|
               if start_idx <= pattern.start_pos && pattern.start_pos <= end_idx
-                prefixes = prefixes_by_function[func_name]
+                span = end_idx - start_idx
+                containing_functions << {func_name, span}
+              end
+            end
+            containing_functions.sort_by! { |_, span| span }
+
+            # Walk outward through enclosing functions until we find one with prefixes
+            containing_functions.each do |func_name, _|
+              func_prefixes = prefixes_by_function[func_name]
+              unless func_prefixes.empty?
+                prefixes = func_prefixes
                 break
               end
             end
           end
-          if prefixes.empty? && file_prefix && !file_prefix.empty?
-            prefixes = [file_prefix]
+          if prefixes.empty? && !file_prefixes.empty?
+            prefixes = file_prefixes
           end
           prefixes = [""] if prefixes.empty?
 
@@ -347,7 +363,107 @@ module Noir
       idx = open_paren_idx + 1
 
       while idx < content.size && paren_count > 0
-        case content[idx]
+        char = content[idx]
+
+        # Skip single-line comments
+        if char == '/' && idx + 1 < content.size && content[idx + 1] == '/'
+          while idx < content.size && content[idx] != '\n'
+            idx += 1
+          end
+          next
+        end
+
+        # Skip multi-line comments
+        if char == '/' && idx + 1 < content.size && content[idx + 1] == '*'
+          idx += 2
+          while idx + 1 < content.size && !(content[idx] == '*' && content[idx + 1] == '/')
+            idx += 1
+          end
+          idx += 2 if idx + 1 < content.size
+          next
+        end
+
+        # Skip string literals
+        if char == '"' || char == '\''
+          quote = char
+          idx += 1
+          while idx < content.size && content[idx] != quote
+            if content[idx] == '\\' && idx + 1 < content.size
+              idx += 2
+            else
+              idx += 1
+            end
+          end
+          idx += 1
+          next
+        end
+
+        # Skip template literals
+        if char == '`'
+          idx += 1
+          while idx < content.size && content[idx] != '`'
+            if content[idx] == '\\' && idx + 1 < content.size
+              idx += 2
+            else
+              idx += 1
+            end
+          end
+          idx += 1
+          next
+        end
+
+        # Skip regex literals (heuristic: / preceded by operator/punctuation or keyword)
+        if char == '/' && idx > 0
+          prev_idx = idx - 1
+          while prev_idx > 0 && content[prev_idx].whitespace?
+            prev_idx -= 1
+          end
+          prev_char = content[prev_idx]
+
+          # Check if preceded by punctuation that expects expression
+          is_regex = prev_char.in?('(', '[', '{', ',', ':', ';', '=', '!', '&', '|', '?', '+', '-', '*', '%', '<', '>', '~', '^')
+
+          # Also check if preceded by keyword that expects expression
+          unless is_regex
+            # Extract preceding word
+            word_end = prev_idx + 1
+            word_start = prev_idx
+            while word_start > 0 && (content[word_start - 1].alphanumeric? || content[word_start - 1] == '_')
+              word_start -= 1
+            end
+            if word_start < word_end
+              prev_word = content[word_start...word_end]
+              is_regex = prev_word.in?("return", "case", "throw", "in", "of", "typeof", "instanceof", "void", "delete", "new")
+            end
+          end
+
+          if is_regex
+            idx += 1
+            in_char_class = false
+            while idx < content.size
+              break if content[idx] == '/' && !in_char_class
+              if content[idx] == '\\' && idx + 1 < content.size
+                idx += 2
+              elsif content[idx] == '[' && !in_char_class
+                in_char_class = true
+                idx += 1
+              elsif content[idx] == ']' && in_char_class
+                in_char_class = false
+                idx += 1
+              else
+                idx += 1
+              end
+            end
+            idx += 1 if idx < content.size
+            # Skip regex flags
+            while idx < content.size && content[idx].in?('g', 'i', 'm', 's', 'u', 'y', 'd')
+              idx += 1
+            end
+            next
+          end
+        end
+
+        case char
         when '('
           paren_count += 1
         when ')'

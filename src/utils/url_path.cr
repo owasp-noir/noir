@@ -17,14 +17,15 @@ module Noir
     #   URLPath.join("/api", "users")   # => "/api/users"
     #   URLPath.join("", "/users")      # => "/users"
     #   URLPath.join("/api", "")        # => "/api"
-    #   URLPath.join("/api", "/")       # => "/api"
+    #   URLPath.join("/api", "/")       # => "/api/"
     #
     # Note: This does not normalize multiple consecutive slashes within paths.
     # For example, URLPath.join("/api//v1", "users") produces "/api//v1/users".
     def self.join(parent : String, child : String) : String
       return child if parent.empty?
       return parent if child.empty?
-      return parent if child == "/"
+      # When child is "/", preserve trailing slash for Express strict routing
+      return parent.ends_with?("/") ? parent : "#{parent}/" if child == "/"
 
       if parent.ends_with?("/") && child.starts_with?("/")
         "#{parent[0..-2]}#{child}"
