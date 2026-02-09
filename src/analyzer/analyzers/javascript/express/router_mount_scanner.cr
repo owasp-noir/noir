@@ -87,7 +87,7 @@ module Analyzer::Javascript
         var_to_function: var_to_function,
         var_prefix:      var_prefix,
       }
-    rescue e : File::NotFoundError | File::Error | IO::Error | ArgumentError
+    rescue e : File::NotFoundError | File::Error | IO::Error
       @logger.debug "Error scanning #{main_file} for router mounts (#{e.class}): #{e.message}"
     end
 
