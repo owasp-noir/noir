@@ -374,8 +374,14 @@ module Analyzer::Javascript
       end
 
       # Final fallback: use current file's prefix
+      # Try both the raw path and the absolute path since resolve_require_path
+      # returns absolute paths while main_file may be relative.
       if parent_prefixes.empty?
         parent_prefixes = locator.all(ExpressConstants.file_key(main_file)).dup
+      end
+      if parent_prefixes.empty?
+        absolute_main = File.expand_path(main_file)
+        parent_prefixes = locator.all(ExpressConstants.file_key(absolute_main)).dup
       end
 
       parent_prefixes
@@ -523,27 +529,53 @@ module Analyzer::Javascript
     end
 
     # Process deferred mounts in pass 2
+    # Uses a fix-point loop to resolve multi-level deferred chains.
+    # Each iteration resolves mounts whose parents became known in a prior iteration.
+    # The loop terminates when no further progress is made or after a safety limit.
     private def process_deferred_mounts(
       global_deferred_mounts : Array(Tuple(String, String, String, String)),
       file_contexts : Hash(String, FileContext),
       locator : CodeLocator
     )
-      global_deferred_mounts.each do |main_file, caller, prefix, router_var|
-        ctx = file_contexts[main_file]?
-        next unless ctx
+      remaining = global_deferred_mounts
+      max_iterations = 10
+      iteration = 0
 
-        require_map = ctx[:require_map]
-        function_map = ctx[:function_map]
-        var_to_function = ctx[:var_to_function]
-        var_prefix = ctx[:var_prefix]
+      loop do
+        iteration += 1
+        break if iteration > max_iterations
+        break if remaining.empty?
 
-        parent_prefixes = get_parent_prefixes(caller, var_prefix, require_map, function_map, var_to_function, main_file, locator)
-        next if parent_prefixes.empty?
+        resolved_any = false
+        still_deferred = [] of Tuple(String, String, String, String)
 
-        parent_prefixes.each do |parent_prefix|
-          combined = Noir::URLPath.join(parent_prefix, prefix)
-          store_deferred_mount(locator, router_var, combined, main_file, require_map, function_map, var_to_function, var_prefix)
+        remaining.each do |main_file, caller, prefix, router_var|
+          ctx = file_contexts[main_file]?
+          unless ctx
+            still_deferred << {main_file, caller, prefix, router_var}
+            next
+          end
+
+          require_map = ctx[:require_map]
+          function_map = ctx[:function_map]
+          var_to_function = ctx[:var_to_function]
+          var_prefix = ctx[:var_prefix]
+
+          parent_prefixes = get_parent_prefixes(caller, var_prefix, require_map, function_map, var_to_function, main_file, locator)
+          if parent_prefixes.empty?
+            still_deferred << {main_file, caller, prefix, router_var}
+            next
+          end
+
+          resolved_any = true
+          parent_prefixes.each do |parent_prefix|
+            combined = Noir::URLPath.join(parent_prefix, prefix)
+            store_deferred_mount(locator, router_var, combined, main_file, require_map, function_map, var_to_function, var_prefix)
+          end
         end
+
+        remaining = still_deferred
+        break unless resolved_any
       end
     end
 

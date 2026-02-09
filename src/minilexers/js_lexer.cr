@@ -68,6 +68,9 @@ module Noir
         when '+'
           add_token(:plus, "+")
           advance
+        when '='
+          add_token(:assign, "=")
+          advance
         when '/'
           if peek == '/' # Single line comment
             skip_line_comment
@@ -243,6 +246,7 @@ module Noir
       return true if last_token.type == :semicolon
 
       # Regex can follow assignment and comparison operators
+      return true if last_token.type == :assign
       return true if last_token.value == "="
 
       # Regex can follow keywords that expect an expression

@@ -1010,7 +1010,7 @@ module Noir
         if (@tokens[idx].value == "const" || @tokens[idx].value == "let" || @tokens[idx].value == "var") &&
            idx + 4 < @tokens.size &&
            @tokens[idx + 1].type == :identifier &&
-           @tokens[idx + 2].value == "=" &&
+           (@tokens[idx + 2].type == :assign || @tokens[idx + 2].value == "=") &&
            (@tokens[idx + 3].type == :string || @tokens[idx + 3].type == :template_literal)
           var_name = @tokens[idx + 1].value
           var_value = @tokens[idx + 3].value

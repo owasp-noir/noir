@@ -538,7 +538,7 @@ module Analyzer::Javascript
       end
 
       # Extract query parameters from destructuring
-      handler_body.scan(/(?:const|let|var)?\s*\{\s*([^}]+)\s*\}\s*=\\s*req\.query/) do |m|
+      handler_body.scan(/(?:const|let|var)?\s*\{\s*([^}]+)\s*\}\s*=\s*req\.query/) do |m|
         if m.size > 0
           param_list = m[1].split(",").map(&.strip)
           param_list.each do |param_var|
@@ -557,7 +557,7 @@ module Analyzer::Javascript
       end
 
       # Extract body parameters from destructuring
-      handler_body.scan(/(?:const|let|var)?\s*\{\s*([^}]+)\s*\}\s*=\\s*req\.body/) do |m|
+      handler_body.scan(/(?:const|let|var)?\s*\{\s*([^}]+)\s*\}\s*=\s*req\.body/) do |m|
         if m.size > 0
           param_list = m[1].split(",").map(&.strip)
           param_list.each do |param_var|
@@ -660,45 +660,30 @@ module Analyzer::Javascript
     end
 
     def line_to_endpoint(line : String, router_detected : Bool = false) : Endpoint
-      # Support case-insensitive method patterns - matching get, Get, GET, post, Post, POST, etc.
-      # Define explicit patterns for all case variations
-      http_methods = {
-        "get"     => /(?:get|Get|GET)/,
-        "post"    => /(?:post|Post|POST)/,
-        "put"     => /(?:put|Put|PUT)/,
-        "delete"  => /(?:delete|Delete|DELETE|del|Del|DEL)/,
-        "patch"   => /(?:patch|Patch|PATCH)/,
-        "options" => /(?:options|Options|OPTIONS)/,
-        "head"    => /(?:head|Head|HEAD)/,
-        "all"     => /(?:all|All|ALL)/,
-      }
+      # Match both app.method and router.method patterns
+      # Support case variations and catch v1Router, apiRouter, and any *Router patterns
+      combined_pattern = /\b(?:app|router|route|r|Router|v\d+Router|apiRouter|[\w]+Router)\s*\.\s*(?:get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)\s*\(\s*['"]([^'"]+)['"]/
 
-      http_methods.each do |_, _|
-        # Match both app.method and router.method patterns
-        # Support case variations and catch v1Router, apiRouter, and any *Router patterns
-        combined_pattern = /\b(?:app|router|route|r|Router|v\d+Router|apiRouter|[\w]+Router)\s*\.\s*(?:get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)\s*\(\s*['"]([^'"]+)['"]/
-
-        if line =~ combined_pattern
-          # Extract the actual method used
-          method_match = line.match(/\.(get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)\s*\(/)
-          if method_match
-            actual_method = method_match[1].downcase
-            actual_method = "delete" if actual_method == "del"
-            path = $1
-            return Endpoint.new(path, actual_method.upcase)
-          end
+      if line =~ combined_pattern
+        # Extract the actual method used
+        method_match = line.match(/\.(get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)\s*\(/)
+        if method_match
+          actual_method = method_match[1].downcase
+          actual_method = "delete" if actual_method == "del"
+          path = $1
+          return Endpoint.new(path, actual_method.upcase)
         end
+      end
 
-        # Also try simple pattern match
-        simple_pattern = /\.\s*(?:get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)\s*\(\s*['"]([^'"]+)['"]/
-        if line =~ simple_pattern
-          method_match = line.match(/\.(get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)\s*\(/)
-          if method_match
-            actual_method = method_match[1].downcase
-            actual_method = "delete" if actual_method == "del"
-            path = $1
-            return Endpoint.new(path, actual_method.upcase)
-          end
+      # Also try simple pattern match (without router name constraint)
+      simple_pattern = /\.\s*(?:get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)\s*\(\s*['"]([^'"]+)['"]/
+      if line =~ simple_pattern
+        method_match = line.match(/\.(get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)\s*\(/)
+        if method_match
+          actual_method = method_match[1].downcase
+          actual_method = "delete" if actual_method == "del"
+          path = $1
+          return Endpoint.new(path, actual_method.upcase)
         end
       end
 
