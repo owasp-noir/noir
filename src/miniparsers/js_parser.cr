@@ -98,10 +98,10 @@ module Noir
           parent_router = @tokens[idx].value
           prefix = @tokens[idx + 4].value
 
-          # Find the FIRST identifier after the path (the router)
-          # In app.use('/api', router, middleware), router is first, middleware is last
+          # Collect all identifiers after the path to find the router
+          # Routers can be before or after middleware in .use() calls
           scan_idx = idx + 5
-          first_identifier : String? = nil
+          candidates = [] of String
           paren_depth = 1
 
           while scan_idx < @tokens.size && paren_depth > 0
@@ -110,20 +110,23 @@ module Noir
               paren_depth += 1
             elsif token.type == :rparen
               paren_depth -= 1
-            elsif token.type == :identifier && paren_depth == 1 && first_identifier.nil?
+            elsif token.type == :identifier && paren_depth == 1
               # Only consider identifiers at the top level (not inside nested calls)
               # Skip if next token is lparen (it's a function call like createRouter())
               if scan_idx + 1 < @tokens.size && @tokens[scan_idx + 1].type != :lparen
-                first_identifier = token.value
+                candidates << token.value
               end
             end
             scan_idx += 1
           end
 
-          if first_identifier
-            router_prefixes[first_identifier] << prefix unless router_prefixes[first_identifier].includes?(prefix)
-            router_parents[first_identifier] << parent_router unless router_parents[first_identifier].includes?(parent_router)
-            router_variables.add(first_identifier)
+          # Find the best router candidate using heuristics
+          router_identifier = find_router_candidate(candidates, router_variables)
+
+          if router_identifier
+            router_prefixes[router_identifier] << prefix unless router_prefixes[router_identifier].includes?(prefix)
+            router_parents[router_identifier] << parent_router unless router_parents[router_identifier].includes?(parent_router)
+            router_variables.add(router_identifier)
           end
         end
         idx += 1
@@ -271,6 +274,38 @@ module Noir
       end
 
       paths
+    end
+
+    # Find the best router candidate from a list of identifiers
+    # Uses heuristics: known routers > router-like naming > last identifier
+    private def find_router_candidate(candidates : Array(String), known_routers : Set(String)) : String?
+      return nil if candidates.empty?
+      return candidates.first if candidates.size == 1
+
+      # First pass: check if any candidate is a known router variable
+      candidates.each do |candidate|
+        return candidate if known_routers.includes?(candidate)
+      end
+
+      # Second pass: look for router-like naming convention
+      candidates.each do |candidate|
+        lower = candidate.downcase
+        if lower.includes?("route") || lower.includes?("router")
+          return candidate
+        end
+      end
+
+      # Third pass: skip middleware-like naming and pick first remaining
+      candidates.each do |candidate|
+        lower = candidate.downcase
+        next if lower == "auth" || lower == "logger" || lower == "validate" ||
+                lower.includes?("middleware") || lower.includes?("validator") ||
+                lower.includes?("limiter") || lower == "cors" || lower == "helmet"
+        return candidate
+      end
+
+      # Fallback: last identifier (original Express convention)
+      candidates.last
     end
 
     private def current_token

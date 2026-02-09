@@ -255,21 +255,76 @@ module Analyzer::Javascript
       end
 
       # If no inline require/factory, look for identifier or property access
-      # Important: Pick the FIRST valid identifier (the router), not the last (often middleware)
       unless router_file_direct || router_var
         if args =~ /(\w+)\.(\w+)\s*$/ || args =~ /(\w+)\[['"](\w+)['"]\]\s*$/
           router_var = "#{$1}.#{$2}"
         else
+          # Collect all candidate identifiers
+          candidates = [] of String
           args.scan(/(?<![.=])\b(\w+)\b(?!\s*[(\[=>])/) do |id_match|
             candidate = id_match[1]
             next if ExpressConstants::SKIP_IDENTIFIERS.includes?(candidate)
-            router_var = candidate
-            break  # Take the first valid identifier (router), not the last (middleware)
+            candidates << candidate
           end
+
+          # Find the best router candidate using heuristics:
+          # 1. First, look for a known router (in require_map pointing to routes, not middleware)
+          # 2. Then, look for router-like naming (contains "route" or "router")
+          # 3. Fallback to last identifier (original Express convention)
+          router_var = find_best_router_candidate(candidates, require_map, function_map, var_to_function)
         end
       end
 
       {router_var: router_var, router_file_direct: router_file_direct}
+    end
+
+    # Find the best router candidate from a list of identifiers
+    private def find_best_router_candidate(
+      candidates : Array(String),
+      require_map : Hash(String, String),
+      function_map : Hash(String, String),
+      var_to_function : Hash(String, String)
+    ) : String?
+      return nil if candidates.empty?
+      return candidates.first if candidates.size == 1
+
+      # First pass: find identifiers that resolve to route files (not middleware)
+      candidates.each do |candidate|
+        if file_path = require_map[candidate]?
+          # Prefer files in routes directories, skip middleware
+          if file_path.includes?("/routes/") || file_path.ends_with?("routes.js") || file_path.ends_with?("routes.ts")
+            return candidate
+          end
+          next if file_path.includes?("/middleware/")
+        end
+        if file_path = function_map[candidate]?
+          if file_path.includes?("/routes/") || file_path.ends_with?("routes.js") || file_path.ends_with?("routes.ts")
+            return candidate
+          end
+          next if file_path.includes?("/middleware/")
+        end
+      end
+
+      # Second pass: look for router-like naming convention
+      candidates.each do |candidate|
+        lower = candidate.downcase
+        if lower.includes?("route") || lower.includes?("router")
+          return candidate
+        end
+      end
+
+      # Third pass: pick first known import that's not middleware
+      candidates.each do |candidate|
+        if file_path = require_map[candidate]?
+          return candidate unless file_path.includes?("/middleware/")
+        end
+        if function_map[candidate]? || var_to_function[candidate]?
+          return candidate
+        end
+      end
+
+      # Fallback: last identifier (original Express convention for middleware-first patterns)
+      candidates.last
     end
 
     # Push prefix to CodeLocator with deduplication

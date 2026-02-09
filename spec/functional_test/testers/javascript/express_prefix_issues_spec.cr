@@ -6,11 +6,12 @@ require "../../func_spec.cr"
 #   - When mounting createPublicRouter() from a file that also exports createAdminRouter(),
 #     the /api prefix should NOT apply to createAdminRouter() routes.
 #
-# Issue 2: Mounted router detection assumes the router is the last identifier in use(...) args
-#   - In app.use('/users', userRoutes, auth), the router is userRoutes (first), not auth (last).
+# Issue 2: Router detection with multiple identifiers in .use() args
+#   - Must handle both patterns:
+#     - app.use('/path', router, middleware) - router first
+#     - app.use('/path', middleware, router) - middleware first
 #
-# Issue 3: Same-file nested routers with middleware
-#   - In router.use('/sub', subRouter, logger), subRouter should get the prefix, not logger.
+# Issue 3: Same-file nested routers with middleware (both orderings)
 
 # Expected CORRECT behavior:
 expected_endpoints = [
@@ -21,12 +22,19 @@ expected_endpoints = [
   # If this appears as /api/admin, that's the BUG (prefix bleed)
   Endpoint.new("/admin", "GET"),
 
-  # From userRoutes mounted at /users (first identifier, not 'auth')
+  # From userRoutes mounted at /users (router FIRST, middleware after)
   Endpoint.new("/users/list", "GET"),
   Endpoint.new("/users/create", "POST"),
 
-  # From subRouter mounted at /nested/sub (first identifier, not 'logger')
+  # From orderRoutes mounted at /orders (middleware FIRST, router after)
+  Endpoint.new("/orders/pending", "GET"),
+  Endpoint.new("/orders/create", "POST"),
+
+  # From subRouter mounted at /nested/sub (router first, middleware after)
   Endpoint.new("/nested/sub/items", "GET"),
+
+  # From sub2Router mounted at /nested2/sub2 (middleware first, router after)
+  Endpoint.new("/nested2/sub2/data", "GET"),
 ]
 
 FunctionalTester.new("fixtures/javascript/express_prefix_issues/", {
