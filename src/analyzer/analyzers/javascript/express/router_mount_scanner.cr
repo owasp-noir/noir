@@ -536,25 +536,94 @@ module Analyzer::Javascript
       )
     end
 
-    # Parse destructured import/require names
+    # Parse destructured import/require names from JavaScript/TypeScript syntax.
+    #
+    # This is a heuristic parser that extracts variable names from destructuring patterns.
+    # It handles the most common patterns found in Express.js codebases but is not a
+    # complete JavaScript parser.
+    #
+    # ## Algorithm
+    #
+    # 1. **Preprocessing**: Strip comments (block and line) to simplify parsing.
+    #
+    # 2. **Tokenization by comma**: Split the input into items at top-level commas only.
+    #    We track nesting depth for braces `{}`, brackets `[]`, and parentheses `()`,
+    #    as well as string literal state (single/double quotes, backticks).
+    #    Commas inside nested structures or strings are preserved.
+    #
+    # 3. **Name extraction**: For each item, extract the local variable name by:
+    #    - Removing spread operator (`...`)
+    #    - Removing default values (`= defaultValue`)
+    #    - Handling ES6 import aliases (`original as alias` → `alias`)
+    #    - Handling object property renaming (`key: localName` → `localName`)
+    #    - Recursively parsing nested destructuring patterns
+    #
+    # ## Supported Patterns
+    #
+    # ```javascript
+    # // Simple destructuring
+    # { a, b, c }                        → ["a", "b", "c"]
+    #
+    # // With aliases (ES6 import style)
+    # { foo as bar }                     → ["bar"]
+    #
+    # // With renaming (object destructuring style)
+    # { originalKey: localVar }          → ["localVar"]
+    #
+    # // With defaults
+    # { a = 1, b = "default" }           → ["a", "b"]
+    #
+    # // Spread operator
+    # { ...rest }                        → ["rest"]
+    #
+    # // Nested destructuring (recursive)
+    # { outer: { inner } }               → ["inner"]
+    # { arr: [first, second] }           → ["first", "second"]
+    #
+    # // Mixed patterns
+    # { a, b: renamed, c = 3, ...rest }  → ["a", "renamed", "c", "rest"]
+    # ```
+    #
+    # ## Known Limitations
+    #
+    # - **Computed property names**: `{ [expr]: value }` is not supported.
+    # - **Complex default expressions**: Defaults with nested function calls or
+    #   objects containing commas may cause issues (though string literals are handled).
+    # - **Template literal interpolation**: Backtick strings with `${...}` containing
+    #   quotes may confuse the string state tracking.
+    # - **Escaped characters**: Only simple backslash-quote escapes are handled;
+    #   unicode escapes or other complex escapes are not.
+    #
+    # ## Design Decision
+    #
+    # This approach was chosen over a full parser because:
+    # 1. We only need variable names, not full AST
+    # 2. The patterns in real Express.js code are typically simple
+    # 3. A full JS parser would be significantly more complex and slower
+    # 4. False negatives (missing a name) are acceptable; false positives are rare
+    #
     private def parse_destructured_names(names : String) : Array(String)
+      # Step 1: Remove comments to simplify parsing
       cleaned = names
-        .gsub(/\/\*.*?\*\//m, "")
-        .gsub(/\/\/[^\n]*/, "")
+        .gsub(/\/\*.*?\*\//m, "")  # Block comments
+        .gsub(/\/\/[^\n]*/, "")    # Line comments
 
+      # Step 2: Split into items at top-level commas
+      # We track nesting depth to avoid splitting inside nested structures
       items = [] of String
       current = ""
-      depth_brace = 0
-      depth_bracket = 0
-      depth_paren = 0
-      in_string : Char? = nil
-      prev_char : Char? = nil
+      depth_brace = 0    # Tracks {} nesting (objects, blocks)
+      depth_bracket = 0  # Tracks [] nesting (arrays)
+      depth_paren = 0    # Tracks () nesting (function calls, grouping)
+      in_string : Char? = nil  # Tracks if we're inside a string and which quote char
+      prev_char : Char? = nil  # For detecting escaped quotes
 
       cleaned.each_char do |ch|
-        # Handle string literal state (single quotes, double quotes, backticks)
+        # --- String literal handling ---
+        # When inside a string, accumulate characters until we hit the closing quote
         if in_string
           current += ch
-          # Check for end of string (unescaped quote)
+          # End of string: same quote char, not escaped by backslash
           if ch == in_string && prev_char != '\\'
             in_string = nil
           end
@@ -562,7 +631,7 @@ module Analyzer::Javascript
           next
         end
 
-        # Check for start of string literal
+        # Start of a string literal
         if ch == '"' || ch == '\'' || ch == '`'
           in_string = ch
           current += ch
@@ -570,6 +639,8 @@ module Analyzer::Javascript
           next
         end
 
+        # --- Nesting depth tracking ---
+        # Track depth so we only split on commas at the top level
         case ch
         when '{'
           depth_brace += 1
@@ -584,6 +655,7 @@ module Analyzer::Javascript
         when ')'
           depth_paren -= 1 if depth_paren > 0
         when ','
+          # Only split at top-level commas (not inside any nested structure)
           if depth_brace == 0 && depth_bracket == 0 && depth_paren == 0
             items << current
             current = ""
@@ -596,34 +668,45 @@ module Analyzer::Javascript
         prev_char = ch
       end
 
+      # Don't forget the last item (no trailing comma)
       items << current unless current.empty?
 
+      # Step 3: Extract variable names from each item
       extracted = [] of String
       items.each do |item|
         name = item.strip
         next if name.empty?
 
+        # Remove spread operator: `...rest` → `rest`
         name = name.sub(/^\.\.\./, "").strip
+
+        # Remove default value (first pass): `a = 1` → `a`
         name = name.split("=", 2)[0].strip
 
+        # Handle ES6 import alias syntax: `original as alias` → `alias`
         if name.includes?(" as ")
           parts = name.split(/\s+as\s+/, 2)
           name = parts.size == 2 ? parts[1].strip : name
+        # Handle object property renaming: `key: localName` → `localName`
         elsif name.includes?(":")
           parts = name.split(":", 2)
           name = parts.size == 2 ? parts[1].strip : name
         end
 
+        # Handle nested object destructuring: `{ inner }` → recurse
         if name.starts_with?("{") && name.ends_with?("}")
           inner = name[1..-2]
           extracted.concat(parse_destructured_names(inner))
           next
+        # Handle nested array destructuring: `[ first, second ]` → recurse
         elsif name.starts_with?("[") && name.ends_with?("]")
           inner = name[1..-2]
           extracted.concat(parse_destructured_names(inner))
           next
         end
 
+        # Remove any remaining default value after alias/rename processing
+        # This handles cases like `key: localName = default`
         name = name.split("=", 2)[0].strip
         extracted << name unless name.empty?
       end
@@ -632,6 +715,7 @@ module Analyzer::Javascript
     end
 
     # Resolve a require path relative to the requiring file
+    # Follows Node.js module resolution: file -> file+ext -> directory/index
     private def resolve_require_path(from_file : String, require_path : String) : String?
       is_relative = require_path.starts_with?(".")
       is_root_alias = require_path.starts_with?("@/") || require_path.starts_with?("~/")
@@ -645,18 +729,23 @@ module Analyzer::Javascript
                    File.expand_path(require_path, base_dir)
                  end
 
-      # Try with common extensions if file doesn't exist
-      return resolved if File.exists?(resolved)
+      # Case 1: The resolved path is a file that exists
+      return resolved if File.file?(resolved)
 
-      [".js", ".ts", ".jsx", ".tsx"].each do |ext|
-        with_ext = "#{resolved}#{ext}"
-        return with_ext if File.exists?(with_ext)
+      # Case 2: The path has no extension, try adding common JS/TS extensions
+      if File.extname(require_path).empty?
+        [".js", ".ts", ".jsx", ".tsx"].each do |ext|
+          with_ext = "#{resolved}#{ext}"
+          return with_ext if File.file?(with_ext)
+        end
       end
 
-      # Try as directory with index file
-      ["index.js", "index.ts", "index.jsx", "index.tsx"].each do |index_file|
-        index_path = File.join(resolved, index_file)
-        return index_path if File.exists?(index_path)
+      # Case 3: The path is a directory, look for an index file
+      if File.directory?(resolved)
+        ["index.js", "index.ts", "index.jsx", "index.tsx"].each do |index_file|
+          index_path = File.join(resolved, index_file)
+          return index_path if File.file?(index_path)
+        end
       end
 
       nil
