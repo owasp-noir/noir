@@ -255,6 +255,7 @@ module Analyzer::Javascript
       end
 
       # If no inline require/factory, look for identifier or property access
+      # Important: Pick the FIRST valid identifier (the router), not the last (often middleware)
       unless router_file_direct || router_var
         if args =~ /(\w+)\.(\w+)\s*$/ || args =~ /(\w+)\[['"](\w+)['"]\]\s*$/
           router_var = "#{$1}.#{$2}"
@@ -263,6 +264,7 @@ module Analyzer::Javascript
             candidate = id_match[1]
             next if ExpressConstants::SKIP_IDENTIFIERS.includes?(candidate)
             router_var = candidate
+            break  # Take the first valid identifier (router), not the last (middleware)
           end
         end
       end
@@ -363,19 +365,19 @@ module Analyzer::Javascript
         return
       end
 
-      # Check function_map (destructured imports)
+      # Check function_map (destructured imports / factory functions)
+      # Note: We do NOT store file-level keys here to avoid prefix bleed to other
+      # factory functions in the same file that were not mounted.
       if router_file = function_map[router_var]?
         key = ExpressConstants.function_key(router_file, router_var)
         push_prefix_to_locator(locator, key, prefix, "#{log_prefix} (factory direct): #{router_file}:#{router_var} => #{prefix}")
-        if include_file_level
-          file_key = ExpressConstants.file_key(router_file)
-          push_prefix_to_locator(locator, file_key, prefix, "#{log_prefix} (file-level): #{router_file} => #{prefix}")
-        end
         var_prefix[router_var] << prefix unless var_prefix[router_var].includes?(prefix)
         return
       end
 
       # Handle property-based router access: routers.user or routers['user']
+      # Note: We do NOT store file-level keys here to avoid prefix bleed to other
+      # properties in the same module that were not mounted.
       if router_var.includes?(".")
         parts = router_var.split(".", 2)
         base_obj = parts[0]
@@ -385,11 +387,6 @@ module Analyzer::Javascript
           if router_file
             key = ExpressConstants.function_key(router_file, prop_name)
             push_prefix_to_locator(locator, key, prefix, "#{log_prefix} (property): #{router_file}:#{prop_name} => #{prefix}")
-            # Also store file-level key for router-instance exports (not factory functions)
-            if include_file_level
-              file_key = ExpressConstants.file_key(router_file)
-              push_prefix_to_locator(locator, file_key, prefix, "#{log_prefix} (property file-level): #{router_file} => #{prefix}")
-            end
           end
         end
         var_prefix[router_var] << prefix unless var_prefix[router_var].includes?(prefix)
