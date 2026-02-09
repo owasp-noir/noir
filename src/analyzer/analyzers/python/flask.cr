@@ -60,6 +60,7 @@ module Analyzer::Python
               if flask_match
                 flask_instance_name = flask_match[1]
                 api_instances[flask_instance_name] ||= ""
+                flask_instances[flask_instance_name] ||= ""
               end
 
               # Identify Blueprint instance assignments
@@ -358,7 +359,10 @@ module Analyzer::Python
           # Find class definition line
           class_def_index = -1
           class_lines.each_with_index do |line, idx|
-            if line.lstrip.starts_with?("class #{class_name}")
+            stripped = line.lstrip
+            class_prefix = "class #{class_name}"
+            if stripped.starts_with?(class_prefix) &&
+               (stripped.size == class_prefix.size || stripped[class_prefix.size].in?('(', ':', ' ', '\t'))
               class_def_index = idx
               break
             end
@@ -366,13 +370,31 @@ module Analyzer::Python
 
           next if class_def_index == -1
 
+          indent = class_lines[class_def_index].size - class_lines[class_def_index].lstrip.size
+
+          # If no explicit methods, infer from class method definitions
+          if methods.empty?
+            i = class_def_index + 1
+            while i < class_lines.size
+              infer_match = class_lines[i].match /(\s*)(async\s+)?def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/
+              if infer_match && infer_match[1].size > indent
+                method_name = infer_match[3]
+                http_method = HTTP_METHODS.find { |m| m.downcase == method_name.downcase }
+                methods << http_method.upcase if http_method
+              end
+              # Stop if we hit another class at same or higher level
+              class_match = class_lines[i].match /(\s*)class\s+/
+              break if class_match && class_match[1].size <= indent && i != class_def_index
+              i += 1
+            end
+          end
+
           # Process each declared method
           methods.each do |http_method|
             method_name = http_method.downcase
 
             # Find method definition in class
             method_def_index = -1
-            indent = class_lines[class_def_index].index("class") || 0
             i = class_def_index + 1
 
             while i < class_lines.size
@@ -569,6 +591,11 @@ module Analyzer::Python
 
       # Iterate through the lines until the decorator ends
       while (direction == :down && codeline_index < lines.size) || (direction == :up && codeline_index >= 0)
+        # Skip empty/blank lines
+        if lines[codeline_index].strip.empty?
+          codeline_index += (direction == :down ? 1 : -1)
+          next
+        end
         decorator_match = lines[codeline_index].match /\s*@/
         break if decorator_match.nil?
 

@@ -26,6 +26,10 @@ expected_endpoints = [
   # request.get_json()
   Endpoint.new("/api/get-json", "POST", [Param.new("action", "", "json")]),
 
+  # MethodView - ItemAPI (inferred methods, no explicit methods= arg)
+  Endpoint.new("/api/items-inferred", "GET", [Param.new("page", "", "query")]),
+  Endpoint.new("/api/items-inferred", "POST", [Param.new("name", "", "json")]),
+
   # MethodView - AsyncAPI (async def)
   Endpoint.new("/api/async", "GET", [Param.new("category", "", "query")]),
   Endpoint.new("/api/async", "POST", [Param.new("title", "", "json")]),

@@ -118,6 +118,9 @@ bp.add_url_rule('/items', view_func=item_view, methods=['GET', 'POST'])
 async_view = AsyncAPI.as_view('async_api')
 bp.add_url_rule('/async', view_func=async_view, methods=['GET', 'POST'])
 
+# add_url_rule without explicit methods (should infer from class)
+bp.add_url_rule('/items-inferred', view_func=ItemAPI.as_view('item_inferred'))
+
 # Register blueprint
 app.register_blueprint(bp)
 
