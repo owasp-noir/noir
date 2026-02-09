@@ -890,519 +890,104 @@ module Analyzer::Javascript
         var_to_function: Hash(String, String),
         var_prefix: Hash(String, Array(String))
       )).new
-      global_deferred_mounts = [] of Tuple(String, String, String, String) # (main_file, caller, prefix, router_var)
+      global_deferred_mounts = [] of Tuple(String, String, String, String)
 
       # PASS 1: Scan all files for top-level mounts and collect nested mounts for later
       main_files.each do |main_file|
-        begin
-          content = File.read(main_file, encoding: "utf-8", invalid: :skip)
-
-          # Parse imports using helper method
-          imports = parse_imports(content, main_file)
-          require_map = imports[:require_map]
-          function_map = imports[:function_map]
-          var_to_function = imports[:var_to_function]
-
-          # Store arrays of prefixes per router variable to support multi-mount scenarios
-          var_prefix = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
-
-          # Pattern: const varName = functionName() - additional pass for factory assignments
-          content.scan(/(?:const|let|var)\s+(\w+)\s*=\s*(\w+)\s*\(\s*\)/) do |m|
-            if m.size >= 3
-              var_name = m[1]
-              func_name = m[2]
-              if function_map.has_key?(func_name)
-                var_to_function[var_name] = func_name
-              end
-            end
-          end
-
-          # Now scan for app.use('/prefix', ..., routerVar) patterns
-          # Use two-phase approach: find the pattern start, then parse args with paren tracking
-          content.scan(/(\w+)\.use\s*\(\s*['"]([^'"]+)['"]\s*,\s*/) do |m|
-            if m.size >= 3
-              caller = m[1]
-              prefix = m[2]
-              match_end = m.end(0) || 0
-
-              # Extract arguments by tracking parentheses depth, skipping strings/comments
-              args = ""
-              paren_depth = 1
-              pos = match_end
-              while pos < content.size && paren_depth > 0
-                char = content[pos]
-
-                # Skip single-line comments
-                if char == '/' && pos + 1 < content.size && content[pos + 1] == '/'
-                  while pos < content.size && content[pos] != '\n'
-                    pos += 1
-                  end
-                  next
-                end
-
-                # Skip multi-line comments
-                if char == '/' && pos + 1 < content.size && content[pos + 1] == '*'
-                  pos += 2
-                  while pos + 1 < content.size && !(content[pos] == '*' && content[pos + 1] == '/')
-                    pos += 1
-                  end
-                  pos += 2 if pos + 1 < content.size
-                  next
-                end
-
-                # Skip string literals (single/double quotes)
-                if char == '"' || char == '\''
-                  quote = char
-                  args += char
-                  pos += 1
-                  while pos < content.size && content[pos] != quote
-                    if content[pos] == '\\' && pos + 1 < content.size
-                      args += content[pos]
-                      pos += 1
-                    end
-                    args += content[pos] if pos < content.size
-                    pos += 1
-                  end
-                  args += content[pos] if pos < content.size && content[pos] == quote
-                  pos += 1
-                  next
-                end
-
-                # Skip template literals
-                if char == '`'
-                  args += char
-                  pos += 1
-                  while pos < content.size && content[pos] != '`'
-                    if content[pos] == '\\' && pos + 1 < content.size
-                      args += content[pos]
-                      pos += 1
-                    end
-                    args += content[pos] if pos < content.size
-                    pos += 1
-                  end
-                  args += content[pos] if pos < content.size && content[pos] == '`'
-                  pos += 1
-                  next
-                end
-
-                # Skip regex literals (heuristic: / not followed by / or * and preceded by operator/punctuation)
-                if char == '/'
-                  # Already handled // and /* above, so this is either division or regex
-                  # Heuristic: check last non-whitespace char in args to determine if regex
-                  last_char = args.rstrip.chars.last? || ','
-                  # Regex can follow: ( [ { , : ; = ! & | ? + - * % < > ~ ^ or be at start
-                  if last_char.in?('(', '[', '{', ',', ':', ';', '=', '!', '&', '|', '?', '+', '-', '*', '%', '<', '>', '~', '^')
-                    args += char
-                    pos += 1
-                    in_char_class = false
-                    while pos < content.size
-                      rc = content[pos]
-                      break if rc == '/' && !in_char_class
-                      if rc == '\\' && pos + 1 < content.size
-                        args += rc
-                        pos += 1
-                        args += content[pos] if pos < content.size
-                        pos += 1
-                      elsif rc == '[' && !in_char_class
-                        in_char_class = true
-                        args += rc
-                        pos += 1
-                      elsif rc == ']' && in_char_class
-                        in_char_class = false
-                        args += rc
-                        pos += 1
-                      else
-                        args += rc
-                        pos += 1
-                      end
-                    end
-                    args += content[pos] if pos < content.size && content[pos] == '/'
-                    pos += 1
-                    # Skip regex flags
-                    while pos < content.size && content[pos].in?('g', 'i', 'm', 's', 'u', 'y', 'd')
-                      args += content[pos]
-                      pos += 1
-                    end
-                    next
-                  end
-                end
-
-                # Track parentheses depth
-                if char == '('
-                  paren_depth += 1
-                elsif char == ')'
-                  paren_depth -= 1
-                  break if paren_depth == 0
-                end
-                args += char
-                pos += 1
-              end
-
-              # Extract router reference from args - can be:
-              # 1. Simple identifier: routerVar
-              # 2. Property access: routers.user or routers['user'] or routers["user"]
-              # 3. Inline require: require('./routes')
-              # 4. Factory call: createRouter()
-              router_var : String? = nil
-              router_file_direct : String? = nil  # For inline require
-
-              # First check for inline require('./path') at the end of args
-              if args =~ /require\s*\(\s*['"]([^'"]+)['"]\s*\)\s*$/
-                router_file_direct = $1
-              # Check for factory function call: createRouter() etc.
-              elsif args =~ /(\w+)\s*\(\s*\)\s*$/
-                factory_name = $1
-                # Check function_map (destructured), require_map (default import), or var_to_function
-                if function_map[factory_name]? || require_map[factory_name]? || var_to_function[factory_name]?
-                  router_var = factory_name
-                end
-              end
-
-              # If no inline require/factory, look for identifier or property access
-              unless router_file_direct || router_var
-                # Check for property access: routers.user or routers['user'] or routers["user"]
-                if args =~ /(\w+)\.(\w+)\s*$/ || args =~ /(\w+)\[['"](\w+)['"]\]\s*$/
-                  # Found property access - use the property name as the key
-                  router_var = "#{$1}.#{$2}"
-                else
-                  # Find last simple identifier (not followed by ( and not preceded by . or =)
-                  args.scan(/(?<![.=])\b(\w+)\b(?!\s*[(\[=>])/) do |id_match|
-                    candidate = id_match[1]
-                    # Skip common non-router identifiers
-                    next if ["req", "res", "next", "err", "error", "true", "false", "null", "undefined"].includes?(candidate)
-                    router_var = candidate
-                  end
-                end
-              end
-
-              next unless router_var || router_file_direct
-
-              # Only treat app as top-level mount; router.use inside a file should inherit file prefix
-              if caller == "app"
-                # Handle inline require('./path') directly
-                if router_file_direct
-                  router_file = resolve_require_path(main_file, router_file_direct)
-                  if router_file
-                    key = ExpressConstants.file_key(router_file)
-                    unless locator.all(key).includes?(prefix)
-                      locator.push(key, prefix)
-                      logger.debug "Mapped router prefix (inline require): #{router_file} => #{prefix}"
-                    end
-                  end
-                # Look up the file path for this router variable
-                elsif router_var && (router_file = require_map[router_var]?)
-                  # Store in CodeLocator with key format: "express_router_prefix:<file_path>"
-                  # Deduplicate to avoid duplicates from repeated mounts
-                  key = ExpressConstants.file_key(router_file)
-                  unless locator.all(key).includes?(prefix)
-                    locator.push(key, prefix)
-                    logger.debug "Mapped router prefix: #{router_file} => #{prefix}"
-                  end
-                  var_prefix[router_var] << prefix unless var_prefix[router_var].includes?(prefix)
-                elsif router_var && (func_name = var_to_function[router_var]?)
-                  if router_file = function_map[func_name]?
-                    key = ExpressConstants.function_key(router_file, func_name)
-                    unless locator.all(key).includes?(prefix)
-                      locator.push(key, prefix)
-                      logger.debug "Mapped router prefix (factory var): #{router_file}:#{func_name} => #{prefix}"
-                    end
-                    var_prefix[router_var] << prefix unless var_prefix[router_var].includes?(prefix)
-                  end
-                elsif router_var && (router_file = function_map[router_var]?)
-                  # Store both function-specific and file-level prefix
-                  # This handles both factory functions and direct router exports
-                  key = ExpressConstants.function_key(router_file, router_var)
-                  unless locator.all(key).includes?(prefix)
-                    locator.push(key, prefix)
-                    logger.debug "Mapped router prefix (factory direct): #{router_file}:#{router_var} => #{prefix}"
-                  end
-                  # Also store file-level prefix for direct router instance exports
-                  file_key = ExpressConstants.file_key(router_file)
-                  unless locator.all(file_key).includes?(prefix)
-                    locator.push(file_key, prefix)
-                    logger.debug "Mapped router prefix (file-level): #{router_file} => #{prefix}"
-                  end
-                  var_prefix[router_var] << prefix unless var_prefix[router_var].includes?(prefix)
-                elsif router_var && router_var.includes?(".")
-                  # Handle property-based router access: routers.user or routers['user']
-                  # Resolve the base object via require_map or function_map (for destructured imports)
-                  parts = router_var.split(".", 2)
-                  base_obj = parts[0]
-                  prop_name = parts[1]?
-                  if prop_name
-                    # Check require_map first (default import), then function_map (destructured import)
-                    router_file = require_map[base_obj]? || function_map[base_obj]?
-                    if router_file
-                      # Map to the file with property as function identifier
-                      key = ExpressConstants.function_key(router_file, prop_name)
-                      unless locator.all(key).includes?(prefix)
-                        locator.push(key, prefix)
-                        logger.debug "Mapped router prefix (property): #{router_file}:#{prop_name} => #{prefix}"
-                      end
-                    end
-                  end
-                  var_prefix[router_var] << prefix unless var_prefix[router_var].includes?(prefix)
-                end
-              else
-                # Nested mounts: parent router variable should already have prefix(es)
-                # First try var_prefix (same-file, earlier in scan order)
-                parent_prefixes = var_prefix[caller]?.try(&.dup) || [] of String
-
-                # Fall back to CodeLocator if var_prefix is empty (cross-file or later in same file)
-                if parent_prefixes.empty?
-                  if caller_file = require_map[caller]?
-                    parent_prefixes = locator.all(ExpressConstants.file_key(caller_file))
-                  elsif caller_func = var_to_function[caller]?
-                    if caller_file = function_map[caller_func]?
-                      parent_prefixes = locator.all(ExpressConstants.function_key(caller_file, caller_func))
-                    end
-                  elsif caller_file = function_map[caller]?
-                    parent_prefixes = locator.all(ExpressConstants.function_key(caller_file, caller))
-                  end
-                end
-
-                # Final fallback: if caller is a local router, use current file's prefix
-                # This handles: app.use('/api', require('./routes')) where routes.js has router.use('/v1', child)
-                if parent_prefixes.empty?
-                  parent_prefixes = locator.all(ExpressConstants.file_key(main_file))
-                end
-
-                if !parent_prefixes.empty?
-                  parent_prefixes.each do |parent_prefix|
-                    combined = Noir::URLPath.join(parent_prefix, prefix)
-                    if router_file_direct
-                      # Inline require('./path')
-                      router_file = resolve_require_path(main_file, router_file_direct)
-                      if router_file
-                        key = ExpressConstants.file_key(router_file)
-                        unless locator.all(key).includes?(combined)
-                          locator.push(key, combined)
-                          logger.debug "Mapped nested router prefix (inline require): #{router_file} => #{combined}"
-                        end
-                      end
-                    elsif router_var && (router_file = require_map[router_var]?)
-                      # Router from require('./path')
-                      key = ExpressConstants.file_key(router_file)
-                      unless locator.all(key).includes?(combined)
-                        locator.push(key, combined)
-                        logger.debug "Mapped nested router prefix: #{router_file} => #{combined}"
-                      end
-                      var_prefix[router_var] << combined unless var_prefix[router_var].includes?(combined)
-                    elsif router_var && (func_name = var_to_function[router_var]?)
-                      if router_file = function_map[func_name]?
-                        key = ExpressConstants.function_key(router_file, func_name)
-                        unless locator.all(key).includes?(combined)
-                          locator.push(key, combined)
-                          logger.debug "Mapped nested router prefix: #{router_file}:#{func_name} => #{combined}"
-                        end
-                        var_prefix[router_var] << combined unless var_prefix[router_var].includes?(combined)
-                      end
-                    elsif router_var && (router_file = function_map[router_var]?)
-                      key = ExpressConstants.function_key(router_file, router_var)
-                      unless locator.all(key).includes?(combined)
-                        locator.push(key, combined)
-                        logger.debug "Mapped nested router prefix: #{router_file}:#{router_var} => #{combined}"
-                      end
-                      var_prefix[router_var] << combined unless var_prefix[router_var].includes?(combined)
-                    elsif router_var && router_var.includes?(".")
-                      # Property-based router: routers.user - resolve base via require_map or function_map
-                      parts = router_var.split(".", 2)
-                      base_obj = parts[0]
-                      prop_name = parts[1]?
-                      if prop_name
-                        router_file = require_map[base_obj]? || function_map[base_obj]?
-                        if router_file
-                          key = ExpressConstants.function_key(router_file, prop_name)
-                          unless locator.all(key).includes?(combined)
-                            locator.push(key, combined)
-                            logger.debug "Mapped nested router prefix (property): #{router_file}:#{prop_name} => #{combined}"
-                          end
-                        end
-                      end
-                      var_prefix[router_var] << combined unless var_prefix[router_var].includes?(combined)
-                    end
-                  end
-                else
-                  # Defer for global second pass - parent prefix not yet known (cross-file, local router, out-of-order)
-                  deferred_key = router_file_direct || router_var || ""
-                  global_deferred_mounts << {main_file, caller, prefix, deferred_key} unless deferred_key.empty?
-                end
-              end
-            end
-          end
-
-          # Handle inline factory calls: app.use('/prefix', createRouter()) and nested mounts
-          # Uses deduplication to avoid pushing same prefix twice (generic scan may have matched already)
-          content.scan(/(\w+)\.use\s*\(\s*['"]([^'"]+)['"]\s*,\s*(\w+)\s*\(\s*\)\s*\)/) do |m|
-            if m.size >= 4
-              caller = m[1]
-              prefix = m[2]
-              func_name = m[3]
-              router_file = function_map[func_name]?
-
-              if caller == "app"
-                # Top-level mount - deduplicate before pushing
-                if router_file
-                  key = ExpressConstants.function_key(router_file, func_name)
-                  unless locator.all(key).includes?(prefix)
-                    locator.push(key, prefix)
-                    logger.debug "Mapped router prefix (inline factory): #{router_file}:#{func_name} => #{prefix}"
-                  end
-                end
-              else
-                # Nested mount - iterate over all parent prefixes with deduplication
-                # First try var_prefix, then fall back to CodeLocator
-                parent_prefixes = var_prefix[caller]?.try(&.dup) || [] of String
-
-                if parent_prefixes.empty?
-                  if caller_file = require_map[caller]?
-                    parent_prefixes = locator.all(ExpressConstants.file_key(caller_file))
-                  elsif caller_func = var_to_function[caller]?
-                    if caller_file = function_map[caller_func]?
-                      parent_prefixes = locator.all(ExpressConstants.function_key(caller_file, caller_func))
-                    end
-                  elsif caller_file = function_map[caller]?
-                    parent_prefixes = locator.all(ExpressConstants.function_key(caller_file, caller))
-                  end
-                end
-
-                # Final fallback: if caller is a local router, use current file's prefix
-                if parent_prefixes.empty?
-                  parent_prefixes = locator.all(ExpressConstants.file_key(main_file))
-                end
-
-                if !parent_prefixes.empty? && router_file
-                  parent_prefixes.each do |parent_prefix|
-                    combined = Noir::URLPath.join(parent_prefix, prefix)
-                    key = ExpressConstants.function_key(router_file, func_name)
-                    unless locator.all(key).includes?(combined)
-                      locator.push(key, combined)
-                      logger.debug "Mapped nested router prefix: #{router_file}:#{func_name} => #{combined}"
-                    end
-                  end
-                end
-              end
-            end
-          end
-
-          # Also handle inline require: app.use('/prefix', require('./path'))
-          # Only match top-level app.use to avoid duplicating nested mounts
-          # (nested mounts are handled by the main arg scan with proper parent prefix resolution)
-          content.scan(/app\.use\s*\(\s*['"]([^'"]+)['"]\s*,\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
-            if m.size >= 3
-              prefix = m[1]
-              require_path = m[2]
-              resolved_path = resolve_require_path(main_file, require_path)
-
-              if resolved_path
-                # Deduplicate to avoid duplicates from repeated mounts
-                key = ExpressConstants.file_key(resolved_path)
-                unless locator.all(key).includes?(prefix)
-                  locator.push(key, prefix)
-                  logger.debug "Mapped router prefix (inline): #{resolved_path} => #{prefix}"
-                end
-              end
-            end
-          end
-
-          # Store file context for global second pass
-          file_contexts[main_file] = {
-            require_map:    require_map,
-            function_map:   function_map,
-            var_to_function: var_to_function,
-            var_prefix:     var_prefix,
-          }
-        rescue e : File::NotFoundError | File::Error | IO::Error | ArgumentError
-          # Log at debug level for expected file/IO errors during scanning
-          logger.debug "Error scanning #{main_file} for router mounts (#{e.class}): #{e.message}"
-        end
+        process_file_for_mounts(main_file, locator, file_contexts, global_deferred_mounts)
       end
 
       # PASS 2: Process all deferred nested mounts now that all top-level mounts are known
-      global_deferred_mounts.each do |main_file, caller, prefix, router_var|
-        ctx = file_contexts[main_file]?
-        next unless ctx
+      process_deferred_mounts(global_deferred_mounts, file_contexts, locator)
+    end
 
-        require_map = ctx[:require_map]
-        function_map = ctx[:function_map]
-        var_to_function = ctx[:var_to_function]
-        var_prefix = ctx[:var_prefix]
+    # Process a single file for router mounts
+    private def process_file_for_mounts(
+      main_file : String,
+      locator : CodeLocator,
+      file_contexts : Hash(String, NamedTuple(
+        require_map: Hash(String, String),
+        function_map: Hash(String, String),
+        var_to_function: Hash(String, String),
+        var_prefix: Hash(String, Array(String))
+      )),
+      global_deferred_mounts : Array(Tuple(String, String, String, String))
+    )
+      content = File.read(main_file, encoding: "utf-8", invalid: :skip)
 
-        parent_prefixes = var_prefix[caller]?.try(&.dup) || [] of String
+      # Parse imports
+      imports = parse_imports(content, main_file)
+      require_map = imports[:require_map]
+      function_map = imports[:function_map]
+      var_to_function = imports[:var_to_function]
 
-        # Try CodeLocator fallback
-        if parent_prefixes.empty?
-          if caller_file = require_map[caller]?
-            parent_prefixes = locator.all(ExpressConstants.file_key(caller_file))
-          elsif caller_func = var_to_function[caller]?
-            if caller_file = function_map[caller_func]?
-              parent_prefixes = locator.all(ExpressConstants.function_key(caller_file, caller_func))
-            end
-          elsif caller_file = function_map[caller]?
-            parent_prefixes = locator.all(ExpressConstants.function_key(caller_file, caller))
-          end
-        end
+      # Store arrays of prefixes per router variable to support multi-mount scenarios
+      var_prefix = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
 
-        # Final fallback: if caller is a local router, use current file's prefix
-        if parent_prefixes.empty?
-          parent_prefixes = locator.all(ExpressConstants.file_key(main_file))
-        end
+      # Scan for .use('/prefix', ...) patterns
+      content.scan(/(\w+)\.use\s*\(\s*['"]([^'"]+)['"]\s*,\s*/) do |m|
+        next unless m.size >= 3
 
-        if !parent_prefixes.empty?
-          parent_prefixes.each do |parent_prefix|
-            combined = Noir::URLPath.join(parent_prefix, prefix)
+        caller = m[1]
+        prefix = m[2]
+        match_end = m.end(0) || 0
 
-            # Check if router_var is an inline require path (relative or alias)
-            if router_var.starts_with?("./") || router_var.starts_with?("../") ||
-               router_var.starts_with?("@/") || router_var.starts_with?("~/")
-              router_file = resolve_require_path(main_file, router_var)
-              if router_file
-                key = ExpressConstants.file_key(router_file)
-                unless locator.all(key).includes?(combined)
-                  locator.push(key, combined)
-                  logger.debug "Mapped deferred nested router prefix (inline require): #{router_file} => #{combined}"
-                end
-              end
-            elsif func_name = var_to_function[router_var]?
-              if router_file = function_map[func_name]?
-                key = ExpressConstants.function_key(router_file, func_name)
-                unless locator.all(key).includes?(combined)
-                  locator.push(key, combined)
-                  logger.debug "Mapped deferred nested router prefix: #{router_file}:#{func_name} => #{combined}"
-                end
-              end
-            elsif router_file = function_map[router_var]?
-              # Store both function-specific and file-level prefix
-              # This handles both factory functions and direct router instance exports
-              key = ExpressConstants.function_key(router_file, router_var)
-              unless locator.all(key).includes?(combined)
-                locator.push(key, combined)
-                logger.debug "Mapped deferred nested router prefix: #{router_file}:#{router_var} => #{combined}"
-              end
-              # Also store file-level prefix for direct router instance exports
-              file_key = ExpressConstants.file_key(router_file)
-              unless locator.all(file_key).includes?(combined)
-                locator.push(file_key, combined)
-                logger.debug "Mapped deferred nested router prefix (file-level): #{router_file} => #{combined}"
-              end
-            elsif router_var.includes?(".")
-              # Property-based router: routers.user - resolve base via require_map or function_map
-              parts = router_var.split(".", 2)
-              base_obj = parts[0]
-              prop_name = parts[1]?
-              if prop_name
-                router_file = require_map[base_obj]? || function_map[base_obj]?
-                if router_file
-                  key = ExpressConstants.function_key(router_file, prop_name)
-                  unless locator.all(key).includes?(combined)
-                    locator.push(key, combined)
-                    logger.debug "Mapped deferred nested router prefix (property): #{router_file}:#{prop_name} => #{combined}"
-                  end
-                end
-              end
-              var_prefix[router_var] << combined unless var_prefix[router_var].includes?(combined)
-            end
-          end
+        process_use_call(content, match_end, caller, prefix, main_file, locator,
+                         require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
+      end
+
+      # Handle inline factory calls and inline require calls
+      process_inline_factory_mounts(content, locator, main_file, function_map, require_map, var_to_function, var_prefix)
+      process_inline_require_mounts(content, locator, main_file)
+
+      # Store file context for second pass
+      file_contexts[main_file] = {
+        require_map:     require_map,
+        function_map:    function_map,
+        var_to_function: var_to_function,
+        var_prefix:      var_prefix,
+      }
+    rescue e : File::NotFoundError | File::Error | IO::Error | ArgumentError
+      logger.debug "Error scanning #{main_file} for router mounts (#{e.class}): #{e.message}"
+    end
+
+    # Process a single .use() call
+    private def process_use_call(
+      content : String,
+      match_end : Int32,
+      caller : String,
+      prefix : String,
+      main_file : String,
+      locator : CodeLocator,
+      require_map : Hash(String, String),
+      function_map : Hash(String, String),
+      var_to_function : Hash(String, String),
+      var_prefix : Hash(String, Array(String)),
+      global_deferred_mounts : Array(Tuple(String, String, String, String))
+    )
+      # Extract arguments with literal-aware scanning
+      args = extract_use_call_args(content, match_end)
+
+      # Extract router reference from args
+      ref = extract_router_reference(args, require_map, function_map, var_to_function)
+      router_var = ref[:router_var]
+      router_file_direct = ref[:router_file_direct]
+
+      return unless router_var || router_file_direct
+
+      if caller == "app"
+        # Top-level mount
+        store_top_level_mount(locator, router_var, router_file_direct, prefix, main_file,
+                              require_map, function_map, var_to_function, var_prefix)
+      else
+        # Nested mount - try to resolve parent prefixes
+        processed = store_nested_mount(locator, router_var, router_file_direct, prefix, caller, main_file,
+                                       require_map, function_map, var_to_function, var_prefix)
+
+        # Defer if parent prefix not yet known
+        unless processed
+          deferred_key = router_file_direct || router_var || ""
+          global_deferred_mounts << {main_file, caller, prefix, deferred_key} unless deferred_key.empty?
         end
       end
     end
@@ -1599,6 +1184,254 @@ module Analyzer::Javascript
       end
 
       parent_prefixes
+    end
+
+    # Helper: Extract arguments from .use() call using literal-aware scanning
+    # Delegates to JSLiteralScanner for robust handling of strings, comments, template literals, and regex
+    private def extract_use_call_args(content : String, match_end : Int32) : String
+      result = Noir::JSLiteralScanner.extract_paren_content(content, match_end)
+      result ? result.content : ""
+    end
+
+    # Unified helper: Resolve router variable and store prefix to CodeLocator
+    # Handles all resolution paths: inline require, require_map, var_to_function, function_map, property access
+    # @param include_file_level - if true, also stores file-level prefix for function_map entries (used for top-level mounts)
+    private def resolve_and_store_router_prefix(
+      locator : CodeLocator,
+      router_var : String?,
+      router_file_direct : String?,
+      prefix : String,
+      main_file : String,
+      require_map : Hash(String, String),
+      function_map : Hash(String, String),
+      var_to_function : Hash(String, String),
+      var_prefix : Hash(String, Array(String)),
+      log_prefix : String = "Mapped router prefix",
+      include_file_level : Bool = false
+    )
+      # Handle inline require('./path') directly
+      if router_file_direct
+        router_file = resolve_require_path(main_file, router_file_direct)
+        if router_file
+          key = ExpressConstants.file_key(router_file)
+          push_prefix_to_locator(locator, key, prefix, "#{log_prefix} (inline require): #{router_file} => #{prefix}")
+        end
+        return
+      end
+
+      # Handle path-like router_var as inline require (for deferred mounts)
+      if router_var && (router_var.starts_with?("./") || router_var.starts_with?("../") ||
+                        router_var.starts_with?("@/") || router_var.starts_with?("~/"))
+        router_file = resolve_require_path(main_file, router_var)
+        if router_file
+          key = ExpressConstants.file_key(router_file)
+          push_prefix_to_locator(locator, key, prefix, "#{log_prefix} (inline require): #{router_file} => #{prefix}")
+        end
+        return
+      end
+
+      return unless router_var
+
+      # Check require_map (default imports)
+      if router_file = require_map[router_var]?
+        key = ExpressConstants.file_key(router_file)
+        push_prefix_to_locator(locator, key, prefix, "#{log_prefix}: #{router_file} => #{prefix}")
+        var_prefix[router_var] << prefix unless var_prefix[router_var].includes?(prefix)
+        return
+      end
+
+      # Check var_to_function (factory variable assignments)
+      if func_name = var_to_function[router_var]?
+        if router_file = function_map[func_name]?
+          key = ExpressConstants.function_key(router_file, func_name)
+          push_prefix_to_locator(locator, key, prefix, "#{log_prefix} (factory var): #{router_file}:#{func_name} => #{prefix}")
+          var_prefix[router_var] << prefix unless var_prefix[router_var].includes?(prefix)
+        end
+        return
+      end
+
+      # Check function_map (destructured imports)
+      if router_file = function_map[router_var]?
+        key = ExpressConstants.function_key(router_file, router_var)
+        push_prefix_to_locator(locator, key, prefix, "#{log_prefix} (factory direct): #{router_file}:#{router_var} => #{prefix}")
+        # Also store file-level prefix for direct router instance exports (top-level and deferred mounts)
+        if include_file_level
+          file_key = ExpressConstants.file_key(router_file)
+          push_prefix_to_locator(locator, file_key, prefix, "#{log_prefix} (file-level): #{router_file} => #{prefix}")
+        end
+        var_prefix[router_var] << prefix unless var_prefix[router_var].includes?(prefix)
+        return
+      end
+
+      # Handle property-based router access: routers.user or routers['user']
+      if router_var.includes?(".")
+        parts = router_var.split(".", 2)
+        base_obj = parts[0]
+        prop_name = parts[1]?
+        if prop_name
+          router_file = require_map[base_obj]? || function_map[base_obj]?
+          if router_file
+            key = ExpressConstants.function_key(router_file, prop_name)
+            push_prefix_to_locator(locator, key, prefix, "#{log_prefix} (property): #{router_file}:#{prop_name} => #{prefix}")
+          end
+        end
+        var_prefix[router_var] << prefix unless var_prefix[router_var].includes?(prefix)
+      end
+    end
+
+    # Helper: Store a top-level mount (caller == "app") to CodeLocator
+    private def store_top_level_mount(
+      locator : CodeLocator,
+      router_var : String?,
+      router_file_direct : String?,
+      prefix : String,
+      main_file : String,
+      require_map : Hash(String, String),
+      function_map : Hash(String, String),
+      var_to_function : Hash(String, String),
+      var_prefix : Hash(String, Array(String))
+    )
+      resolve_and_store_router_prefix(
+        locator, router_var, router_file_direct, prefix, main_file,
+        require_map, function_map, var_to_function, var_prefix,
+        log_prefix: "Mapped router prefix",
+        include_file_level: true
+      )
+    end
+
+    # Helper: Store a nested mount (caller != "app") with proper parent prefix resolution
+    # Returns true if processed, false if should be deferred
+    private def store_nested_mount(
+      locator : CodeLocator,
+      router_var : String?,
+      router_file_direct : String?,
+      prefix : String,
+      caller : String,
+      main_file : String,
+      require_map : Hash(String, String),
+      function_map : Hash(String, String),
+      var_to_function : Hash(String, String),
+      var_prefix : Hash(String, Array(String))
+    ) : Bool
+      parent_prefixes = get_parent_prefixes(caller, var_prefix, require_map, function_map, var_to_function, main_file, locator)
+
+      # If no parent prefixes found, defer for later processing
+      return false if parent_prefixes.empty?
+
+      parent_prefixes.each do |parent_prefix|
+        combined = Noir::URLPath.join(parent_prefix, prefix)
+        resolve_and_store_router_prefix(
+          locator, router_var, router_file_direct, combined, main_file,
+          require_map, function_map, var_to_function, var_prefix,
+          log_prefix: "Mapped nested router prefix"
+        )
+      end
+
+      true
+    end
+
+    # Helper: Process inline factory calls: app.use('/prefix', createRouter())
+    private def process_inline_factory_mounts(
+      content : String,
+      locator : CodeLocator,
+      main_file : String,
+      function_map : Hash(String, String),
+      require_map : Hash(String, String),
+      var_to_function : Hash(String, String),
+      var_prefix : Hash(String, Array(String))
+    )
+      content.scan(/(\w+)\.use\s*\(\s*['"]([^'"]+)['"]\s*,\s*(\w+)\s*\(\s*\)\s*\)/) do |m|
+        next unless m.size >= 4
+
+        caller = m[1]
+        prefix = m[2]
+        func_name = m[3]
+        router_file = function_map[func_name]?
+
+        if caller == "app"
+          # Top-level mount
+          if router_file
+            key = ExpressConstants.function_key(router_file, func_name)
+            push_prefix_to_locator(locator, key, prefix, "Mapped router prefix (inline factory): #{router_file}:#{func_name} => #{prefix}")
+          end
+        else
+          # Nested mount
+          parent_prefixes = get_parent_prefixes(caller, var_prefix, require_map, function_map, var_to_function, main_file, locator)
+
+          if !parent_prefixes.empty? && router_file
+            parent_prefixes.each do |parent_prefix|
+              combined = Noir::URLPath.join(parent_prefix, prefix)
+              key = ExpressConstants.function_key(router_file, func_name)
+              push_prefix_to_locator(locator, key, combined, "Mapped nested router prefix: #{router_file}:#{func_name} => #{combined}")
+            end
+          end
+        end
+      end
+    end
+
+    # Helper: Process inline require calls: app.use('/prefix', require('./path'))
+    private def process_inline_require_mounts(content : String, locator : CodeLocator, main_file : String)
+      content.scan(/app\.use\s*\(\s*['"]([^'"]+)['"]\s*,\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
+        next unless m.size >= 3
+
+        prefix = m[1]
+        require_path = m[2]
+        resolved_path = resolve_require_path(main_file, require_path)
+
+        if resolved_path
+          key = ExpressConstants.file_key(resolved_path)
+          push_prefix_to_locator(locator, key, prefix, "Mapped router prefix (inline): #{resolved_path} => #{prefix}")
+        end
+      end
+    end
+
+    # Helper: Process deferred mounts in pass 2
+    private def process_deferred_mounts(
+      global_deferred_mounts : Array(Tuple(String, String, String, String)),
+      file_contexts : Hash(String, NamedTuple(
+        require_map: Hash(String, String),
+        function_map: Hash(String, String),
+        var_to_function: Hash(String, String),
+        var_prefix: Hash(String, Array(String))
+      )),
+      locator : CodeLocator
+    )
+      global_deferred_mounts.each do |main_file, caller, prefix, router_var|
+        ctx = file_contexts[main_file]?
+        next unless ctx
+
+        require_map = ctx[:require_map]
+        function_map = ctx[:function_map]
+        var_to_function = ctx[:var_to_function]
+        var_prefix = ctx[:var_prefix]
+
+        parent_prefixes = get_parent_prefixes(caller, var_prefix, require_map, function_map, var_to_function, main_file, locator)
+        next if parent_prefixes.empty?
+
+        parent_prefixes.each do |parent_prefix|
+          combined = Noir::URLPath.join(parent_prefix, prefix)
+          store_deferred_mount(locator, router_var, combined, main_file, require_map, function_map, var_to_function, var_prefix)
+        end
+      end
+    end
+
+    # Helper: Store a single deferred mount - delegates to unified resolver
+    private def store_deferred_mount(
+      locator : CodeLocator,
+      router_var : String,
+      combined : String,
+      main_file : String,
+      require_map : Hash(String, String),
+      function_map : Hash(String, String),
+      var_to_function : Hash(String, String),
+      var_prefix : Hash(String, Array(String))
+    )
+      resolve_and_store_router_prefix(
+        locator, router_var, nil, combined, main_file,
+        require_map, function_map, var_to_function, var_prefix,
+        log_prefix: "Mapped deferred nested router prefix",
+        include_file_level: true
+      )
     end
 
     private def parse_destructured_names(names : String) : Array(String)

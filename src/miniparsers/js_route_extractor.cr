@@ -3,6 +3,7 @@ require "../minilexers/js_lexer"
 require "../miniparsers/js_parser"
 require "../models/code_locator"
 require "../utils/url_path"
+require "../utils/js_literal_scanner"
 require "../analyzer/analyzers/javascript/express_constants"
 
 module Noir
@@ -337,146 +338,14 @@ module Noir
       extract_cookie_params(handler_body, endpoint)
     end
 
+    # Delegate to JSLiteralScanner for literal-aware brace matching
     def self.find_matching_brace(content : String, open_brace_idx : Int32) : Int32?
-      brace_count = 1
-      idx = open_brace_idx + 1
-
-      while idx < content.size && brace_count > 0
-        case content[idx]
-        when '{'
-          brace_count += 1
-        when '}'
-          brace_count -= 1
-        end
-        idx += 1
-
-        # Return the position of the matching closing brace
-        return idx - 1 if brace_count == 0
-      end
-
-      # No matching brace found
-      nil
+      JSLiteralScanner.find_matching_brace(content, open_brace_idx)
     end
 
+    # Delegate to JSLiteralScanner for literal-aware paren matching
     def self.find_matching_paren(content : String, open_paren_idx : Int32) : Int32?
-      paren_count = 1
-      idx = open_paren_idx + 1
-
-      while idx < content.size && paren_count > 0
-        char = content[idx]
-
-        # Skip single-line comments
-        if char == '/' && idx + 1 < content.size && content[idx + 1] == '/'
-          while idx < content.size && content[idx] != '\n'
-            idx += 1
-          end
-          next
-        end
-
-        # Skip multi-line comments
-        if char == '/' && idx + 1 < content.size && content[idx + 1] == '*'
-          idx += 2
-          while idx + 1 < content.size && !(content[idx] == '*' && content[idx + 1] == '/')
-            idx += 1
-          end
-          idx += 2 if idx + 1 < content.size
-          next
-        end
-
-        # Skip string literals
-        if char == '"' || char == '\''
-          quote = char
-          idx += 1
-          while idx < content.size && content[idx] != quote
-            if content[idx] == '\\' && idx + 1 < content.size
-              idx += 2
-            else
-              idx += 1
-            end
-          end
-          idx += 1
-          next
-        end
-
-        # Skip template literals
-        if char == '`'
-          idx += 1
-          while idx < content.size && content[idx] != '`'
-            if content[idx] == '\\' && idx + 1 < content.size
-              idx += 2
-            else
-              idx += 1
-            end
-          end
-          idx += 1
-          next
-        end
-
-        # Skip regex literals (heuristic: / preceded by operator/punctuation or keyword)
-        if char == '/' && idx > 0
-          prev_idx = idx - 1
-          while prev_idx > 0 && content[prev_idx].whitespace?
-            prev_idx -= 1
-          end
-          prev_char = content[prev_idx]
-
-          # Check if preceded by punctuation that expects expression
-          is_regex = prev_char.in?('(', '[', '{', ',', ':', ';', '=', '!', '&', '|', '?', '+', '-', '*', '%', '<', '>', '~', '^')
-
-          # Also check if preceded by keyword that expects expression
-          unless is_regex
-            # Extract preceding word
-            word_end = prev_idx + 1
-            word_start = prev_idx
-            while word_start > 0 && (content[word_start - 1].alphanumeric? || content[word_start - 1] == '_')
-              word_start -= 1
-            end
-            if word_start < word_end
-              prev_word = content[word_start...word_end]
-              is_regex = prev_word.in?("return", "case", "throw", "in", "of", "typeof", "instanceof", "void", "delete", "new")
-            end
-          end
-
-          if is_regex
-            idx += 1
-            in_char_class = false
-            while idx < content.size
-              break if content[idx] == '/' && !in_char_class
-              if content[idx] == '\\' && idx + 1 < content.size
-                idx += 2
-              elsif content[idx] == '[' && !in_char_class
-                in_char_class = true
-                idx += 1
-              elsif content[idx] == ']' && in_char_class
-                in_char_class = false
-                idx += 1
-              else
-                idx += 1
-              end
-            end
-            idx += 1 if idx < content.size
-            # Skip regex flags
-            while idx < content.size && content[idx].in?('g', 'i', 'm', 's', 'u', 'y', 'd')
-              idx += 1
-            end
-            next
-          end
-        end
-
-        case char
-        when '('
-          paren_count += 1
-        when ')'
-          paren_count -= 1
-        end
-        idx += 1
-
-        # Return the position of the matching closing paren
-        return idx - 1 if paren_count == 0
-      end
-
-      # No matching paren found
-      nil
+      JSLiteralScanner.find_matching_paren(content, open_paren_idx)
     end
 
     def self.extract_body_params(handler_body : String, endpoint : Endpoint)
