@@ -284,19 +284,19 @@ module Analyzer::Javascript
 
       if parent_prefixes.empty?
         if caller_file = require_map[caller]?
-          parent_prefixes = locator.all(ExpressConstants.file_key(caller_file))
+          parent_prefixes = locator.all(ExpressConstants.file_key(caller_file)).dup
         elsif caller_func = var_to_function[caller]?
           if caller_file = function_map[caller_func]?
-            parent_prefixes = locator.all(ExpressConstants.function_key(caller_file, caller_func))
+            parent_prefixes = locator.all(ExpressConstants.function_key(caller_file, caller_func)).dup
           end
         elsif caller_file = function_map[caller]?
-          parent_prefixes = locator.all(ExpressConstants.function_key(caller_file, caller))
+          parent_prefixes = locator.all(ExpressConstants.function_key(caller_file, caller)).dup
         end
       end
 
       # Final fallback: use current file's prefix
       if parent_prefixes.empty?
-        parent_prefixes = locator.all(ExpressConstants.file_key(main_file))
+        parent_prefixes = locator.all(ExpressConstants.file_key(main_file)).dup
       end
 
       parent_prefixes
