@@ -356,31 +356,10 @@ module Noir
             paths << PathEntry.new(path, true)
           end
 
-          # Create one route for each path
-          paths.each do |path_entry|
-            base_path = path_entry.path
-            raw_path = path_entry.path
-            start_pos = @tokens[idx].position
-
-            # Get all prefixes for this router (supports multi-mount)
-            prefixes_to_apply = if router_prefixes.has_key?(router_var)
-                                  router_prefixes[router_var]
-                                else
-                                  [""] # No prefix - use empty string
-                                end
-
-            prefixes_to_apply.each do |prefix|
-              path = prefix.empty? ? base_path : URLPath.join(prefix, base_path)
-
-              m = method.upcase
-              m = "DELETE" if m.downcase == "del"
-              route = JSRoutePattern.new(m, path, raw_path, start_pos)
-              # Only extract path params from non-regex patterns
-              unless path_entry.is_regex
-                extract_path_params(path).each { |p| route.push_param(p) }
-              end
-              results << route
-            end
+          # Create one route for each path with prefix
+          start_pos = @tokens[idx].position
+          each_prefixed_path(paths, router_var, router_prefixes) do |path_entry, prefixed_path|
+            results << create_route_with_params(method, prefixed_path, path_entry.path, start_pos, path_entry.is_regex)
           end
 
           idx += 1
@@ -409,44 +388,23 @@ module Noir
             end
           end
 
-          paths.each do |path_entry|
-            base_path = path_entry.path
-            raw_path = path_entry.path
-            start_pos = @tokens[idx].position
-
-            # Get all prefixes for this router (supports multi-mount)
-            prefixes_to_apply = if router_prefixes.has_key?(router_var)
-                                  router_prefixes[router_var]
-                                else
-                                  [""] # No prefix - use empty string
-                                end
-
-            prefixes_to_apply.each do |prefix|
-              path = prefix.empty? ? base_path : URLPath.join(prefix, base_path)
-
-              # look ahead bounded to avoid O(n^2)
-              j = idx + 5
-              steps = 0
-              max_steps = 1000
-              while j < limit - 1 && steps < max_steps
-                if @tokens[j].type == :dot && @tokens[j + 1].type == :http_method
-                  m = @tokens[j + 1].value.upcase
-                  m = "DELETE" if m.downcase == "del"
-                  route = JSRoutePattern.new(m, path, raw_path, start_pos)
-                  # Only extract path params from non-regex patterns
-                  unless path_entry.is_regex
-                    extract_path_params(path).each { |p| route.push_param(p) }
-                  end
-                  results << route
-                  j += 2
-                  steps += 2
-                  next
-                elsif @tokens[j].type == :semicolon
-                  break
-                end
-                j += 1
-                steps += 1
+          start_pos = @tokens[idx].position
+          each_prefixed_path(paths, router_var, router_prefixes) do |path_entry, prefixed_path|
+            # Scan ahead for chained HTTP method calls (bounded to avoid O(n^2))
+            j = idx + 5
+            steps = 0
+            max_steps = 1000
+            while j < limit - 1 && steps < max_steps
+              if @tokens[j].type == :dot && @tokens[j + 1].type == :http_method
+                results << create_route_with_params(@tokens[j + 1].value, prefixed_path, path_entry.path, start_pos, path_entry.is_regex)
+                j += 2
+                steps += 2
+                next
+              elsif @tokens[j].type == :semicolon
+                break
               end
+              j += 1
+              steps += 1
             end
           end
 
@@ -1047,6 +1005,37 @@ module Noir
       end
 
       result.empty? ? nil : result
+    end
+
+    # Iterates over paths with their prefixes, yielding (path_entry, prefixed_path) for each combination.
+    # This consolidates the common prefix resolution logic used by both simple and chained route patterns.
+    private def each_prefixed_path(
+      paths : Array(PathEntry),
+      router_var : String,
+      router_prefixes : Hash(String, Array(String)),
+      &block : PathEntry, String ->
+    )
+      prefixes_to_apply = router_prefixes.fetch(router_var, [""])
+
+      paths.each do |path_entry|
+        base_path = path_entry.path
+
+        prefixes_to_apply.each do |prefix|
+          prefixed_path = prefix.empty? ? base_path : URLPath.join(prefix, base_path)
+          yield path_entry, prefixed_path
+        end
+      end
+    end
+
+    # Creates a route pattern and adds path params unless it's a regex path.
+    private def create_route_with_params(method : String, path : String, raw_path : String, start_pos : Int32, is_regex : Bool) : JSRoutePattern
+      m = method.upcase
+      m = "DELETE" if m.downcase == "del"
+      route = JSRoutePattern.new(m, path, raw_path, start_pos)
+      unless is_regex
+        extract_path_params(path).each { |p| route.push_param(p) }
+      end
+      route
     end
 
     private def extract_path_params(path : String) : Array(Param)

@@ -374,6 +374,11 @@ module Analyzer::Javascript
           if router_file
             key = ExpressConstants.function_key(router_file, prop_name)
             push_prefix_to_locator(locator, key, prefix, "#{log_prefix} (property): #{router_file}:#{prop_name} => #{prefix}")
+            # Also store file-level key for router-instance exports (not factory functions)
+            if include_file_level
+              file_key = ExpressConstants.file_key(router_file)
+              push_prefix_to_locator(locator, file_key, prefix, "#{log_prefix} (property file-level): #{router_file} => #{prefix}")
+            end
           end
         end
         var_prefix[router_var] << prefix unless var_prefix[router_var].includes?(prefix)
@@ -424,7 +429,8 @@ module Analyzer::Javascript
         resolve_and_store_router_prefix(
           locator, router_var, router_file_direct, combined, main_file,
           require_map, function_map, var_to_function, var_prefix,
-          log_prefix: "Mapped nested router prefix"
+          log_prefix: "Mapped nested router prefix",
+          include_file_level: true
         )
       end
 
@@ -541,8 +547,29 @@ module Analyzer::Javascript
       depth_brace = 0
       depth_bracket = 0
       depth_paren = 0
+      in_string : Char? = nil
+      prev_char : Char? = nil
 
       cleaned.each_char do |ch|
+        # Handle string literal state (single quotes, double quotes, backticks)
+        if in_string
+          current += ch
+          # Check for end of string (unescaped quote)
+          if ch == in_string && prev_char != '\\'
+            in_string = nil
+          end
+          prev_char = ch
+          next
+        end
+
+        # Check for start of string literal
+        if ch == '"' || ch == '\'' || ch == '`'
+          in_string = ch
+          current += ch
+          prev_char = ch
+          next
+        end
+
         case ch
         when '{'
           depth_brace += 1
@@ -560,11 +587,13 @@ module Analyzer::Javascript
           if depth_brace == 0 && depth_bracket == 0 && depth_paren == 0
             items << current
             current = ""
+            prev_char = ch
             next
           end
         end
 
         current += ch
+        prev_char = ch
       end
 
       items << current unless current.empty?
