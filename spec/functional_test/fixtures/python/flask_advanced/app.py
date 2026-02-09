@@ -100,6 +100,13 @@ class AsyncAPI(MethodView):
         title = request.json.get('title')
         return jsonify({'title': title})
 
+@bp.post('/get-json')
+def use_get_json():
+    """Test request.get_json() detection"""
+    payload = request.get_json()
+    action = payload.get('action')
+    return jsonify({'action': action})
+
 # Register MethodView with add_url_rule
 user_view = UserAPI.as_view('user_api')
 bp.add_url_rule('/users', view_func=user_view, methods=['GET', 'POST'])

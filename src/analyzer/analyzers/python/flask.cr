@@ -492,7 +492,7 @@ module Analyzer::Python
         if !match.nil? && match.size == 2 && !json_variable_names.includes?(match[1])
           json_variable_names << match[1]
         end
-        match = codeblock_line.match /([a-zA-Z_][a-zA-Z0-9_]*).*=\s*request\.json/
+        match = codeblock_line.match /([a-zA-Z_][a-zA-Z0-9_]*).*=\s*request\.(?:get_json\([^)]*\)|json)/
         if !match.nil? && match.size == 2 && !json_variable_names.includes?(match[1])
           json_variable_names << match[1]
         end
