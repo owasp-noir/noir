@@ -58,3 +58,5 @@ brightness = "normal"       # Common brightness: "darker", "normal", "lighter"
 dark_brightness = "darker"  # Override brightness for dark theme (optional)
 light_brightness = "normal" # Override brightness for light theme (optional)
 disable_toggle = false      # Hides dark/light mode toggle
+default_theme_dark = "goyo-dark"
+default_theme_light = "goyo-light"
