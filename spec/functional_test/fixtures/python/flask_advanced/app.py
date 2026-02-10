@@ -121,6 +121,12 @@ bp.add_url_rule('/async', view_func=async_view, methods=['GET', 'POST'])
 # add_url_rule without explicit methods (should infer from class)
 bp.add_url_rule('/items-inferred', view_func=ItemAPI.as_view('item_inferred'))
 
+# add_url_rule with rule= keyword argument (not first positional)
+bp.add_url_rule(view_func=item_view, rule='/items-kwarg', methods=['GET', 'POST'])
+
+# add_url_rule with positional view_func (3rd arg, no keyword)
+bp.add_url_rule('/items-positional', 'items_pos', item_view, methods=['GET', 'POST'])
+
 # Register blueprint
 app.register_blueprint(bp)
 

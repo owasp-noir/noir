@@ -33,6 +33,14 @@ expected_endpoints = [
   # MethodView - AsyncAPI (async def)
   Endpoint.new("/api/async", "GET", [Param.new("category", "", "query")]),
   Endpoint.new("/api/async", "POST", [Param.new("title", "", "json")]),
+
+  # add_url_rule with rule= keyword (not first positional)
+  Endpoint.new("/api/items-kwarg", "GET", [Param.new("page", "", "query")]),
+  Endpoint.new("/api/items-kwarg", "POST", [Param.new("name", "", "json")]),
+
+  # add_url_rule with positional view_func (3rd arg)
+  Endpoint.new("/api/items-positional", "GET", [Param.new("page", "", "query")]),
+  Endpoint.new("/api/items-positional", "POST", [Param.new("name", "", "json")]),
 ]
 
 FunctionalTester.new("fixtures/python/flask_advanced/", {

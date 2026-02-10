@@ -192,48 +192,103 @@ module Analyzer::Python
               end
 
               # Identify add_url_rule() registrations for class-based views
-              line.scan(/(#{PYTHON_VAR_NAME_REGEX})\.add_url_rule\([rf]?['"]([^'"]*)['"]/) do |_match|
-                if _match.size > 0
-                  router_name = _match[1]
-                  route_path = _match[2]
-                  class_name = ""
-                  view_name = ""
+              # Match the call generically, then extract rule/view_func from any argument position
+              line.scan(/(#{PYTHON_VAR_NAME_REGEX})\.add_url_rule\((.+)\)/) do |_match|
+                next if _match.size == 0
+                router_name = _match[1]
+                args_str = _match[2]
 
-                  # Check for direct pattern: view_func=ClassName.as_view('name')
-                  view_func_match = line.match /view_func=(#{PYTHON_VAR_NAME_REGEX})\.as_view\([rf]?['"]([^'"]*)['"]\)/
-                  if view_func_match
-                    class_name = view_func_match[1]
-                    view_name = view_func_match[2]
-                  else
-                    # Check for indirect pattern: view_func=view_var (where view_var was assigned earlier)
-                    view_var_match = line.match /view_func=(#{PYTHON_VAR_NAME_REGEX})[,\)]/
-                    if view_var_match
-                      view_var = view_var_match[1]
-                      if view_assignments.has_key?(view_var)
-                        class_name = view_assignments[view_var]
-                        view_name = view_var
-                      end
+                # Extract route path: try rule= keyword first, then first positional string arg
+                route_path = ""
+                rule_match = args_str.match /rule=[rf]?['"]([^'"]*)['"]/
+                if rule_match
+                  route_path = rule_match[1]
+                else
+                  first_str_match = args_str.match /^[rf]?['"]([^'"]*)['"]/
+                  route_path = first_str_match[1] if first_str_match
+                end
+                next if route_path.empty?
+
+                class_name = ""
+                view_name = ""
+
+                # Extract view_func: try keyword form, then positional form
+                # Keyword: view_func=ClassName.as_view('name') or view_func=view_var
+                view_func_match = args_str.match /view_func=(#{PYTHON_VAR_NAME_REGEX})\.as_view\([rf]?['"]([^'"]*)['"]\)/
+                if view_func_match
+                  class_name = view_func_match[1]
+                  view_name = view_func_match[2]
+                else
+                  view_var_match = args_str.match /view_func=(#{PYTHON_VAR_NAME_REGEX})[,\)]/
+                  if view_var_match
+                    view_var = view_var_match[1]
+                    if view_assignments.has_key?(view_var)
+                      class_name = view_assignments[view_var]
+                      view_name = view_var
+                    end
+                  end
+                end
+
+                # Positional: add_url_rule('/path', 'endpoint', view_var) or
+                #             add_url_rule('/path', 'endpoint', Class.as_view('name'))
+                # After space-stripping: '/path','endpoint',view_var
+                if class_name.empty?
+                  # Split positional args (before any keyword arg)
+                  positional_parts = [] of ::String
+                  remaining = args_str
+                  while !remaining.empty?
+                    # Match a quoted string argument
+                    str_match = remaining.match /^[rf]?['"][^'"]*['"]/
+                    if str_match
+                      positional_parts << str_match[0]
+                      remaining = remaining[str_match[0].size..]
+                      remaining = remaining.lstrip(',')
+                      next
+                    end
+                    # Stop at keyword arguments
+                    break if remaining.match /^#{PYTHON_VAR_NAME_REGEX}=/
+                    # Match an identifier or expression until comma/closing paren
+                    expr_match = remaining.match /^([^,\)]+)/
+                    if expr_match
+                      positional_parts << expr_match[1]
+                      remaining = remaining[expr_match[1].size..]
+                      remaining = remaining.lstrip(',')
+                      next
+                    end
+                    break
+                  end
+
+                  # 3rd positional arg (index 2) is view_func
+                  if positional_parts.size >= 3
+                    view_arg = positional_parts[2]
+                    as_view_match = view_arg.match /(#{PYTHON_VAR_NAME_REGEX})\.as_view\([rf]?['"]([^'"]*)['"]\)/
+                    if as_view_match
+                      class_name = as_view_match[1]
+                      view_name = as_view_match[2]
+                    elsif view_assignments.has_key?(view_arg)
+                      class_name = view_assignments[view_arg]
+                      view_name = view_arg
+                    end
+                  end
+                end
+
+                if !class_name.empty?
+                  # Extract methods list
+                  methods = [] of ::String
+                  methods_match = args_str.match /methods=\[(.*?)\]/
+                  if methods_match
+                    methods_str = methods_match[1]
+                    methods_str.scan(/['"]([A-Z]+)['"]/) do |method_match|
+                      methods << method_match[1]
                     end
                   end
 
-                  if !class_name.empty?
-                    # Extract methods list
-                    methods = [] of ::String
-                    methods_match = line.match /methods\s*=\s*\[(.*?)\]/
-                    if methods_match
-                      methods_str = methods_match[1]
-                      methods_str.scan(/['"]([A-Z]+)['"]/) do |method_match|
-                        methods << method_match[1]
-                      end
-                    end
-
-                    # Store class view registration
-                    class_view_info = Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String)).new(
-                      line_index, path, route_path, class_name, view_name, methods
-                    )
-                    @class_views[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String))
-                    @class_views[router_name] << class_view_info
-                  end
+                  # Store class view registration
+                  class_view_info = Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String)).new(
+                    line_index, path, route_path, class_name, view_name, methods
+                  )
+                  @class_views[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String))
+                  @class_views[router_name] << class_view_info
                 end
               end
             end
