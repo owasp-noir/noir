@@ -1,8 +1,14 @@
 require "../../../models/analyzer"
 require "../../../miniparsers/js_route_extractor"
+require "../../../utils/url_path"
+require "../../../utils/js_literal_scanner"
+require "./express_constants"
+require "./express/router_mount_scanner"
 
 module Analyzer::Javascript
   class Express < Analyzer
+    include ExpressConstants
+
     # Constants for method chaining detection
     MAX_CHAIN_METHOD_DISTANCE = 1000
     MAX_CHAIN_SEARCH_DISTANCE = 5000
@@ -14,6 +20,9 @@ module Analyzer::Javascript
       static_dirs = [] of Hash(String, String)
 
       begin
+        # Phase 1: Pre-scan to build router mount map
+        scan_for_router_mounts
+
         populate_channel_with_files(channel)
 
         WaitGroup.wait do |wg|
@@ -185,14 +194,7 @@ module Analyzer::Javascript
                 # Apply nested router prefix if applicable
                 if !current_router.empty? && nested_routers.has_key?(current_router) && !nested_routers[current_router].empty?
                   router_prefix = nested_routers[current_router]
-                  # Handle path joining properly
-                  if expanded_endpoint.url.starts_with?("/") && router_prefix.ends_with?("/")
-                    expanded_endpoint.url = "#{router_prefix[0..-2]}#{expanded_endpoint.url}"
-                  elsif !expanded_endpoint.url.starts_with?("/") && !router_prefix.ends_with?("/")
-                    expanded_endpoint.url = "#{router_prefix}/#{expanded_endpoint.url}"
-                  else
-                    expanded_endpoint.url = "#{router_prefix}#{expanded_endpoint.url}"
-                  end
+                  expanded_endpoint.url = Noir::URLPath.join(router_prefix, expanded_endpoint.url)
                   # If we have a router base path and the endpoint doesn't already include it
                 elsif !current_router_base.empty? && !expanded_endpoint.url.starts_with?("/")
                   expanded_endpoint.url = "#{current_router_base}/#{expanded_endpoint.url}"
@@ -208,14 +210,7 @@ module Analyzer::Javascript
               # Apply nested router prefix if applicable
               if !current_router.empty? && nested_routers.has_key?(current_router) && !nested_routers[current_router].empty?
                 router_prefix = nested_routers[current_router]
-                # Handle path joining properly
-                if endpoint.url.starts_with?("/") && router_prefix.ends_with?("/")
-                  endpoint.url = "#{router_prefix[0..-2]}#{endpoint.url}"
-                elsif !endpoint.url.starts_with?("/") && !router_prefix.ends_with?("/")
-                  endpoint.url = "#{router_prefix}/#{endpoint.url}"
-                else
-                  endpoint.url = "#{router_prefix}#{endpoint.url}"
-                end
+                endpoint.url = Noir::URLPath.join(router_prefix, endpoint.url)
                 # If we have a router base path and the endpoint doesn't already include it
               elsif !current_router_base.empty? && !endpoint.url.starts_with?("/")
                 endpoint.url = "#{current_router_base}/#{endpoint.url}"
@@ -268,13 +263,7 @@ module Analyzer::Javascript
                 method_upper = http_method.upcase
 
                 # Combine the prefix with the path
-                full_path = if route_path.starts_with?("/") && prefix.ends_with?("/")
-                              "#{prefix[0..-2]}#{route_path}"
-                            elsif !route_path.starts_with?("/") && !prefix.ends_with?("/")
-                              "#{prefix}/#{route_path}"
-                            else
-                              "#{prefix}#{route_path}"
-                            end
+                full_path = Noir::URLPath.join(prefix, route_path)
 
                 # Create the endpoint with prefixed path
                 endpoint = Endpoint.new(full_path, method_upper)
@@ -376,13 +365,7 @@ module Analyzer::Javascript
             parent_prefix = router_prefixes[parent]
 
             # Concatenate prefixes properly
-            if parent_prefix.ends_with?("/") && full_prefix.starts_with?("/")
-              full_prefix = "#{parent_prefix[0..-2]}#{full_prefix}"
-            elsif !parent_prefix.ends_with?("/") && !full_prefix.starts_with?("/")
-              full_prefix = "#{parent_prefix}/#{full_prefix}"
-            else
-              full_prefix = "#{parent_prefix}#{full_prefix}"
-            end
+            full_prefix = Noir::URLPath.join(parent_prefix, full_prefix)
           end
 
           current_router = parent
@@ -410,13 +393,7 @@ module Analyzer::Javascript
               method_upper = method.upcase
 
               # Combine the prefix with the path
-              full_path = if route_path.starts_with?("/") && router_prefix.ends_with?("/")
-                            "#{router_prefix[0..-2]}#{route_path}"
-                          elsif !route_path.starts_with?("/") && !router_prefix.ends_with?("/")
-                            "#{router_prefix}/#{route_path}"
-                          else
-                            "#{router_prefix}#{route_path}"
-                          end
+              full_path = Noir::URLPath.join(router_prefix, route_path)
 
               # Create endpoint and add to results
               endpoint = Endpoint.new(full_path, method_upper)
@@ -460,13 +437,7 @@ module Analyzer::Javascript
             method_upper = method.upcase
 
             # Combine the prefix with the path
-            full_path = if route_path.starts_with?("/") && prefix.ends_with?("/")
-                          "#{prefix[0..-2]}#{route_path}"
-                        elsif !route_path.starts_with?("/") && !prefix.ends_with?("/")
-                          "#{prefix}/#{route_path}"
-                        else
-                          "#{prefix}#{route_path}"
-                        end
+            full_path = Noir::URLPath.join(prefix, route_path)
 
             # Create endpoint and add to results
             endpoint = Endpoint.new(full_path, method_upper)
@@ -567,7 +538,7 @@ module Analyzer::Javascript
       end
 
       # Extract query parameters from destructuring
-      handler_body.scan(/(?:const|let|var)?\s*\{\s*([^}]+)\s*\}\s*=\\s*req\.query/) do |m|
+      handler_body.scan(/(?:const|let|var)?\s*\{\s*([^}]+)\s*\}\s*=\s*req\.query/) do |m|
         if m.size > 0
           param_list = m[1].split(",").map(&.strip)
           param_list.each do |param_var|
@@ -586,7 +557,7 @@ module Analyzer::Javascript
       end
 
       # Extract body parameters from destructuring
-      handler_body.scan(/(?:const|let|var)?\s*\{\s*([^}]+)\s*\}\s*=\\s*req\.body/) do |m|
+      handler_body.scan(/(?:const|let|var)?\s*\{\s*([^}]+)\s*\}\s*=\s*req\.body/) do |m|
         if m.size > 0
           param_list = m[1].split(",").map(&.strip)
           param_list.each do |param_var|
@@ -689,45 +660,30 @@ module Analyzer::Javascript
     end
 
     def line_to_endpoint(line : String, router_detected : Bool = false) : Endpoint
-      # Support case-insensitive method patterns - matching get, Get, GET, post, Post, POST, etc.
-      # Define explicit patterns for all case variations
-      http_methods = {
-        "get"     => /(?:get|Get|GET)/,
-        "post"    => /(?:post|Post|POST)/,
-        "put"     => /(?:put|Put|PUT)/,
-        "delete"  => /(?:delete|Delete|DELETE|del|Del|DEL)/,
-        "patch"   => /(?:patch|Patch|PATCH)/,
-        "options" => /(?:options|Options|OPTIONS)/,
-        "head"    => /(?:head|Head|HEAD)/,
-        "all"     => /(?:all|All|ALL)/,
-      }
+      # Match both app.method and router.method patterns
+      # Support case variations and catch v1Router, apiRouter, and any *Router patterns
+      combined_pattern = /\b(?:app|router|route|r|Router|v\d+Router|apiRouter|[\w]+Router)\s*\.\s*(?:get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)\s*\(\s*['"]([^'"]+)['"]/
 
-      http_methods.each do |_, _|
-        # Match both app.method and router.method patterns
-        # Support case variations and catch v1Router, apiRouter, and any *Router patterns
-        combined_pattern = /\b(?:app|router|route|r|Router|v\d+Router|apiRouter|[\w]+Router)\s*\.\s*(?:get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)\s*\(\s*['"]([^'"]+)['"]/
-
-        if line =~ combined_pattern
-          # Extract the actual method used
-          method_match = line.match(/\.(get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)\s*\(/)
-          if method_match
-            actual_method = method_match[1].downcase
-            actual_method = "delete" if actual_method == "del"
-            path = $1
-            return Endpoint.new(path, actual_method.upcase)
-          end
+      if line =~ combined_pattern
+        # Extract the actual method used
+        method_match = line.match(/\.(get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)\s*\(/)
+        if method_match
+          actual_method = method_match[1].downcase
+          actual_method = "delete" if actual_method == "del"
+          path = $1
+          return Endpoint.new(path, actual_method.upcase)
         end
+      end
 
-        # Also try simple pattern match
-        simple_pattern = /\.\s*(?:get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)\s*\(\s*['"]([^'"]+)['"]/
-        if line =~ simple_pattern
-          method_match = line.match(/\.(get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)\s*\(/)
-          if method_match
-            actual_method = method_match[1].downcase
-            actual_method = "delete" if actual_method == "del"
-            path = $1
-            return Endpoint.new(path, actual_method.upcase)
-          end
+      # Also try simple pattern match (without router name constraint)
+      simple_pattern = /\.\s*(?:get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)\s*\(\s*['"]([^'"]+)['"]/
+      if line =~ simple_pattern
+        method_match = line.match(/\.(get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)\s*\(/)
+        if method_match
+          actual_method = method_match[1].downcase
+          actual_method = "delete" if actual_method == "del"
+          path = $1
+          return Endpoint.new(path, actual_method.upcase)
         end
       end
 
@@ -905,6 +861,13 @@ module Analyzer::Javascript
       Noir::JSRouteExtractor.extract_body_params(handler_body, endpoint)
       Noir::JSRouteExtractor.extract_header_params(handler_body, endpoint)
       Noir::JSRouteExtractor.extract_cookie_params(handler_body, endpoint)
+    end
+
+    # Scan for router mount patterns and store them in CodeLocator
+    # This enables cross-file router prefix tracking
+    private def scan_for_router_mounts
+      scanner = RouterMountScanner.new(all_files, @base_paths, base_path, logger)
+      scanner.scan
     end
   end
 end
