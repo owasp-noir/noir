@@ -83,8 +83,14 @@ class PythonLexer < MiniLexer
         match_comment
       when '0'..'9'
         match_number
-      when '"', '\'', "f"
+      when '"', '\''
         match_string
+      when 'f'
+        if @position + 1 < @input.size && (@input[@position + 1] == '"' || @input[@position + 1] == '\'')
+          match_string
+        else
+          match_other
+        end
       when '.', ',', '(', ')', '{', '}', '[', ']', ';', '?', ':'
         match_punctuation
       when '+', '-', '*', '/', '%', '&', '|', '^', '!', '=', '<', '>', '~'
@@ -178,9 +184,9 @@ class PythonLexer < MiniLexer
     elsif c == '\'' && @input[@position...@position + 3] == "'''"
       match_multiline_string
     elsif c == 'f' && (@input[@position + 1] == '"' || @input[@position + 1] == '\'')
+      self << Tuple.new(:FSTRING, "f")
       @position += 1
       match_string
-      self << Tuple.new(:FSTRING, @input[@position])
     else
       start_pos = @position
       @position += 1

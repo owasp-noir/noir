@@ -1,3 +1,4 @@
+require "spec"
 require "../../../src/minilexers/golang"
 
 describe "initialize" do
