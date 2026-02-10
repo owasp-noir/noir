@@ -50,7 +50,7 @@ module Analyzer::Python
             next unless lines.any?(&.includes?("flask"))
             api_instances = Hash(::String, ::String).new
             path_api_instances[path] = api_instances
-            view_assignments = Hash(::String, ::String).new  # Maps view_var -> ClassName (per-file scope)
+            view_assignments = Hash(::String, ::String).new # Maps view_var -> ClassName (per-file scope)
 
             lines.each_with_index do |line, line_index|
               line = line.gsub(" ", "") # remove spaces for easier regex matching
@@ -396,7 +396,7 @@ module Analyzer::Python
       # Process class-based views from add_url_rule() registrations
       @class_views.each do |router_name, class_view_list|
         class_view_list.each do |class_view_info|
-          line_index, path, route_path, class_name, view_name, methods = class_view_info
+          _, path, route_path, class_name, _, methods = class_view_info
 
           api_instances = path_api_instances[path]
           prefix = api_instances.has_key?(router_name) ? api_instances[router_name] : ""
@@ -434,8 +434,8 @@ module Analyzer::Python
               infer_match = class_lines[i].match /(\s*)(async\s+)?def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/
               if infer_match && infer_match[1].size > indent
                 method_name = infer_match[3]
-                http_method = HTTP_METHODS.find { |m| m.downcase == method_name.downcase }
-                methods << http_method.upcase if http_method
+                inferred_method = HTTP_METHODS.find { |m| m.downcase == method_name.downcase }
+                methods << inferred_method.upcase if inferred_method
               end
               # Stop if we hit another class at same or higher level
               class_match = class_lines[i].match /(\s*)class\s+/
