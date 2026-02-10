@@ -127,6 +127,12 @@ bp.add_url_rule(view_func=item_view, rule='/items-kwarg', methods=['GET', 'POST'
 # add_url_rule with positional view_func (3rd arg, no keyword)
 bp.add_url_rule('/items-positional', 'items_pos', item_view, methods=['GET', 'POST'])
 
+# add_url_rule with view_func as 2nd positional arg (no endpoint name)
+bp.add_url_rule('/items-no-endpoint', item_view, methods=['GET', 'POST'])
+
+# add_url_rule with tuple methods syntax
+bp.add_url_rule('/items-tuple', view_func=item_view, methods=('GET', 'POST'))
+
 # Register blueprint
 app.register_blueprint(bp)
 

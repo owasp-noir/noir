@@ -242,7 +242,7 @@ module Analyzer::Python
                 #             add_url_rule('/path', 'endpoint', Class.as_view('name'))
                 # After space-stripping: '/path','endpoint',view_var
                 if class_name.empty?
-                  # Split positional args (before any keyword arg)
+                  # Split positional args respecting nested parentheses
                   positional_parts = [] of ::String
                   remaining = args_str
                   while !remaining.empty?
@@ -256,20 +256,41 @@ module Analyzer::Python
                     end
                     # Stop at keyword arguments
                     break if remaining.match /^#{PYTHON_VAR_NAME_REGEX}=/
-                    # Match an identifier or expression until comma/closing paren
-                    expr_match = remaining.match /^([^,\)]+)/
-                    if expr_match
-                      positional_parts << expr_match[1]
-                      remaining = remaining[expr_match[1].size..]
+                    # Match an expression, tracking paren depth to handle nested calls like .as_view('name')
+                    paren_depth = 0
+                    end_idx = 0
+                    while end_idx < remaining.size
+                      ch = remaining[end_idx]
+                      if ch == '('
+                        paren_depth += 1
+                      elsif ch == ')'
+                        break if paren_depth == 0
+                        paren_depth -= 1
+                      elsif ch == ',' && paren_depth == 0
+                        break
+                      end
+                      end_idx += 1
+                    end
+                    if end_idx > 0
+                      positional_parts << remaining[0...end_idx]
+                      remaining = remaining[end_idx..]
                       remaining = remaining.lstrip(',')
                       next
                     end
                     break
                   end
 
-                  # 3rd positional arg (index 2) is view_func
-                  if positional_parts.size >= 3
-                    view_arg = positional_parts[2]
+                  # Flask signature: add_url_rule(rule, endpoint=None, view_func=None, ...)
+                  # 2nd or 3rd positional arg can be view_func
+                  view_arg = if positional_parts.size >= 3
+                               positional_parts[2]
+                             elsif positional_parts.size == 2
+                               positional_parts[1]
+                             else
+                               ""
+                             end
+
+                  unless view_arg.empty?
                     as_view_match = view_arg.match /(#{PYTHON_VAR_NAME_REGEX})\.as_view\([rf]?['"]([^'"]*)['"]\)/
                     if as_view_match
                       class_name = as_view_match[1]
@@ -284,7 +305,7 @@ module Analyzer::Python
                 if !class_name.empty?
                   # Extract methods list
                   methods = [] of ::String
-                  methods_match = args_str.match /methods=\[(.*?)\]/
+                  methods_match = args_str.match /methods=[\[\(](.*?)[\]\)]/
                   if methods_match
                     methods_str = methods_match[1]
                     methods_str.scan(/['"]([A-Z]+)['"]/) do |method_match|
@@ -545,13 +566,12 @@ module Analyzer::Python
       # Parse declared methods from route decorator
       methods_match = extra_params.match /methods\s*=\s*(.*)/
       if !methods_match.nil? && methods_match.size == 2
-        declare_methods = methods_match[1].downcase
-        HTTP_METHODS.each do |method_name|
-          if declare_methods.includes? method_name
-            methods << method_name.upcase
-          end
+        methods_match[1].scan(/['"]([^'"]*)['"']/) do |m|
+          method_name = m[1].upcase
+          methods << method_name if HTTP_METHODS.any? { |hm| hm.upcase == method_name }
         end
-      else
+      end
+      if methods.empty?
         methods << method.upcase
       end
 

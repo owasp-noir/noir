@@ -41,6 +41,14 @@ expected_endpoints = [
   # add_url_rule with positional view_func (3rd arg)
   Endpoint.new("/api/items-positional", "GET", [Param.new("page", "", "query")]),
   Endpoint.new("/api/items-positional", "POST", [Param.new("name", "", "json")]),
+
+  # add_url_rule without endpoint name (view_func as keyword)
+  Endpoint.new("/api/items-no-endpoint", "GET", [Param.new("page", "", "query")]),
+  Endpoint.new("/api/items-no-endpoint", "POST", [Param.new("name", "", "json")]),
+
+  # add_url_rule with tuple methods syntax
+  Endpoint.new("/api/items-tuple", "GET", [Param.new("page", "", "query")]),
+  Endpoint.new("/api/items-tuple", "POST", [Param.new("name", "", "json")]),
 ]
 
 FunctionalTester.new("fixtures/python/flask_advanced/", {
