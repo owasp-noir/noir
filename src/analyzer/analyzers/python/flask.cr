@@ -29,6 +29,7 @@ module Analyzer::Python
     @file_content_cache = Hash(::String, ::String).new
     @parsers = Hash(::String, PythonParser).new
     @routes = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String))).new
+    @class_views = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String)))).new
 
     def analyze
       flask_instances = Hash(::String, ::String).new
@@ -49,15 +50,17 @@ module Analyzer::Python
             next unless lines.any?(&.includes?("flask"))
             api_instances = Hash(::String, ::String).new
             path_api_instances[path] = api_instances
+            view_assignments = Hash(::String, ::String).new # Maps view_var -> ClassName (per-file scope)
 
-            lines.each_with_index do |line, line_index|
-              line = line.gsub(" ", "") # remove spaces for easier regex matching
+            lines.each_with_index do |original_line, line_index|
+              line = original_line.gsub(" ", "") # remove spaces for easier regex matching
 
               # Identify Flask instance assignments
               flask_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:flask\.)?Flask\(/
               if flask_match
                 flask_instance_name = flask_match[1]
                 api_instances[flask_instance_name] ||= ""
+                flask_instances[flask_instance_name] ||= ""
               end
 
               # Identify Blueprint instance assignments
@@ -65,8 +68,8 @@ module Analyzer::Python
               if blueprint_match
                 prefix = ""
                 blueprint_instance_name = blueprint_match[1]
-                param_codes = line.split("Blueprint", 2)[1]
-                prefix_match = param_codes.match /url_prefix=[rf]?['"]([^'"]*)['"]/
+                param_codes = original_line.split("Blueprint", 2)[1]
+                prefix_match = param_codes.match /url_prefix\s*=\s*[rf]?['"]([^'"]*)['"]/
                 if !prefix_match.nil? && prefix_match.size == 2
                   prefix = prefix_match[1]
                 end
@@ -122,7 +125,9 @@ module Analyzer::Python
               blueprint_prefixes.each do |blueprint_name, blueprint_prefix|
                 view_registration_match = line.match /#{blueprint_name},routes=(.*)\)/
                 if view_registration_match
-                  route_paths = view_registration_match[1]
+                  # Re-extract route paths from original line to preserve spaces in paths
+                  original_registration_match = original_line.match /#{blueprint_name}\s*,\s*routes\s*=\s*(.*)\)/
+                  route_paths = original_registration_match ? original_registration_match[1] : view_registration_match[1]
                   route_paths.scan /['"]([^'"]*)['"]/ do |path_str_match|
                     if !path_str_match.nil? && path_str_match.size == 2
                       route_path = path_str_match[1]
@@ -139,7 +144,7 @@ module Analyzer::Python
               # Identify Blueprint registration
               register_blueprint_match = line.match /(#{PYTHON_VAR_NAME_REGEX})\.register_blueprint\((#{DOT_NATION})/
               if register_blueprint_match
-                url_prefix_match = line.match /url_prefix=[rf]?['"]([^'"]*)['"]/
+                url_prefix_match = original_line.match /url_prefix\s*=\s*[rf]?['"]([^'"]*)['"]/
                 if url_prefix_match
                   blueprint_name = register_blueprint_match[2]
                   parser = get_parser(path)
@@ -157,11 +162,163 @@ module Analyzer::Python
               line.scan(/@(#{PYTHON_VAR_NAME_REGEX})\.route\([rf]?['"]([^'"]*)['"](.*)/) do |_match|
                 if _match.size > 0
                   router_name = _match[1]
-                  route_path = _match[2]
                   extra_params = _match[3]
+                  # Extract route path from original line to preserve spaces in paths
+                  original_route_match = original_line.match /@#{_match[1]}\.route\(\s*[rf]?['"]([^'"]*)['"]/
+                  route_path = original_route_match ? original_route_match[1] : _match[2]
                   router_info = Tuple(Int32, ::String, ::String, ::String).new(line_index, path, route_path, extra_params)
                   @routes[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String)
                   @routes[router_name] << router_info
+                end
+              end
+
+              # Also detect method-specific decorators like @app.get, @app.post, etc.
+              HTTP_METHODS.each do |method|
+                line.scan(/@(#{PYTHON_VAR_NAME_REGEX})\.#{method.downcase}\([rf]?['"]([^'"]*)['"](.*)/) do |_match|
+                  if _match.size > 0
+                    router_name = _match[1]
+                    extra_params = "methods=['#{method.upcase}']"
+                    # Extract route path from original line to preserve spaces in paths
+                    original_route_match = original_line.match /@#{_match[1]}\.#{method.downcase}\(\s*[rf]?['"]([^'"]*)['"]/
+                    route_path = original_route_match ? original_route_match[1] : _match[2]
+                    router_info = Tuple(Int32, ::String, ::String, ::String).new(line_index, path, route_path, extra_params)
+                    @routes[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String)
+                    @routes[router_name] << router_info
+                  end
+                end
+              end
+
+              # Identify view assignments: view_var = ClassName.as_view('name')
+              # Note: spaces are already removed from line at this point
+              view_assign_match = line.match /(#{PYTHON_VAR_NAME_REGEX})=(#{PYTHON_VAR_NAME_REGEX})\.as_view\(/
+              if view_assign_match
+                view_var = view_assign_match[1]
+                class_name = view_assign_match[2]
+                view_assignments[view_var] = class_name
+              end
+
+              # Identify add_url_rule() registrations for class-based views
+              # Match the call generically, then extract rule/view_func from any argument position
+              line.scan(/(#{PYTHON_VAR_NAME_REGEX})\.add_url_rule\((.+)\)/) do |_match|
+                next if _match.size == 0
+                router_name = _match[1]
+                args_str = _match[2]
+
+                # Extract route path from original line to preserve spaces in paths
+                # Try rule= keyword first, then first positional string arg
+                route_path = ""
+                original_args_match = original_line.match /\.add_url_rule\((.+)\)/
+                original_args = original_args_match ? original_args_match[1] : args_str
+                rule_match = original_args.match /rule\s*=\s*[rf]?['"]([^'"]*)['"]/
+                if rule_match
+                  route_path = rule_match[1]
+                else
+                  first_str_match = original_args.match /^\s*[rf]?['"]([^'"]*)['"]/
+                  route_path = first_str_match[1] if first_str_match
+                end
+                next if route_path.empty?
+
+                class_name = ""
+                view_name = ""
+
+                # Extract view_func: try keyword form, then positional form
+                # Keyword: view_func=ClassName.as_view('name') or view_func=view_var
+                view_func_match = args_str.match /view_func=(#{PYTHON_VAR_NAME_REGEX})\.as_view\([rf]?['"]([^'"]*)['"]\)/
+                if view_func_match
+                  class_name = view_func_match[1]
+                  view_name = view_func_match[2]
+                else
+                  view_var_match = args_str.match /view_func=(#{PYTHON_VAR_NAME_REGEX})[,\)]/
+                  if view_var_match
+                    view_var = view_var_match[1]
+                    if view_assignments.has_key?(view_var)
+                      class_name = view_assignments[view_var]
+                      view_name = view_var
+                    end
+                  end
+                end
+
+                # Positional: add_url_rule('/path', 'endpoint', view_var) or
+                #             add_url_rule('/path', 'endpoint', Class.as_view('name'))
+                # After space-stripping: '/path','endpoint',view_var
+                if class_name.empty?
+                  # Split positional args respecting nested parentheses
+                  positional_parts = [] of ::String
+                  remaining = args_str
+                  while !remaining.empty?
+                    # Match a quoted string argument
+                    str_match = remaining.match /^[rf]?['"][^'"]*['"]/
+                    if str_match
+                      positional_parts << str_match[0]
+                      remaining = remaining[str_match[0].size..]
+                      remaining = remaining.lstrip(',')
+                      next
+                    end
+                    # Stop at keyword arguments
+                    break if remaining.match /^#{PYTHON_VAR_NAME_REGEX}=/
+                    # Match an expression, tracking paren depth to handle nested calls like .as_view('name')
+                    paren_depth = 0
+                    end_idx = 0
+                    while end_idx < remaining.size
+                      ch = remaining[end_idx]
+                      if ch == '('
+                        paren_depth += 1
+                      elsif ch == ')'
+                        break if paren_depth == 0
+                        paren_depth -= 1
+                      elsif ch == ',' && paren_depth == 0
+                        break
+                      end
+                      end_idx += 1
+                    end
+                    if end_idx > 0
+                      positional_parts << remaining[0...end_idx]
+                      remaining = remaining[end_idx..]
+                      remaining = remaining.lstrip(',')
+                      next
+                    end
+                    break
+                  end
+
+                  # Flask signature: add_url_rule(rule, endpoint=None, view_func=None, ...)
+                  # 2nd or 3rd positional arg can be view_func
+                  view_arg = if positional_parts.size >= 3
+                               positional_parts[2]
+                             elsif positional_parts.size == 2
+                               positional_parts[1]
+                             else
+                               ""
+                             end
+
+                  unless view_arg.empty?
+                    as_view_match = view_arg.match /(#{PYTHON_VAR_NAME_REGEX})\.as_view\([rf]?['"]([^'"]*)['"]\)/
+                    if as_view_match
+                      class_name = as_view_match[1]
+                      view_name = as_view_match[2]
+                    elsif view_assignments.has_key?(view_arg)
+                      class_name = view_assignments[view_arg]
+                      view_name = view_arg
+                    end
+                  end
+                end
+
+                if !class_name.empty?
+                  # Extract methods list
+                  methods = [] of ::String
+                  methods_match = args_str.match /methods=[\[\(](.*?)[\]\)]/
+                  if methods_match
+                    methods_str = methods_match[1]
+                    methods_str.scan(/['"]([A-Z]+)['"]/) do |method_match|
+                      methods << method_match[1]
+                    end
+                  end
+
+                  # Store class view registration
+                  class_view_info = Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String)).new(
+                    line_index, path, route_path, class_name, view_name, methods
+                  )
+                  @class_views[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String))
+                  @class_views[router_name] << class_view_info
                 end
               end
             end
@@ -196,10 +353,10 @@ module Analyzer::Python
           end
 
           is_class_router = false
-          indent = lines[class_def_index].index("def") || 0
-          unless lines[class_def_index].lstrip.starts_with?("def ")
+          indent = lines[class_def_index].size - lines[class_def_index].lstrip.size
+          unless lines[class_def_index].lstrip.starts_with?("def ") || lines[class_def_index].lstrip.starts_with?("async def ")
             if lines[class_def_index].lstrip.starts_with?("class ")
-              indent = lines[class_def_index].index("class") || 0
+              indent = lines[class_def_index].size - lines[class_def_index].lstrip.size
               is_class_router = true
             else
               next # Skip if not a function and not a class
@@ -209,13 +366,13 @@ module Analyzer::Python
           i = class_def_index
           function_name_locations = Array(Tuple(Int32, ::String)).new
           while i < lines.size
-            def_match = lines[i].match /(\s*)def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/
+            def_match = lines[i].match /(\s*)(async\s+)?def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/
             if def_match
               # Stop when the indentation is less than or equal to the class indentation
               break if is_class_router && def_match[1].size <= indent
 
               # Stop when the first function is found
-              function_name_locations << Tuple.new(i, def_match[2])
+              function_name_locations << Tuple.new(i, def_match[3])
               break unless is_class_router
             end
 
@@ -266,6 +423,110 @@ module Analyzer::Python
         end
       end
 
+      # Process class-based views from add_url_rule() registrations
+      @class_views.each do |router_name, class_view_list|
+        class_view_list.each do |class_view_info|
+          _, path, route_path, class_name, _, methods = class_view_info
+
+          api_instances = path_api_instances[path]
+          prefix = api_instances.has_key?(router_name) ? api_instances[router_name] : ""
+
+          # Try to use parser to find class definition, otherwise assume same file
+          class_file = path
+          parser = get_parser(path)
+          if parser.@global_variables.has_key?(class_name)
+            gv = parser.@global_variables[class_name]
+            class_file = gv.path
+          end
+
+          class_lines = fetch_file_content(class_file).lines
+
+          # Find class definition line
+          class_def_index = -1
+          class_lines.each_with_index do |line, idx|
+            stripped = line.lstrip
+            class_prefix = "class #{class_name}"
+            if stripped.starts_with?(class_prefix) &&
+               (stripped.size == class_prefix.size || stripped[class_prefix.size].in?('(', ':', ' ', '\t'))
+              class_def_index = idx
+              break
+            end
+          end
+
+          next if class_def_index == -1
+
+          indent = class_lines[class_def_index].size - class_lines[class_def_index].lstrip.size
+
+          # If no explicit methods, infer from class method definitions
+          if methods.empty?
+            i = class_def_index + 1
+            while i < class_lines.size
+              infer_match = class_lines[i].match /(\s*)(async\s+)?def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/
+              if infer_match && infer_match[1].size > indent
+                method_name = infer_match[3]
+                inferred_method = HTTP_METHODS.find { |m| m.downcase == method_name.downcase }
+                methods << inferred_method.upcase if inferred_method
+              end
+              # Stop if we hit another class at same or higher level
+              class_match = class_lines[i].match /(\s*)class\s+/
+              break if class_match && class_match[1].size <= indent && i != class_def_index
+              i += 1
+            end
+            # Default to GET if no HTTP methods inferred (matches Flask behavior)
+            methods << "GET" if methods.empty?
+          end
+
+          # Process each declared method
+          methods.uniq.each do |http_method|
+            method_name = http_method.downcase
+
+            # Find method definition in class
+            method_def_index = -1
+            i = class_def_index + 1
+
+            while i < class_lines.size
+              method_match = class_lines[i].match /(\s*)(async\s+)?def\s+#{method_name}\s*\(/
+              if method_match
+                # Check it's a method of this class (correct indentation)
+                method_indent = method_match[1].size
+                if method_indent > indent
+                  method_def_index = i
+                  break
+                end
+              end
+
+              # Stop if we hit another class at same or higher level
+              class_match = class_lines[i].match /(\s*)class\s+/
+              if class_match && class_match[1].size <= indent
+                break
+              end
+
+              i += 1
+            end
+
+            next if method_def_index == -1
+
+            # Parse method code block
+            codeblock = parse_code_block(class_lines[method_def_index..])
+            next if codeblock.nil?
+            codeblock_lines = codeblock.split("\n")
+
+            # Generate endpoint with parameters
+            route_url = "#{prefix}#{route_path}"
+            route_url = "/#{route_url}" unless route_url.starts_with?("/")
+            route_url = route_url.gsub("//", "/")
+
+            # Extract parameters from method body
+            suspicious_params = extract_request_params(codeblock_lines)
+            params = get_filtered_params(http_method, suspicious_params)
+            details = Details.new(PathInfo.new(class_file, method_def_index + 1))
+            endpoint = Endpoint.new(route_url, http_method, params)
+            endpoint.details = details
+            result << endpoint
+          end
+        end
+      end
+
       Fiber.yield
       result
     end
@@ -297,7 +558,6 @@ module Analyzer::Python
     def get_endpoints(method : ::String, route_path : ::String, extra_params : ::String, codeblock_lines : Array(::String), prefix : ::String)
       endpoints = [] of Endpoint
       methods = [] of ::String
-      suspicious_params = [] of Param
 
       if !prefix.ends_with?("/") && !route_path.starts_with?("/")
         prefix = "#{prefix}/"
@@ -306,31 +566,47 @@ module Analyzer::Python
       # Parse declared methods from route decorator
       methods_match = extra_params.match /methods\s*=\s*(.*)/
       if !methods_match.nil? && methods_match.size == 2
-        declare_methods = methods_match[1].downcase
-        HTTP_METHODS.each do |method_name|
-          if declare_methods.includes? method_name
-            methods << method_name.upcase
-          end
+        methods_match[1].scan(/['"]([^'"]*)['"']/) do |m|
+          method_name = m[1].upcase
+          methods << method_name if HTTP_METHODS.any? { |hm| hm.upcase == method_name }
         end
-      else
+      end
+      if methods.empty?
         methods << method.upcase
       end
 
+      suspicious_params = extract_request_params(codeblock_lines)
+
+      methods.uniq.each do |http_method_name|
+        route_url = "#{prefix}#{route_path}"
+        route_url = "/#{route_url}" unless route_url.starts_with?("/")
+
+        params = get_filtered_params(http_method_name, suspicious_params)
+        endpoints << Endpoint.new(route_url.gsub("//", "/"), http_method_name, params)
+      end
+
+      endpoints
+    end
+
+    # Extracts request parameters from a code block by detecting JSON variable
+    # assignments and scanning for request.field access patterns.
+    private def extract_request_params(codeblock_lines : Array(::String)) : Array(Param)
+      params = [] of Param
       json_variable_names = [] of ::String
-      # Parse JSON variable names
+
+      # Parse JSON variable names (e.g. data = json.loads(request.data), data = request.json)
       codeblock_lines.each do |codeblock_line|
         match = codeblock_line.match /([a-zA-Z_][a-zA-Z0-9_]*).*=\s*json\.loads\(request\.data/
         if !match.nil? && match.size == 2 && !json_variable_names.includes?(match[1])
           json_variable_names << match[1]
         end
-
-        match = codeblock_line.match /([a-zA-Z_][a-zA-Z0-9_]*).*=\s*request\.json/
+        match = codeblock_line.match /([a-zA-Z_][a-zA-Z0-9_]*).*=\s*request\.(?:get_json\([^)]*\)|json)/
         if !match.nil? && match.size == 2 && !json_variable_names.includes?(match[1])
           json_variable_names << match[1]
         end
       end
 
-      # Parse declared parameters
+      # Parse declared parameters from request field access patterns
       codeblock_lines.each do |codeblock_line|
         REQUEST_PARAM_FIELDS.each do |field_name, tuple|
           _, noir_param_type = tuple
@@ -345,31 +621,19 @@ module Analyzer::Python
               if matches.size == 0
                 matches = codeblock_line.scan(/[^a-zA-Z_]#{json_variable_name}\.get\([rf]?['"]([^'"]*)['"]/)
               end
-
-              if matches.size > 0
-                break
-              end
+              break if matches.size > 0
             end
           end
 
           matches.each do |parameter_match|
             next if parameter_match.size != 2
             param_name = parameter_match[1]
-
-            suspicious_params << Param.new(param_name, "", noir_param_type)
+            params << Param.new(param_name, "", noir_param_type)
           end
         end
       end
 
-      methods.uniq.each do |http_method_name|
-        route_url = "#{prefix}#{route_path}"
-        route_url = "/#{route_url}" unless route_url.starts_with?("/")
-
-        params = get_filtered_params(http_method_name, suspicious_params)
-        endpoints << Endpoint.new(route_url.gsub("//", "/"), http_method_name, params)
-      end
-
-      endpoints
+      params
     end
 
     # Filters the parameters based on the HTTP method
@@ -413,6 +677,11 @@ module Analyzer::Python
 
       # Iterate through the lines until the decorator ends
       while (direction == :down && codeline_index < lines.size) || (direction == :up && codeline_index >= 0)
+        # Skip empty/blank lines
+        if lines[codeline_index].strip.empty?
+          codeline_index += (direction == :down ? 1 : -1)
+          next
+        end
         decorator_match = lines[codeline_index].match /\s*@/
         break if decorator_match.nil?
 
