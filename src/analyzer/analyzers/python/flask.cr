@@ -52,8 +52,8 @@ module Analyzer::Python
             path_api_instances[path] = api_instances
             view_assignments = Hash(::String, ::String).new # Maps view_var -> ClassName (per-file scope)
 
-            lines.each_with_index do |line, line_index|
-              line = line.gsub(" ", "") # remove spaces for easier regex matching
+            lines.each_with_index do |original_line, line_index|
+              line = original_line.gsub(" ", "") # remove spaces for easier regex matching
 
               # Identify Flask instance assignments
               flask_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:flask\.)?Flask\(/
@@ -68,8 +68,8 @@ module Analyzer::Python
               if blueprint_match
                 prefix = ""
                 blueprint_instance_name = blueprint_match[1]
-                param_codes = line.split("Blueprint", 2)[1]
-                prefix_match = param_codes.match /url_prefix=[rf]?['"]([^'"]*)['"]/
+                param_codes = original_line.split("Blueprint", 2)[1]
+                prefix_match = param_codes.match /url_prefix\s*=\s*[rf]?['"]([^'"]*)['"]/
                 if !prefix_match.nil? && prefix_match.size == 2
                   prefix = prefix_match[1]
                 end
@@ -125,7 +125,9 @@ module Analyzer::Python
               blueprint_prefixes.each do |blueprint_name, blueprint_prefix|
                 view_registration_match = line.match /#{blueprint_name},routes=(.*)\)/
                 if view_registration_match
-                  route_paths = view_registration_match[1]
+                  # Re-extract route paths from original line to preserve spaces in paths
+                  original_registration_match = original_line.match /#{blueprint_name}\s*,\s*routes\s*=\s*(.*)\)/
+                  route_paths = original_registration_match ? original_registration_match[1] : view_registration_match[1]
                   route_paths.scan /['"]([^'"]*)['"]/ do |path_str_match|
                     if !path_str_match.nil? && path_str_match.size == 2
                       route_path = path_str_match[1]
@@ -142,7 +144,7 @@ module Analyzer::Python
               # Identify Blueprint registration
               register_blueprint_match = line.match /(#{PYTHON_VAR_NAME_REGEX})\.register_blueprint\((#{DOT_NATION})/
               if register_blueprint_match
-                url_prefix_match = line.match /url_prefix=[rf]?['"]([^'"]*)['"]/
+                url_prefix_match = original_line.match /url_prefix\s*=\s*[rf]?['"]([^'"]*)['"]/
                 if url_prefix_match
                   blueprint_name = register_blueprint_match[2]
                   parser = get_parser(path)
@@ -160,8 +162,10 @@ module Analyzer::Python
               line.scan(/@(#{PYTHON_VAR_NAME_REGEX})\.route\([rf]?['"]([^'"]*)['"](.*)/) do |_match|
                 if _match.size > 0
                   router_name = _match[1]
-                  route_path = _match[2]
                   extra_params = _match[3]
+                  # Extract route path from original line to preserve spaces in paths
+                  original_route_match = original_line.match /@#{_match[1]}\.route\(\s*[rf]?['"]([^'"]*)['"]/
+                  route_path = original_route_match ? original_route_match[1] : _match[2]
                   router_info = Tuple(Int32, ::String, ::String, ::String).new(line_index, path, route_path, extra_params)
                   @routes[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String)
                   @routes[router_name] << router_info
@@ -173,8 +177,10 @@ module Analyzer::Python
                 line.scan(/@(#{PYTHON_VAR_NAME_REGEX})\.#{method.downcase}\([rf]?['"]([^'"]*)['"](.*)/) do |_match|
                   if _match.size > 0
                     router_name = _match[1]
-                    route_path = _match[2]
                     extra_params = "methods=['#{method.upcase}']"
+                    # Extract route path from original line to preserve spaces in paths
+                    original_route_match = original_line.match /@#{_match[1]}\.#{method.downcase}\(\s*[rf]?['"]([^'"]*)['"]/
+                    route_path = original_route_match ? original_route_match[1] : _match[2]
                     router_info = Tuple(Int32, ::String, ::String, ::String).new(line_index, path, route_path, extra_params)
                     @routes[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String)
                     @routes[router_name] << router_info
@@ -198,13 +204,16 @@ module Analyzer::Python
                 router_name = _match[1]
                 args_str = _match[2]
 
-                # Extract route path: try rule= keyword first, then first positional string arg
+                # Extract route path from original line to preserve spaces in paths
+                # Try rule= keyword first, then first positional string arg
                 route_path = ""
-                rule_match = args_str.match /rule=[rf]?['"]([^'"]*)['"]/
+                original_args_match = original_line.match /\.add_url_rule\((.+)\)/
+                original_args = original_args_match ? original_args_match[1] : args_str
+                rule_match = original_args.match /rule\s*=\s*[rf]?['"]([^'"]*)['"]/
                 if rule_match
                   route_path = rule_match[1]
                 else
-                  first_str_match = args_str.match /^[rf]?['"]([^'"]*)['"]/
+                  first_str_match = original_args.match /^\s*[rf]?['"]([^'"]*)['"]/
                   route_path = first_str_match[1] if first_str_match
                 end
                 next if route_path.empty?
@@ -326,7 +335,7 @@ module Analyzer::Python
           indent = lines[class_def_index].size - lines[class_def_index].lstrip.size
           unless lines[class_def_index].lstrip.starts_with?("def ") || lines[class_def_index].lstrip.starts_with?("async def ")
             if lines[class_def_index].lstrip.starts_with?("class ")
-              indent = lines[class_def_index].index("class") || 0
+              indent = lines[class_def_index].size - lines[class_def_index].lstrip.size
               is_class_router = true
             else
               next # Skip if not a function and not a class
@@ -442,10 +451,12 @@ module Analyzer::Python
               break if class_match && class_match[1].size <= indent && i != class_def_index
               i += 1
             end
+            # Default to GET if no HTTP methods inferred (matches Flask behavior)
+            methods << "GET" if methods.empty?
           end
 
           # Process each declared method
-          methods.each do |http_method|
+          methods.uniq.each do |http_method|
             method_name = http_method.downcase
 
             # Find method definition in class
