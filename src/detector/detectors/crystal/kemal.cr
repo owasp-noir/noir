@@ -3,8 +3,8 @@ require "../../../models/detector"
 module Detector::Crystal
   class Kemal < Detector
     def detect(filename : String, file_contents : String) : Bool
-      check = file_contents.includes?("kemalcr/kemal")
-      check = check && filename.includes?("shard.yml")
+      check = filename.includes?("shard.yml")
+      check = check && file_contents.includes?("kemalcr/kemal")
 
       check
     end
