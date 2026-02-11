@@ -1,4 +1,4 @@
 * linguist-vendored
 *.cr linguist-vendored=false
-*.rb linguist-vendored=false
+*.nix linguist-vendored=false
 justfile linguist-vendored=false
