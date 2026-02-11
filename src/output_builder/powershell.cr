@@ -6,7 +6,7 @@ class OutputBuilderPowershell < OutputBuilder
     endpoints.each do |endpoint|
       baked = bake_endpoint(endpoint.url, endpoint.params)
 
-      cmd = "Invoke-WebRequest -Method #{endpoint.method} -Uri \"#{escape_powershell(baked[:url])}\""
+      cmd = "Invoke-WebRequest -Method \"#{escape_powershell(endpoint.method)}\" -Uri \"#{escape_powershell(baked[:url])}\""
 
       # Build headers hash including cookies
       header_parts = [] of String

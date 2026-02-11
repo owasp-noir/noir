@@ -26,7 +26,7 @@ describe "Output Builders Edge Cases" do
     output = builder.io.to_s
 
     # Should properly escape single quotes for shell
-    output.should contain("curl -i -X POST")
+    output.should contain("curl -i -X 'POST'")
     output.should contain("Content-Type: application/json")
   end
 
@@ -50,7 +50,7 @@ describe "Output Builders Edge Cases" do
     output = builder.io.to_s
 
     # Should use HTTPie's JSON syntax
-    output.should contain("http POST")
+    output.should contain("http 'POST'")
     output.should contain(":=")
   end
 
@@ -74,7 +74,7 @@ describe "Output Builders Edge Cases" do
     output = builder.io.to_s
 
     # Should properly escape PowerShell special characters
-    output.should contain("Invoke-WebRequest -Method POST")
+    output.should contain("Invoke-WebRequest -Method \"POST\"")
     output.should contain("application/json")
   end
 
@@ -96,20 +96,20 @@ describe "Output Builders Edge Cases" do
     curl.io = IO::Memory.new
     curl.print([endpoint])
     curl_output = curl.io.to_s
-    curl_output.should contain("curl -i -X GET")
+    curl_output.should contain("curl -i -X 'GET'")
 
     # Test httpie with empty values
     httpie = OutputBuilderHttpie.new(options)
     httpie.io = IO::Memory.new
     httpie.print([endpoint])
     httpie_output = httpie.io.to_s
-    httpie_output.should contain("http GET")
+    httpie_output.should contain("http 'GET'")
 
     # Test powershell with empty values
     ps = OutputBuilderPowershell.new(options)
     ps.io = IO::Memory.new
     ps.print([endpoint])
     ps_output = ps.io.to_s
-    ps_output.should contain("Invoke-WebRequest -Method GET")
+    ps_output.should contain("Invoke-WebRequest -Method \"GET\"")
   end
 end
