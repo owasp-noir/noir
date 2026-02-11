@@ -191,7 +191,7 @@ module Noir
         end
 
         endpoints
-      rescue e
+      rescue
         # If parser fails, return empty array
         [] of Endpoint
       end

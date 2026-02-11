@@ -37,7 +37,7 @@ module Noir
 
     private struct PathEntry
       getter path : String
-      getter is_regex : Bool
+      getter? is_regex : Bool
 
       def initialize(@path : String, @is_regex : Bool)
       end
@@ -313,7 +313,7 @@ module Noir
     # Find the best router candidate from a list of identifiers
     # Uses heuristics: known routers > router-like naming > last identifier
     private def find_router_candidate(candidates : Array(String), known_routers : Set(String)) : String?
-      return nil if candidates.empty?
+      return if candidates.empty?
       return candidates.first if candidates.size == 1
 
       # First pass: check if any candidate is a known router variable
@@ -428,7 +428,7 @@ module Noir
           # Create one route for each path with prefix
           start_pos = @tokens[idx].position
           each_prefixed_path(paths, router_var, router_prefixes) do |path_entry, prefixed_path|
-            results << create_route_with_params(method, prefixed_path, path_entry.path, start_pos, path_entry.is_regex)
+            results << create_route_with_params(method, prefixed_path, path_entry.path, start_pos, path_entry.is_regex?)
           end
 
           idx += 1
@@ -465,7 +465,7 @@ module Noir
             max_steps = 1000
             while j < limit - 1 && steps < max_steps
               if @tokens[j].type == :dot && @tokens[j + 1].type == :http_method
-                results << create_route_with_params(@tokens[j + 1].value, prefixed_path, path_entry.path, start_pos, path_entry.is_regex)
+                results << create_route_with_params(@tokens[j + 1].value, prefixed_path, path_entry.path, start_pos, path_entry.is_regex?)
                 j += 2
                 steps += 2
                 next
@@ -1082,7 +1082,7 @@ module Noir
       paths : Array(PathEntry),
       router_var : String,
       router_prefixes : Hash(String, Array(String)),
-      &block : PathEntry, String ->
+      & : PathEntry, String ->
     )
       prefixes_to_apply = router_prefixes.fetch(router_var, [""])
 

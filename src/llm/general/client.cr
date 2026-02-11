@@ -53,7 +53,7 @@ module LLM
       response_json = JSON.parse(response.body)
 
       (response_json["choices"][0]["message"]["content"].to_s.gsub("```json", "").gsub("```", "").strip).to_s
-    rescue ex : Exception
+    rescue Exception
       ""
     end
 

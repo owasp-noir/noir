@@ -66,7 +66,7 @@ module Analyzer::Java
                       @result << Endpoint.new(endpoint, "GET", details)
                     end
                   end
-                rescue e : File::NotFoundError
+                rescue File::NotFoundError
                   logger.debug "File not found: #{path}"
                 end
               end

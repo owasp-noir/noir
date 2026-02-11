@@ -52,7 +52,7 @@ module Analyzer::Javascript
                       analyze_with_regex(path, result, static_dirs)
                     end
                   end
-                rescue e : File::NotFoundError
+                rescue File::NotFoundError
                   logger.debug "File not found: #{path}"
                 rescue e : Exception
                   logger.debug "Error processing file #{path}: #{e.message}"

@@ -288,7 +288,7 @@ module Analyzer::Javascript
       function_map : Hash(String, String),
       var_to_function : Hash(String, String),
     ) : String?
-      return nil if candidates.empty?
+      return if candidates.empty?
       return candidates.first if candidates.size == 1
 
       # Primary approach: check which files actually contain route definitions
@@ -792,7 +792,7 @@ module Analyzer::Javascript
     private def resolve_require_path(from_file : String, require_path : String) : String?
       is_relative = require_path.starts_with?(".")
       is_root_alias = require_path.starts_with?("@/") || require_path.starts_with?("~/")
-      return nil unless is_relative || is_root_alias
+      return unless is_relative || is_root_alias
 
       resolved = if is_root_alias
                    alias_path = require_path.starts_with?("@/") ? require_path.lchop("@/") : require_path.lchop("~/")
