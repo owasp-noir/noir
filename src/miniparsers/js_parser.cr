@@ -29,7 +29,7 @@ module Noir
     @framework : Symbol = :unknown
     @constants : Hash(String, String) = {} of String => String
     @current_route_path : String? = nil
-    @current_route_paths : Array(String)? = nil  # For multi-prefix support in route chains
+    @current_route_paths : Array(String)? = nil # For multi-prefix support in route chains
     @current_route_start_idx : Int32? = nil
     @current_route_raw_path : String? = nil
     @current_route_start_pos : Int32? = nil
@@ -81,8 +81,8 @@ module Noir
 
       # Track router mount paths: router_variable_name => array of prefix_paths (supports multi-mount)
       router_prefixes = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
-      router_parents = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }  # For nested routers (child => parents)
-      router_variables = Set(String).new  # Track which identifiers are routers
+      router_parents = Hash(String, Array(String)).new { |h, k| h[k] = [] of String } # For nested routers (child => parents)
+      router_variables = Set(String).new                                              # Track which identifiers are routers
 
       # Pre-scan: identify router variables by looking for:
       # 1. Variables assigned from express.Router()
@@ -99,7 +99,6 @@ module Noir
            (idx + 2 < @tokens.size) && (@tokens[idx + 2].value == "use" || @tokens[idx + 2].value == "register") &&
            (idx + 3 < @tokens.size) && (@tokens[idx + 3].type == :lparen) &&
            (idx + 4 < @tokens.size) && (@tokens[idx + 4].type == :string)
-
           parent_router = @tokens[idx].value
           prefix = @tokens[idx + 4].value
 
@@ -215,7 +214,7 @@ module Noir
     private def resolve_full_prefixes(router : String, router_prefixes : Hash(String, Array(String)), router_parents : Hash(String, Array(String)), visited : Set(String) = Set(String).new) : Array(String)
       prefixes = router_prefixes[router]?.try(&.dup) || [] of String
       return prefixes if prefixes.empty?
-      return prefixes if visited.includes?(router)  # Prevent infinite loops
+      return prefixes if visited.includes?(router) # Prevent infinite loops
 
       visited.add(router)
       parents = router_parents[router]? || [] of String

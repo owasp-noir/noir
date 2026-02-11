@@ -23,7 +23,7 @@ class EndpointOptimizer
   def optimize_endpoints(endpoints : Array(Endpoint)) : Array(Endpoint)
     @logger.info "Optimizing endpoints."
     @logger.sub "➔ Removing duplicated endpoints and params."
-    final = [] of Endpoint
+    final_map = {} of Tuple(String, String) => Endpoint
     duplicate_count = 0
     allowed_methods = get_allowed_methods
 
@@ -57,28 +57,26 @@ class EndpointOptimizer
         # Check double slash
         tiny_tmp.url = tiny_tmp.url.gsub_repeatedly("//", "/")
 
-        is_new = true
-        final.each do |dup|
-          if dup.method == tiny_tmp.method && dup.url == tiny_tmp.url
-            @logger.debug_sub "  - Found duplicated endpoint: #{tiny_tmp.method} #{tiny_tmp.url}"
-            is_new = false
-            duplicate_count += 1
-            tiny_tmp.params.each do |param|
-              existing_param = dup.params.find { |dup_param| dup_param.name == param.name }
-              unless existing_param
-                dup.params << param
-              end
+        key = {tiny_tmp.method, tiny_tmp.url}
+
+        if final_map.has_key?(key)
+          dup = final_map[key]
+          @logger.debug_sub "  - Found duplicated endpoint: #{tiny_tmp.method} #{tiny_tmp.url}"
+          duplicate_count += 1
+          tiny_tmp.params.each do |param|
+            existing_param = dup.params.find { |dup_param| dup_param.name == param.name }
+            unless existing_param
+              dup.params << param
             end
           end
-        end
-        if is_new || final.size == 0
-          final << tiny_tmp
+        else
+          final_map[key] = tiny_tmp
         end
       end
     end
 
     @logger.verbose_sub "➔ Total duplicated endpoints: #{duplicate_count}"
-    final
+    final_map.values
   end
 
   # Combine target URL with endpoints
