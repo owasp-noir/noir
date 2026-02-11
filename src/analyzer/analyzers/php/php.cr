@@ -64,7 +64,7 @@ module Analyzer::Php
                       result << Endpoint.new("/#{relative_path}", "GET", params_query, details)
                     end
                   end
-                rescue e : File::NotFoundError
+                rescue File::NotFoundError
                   logger.debug "File not found: #{path}"
                 end
               end

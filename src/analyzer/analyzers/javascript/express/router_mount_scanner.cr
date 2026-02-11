@@ -17,14 +17,13 @@ module Analyzer::Javascript
       require_map: Hash(String, String),
       function_map: Hash(String, String),
       var_to_function: Hash(String, String),
-      var_prefix: Hash(String, Array(String))
-    )
+      var_prefix: Hash(String, Array(String)))
 
     def initialize(
       @all_files : Array(String),
       @base_paths : Array(String),
       @base_path : String,
-      @logger : NoirLogger
+      @logger : NoirLogger,
     )
     end
 
@@ -51,7 +50,7 @@ module Analyzer::Javascript
       main_file : String,
       locator : CodeLocator,
       file_contexts : Hash(String, FileContext),
-      global_deferred_mounts : Array(Tuple(String, String, String, String))
+      global_deferred_mounts : Array(Tuple(String, String, String, String)),
     )
       content = File.read(main_file, encoding: "utf-8", invalid: :skip)
 
@@ -73,7 +72,7 @@ module Analyzer::Javascript
         match_end = m.end(0) || 0
 
         process_use_call(content, match_end, caller, prefix, main_file, locator,
-                         require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
+          require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
       end
 
       # Scan for .use(router) patterns where prefix is omitted (defaults to '/')
@@ -88,7 +87,7 @@ module Analyzer::Javascript
         match_end = (m.begin(0) || 0) + m[0].size
 
         process_use_call(content, match_end, caller, prefix, main_file, locator,
-                         require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
+          require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
       end
 
       # Store file context for second pass
@@ -114,7 +113,7 @@ module Analyzer::Javascript
       function_map : Hash(String, String),
       var_to_function : Hash(String, String),
       var_prefix : Hash(String, Array(String)),
-      global_deferred_mounts : Array(Tuple(String, String, String, String))
+      global_deferred_mounts : Array(Tuple(String, String, String, String)),
     )
       # Extract arguments with literal-aware scanning
       args = extract_use_call_args(content, match_end)
@@ -129,11 +128,11 @@ module Analyzer::Javascript
       if caller == "app"
         # Top-level mount
         store_top_level_mount(locator, router_var, router_file_direct, prefix, main_file,
-                              require_map, function_map, var_to_function, var_prefix)
+          require_map, function_map, var_to_function, var_prefix)
       else
         # Nested mount - try to resolve parent prefixes
         processed = store_nested_mount(locator, router_var, router_file_direct, prefix, caller, main_file,
-                                       require_map, function_map, var_to_function, var_prefix)
+          require_map, function_map, var_to_function, var_prefix)
 
         # Defer if parent prefix not yet known
         unless processed
@@ -287,9 +286,9 @@ module Analyzer::Javascript
       candidates : Array(String),
       require_map : Hash(String, String),
       function_map : Hash(String, String),
-      var_to_function : Hash(String, String)
+      var_to_function : Hash(String, String),
     ) : String?
-      return nil if candidates.empty?
+      return if candidates.empty?
       return candidates.first if candidates.size == 1
 
       # Primary approach: check which files actually contain route definitions
@@ -405,7 +404,7 @@ module Analyzer::Javascript
       var_to_function : Hash(String, String),
       var_prefix : Hash(String, Array(String)),
       log_prefix : String = "Mapped router prefix",
-      include_file_level : Bool = false
+      include_file_level : Bool = false,
     )
       # Handle inline require('./path') directly
       if router_file_direct
@@ -419,7 +418,7 @@ module Analyzer::Javascript
 
       # Handle path-like router_var as inline require (for deferred mounts)
       if router_var && (router_var.starts_with?("./") || router_var.starts_with?("../") ||
-                        router_var.starts_with?("@/") || router_var.starts_with?("~/"))
+         router_var.starts_with?("@/") || router_var.starts_with?("~/"))
         router_file = resolve_require_path(main_file, router_var)
         if router_file
           key = ExpressConstants.file_key(router_file)
@@ -486,7 +485,7 @@ module Analyzer::Javascript
       require_map : Hash(String, String),
       function_map : Hash(String, String),
       var_to_function : Hash(String, String),
-      var_prefix : Hash(String, Array(String))
+      var_prefix : Hash(String, Array(String)),
     )
       resolve_and_store_router_prefix(
         locator, router_var, router_file_direct, prefix, main_file,
@@ -508,7 +507,7 @@ module Analyzer::Javascript
       require_map : Hash(String, String),
       function_map : Hash(String, String),
       var_to_function : Hash(String, String),
-      var_prefix : Hash(String, Array(String))
+      var_prefix : Hash(String, Array(String)),
     ) : Bool
       parent_prefixes = get_parent_prefixes(caller, var_prefix, require_map, function_map, var_to_function, main_file, locator)
 
@@ -535,7 +534,7 @@ module Analyzer::Javascript
     private def process_deferred_mounts(
       global_deferred_mounts : Array(Tuple(String, String, String, String)),
       file_contexts : Hash(String, FileContext),
-      locator : CodeLocator
+      locator : CodeLocator,
     )
       remaining = global_deferred_mounts
       max_iterations = 10
@@ -588,7 +587,7 @@ module Analyzer::Javascript
       require_map : Hash(String, String),
       function_map : Hash(String, String),
       var_to_function : Hash(String, String),
-      var_prefix : Hash(String, Array(String))
+      var_prefix : Hash(String, Array(String)),
     )
       resolve_and_store_router_prefix(
         locator, router_var, nil, combined, main_file,
@@ -667,8 +666,8 @@ module Analyzer::Javascript
     private def parse_destructured_names(names : String) : Array(String)
       # Step 1: Remove comments to simplify parsing
       cleaned = names
-        .gsub(/\/\*.*?\*\//m, "")  # Block comments
-        .gsub(/\/\/[^\n]*/, "")    # Line comments
+        .gsub(/\/\*.*?\*\//m, "") # Block comments
+        .gsub(/\/\/[^\n]*/, "")   # Line comments
 
       # Step 2: Split into items at top-level commas
       items = split_at_top_level_commas(cleaned)
@@ -689,7 +688,7 @@ module Analyzer::Javascript
         if name.includes?(" as ")
           parts = name.split(/\s+as\s+/, 2)
           name = parts.size == 2 ? parts[1].strip : name
-        # Handle object property renaming: `key: localName` → `localName`
+          # Handle object property renaming: `key: localName` → `localName`
         elsif name.includes?(":")
           parts = name.split(":", 2)
           name = parts.size == 2 ? parts[1].strip : name
@@ -700,7 +699,7 @@ module Analyzer::Javascript
           inner = name[1..-2]
           extracted.concat(parse_destructured_names(inner))
           next
-        # Handle nested array destructuring: `[ first, second ]` → recurse
+          # Handle nested array destructuring: `[ first, second ]` → recurse
         elsif name.starts_with?("[") && name.ends_with?("]")
           inner = name[1..-2]
           extracted.concat(parse_destructured_names(inner))
@@ -726,11 +725,11 @@ module Analyzer::Javascript
     private def split_at_top_level_commas(input : String) : Array(String)
       items = [] of String
       current = ""
-      depth_brace = 0    # Tracks {} nesting (objects, blocks)
-      depth_bracket = 0  # Tracks [] nesting (arrays)
-      depth_paren = 0    # Tracks () nesting (function calls, grouping)
-      in_string : Char? = nil  # Tracks if we're inside a string and which quote char
-      prev_char : Char? = nil  # For detecting escaped quotes
+      depth_brace = 0         # Tracks {} nesting (objects, blocks)
+      depth_bracket = 0       # Tracks [] nesting (arrays)
+      depth_paren = 0         # Tracks () nesting (function calls, grouping)
+      in_string : Char? = nil # Tracks if we're inside a string and which quote char
+      prev_char : Char? = nil # For detecting escaped quotes
 
       input.each_char do |ch|
         # --- String literal handling ---
@@ -793,7 +792,7 @@ module Analyzer::Javascript
     private def resolve_require_path(from_file : String, require_path : String) : String?
       is_relative = require_path.starts_with?(".")
       is_root_alias = require_path.starts_with?("@/") || require_path.starts_with?("~/")
-      return nil unless is_relative || is_root_alias
+      return unless is_relative || is_root_alias
 
       resolved = if is_root_alias
                    alias_path = require_path.starts_with?("@/") ? require_path.lchop("@/") : require_path.lchop("~/")

@@ -31,7 +31,7 @@ module Analyzer::Java
                 if webflux_base_path
                   webflux_base_path_map[path] = webflux_base_path.as_s
                 end
-              rescue e
+              rescue
                 # Handle parsing errors if necessary
               end
             end
@@ -45,7 +45,7 @@ module Analyzer::Java
                   webflux_base_path = base_path[1]
                   webflux_base_path_map[path] = webflux_base_path if webflux_base_path
                 end
-              rescue e
+              rescue
                 # Handle parsing errors if necessary
               end
             end

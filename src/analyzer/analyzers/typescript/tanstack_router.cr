@@ -25,7 +25,7 @@ module Analyzer::Typescript
                   if File.exists?(path)
                     analyze_tanstack_file(path, result)
                   end
-                rescue e : File::NotFoundError
+                rescue File::NotFoundError
                   logger.debug "File not found: #{path}"
                 rescue e : Exception
                   logger.debug "Error processing file #{path}: #{e.message}"

@@ -21,7 +21,7 @@ module Noir
     # Extract content between parentheses while skipping literals
     # Returns the content inside the parentheses (not including the parens)
     def self.extract_paren_content(content : String, start_pos : Int32) : ScanResult?
-      return nil unless start_pos < content.size
+      return unless start_pos < content.size
 
       result = ""
       paren_depth = 1

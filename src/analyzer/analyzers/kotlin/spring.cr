@@ -70,7 +70,7 @@ module Analyzer::Kotlin
                 end
               end
             end
-          rescue e
+          rescue
             # Handle parsing errors if necessary
           end
         end
@@ -91,7 +91,7 @@ module Analyzer::Kotlin
                 static_locations << loc.strip
               end
             end
-          rescue e
+          rescue
             # Handle parsing errors if necessary
           end
         end

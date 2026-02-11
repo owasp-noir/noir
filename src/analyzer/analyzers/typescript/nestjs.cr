@@ -27,7 +27,7 @@ module Analyzer::Typescript
                   if File.exists?(path)
                     analyze_nestjs_file(path, result, static_dirs)
                   end
-                rescue e : File::NotFoundError
+                rescue File::NotFoundError
                   logger.debug "File not found: #{path}"
                 rescue e : Exception
                   logger.debug "Error processing file #{path}: #{e.message}"
