@@ -39,7 +39,7 @@ describe "OutputBuilderPowershell" do
 
     # Check GET request
     get_line = lines[0]
-    get_line.should start_with("Invoke-WebRequest -Method GET")
+    get_line.should start_with("Invoke-WebRequest -Method \"GET\"")
     get_line.should contain("/test")
     get_line.should contain("id=1")
     get_line.should contain("Cookie")
@@ -47,7 +47,7 @@ describe "OutputBuilderPowershell" do
 
     # Check POST request with JSON
     post_line = lines[1]
-    post_line.should start_with("Invoke-WebRequest -Method POST")
+    post_line.should start_with("Invoke-WebRequest -Method \"POST\"")
     post_line.should contain("/api/users")
     post_line.should contain("x-api-key")
     post_line.should contain("key123")
@@ -55,7 +55,7 @@ describe "OutputBuilderPowershell" do
 
     # Check PUT request with form data
     put_line = lines[2]
-    put_line.should start_with("Invoke-WebRequest -Method PUT")
+    put_line.should start_with("Invoke-WebRequest -Method \"PUT\"")
     put_line.should contain("/api/products")
     put_line.should contain("name=Updated Product")
     put_line.should contain("application/x-www-form-urlencoded")
