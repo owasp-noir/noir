@@ -83,8 +83,19 @@ class PythonLexer < MiniLexer
         match_comment
       when '0'..'9'
         match_number
-      when '"', '\'', "f"
+      when '"', '\''
         match_string
+        # Handle f-strings (format strings)
+        # We check for 'f' or 'F' followed immediately by a quote.
+        # This logic is consolidated here to keep match_string focused on string content.
+      when 'f', 'F'
+        if @position + 1 < @input.size && (@input[@position + 1] == '"' || @input[@position + 1] == '\'')
+          self << Tuple.new(:FSTRING, @input[@position].to_s)
+          @position += 1
+          match_string
+        else
+          match_other
+        end
       when '.', ',', '(', ')', '{', '}', '[', ']', ';', '?', ':'
         match_punctuation
       when '+', '-', '*', '/', '%', '&', '|', '^', '!', '=', '<', '>', '~'
@@ -177,10 +188,6 @@ class PythonLexer < MiniLexer
       match_multiline_string
     elsif c == '\'' && @input[@position...@position + 3] == "'''"
       match_multiline_string
-    elsif c == 'f' && (@input[@position + 1] == '"' || @input[@position + 1] == '\'')
-      @position += 1
-      match_string
-      self << Tuple.new(:FSTRING, @input[@position])
     else
       start_pos = @position
       @position += 1
