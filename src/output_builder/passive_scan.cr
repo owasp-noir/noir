@@ -27,7 +27,7 @@ class OutputBuilderPassiveScan < OutputBuilder
     when "info"
       severity.colorize(:light_blue).to_s
     else
-      severity.colorize(:light_white).to_s
+      severity.colorize(:white).to_s
     end
   end
 end
