@@ -51,4 +51,37 @@ describe "OutputBuilderMarkdownTable" do
     lines[4].should contain("PUT /api/products")
     lines[4].should contain("product_id (path)")
   end
+
+  it "escapes special characters in markdown table" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderMarkdownTable.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/test|url", "GET|POST")
+    endpoint.protocol = "http|https"
+    endpoint.push_param(Param.new("param|name", "val", "query|type"))
+
+    # Add HTML and backslash test case
+    endpoint_html = Endpoint.new("/<script>alert(1)</script>", "GET\\POST")
+    endpoint_html.push_param(Param.new("<i>html</i>", "val", "query"))
+
+    builder.print([endpoint, endpoint_html])
+    output = builder.io.to_s
+    lines = output.split("\n")
+
+    # Verify content is escaped
+    # Line 2: | GET\|POST /test\|url | http\|https | `param\|name (query\|type)`  |
+    expected_line_1 = "| GET\\|POST /test\\|url | http\\|https | `param\\|name (query\\|type)`  |"
+    lines[2].should eq(expected_line_1)
+
+    # Line 3: | GET\\POST /&lt;script&gt;alert(1)&lt;/script&gt; | http | `&lt;i&gt;html&lt;/i&gt; (query)`  |
+    expected_line_2 = "| GET\\\\POST /&lt;script&gt;alert(1)&lt;/script&gt; | http | `&lt;i&gt;html&lt;/i&gt; (query)`  |"
+    lines[3].should eq(expected_line_2)
+  end
 end
