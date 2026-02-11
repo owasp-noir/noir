@@ -23,11 +23,11 @@ class OutputBuilderMarkdownTable < OutputBuilder
 
   private def sanitize_markdown_cell(content : String) : String
     content.to_s
-           .gsub('\\', "\\\\") # Escape backslashes first
-           .gsub('|', "\\|")   # Escape pipes
-           .gsub('<', "&lt;")  # Escape HTML start tag
-           .gsub('>', "&gt;")  # Escape HTML end tag
-           .gsub("\r", "")     # Remove carriage returns
-           .gsub("\n", " ")    # Replace newlines with space
+      .gsub('\\', "\\\\") # Escape backslashes first
+      .gsub('|', "\\|")   # Escape pipes
+      .gsub('<', "&lt;")  # Escape HTML start tag
+      .gsub('>', "&gt;")  # Escape HTML end tag
+      .gsub("\r", "")     # Remove carriage returns
+      .gsub("\n", " ")    # Replace newlines with space
   end
 end
