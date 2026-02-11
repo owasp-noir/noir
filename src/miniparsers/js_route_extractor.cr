@@ -37,10 +37,10 @@ module Noir
         function_ranges = [] of Tuple(String, Int32, Int32)
         function_names = Set(String).new
         function_patterns = {
-          /function\s+(\w+)\s*\(/ => :function,
-          /(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?function\b/ => :function,
+          /function\s+(\w+)\s*\(/                                       => :function,
+          /(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?function\b/     => :function,
           /(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?\([^)]*\)\s*=>/ => :arrow,
-          /(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?\w+\s*=>/ => :arrow,
+          /(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?\w+\s*=>/       => :arrow,
         }
         function_patterns.each do |pattern, kind|
           content.scan(pattern) do |m|
