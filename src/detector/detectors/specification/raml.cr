@@ -6,14 +6,16 @@ module Detector::Specification
   class RAML < Detector
     def detect(filename : String, file_contents : String) : Bool
       check = false
-      if valid_yaml? file_contents
-        if file_contents.includes? "#%RAML"
-          begin
-            YAML.parse(file_contents)
-            check = true
-            locator = CodeLocator.instance
-            locator.push("raml-spec", filename)
-          rescue
+      if (filename.ends_with?(".raml") || filename.ends_with?(".yaml") || filename.ends_with?(".yml"))
+        if file_contents.includes?("#%RAML")
+          if valid_yaml?(file_contents)
+            begin
+              YAML.parse(file_contents)
+              check = true
+              locator = CodeLocator.instance
+              locator.push("raml-spec", filename)
+            rescue
+            end
           end
         end
       end

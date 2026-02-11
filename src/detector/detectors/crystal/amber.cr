@@ -3,10 +3,9 @@ require "../../../models/detector"
 module Detector::Crystal
   class Amber < Detector
     def detect(filename : String, file_contents : String) : Bool
-      check = file_contents.includes?("amberframework/amber")
-      check = check && filename.includes?("shard.yml")
+      return false unless filename.includes?("shard.yml")
 
-      check
+      file_contents.includes?("amberframework/amber")
     end
 
     def set_name

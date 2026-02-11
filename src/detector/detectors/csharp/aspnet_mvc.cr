@@ -3,17 +3,16 @@ require "../../../models/detector"
 module Detector::CSharp
   class AspNetMvc < Detector
     def detect(filename : String, file_contents : String) : Bool
-      check = file_contents.includes?("Microsoft.AspNet.Mvc")
-      check = check && filename.includes?("packages.config")
       check_routeconfig filename, file_contents
 
-      check
+      return false unless filename.includes?("packages.config")
+      file_contents.includes?("Microsoft.AspNet.Mvc")
     end
 
     def check_routeconfig(filename : String, file_contents : String)
-      check = file_contents.includes?(".MapRoute")
-      check = check && filename.includes?("RouteConfig.cs")
-      if check
+      return unless filename.includes?("RouteConfig.cs")
+
+      if file_contents.includes?(".MapRoute")
         locator = CodeLocator.instance
         locator.set("cs-apinet-mvc-routeconfig", filename)
       end

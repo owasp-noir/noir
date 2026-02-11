@@ -3,9 +3,10 @@ require "../../../models/detector"
 module Detector::Php
   class Php < Detector
     def detect(filename : String, file_contents : String) : Bool
+      return false unless filename.ends_with?(".php")
+
       check = file_contents.includes?("<?")
       check = check || file_contents.includes?("?>")
-      check = check && filename.ends_with?(".php")
 
       check
     end

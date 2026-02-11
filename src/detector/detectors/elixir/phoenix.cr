@@ -3,10 +3,9 @@ require "../../../models/detector"
 module Detector::Elixir
   class Phoenix < Detector
     def detect(filename : String, file_contents : String) : Bool
-      check = file_contents.includes?("ElixirPhoenix")
-      check = check && filename.includes?("mix.exs")
+      return false unless filename.includes?("mix.exs")
 
-      check
+      file_contents.includes?("ElixirPhoenix")
     end
 
     def set_name
