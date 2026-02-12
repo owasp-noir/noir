@@ -7,8 +7,18 @@ require "../utils/*"
 class EndpointOptimizer
   @logger : NoirLogger
   @options : Hash(String, YAML::Any)
+  @pvalue_rules : Hash(String, Array(PValueRule))
+
+  private struct PValueRule
+    property key : String?
+    property value : String
+
+    def initialize(@key : String?, @value : String)
+    end
+  end
 
   def initialize(@logger : NoirLogger, @options : Hash(String, YAML::Any))
+    @pvalue_rules = initialize_pvalue_rules
   end
 
   # Main optimization workflow - calls all optimization steps
@@ -202,51 +212,72 @@ class EndpointOptimizer
 
   # Apply parameter values based on configuration
   def apply_pvalue(param_type, param_name, param_value) : String
-    case param_type
-    when "query"
-      pvalue_target = @options["set_pvalue_query"]
-    when "json"
-      pvalue_target = @options["set_pvalue_json"]
-    when "form"
-      pvalue_target = @options["set_pvalue_form"]
-    when "header"
-      pvalue_target = @options["set_pvalue_header"]
-    when "cookie"
-      pvalue_target = @options["set_pvalue_cookie"]
-    when "path"
-      pvalue_target = @options["set_pvalue_path"]
-    else
-      pvalue_target = YAML::Any.new([] of YAML::Any)
+    if rules = @pvalue_rules[param_type]?
+      rules.each do |rule|
+        if rule.key.nil? || rule.key == param_name
+          return rule.value
+        end
+      end
     end
 
-    # Merge with @options["set_pvalue"]
-    merged_pvalue_target = [] of YAML::Any
-    merged_pvalue_target.concat(pvalue_target.as_a)
-    merged_pvalue_target.concat(@options["set_pvalue"].as_a)
+    param_value.to_s
+  end
 
-    merged_pvalue_target.each do |pvalue|
+  private def initialize_pvalue_rules : Hash(String, Array(PValueRule))
+    rules = Hash(String, Array(PValueRule)).new
+    param_types = ["query", "json", "form", "header", "cookie", "path"]
+    global_pvalue = @options["set_pvalue"].as_a
+
+    param_types.each do |type|
+      pvalue_target = case type
+                      when "query"  then @options["set_pvalue_query"]
+                      when "json"   then @options["set_pvalue_json"]
+                      when "form"   then @options["set_pvalue_form"]
+                      when "header" then @options["set_pvalue_header"]
+                      when "cookie" then @options["set_pvalue_cookie"]
+                      when "path"   then @options["set_pvalue_path"]
+                      else               YAML::Any.new([] of YAML::Any)
+                      end
+
+      merged_pvalue_target = [] of YAML::Any
+      merged_pvalue_target.concat(pvalue_target.as_a)
+      merged_pvalue_target.concat(global_pvalue)
+
+      rules[type] = parse_rules(merged_pvalue_target)
+    end
+
+    rules
+  end
+
+  private def parse_rules(yaml_rules : Array(YAML::Any)) : Array(PValueRule)
+    parsed_rules = [] of PValueRule
+    yaml_rules.each do |pvalue|
       pvalue_str = pvalue.to_s
+      key = nil
+      value = pvalue_str
+
       if pvalue_str.includes?("=") || pvalue_str.includes?(":")
         first_equal = pvalue_str.index("=")
         first_colon = pvalue_str.index(":")
 
         if first_equal && (!first_colon || first_equal < first_colon)
           split = pvalue_str.split("=", 2)
-          if split[0] == param_name || split[0] == "*"
-            return split[1].to_s
-          end
+          key = split[0]
+          value = split[1]
         elsif first_colon
           split = pvalue_str.split(":", 2)
-          if split[0] == param_name || split[0] == "*"
-            return split[1].to_s
-          end
+          key = split[0]
+          value = split[1]
         end
-      else
-        return pvalue_str
       end
-    end
 
-    param_value.to_s
+      if key == "*"
+        key = nil
+      end
+
+      parsed_rules << PValueRule.new(key, value)
+    end
+    parsed_rules
   end
 
   # Get allowed HTTP methods
