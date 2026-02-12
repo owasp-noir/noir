@@ -28,11 +28,11 @@ describe "OutputBuilderPassiveScan" do
   describe "#severity_color" do
     it "returns colored string for critical severity" do
       builder = OutputBuilderPassiveScan.new({
-        "debug" => YAML::Any.new(false),
+        "debug"   => YAML::Any.new(false),
         "verbose" => YAML::Any.new(false),
-        "color" => YAML::Any.new(false),
-        "nolog" => YAML::Any.new(false),
-        "output" => YAML::Any.new("")
+        "color"   => YAML::Any.new(false),
+        "nolog"   => YAML::Any.new(false),
+        "output"  => YAML::Any.new(""),
       })
 
       builder.severity_color("critical").should contain("critical")
@@ -40,55 +40,55 @@ describe "OutputBuilderPassiveScan" do
 
     it "returns colored string for high severity" do
       builder = OutputBuilderPassiveScan.new({
-        "debug" => YAML::Any.new(false),
+        "debug"   => YAML::Any.new(false),
         "verbose" => YAML::Any.new(false),
-        "color" => YAML::Any.new(false),
-        "nolog" => YAML::Any.new(false),
-        "output" => YAML::Any.new("")
+        "color"   => YAML::Any.new(false),
+        "nolog"   => YAML::Any.new(false),
+        "output"  => YAML::Any.new(""),
       })
       builder.severity_color("high").should contain("high")
     end
 
     it "returns colored string for medium severity" do
       builder = OutputBuilderPassiveScan.new({
-        "debug" => YAML::Any.new(false),
+        "debug"   => YAML::Any.new(false),
         "verbose" => YAML::Any.new(false),
-        "color" => YAML::Any.new(false),
-        "nolog" => YAML::Any.new(false),
-        "output" => YAML::Any.new("")
+        "color"   => YAML::Any.new(false),
+        "nolog"   => YAML::Any.new(false),
+        "output"  => YAML::Any.new(""),
       })
       builder.severity_color("medium").should contain("medium")
     end
 
     it "returns colored string for low severity" do
       builder = OutputBuilderPassiveScan.new({
-        "debug" => YAML::Any.new(false),
+        "debug"   => YAML::Any.new(false),
         "verbose" => YAML::Any.new(false),
-        "color" => YAML::Any.new(false),
-        "nolog" => YAML::Any.new(false),
-        "output" => YAML::Any.new("")
+        "color"   => YAML::Any.new(false),
+        "nolog"   => YAML::Any.new(false),
+        "output"  => YAML::Any.new(""),
       })
       builder.severity_color("low").should contain("low")
     end
 
     it "returns colored string for info severity" do
       builder = OutputBuilderPassiveScan.new({
-        "debug" => YAML::Any.new(false),
+        "debug"   => YAML::Any.new(false),
         "verbose" => YAML::Any.new(false),
-        "color" => YAML::Any.new(false),
-        "nolog" => YAML::Any.new(false),
-        "output" => YAML::Any.new("")
+        "color"   => YAML::Any.new(false),
+        "nolog"   => YAML::Any.new(false),
+        "output"  => YAML::Any.new(""),
       })
       builder.severity_color("info").should contain("info")
     end
 
     it "returns colored string for unknown severity" do
       builder = OutputBuilderPassiveScan.new({
-        "debug" => YAML::Any.new(false),
+        "debug"   => YAML::Any.new(false),
         "verbose" => YAML::Any.new(false),
-        "color" => YAML::Any.new(false),
-        "nolog" => YAML::Any.new(false),
-        "output" => YAML::Any.new("")
+        "color"   => YAML::Any.new(false),
+        "nolog"   => YAML::Any.new(false),
+        "output"  => YAML::Any.new(""),
       })
       builder.severity_color("unknown").should contain("unknown")
     end
@@ -97,11 +97,11 @@ describe "OutputBuilderPassiveScan" do
   describe "#print" do
     it "prints passive scan results correctly" do
       options = {
-        "debug" => YAML::Any.new(false),
+        "debug"   => YAML::Any.new(false),
         "verbose" => YAML::Any.new(false),
-        "color" => YAML::Any.new(false),
-        "nolog" => YAML::Any.new(false),
-        "output" => YAML::Any.new("")
+        "color"   => YAML::Any.new(false),
+        "nolog"   => YAML::Any.new(false),
+        "output"  => YAML::Any.new(""),
       }
       builder = OutputBuilderPassiveScan.new(options)
       logger = MockLogger.new
@@ -143,11 +143,11 @@ describe "OutputBuilderPassiveScan" do
 
     it "prints multiple passive scan results" do
       options = {
-        "debug" => YAML::Any.new(false),
+        "debug"   => YAML::Any.new(false),
         "verbose" => YAML::Any.new(false),
-        "color" => YAML::Any.new(false),
-        "nolog" => YAML::Any.new(false),
-        "output" => YAML::Any.new("")
+        "color"   => YAML::Any.new(false),
+        "nolog"   => YAML::Any.new(false),
+        "output"  => YAML::Any.new(""),
       }
       builder = OutputBuilderPassiveScan.new(options)
       logger = MockLogger.new

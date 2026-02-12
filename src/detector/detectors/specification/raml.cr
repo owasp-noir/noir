@@ -6,7 +6,7 @@ module Detector::Specification
   class RAML < Detector
     def detect(filename : String, file_contents : String) : Bool
       check = false
-      if (filename.ends_with?(".raml") || filename.ends_with?(".yaml") || filename.ends_with?(".yml"))
+      if filename.ends_with?(".raml") || filename.ends_with?(".yaml") || filename.ends_with?(".yml")
         if file_contents.includes?("#%RAML")
           if valid_yaml?(file_contents)
             begin
