@@ -7,6 +7,14 @@ module LLM::PromptOverrides
   @@bundle_analyze_prompt_override : String?
   @@llm_optimize_prompt_override : String?
 
+  # Reset all prompt overrides to nil
+  def self.reset
+    @@filter_prompt_override = nil
+    @@analyze_prompt_override = nil
+    @@bundle_analyze_prompt_override = nil
+    @@llm_optimize_prompt_override = nil
+  end
+
   # Setters for prompt overrides
   def self.filter_prompt=(value : String)
     @@filter_prompt_override = value

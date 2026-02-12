@@ -2,6 +2,10 @@ require "spec"
 require "../../../src/llm/prompt_overrides"
 
 describe LLM::PromptOverrides do
+  before_each do
+    LLM::PromptOverrides.reset
+  end
+
   describe "prompt overrides" do
     it "returns default filter prompt when no override is set" do
       default_prompt = LLM::PromptOverrides.filter_prompt
@@ -12,6 +16,11 @@ describe LLM::PromptOverrides do
       test_prompt = "Custom filter prompt for testing"
       LLM::PromptOverrides.filter_prompt = test_prompt
       LLM::PromptOverrides.filter_prompt.should eq(test_prompt)
+    end
+
+    it "returns empty string when override is empty string" do
+      LLM::PromptOverrides.filter_prompt = ""
+      LLM::PromptOverrides.filter_prompt.should eq("")
     end
 
     it "returns default analyze prompt when no override is set" do
@@ -45,6 +54,22 @@ describe LLM::PromptOverrides do
       test_prompt = "Custom LLM optimize prompt for testing"
       LLM::PromptOverrides.llm_optimize_prompt = test_prompt
       LLM::PromptOverrides.llm_optimize_prompt.should eq(test_prompt)
+    end
+  end
+
+  describe "reset" do
+    it "resets all overrides to nil" do
+      LLM::PromptOverrides.filter_prompt = "filter"
+      LLM::PromptOverrides.analyze_prompt = "analyze"
+      LLM::PromptOverrides.bundle_analyze_prompt = "bundle"
+      LLM::PromptOverrides.llm_optimize_prompt = "optimize"
+
+      LLM::PromptOverrides.reset
+
+      LLM::PromptOverrides.filter_prompt.should contain("Analyze the following list of file paths")
+      LLM::PromptOverrides.analyze_prompt.should contain("Analyze the provided source code")
+      LLM::PromptOverrides.bundle_analyze_prompt.should contain("Analyze the following bundle of source code files")
+      LLM::PromptOverrides.llm_optimize_prompt.should contain("Analyze the provided endpoint and optimize it")
     end
   end
 end
