@@ -279,15 +279,13 @@ module Analyzer::Kotlin
         when "consumes"
           parser.parse_formal_parameters(bracket_index).each do |param_tokens|
             if param_tokens.size > 0 && param_tokens[0].type == :STRING_LITERAL
-              if param_tokens.size > 0 && param_tokens[0].type == :STRING_LITERAL
-                parameter_format = case param_tokens[0].value[1..-2].upcase
-                                   when "APPLICATION/X-WWW-FORM-URLENCODED"
-                                     "form"
-                                   when "APPLICATION/JSON"
-                                     "json"
-                                   end
-                break
-              end
+              parameter_format = case param_tokens[0].value[1..-2].upcase
+                                 when "APPLICATION/X-WWW-FORM-URLENCODED"
+                                   "form"
+                                 when "APPLICATION/JSON"
+                                   "json"
+                                 end
+              break
             end
           end
         when "params"
