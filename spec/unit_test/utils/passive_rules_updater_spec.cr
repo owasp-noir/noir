@@ -18,7 +18,7 @@ describe "PassiveRulesUpdater" do
 
         # Ensure it's not a git repo
         if Dir.exists?(File.join(passive_rules_path, ".git"))
-            FileUtils.rm_rf(File.join(passive_rules_path, ".git"))
+          FileUtils.rm_rf(File.join(passive_rules_path, ".git"))
         end
 
         logger = NoirLogger.new(debug: true, verbose: false, colorize: false, no_log: true)
@@ -28,7 +28,6 @@ describe "PassiveRulesUpdater" do
 
         # Verify
         result.should be_true
-
       ensure
         # Cleanup
         FileUtils.rm_rf(temp_home)
