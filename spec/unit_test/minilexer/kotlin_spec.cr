@@ -105,6 +105,23 @@ describe KotlinLexer do
       output = lexer.tokenize("\"\"\"line1\nline2\"\"\"")
       output.first.type.should eq(:TEXT_BLOCK)
       output.first.value.should eq("\"\"\"line1\nline2\"\"\"")
+
+      # Escaped quotes in string
+      output = lexer.tokenize("\"foo\\\"bar\"")
+      output.first.type.should eq(:STRING_LITERAL)
+      output.first.value.should eq("\"foo\\\"bar\"")
+
+      # Escaped quotes in char
+      output = lexer.tokenize("'\\''")
+      output.first.type.should eq(:CHAR_LITERAL)
+      output.first.value.should eq("'\\''")
+    end
+
+    it "handles standalone at symbol" do
+      lexer = KotlinLexer.new
+      output = lexer.tokenize("@")
+      output.first.type.should eq(:UNKNOWN)
+      output.first.value.should eq("@")
     end
 
     it "tokenizes identifiers" do
