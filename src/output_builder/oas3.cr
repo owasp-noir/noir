@@ -138,7 +138,7 @@ class OutputBuilderOas3 < OutputBuilder
       } of String => JSON::Any),
       "servers" => JSON::Any.new([
         JSON::Any.new({
-          "url" => JSON::Any.new("http://localhost"),
+          "url" => JSON::Any.new(@options["url"].to_s.empty? ? "http://localhost" : @options["url"].to_s),
         } of String => JSON::Any),
       ]),
       "paths" => JSON::Any.new(paths.transform_values { |v| JSON::Any.new(v) }),
