@@ -209,7 +209,10 @@ module Noir
 
       # Check if it's a keyword
       case identifier
-      when "function", "async", "const", "let", "var", "return", "if", "else", "for", "while"
+      when "function", "async", "const", "let", "var", "return", "if", "else", "for", "while",
+           "case", "default", "break", "continue", "switch", "try", "catch", "finally", "throw",
+           "new", "delete", "typeof", "instanceof", "void", "in", "of", "do", "class", "extends",
+           "super", "this", "import", "export", "from", "as", "yield", "await", "static"
         add_token(:keyword, identifier)
       when "true", "false", "null", "undefined"
         add_token(:literal, identifier)
