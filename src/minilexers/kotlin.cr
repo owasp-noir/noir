@@ -33,7 +33,7 @@ class KotlinLexer < MiniLexer
   PUNCTUATION = {
     '.' => :DOT, ',' => :COMMA, '(' => :LPAREN, ')' => :RPAREN,
     '{' => :LCURL, '}' => :RCURL, '[' => :LSQUARE, ']' => :RSQUARE,
-    ';' => :SEMI, ':' => :COLON, '?' => :QUESTION,
+    ';' => :SEMI, ':' => :COLON,
   }
 
   OPERATORS = {
@@ -43,7 +43,7 @@ class KotlinLexer < MiniLexer
     "++" => :INC, "--" => :DEC, "+=" => :ADD_ASSIGN, "-=" => :SUB_ASSIGN,
     "*=" => :MUL_ASSIGN, "/=" => :DIV_ASSIGN, "%=" => :MOD_ASSIGN,
     '&' => :BITAND, '|' => :BITOR, '^' => :CARET, '~' => :TILDE,
-    "->" => :ARROW, "=>" => :DOUBLE_ARROW, "?:" => :ELVIS,
+    "->" => :ARROW, "=>" => :DOUBLE_ARROW, "?:" => :ELVIS, '?' => :QUESTION,
   }
 
   def initialize
@@ -55,6 +55,7 @@ class KotlinLexer < MiniLexer
   end
 
   def tokenize_logic(@input : String) : Array(Token)
+    @tokens.clear
     after_skip = -1
     while @position < @input.size
       while @position != after_skip
@@ -72,9 +73,9 @@ class KotlinLexer < MiniLexer
         match_annotation
       when '"', '\''
         match_string_or_char_literal
-      when '.', ',', '(', ')', '{', '}', '[', ']', ';', '?', ':'
+      when '.', ',', '(', ')', '{', '}', '[', ']', ';', ':'
         match_punctuation
-      when '+', '-', '*', '/', '%', '&', '|', '^', '!', '=', '<', '>', '~'
+      when '+', '-', '*', '/', '%', '&', '|', '^', '!', '=', '<', '>', '~', '?'
         match_operator
       else
         match_other
@@ -160,7 +161,7 @@ class KotlinLexer < MiniLexer
     if @position < @input.size - 3 && @input[@position..@position + 2] == text_block_literal
       s = text_block_literal
       @position += 3
-      while @position < @input.size - 3
+      while @position <= @input.size - 3
         s += @input[@position]
         if @input[@position..@position + 2] == text_block_literal
           s += "\"\""
