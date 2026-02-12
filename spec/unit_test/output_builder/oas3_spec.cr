@@ -12,6 +12,7 @@ describe "OutputBuilderOas3" do
       "color"   => YAML::Any.new(false),
       "nolog"   => YAML::Any.new(false),
       "output"  => YAML::Any.new(""),
+      "url"     => YAML::Any.new(""),
     }
     builder = OutputBuilderOas3.new(options)
     builder.io = IO::Memory.new

@@ -49,8 +49,8 @@ if noir_options["base"].as_a.empty?
 end
 
 if noir_options["url"] != "" && !noir_options["url"].to_s.includes?("://")
-  STDERR.puts "WARNING: The protocol (http or https) is missing in the URL '#{noir_options["url"]}'.".colorize(Colorize::Color256.new(208))
-  noir_options["url"] = YAML::Any.new("http://#{noir_options["url"]}")
+  STDERR.puts "WARNING: The protocol (http or https) is missing in the URL '#{noir_options["url"]}'. Defaulting to 'https://'.".colorize(Colorize::Color256.new(208))
+  noir_options["url"] = YAML::Any.new("https://#{noir_options["url"]}")
 end
 
 # Check URL
