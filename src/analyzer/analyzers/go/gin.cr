@@ -1,8 +1,7 @@
-require "../../../models/analyzer"
-require "../../../minilexers/golang"
+require "./common"
 
 module Analyzer::Go
-  class Gin < Analyzer
+  class Gin < Common
     def analyze
       # Source Analysis
       public_dirs = [] of (Hash(String, String))
@@ -28,36 +27,7 @@ module Analyzer::Go
                       details = Details.new(PathInfo.new(path, index + 1))
                       lexer = GolangLexer.new
 
-                      if line.includes?(".Group(")
-                        map = lexer.tokenize(line)
-                        before = Token.new(:unknown, "", 0)
-                        group_name = ""
-                        group_path = ""
-                        map.each do |token|
-                          if token.type == :assign
-                            group_name = before.value.to_s.gsub(":", "").gsub(/\s/, "")
-                          end
-
-                          if token.type == :string
-                            group_path = token.value.to_s
-                            groups.each do |group|
-                              group.each do |key, value|
-                                if before.value.to_s.includes? key
-                                  group_path = value + group_path
-                                end
-                              end
-                            end
-                          end
-
-                          before = token
-                        end
-
-                        if group_name.size > 0 && group_path.size > 0
-                          groups << {
-                            group_name => group_path,
-                          }
-                        end
-                      end
+                      analyze_group(line, lexer, groups)
 
                       # Use case-insensitive regex for HTTP method detection
                       # Matches patterns like: .GET(, .Get(, .get(, .POST(, .Post(, .post(, etc.
@@ -118,19 +88,7 @@ module Analyzer::Go
         logger.debug e
       end
 
-      public_dirs.each do |p_dir|
-        full_path = (base_path + "/" + p_dir["file_path"]).gsub_repeatedly("//", "/")
-        get_files_by_prefix(full_path).each do |path|
-          if File.exists?(path)
-            if p_dir["static_path"].ends_with?("/")
-              p_dir["static_path"] = p_dir["static_path"][0..-2]
-            end
-
-            details = Details.new(PathInfo.new(path))
-            result << Endpoint.new("#{p_dir["static_path"]}#{path.gsub(full_path, "")}", "GET", details)
-          end
-        end
-      end
+      resolve_public_dirs(public_dirs)
 
       result
     end
@@ -164,54 +122,6 @@ module Analyzer::Go
       end
 
       Param.new("", "", "")
-    end
-
-    def get_static_path(line : String) : Hash(String, String)
-      first = line.strip.split("(")
-      if first.size > 1
-        second = first[1].split(",")
-        if second.size > 1
-          static_path = second[0].gsub("\"", "")
-          file_path = second[1].gsub("\"", "").gsub(" ", "").gsub(")", "")
-          rtn = {
-            "static_path" => static_path,
-            "file_path"   => file_path,
-          }
-
-          return rtn
-        end
-      end
-
-      {
-        "static_path" => "",
-        "file_path"   => "",
-      }
-    end
-
-    def get_route_path(line : String, groups : Array(Hash(String, String))) : String
-      lexer = GolangLexer.new
-      map = lexer.tokenize(line)
-      before = Token.new(:unknown, "", 0)
-      map.each do |token|
-        if token.type == :string
-          final_path = token.value.to_s
-          # Route path must start with "/" to be a valid HTTP endpoint
-          next unless final_path.starts_with?("/")
-          groups.each do |group|
-            group.each do |key, value|
-              if before.value.to_s.includes? key
-                final_path = value + final_path
-              end
-            end
-          end
-
-          return final_path
-        end
-
-        before = token
-      end
-
-      ""
     end
   end
 end
