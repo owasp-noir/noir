@@ -19,7 +19,7 @@ describe JavaLexer do
             System.out.println("Hello");
           }
         }
-      JAVA
+        JAVA
 
       # Verify key tokens
       output.map(&.type).should contain(:PUBLIC)
@@ -51,7 +51,7 @@ describe JavaLexer do
         "requires" => :REQUIRES, "exports" => :EXPORTS, "opens" => :OPENS, "to" => :TO,
         "uses" => :USES, "provides" => :PROVIDES, "with" => :WITH, "transitive" => :TRANSITIVE,
         "var" => :VAR, "yield" => :YIELD, "record" => :RECORD, "sealed" => :SEALED,
-        "permits" => :PERMITS
+        "permits" => :PERMITS,
       }
 
       keywords.each do |text, type|
@@ -63,8 +63,8 @@ describe JavaLexer do
     it "tokenizes integers" do
       lexer = JavaLexer.new
       cases = {
-        "123" => :DECIMAL_LITERAL,
-        "0" => :OCT_LITERAL, # Java lexer logic: starts with 0 -> OCT_LITERAL
+        "123"  => :DECIMAL_LITERAL,
+        "0"    => :OCT_LITERAL, # Java lexer logic: starts with 0 -> OCT_LITERAL
         "0123" => :OCT_LITERAL,
         "0x1A" => :HEX_LITERAL,
         "0X1a" => :HEX_LITERAL,
@@ -80,7 +80,7 @@ describe JavaLexer do
     it "tokenizes floating point literals" do
       lexer = JavaLexer.new
       cases = [
-        "1.23", ".45", "1e10", "1.2e-3", "1.2f", "1.2d"
+        "1.23", ".45", "1e10", "1.2e-3", "1.2f", "1.2d",
       ]
 
       cases.each do |text|
@@ -147,7 +147,7 @@ describe JavaLexer do
         "+" => :ADD, "-" => :SUB, "*" => :MUL, "/" => :DIV, "%" => :MOD,
         "=" => :ASSIGN, "==" => :EQUAL, "!=" => :NOTEQUAL,
         "&&" => :AND, "||" => :OR,
-        "++" => :INC, "--" => :DEC
+        "++" => :INC, "--" => :DEC,
       }
 
       ops.each do |text, type|

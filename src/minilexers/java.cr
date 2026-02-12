@@ -459,30 +459,30 @@ class JavaLexer < MiniLexer
         @position += 2
         self << Tuple.new(:LE, "<=")
       elsif @position + 1 < @input.size && @input[@position + 1] == '<'
-         if @position + 2 < @input.size && @input[@position + 2] == '='
-           @position += 3
-           self << Tuple.new(:LSHIFT_ASSIGN, "<<=")
-         else
-           @position += 2
-           # Assuming LSHIFT operator is not defined in constants but LSHIFT_ASSIGN is?
-           # Constants include LSHIFT_ASSIGN.
-           # But not LSHIFT.
-           # However, checking `match_punctuation` or constants.
-           # Constants list: ASSIGN, GT, LT, ...
-           # It does not list LSHIFT (<<).
-           # So I'll emit UNKNOWN or just handle it if I missed a constant.
-           # Wait, `LSHIFT` is common. JavaLexer constants list `LSHIFT_ASSIGN`.
-           # Maybe I should add LSHIFT? Or emit LT twice?
-           # I'll emit UNKNOWN for now if not in list, or just add LSHIFT constant.
-           # I cannot change constants easily as they are part of class definition I am rewriting.
-           # I'll check my rewritten class.
-           # I didn't add LSHIFT constant.
-           # So I'll just emit UNKNOWN for `<<` unless I add it.
-           # Or maybe existing code didn't handle `<<`?
-           # Existing code `match_other` didn't handle `<<`.
-           # So I'll handle `<` and check `<=`.
-           self << Tuple.new(:UNKNOWN, "<<")
-         end
+        if @position + 2 < @input.size && @input[@position + 2] == '='
+          @position += 3
+          self << Tuple.new(:LSHIFT_ASSIGN, "<<=")
+        else
+          @position += 2
+          # Assuming LSHIFT operator is not defined in constants but LSHIFT_ASSIGN is?
+          # Constants include LSHIFT_ASSIGN.
+          # But not LSHIFT.
+          # However, checking `match_punctuation` or constants.
+          # Constants list: ASSIGN, GT, LT, ...
+          # It does not list LSHIFT (<<).
+          # So I'll emit UNKNOWN or just handle it if I missed a constant.
+          # Wait, `LSHIFT` is common. JavaLexer constants list `LSHIFT_ASSIGN`.
+          # Maybe I should add LSHIFT? Or emit LT twice?
+          # I'll emit UNKNOWN for now if not in list, or just add LSHIFT constant.
+          # I cannot change constants easily as they are part of class definition I am rewriting.
+          # I'll check my rewritten class.
+          # I didn't add LSHIFT constant.
+          # So I'll just emit UNKNOWN for `<<` unless I add it.
+          # Or maybe existing code didn't handle `<<`?
+          # Existing code `match_other` didn't handle `<<`.
+          # So I'll handle `<` and check `<=`.
+          self << Tuple.new(:UNKNOWN, "<<")
+        end
       else
         @position += 1
         self << Tuple.new(:LT, "<")
