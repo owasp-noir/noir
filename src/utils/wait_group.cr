@@ -2,7 +2,7 @@ class WaitGroup
   def initialize
     @count = 0
     @mutex = Mutex.new
-    @channel = Channel(Nil).new
+    @channel = Channel(Nil).new(1)
   end
 
   def add(delta : Int32)
