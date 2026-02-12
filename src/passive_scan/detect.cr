@@ -69,10 +69,18 @@ module NoirPassiveScan
           false
         end
       when "or"
-        begin
-          matcher.patterns && matcher.patterns.any? { |pattern| content.match(Regex.new(pattern.to_s)) }
-        rescue
-          false
+        if regex = matcher.compiled_regex
+          begin
+            !!content.match(regex)
+          rescue
+            false
+          end
+        else
+          begin
+            matcher.patterns && matcher.patterns.any? { |pattern| content.match(Regex.new(pattern.to_s)) }
+          rescue
+            false
+          end
         end
       else
         false
