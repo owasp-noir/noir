@@ -160,23 +160,23 @@ describe Noir::JSLiteralScanner do
     end
 
     it "handles regex with character classes" do
-       content = "return /[a-z]/;"
-       res = Noir::JSLiteralScanner.try_skip_literal(content, 7, "return ")
-       res.should_not be_nil
-       if res
-         res[:content].should eq("return /[a-z]/")
-         res[:pos].should eq(14)
-       end
+      content = "return /[a-z]/;"
+      res = Noir::JSLiteralScanner.try_skip_literal(content, 7, "return ")
+      res.should_not be_nil
+      if res
+        res[:content].should eq("return /[a-z]/")
+        res[:pos].should eq(14)
+      end
     end
 
     it "handles regex with escaped slashes" do
-       content = "return /\\//;"
-       res = Noir::JSLiteralScanner.try_skip_literal(content, 7, "return ")
-       res.should_not be_nil
-       if res
-         res[:content].should eq("return /\\//")
-         res[:pos].should eq(11)
-       end
+      content = "return /\\//;"
+      res = Noir::JSLiteralScanner.try_skip_literal(content, 7, "return ")
+      res.should_not be_nil
+      if res
+        res[:content].should eq("return /\\//")
+        res[:pos].should eq(11)
+      end
     end
   end
 
@@ -200,9 +200,9 @@ describe Noir::JSLiteralScanner do
     end
 
     it "returns nil if not found" do
-       content = "{ code"
-       idx = Noir::JSLiteralScanner.find_matching_brace(content, 0)
-       idx.should be_nil
+      content = "{ code"
+      idx = Noir::JSLiteralScanner.find_matching_brace(content, 0)
+      idx.should be_nil
     end
   end
 
@@ -225,10 +225,10 @@ describe Noir::JSLiteralScanner do
       idx.should eq(6)
     end
 
-     it "returns nil if not found" do
-       content = "( code"
-       idx = Noir::JSLiteralScanner.find_matching_paren(content, 0)
-       idx.should be_nil
+    it "returns nil if not found" do
+      content = "( code"
+      idx = Noir::JSLiteralScanner.find_matching_paren(content, 0)
+      idx.should be_nil
     end
   end
 end
