@@ -139,6 +139,8 @@ class JavaLexer < MiniLexer
   LSHIFT_ASSIGN  = "<<="
   RSHIFT_ASSIGN  = ">>="
   URSHIFT_ASSIGN = ">>>="
+  RSHIFT         = ">>"
+  URSHIFT        = ">>>"
 
   # Java 8 tokens
   ARROW      = "->"
@@ -488,15 +490,26 @@ class JavaLexer < MiniLexer
         self << Tuple.new(:LT, "<")
       end
     when '>'
-      if @position + 1 < @input.size && @input[@position + 1] == '='
+      if @position + 1 < @input.size && @input[@position + 1] == '>'     # starts with >>
+        if @position + 2 < @input.size && @input[@position + 2] == '>'   # starts with >>>
+          if @position + 3 < @input.size && @input[@position + 3] == '=' # >>>=
+            @position += 4
+            self << Tuple.new(:URSHIFT_ASSIGN, ">>>=")
+          else # >>>
+            @position += 3
+            self << Tuple.new(:URSHIFT, ">>>")
+          end
+        elsif @position + 2 < @input.size && @input[@position + 2] == '=' # >>=
+          @position += 3
+          self << Tuple.new(:RSHIFT_ASSIGN, ">>=")
+        else # >>
+          @position += 2
+          self << Tuple.new(:RSHIFT, ">>")
+        end
+      elsif @position + 1 < @input.size && @input[@position + 1] == '=' # >=
         @position += 2
         self << Tuple.new(:GE, ">=")
-      elsif @position + 1 < @input.size && @input[@position + 1] == '>'
-        # Handle >> and >>> and >>= and >>>=
-        # For now, similar to <<.
-        @position += 2
-        self << Tuple.new(:UNKNOWN, ">>")
-      else
+      else # >
         @position += 1
         self << Tuple.new(:GT, ">")
       end

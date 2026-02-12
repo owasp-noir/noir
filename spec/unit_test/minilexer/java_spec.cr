@@ -148,6 +148,10 @@ describe JavaLexer do
         "=" => :ASSIGN, "==" => :EQUAL, "!=" => :NOTEQUAL,
         "&&" => :AND, "||" => :OR,
         "++" => :INC, "--" => :DEC,
+        "+=" => :ADD_ASSIGN, "-=" => :SUB_ASSIGN, "*=" => :MUL_ASSIGN, "/=" => :DIV_ASSIGN,
+        "%=" => :MOD_ASSIGN, "&=" => :AND_ASSIGN, "|=" => :OR_ASSIGN, "^=" => :XOR_ASSIGN,
+        "->" => :ARROW, "::" => :COLONCOLON,
+        ">>" => :RSHIFT, ">>>" => :URSHIFT, ">>=" => :RSHIFT_ASSIGN, ">>>=" => :URSHIFT_ASSIGN,
       }
 
       ops.each do |text, type|
