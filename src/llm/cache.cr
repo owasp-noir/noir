@@ -50,14 +50,13 @@ module LLM
     #
     # Returns a hex-encoded SHA256 digest.
     def self.key(provider : String, model : String, kind : String, format : String, payload : String) : String
-      data = String.build do |io|
-        io << provider << '|'
-        io << model << '|'
-        io << kind << '|'
-        io << format << '|'
-        io << payload
-      end
-      Digest::SHA256.hexdigest(data)
+      digest = Digest::SHA256.new
+      digest << provider << "|"
+      digest << model << "|"
+      digest << kind << "|"
+      digest << format << "|"
+      digest << payload
+      digest.hexfinal
     end
 
     def self.path_for(key : String) : String
