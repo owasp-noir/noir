@@ -26,17 +26,26 @@ struct PassiveScan
     property patterns : Array(YAML::Any)
     property condition : String
     property compiled_regex : Regex?
+    property compiled_regexes : Array(Regex)?
 
     def initialize(yaml : YAML::Any)
       @type = yaml["type"].as_s
       @patterns = yaml["patterns"].as_a
       @condition = yaml["condition"].as_s
 
-      if @type == "regex" && @condition == "or"
-        begin
-          @compiled_regex = Regex.union(@patterns.map { |p| Regex.new(p.to_s) })
-        rescue
-          @compiled_regex = nil
+      if @type == "regex"
+        if @condition == "or"
+          begin
+            @compiled_regex = Regex.union(@patterns.map { |p| Regex.new(p.to_s) })
+          rescue
+            @compiled_regex = nil
+          end
+        elsif @condition == "and"
+          begin
+            @compiled_regexes = @patterns.map { |p| Regex.new(p.to_s) }
+          rescue
+            @compiled_regexes = nil
+          end
         end
       end
     end
