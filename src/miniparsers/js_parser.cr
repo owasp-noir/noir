@@ -43,6 +43,10 @@ module Noir
       end
     end
 
+    private def is_http_method?(token : JSToken) : Bool
+      token.type == :http_method || (token.type == :keyword && token.value == "delete")
+    end
+
     def initialize(source : String)
       lexer = JSLexer.new(source)
       @tokens = lexer.tokenize
@@ -301,7 +305,7 @@ module Noir
         # This identifies variables used as routers
         if @tokens[idx].type == :identifier &&
            idx + 1 < @tokens.size && @tokens[idx + 1].type == :dot &&
-           idx + 2 < @tokens.size && @tokens[idx + 2].type == :http_method &&
+           idx + 2 < @tokens.size && is_http_method?(@tokens[idx + 2]) &&
            idx + 3 < @tokens.size && @tokens[idx + 3].type == :lparen
           router_variables.add(@tokens[idx].value)
         end
@@ -405,7 +409,7 @@ module Noir
         # Pattern 1: identifier . http_method ( 'path' | `tpl` | identifier/concat )
         if @tokens[idx].type == :identifier &&
            @tokens[idx + 1].type == :dot &&
-           @tokens[idx + 2].type == :http_method &&
+           is_http_method?(@tokens[idx + 2]) &&
            @tokens[idx + 3].type == :lparen
           router_var = @tokens[idx].value
           method = @tokens[idx + 2].value
@@ -464,7 +468,7 @@ module Noir
             steps = 0
             max_steps = 1000
             while j < limit - 1 && steps < max_steps
-              if @tokens[j].type == :dot && @tokens[j + 1].type == :http_method
+              if @tokens[j].type == :dot && is_http_method?(@tokens[j + 1])
                 results << create_route_with_params(@tokens[j + 1].value, prefixed_path, path_entry.path, start_pos, path_entry.is_regex?)
                 j += 2
                 steps += 2
@@ -495,7 +499,7 @@ module Noir
       while idx < @tokens.size
         if idx > 1 &&
            @tokens[idx - 2].type == :dot &&
-           @tokens[idx - 1].type == :http_method &&
+           is_http_method?(@tokens[idx - 1]) &&
            @tokens[idx].type == :lparen &&
            idx + 1 < @tokens.size &&
            @tokens[idx + 1].type == :string
@@ -518,7 +522,7 @@ module Noir
          @tokens[idx].value.ends_with?("Router")) &&
          idx + 2 < @tokens.size &&
          @tokens[idx + 1].type == :dot &&
-         @tokens[idx + 2].type == :http_method
+         is_http_method?(@tokens[idx + 2])
         method = @tokens[idx + 2].value.upcase
 
         # Look for the path string in parentheses
@@ -593,7 +597,7 @@ module Noir
          @tokens[idx].value == "server") &&
          idx + 2 < @tokens.size &&
          @tokens[idx + 1].type == :dot &&
-         @tokens[idx + 2].type == :http_method
+         is_http_method?(@tokens[idx + 2])
         method = @tokens[idx + 2].value.upcase
 
         # Look for the path string in parentheses
@@ -633,7 +637,7 @@ module Noir
          @tokens[idx].value.ends_with?("Router")) &&
          idx + 2 < @tokens.size &&
          @tokens[idx + 1].type == :dot &&
-         @tokens[idx + 2].type == :http_method
+         is_http_method?(@tokens[idx + 2])
         method = @tokens[idx + 2].value
         # Handle restify's 'del' method which means DELETE
         method = "DELETE" if method.downcase == "del"
@@ -691,7 +695,7 @@ module Noir
       if idx > 0 &&
          idx < @tokens.size - 2 &&
          @tokens[idx].type == :dot &&
-         @tokens[idx + 1].type == :http_method
+         is_http_method?(@tokens[idx + 1])
         method = @tokens[idx + 1].value.upcase
 
         # Look for the path string in parentheses
@@ -781,7 +785,7 @@ module Noir
         while method_idx < @tokens.size - 1
           if @tokens[method_idx].type == :dot &&
              method_idx + 1 < @tokens.size &&
-             @tokens[method_idx + 1].type == :http_method
+             is_http_method?(@tokens[method_idx + 1])
             method = @tokens[method_idx + 1].value.upcase
 
             # Create routes for all prefixed paths
@@ -849,7 +853,7 @@ module Noir
         while method_idx < @tokens.size - 1
           if @tokens[method_idx].type == :dot &&
              method_idx + 1 < @tokens.size &&
-             @tokens[method_idx + 1].type == :http_method
+             is_http_method?(@tokens[method_idx + 1])
             method = @tokens[method_idx + 1].value.upcase
 
             # Create routes for all prefixed paths
@@ -915,7 +919,7 @@ module Noir
           while ahead_idx < @tokens.size - 3
             if ahead_idx + 2 < @tokens.size &&
                @tokens[ahead_idx + 1].type == :dot &&
-               @tokens[ahead_idx + 2].type == :http_method &&
+               is_http_method?(@tokens[ahead_idx + 2]) &&
                ahead_idx + 3 < @tokens.size &&
                @tokens[ahead_idx + 3].type == :lparen &&
                ahead_idx + 4 < @tokens.size &&
@@ -969,7 +973,7 @@ module Noir
           if back_idx > 2 &&
              @tokens[back_idx - 2].value == router_name &&
              @tokens[back_idx - 1].type == :dot &&
-             (@tokens[back_idx].type == :http_method ||
+             (is_http_method?(@tokens[back_idx]) ||
              @tokens[back_idx].value == "del") && # Restify uses 'del' for DELETE
              back_idx + 1 < @tokens.size &&
              @tokens[back_idx + 1].type == :lparen &&
