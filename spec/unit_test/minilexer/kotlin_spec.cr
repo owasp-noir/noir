@@ -22,7 +22,7 @@ describe KotlinLexer do
       output.map(&.type).should eq([
         :FUN, :IDENTIFIER, :LPAREN, :RPAREN, :LCURL, :NEWLINE,
         :IDENTIFIER, :LPAREN, :STRING_LITERAL, :RPAREN, :NEWLINE,
-        :RCURL
+        :RCURL,
       ])
       output[1].value.should eq("main")
       output[6].value.should eq("println")
