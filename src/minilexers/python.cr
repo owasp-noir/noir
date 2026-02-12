@@ -109,8 +109,7 @@ class PythonLexer < MiniLexer
   end
 
   private def match_indentation
-    match = @input[@position..].match(/^[\t ]+\b/)
-    if match
+    if match = @input.match(/\G[\t ]+\b/, @position)
       self << Tuple.new(:INDENT, match[0])
       @position += match[0].size
     end
