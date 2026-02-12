@@ -177,11 +177,13 @@ class KotlinLexer < MiniLexer
       end
     else
       @position += 1
-      is_backslash_char = false
+      is_escaped = false
       while @position < @input.size
-        s += @input[@position]
-        break if !is_backslash_char && @input[@position] == s[0]
-        is_backslash_char = s[0] == '\\'
+        char = @input[@position]
+        s += char
+        break if !is_escaped && char == s[0]
+
+        is_escaped = char == '\\' && !is_escaped
         @position += 1
       end
 
