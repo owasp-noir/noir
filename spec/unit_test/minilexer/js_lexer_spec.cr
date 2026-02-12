@@ -15,7 +15,7 @@ describe Noir::JSLexer do
       tokens = lexer.tokenize
       tokens.map(&.type).should eq([
         :lparen, :rparen, :lbrace, :rbrace, :lbracket, :rbracket,
-        :comma, :colon, :semicolon, :dot
+        :comma, :colon, :semicolon, :dot,
       ])
       tokens.map(&.value).should eq(["(", ")", "{", "}", "[", "]", ",", ":", ";", "."])
     end
@@ -135,13 +135,13 @@ describe Noir::JSLexer do
 
     it "identifies regex in complex contexts" do
       cases = {
-        "( /abc/ )" => [:lparen, :regex, :rparen],
-        "{ /abc/ }" => [:lbrace, :regex, :rbrace],
-        "[ /abc/ ]" => [:lbracket, :regex, :rbracket],
-        ", /abc/"   => [:comma, :regex],
-        ": /abc/"   => [:colon, :regex],
-        "= /abc/"   => [:assign, :regex],
-        "case /abc/:" => [:keyword, :regex, :colon],
+        "( /abc/ )"    => [:lparen, :regex, :rparen],
+        "{ /abc/ }"    => [:lbrace, :regex, :rbrace],
+        "[ /abc/ ]"    => [:lbracket, :regex, :rbracket],
+        ", /abc/"      => [:comma, :regex],
+        ": /abc/"      => [:colon, :regex],
+        "= /abc/"      => [:assign, :regex],
+        "case /abc/:"  => [:keyword, :regex, :colon],
         "typeof /abc/" => [:keyword, :regex],
       }
 
