@@ -134,5 +134,43 @@ describe "WaitGroup" do
       # Should not block
       true.should be_true
     end
+
+    it "prevents deadlock when adding after done without wait" do
+      wg = WaitGroup.new
+      wg.add(1)
+
+      done_called = Channel(Nil).new
+      spawn do
+        wg.done
+        done_called.send(nil)
+      end
+
+      # Ensure done is called
+      done_called.receive
+
+      # This add should succeed immediately without blocking on the worker holding a lock
+      # In the buggy implementation, 'done' would block holding the lock because 'wait' wasn't called.
+      # 'add' would then block trying to acquire the lock.
+      begin
+        result_ch = Channel(Nil).new
+        spawn do
+          wg.add(1)
+          result_ch.send(nil)
+        end
+
+        select
+        when result_ch.receive
+          true.should be_true
+        when timeout(1.seconds)
+          raise "Deadlock detected: wg.add(1) timed out"
+        end
+      rescue ex
+        fail("Exception during deadlock check: #{ex.message}")
+      end
+
+      # Clean up to allow wait to return (count is now 1 because we added 1)
+      spawn { wg.done }
+      wg.wait
+    end
   end
 end
