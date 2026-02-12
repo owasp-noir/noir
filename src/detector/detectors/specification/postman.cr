@@ -6,7 +6,7 @@ module Detector::Specification
   class Postman < Detector
     def detect(filename : String, file_contents : String) : Bool
       check = false
-      if valid_json? file_contents
+      if filename.ends_with?(".json") && valid_json?(file_contents)
         data = JSON.parse(file_contents)
         begin
           # Check for Postman Collection v2.1.0 or v2.0.0 schema

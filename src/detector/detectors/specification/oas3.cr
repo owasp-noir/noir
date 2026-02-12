@@ -7,7 +7,7 @@ module Detector::Specification
   class Oas3 < Detector
     def detect(filename : String, file_contents : String) : Bool
       check = false
-      if valid_json? file_contents
+      if filename.ends_with?(".json") && valid_json?(file_contents)
         data = JSON.parse(file_contents)
         begin
           if data["openapi"].as_s.includes? "3."
@@ -17,7 +17,7 @@ module Detector::Specification
           end
         rescue
         end
-      elsif valid_yaml? file_contents
+      elsif (filename.ends_with?(".yaml") || filename.ends_with?(".yml")) && valid_yaml?(file_contents)
         data = YAML.parse(file_contents)
         begin
           if data["openapi"].as_s.includes? "3."

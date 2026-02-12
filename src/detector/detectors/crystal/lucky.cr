@@ -3,10 +3,9 @@ require "../../../models/detector"
 module Detector::Crystal
   class Lucky < Detector
     def detect(filename : String, file_contents : String) : Bool
-      check = file_contents.includes?("luckyframework/lucky")
-      check = check && filename.includes?("shard.yml")
+      return false unless filename.includes?("shard.yml")
 
-      check
+      file_contents.includes?("luckyframework/lucky")
     end
 
     def set_name

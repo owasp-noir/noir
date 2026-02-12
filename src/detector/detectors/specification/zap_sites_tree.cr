@@ -7,7 +7,7 @@ module Detector::Specification
   class ZapSitesTree < Detector
     def detect(filename : String, file_contents : String) : Bool
       check = false
-      if valid_yaml? file_contents
+      if (filename.ends_with?(".yaml") || filename.ends_with?(".yml")) && valid_yaml?(file_contents)
         data = YAML.parse(file_contents)
         begin
           if data[0]["node"].as_s.includes? "Sites"

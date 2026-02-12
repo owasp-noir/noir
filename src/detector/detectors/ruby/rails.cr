@@ -3,9 +3,10 @@ require "../../../models/detector"
 module Detector::Ruby
   class Rails < Detector
     def detect(filename : String, file_contents : String) : Bool
+      return false unless filename.includes?("Gemfile")
+
       check = file_contents.includes?("gem 'rails'")
       check = check || file_contents.includes?("gem \"rails\"")
-      check = check && filename.includes?("Gemfile")
 
       check
     end

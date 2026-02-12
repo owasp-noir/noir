@@ -3,9 +3,10 @@ require "../../../models/detector"
 module Detector::Rust
   class Tide < Detector
     def detect(filename : String, file_contents : String) : Bool
+      return false unless filename.includes?("Cargo.toml")
+
       check = file_contents.includes?("tide")
       check = check && file_contents.includes?("dependencies")
-      check = check && filename.includes?("Cargo.toml")
 
       check
     end
