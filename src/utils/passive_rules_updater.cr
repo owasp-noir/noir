@@ -91,17 +91,9 @@ module PassiveRulesUpdater
       return false
     end
 
-    begin
-      local_revision = File.read(revision_file).strip
-      logger.debug "Local passive rules revision: #{local_revision}"
-
-      # For now, we'll just assume rules are up to date if revision file exists
-      # A more sophisticated implementation could fetch the latest revision from GitHub API
-      true
-    rescue ex : Exception
-      logger.debug "Error reading revision file: #{ex.message}"
-      false
-    end
+    # For now, we'll just assume rules are up to date if revision file exists
+    # A more sophisticated implementation could fetch the latest revision from GitHub API
+    true
   end
 
   # Notify user that updates are available
