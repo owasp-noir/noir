@@ -11,29 +11,12 @@ module Analyzer::Typescript
       begin
         populate_channel_with_files(channel)
 
-        WaitGroup.wait do |wg|
-          worker_count = @options["concurrency"].to_s.to_i
-          worker_count = 16 if worker_count > 16
-          worker_count = 1 if worker_count < 1
-          worker_count.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if File.directory?(path)
-                  next unless [".ts", ".tsx"].any? { |ext| path.ends_with?(ext) }
+        parallel_analyze(channel) do |path|
+          next if File.directory?(path)
+          next unless [".ts", ".tsx"].any? { |ext| path.ends_with?(ext) }
 
-                  if File.exists?(path)
-                    analyze_nestjs_file(path, result, static_dirs)
-                  end
-                rescue File::NotFoundError
-                  logger.debug "File not found: #{path}"
-                rescue e : Exception
-                  logger.debug "Error processing file #{path}: #{e.message}"
-                end
-              end
-            end
+          if File.exists?(path)
+            analyze_nestjs_file(path, result, static_dirs)
           end
         end
       rescue e : Exception
