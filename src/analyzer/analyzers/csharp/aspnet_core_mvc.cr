@@ -438,21 +438,21 @@ module Analyzer::CSharp
     end
 
     private ATTRIBUTE_REGEXES = {
-      "HttpPost"    => /\[HttpPost[^(]*\(\s*"([^"]+)"/,
-      "HttpGet"     => /\[HttpGet[^(]*\(\s*"([^"]+)"/,
-      "HttpPut"     => /\[HttpPut[^(]*\(\s*"([^"]+)"/,
-      "HttpDelete"  => /\[HttpDelete[^(]*\(\s*"([^"]+)"/,
-      "HttpPatch"   => /\[HttpPatch[^(]*\(\s*"([^"]+)"/,
-      "HttpHead"    => /\[HttpHead[^(]*\(\s*"([^"]+)"/,
-      "HttpOptions" => /\[HttpOptions[^(]*\(\s*"([^"]+)"/,
-      "Route"       => /\[Route[^(]*\(\s*"([^"]+)"/,
+      "HttpPost"    => /\[HttpPost[^(]*+\(\s*"([^"]+)"/,
+      "HttpGet"     => /\[HttpGet[^(]*+\(\s*"([^"]+)"/,
+      "HttpPut"     => /\[HttpPut[^(]*+\(\s*"([^"]+)"/,
+      "HttpDelete"  => /\[HttpDelete[^(]*+\(\s*"([^"]+)"/,
+      "HttpPatch"   => /\[HttpPatch[^(]*+\(\s*"([^"]+)"/,
+      "HttpHead"    => /\[HttpHead[^(]*+\(\s*"([^"]+)"/,
+      "HttpOptions" => /\[HttpOptions[^(]*+\(\s*"([^"]+)"/,
+      "Route"       => /\[Route[^(]*+\(\s*"([^"]+)"/,
     }
 
     private TEMPLATE_REGEX = /Template\s*=\s*"([^"]+)"/
 
     private def extract_attribute_route(line : String, attribute : String, current_route : String) : String
       # Try to extract the first string literal inside the attribute
-      regex_with_value = ATTRIBUTE_REGEXES[attribute]? || Regex.new("\\[#{attribute}[^(]*\\(\\s*\"([^\"]+)\"")
+      regex_with_value = ATTRIBUTE_REGEXES[attribute]? || Regex.new("\\[#{attribute}[^(]*+\\(\\s*\"([^\"]+)\"")
 
       if match = regex_with_value.match(line)
         return match[1]
