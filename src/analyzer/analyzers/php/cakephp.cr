@@ -81,8 +81,8 @@ module Analyzer::Php
           # match[2] is path
           # match[3] is content
           if match.size >= 4
-             new_prefix = build_full_path(prefix, match[2])
-             endpoints.concat(analyze_routes_content(match[3], new_prefix, file_path))
+            new_prefix = build_full_path(prefix, match[2])
+            endpoints.concat(analyze_routes_content(match[3], new_prefix, file_path))
           end
         end
         working_content = working_content.gsub(pattern, "")
@@ -107,13 +107,13 @@ module Analyzer::Php
 
       # 3. HTTP Verb methods
       verb_patterns = {
-        "GET" => /(\$routes|\$builder)->get\s*\(\s*['"]([^'"]+)['"]/mi,
-        "POST" => /(\$routes|\$builder)->post\s*\(\s*['"]([^'"]+)['"]/mi,
-        "PUT" => /(\$routes|\$builder)->put\s*\(\s*['"]([^'"]+)['"]/mi,
-        "PATCH" => /(\$routes|\$builder)->patch\s*\(\s*['"]([^'"]+)['"]/mi,
-        "DELETE" => /(\$routes|\$builder)->delete\s*\(\s*['"]([^'"]+)['"]/mi,
+        "GET"     => /(\$routes|\$builder)->get\s*\(\s*['"]([^'"]+)['"]/mi,
+        "POST"    => /(\$routes|\$builder)->post\s*\(\s*['"]([^'"]+)['"]/mi,
+        "PUT"     => /(\$routes|\$builder)->put\s*\(\s*['"]([^'"]+)['"]/mi,
+        "PATCH"   => /(\$routes|\$builder)->patch\s*\(\s*['"]([^'"]+)['"]/mi,
+        "DELETE"  => /(\$routes|\$builder)->delete\s*\(\s*['"]([^'"]+)['"]/mi,
         "OPTIONS" => /(\$routes|\$builder)->options\s*\(\s*['"]([^'"]+)['"]/mi,
-        "HEAD" => /(\$routes|\$builder)->head\s*\(\s*['"]([^'"]+)['"]/mi,
+        "HEAD"    => /(\$routes|\$builder)->head\s*\(\s*['"]([^'"]+)['"]/mi,
       }
 
       verb_patterns.each do |method, pattern|
@@ -168,12 +168,12 @@ module Analyzer::Php
 
       # Standard REST resource routes
       resource_routes = [
-        {resource_path, "GET"},           # index
-        {resource_path, "POST"},          # add
-        {"#{resource_path}/{id}", "GET"},      # view
-        {"#{resource_path}/{id}", "PUT"},      # edit
-        {"#{resource_path}/{id}", "PATCH"},    # edit
-        {"#{resource_path}/{id}", "DELETE"},   # delete
+        {resource_path, "GET"},              # index
+        {resource_path, "POST"},             # add
+        {"#{resource_path}/{id}", "GET"},    # view
+        {"#{resource_path}/{id}", "PUT"},    # edit
+        {"#{resource_path}/{id}", "PATCH"},  # edit
+        {"#{resource_path}/{id}", "DELETE"}, # delete
       ]
 
       resource_routes.each do |route_info|
