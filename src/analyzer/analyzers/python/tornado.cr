@@ -74,8 +74,8 @@ module Analyzer::Python
       # Process route handlers
       path_api_instances.each do |path, _|
         @routes[path]?.try &.each do |route_info|
-          line_index, method, route_path, handler_class = route_info
-          endpoints = extract_endpoints_from_handler(path, route_path, handler_class, method)
+          line_index, _, route_path, handler_class = route_info
+          endpoints = extract_endpoints_from_handler(path, route_path, handler_class)
           endpoints.each do |endpoint|
             details = Details.new(PathInfo.new(path, line_index + 1))
             endpoint.details = details
@@ -94,7 +94,7 @@ module Analyzer::Python
 
       # Check if Application() is called with a variable name (not an inline list)
       # e.g. Application(routes) but NOT Application([...])
-      var_match = app_line.match /Application\(([a-zA-Z_][a-zA-Z0-9_]*)/
+      var_match = app_line.match /Application\((?:handlers=)?([a-zA-Z_][a-zA-Z0-9_]*)/
       if var_match
         var_name = var_match[1]
         # Find the variable definition in the file
@@ -130,14 +130,16 @@ module Analyzer::Python
         line.each_char do |c|
           if in_string
             in_string = false if c == string_char
-          elsif c == '"' || c == '\''
-            in_string = true
-            string_char = c
-          elsif c == '['
-            bracket_depth += 1
-            found_opening = true
-          elsif c == ']'
-            bracket_depth -= 1
+          else
+            if c == '"' || c == '\''
+              in_string = true
+              string_char = c
+            elsif c == '['
+              bracket_depth += 1
+              found_opening = true
+            elsif c == ']'
+              bracket_depth -= 1
+            end
           end
         end
 
@@ -155,7 +157,7 @@ module Analyzer::Python
       end
     end
 
-    private def extract_endpoints_from_handler(file_path : ::String, route_path : ::String, handler_class : ::String, default_method : ::String) : Array(Endpoint)
+    private def extract_endpoints_from_handler(file_path : ::String, route_path : ::String, handler_class : ::String) : Array(Endpoint)
       endpoints = [] of Endpoint
 
       # First try to find the handler class in the application file
@@ -186,7 +188,8 @@ module Analyzer::Python
 
       class_found = false
       lines.each_with_index do |line, line_index|
-        if line.strip.starts_with?("class #{handler_class}")
+        stripped = line.strip
+        if stripped.starts_with?("class #{handler_class}(") || stripped.starts_with?("class #{handler_class}:")
           class_found = true
           next
         end
@@ -195,7 +198,6 @@ module Analyzer::Python
 
         # Look for HTTP method handlers (both sync and async)
         HTTP_METHODS.each do |http_method|
-          stripped = line.strip
           if stripped.starts_with?("def #{http_method}(") || stripped.starts_with?("async def #{http_method}(")
             params = extract_params_from_method(lines, line_index, file_path)
             endpoint = Endpoint.new(route_path, http_method.upcase, params)
@@ -204,7 +206,7 @@ module Analyzer::Python
         end
 
         # Stop when we reach the next class
-        if line.strip.starts_with?("class ") && !line.strip.starts_with?("class #{handler_class}")
+        if stripped.starts_with?("class ") && !stripped.starts_with?("class #{handler_class}(") && !stripped.starts_with?("class #{handler_class}:")
           break
         end
       end
@@ -227,7 +229,12 @@ module Analyzer::Python
 
     private def read_file_content(file_path : ::String) : ::String
       return @file_content_cache[file_path] if @file_content_cache.has_key?(file_path)
-      content = File.read(file_path, encoding: "utf-8", invalid: :skip)
+      content = begin
+        File.read(file_path, encoding: "utf-8", invalid: :skip)
+      rescue File::NotFoundError
+        @logger.debug "File not found: #{file_path}"
+        ""
+      end
       @file_content_cache[file_path] = content
       content
     end
@@ -283,13 +290,8 @@ module Analyzer::Python
         params << Param.new(param_name, "", "query")
       end
 
-      # JSON body parsing: tornado.escape.json_decode(self.request.body)
-      if line.includes?("json_decode") && line.includes?("self.request.body")
-        params << Param.new("", "", "json")
-      end
-
-      # JSON body parsing: json.loads(self.request.body)
-      if line.includes?("json.loads") && line.includes?("self.request.body")
+      # JSON body parsing: tornado.escape.json_decode or json.loads
+      if (line.includes?("json_decode") || line.includes?("json.loads")) && line.includes?("self.request.body")
         params << Param.new("", "", "json")
       end
     end
