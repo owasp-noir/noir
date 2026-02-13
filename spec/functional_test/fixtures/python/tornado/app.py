@@ -1,5 +1,7 @@
 import tornado.web
 import tornado.escape
+from handlers import ApiHandler, SearchHandler
+from admin import AdminHandler
 
 class MainHandler(tornado.web.RequestHandler):
     def get(self):
@@ -9,10 +11,10 @@ class MainHandler(tornado.web.RequestHandler):
 class UserHandler(tornado.web.RequestHandler):
     def get(self, user_id):
         self.write(f"User ID: {user_id}")
-    
+
     def post(self):
         username = self.get_body_argument("username")
-        email = self.get_body_argument("email") 
+        email = self.get_body_argument("email")
         self.write(f"Created user: {username}")
 
 class AuthHandler(tornado.web.RequestHandler):
@@ -22,8 +24,14 @@ class AuthHandler(tornado.web.RequestHandler):
         if token and api_key:
             self.write("Authenticated")
 
-application = tornado.web.Application([
+routes = [
     (r"/", MainHandler),
     (r"/users", UserHandler),
     (r"/auth", AuthHandler),
-])
+    (r"/api", ApiHandler),
+    (r"/search", SearchHandler),
+    (r"/items(?:/(\d+))?", SearchHandler),
+    (r"/admin", AdminHandler),
+]
+
+application = tornado.web.Application(routes)
