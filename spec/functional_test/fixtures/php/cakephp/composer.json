@@ -1,0 +1,5 @@
+{
+  "require": {
+    "cakephp/cakephp": "^5.0"
+  }
+}
