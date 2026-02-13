@@ -39,7 +39,7 @@ class Analyzer
     # After inheriting the class, write an action code here.
   end
 
-  def parallel_analyze(channel : Channel(String), &block : String -> Void)
+  def parallel_analyze(channel : Channel(String), &block : String -> Nil)
     WaitGroup.wait do |wg|
       worker_count = @options["concurrency"].to_s.to_i
       worker_count = 16 if worker_count > 16
@@ -52,7 +52,7 @@ class Analyzer
               path = channel.receive?
               break if path.nil?
               block.call(path)
-            rescue e : File::NotFoundError
+            rescue File::NotFoundError
               @logger.debug "File not found: #{path}"
             rescue e : Exception
               if path
