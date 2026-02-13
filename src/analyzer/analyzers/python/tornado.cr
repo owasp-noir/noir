@@ -189,7 +189,7 @@ module Analyzer::Python
       class_found = false
       lines.each_with_index do |line, line_index|
         stripped = line.strip
-        if stripped.starts_with?("class #{handler_class}(") || stripped.starts_with?("class #{handler_class}:")
+        if (m = stripped.match(/^class\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*[\(:]/)) && m[1] == handler_class
           class_found = true
           next
         end
@@ -206,7 +206,7 @@ module Analyzer::Python
         end
 
         # Stop when we reach the next class
-        if stripped.starts_with?("class ") && !stripped.starts_with?("class #{handler_class}(") && !stripped.starts_with?("class #{handler_class}:")
+        if stripped.match(/^class\s+/) && !((m = stripped.match(/^class\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*[\(:]/)) && m[1] == handler_class)
           break
         end
       end
