@@ -11,53 +11,36 @@ module Analyzer::Javascript
       begin
         populate_channel_with_files(channel)
 
-        WaitGroup.wait do |wg|
-          worker_count = @options["concurrency"].to_s.to_i
-          worker_count = 16 if worker_count > 16
-          worker_count = 1 if worker_count < 1
-          worker_count.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if File.directory?(path)
-                  next unless [".js", ".ts", ".mjs"].any? { |ext| path.ends_with?(ext) }
+        parallel_analyze(channel) do |path|
+          next if File.directory?(path)
+          next unless [".js", ".ts", ".mjs"].any? { |ext| path.ends_with?(ext) }
 
-                  if File.exists?(path)
-                    begin
-                      content = File.read(path, encoding: "utf-8", invalid: :skip)
-                      parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug)
-                      parser_endpoints.each do |endpoint|
-                        details = Details.new(PathInfo.new(path, 1)) # Line number is approximate
-                        endpoint.details = details
+          if File.exists?(path)
+            begin
+              content = File.read(path, encoding: "utf-8", invalid: :skip)
+              parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug)
+              parser_endpoints.each do |endpoint|
+                details = Details.new(PathInfo.new(path, 1)) # Line number is approximate
+                endpoint.details = details
 
-                        if endpoint.url.includes?(":")
-                          endpoint.url.scan(/:(\w+)/) do |m|
-                            if m.size > 0
-                              param = Param.new(m[1], "", "path")
-                              endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
-                            end
-                          end
-                        end
-                        result << endpoint
-                      end
-
-                      # Extract static path declarations
-                      Noir::JSRouteExtractor.extract_static_paths(content).each do |static_path|
-                        static_dirs << static_path unless static_dirs.any? { |s| s["static_path"] == static_path["static_path"] && s["file_path"] == static_path["file_path"] }
-                      end
-                    rescue e
-                      logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
-                      analyze_with_regex(path, result, static_dirs)
+                if endpoint.url.includes?(":")
+                  endpoint.url.scan(/:(\w+)/) do |m|
+                    if m.size > 0
+                      param = Param.new(m[1], "", "path")
+                      endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
                     end
                   end
-                rescue File::NotFoundError
-                  logger.debug "File not found: #{path}"
-                rescue e : Exception
-                  logger.debug "Error processing file #{path}: #{e.message}"
                 end
+                result << endpoint
               end
+
+              # Extract static path declarations
+              Noir::JSRouteExtractor.extract_static_paths(content).each do |static_path|
+                static_dirs << static_path unless static_dirs.any? { |s| s["static_path"] == static_path["static_path"] && s["file_path"] == static_path["file_path"] }
+              end
+            rescue e
+              logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
+              analyze_with_regex(path, result, static_dirs)
             end
           end
         end

@@ -39,6 +39,34 @@ class Analyzer
     # After inheriting the class, write an action code here.
   end
 
+  def parallel_analyze(channel : Channel(String), &block : String -> Nil)
+    WaitGroup.wait do |wg|
+      worker_count = @options["concurrency"].to_s.to_i
+      worker_count = 16 if worker_count > 16
+      worker_count = 1 if worker_count < 1
+      worker_count.times do
+        wg.spawn do
+          loop do
+            path = nil
+            begin
+              path = channel.receive?
+              break if path.nil?
+              block.call(path)
+            rescue File::NotFoundError
+              @logger.debug "File not found: #{path}"
+            rescue e : Exception
+              if path
+                @logger.debug "Error processing file #{path}: #{e.message}"
+              else
+                @logger.debug "Error in worker: #{e.message}"
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+
   macro define_getter_methods(names)
     {% for name, index in names %}
       def {{ name.id }}

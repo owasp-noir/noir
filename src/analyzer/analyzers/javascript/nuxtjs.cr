@@ -9,31 +9,14 @@ module Analyzer::Javascript
       begin
         populate_channel_with_files(channel)
 
-        WaitGroup.wait do |wg|
-          worker_count = @options["concurrency"].to_s.to_i
-          worker_count = 16 if worker_count > 16
-          worker_count = 1 if worker_count < 1
-          worker_count.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if File.directory?(path)
-                  next unless [".js", ".ts", ".mjs", ".mts"].any? { |ext| path.ends_with?(ext) }
+        parallel_analyze(channel) do |path|
+          next if File.directory?(path)
+          next unless [".js", ".ts", ".mjs", ".mts"].any? { |ext| path.ends_with?(ext) }
 
-                  # Focus on server/api and server/routes directories for Nuxt 3
-                  if path.includes?("/server/api/") || path.includes?("/server/routes/")
-                    if File.exists?(path)
-                      analyze_nuxt_file(path, result)
-                    end
-                  end
-                rescue File::NotFoundError
-                  logger.debug "File not found: #{path}"
-                rescue e : Exception
-                  logger.debug "Error processing file #{path}: #{e.message}"
-                end
-              end
+          # Focus on server/api and server/routes directories for Nuxt 3
+          if path.includes?("/server/api/") || path.includes?("/server/routes/")
+            if File.exists?(path)
+              analyze_nuxt_file(path, result)
             end
           end
         end
