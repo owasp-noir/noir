@@ -24,6 +24,8 @@ module Analyzer::Python
       "header" => nil,
     }
 
+    CLASS_DEF_REGEX = /^class\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*[\(:]/
+
     @file_content_cache = Hash(::String, ::String).new
     @parsers = Hash(::String, PythonParser).new
     @routes = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String))).new
@@ -90,11 +92,11 @@ module Analyzer::Python
     private def extract_url_patterns_from_application(lines : Array(::String), start_index : Int32, file_path : ::String, api_instances : Hash(::String, ::String))
       @routes[file_path] ||= [] of Tuple(Int32, ::String, ::String, ::String)
 
-      app_line = lines[start_index].strip.gsub(" ", "")
+      app_line = lines[start_index].strip
 
       # Check if Application() is called with a variable name (not an inline list)
       # e.g. Application(routes) but NOT Application([...])
-      var_match = app_line.match /Application\((?:handlers=)?([a-zA-Z_][a-zA-Z0-9_]*)/
+      var_match = app_line.match /Application\s*\((?:handlers\s*=\s*)?([a-zA-Z_][a-zA-Z0-9_]*)/
       if var_match
         var_name = var_match[1]
         # Find the variable definition in the file
@@ -108,9 +110,9 @@ module Analyzer::Python
 
     private def extract_routes_from_variable(lines : Array(::String), var_name : ::String, file_path : ::String)
       lines.each_with_index do |line, line_index|
-        stripped = line.strip.gsub(" ", "")
+        stripped = line.strip
         # Match: var_name = [
-        if stripped.starts_with?("#{var_name}=[")
+        if stripped.match(/^#{var_name}\s*=\s*\[/)
           extract_routes_from_lines(lines, line_index, file_path)
           return
         end
@@ -126,12 +128,15 @@ module Analyzer::Python
 
         # Track bracket depth, skipping characters inside string literals
         in_string = false
-        string_char = '"'
+        string_char = '\0'
+        prev_char = '\0'
         line.each_char do |c|
           if in_string
-            in_string = false if c == string_char
+            if c == string_char && prev_char != '\\'
+              in_string = false
+            end
           else
-            if c == '"' || c == '\''
+            if (c == '"' || c == '\'') && prev_char != '\\'
               in_string = true
               string_char = c
             elsif c == '['
@@ -141,6 +146,7 @@ module Analyzer::Python
               bracket_depth -= 1
             end
           end
+          prev_char = c
         end
 
         # Match URL pattern: (r"/path", HandlerClass)
@@ -189,7 +195,7 @@ module Analyzer::Python
       class_found = false
       lines.each_with_index do |line, line_index|
         stripped = line.strip
-        if (m = stripped.match(/^class\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*[\(:]/)) && m[1] == handler_class
+        if (m = stripped.match(CLASS_DEF_REGEX)) && m[1] == handler_class
           class_found = true
           next
         end
@@ -206,7 +212,7 @@ module Analyzer::Python
         end
 
         # Stop when we reach the next class
-        if stripped.match(/^class\s+/) && !((m = stripped.match(/^class\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*[\(:]/)) && m[1] == handler_class)
+        if stripped.match(/^class\s+/) && !((m = stripped.match(CLASS_DEF_REGEX)) && m[1] == handler_class)
           break
         end
       end
@@ -215,11 +221,10 @@ module Analyzer::Python
     end
 
     private def resolve_imports(file_path : ::String) : Hash(::String, Tuple(::String, Int32))
-      return @import_modules_cache[file_path] if @import_modules_cache.has_key?(file_path)
-      content = read_file_content(file_path)
-      import_map = find_imported_modules(base_paths[0], file_path, content)
-      @import_modules_cache[file_path] = import_map
-      import_map
+      @import_modules_cache[file_path] ||= begin
+        content = read_file_content(file_path)
+        find_imported_modules(base_paths[0], file_path, content)
+      end
     end
 
     private def read_file_lines(file_path : ::String) : Array(::String)
@@ -231,8 +236,8 @@ module Analyzer::Python
       return @file_content_cache[file_path] if @file_content_cache.has_key?(file_path)
       content = begin
         File.read(file_path, encoding: "utf-8", invalid: :skip)
-      rescue File::NotFoundError
-        @logger.debug "File not found: #{file_path}"
+      rescue e : IO::Error
+        @logger.debug "Failed to read file: #{file_path} (#{e.message})"
         ""
       end
       @file_content_cache[file_path] = content
