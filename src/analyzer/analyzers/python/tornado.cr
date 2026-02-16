@@ -126,21 +126,26 @@ module Analyzer::Python
     private def extract_routes_from_lines(lines : Array(::String), start_index : Int32, file_path : ::String)
       bracket_depth = 0
       found_opening = false
+      in_string = false
+      string_char = '\0'
       i = start_index
       while i < lines.size
         line = lines[i].strip
 
-        # Track bracket depth, skipping characters inside string literals
-        in_string = false
-        string_char = '\0'
+        # Track bracket depth, skipping characters inside string literals and comments
+        in_comment = false
         prev_char = '\0'
         line.each_char do |c|
-          if in_string
+          if in_comment
+            # Skip rest of line
+          elsif in_string
             if c == string_char && prev_char != '\\'
               in_string = false
             end
           else
-            if (c == '"' || c == '\'') && prev_char != '\\'
+            if c == '#'
+              in_comment = true
+            elsif (c == '"' || c == '\'') && prev_char != '\\'
               in_string = true
               string_char = c
             elsif c == '['
