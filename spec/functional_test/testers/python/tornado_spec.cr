@@ -12,6 +12,7 @@ expected_endpoints = [
   Endpoint.new("/admin", "GET", [Param.new("admin_token", "", "cookie")]),
   Endpoint.new("/admin", "DELETE"),
   Endpoint.new("/health", "GET"),
+  Endpoint.new("/status", "GET"),
 ]
 
 FunctionalTester.new("fixtures/python/tornado/", {

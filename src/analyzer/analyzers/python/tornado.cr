@@ -112,9 +112,12 @@ module Analyzer::Python
     private def extract_routes_from_variable(lines : Array(::String), var_name : ::String, file_path : ::String)
       lines.each_with_index do |line, line_index|
         stripped = line.strip
-        # Match: var_name = [
+        # Match: var_name = [ (same line) or var_name = (opening bracket on next line)
         if stripped.match(/^#{var_name}\s*=\s*\[/)
           extract_routes_from_lines(lines, line_index, file_path)
+          return
+        elsif stripped.match(/^#{var_name}\s*=\s*$/)
+          extract_routes_from_lines(lines, line_index + 1, file_path)
           return
         end
       end
