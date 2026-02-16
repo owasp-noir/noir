@@ -154,10 +154,10 @@ module Analyzer::Python
         end
 
         # Match URL pattern: (r"/path", HandlerClass)
-        pattern_match = line.match /\(\s*r?["']([^"']+)["']\s*,\s*([^),]+)/
+        pattern_match = line.match /\(\s*r?(["'])(.*?)\1\s*,\s*([^),]+)/
         if pattern_match
-          route_path = pattern_match[1]
-          handler_class = pattern_match[2]
+          route_path = pattern_match[2]
+          handler_class = pattern_match[3]
           @routes[file_path] << {i, "ALL", route_path, handler_class}
         end
 
