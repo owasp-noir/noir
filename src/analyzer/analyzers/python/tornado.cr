@@ -97,7 +97,7 @@ module Analyzer::Python
       # Check if Application() is called with a variable name (not an inline list)
       # e.g. Application(routes), Application(handlers=routes), Application(debug=True, handlers=routes)
       var_match = app_line.match(/Application\s*\(.*handlers\s*=\s*([a-zA-Z_][a-zA-Z0-9_]*)/) ||
-                  app_line.match(/Application\s*\(([a-zA-Z_][a-zA-Z0-9_]*)/)
+                  app_line.match(/Application\s*\(\s*([a-zA-Z_][a-zA-Z0-9_]*)/)
       if var_match
         var_name = var_match[1]
         # Find the variable definition in the file
@@ -113,10 +113,10 @@ module Analyzer::Python
       lines.each_with_index do |line, line_index|
         stripped = line.strip
         # Match: var_name = [ (same line) or var_name = (opening bracket on next line)
-        if stripped.match(/^#{var_name}\s*=\s*\[/)
+        if stripped.match(/^#{var_name}(?::.*?)?\s*=\s*\[/)
           extract_routes_from_lines(lines, line_index, file_path)
           return
-        elsif stripped.match(/^#{var_name}\s*=\s*$/)
+        elsif stripped.match(/^#{var_name}(?::.*?)?\s*=\s*$/)
           extract_routes_from_lines(lines, line_index + 1, file_path)
           return
         end
@@ -157,7 +157,7 @@ module Analyzer::Python
         pattern_match = line.match /\(\s*r?(["'])(.*?)\1\s*,\s*([^),]+)/
         if pattern_match
           route_path = pattern_match[2]
-          handler_class = pattern_match[3]
+          handler_class = pattern_match[3].strip
           @routes[file_path] << {i, "ALL", route_path, handler_class}
         end
 
@@ -227,7 +227,8 @@ module Analyzer::Python
     private def resolve_imports(file_path : ::String) : Hash(::String, Tuple(::String, Int32))
       @import_modules_cache[file_path] ||= begin
         content = read_file_content(file_path)
-        find_imported_modules(base_paths[0], file_path, content)
+        base_path = base_paths.find { |bp| file_path.starts_with?(bp) } || base_paths[0]? || ""
+        find_imported_modules(base_path, file_path, content)
       end
     end
 

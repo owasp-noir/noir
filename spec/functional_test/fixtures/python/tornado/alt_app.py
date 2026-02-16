@@ -8,7 +8,7 @@ class StatusHandler(tornado.web.RequestHandler):
     def get(self):
         self.write("running")
 
-handler_routes = [
+handler_routes: list = [
     (r"/health", HealthHandler),
 ]
 
