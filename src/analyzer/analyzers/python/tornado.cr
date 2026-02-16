@@ -95,8 +95,9 @@ module Analyzer::Python
       app_line = lines[start_index].strip
 
       # Check if Application() is called with a variable name (not an inline list)
-      # e.g. Application(routes) but NOT Application([...])
-      var_match = app_line.match /Application\s*\((?:handlers\s*=\s*)?([a-zA-Z_][a-zA-Z0-9_]*)/
+      # e.g. Application(routes), Application(handlers=routes), Application(debug=True, handlers=routes)
+      var_match = app_line.match(/Application\s*\(.*handlers\s*=\s*([a-zA-Z_][a-zA-Z0-9_]*)/) ||
+                  app_line.match(/Application\s*\(([a-zA-Z_][a-zA-Z0-9_]*)/)
       if var_match
         var_name = var_match[1]
         # Find the variable definition in the file
@@ -124,7 +125,7 @@ module Analyzer::Python
       found_opening = false
       i = start_index
       while i < lines.size
-        line = lines[i].strip.gsub(" ", "")
+        line = lines[i].strip
 
         # Track bracket depth, skipping characters inside string literals
         in_string = false
@@ -150,7 +151,7 @@ module Analyzer::Python
         end
 
         # Match URL pattern: (r"/path", HandlerClass)
-        pattern_match = line.match /\(r?["']([^"']+)["'],\s*([^),]+)/
+        pattern_match = line.match /\(\s*r?["']([^"']+)["']\s*,\s*([^),]+)/
         if pattern_match
           route_path = pattern_match[1]
           handler_class = pattern_match[2]
@@ -212,7 +213,7 @@ module Analyzer::Python
         end
 
         # Stop when we reach the next class
-        if stripped.match(/^class\s+/) && !((m = stripped.match(CLASS_DEF_REGEX)) && m[1] == handler_class)
+        if (m = stripped.match(CLASS_DEF_REGEX)) && m[1] != handler_class
           break
         end
       end
