@@ -12,24 +12,24 @@ describe NoirPassiveScan do
       Dir.mkdir(temp_dir)
       begin
         valid_yaml = <<-YAML
-        id: test-rule
-        info:
-          name: Test Rule
-          author:
-            - me
-          severity: low
-          description: A test rule
-          reference: []
-        matchers-condition: and
-        matchers:
-          - type: word
-            patterns:
-              - test
-            condition: or
-        category: info
-        techs:
-          - '*'
-        YAML
+          id: test-rule
+          info:
+            name: Test Rule
+            author:
+              - me
+            severity: low
+            description: A test rule
+            reference: []
+          matchers-condition: and
+          matchers:
+            - type: word
+              patterns:
+                - test
+              condition: or
+          category: info
+          techs:
+            - '*'
+          YAML
 
         File.write(File.join(temp_dir, "rule.yaml"), valid_yaml)
 
@@ -65,19 +65,19 @@ describe NoirPassiveScan do
       begin
         # Missing matchers
         invalid_structure = <<-YAML
-        id: test-rule
-        info:
-          name: Test Rule
-          author:
-            - me
-          severity: low
-          description: A test rule
-          reference: []
-        matchers-condition: and
-        category: info
-        techs:
-          - '*'
-        YAML
+          id: test-rule
+          info:
+            name: Test Rule
+            author:
+              - me
+            severity: low
+            description: A test rule
+            reference: []
+          matchers-condition: and
+          category: info
+          techs:
+            - '*'
+          YAML
 
         File.write(File.join(temp_dir, "incomplete.yaml"), invalid_structure)
 
@@ -98,24 +98,24 @@ describe NoirPassiveScan do
         Dir.mkdir(subdir)
 
         valid_yaml = <<-YAML
-        id: recursive-rule
-        info:
-          name: Recursive Rule
-          author:
-            - me
-          severity: low
-          description: A recursive test rule
-          reference: []
-        matchers-condition: and
-        matchers:
-          - type: word
-            patterns:
-              - test
-            condition: or
-        category: info
-        techs:
-          - '*'
-        YAML
+          id: recursive-rule
+          info:
+            name: Recursive Rule
+            author:
+              - me
+            severity: low
+            description: A recursive test rule
+            reference: []
+          matchers-condition: and
+          matchers:
+            - type: word
+              patterns:
+                - test
+              condition: or
+          category: info
+          techs:
+            - '*'
+          YAML
 
         File.write(File.join(subdir, "recursive.yaml"), valid_yaml)
 
