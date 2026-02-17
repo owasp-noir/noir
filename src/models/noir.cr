@@ -164,29 +164,21 @@ class NoirRunner
             body = endpoint_hash["form"]
           end
 
-          response = Crest::Request.execute(
-            method: get_symbol(endpoint.method),
-            url: endpoint.url,
-            tls: OpenSSL::SSL::Context::Client.insecure,
-            user_agent: "Noir/#{Noir::VERSION}",
-            params: endpoint_hash["query"],
-            form: body,
-            json: is_json,
-            handle_errors: false,
-            read_timeout: 5.second
+          response = perform_request(
+            get_symbol(endpoint.method),
+            endpoint.url,
+            endpoint_hash["query"],
+            body,
+            is_json
           )
           endpoint.details.status_code = response.status_code
           unless exclude_codes.includes?(response.status_code)
             final << endpoint
           end
         else
-          response = Crest::Request.execute(
-            method: get_symbol(endpoint.method),
-            url: endpoint.url,
-            tls: OpenSSL::SSL::Context::Client.insecure,
-            user_agent: "Noir/#{Noir::VERSION}",
-            handle_errors: false,
-            read_timeout: 5.second
+          response = perform_request(
+            get_symbol(endpoint.method),
+            endpoint.url
           )
           endpoint.details.status_code = response.status_code
           unless exclude_codes.includes?(response.status_code)
@@ -200,6 +192,20 @@ class NoirRunner
     end
 
     @endpoints = final
+  end
+
+  def perform_request(method, url, params = {} of String => String, form = {} of String => String, json = false)
+    Crest::Request.execute(
+      method: method,
+      url: url,
+      tls: OpenSSL::SSL::Context::Client.insecure,
+      user_agent: "Noir/#{Noir::VERSION}",
+      params: params,
+      form: form,
+      json: json,
+      handle_errors: false,
+      read_timeout: 5.second
+    )
   end
 
   # Backward compatibility wrapper methods for tests
