@@ -92,3 +92,12 @@ app10 = tornado.web.Application(
 line)secret""",
     handlers=multiline_triple_routes,
 )
+
+# Test: multi-level dotted class name (e.g., subpkg.views.DeepHandler)
+import subpkg.views
+
+deep_dotted_routes = [
+    (r"/deep", subpkg.views.DeepHandler),
+]
+
+app11 = tornado.web.Application(deep_dotted_routes)

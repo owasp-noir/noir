@@ -23,6 +23,7 @@ expected_endpoints = [
   Endpoint.new("/inner-class", "DELETE"),
   Endpoint.new("/multiline-tuple", "GET"),
   Endpoint.new("/multiline-triple", "GET"),
+  Endpoint.new("/deep", "GET", [Param.new("token", "", "query")]),
 ]
 
 FunctionalTester.new("fixtures/python/tornado/", {

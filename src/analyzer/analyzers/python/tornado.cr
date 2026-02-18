@@ -283,12 +283,27 @@ module Analyzer::Python
         elsif handler_class.includes?(".")
           parts = handler_class.split(".")
           class_name = parts.last
-          parts[0...-1].each do |name|
-            if import_map.has_key?(name)
-              resolved_path, _ = import_map[name]
-              if File.exists?(resolved_path)
-                if extract_endpoints_from_class_in_file(resolved_path, route_path, class_name, endpoints)
-                  break
+          module_parts = parts[0...-1]
+          resolved = false
+
+          # Try full module path first (e.g., "foo.bar" for foo.bar.Handler)
+          module_name = module_parts.join(".")
+          if import_map.has_key?(module_name)
+            resolved_path, _ = import_map[module_name]
+            if File.exists?(resolved_path)
+              resolved = extract_endpoints_from_class_in_file(resolved_path, route_path, class_name, endpoints)
+            end
+          end
+
+          # Fall back to individual module parts (e.g., "handlers" for handlers.ApiHandler)
+          unless resolved
+            module_parts.each do |name|
+              if import_map.has_key?(name)
+                resolved_path, _ = import_map[name]
+                if File.exists?(resolved_path)
+                  if extract_endpoints_from_class_in_file(resolved_path, route_path, class_name, endpoints)
+                    break
+                  end
                 end
               end
             end
