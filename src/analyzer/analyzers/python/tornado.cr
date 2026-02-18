@@ -93,17 +93,32 @@ module Analyzer::Python
       result = ""
       paren_depth = 0
       found_opening = false
+      in_string = false
+      string_char = '\0'
       i = start_index
       while i < lines.size
         line = lines[i].strip
-        line.each_char do |c|
-          if c == '('
+        line_idx = 0
+        while line_idx < line.size
+          c = line[line_idx]
+          if in_string
+            if c == string_char && (line_idx == 0 || line[line_idx - 1] != '\\')
+              in_string = false
+            end
+          elsif c == '#'
+            break
+          elsif c == '"' || c == '\''
+            in_string = true
+            string_char = c
+          elsif c == '('
             paren_depth += 1
             found_opening = true
           elsif c == ')'
             paren_depth -= 1
           end
+          line_idx += 1
         end
+        in_string = false
         result += " " unless result.empty?
         result += line
         break if found_opening && paren_depth <= 0
@@ -241,9 +256,10 @@ module Analyzer::Python
             if import_map.has_key?(name)
               resolved_path, _ = import_map[name]
               if File.exists?(resolved_path)
-                extract_endpoints_from_class_in_file(resolved_path, route_path, class_name, endpoints)
+                if extract_endpoints_from_class_in_file(resolved_path, route_path, class_name, endpoints)
+                  break
+                end
               end
-              break
             end
           end
         end
