@@ -154,7 +154,7 @@ module Analyzer::Python
       # Check if Application() is called with a variable name (not an inline list)
       # e.g. Application(routes), Application(handlers=routes), Application(debug=True, handlers=routes)
       var_match = app_line.match(/Application\s*\(.*handlers\s*=\s*(#{PYTHON_VAR_NAME_REGEX})/) ||
-                  app_line.match(/Application\s*\(\s*(#{PYTHON_VAR_NAME_REGEX})/)
+                  app_line.match(/Application\s*\(\s*(#{PYTHON_VAR_NAME_REGEX})\s*[,)]/)
       if var_match
         var_name = var_match[1]
         # Find the variable definition in the file
