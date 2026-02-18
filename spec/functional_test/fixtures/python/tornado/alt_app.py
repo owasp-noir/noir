@@ -4,6 +4,9 @@ class HealthHandler(tornado.web.RequestHandler):
     def get(self):
         self.write("ok")
 
+    def post(self):
+        self.write("created")
+
 class StatusHandler(tornado.web.RequestHandler):
     def get(self):
         self.write("running")
