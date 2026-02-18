@@ -183,7 +183,7 @@ module Analyzer::Python
           else
             if c == '#'
               in_comment = true
-            elsif (c == '"' || c == '\'')
+            elsif c == '"' || c == '\''
               if line_index + 2 < line.size && line[line_index + 1] == c && line[line_index + 2] == c
                 in_triple_string = true
                 triple_string_char = c
