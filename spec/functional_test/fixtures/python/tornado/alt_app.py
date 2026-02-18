@@ -57,3 +57,38 @@ dotted_routes2 = [
 ]
 
 app6 = tornado.web.Application(dotted_routes2)
+
+from handlers import NestedDefHandler, InnerClassHandler
+
+# Test Bug 1: nested def inside handler method doesn't break param extraction
+nested_def_routes = [
+    (r"/nested-def", NestedDefHandler),
+]
+
+app7 = tornado.web.Application(nested_def_routes)
+
+# Test Bug 3: inner class inside handler doesn't break method scanning
+inner_class_routes = [
+    (r"/inner-class", InnerClassHandler),
+]
+
+app8 = tornado.web.Application(inner_class_routes)
+
+# Test Bug 4: route tuple split across lines
+multiline_tuple_routes = [
+    (r"/multiline-tuple",
+     HealthHandler),
+]
+
+app9 = tornado.web.Application(multiline_tuple_routes)
+
+# Test Bug 2: multi-line triple-quoted string with ) in Application() call
+multiline_triple_routes = [
+    (r"/multiline-triple", HealthHandler),
+]
+
+app10 = tornado.web.Application(
+    cookie_secret="""multi
+line)secret""",
+    handlers=multiline_triple_routes,
+)

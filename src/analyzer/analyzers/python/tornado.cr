@@ -95,21 +95,40 @@ module Analyzer::Python
       found_opening = false
       in_string = false
       string_char = '\0'
+      in_triple_string = false
+      triple_string_char = '\0'
       i = start_index
       while i < lines.size
         line = lines[i].strip
         line_idx = 0
         while line_idx < line.size
           c = line[line_idx]
-          if in_string
+          if in_triple_string
+            if line_idx + 2 < line.size && c == triple_string_char && line[line_idx + 1] == triple_string_char && line[line_idx + 2] == triple_string_char
+              in_triple_string = false
+              line_idx += 3
+              next
+            end
+            line_idx += 1
+            next
+          elsif in_string
             if c == string_char && (line_idx == 0 || line[line_idx - 1] != '\\')
               in_string = false
             end
+            line_idx += 1
+            next
           elsif c == '#'
             break
           elsif c == '"' || c == '\''
-            in_string = true
-            string_char = c
+            if line_idx + 2 < line.size && line[line_idx + 1] == c && line[line_idx + 2] == c
+              in_triple_string = true
+              triple_string_char = c
+              line_idx += 3
+              next
+            else
+              in_string = true
+              string_char = c
+            end
           elsif c == '('
             paren_depth += 1
             found_opening = true
@@ -227,6 +246,18 @@ module Analyzer::Python
           route_path = pattern_match[2]
           handler_class = pattern_match[3].strip
           @routes[file_path] << {i, "ALL", route_path, handler_class}
+        elsif partial_match = line.match(/\(\s*r?(["'])(.*?)\1\s*,\s*$/)
+          # Route tuple split across lines — handler on next line
+          j = i + 1
+          while j < lines.size && lines[j].strip.empty?
+            j += 1
+          end
+          if j < lines.size
+            handler_match = lines[j].strip.match(/^([a-zA-Z_][a-zA-Z0-9_.]*)/)
+            if handler_match
+              @routes[file_path] << {i, "ALL", partial_match[2], handler_match[1].strip}
+            end
+          end
         end
 
         # Stop when bracket depth returns to 0 (end of the list)
@@ -278,10 +309,12 @@ module Analyzer::Python
       lines = read_file_lines(file_path)
 
       class_found = false
+      class_indent = 0
       lines.each_with_index do |line, line_index|
         stripped = line.strip
-        if (m = stripped.match(CLASS_DEF_REGEX)) && m[1] == handler_class
+        if (m = stripped.match(CLASS_DEF_REGEX)) && m[1] == handler_class && !class_found
           class_found = true
+          class_indent = indent_level(line)
           next
         end
 
@@ -296,8 +329,8 @@ module Analyzer::Python
           end
         end
 
-        # Stop when we reach the next class
-        if (m = stripped.match(CLASS_DEF_REGEX)) && m[1] != handler_class
+        # Stop when we reach another class at same or lesser indentation (not inner classes)
+        if stripped.match(CLASS_DEF_REGEX) && indent_level(line) <= class_indent
           break
         end
       end
@@ -330,19 +363,29 @@ module Analyzer::Python
       content
     end
 
+    private def indent_level(line : ::String) : Int32
+      line.size - line.lstrip.size
+    end
+
     private def extract_params_from_method(lines : Array(::String), method_line_index : Int32, file_path : ::String) : Array(Param)
       params = [] of Param
+      method_indent = indent_level(lines[method_line_index])
 
       # Parse the method body for parameter extraction patterns
       i = method_line_index + 1
       while i < lines.size
-        line = lines[i].strip
+        line = lines[i]
+        stripped = line.strip
 
-        # Stop at the next method or class
-        break if line.starts_with?("def ") || line.starts_with?("async def ") || line.starts_with?("class ")
+        # Stop at the next method or class at same or lesser indentation (not nested)
+        unless stripped.empty?
+          if stripped.starts_with?("def ") || stripped.starts_with?("async def ") || stripped.starts_with?("class ")
+            break if indent_level(line) <= method_indent
+          end
+        end
 
         # Extract Tornado parameter patterns
-        extract_tornado_params(line, params)
+        extract_tornado_params(stripped, params)
 
         i += 1
       end

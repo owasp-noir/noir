@@ -18,6 +18,11 @@ expected_endpoints = [
   Endpoint.new("/api/v2", "POST", [Param.new("", "", "json")]),
   Endpoint.new("/triple-bracket", "GET"),
   Endpoint.new("/search/v2", "GET", [Param.new("tags", "", "query"), Param.new("q", "", "query")]),
+  Endpoint.new("/nested-def", "POST", [Param.new("username", "", "form")]),
+  Endpoint.new("/inner-class", "GET", [Param.new("q", "", "query")]),
+  Endpoint.new("/inner-class", "DELETE"),
+  Endpoint.new("/multiline-tuple", "GET"),
+  Endpoint.new("/multiline-triple", "GET"),
 ]
 
 FunctionalTester.new("fixtures/python/tornado/", {
