@@ -89,10 +89,33 @@ module Analyzer::Python
       result
     end
 
+    private def join_multiline_call(lines : Array(::String), start_index : Int32) : ::String
+      result = ""
+      paren_depth = 0
+      found_opening = false
+      i = start_index
+      while i < lines.size
+        line = lines[i].strip
+        line.each_char do |c|
+          if c == '('
+            paren_depth += 1
+            found_opening = true
+          elsif c == ')'
+            paren_depth -= 1
+          end
+        end
+        result += " " unless result.empty?
+        result += line
+        break if found_opening && paren_depth <= 0
+        i += 1
+      end
+      result
+    end
+
     private def extract_url_patterns_from_application(lines : Array(::String), start_index : Int32, file_path : ::String, api_instances : Hash(::String, ::String))
       @routes[file_path] ||= [] of Tuple(Int32, ::String, ::String, ::String)
 
-      app_line = lines[start_index].strip
+      app_line = join_multiline_call(lines, start_index)
 
       # Check if Application() is called with a variable name (not an inline list)
       # e.g. Application(routes), Application(handlers=routes), Application(debug=True, handlers=routes)
@@ -128,26 +151,48 @@ module Analyzer::Python
       found_opening = false
       in_string = false
       string_char = '\0'
+      in_triple_string = false
+      triple_string_char = '\0'
       i = start_index
       while i < lines.size
         line = lines[i].strip
 
         # Track bracket depth, skipping characters inside string literals and comments
         in_comment = false
-        prev_char = '\0'
-        line.each_char do |c|
+        line_index = 0
+        while line_index < line.size
+          c = line[line_index]
+
           if in_comment
-            # Skip rest of line
+            line_index += 1
+            next
+          elsif in_triple_string
+            if line_index + 2 < line.size && c == triple_string_char && line[line_index + 1] == triple_string_char && line[line_index + 2] == triple_string_char
+              in_triple_string = false
+              line_index += 3
+              next
+            end
+            line_index += 1
+            next
           elsif in_string
-            if c == string_char && prev_char != '\\'
+            if c == string_char && (line_index == 0 || line[line_index - 1] != '\\')
               in_string = false
             end
+            line_index += 1
+            next
           else
             if c == '#'
               in_comment = true
-            elsif (c == '"' || c == '\'') && prev_char != '\\'
-              in_string = true
-              string_char = c
+            elsif (c == '"' || c == '\'')
+              if line_index + 2 < line.size && line[line_index + 1] == c && line[line_index + 2] == c
+                in_triple_string = true
+                triple_string_char = c
+                line_index += 3
+                next
+              else
+                in_string = true
+                string_char = c
+              end
             elsif c == '['
               bracket_depth += 1
               found_opening = true
@@ -155,8 +200,11 @@ module Analyzer::Python
               bracket_depth -= 1
             end
           end
-          prev_char = c
+          line_index += 1
         end
+
+        # Regular strings don't span lines; triple-quoted strings do
+        in_string = false
 
         # Match URL pattern: (r"/path", HandlerClass)
         pattern_match = line.match /\(\s*r?(["'])(.*?)\1\s*,\s*([^),]+)/
@@ -185,6 +233,18 @@ module Analyzer::Python
           resolved_path, _ = import_map[handler_class]
           if File.exists?(resolved_path)
             extract_endpoints_from_class_in_file(resolved_path, route_path, handler_class, endpoints)
+          end
+        elsif handler_class.includes?(".")
+          parts = handler_class.split(".")
+          class_name = parts.last
+          parts[0...-1].each do |name|
+            if import_map.has_key?(name)
+              resolved_path, _ = import_map[name]
+              if File.exists?(resolved_path)
+                extract_endpoints_from_class_in_file(resolved_path, route_path, class_name, endpoints)
+              end
+              break
+            end
           end
         end
       end

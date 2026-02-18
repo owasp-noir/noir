@@ -13,6 +13,9 @@ expected_endpoints = [
   Endpoint.new("/admin", "DELETE"),
   Endpoint.new("/health", "GET"),
   Endpoint.new("/status", "GET"),
+  Endpoint.new("/ping", "GET"),
+  Endpoint.new("/api/v2", "GET", [Param.new("X-API-Key", "", "header")]),
+  Endpoint.new("/api/v2", "POST", [Param.new("", "", "json")]),
 ]
 
 FunctionalTester.new("fixtures/python/tornado/", {
