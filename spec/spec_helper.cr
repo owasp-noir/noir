@@ -1,6 +1,12 @@
 require "spec"
 require "../src/config_initializer"
 
+module Noir
+  {% unless Noir.has_constant?("VERSION") %}
+    VERSION = "SPEC"
+  {% end %}
+end
+
 # Helper method to create default test options with common test settings.
 # This method:
 # - Creates default options from ConfigInitializer

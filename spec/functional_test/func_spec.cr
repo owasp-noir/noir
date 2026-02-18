@@ -4,7 +4,9 @@ require "../../src/models/endpoint.cr"
 require "../../src/config_initializer.cr" # Added to define ConfigInitializer
 
 module Noir
-  VERSION = "SPEC"
+  {% unless Noir.has_constant?("VERSION") %}
+    VERSION = "SPEC"
+  {% end %}
 end
 
 class FunctionalTester
