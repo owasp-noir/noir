@@ -16,6 +16,8 @@ expected_endpoints = [
   Endpoint.new("/ping", "GET"),
   Endpoint.new("/api/v2", "GET", [Param.new("X-API-Key", "", "header")]),
   Endpoint.new("/api/v2", "POST", [Param.new("", "", "json")]),
+  Endpoint.new("/triple-bracket", "GET"),
+  Endpoint.new("/search/v2", "GET", [Param.new("tags", "", "query"), Param.new("q", "", "query")]),
 ]
 
 FunctionalTester.new("fixtures/python/tornado/", {

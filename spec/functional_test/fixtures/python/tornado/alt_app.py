@@ -36,3 +36,24 @@ dotted_routes = [
 ]
 
 app4 = tornado.web.Application(dotted_routes)
+
+# Test: triple-quoted string with ] inside a route list (comment 2821393140)
+triple_bracket_routes = [
+    (r"/triple-bracket", HealthHandler, {"desc": """This route has
+a ] bracket and more text
+spanning multiple lines"""}),
+]
+
+# Test: multi-line Application() with triple-quoted string containing ) (comment 2821393139)
+app5 = tornado.web.Application(
+    handlers=triple_bracket_routes,
+    cookie_secret="""secret)with)parens""",
+    debug=True,
+)
+
+# Test: second dotted class name reference (comment 2821393143)
+dotted_routes2 = [
+    (r"/search/v2", handlers.SearchHandler),
+]
+
+app6 = tornado.web.Application(dotted_routes2)
