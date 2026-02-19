@@ -55,4 +55,43 @@ describe LLM::AdapterFactory do
     adapter.should be_a(LLM::ACPAdapter)
     adapter.close
   end
+
+  it "enables native tool-calling for openai provider" do
+    adapter = LLM::AdapterFactory.for("openai", "gpt-4o-mini", nil)
+    adapter.should be_a(LLM::GeneralAdapter)
+    adapter.supports_native_tool_calling?.should be_true
+  end
+
+  it "enables native tool-calling for github provider url" do
+    adapter = LLM::AdapterFactory.for("https://models.github.ai/inference/chat/completions", "gpt-4o", nil)
+    adapter.should be_a(LLM::GeneralAdapter)
+    adapter.supports_native_tool_calling?.should be_true
+  end
+
+  it "disables native tool-calling for non-allowlisted providers" do
+    adapter = LLM::AdapterFactory.for("azure", "gpt-4o", nil)
+    adapter.should be_a(LLM::GeneralAdapter)
+    adapter.supports_native_tool_calling?.should be_false
+  end
+
+  it "keeps default allowlist when custom allowlist is nil" do
+    LLM::AdapterFactory.native_tool_calling_enabled_for_provider?("openai", nil).should be_true
+    LLM::AdapterFactory.native_tool_calling_enabled_for_provider?("azure", nil).should be_false
+  end
+
+  it "applies custom allowlist when provided" do
+    adapter = LLM::AdapterFactory.for("openai", "gpt-4o-mini", nil, nil, ["github"])
+    adapter.should be_a(LLM::GeneralAdapter)
+    adapter.supports_native_tool_calling?.should be_false
+
+    adapter2 = LLM::AdapterFactory.for("github", "gpt-4o", nil, nil, ["github"])
+    adapter2.should be_a(LLM::GeneralAdapter)
+    adapter2.supports_native_tool_calling?.should be_true
+  end
+
+  it "canonicalizes URL entries in custom allowlist" do
+    LLM::AdapterFactory.native_tool_calling_enabled_for_provider?("openai", ["https://api.openai.com/v1"]).should be_true
+    LLM::AdapterFactory.native_tool_calling_enabled_for_provider?("xai", ["https://api.x.ai/v1"]).should be_true
+    LLM::AdapterFactory.native_tool_calling_enabled_for_provider?("github", ["https://models.github.ai/inference/chat/completions"]).should be_true
+  end
 end

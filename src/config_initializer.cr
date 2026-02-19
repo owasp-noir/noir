@@ -1,6 +1,7 @@
 require "file"
 require "yaml"
 require "./utils/home.cr"
+require "./llm/native_tool_calling"
 
 class ConfigInitializer
   @config_dir : String
@@ -118,6 +119,8 @@ class ConfigInitializer
       "ai_provider"                  => YAML::Any.new(""),
       "ai_model"                     => YAML::Any.new(""),
       "ai_key"                       => YAML::Any.new(""),
+      "ai_agent"                     => YAML::Any.new(false),
+      "ai_native_tools_allowlist"    => YAML::Any.new(LLM::NativeToolCalling.default_allowlist_csv),
       "ai_max_token"                 => YAML::Any.new(0),
       "cache_disable"                => YAML::Any.new(false),
       "cache_clear"                  => YAML::Any.new(false),
@@ -250,6 +253,12 @@ class ConfigInitializer
 
       # The API key for the AI server
       ai_key: "#{options["ai_key"]}"
+
+      # Enable agentic LLM workflow with iterative tool-calling loop
+      ai_agent: #{options["ai_agent"]}
+
+      # Provider allowlist for native tool-calling (comma-separated)
+      ai_native_tools_allowlist: "#{options["ai_native_tools_allowlist"]}"
 
       # The maximum number of tokens for AI requests (0 = no limit)
       ai_max_token: #{options["ai_max_token"]}

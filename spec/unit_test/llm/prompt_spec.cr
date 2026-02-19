@@ -22,6 +22,22 @@ describe LLM do
     LLM::ANALYZE_FORMAT.should contain("\"name\": \"analyze_endpoints\"")
   end
 
+  it "has an AGENT_PROMPT constant" do
+    LLM::AGENT_PROMPT.should_not be_nil
+    LLM::AGENT_PROMPT.should contain("Allowed actions:")
+  end
+
+  it "has an AGENT_STEP_FORMAT constant" do
+    LLM::AGENT_STEP_FORMAT.should_not be_nil
+    LLM::AGENT_STEP_FORMAT.should contain("\"name\": \"agent_next_action\"")
+  end
+
+  it "has an AGENT_TOOLS constant" do
+    LLM::AGENT_TOOLS.should_not be_nil
+    LLM::AGENT_TOOLS.should contain("\"name\": \"list_directory\"")
+    LLM::AGENT_TOOLS.should contain("\"name\": \"finalize\"")
+  end
+
   describe "MODEL_TOKEN_LIMITS" do
     # Crystal에서는 `let` 대신 `def`로 게으른 변수 정의
     limits = LLM::MODEL_TOKEN_LIMITS

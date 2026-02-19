@@ -278,6 +278,12 @@ def run_options_parser
     parser.on "--ai-key KEY", "API key (or set NOIR_AI_KEY env)" do |v|
       noir_options["ai_key"] = YAML::Any.new(v)
     end
+    parser.on "--ai-agent", "Enable agentic AI workflow (iterative tool-calling loop)" do
+      noir_options["ai_agent"] = YAML::Any.new(true)
+    end
+    parser.on "--ai-native-tools-allowlist LIST", "Provider allowlist for native tool-calling (comma-separated, default: #{LLM::NativeToolCalling.default_allowlist_csv})" do |v|
+      noir_options["ai_native_tools_allowlist"] = YAML::Any.new(v)
+    end
     parser.on "--ai-max-token N", "Max tokens per request" do |v|
       noir_options["ai_max_token"] = YAML::Any.new(v.to_i)
     end

@@ -1,11 +1,13 @@
 # LLM prompts and formats for AI-powered endpoint analysis
 
 module LLM
-  SHARED_RULES = "Output only JSON. No explanations. method in [GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD]. param_type in [query, json, form, header, cookie, path]."
+  SHARED_RULES       = "Output only JSON. No explanations. method in [GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD]. param_type in [query, json, form, header, cookie, path]."
+  AGENT_SHARED_RULES = "Output only JSON. No markdown fences. Use only the defined action names. Do not guess endpoints without reading code."
 
   SYSTEM_FILTER  = "#{SHARED_RULES} Given a list of file paths, return JSON with property files: string[] of likely endpoints (no directories)."
   SYSTEM_ANALYZE = "#{SHARED_RULES} Given source code, return JSON with endpoints: [{url, method, params:[{name, param_type, value}]}]."
   SYSTEM_BUNDLE  = "#{SHARED_RULES} Given a bundle of files, include endpoints from ALL files; return the same JSON schema."
+  SYSTEM_AGENT   = "#{AGENT_SHARED_RULES} You are OWASP Noir Advanced Endpoint Discovery Agent. Use iterative tool actions until enough evidence is collected, then finalize."
 
   FILTER_PROMPT = <<-PROMPT
     Analyze the following list of file paths and identify which files are likely to represent endpoints, including API endpoints, web pages, or static resources.
@@ -121,6 +123,182 @@ module LLM
 
     Bundle of files:
     PROMPT
+
+  AGENT_PROMPT = <<-PROMPT
+    You are OWASP Noir's endpoint discovery agent.
+    Your goal is to discover all API endpoints from source code with high confidence.
+
+    Allowed actions:
+    - list_directory(path: string = ".", max_depth: integer = 3)
+    - read_file(path: string)
+    - grep(pattern: string, path: string = ".", file_pattern: string = "*")
+    - semantic_search(query: string)
+    - finalize(endpoints: array, summary: string, confidence: integer 0..100)
+
+    Rules:
+    - First inspect project structure with list_directory or grep.
+    - Never assume endpoint existence from filenames only.
+    - Read source files before finalizing.
+    - Use finalize only when confident enough.
+    - Keep endpoint method to [GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD].
+    - Use param_type in [query, json, form, header, cookie, path].
+    PROMPT
+
+  AGENT_STEP_FORMAT = <<-JSON
+    {
+      "type": "json_schema",
+      "json_schema": {
+        "name": "agent_next_action",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": ["list_directory", "read_file", "grep", "semantic_search", "finalize"]
+            },
+            "args": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "required": ["action", "args"],
+          "additionalProperties": false
+        },
+        "strict": true
+      }
+    }
+    JSON
+
+  AGENT_TOOLS = <<-JSON
+    [
+      {
+        "type": "function",
+        "function": {
+          "name": "list_directory",
+          "description": "Return project directory structure up to max_depth.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "default": "."
+              },
+              "max_depth": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 6,
+                "default": 3
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "read_file",
+          "description": "Read file content for endpoint extraction.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": ["path"],
+            "additionalProperties": false
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "grep",
+          "description": "Regex search in codebase.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "pattern": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string",
+                "default": "."
+              },
+              "file_pattern": {
+                "type": "string",
+                "default": "*"
+              }
+            },
+            "required": ["pattern"],
+            "additionalProperties": false
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "semantic_search",
+          "description": "Semantic-like search for code using natural language query.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string"
+              }
+            },
+            "required": ["query"],
+            "additionalProperties": false
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "finalize",
+          "description": "Finalize extraction and return endpoint list.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "endpoints": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "url": { "type": "string" },
+                    "path": { "type": "string" },
+                    "method": { "type": "string" },
+                    "file": { "type": "string" },
+                    "line": { "type": "integer" },
+                    "params": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": { "type": "string" },
+                          "param_type": { "type": "string" },
+                          "value": { "type": "string" }
+                        },
+                        "required": ["name"],
+                        "additionalProperties": true
+                      }
+                    }
+                  },
+                  "required": ["method"],
+                  "additionalProperties": true
+                }
+              },
+              "summary": { "type": "string" },
+              "confidence": { "type": "integer" }
+            },
+            "required": ["endpoints"],
+            "additionalProperties": true
+          }
+        }
+      }
+    ]
+    JSON
 
   # Map of LLM providers and their models to their max token limits
   # This helps determine how many files can be bundled together
