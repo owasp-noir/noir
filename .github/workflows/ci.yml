@@ -115,9 +115,10 @@ jobs:
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@v21
         with:
+          github-token: ${{ github.token }}
           extra-conf: |
             experimental-features = nix-command flakes
-            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+            sandbox = relaxed
 
       - name: Enable magic-nix-cache (FlakeHub OFF)
         uses: DeterminateSystems/magic-nix-cache-action@v13
