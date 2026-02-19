@@ -107,6 +107,7 @@ jobs:
         with:
           snap: ${{ steps.build.outputs.snap }}
   build-nix-flake:
+    if: false  # TODO: FlakeHub 인증 문제 해결 후 제거
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
