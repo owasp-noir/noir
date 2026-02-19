@@ -107,32 +107,40 @@ jobs:
         with:
           snap: ${{ steps.build.outputs.snap }}
   build-nix-flake:
-    if: false  # TODO: FlakeHub 인증 문제 해결 후 제거
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@v21
         with:
           extra-conf: |
             experimental-features = nix-command flakes
             access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
-      - name: Enable magic-nix-cache
+
+      - name: Enable magic-nix-cache (FlakeHub OFF)
         uses: DeterminateSystems/magic-nix-cache-action@v13
+        with:
+          use-flakehub: false
+          use-gha-cache: true
+
       - name: Check Nix flake
         run: |
           echo "Checking Nix flake inputs..."
           nix flake check --show-trace
+
       - name: Build with Nix (release binary)
         run: |
           echo "Building Noir with Nix..."
           nix build .#default --print-build-logs
+
       - name: Run Noir binary (smoke test)
         run: |
           echo "Running smoke test..."
           ./result/bin/noir --version
           ./result/bin/noir --help | head -n 10
+
       - name: Enter dev shell (optional sanity check)
         run: |-
           echo "Testing dev shell..."
