@@ -593,7 +593,7 @@ module Analyzer::AI
             File.open(file_path, "r", encoding: "utf-8", invalid: :skip) do |file|
               file.each_line do |line|
                 line_number += 1
-                next unless regex.matches?(line)
+                next unless regex_matches_with_timeout?(regex, line)
 
                 snippet = line.strip
                 snippet = snippet[0, 220] if snippet.size > 220
