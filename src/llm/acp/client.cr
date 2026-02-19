@@ -60,7 +60,10 @@ module LLM
       when "claude", "claude-code"
         {"npx", CLAUDE_ARGS.clone}
       else
-        {target.empty? ? "acp" : target, [] of String}
+        parts = target.split
+        command = parts.first || "acp"
+        args = parts.size > 1 ? parts[1..-1] : [] of String
+        {command, args}
       end
     end
 
