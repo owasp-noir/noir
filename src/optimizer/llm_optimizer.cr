@@ -195,14 +195,19 @@ class LLMEndpointOptimizer < EndpointOptimizer
 
     if @options.has_key?("ai_provider") && !@options["ai_provider"].to_s.empty?
       provider = @options["ai_provider"].to_s
-      model = @options["ai_model"]?.try(&.to_s) || ""
+      raw_model = @options["ai_model"]?.try(&.to_s) || ""
+      model = if LLM::ACPClient.acp_provider?(provider)
+                LLM::ACPClient.default_model(provider, raw_model)
+              else
+                raw_model
+              end
       api_key = @options["ai_key"]?.try(&.to_s)
     elsif @options.has_key?("ollama") && !@options["ollama"].to_s.empty?
       provider = @options["ollama"].to_s
       model = @options["ollama_model"]?.try(&.to_s) || ""
     end
 
-    if !provider.empty? && !model.empty?
+    if !provider.empty? && (!model.empty? || LLM::ACPClient.acp_provider?(provider))
       @use_llm = true
       @adapter = LLM::AdapterFactory.for(provider, model, api_key)
       @logger.debug_sub "LLM optimization enabled with #{provider}: #{model}"

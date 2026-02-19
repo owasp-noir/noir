@@ -45,8 +45,8 @@ def generate_zsh_completion_script
       '--generate-completion[Generate Zsh/Bash/Fish completion script]:completion:(zsh bash fish)' \\
       '--cache-disable[Disable LLM cache]' \\
       '--cache-clear[Clear LLM cache before run]' \\
-      '--ai-provider[Specify the AI (LLM) provider or custom API URL]:provider:' \\
-      '--ai-model[Set the model name to use for AI analysis]:model:' \\
+      '--ai-provider[Specify the AI (LLM) provider, ACP target, or custom API URL]:provider:' \\
+      '--ai-model[Set the model name to use for AI analysis (optional for acp:*)]:model:' \\
       '--ai-key[Provide the API key for the AI provider]:key:' \\
       '--ai-max-token[Set the maximum number of tokens for AI requests]:value:' \\
       '--ollama[Specify the Ollama server URL (Deprecated)]:URL:_urls' \\
@@ -208,8 +208,8 @@ def generate_fish_completion_script
     complete -c noir -n '__fish_noir_needs_command' -a '--generate-completion' -d 'Generate Zsh/Bash/Fish completion script'
     complete -c noir -n '__fish_noir_needs_command' -a '--cache-disable' -d 'Disable LLM cache'
     complete -c noir -n '__fish_noir_needs_command' -a '--cache-clear' -d 'Clear LLM cache before run'
-    complete -c noir -n '__fish_noir_needs_command' -a '--ai-provider' -d 'Specify the AI (LLM) provider or custom API URL'
-    complete -c noir -n '__fish_noir_needs_command' -a '--ai-model' -d 'Set the model name to use for AI analysis'
+    complete -c noir -n '__fish_noir_needs_command' -a '--ai-provider' -d 'Specify the AI (LLM) provider, ACP target, or custom API URL'
+    complete -c noir -n '__fish_noir_needs_command' -a '--ai-model' -d 'Set the model name to use for AI analysis (optional for acp:*)'
     complete -c noir -n '__fish_noir_needs_command' -a '--ai-key' -d 'Provide the API key for the AI provider'
     complete -c noir -n '__fish_noir_needs_command' -a '--ai-max-token' -d 'Set the maximum number of tokens for AI requests'
     complete -c noir -n '__fish_noir_needs_command' -a '--ollama' -d 'Specify the Ollama server URL (Deprecated)'

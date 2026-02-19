@@ -18,7 +18,12 @@ module Analyzer::AI
 
       if options.has_key?("ai_provider") && !options["ai_provider"].as_s.empty?
         @provider = options["ai_provider"].as_s
-        @model = options["ai_model"].as_s
+        raw_model = options["ai_model"]?.try(&.as_s) || ""
+        @model = if LLM::ACPClient.acp_provider?(@provider)
+                   LLM::ACPClient.default_model(@provider, raw_model)
+                 else
+                   raw_model
+                 end
         @api_key = options["ai_key"]?.try(&.as_s)
       elsif options.has_key?("ollama") && !options["ollama"].as_s.empty?
         @provider = options["ollama"].as_s
@@ -39,23 +44,26 @@ module Analyzer::AI
 
     def analyze
       adapter = LLM::AdapterFactory.for(@provider, @model, @api_key)
-      target_paths = select_target_paths(adapter)
+      begin
+        target_paths = select_target_paths(adapter)
+        if target_paths.empty?
+          logger.warning "No files selected for AI analysis"
+          return @result
+        end
 
-      if target_paths.empty?
-        logger.warning "No files selected for AI analysis"
-        return @result
+        logger.info "AI Analysis using #{@provider} with model #{@model} (max tokens: #{@max_tokens})"
+
+        if @max_tokens > 0 && target_paths.size > 5
+          analyze_with_bundling(target_paths, adapter)
+        else
+          target_paths.each { |path| analyze_file(path, adapter) }
+        end
+
+        Fiber.yield
+        @result
+      ensure
+        adapter.close
       end
-
-      logger.info "AI Analysis using #{@provider} with model #{@model} (max tokens: #{@max_tokens})"
-
-      if @max_tokens > 0 && target_paths.size > 5
-        analyze_with_bundling(target_paths, adapter)
-      else
-        target_paths.each { |path| analyze_file(path, adapter) }
-      end
-
-      Fiber.yield
-      @result
     end
 
     private def analyze_with_bundling(paths : Array(String), adapter : LLM::Adapter)

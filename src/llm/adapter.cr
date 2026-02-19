@@ -6,6 +6,7 @@
 
 require "./general/client"
 require "./ollama/ollama"
+require "./acp/client"
 
 module LLM
   # A normalized adapter interface for LLM clients.
@@ -34,6 +35,10 @@ module LLM
       end
       msgs << {"role" => "user", "content" => user}
       request_messages(msgs, format)
+    end
+
+    # Optional cleanup hook for adapters that manage external resources.
+    def close : Nil
     end
   end
 
@@ -99,11 +104,36 @@ module LLM
     end
   end
 
+  # Adapter for ACP-based agents (codex, gemini, etc.).
+  class ACPAdapter
+    include Adapter
+
+    getter client : LLM::ACPClient
+
+    def initialize(@client : LLM::ACPClient)
+    end
+
+    def request_messages(messages : Messages, format : String = "json") : String
+      client.request_messages(messages, format)
+    end
+
+    def request(prompt : String, format : String = "json") : String
+      client.request(prompt, format)
+    end
+
+    def close : Nil
+      client.close
+    end
+  end
+
   # Factory for creating LLM adapters based on provider configuration.
   class AdapterFactory
     def self.for(provider : String, model : String, api_key : String? = nil) : Adapter
       prov = provider.downcase
-      if prov.includes?("ollama")
+      if LLM::ACPClient.acp_provider?(prov)
+        acp_model = LLM::ACPClient.default_model(provider, model)
+        ACPAdapter.new(LLM::ACPClient.new(provider, acp_model))
+      elsif prov.includes?("ollama")
         url = provider.includes?("://") ? provider : "http://localhost:11434"
         OllamaAdapter.new(LLM::Ollama.new(url, model))
       else

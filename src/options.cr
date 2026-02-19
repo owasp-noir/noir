@@ -65,6 +65,7 @@ private def base_help : String
 
       #{"AI integration".colorize(:yellow)}
         $ noir -b . --ai-provider openai --ai-model gpt-5.1 --ai-key YOUR_API_KEY
+        $ noir -b . --ai-provider acp:codex
 
       #{"Forward results via proxy (Burp/ZAP)".colorize(:yellow)}
         noir -b ./myapp --send-proxy http://127.0.0.1:8080
@@ -261,13 +262,15 @@ def run_options_parser
         ollama     → http://localhost:11434/v1
         lmstudio   → http://localhost:1234/v1
         vllm       → http://localhost:8000/v1
+        acp:codex  → npx @zed-industries/codex-acp
+        acp:gemini → gemini --experimental-acp
 
       Or use a custom URL directly:
         --ai-provider http://localhost:8000/v1
       DESC
       noir_options["ai_provider"] = YAML::Any.new(v)
     end
-    parser.on "--ai-model NAME", "Model name" do |v|
+    parser.on "--ai-model NAME", "Model name (optional for acp:* providers)" do |v|
       noir_options["ai_model"] = YAML::Any.new(v)
     end
     parser.on "--ai-key KEY", "API key (or set NOIR_AI_KEY env)" do |v|

@@ -124,8 +124,8 @@ if app.techs.empty?
     app.logger.info "Start file-based analysis as the -u flag has been used."
   elsif (app.options["ollama"] != "") && (app.options["ollama_model"] != "")
     app.logger.info "Start AI-based analysis as the --ollama and --ollama-model flags have been used."
-  elsif (app.options["ai_provider"] != "") && (app.options["ai_model"] != "")
-    app.logger.info "Start AI-based analysis as the --ai-provider and --ai-model flags have been used."
+  elsif (app.options["ai_provider"] != "") && ((app.options["ai_model"] != "") || app.options["ai_provider"].to_s.downcase.starts_with?("acp:"))
+    app.logger.info "Start AI-based analysis as the --ai-provider flag has been used."
   elsif app.passive_results.size > 0
     app.logger.info "Noir found #{app.passive_results.size} passive results."
     app.report
