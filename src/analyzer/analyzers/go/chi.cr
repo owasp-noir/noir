@@ -26,6 +26,7 @@ module Analyzer::Go
 
                   lines.each_with_index do |line, index|
                     details = Details.new(PathInfo.new(path, index + 1))
+                    handler_initialized_this_line = false
 
                     # Mount 처리: 객체가 무엇이든 Mount 호출 인식
                     if line.includes?(".Mount(")
@@ -41,6 +42,12 @@ module Analyzer::Go
                       next
                     end
 
+                    # Group 블록 처리: 빈 접두사 저장 (brace depth 유지)
+                    if line.includes?(".Group(")
+                      prefix_stack << ""
+                      next
+                    end
+
                     # Route 블록 처리: 객체가 무엇이든 Route 호출 인식 (접두사 저장)
                     if line.includes?(".Route(")
                       if match = line.match(/[a-zA-Z]\w*\.Route\(\s*"([^"]+)"/)
@@ -50,8 +57,8 @@ module Analyzer::Go
                     end
 
                     # 블록 종료 시 접두사 제거 (}로 시작하는 줄 또는 })로 끝나는 줄 처리)
-                    # Closing braces that end Route blocks
-                    if (line.strip == "}" || line.strip == "})") && !prefix_stack.empty?
+                    # Closing braces that end Route/Group blocks (skip when inside inline handler)
+                    if (line.strip == "}" || line.strip == "})") && !prefix_stack.empty? && !in_inline_handler
                       prefix_stack.pop
                       next
                     end
@@ -91,12 +98,18 @@ module Analyzer::Go
                         if line.includes?("func(")
                           in_inline_handler = true
                           handler_brace_count = line.count("{") - line.count("}")
+                          handler_initialized_this_line = true
+                          if handler_brace_count <= 0
+                            in_inline_handler = false
+                            handler_brace_count = 0
+                          end
                         end
                       end
                     end
 
                     # Track brace count when inside an inline handler
-                    if in_inline_handler
+                    # Skip the line where the handler was just initialized to avoid double-counting
+                    if in_inline_handler && !handler_initialized_this_line
                       handler_brace_count += line.count("{")
                       handler_brace_count -= line.count("}")
 
@@ -228,6 +241,8 @@ module Analyzer::Go
       if content.includes?("func #{func_name}(")
         block_started = false
         brace_count = 0
+        prefix_stack = [] of String
+
         content.each_line do |line|
           if !block_started
             if line.includes?("func #{func_name}(")
@@ -240,18 +255,33 @@ module Analyzer::Go
           else
             brace_count += line.count("{")
             brace_count -= line.count("}")
-            details = Details.new(PathInfo.new(file_path))
-            method = ""
-            route_path = ""
-            # Support case-insensitive method names
-            # Route path must start with "/" to be a valid HTTP endpoint
-            if match = line.match(/[a-zA-Z]\w*\.(GET|POST|PUT|DELETE|PATCH)\(\s*"(\/[^"]*)"/i)
-              method = match[1].upcase
-              route_path = match[2]
-            end
 
-            if method.size > 0 && route_path.size > 0
-              endpoints << Endpoint.new(route_path, method, details)
+            # Group block: push empty prefix
+            if line.includes?(".Group(")
+              prefix_stack << ""
+            # Route block: push path prefix
+            elsif line.includes?(".Route(")
+              if match = line.match(/[a-zA-Z]\w*\.Route\(\s*"([^"]+)"/)
+                prefix_stack << match[1]
+              end
+            # Closing brace: pop prefix if applicable
+            elsif (line.strip == "}" || line.strip == "})") && !prefix_stack.empty?
+              prefix_stack.pop
+            else
+              # Endpoint detection
+              details = Details.new(PathInfo.new(file_path))
+              method = ""
+              route_path = ""
+              # Support case-insensitive method names
+              # Route path must start with "/" to be a valid HTTP endpoint
+              if match = line.match(/[a-zA-Z]\w*\.(GET|POST|PUT|DELETE|PATCH)\(\s*"(\/[^"]*)"/i)
+                method = match[1].upcase
+                route_path = match[2]
+              end
+
+              if method.size > 0 && route_path.size > 0
+                endpoints << Endpoint.new(prefix_stack.join("") + route_path, method, details)
+              end
             end
 
             break if brace_count <= 0

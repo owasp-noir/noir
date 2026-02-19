@@ -35,6 +35,13 @@ expected_endpoints = [
   Endpoint.new("/multiline", "GET"),
   Endpoint.new("/uppercase", "GET"),
   Endpoint.new("/uppercase-post", "POST"),
+  Endpoint.new("/grouped", "GET"),
+  Endpoint.new("/api/users", "GET"),
+  Endpoint.new("/api/health", "GET"),
+  Endpoint.new("/admin/settings/", "GET"),
+  Endpoint.new("/admin/settings/", "PUT"),
+  Endpoint.new("/settings/", "GET"),
+  Endpoint.new("/settings/", "PUT"),
 ]
 
 FunctionalTester.new("fixtures/go/chi/", {
