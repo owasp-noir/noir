@@ -144,7 +144,10 @@ module LLM
         end
       end
 
-      @session.not_nil!
+      session = @session
+      return session unless session.nil?
+
+      raise "ACP session initialization failed"
     end
 
     def self.mute_acp_logs : Nil
