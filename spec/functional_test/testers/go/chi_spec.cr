@@ -10,7 +10,6 @@ expected_endpoints = [
   Endpoint.new("/articles/{articleID}/", "DELETE", [Param.new("articleID", "", "path")]),
   Endpoint.new("/admin/", "GET"),
   Endpoint.new("/admin/accounts", "GET"),
-  Endpoint.new("/accounts", "GET"),
   Endpoint.new("/search-test", "GET", [
     Param.new("q", "", "query"),
     Param.new("page", "", "query"),
@@ -40,8 +39,7 @@ expected_endpoints = [
   Endpoint.new("/api/health", "GET"),
   Endpoint.new("/admin/settings/", "GET"),
   Endpoint.new("/admin/settings/", "PUT"),
-  Endpoint.new("/settings/", "GET"),
-  Endpoint.new("/settings/", "PUT"),
+  Endpoint.new("/admin/webhook", "POST"),
 ]
 
 FunctionalTester.new("fixtures/go/chi/", {

@@ -162,6 +162,12 @@ import (
 		r.Get("/", settingsIndex)
 		r.Put("/", updateSettings)
 	})
+	// Inline handler inside mounted router (tests analyze_router_function inline handler tracking)
+	r.Post("/webhook", func(w http.ResponseWriter, r *http.Request) {
+		payload := r.FormValue("payload")
+		_ = payload
+		w.Write([]byte("webhook received"))
+	})
 	return r
   }
   

@@ -24,7 +24,44 @@ module Analyzer::Go
                   in_inline_handler = false
                   handler_brace_count = 0
 
+                  # Pre-scan: collect mounted function names to skip their bodies
+                  mounted_functions = [] of String
+                  lines.each do |scan_line|
+                    if scan_line.includes?(".Mount(")
+                      if scan_match = scan_line.match(/[a-zA-Z]\w*\.Mount\(\s*"([^"]+)"\s*,\s*([^(]+)\(\)/)
+                        mounted_functions << scan_match[2].strip
+                      end
+                    end
+                  end
+                  in_mounted_func = false
+                  mounted_func_brace_count = 0
+
                   lines.each_with_index do |line, index|
+                    # Skip bodies of mounted router functions (already handled by analyze_router_function)
+                    if in_mounted_func
+                      mounted_func_brace_count += line.count("{")
+                      mounted_func_brace_count -= line.count("}")
+                      if mounted_func_brace_count <= 0
+                        in_mounted_func = false
+                      end
+                      next
+                    end
+                    unless mounted_functions.empty?
+                      skip = false
+                      mounted_functions.each do |mf|
+                        if line.includes?("func #{mf}(")
+                          in_mounted_func = true
+                          mounted_func_brace_count = line.count("{") - line.count("}")
+                          if mounted_func_brace_count <= 0
+                            in_mounted_func = false
+                          end
+                          skip = true
+                          break
+                        end
+                      end
+                      next if skip
+                    end
+
                     details = Details.new(PathInfo.new(path, index + 1))
                     handler_initialized_this_line = false
 
@@ -237,57 +274,96 @@ module Analyzer::Go
     # 주어진 파일 내에 정의된 router 함수의 내용을 추출하여 엔드포인트 정보로 변환
     def analyze_router_function(file_path : String, func_name : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      content = File.read(file_path)
-      if content.includes?("func #{func_name}(")
-        block_started = false
-        brace_count = 0
-        prefix_stack = [] of String
+      lines = File.read_lines(file_path, encoding: "utf-8", invalid: :skip)
 
-        content.each_line do |line|
-          if !block_started
-            if line.includes?("func #{func_name}(")
-              block_started = true
-              if line.includes?("{")
-                brace_count += 1
-              end
-            end
-            next
-          else
-            brace_count += line.count("{")
-            brace_count -= line.count("}")
-
-            # Group block: push empty prefix
-            if line.includes?(".Group(")
-              prefix_stack << ""
-            # Route block: push path prefix
-            elsif line.includes?(".Route(")
-              if match = line.match(/[a-zA-Z]\w*\.Route\(\s*"([^"]+)"/)
-                prefix_stack << match[1]
-              end
-            # Closing brace: pop prefix if applicable
-            elsif (line.strip == "}" || line.strip == "})") && !prefix_stack.empty?
-              prefix_stack.pop
-            else
-              # Endpoint detection
-              details = Details.new(PathInfo.new(file_path))
-              method = ""
-              route_path = ""
-              # Support case-insensitive method names
-              # Route path must start with "/" to be a valid HTTP endpoint
-              if match = line.match(/[a-zA-Z]\w*\.(GET|POST|PUT|DELETE|PATCH)\(\s*"(\/[^"]*)"/i)
-                method = match[1].upcase
-                route_path = match[2]
-              end
-
-              if method.size > 0 && route_path.size > 0
-                endpoints << Endpoint.new(prefix_stack.join("") + route_path, method, details)
-              end
-            end
-
-            break if brace_count <= 0
-          end
+      # Find function start
+      func_start = -1
+      lines.each_with_index do |line, i|
+        if line.includes?("func #{func_name}(")
+          func_start = i
+          break
         end
       end
+      return endpoints if func_start < 0
+
+      brace_count = 0
+      prefix_stack = [] of String
+      in_inline_handler = false
+      handler_brace_count = 0
+      started = false
+
+      (func_start...lines.size).each do |index|
+        line = lines[index]
+
+        if !started
+          started = true
+          brace_count += 1 if line.includes?("{")
+          next
+        end
+
+        brace_count += line.count("{")
+        brace_count -= line.count("}")
+        handler_initialized_this_line = false
+
+        # Group block: push empty prefix
+        if line.includes?(".Group(")
+          prefix_stack << ""
+          # Route block: push path prefix
+        elsif line.includes?(".Route(")
+          if match = line.match(/[a-zA-Z]\w*\.Route\(\s*"([^"]+)"/)
+            prefix_stack << match[1]
+          end
+          # Closing brace: pop prefix if applicable (skip when inside inline handler)
+        elsif (line.strip == "}" || line.strip == "})") && !prefix_stack.empty? && !in_inline_handler
+          prefix_stack.pop
+        else
+          # Endpoint detection
+          details = Details.new(PathInfo.new(file_path))
+          method = ""
+          route_path = ""
+          # Support case-insensitive method names
+          # Route path must start with "/" to be a valid HTTP endpoint
+          if match = line.match(/[a-zA-Z]\w*\.(GET|POST|PUT|DELETE|PATCH)\(\s*"(\/[^"]*)"/i)
+            method = match[1].upcase
+            route_path = match[2]
+          elsif match = line.match(/[a-zA-Z]\w*\.(GET|POST|PUT|DELETE|PATCH)\s*\(/i)
+            method = match[1].upcase
+            if index + 1 < lines.size
+              next_line = lines[index + 1]
+              if next_match = next_line.match(/"(\/[^"]*)"/)
+                route_path = next_match[1]
+              end
+            end
+          end
+
+          if method.size > 0 && route_path.size > 0
+            endpoints << Endpoint.new(prefix_stack.join("") + route_path, method, details)
+
+            if line.includes?("func(")
+              in_inline_handler = true
+              handler_brace_count = line.count("{") - line.count("}")
+              handler_initialized_this_line = true
+              if handler_brace_count <= 0
+                in_inline_handler = false
+                handler_brace_count = 0
+              end
+            end
+          end
+        end
+
+        # Track inline handler braces (skip line where handler was just initialized)
+        if in_inline_handler && !handler_initialized_this_line
+          handler_brace_count += line.count("{")
+          handler_brace_count -= line.count("}")
+          if handler_brace_count <= 0
+            in_inline_handler = false
+            handler_brace_count = 0
+          end
+        end
+
+        break if brace_count <= 0
+      end
+
       endpoints
     end
   end
