@@ -43,7 +43,10 @@ module Analyzer::AI
     end
 
     def analyze
-      adapter = LLM::AdapterFactory.for(@provider, @model, @api_key)
+      event_sink = if LLM::ACPClient.acp_provider?(@provider)
+                     ->(msg : String) { logger.sub "➔ #{msg}" }
+                   end
+      adapter = LLM::AdapterFactory.for(@provider, @model, @api_key, event_sink)
       begin
         target_paths = select_target_paths(adapter)
         if target_paths.empty?

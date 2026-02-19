@@ -1,5 +1,6 @@
 require "acp"
 require "json"
+require "log"
 
 module LLM
   # ACP-backed client wrapper for communicating with local AI agents.
@@ -11,19 +12,24 @@ module LLM
 
     @client : ACP::Client?
     @session : ACP::Session?
+    @agent_stderr : IO?
     @session_lock : Mutex
     @response_lock : Mutex
     @response_buffer : String
+
+    @@logs_muted = false
+    @@logs_mutex = Mutex.new
 
     CODEX_ARGS  = ["@zed-industries/codex-acp"]
     GEMINI_ARGS = ["--experimental-acp"]
     CLAUDE_ARGS = ["@zed-industries/claude-code-acp"]
 
-    def initialize(@provider : String, @model : String)
+    def initialize(@provider : String, @model : String, @event_sink : Proc(String, Nil)? = nil)
       @command, @args = self.class.resolve_command(provider)
       @session_lock = Mutex.new
       @response_lock = Mutex.new
       @response_buffer = ""
+      self.class.mute_acp_logs
     end
 
     def self.acp_provider?(provider : String) : Bool
@@ -76,11 +82,14 @@ module LLM
     def close : Nil
       @session_lock.synchronize do
         begin
+          @event_sink.try(&.call("ACP: closing client"))
           @client.try(&.close)
+          @agent_stderr.try(&.close)
         rescue Exception
         ensure
           @client = nil
           @session = nil
+          @agent_stderr = nil
         end
       end
     end
@@ -92,11 +101,17 @@ module LLM
 
       @session_lock.synchronize do
         if @session.nil?
-          client = ACP.connect(
+          agent_stderr = if ENV["NOIR_ACP_RAW_LOG"]? == "1"
+                           STDERR
+                         else
+                           File.open(File::NULL, "w")
+                         end
+          transport = ACP::ProcessTransport.new(
             @command,
             args: @args,
-            client_name: "noir"
+            stderr: agent_stderr
           )
+          client = ACP::Client.new(transport, client_name: "noir")
           client.on_update = ->(update : ACP::Protocol::SessionUpdateParams) do
             case u = update.update
             when ACP::Protocol::AgentMessageChunkUpdate
@@ -112,14 +127,32 @@ module LLM
             end
           end
           client.initialize_connection
+          if ai = client.agent_info
+            @event_sink.try(&.call("ACP: connected to #{ai.name} v#{ai.version}"))
+          else
+            @event_sink.try(&.call("ACP: connected"))
+          end
           session = ACP::Session.create(client, cwd: (ENV["NOIR_ACP_CWD"]? || Dir.current))
+          @event_sink.try(&.call("ACP: session #{session.id} created"))
 
           @client = client
           @session = session
+          @agent_stderr = agent_stderr.same?(STDERR) ? nil : agent_stderr
         end
       end
 
       @session.not_nil!
+    end
+
+    def self.mute_acp_logs : Nil
+      return if ENV["NOIR_ACP_RAW_LOG"]? == "1"
+
+      @@logs_mutex.synchronize do
+        return if @@logs_muted
+        ::Log.for("acp.client").level = ::Log::Severity::None
+        ::Log.for("acp.transport").level = ::Log::Severity::None
+        @@logs_muted = true
+      end
     end
 
     private def messages_to_prompt(messages : Array(Hash(String, String))) : String

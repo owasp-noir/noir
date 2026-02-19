@@ -128,11 +128,11 @@ module LLM
 
   # Factory for creating LLM adapters based on provider configuration.
   class AdapterFactory
-    def self.for(provider : String, model : String, api_key : String? = nil) : Adapter
+    def self.for(provider : String, model : String, api_key : String? = nil, event_sink : Proc(String, Nil)? = nil) : Adapter
       prov = provider.downcase
       if LLM::ACPClient.acp_provider?(prov)
         acp_model = LLM::ACPClient.default_model(provider, model)
-        ACPAdapter.new(LLM::ACPClient.new(provider, acp_model))
+        ACPAdapter.new(LLM::ACPClient.new(provider, acp_model, event_sink))
       elsif prov.includes?("ollama")
         url = provider.includes?("://") ? provider : "http://localhost:11434"
         OllamaAdapter.new(LLM::Ollama.new(url, model))
