@@ -22,7 +22,7 @@ module LLM
 
     CODEX_ARGS  = ["@zed-industries/codex-acp"]
     GEMINI_ARGS = ["--experimental-acp"]
-    CLAUDE_ARGS = ["@zed-industries/claude-code-acp"]
+    CLAUDE_ARGS = ["@zed-industries/claude-agent-acp"]
 
     def initialize(@provider : String, @model : String, @event_sink : Proc(String, Nil)? = nil)
       @command, @args = self.class.resolve_command(provider)

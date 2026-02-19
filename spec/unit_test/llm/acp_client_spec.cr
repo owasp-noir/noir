@@ -7,6 +7,7 @@ describe LLM::ACPClient do
     it "detects acp providers" do
       LLM::ACPClient.acp_provider?("acp:codex").should be_true
       LLM::ACPClient.acp_provider?("acp:gemini").should be_true
+      LLM::ACPClient.acp_provider?("acp:claude").should be_true
       LLM::ACPClient.acp_provider?("openai").should be_false
     end
   end
@@ -22,6 +23,18 @@ describe LLM::ACPClient do
       command, args = LLM::ACPClient.resolve_command("acp:gemini")
       command.should eq("gemini")
       args.should eq(["--experimental-acp"])
+    end
+
+    it "maps claude to npx claude agent acp adapter" do
+      command, args = LLM::ACPClient.resolve_command("acp:claude")
+      command.should eq("npx")
+      args.should eq(["@zed-industries/claude-agent-acp"])
+    end
+
+    it "maps claude-code alias to npx claude agent acp adapter" do
+      command, args = LLM::ACPClient.resolve_command("acp:claude-code")
+      command.should eq("npx")
+      args.should eq(["@zed-industries/claude-agent-acp"])
     end
   end
 

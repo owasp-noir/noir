@@ -22,6 +22,6 @@ This section provides detailed guides on how to set up and use Noir with each of
     *   [vLLM](vllm/)
     *   [LM Studio](lmstudio/)
 *   **ACP Agent Providers**:
-    *   [ACP (Codex/Gemini/Custom)](acp/)
+    *   [ACP (Codex/Gemini/Claude/Custom)](acp/)
 
 By following these guides, you can easily integrate the power of AI into your code analysis workflow.

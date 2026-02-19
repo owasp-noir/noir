@@ -22,6 +22,6 @@ Noir의 AI 기반 분석은 다양한 대규모 언어 모델(LLM) 제공업체�
     *   [vLLM](vllm/)
     *   [LM Studio](lmstudio/)
 *   **ACP 에이전트 제공업체**:
-    *   [ACP (Codex/Gemini/사용자 정의)](acp/)
+    *   [ACP (Codex/Gemini/Claude/사용자 정의)](acp/)
 
 이 가이드를 따라하면 AI의 힘을 코드 분석 워크플로에 쉽게 통합할 수 있습니다.

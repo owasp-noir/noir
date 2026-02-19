@@ -104,7 +104,7 @@ module LLM
     end
   end
 
-  # Adapter for ACP-based agents (codex, gemini, etc.).
+  # Adapter for ACP-based agents (codex, gemini, claude, etc.).
   class ACPAdapter
     include Adapter
 

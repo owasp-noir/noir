@@ -74,7 +74,7 @@ noir -b . --ai-provider vllm --ai-model microsoft/DialoGPT-medium --ai-key ""
 noir -b . --ai-provider lmstudio --ai-model local-model --ai-key lm-studio
 ```
 
-#### ACP 에이전트 (Codex/Gemini)
+#### ACP 에이전트 (Codex/Gemini/Claude)
 
 ```bash
 noir -b . --ai-provider acp:codex
@@ -82,6 +82,10 @@ noir -b . --ai-provider acp:codex
 
 ```bash
 noir -b . --ai-provider acp:gemini
+```
+
+```bash
+noir -b . --ai-provider acp:claude
 ```
 
 원본 ACP/에이전트 로그가 필요하면 아래와 같이 실행할 수 있습니다.
@@ -115,7 +119,7 @@ flowchart TB
     
     ProviderCheck -->|OpenAI/xAI/등| GeneralAdapter[General Adapter<br/>OpenAI 호환 API]
     ProviderCheck -->|Ollama/Local| OllamaAdapter[Ollama Adapter<br/>컨텍스트 재사용]
-    ProviderCheck -->|ACP 에이전트| ACPAdapter[ACP Adapter<br/>Codex/Gemini/Custom]
+    ProviderCheck -->|ACP 에이전트| ACPAdapter[ACP Adapter<br/>Codex/Gemini/Claude/Custom]
     
     GeneralAdapter --> FileSelection
     OllamaAdapter --> FileSelection
@@ -197,7 +201,7 @@ flowchart TB
 Noir는 여러 LLM 제공자를 지원하는 제공자 독립적인 어댑터 패턴을 사용합니다:
 - **General Adapter**: OpenAI 호환 API용 (OpenAI, xAI, Azure, GitHub Models 등)
 - **Ollama Adapter**: 성능 향상을 위한 서버 측 컨텍스트 재사용 기능이 있는 전문 어댑터
-- **ACP Adapter**: ACP 에이전트 런타임용 (`acp:codex`, `acp:gemini` 등)
+- **ACP Adapter**: ACP 에이전트 런타임용 (`acp:codex`, `acp:gemini`, `acp:claude` 등)
 
 #### 2. 지능형 파일 필터링
 많은 파일(>10개)이 있는 프로젝트를 분석할 때 Noir는 LLM을 사용하여 엔드포인트를 포함할 가능성이 있는 파일을 지능적으로 필터링합니다:

@@ -1,6 +1,6 @@
 +++
 title = "Using Noir with ACP Agents"
-description = "Use ACP-based agents such as Codex and Gemini with Noir for AI-powered endpoint analysis."
+description = "Use ACP-based agents such as Codex, Gemini, and Claude with Noir for AI-powered endpoint analysis."
 weight = 8
 sort_by = "weight"
 
@@ -13,6 +13,7 @@ Use ACP (Agent Client Protocol) providers when you want Noir to talk to an AI ag
 
 - `acp:codex` -> runs `npx @zed-industries/codex-acp`
 - `acp:gemini` -> runs `gemini --experimental-acp`
+- `acp:claude` -> runs `npx @zed-industries/claude-agent-acp`
 - `acp:<custom>` -> runs `<custom>` as an ACP-compatible command
 
 ## Usage
@@ -27,6 +28,12 @@ noir -b ./myapp --ai-provider=acp:codex
 
 ```bash
 noir -b ./myapp --ai-provider=acp:gemini
+```
+
+### Claude
+
+```bash
+noir -b ./myapp --ai-provider=acp:claude
 ```
 
 ### Optional model
@@ -51,3 +58,4 @@ NOIR_ACP_RAW_LOG=1 noir -b ./myapp --ai-provider=acp:codex
 
 - `--ai-key` is not required for `acp:*` providers.
 - Cache flags (`--cache-disable`, `--cache-clear`) work the same as other AI providers.
+- `acp:claude-code` is accepted as an alias of `acp:claude`.

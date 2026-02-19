@@ -52,6 +52,7 @@ Noir has built-in presets for several popular AI providers:
 | `lmstudio` | `http://localhost:1234` |
 | `acp:codex` | `npx @zed-industries/codex-acp` |
 | `acp:gemini` | `gemini --experimental-acp` |
+| `acp:claude` | `npx @zed-industries/claude-agent-acp` |
 
 For custom providers, use the full API URL: `--ai-provider=http://my-custom-api:9000`.
 
@@ -74,7 +75,7 @@ flowchart TB
     
     ProviderCheck -->|OpenAI/xAI/etc| GeneralAdapter[General Adapter<br/>OpenAI-compatible API]
     ProviderCheck -->|Ollama/Local| OllamaAdapter[Ollama Adapter<br/>with Context Reuse]
-    ProviderCheck -->|ACP Agent| ACPAdapter[ACP Adapter<br/>Codex/Gemini/Custom]
+    ProviderCheck -->|ACP Agent| ACPAdapter[ACP Adapter<br/>Codex/Gemini/Claude/Custom]
     
     GeneralAdapter --> FileSelection
     OllamaAdapter --> FileSelection
@@ -156,7 +157,7 @@ flowchart TB
 Noir uses a provider-agnostic adapter pattern that supports multiple LLM providers:
 - **General Adapter**: For OpenAI-compatible APIs (OpenAI, xAI, Azure, GitHub Models, etc.)
 - **Ollama Adapter**: Specialized adapter with server-side context reuse for improved performance
-- **ACP Adapter**: For ACP agent runtimes (for example `acp:codex`, `acp:gemini`)
+- **ACP Adapter**: For ACP agent runtimes (for example `acp:codex`, `acp:gemini`, `acp:claude`)
 
 #### 2. Intelligent File Filtering
 When analyzing projects with many files (>10), Noir uses the LLM to intelligently filter which files are likely to contain endpoints:

@@ -66,6 +66,7 @@ private def base_help : String
       #{"AI integration".colorize(:yellow)}
         $ noir -b . --ai-provider openai --ai-model gpt-5.1 --ai-key YOUR_API_KEY
         $ noir -b . --ai-provider acp:codex
+        $ noir -b . --ai-provider acp:claude
 
       #{"Forward results via proxy (Burp/ZAP)".colorize(:yellow)}
         noir -b ./myapp --send-proxy http://127.0.0.1:8080
@@ -264,6 +265,7 @@ def run_options_parser
         vllm       → http://localhost:8000/v1
         acp:codex  → npx @zed-industries/codex-acp
         acp:gemini → gemini --experimental-acp
+        acp:claude → npx @zed-industries/claude-agent-acp
 
       Or use a custom URL directly:
         --ai-provider http://localhost:8000/v1
