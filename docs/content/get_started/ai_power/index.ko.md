@@ -7,22 +7,28 @@ sort_by = "weight"
 [extra]
 +++
 
-Noir는 클라우드 기반 서비스와 로컬 인스턴스 모두의 대규모 언어 모델(LLM)에 연결하여 코드베이스에 대한 더 깊은 수준의 분석을 제공할 수 있습니다. AI를 활용함으로써 Noir는 종종 기본적으로 지원하지 않는 언어와 프레임워크에서 엔드포인트를 식별할 수 있으며, 애플리케이션의 기능에 대한 추가적인 인사이트를 제공할 수 있습니다.
+Noir는 클라우드 기반 서비스, 로컬 인스턴스, ACP 기반 에이전트까지 다양한 대규모 언어 모델(LLM)에 연결해 코드베이스에 대한 더 깊은 분석을 제공합니다. AI를 활용하면 기본 지원 범위를 넘어서는 언어와 프레임워크에서도 엔드포인트를 식별하고, 애플리케이션 동작에 대한 추가 인사이트를 얻을 수 있습니다.
 
 ![](./ai_integration.jpeg)
 
 ## AI 통합 사용 방법
 
-AI 기반 분석을 활성화하려면 AI 제공업체, 모델 및 API 키를 지정해야 합니다.
+AI 기반 분석을 활성화하려면 AI 제공업체, 모델 및 API 키를 지정합니다.
 
 ```bash
 noir -b . --ai-provider <PROVIDER> --ai-model <MODEL_NAME> --ai-key <YOUR_API_KEY>
 ```
 
+ACP 제공자(`acp:*`)에서는 `--ai-model`이 선택 사항이며 `--ai-key`가 보통 필요하지 않습니다.
+
+```bash
+noir -b . --ai-provider acp:codex
+```
+
 ### 명령줄 플래그
 
-*   `--ai-provider`: 사용하려는 AI 제공업체입니다. 이는 사전 설정 접두사(`openai` 또는 `ollama`와 같은) 또는 사용자 정의 API 엔드포인트의 전체 URL일 수 있습니다.
-*   `--ai-model`: 분석에 사용하려는 모델의 이름입니다(예: `gpt-4o`).
+*   `--ai-provider`: 사용하려는 AI 제공업체입니다. 사전 설정 접두사(`openai`, `ollama`, `acp:codex` 등) 또는 사용자 정의 API URL을 사용할 수 있습니다.
+*   `--ai-model`: 분석에 사용할 모델 이름입니다(예: `gpt-4o`). `acp:*`에서는 선택 사항입니다.
 *   `--ai-key`: AI 제공업체를 위한 API 키입니다. `NOIR_AI_KEY` 환경 변수를 사용하여 설정할 수도 있습니다.
 *   `--ai-max-token`: (선택사항) AI 요청에 사용할 최대 토큰 수입니다. 이는 생성된 텍스트의 길이에 영향을 줄 수 있습니다.
 *   `--cache-disable`: 현재 실행에서 LLM 디스크 캐시를 비활성화합니다.
@@ -68,6 +74,26 @@ noir -b . --ai-provider vllm --ai-model microsoft/DialoGPT-medium --ai-key ""
 noir -b . --ai-provider lmstudio --ai-model local-model --ai-key lm-studio
 ```
 
+#### ACP 에이전트 (Codex/Gemini/Claude)
+
+```bash
+noir -b . --ai-provider acp:codex
+```
+
+```bash
+noir -b . --ai-provider acp:gemini
+```
+
+```bash
+noir -b . --ai-provider acp:claude
+```
+
+원본 ACP/에이전트 로그가 필요하면 아래와 같이 실행할 수 있습니다.
+
+```bash
+NOIR_ACP_RAW_LOG=1 noir -b . --ai-provider acp:codex
+```
+
 ## AI 분석의 이점
 
 AI 통합을 사용할 때 다음과 같은 이점을 얻을 수 있습니다:
@@ -93,9 +119,11 @@ flowchart TB
     
     ProviderCheck -->|OpenAI/xAI/등| GeneralAdapter[General Adapter<br/>OpenAI 호환 API]
     ProviderCheck -->|Ollama/Local| OllamaAdapter[Ollama Adapter<br/>컨텍스트 재사용]
+    ProviderCheck -->|ACP 에이전트| ACPAdapter[ACP Adapter<br/>Codex/Gemini/Claude/Custom]
     
     GeneralAdapter --> FileSelection
     OllamaAdapter --> FileSelection
+    ACPAdapter --> FileSelection
     
     FileSelection[파일 선택] --> FileCount{파일 개수?}
     
@@ -173,6 +201,7 @@ flowchart TB
 Noir는 여러 LLM 제공자를 지원하는 제공자 독립적인 어댑터 패턴을 사용합니다:
 - **General Adapter**: OpenAI 호환 API용 (OpenAI, xAI, Azure, GitHub Models 등)
 - **Ollama Adapter**: 성능 향상을 위한 서버 측 컨텍스트 재사용 기능이 있는 전문 어댑터
+- **ACP Adapter**: ACP 에이전트 런타임용 (`acp:codex`, `acp:gemini`, `acp:claude` 등)
 
 #### 2. 지능형 파일 필터링
 많은 파일(>10개)이 있는 프로젝트를 분석할 때 Noir는 LLM을 사용하여 엔드포인트를 포함할 가능성이 있는 파일을 지능적으로 필터링합니다:

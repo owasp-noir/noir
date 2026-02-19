@@ -7,7 +7,7 @@ sort_by = "weight"
 [extra]
 +++
 
-Connect Noir to Large Language Models (cloud-based or local) for deeper code analysis. AI helps identify endpoints in unsupported languages and frameworks.
+Connect Noir to Large Language Models (cloud-based, local, or ACP agent-based) for deeper code analysis. AI helps identify endpoints in unsupported languages and frameworks.
 
 ![](./ai_integration.jpeg)
 
@@ -19,10 +19,16 @@ Specify an AI provider, model, and API key:
 noir -b . --ai-provider <PROVIDER> --ai-model <MODEL_NAME> --ai-key <YOUR_API_KEY>
 ```
 
+For ACP providers (`acp:*`), `--ai-model` is optional and `--ai-key` is usually not required:
+
+```bash
+noir -b . --ai-provider acp:codex
+```
+
 ### Command-Line Flags
 
-*   `--ai-provider`: AI provider prefix (e.g., `openai`, `ollama`) or custom API URL
-*   `--ai-model`: Model name (e.g., `gpt-4o`)
+*   `--ai-provider`: AI provider prefix (e.g., `openai`, `ollama`, `acp:codex`) or custom API URL
+*   `--ai-model`: Model name (e.g., `gpt-4o`), optional for `acp:*`
 *   `--ai-key`: API key (or use `NOIR_AI_KEY` environment variable)
 *   `--ai-max-token`: Maximum tokens for AI requests (optional)
 *   `--cache-disable`: Disable LLM cache
@@ -40,11 +46,17 @@ Noir has built-in presets for several popular AI providers:
 | `xai` | `https://api.x.ai` |
 | `github` | `https://models.github.ai` |
 | `azure` | `https://models.inference.ai.azure.com` |
+| `openrouter` | `https://openrouter.ai/api/v1` |
 | `vllm` | `http://localhost:8000` |
 | `ollama` | `http://localhost:11434` |
 | `lmstudio` | `http://localhost:1234` |
+| `acp:codex` | `npx @zed-industries/codex-acp` |
+| `acp:gemini` | `gemini --experimental-acp` |
+| `acp:claude` | `npx @zed-industries/claude-agent-acp` |
 
 For custom providers, use the full API URL: `--ai-provider=http://my-custom-api:9000`.
+
+For raw ACP and agent stderr logs, set `NOIR_ACP_RAW_LOG=1`.
 
 ### Benefits and Considerations
 
@@ -63,9 +75,11 @@ flowchart TB
     
     ProviderCheck -->|OpenAI/xAI/etc| GeneralAdapter[General Adapter<br/>OpenAI-compatible API]
     ProviderCheck -->|Ollama/Local| OllamaAdapter[Ollama Adapter<br/>with Context Reuse]
+    ProviderCheck -->|ACP Agent| ACPAdapter[ACP Adapter<br/>Codex/Gemini/Claude/Custom]
     
     GeneralAdapter --> FileSelection
     OllamaAdapter --> FileSelection
+    ACPAdapter --> FileSelection
     
     FileSelection[File Selection] --> FileCount{File Count?}
     
@@ -143,6 +157,7 @@ flowchart TB
 Noir uses a provider-agnostic adapter pattern that supports multiple LLM providers:
 - **General Adapter**: For OpenAI-compatible APIs (OpenAI, xAI, Azure, GitHub Models, etc.)
 - **Ollama Adapter**: Specialized adapter with server-side context reuse for improved performance
+- **ACP Adapter**: For ACP agent runtimes (for example `acp:codex`, `acp:gemini`, `acp:claude`)
 
 #### 2. Intelligent File Filtering
 When analyzing projects with many files (>10), Noir uses the LLM to intelligently filter which files are likely to contain endpoints:

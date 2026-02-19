@@ -1,6 +1,6 @@
 +++
 title = "AI 제공업체"
-description = "OpenAI, xAI 및 Ollama, LM Studio와 같은 도구를 통한 로컬 모델을 포함하여 Noir를 다양한 AI 제공업체에 연결하는 방법을 알아보세요. 이 섹션은 각 제공업체에 대한 가이드를 제공합니다."
+description = "OpenAI, xAI와 Ollama/LM Studio 같은 로컬 모델, 그리고 ACP 기반 에이전트까지 Noir를 다양한 AI 제공업체에 연결하는 방법을 안내합니다."
 weight = 3
 sort_by = "weight"
 
@@ -21,5 +21,7 @@ Noir의 AI 기반 분석은 다양한 대규모 언어 모델(LLM) 제공업체�
     *   [Ollama](ollama/)
     *   [vLLM](vllm/)
     *   [LM Studio](lmstudio/)
+*   **ACP 에이전트 제공업체**:
+    *   [ACP (Codex/Gemini/Claude/사용자 정의)](acp/)
 
 이 가이드를 따라하면 AI의 힘을 코드 분석 워크플로에 쉽게 통합할 수 있습니다.

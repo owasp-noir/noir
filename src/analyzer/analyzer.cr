@@ -103,8 +103,15 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
   logger.info "Analysis Started"
   logger.sub "➔ Code Analyzer: #{techs.size} in use"
 
-  if (options["ai_provider"] != "") && (options["ai_model"] != "")
-    logger.sub "➔ AI Analyzer: Server=#{options["ai_provider"]}, Model=#{options["ai_model"]}"
+  if (options["ai_provider"] != "") && ((options["ai_model"] != "") || LLM::ACPClient.acp_provider?(options["ai_provider"].to_s))
+    provider = options["ai_provider"].to_s
+    raw_model = options["ai_model"].to_s
+    model = if LLM::ACPClient.acp_provider?(provider)
+              LLM::ACPClient.default_model(provider, raw_model)
+            else
+              raw_model
+            end
+    logger.sub "➔ AI Analyzer: Server=#{provider}, Model=#{model}"
     techs << "ai"
   elsif (options["ollama"] != "") && (options["ollama_model"] != "")
     logger.sub "➔ AI Analyzer: Ollama in use"

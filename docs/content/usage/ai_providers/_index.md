@@ -1,6 +1,6 @@
 +++
 title = "AI Providers"
-description = "Learn how to connect Noir to various AI providers, including OpenAI, xAI, and local models through tools like Ollama and LM Studio. This section provides guides for each provider."
+description = "Learn how to connect Noir to various AI providers, including OpenAI, xAI, and local/agent-based runtimes like Ollama, LM Studio, and ACP."
 weight = 3
 sort_by = "weight"
 
@@ -21,5 +21,7 @@ This section provides detailed guides on how to set up and use Noir with each of
     *   [Ollama](ollama/)
     *   [vLLM](vllm/)
     *   [LM Studio](lmstudio/)
+*   **ACP Agent Providers**:
+    *   [ACP (Codex/Gemini/Claude/Custom)](acp/)
 
 By following these guides, you can easily integrate the power of AI into your code analysis workflow.
