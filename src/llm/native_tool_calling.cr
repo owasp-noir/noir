@@ -32,6 +32,6 @@ module LLM::NativeToolCalling
     values
       .map { |value| canonical_provider(value) }
       .reject(&.empty?)
-      .uniq
+      .uniq!
   end
 end

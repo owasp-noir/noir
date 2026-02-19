@@ -15,38 +15,38 @@ end
 private def build_tool_response(action : String, arguments_raw : String) : JSON::Any
   encoded_arguments = arguments_raw.to_json
   JSON.parse(<<-JSON)
-  {
-    "choices": [
-      {
-        "message": {
-          "tool_calls": [
-            {
-              "function": {
-                "name": "#{action}",
-                "arguments": #{encoded_arguments}
+    {
+      "choices": [
+        {
+          "message": {
+            "tool_calls": [
+              {
+                "function": {
+                  "name": "#{action}",
+                  "arguments": #{encoded_arguments}
+                }
               }
-            }
-          ]
+            ]
+          }
         }
-      }
-    ]
-  }
-  JSON
+      ]
+    }
+    JSON
 end
 
 private def build_content_response(content_raw : String) : JSON::Any
   encoded_content = content_raw.to_json
   JSON.parse(<<-JSON)
-  {
-    "choices": [
-      {
-        "message": {
-          "content": #{encoded_content}
+    {
+      "choices": [
+        {
+          "message": {
+            "content": #{encoded_content}
+          }
         }
-      }
-    ]
-  }
-  JSON
+      ]
+    }
+    JSON
 end
 
 describe LLM::General do
@@ -80,15 +80,17 @@ describe LLM::General do
 
   describe ".parse_tools_cached (test hook)" do
     it "reuses parsed schema for the same tools payload" do
-      unique_tools = %([
-        {
-          "type": "function",
-          "function": {
-            "name": "cache_probe_tool",
-            "parameters": {"type": "object", "properties": {}, "additionalProperties": false}
+      unique_tools = <<-JSON
+        [
+          {
+            "type": "function",
+            "function": {
+              "name": "cache_probe_tool",
+              "parameters": {"type": "object", "properties": {}, "additionalProperties": false}
+            }
           }
-        }
-      ])
+        ]
+        JSON
 
       size_before = LLM::General.__test_tools_cache_size
       first = LLM::General.__test_parse_tools_cached(unique_tools)

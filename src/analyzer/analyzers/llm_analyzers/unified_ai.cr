@@ -251,7 +251,7 @@ module Analyzer::AI
 
     private def create_endpoint_from_json(ep : JSON::Any, default_path : String) : Endpoint?
       url = extract_endpoint_url(ep)
-      return nil if url.empty?
+      return if url.empty?
 
       method = normalize_http_method(safe_json_string(ep, "method", "GET"))
       path_info = build_path_info(ep, default_path)
@@ -265,21 +265,19 @@ module Analyzer::AI
       case param.raw
       when String
         name = param.as_s.strip
-        return nil if name.empty?
+        return if name.empty?
         Param.new(name, "", "query")
       when Hash
         name = safe_json_string(param, "name", "").strip
         name = safe_json_string(param, "key", "").strip if name.empty?
         name = safe_json_string(param, "param", "").strip if name.empty?
-        return nil if name.empty?
+        return if name.empty?
 
         param_type = safe_json_string(param, "param_type", "").strip
         param_type = safe_json_string(param, "type", "").strip if param_type.empty?
         value = safe_json_string(param, "value", "")
 
         Param.new(name, value, normalize_param_type(param_type))
-      else
-        nil
       end
     end
 
@@ -561,7 +559,7 @@ module Analyzer::AI
       query = safe_json_string(args, "query", "")
       return "ERROR: query is required." if query.empty?
 
-      keywords = query.downcase.split(/[^a-z0-9_]+/).select { |token| token.size >= 3 }.uniq
+      keywords = query.downcase.split(/[^a-z0-9_]+/).select { |token| token.size >= 3 }.uniq!
       keywords = keywords.first(8)
       return "ERROR: query did not provide useful keywords." if keywords.empty?
 
@@ -736,15 +734,15 @@ module Analyzer::AI
 
     private def safe_json_int_or_nil(data : JSON::Any, key : String) : Int32?
       value = data[key]?
-      return nil if value.nil?
+      return if value.nil?
       value.as_i
     rescue
       nil
     end
 
     private def parse_native_tool_allowlist(raw : String?) : Array(String)?
-      return nil if raw.nil? || raw.strip.empty?
-      tokens = raw.split(",").map(&.strip.downcase).reject(&.empty?).uniq
+      return if raw.nil? || raw.strip.empty?
+      tokens = raw.split(",").map(&.strip.downcase).reject(&.empty?).uniq!
       tokens.empty? ? nil : tokens
     end
 

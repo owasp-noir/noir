@@ -66,7 +66,7 @@ describe "run_options_parser" do
 
     begin
       noir_options = run_options_parser()
-      noir_options["ai_agent"].should eq(true)
+      noir_options["ai_agent"].should be_true
     ensure
       ARGV.clear
       ARGV.concat(original_argv)
