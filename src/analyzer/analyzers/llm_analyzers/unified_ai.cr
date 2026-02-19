@@ -601,7 +601,8 @@ module Analyzer::AI
                 break if matches.size >= AGENT_TOOL_MAX_MATCHES
               end
             end
-          rescue
+          rescue ex : Exception
+            logger.debug "Error processing file for grep '#{file_path}': #{ex.message}"
           end
         end
       end
@@ -701,7 +702,8 @@ module Analyzer::AI
             params << normalized
           end
         end
-      rescue
+      rescue ex : Exception
+        logger.debug "Error parsing params from LLM response: #{ex.message}"
       end
       params
     end

@@ -16,12 +16,12 @@ describe "regex_matches_with_timeout?" do
     # This regex is vulnerable to catastrophic backtracking
     regex = /(a+)+b/
     input = "a" * 30 + "!" # Will take a long time to fail match
-    
+
     # We use a very short timeout to ensure it triggers
     start_time = Time.instant
     result = regex_matches_with_timeout?(regex, input, 10.milliseconds)
     elapsed = Time.instant - start_time
-    
+
     result.should be_false
     elapsed.should be < 500.milliseconds # Should not take seconds
   end
