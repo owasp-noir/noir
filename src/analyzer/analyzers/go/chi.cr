@@ -2,6 +2,12 @@ require "../../../models/analyzer"
 require "../../../minilexers/golang"
 
 module Analyzer::Go
+  private class ChiRouteState
+    property prefix_stack : Array(String) = [] of String
+    property? in_inline_handler : Bool = false
+    property handler_brace_count : Int32 = 0
+  end
+
   class Chi < Analyzer
     def analyze
       result = [] of Endpoint
@@ -19,10 +25,8 @@ module Analyzer::Go
                 if File.exists?(path) && File.extname(path) == ".go"
                   # Read all lines for multi-line pattern support
                   lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
-                  prefix_stack = [] of String
+                  state = ChiRouteState.new
                   last_endpoint = Endpoint.new("", "")
-                  in_inline_handler = false
-                  handler_brace_count = 0
 
                   # Pre-scan: collect mounted function names to skip their bodies
                   mounted_functions = Set(String).new
@@ -60,9 +64,8 @@ module Analyzer::Go
                     end
 
                     details = Details.new(PathInfo.new(path, index + 1))
-                    handler_initialized_this_line = false
 
-                    # Mount 처리: 객체가 무엇이든 Mount 호출 인식
+                    # Mount handling (unique to analyze)
                     if line.includes?(".Mount(")
                       if match = line.match(/[a-zA-Z]\w*\.Mount\(\s*"([^"]+)"\s*,\s*([^(]+)\(\)/)
                         mount_prefix = match[1]
@@ -76,82 +79,13 @@ module Analyzer::Go
                       next
                     end
 
-                    # Group 블록 처리: 빈 접두사 저장 (brace depth 유지)
-                    if line.includes?(".Group(")
-                      prefix_stack << ""
-                      next
-                    end
+                    next_line = index + 1 < lines.size ? lines[index + 1] : nil
+                    endpoint, handled = process_route_line(line, next_line, state, details)
+                    next if handled
 
-                    # Route 블록 처리: 객체가 무엇이든 Route 호출 인식 (접두사 저장)
-                    if line.includes?(".Route(")
-                      if match = line.match(/[a-zA-Z]\w*\.Route\(\s*"([^"]+)"/)
-                        prefix_stack << match[1]
-                      end
-                      next
-                    end
-
-                    # 블록 종료 시 접두사 제거 (}로 시작하는 줄 또는 })로 끝나는 줄 처리)
-                    # Closing braces that end Route/Group blocks (skip when inside inline handler)
-                    if (line.strip == "}" || line.strip == "})") && !prefix_stack.empty? && !in_inline_handler
-                      prefix_stack.pop
-                      next
-                    end
-
-                    # 실제 endpoint 처리: .Get, .Post, .Put, .Delete (임의 객체)
-                    # Skip if it's a Header.Get, Cookie, or other parameter extraction pattern
-                    if !line.includes?("Header.Get") && !line.includes?("Cookie(") &&
-                       !line.includes?("URLParam") && !line.includes?("Query().Get") &&
-                       !line.includes?("FormValue(") && !line.includes?("PostFormValue(")
-                      method = ""
-                      route_path = ""
-
-                      # First try to match method with route on same line
-                      # Route path must start with "/" to be a valid HTTP endpoint
-                      if match = line.match(/[a-zA-Z]\w*\.(GET|POST|PUT|DELETE|PATCH)\(\s*"(\/[^"]*)"/i)
-                        method = match[1].upcase
-                        route_path = match[2]
-                        # Then try to match method without route (for multi-line cases)
-                      elsif match = line.match(/[a-zA-Z]\w*\.(GET|POST|PUT|DELETE|PATCH)\s*\(/i)
-                        method = match[1].upcase
-                        # Look for route in next line - must start with "/" to be valid
-                        if index + 1 < lines.size
-                          next_line = lines[index + 1]
-                          if next_match = next_line.match(/"(\/[^"]*)"/)
-                            route_path = next_match[1]
-                          end
-                        end
-                      end
-
-                      if method.size > 0 && route_path.size > 0
-                        full_route = prefix_stack.join("") + route_path
-                        new_endpoint = Endpoint.new(full_route, method, details)
-                        result << new_endpoint
-                        last_endpoint = new_endpoint
-
-                        # Check if this route has an inline handler (func keyword after the route)
-                        if line.includes?("func(")
-                          in_inline_handler = true
-                          handler_brace_count = line.count("{") - line.count("}")
-                          handler_initialized_this_line = true
-                          if handler_brace_count <= 0
-                            in_inline_handler = false
-                            handler_brace_count = 0
-                          end
-                        end
-                      end
-                    end
-
-                    # Track brace count when inside an inline handler
-                    # Skip the line where the handler was just initialized to avoid double-counting
-                    if in_inline_handler && !handler_initialized_this_line
-                      handler_brace_count += line.count("{")
-                      handler_brace_count -= line.count("}")
-
-                      # End of inline handler
-                      if handler_brace_count <= 0
-                        in_inline_handler = false
-                        handler_brace_count = 0
-                      end
+                    if endpoint
+                      result << endpoint
+                      last_endpoint = endpoint
                     end
 
                     # Parameter extraction patterns (order matters - check more specific patterns first)
@@ -159,14 +93,14 @@ module Analyzer::Go
                     # Other parameters only in inline handler context
                     if line.includes?("chi.URLParam(")
                       # Only extract URLParam if in inline handler, or it's part of a middleware function
-                      if in_inline_handler
+                      if state.in_inline_handler?
                         get_param(line, "URLParam").tap do |param|
                           if param.name.size > 0 && last_endpoint.url != ""
                             last_endpoint.params << param
                           end
                         end
                       end
-                    elsif in_inline_handler
+                    elsif state.in_inline_handler?
                       if line.includes?("Query().Get(")
                         get_param(line, "Query").tap do |param|
                           if param.name.size > 0 && last_endpoint.url != ""
@@ -211,6 +145,73 @@ module Analyzer::Go
         logger.debug e
       end
       result
+    end
+
+    private def process_route_line(line : String, next_line : String?,
+                                   state : ChiRouteState, details : Details) : {Endpoint?, Bool}
+      endpoint = nil
+      handled = false
+      handler_initialized_this_line = false
+
+      # Group block: push empty prefix
+      if line.includes?(".Group(")
+        state.prefix_stack << ""
+        handled = true
+        # Route block: push path prefix
+      elsif line.includes?(".Route(")
+        if match = line.match(/[a-zA-Z]\w*\.Route\(\s*"([^"]+)"/)
+          state.prefix_stack << match[1]
+        end
+        handled = true
+        # Closing brace: pop prefix if applicable (skip when inside inline handler)
+      elsif (line.strip == "}" || line.strip == "})") && !state.prefix_stack.empty? && !state.in_inline_handler?
+        state.prefix_stack.pop
+        handled = true
+      else
+        # Endpoint detection
+        method = ""
+        route_path = ""
+        # Route path must start with "/" to be a valid HTTP endpoint
+        if match = line.match(/[a-zA-Z]\w*\.(GET|POST|PUT|DELETE|PATCH)\(\s*"(\/[^"]*)"/i)
+          method = match[1].upcase
+          route_path = match[2]
+        elsif match = line.match(/[a-zA-Z]\w*\.(GET|POST|PUT|DELETE|PATCH)\s*\(/i)
+          method = match[1].upcase
+          if next_line
+            if next_match = next_line.match(/"(\/[^"]*)"/)
+              route_path = next_match[1]
+            end
+          end
+        end
+
+        if method.size > 0 && route_path.size > 0
+          full_route = state.prefix_stack.join("") + route_path
+          endpoint = Endpoint.new(full_route, method, details)
+
+          # Check if this route has an inline handler
+          if line.includes?("func(")
+            state.in_inline_handler = true
+            state.handler_brace_count = line.count("{") - line.count("}")
+            handler_initialized_this_line = true
+            if state.handler_brace_count <= 0
+              state.in_inline_handler = false
+              state.handler_brace_count = 0
+            end
+          end
+        end
+      end
+
+      # Track inline handler braces (skip line where handler was just initialized)
+      if state.in_inline_handler? && !handler_initialized_this_line
+        state.handler_brace_count += line.count("{")
+        state.handler_brace_count -= line.count("}")
+        if state.handler_brace_count <= 0
+          state.in_inline_handler = false
+          state.handler_brace_count = 0
+        end
+      end
+
+      {endpoint, handled}
     end
 
     def get_param(line : String, pattern : String) : Param
@@ -284,9 +285,7 @@ module Analyzer::Go
       return endpoints if func_start < 0
 
       brace_count = 0
-      prefix_stack = [] of String
-      in_inline_handler = false
-      handler_brace_count = 0
+      state = ChiRouteState.new
       started = false
 
       (func_start...lines.size).each do |index|
@@ -300,63 +299,11 @@ module Analyzer::Go
 
         brace_count += line.count("{")
         brace_count -= line.count("}")
-        handler_initialized_this_line = false
 
-        # Group block: push empty prefix
-        if line.includes?(".Group(")
-          prefix_stack << ""
-          # Route block: push path prefix
-        elsif line.includes?(".Route(")
-          if match = line.match(/[a-zA-Z]\w*\.Route\(\s*"([^"]+)"/)
-            prefix_stack << match[1]
-          end
-          # Closing brace: pop prefix if applicable (skip when inside inline handler)
-        elsif (line.strip == "}" || line.strip == "})") && !prefix_stack.empty? && !in_inline_handler
-          prefix_stack.pop
-        else
-          # Endpoint detection
-          details = Details.new(PathInfo.new(file_path))
-          method = ""
-          route_path = ""
-          # Support case-insensitive method names
-          # Route path must start with "/" to be a valid HTTP endpoint
-          if match = line.match(/[a-zA-Z]\w*\.(GET|POST|PUT|DELETE|PATCH)\(\s*"(\/[^"]*)"/i)
-            method = match[1].upcase
-            route_path = match[2]
-          elsif match = line.match(/[a-zA-Z]\w*\.(GET|POST|PUT|DELETE|PATCH)\s*\(/i)
-            method = match[1].upcase
-            if index + 1 < lines.size
-              next_line = lines[index + 1]
-              if next_match = next_line.match(/"(\/[^"]*)"/)
-                route_path = next_match[1]
-              end
-            end
-          end
-
-          if method.size > 0 && route_path.size > 0
-            endpoints << Endpoint.new(prefix_stack.join("") + route_path, method, details)
-
-            if line.includes?("func(")
-              in_inline_handler = true
-              handler_brace_count = line.count("{") - line.count("}")
-              handler_initialized_this_line = true
-              if handler_brace_count <= 0
-                in_inline_handler = false
-                handler_brace_count = 0
-              end
-            end
-          end
-        end
-
-        # Track inline handler braces (skip line where handler was just initialized)
-        if in_inline_handler && !handler_initialized_this_line
-          handler_brace_count += line.count("{")
-          handler_brace_count -= line.count("}")
-          if handler_brace_count <= 0
-            in_inline_handler = false
-            handler_brace_count = 0
-          end
-        end
+        next_line = index + 1 < lines.size ? lines[index + 1] : nil
+        details = Details.new(PathInfo.new(file_path))
+        endpoint, _ = process_route_line(line, next_line, state, details)
+        endpoints << endpoint if endpoint
 
         break if brace_count <= 0
       end
