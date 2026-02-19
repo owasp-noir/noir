@@ -31,6 +31,7 @@ noir -b . --ai-provider acp:codex
 *   `--ai-model`: 분석에 사용할 모델 이름입니다(예: `gpt-4o`). `acp:*`에서는 선택 사항입니다.
 *   `--ai-key`: AI 제공업체를 위한 API 키입니다. `NOIR_AI_KEY` 환경 변수를 사용하여 설정할 수도 있습니다.
 *   `--ai-agent`: 에이전트 기반 AI 워크플로우를 활성화합니다 (반복적인 도구 호출 루프).
+*   `--ai-agent-max-steps`: AI 에이전트 루프의 최대 단계 수입니다 (기본값: `20`).
 *   `--ai-native-tools-allowlist`: 네이티브 도구 호출을 허용할 제공업체 목록입니다 (쉼표로 구분, 기본값: `openai,xai,github`).
 *   `--ai-max-token`: (선택사항) AI 요청에 사용할 최대 토큰 수입니다. 이는 생성된 텍스트의 길이에 영향을 줄 수 있습니다.
 *   `--cache-disable`: 현재 실행에서 LLM 디스크 캐시를 비활성화합니다.

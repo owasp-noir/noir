@@ -281,6 +281,9 @@ def run_options_parser
     parser.on "--ai-agent", "Enable agentic AI workflow (iterative tool-calling loop)" do
       noir_options["ai_agent"] = YAML::Any.new(true)
     end
+    parser.on "--ai-agent-max-steps N", "Max steps for AI agent loop (default: 20)" do |v|
+      noir_options["ai_agent_max_steps"] = YAML::Any.new(v.to_i)
+    end
     parser.on "--ai-native-tools-allowlist LIST", "Provider allowlist for native tool-calling (comma-separated, default: #{LLM::NativeToolCalling.default_allowlist_csv})" do |v|
       noir_options["ai_native_tools_allowlist"] = YAML::Any.new(v)
     end

@@ -87,4 +87,19 @@ describe "run_options_parser" do
       ARGV.concat(original_argv)
     end
   end
+
+  it "supports --ai-agent-max-steps flag" do
+    original_argv = ARGV.dup
+
+    ARGV.clear
+    ARGV.concat(["-b", "./single_app", "--ai-agent-max-steps", "10"])
+
+    begin
+      noir_options = run_options_parser()
+      noir_options["ai_agent_max_steps"].as_i.should eq(10)
+    ensure
+      ARGV.clear
+      ARGV.concat(original_argv)
+    end
+  end
 end

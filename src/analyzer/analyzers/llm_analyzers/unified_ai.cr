@@ -11,7 +11,6 @@ module Analyzer::AI
   class Unified < Analyzer
     alias AgentAction = NamedTuple(action: String, args: JSON::Any)
 
-    AGENT_MAX_STEPS                    =  24
     AGENT_TOOL_MAX_LINES               = 300
     AGENT_TOOL_MAX_MATCHES             = 200
     AGENT_MAX_READ_BYTES               = 10 * 1024
@@ -34,6 +33,7 @@ module Analyzer::AI
     @max_tokens : Int32
     @expanded_base_paths : Array(String)
     @use_agentic : Bool
+    @agent_max_steps : Int32
     @native_tool_calling_allowlist : Array(String)?
     @agent_tool_cache : Hash(String, String)
     @agent_tool_cache_order : Array(String)
@@ -68,6 +68,7 @@ module Analyzer::AI
 
       @expanded_base_paths = @base_paths.map { |path| File.expand_path(path) }
       @use_agentic = options["ai_agent"]?.try { |val| any_to_bool(val) } || false
+      @agent_max_steps = options["ai_agent_max_steps"]?.try(&.as_i) || 20
       @native_tool_calling_allowlist = parse_native_tool_allowlist(options["ai_native_tools_allowlist"]?.try(&.as_s))
       @agent_tool_cache = {} of String => String
       @agent_tool_cache_order = [] of String
@@ -286,7 +287,7 @@ module Analyzer::AI
       use_native_tools = adapter.supports_native_tool_calling?
       logger.debug_sub "AI agent mode: #{use_native_tools ? "native tool-calling" : "json action fallback"}"
 
-      AGENT_MAX_STEPS.times do |step|
+      @agent_max_steps.times do |step|
         response = if use_native_tools
                      adapter.request_messages_with_tools(messages, LLM::AGENT_TOOLS)
                    else
