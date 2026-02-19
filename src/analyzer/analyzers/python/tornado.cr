@@ -24,9 +24,12 @@ module Analyzer::Python
       "header" => nil,
     }
 
+    CLASS_DEF_REGEX = /^class\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*[\(:]/
+
     @file_content_cache = Hash(::String, ::String).new
     @parsers = Hash(::String, PythonParser).new
     @routes = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String))).new
+    @import_modules_cache = Hash(::String, Hash(::String, Tuple(::String, Int32))).new
 
     def analyze
       tornado_app_instances = Hash(::String, ::String).new
@@ -73,8 +76,8 @@ module Analyzer::Python
       # Process route handlers
       path_api_instances.each do |path, _|
         @routes[path]?.try &.each do |route_info|
-          line_index, method, route_path, handler_class = route_info
-          endpoints = extract_endpoints_from_handler(path, route_path, handler_class, method)
+          line_index, _, route_path, handler_class = route_info
+          endpoints = extract_endpoints_from_handler(path, route_path, handler_class)
           endpoints.each do |endpoint|
             details = Details.new(PathInfo.new(path, line_index + 1))
             endpoint.details = details
@@ -86,63 +89,229 @@ module Analyzer::Python
       result
     end
 
+    private def join_multiline_call(lines : Array(::String), start_index : Int32) : ::String
+      result = ""
+      paren_depth = 0
+      found_opening = false
+      in_string = false
+      string_char = '\0'
+      in_triple_string = false
+      triple_string_char = '\0'
+      i = start_index
+      while i < lines.size
+        line = lines[i].strip
+        line_idx = 0
+        while line_idx < line.size
+          c = line[line_idx]
+          if in_triple_string
+            if line_idx + 2 < line.size && c == triple_string_char && line[line_idx + 1] == triple_string_char && line[line_idx + 2] == triple_string_char
+              in_triple_string = false
+              line_idx += 3
+              next
+            end
+            line_idx += 1
+            next
+          elsif in_string
+            if c == string_char && (line_idx == 0 || line[line_idx - 1] != '\\')
+              in_string = false
+            end
+            line_idx += 1
+            next
+          elsif c == '#'
+            break
+          elsif c == '"' || c == '\''
+            if line_idx + 2 < line.size && line[line_idx + 1] == c && line[line_idx + 2] == c
+              in_triple_string = true
+              triple_string_char = c
+              line_idx += 3
+              next
+            else
+              in_string = true
+              string_char = c
+            end
+          elsif c == '('
+            paren_depth += 1
+            found_opening = true
+          elsif c == ')'
+            paren_depth -= 1
+          end
+          line_idx += 1
+        end
+        in_string = false
+        result += " " unless result.empty?
+        result += line
+        break if found_opening && paren_depth <= 0
+        i += 1
+      end
+      result
+    end
+
     private def extract_url_patterns_from_application(lines : Array(::String), start_index : Int32, file_path : ::String, api_instances : Hash(::String, ::String))
       @routes[file_path] ||= [] of Tuple(Int32, ::String, ::String, ::String)
 
-      # Look for URL patterns in Application constructor
+      app_line = join_multiline_call(lines, start_index)
+
+      # Check if Application() is called with a variable name (not an inline list)
+      # e.g. Application(routes), Application(handlers=routes), Application(debug=True, handlers=routes)
+      var_match = app_line.match(/Application\s*\(.*handlers\s*=\s*(#{PYTHON_VAR_NAME_REGEX})/) ||
+                  app_line.match(/Application\s*\(\s*(#{PYTHON_VAR_NAME_REGEX})\s*[,)]/)
+      if var_match
+        var_name = var_match[1]
+        # Find the variable definition in the file
+        extract_routes_from_variable(lines, var_name, file_path)
+        return
+      end
+
+      # Inline list: Application([(...), ...])
+      extract_routes_from_lines(lines, start_index, file_path)
+    end
+
+    private def extract_routes_from_variable(lines : Array(::String), var_name : ::String, file_path : ::String)
+      lines.each_with_index do |line, line_index|
+        stripped = line.strip
+        # Match: var_name = [ (same line) or var_name = (opening bracket on next line)
+        if stripped.match(/^#{var_name}(?::.*?)?\s*=\s*\[/)
+          extract_routes_from_lines(lines, line_index, file_path)
+          return
+        elsif stripped.match(/^#{var_name}(?::.*?)?\s*=\s*$/)
+          extract_routes_from_lines(lines, line_index + 1, file_path)
+          return
+        end
+      end
+    end
+
+    private def extract_routes_from_lines(lines : Array(::String), start_index : Int32, file_path : ::String)
+      bracket_depth = 0
+      found_opening = false
+      in_string = false
+      string_char = '\0'
+      in_triple_string = false
+      triple_string_char = '\0'
       i = start_index
       while i < lines.size
-        line = lines[i].strip.gsub(" ", "")
+        line = lines[i].strip
 
-        # Match URL pattern: (r"/path", HandlerClass)
-        pattern_match = line.match /\(r?["']([^"']+)["'],\s*([^),]+)/
-        if pattern_match
-          route_path = pattern_match[1]
-          handler_class = pattern_match[2]
-          @routes[file_path] << {i, "ALL", route_path, handler_class}
+        # Track bracket depth, skipping characters inside string literals and comments
+        in_comment = false
+        line_index = 0
+        while line_index < line.size
+          c = line[line_index]
+
+          if in_comment
+            line_index += 1
+            next
+          elsif in_triple_string
+            if line_index + 2 < line.size && c == triple_string_char && line[line_index + 1] == triple_string_char && line[line_index + 2] == triple_string_char
+              in_triple_string = false
+              line_index += 3
+              next
+            end
+            line_index += 1
+            next
+          elsif in_string
+            if c == string_char && (line_index == 0 || line[line_index - 1] != '\\')
+              in_string = false
+            end
+            line_index += 1
+            next
+          else
+            if c == '#'
+              in_comment = true
+            elsif c == '"' || c == '\''
+              if line_index + 2 < line.size && line[line_index + 1] == c && line[line_index + 2] == c
+                in_triple_string = true
+                triple_string_char = c
+                line_index += 3
+                next
+              else
+                in_string = true
+                string_char = c
+              end
+            elsif c == '['
+              bracket_depth += 1
+              found_opening = true
+            elsif c == ']'
+              bracket_depth -= 1
+            end
+          end
+          line_index += 1
         end
 
-        # Stop if we reach the end of the Application constructor
-        break if line.includes?(")]") || line.includes?("))")
+        # Regular strings don't span lines; triple-quoted strings do
+        in_string = false
+
+        # Match URL pattern: (r"/path", HandlerClass)
+        pattern_match = line.match /\(\s*r?(["'])(.*?)\1\s*,\s*([^),]+)/
+        if pattern_match
+          route_path = pattern_match[2]
+          handler_class = pattern_match[3].strip
+          @routes[file_path] << {i, "ALL", route_path, handler_class}
+        elsif partial_match = line.match(/\(\s*r?(["'])(.*?)\1\s*,\s*$/)
+          # Route tuple split across lines — handler on next line
+          j = i + 1
+          while j < lines.size && lines[j].strip.empty?
+            j += 1
+          end
+          if j < lines.size
+            handler_match = lines[j].strip.match(/^([a-zA-Z_][a-zA-Z0-9_.]*)/)
+            if handler_match
+              @routes[file_path] << {i, "ALL", partial_match[2], handler_match[1].strip}
+            end
+          end
+        end
+
+        # Stop when bracket depth returns to 0 (end of the list)
+        break if found_opening && bracket_depth <= 0
         i += 1
       end
     end
 
-    private def extract_endpoints_from_handler(file_path : ::String, route_path : ::String, handler_class : ::String, default_method : ::String) : Array(Endpoint)
+    private def extract_endpoints_from_handler(file_path : ::String, route_path : ::String, handler_class : ::String) : Array(Endpoint)
       endpoints = [] of Endpoint
 
-      # Find the handler class definition and extract HTTP methods
-      File.open(file_path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        lines = file.each_line.to_a
+      # First try to find the handler class in the application file
+      found = extract_endpoints_from_class_in_file(file_path, route_path, handler_class, endpoints)
 
-        # Find class definition
-        class_found = false
-        lines.each_with_index do |line, line_index|
-          if line.strip.starts_with?("class #{handler_class}")
-            class_found = true
-            next
+      # If not found locally, resolve imports
+      unless found
+        import_map = resolve_imports(file_path)
+        if import_map.has_key?(handler_class)
+          resolved_path, _ = import_map[handler_class]
+          if File.exists?(resolved_path)
+            extract_endpoints_from_class_in_file(resolved_path, route_path, handler_class, endpoints)
           end
+        elsif handler_class.includes?(".")
+          parts = handler_class.split(".")
+          class_name = parts.last
+          module_parts = parts[0...-1]
+          resolved = false
 
-          next unless class_found
-
-          # Look for HTTP method handlers
-          HTTP_METHODS.each do |http_method|
-            if line.strip.starts_with?("def #{http_method}(")
-              # Extract parameters from this method
-              params = extract_params_from_method(lines, line_index, file_path)
-              endpoint = Endpoint.new(route_path, http_method.upcase, params)
-              endpoints << endpoint
+          # Try full module path first (e.g., "foo.bar" for foo.bar.Handler)
+          module_name = module_parts.join(".")
+          if import_map.has_key?(module_name)
+            resolved_path, _ = import_map[module_name]
+            if File.exists?(resolved_path)
+              resolved = extract_endpoints_from_class_in_file(resolved_path, route_path, class_name, endpoints)
             end
           end
 
-          # Stop when we reach the next class or end of current class
-          if line.strip.starts_with?("class ") && !line.strip.starts_with?("class #{handler_class}")
-            break
+          # Fall back to individual module parts (e.g., "handlers" for handlers.ApiHandler)
+          unless resolved
+            module_parts.each do |name|
+              if import_map.has_key?(name)
+                resolved_path, _ = import_map[name]
+                if File.exists?(resolved_path)
+                  if extract_endpoints_from_class_in_file(resolved_path, route_path, class_name, endpoints)
+                    break
+                  end
+                end
+              end
+            end
           end
         end
       end
 
-      # If no specific HTTP methods found, create a GET endpoint
+      # Only fall back to default GET if handler was not found anywhere
       if endpoints.empty?
         endpoint = Endpoint.new(route_path, "GET")
         endpoints << endpoint
@@ -151,19 +320,87 @@ module Analyzer::Python
       endpoints
     end
 
+    private def extract_endpoints_from_class_in_file(file_path : ::String, route_path : ::String, handler_class : ::String, endpoints : Array(Endpoint)) : Bool
+      lines = read_file_lines(file_path)
+
+      class_found = false
+      class_indent = 0
+      lines.each_with_index do |line, line_index|
+        stripped = line.strip
+        if (m = stripped.match(CLASS_DEF_REGEX)) && m[1] == handler_class && !class_found
+          class_found = true
+          class_indent = indent_level(line)
+          next
+        end
+
+        next unless class_found
+
+        # Look for HTTP method handlers (both sync and async)
+        HTTP_METHODS.each do |http_method|
+          if stripped.starts_with?("def #{http_method}(") || stripped.starts_with?("async def #{http_method}(")
+            params = extract_params_from_method(lines, line_index, file_path)
+            endpoint = Endpoint.new(route_path, http_method.upcase, params)
+            endpoints << endpoint
+          end
+        end
+
+        # Stop when we reach another class at same or lesser indentation (not inner classes)
+        if stripped.match(CLASS_DEF_REGEX) && indent_level(line) <= class_indent
+          break
+        end
+      end
+
+      class_found
+    end
+
+    private def resolve_imports(file_path : ::String) : Hash(::String, Tuple(::String, Int32))
+      @import_modules_cache[file_path] ||= begin
+        content = read_file_content(file_path)
+        base_path = base_paths.find { |bp| file_path.starts_with?(bp) } || base_paths[0]? || ""
+        find_imported_modules(base_path, file_path, content)
+      end
+    end
+
+    private def read_file_lines(file_path : ::String) : Array(::String)
+      content = read_file_content(file_path)
+      content.split("\n")
+    end
+
+    private def read_file_content(file_path : ::String) : ::String
+      return @file_content_cache[file_path] if @file_content_cache.has_key?(file_path)
+      content = begin
+        File.read(file_path, encoding: "utf-8", invalid: :skip)
+      rescue e : IO::Error
+        @logger.debug "Failed to read file: #{file_path} (#{e.message})"
+        ""
+      end
+      @file_content_cache[file_path] = content
+      content
+    end
+
+    private def indent_level(line : ::String) : Int32
+      line.size - line.lstrip.size
+    end
+
     private def extract_params_from_method(lines : Array(::String), method_line_index : Int32, file_path : ::String) : Array(Param)
       params = [] of Param
+      method_indent = indent_level(lines[method_line_index])
 
       # Parse the method body for parameter extraction patterns
       i = method_line_index + 1
       while i < lines.size
-        line = lines[i].strip
+        line = lines[i]
+        stripped = line.strip
 
-        # Stop at the next method or class
-        break if line.starts_with?("def ") || line.starts_with?("class ")
+        # Stop at the next method or class at same or lesser indentation (not nested)
+        unless stripped.empty?
+          if stripped.starts_with?("def ") || stripped.starts_with?("async def ") || stripped.starts_with?("class ")
+            break if indent_level(line) <= method_indent
+          end
+        end
 
         # Extract Tornado parameter patterns
-        extract_tornado_params(line, params)
+        extract_tornado_params(stripped, params)
 
         i += 1
       end
@@ -196,9 +433,14 @@ module Analyzer::Python
         params << Param.new(param_name, "", "header")
       end
 
-      # JSON body parsing: tornado.escape.json_decode(self.request.body)
-      if line.includes?("json_decode") && line.includes?("self.request.body")
-        # This indicates JSON body usage but we can't extract specific param names statically
+      # self.get_arguments("param_name") — plural form for multi-value query params
+      if match = line.match /self\.get_arguments\(["']([^"']+)["']/
+        param_name = match[1]
+        params << Param.new(param_name, "", "query")
+      end
+
+      # JSON body parsing: tornado.escape.json_decode or json.loads
+      if (line.includes?("json_decode") || line.includes?("json.loads")) && line.includes?("self.request.body")
         params << Param.new("", "", "json")
       end
     end
