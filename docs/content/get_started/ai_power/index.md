@@ -30,6 +30,8 @@ noir -b . --ai-provider acp:codex
 *   `--ai-provider`: AI provider prefix (e.g., `openai`, `ollama`, `acp:codex`) or custom API URL
 *   `--ai-model`: Model name (e.g., `gpt-4o`), optional for `acp:*`
 *   `--ai-key`: API key (or use `NOIR_AI_KEY` environment variable)
+*   `--ai-agent`: Enable agentic AI workflow (iterative tool-calling loop)
+*   `--ai-native-tools-allowlist`: Provider allowlist for native tool-calling (comma-separated, default: `openai,xai,github`)
 *   `--ai-max-token`: Maximum tokens for AI requests (optional)
 *   `--cache-disable`: Disable LLM cache
 *   `--cache-clear`: Clear LLM cache before run
