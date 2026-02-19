@@ -25,7 +25,7 @@ module Analyzer::Go
                   handler_brace_count = 0
 
                   # Pre-scan: collect mounted function names to skip their bodies
-                  mounted_functions = [] of String
+                  mounted_functions = Set(String).new
                   lines.each do |scan_line|
                     if scan_line.includes?(".Mount(")
                       if scan_match = scan_line.match(/[a-zA-Z]\w*\.Mount\(\s*"([^"]+)"\s*,\s*([^(]+)\(\)/)
@@ -46,20 +46,17 @@ module Analyzer::Go
                       end
                       next
                     end
-                    unless mounted_functions.empty?
-                      skip = false
-                      mounted_functions.each do |mf|
-                        if line.includes?("func #{mf}(")
+                    if !mounted_functions.empty? && line.strip.starts_with?("func ")
+                      if func_match = line.match(/func\s+([a-zA-Z_]\w*)\s*\(/)
+                        if mounted_functions.includes?(func_match[1])
                           in_mounted_func = true
                           mounted_func_brace_count = line.count("{") - line.count("}")
                           if mounted_func_brace_count <= 0
                             in_mounted_func = false
                           end
-                          skip = true
-                          break
+                          next
                         end
                       end
-                      next if skip
                     end
 
                     details = Details.new(PathInfo.new(path, index + 1))
