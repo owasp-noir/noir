@@ -307,12 +307,17 @@ module Analyzer::AI
         end
 
         if action[:action] == "finalize"
-          return true if apply_agent_finalize(action[:args])
+          logger.verbose "AI agent action: finalize"
+          if apply_agent_finalize(action[:args])
+            logger.info "AI agent found #{@result.size} potential endpoints" if @is_verbose
+            return true
+          end
 
           append_agent_message(messages, "user", "Tool error: finalize must include endpoints array.")
           next
         end
 
+        logger.verbose "AI agent tool call: #{action[:action]}(#{action[:args].to_json})"
         tool_result = run_agent_tool(action[:action], action[:args])
         append_agent_message(messages, "user", "Tool result (#{action[:action]}):\n#{compact_tool_result(tool_result)}")
       end
@@ -459,7 +464,7 @@ module Analyzer::AI
       confidence = safe_json_int(args, "confidence", -1)
       summary = safe_json_string(args, "summary", "")
       logger.info "AI agent finalized #{added} endpoints (confidence=#{confidence})" if confidence >= 0
-      logger.debug_sub "AI agent summary: #{summary}" unless summary.empty?
+      logger.verbose "AI agent summary: #{summary}" unless summary.empty?
 
       true
     rescue ex : Exception
