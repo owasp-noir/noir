@@ -371,7 +371,9 @@ module Analyzer::AI
                else
                  "ERROR: unknown action '#{action}'."
                end
-      store_agent_tool_cache(cache_key, result)
+      unless result.empty?
+        store_agent_tool_cache(cache_key, result)
+      end
       result
     rescue ex : Exception
       "ERROR: #{ex.message}"
