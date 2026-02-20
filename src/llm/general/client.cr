@@ -100,8 +100,13 @@ module LLM
       headers["Authorization"] = "Bearer #{@api_key}" if @api_key
 
       response = HTTP::Client.post(@api, headers: headers, body: body)
-      response_json = JSON.parse(response.body)
+      unless response.success?
+        snippet = response.body.size > 1024 ? "#{response.body[0, 1024]}..." : response.body
+        STDERR.puts "WARNING: AI API error (HTTP #{response.status_code}): #{snippet}"
+        return ""
+      end
 
+      response_json = JSON.parse(response.body)
       self.class.extract_agent_action(response_json)
     rescue Exception
       ""
