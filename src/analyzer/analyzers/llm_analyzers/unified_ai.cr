@@ -658,7 +658,7 @@ module Analyzer::AI
     private def path_within_base?(path : String) : Bool
       expanded = File.expand_path(path)
       @expanded_base_paths.any? do |base|
-        expanded == base || expanded.starts_with?("#{base}/")
+        expanded == base || expanded.starts_with?(base.ends_with?("/") ? base : "#{base}/")
       end
     end
 
