@@ -106,6 +106,26 @@ import (
 		w.Write([]byte("uppercase post"))
 	})
   
+	// Test .Group() for middleware grouping (no prefix change)
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.Logger)
+		r.Get("/grouped", func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte("grouped"))
+		})
+	})
+
+	// Test .Group() nested inside .Route()
+	r.Route("/api", func(r chi.Router) {
+		r.Group(func(r chi.Router) {
+			r.Get("/users", func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte("api users"))
+			})
+		})
+		r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte("api health"))
+		})
+	})
+
 	http.ListenAndServe(":3333", r)
   }
   
@@ -138,6 +158,16 @@ import (
 	r.Use(AdminOnly)
 	r.Get("/", adminIndex)
 	r.Get("/accounts", adminListAccounts)
+	r.Route("/settings", func(r chi.Router) {
+		r.Get("/", settingsIndex)
+		r.Put("/", updateSettings)
+	})
+	// Inline handler inside mounted router (tests analyze_router_function inline handler tracking)
+	r.Post("/webhook", func(w http.ResponseWriter, r *http.Request) {
+		payload := r.FormValue("payload")
+		_ = payload
+		w.Write([]byte("webhook received"))
+	})
 	return r
   }
   
