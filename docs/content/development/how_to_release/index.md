@@ -48,7 +48,7 @@ To update the main Homebrew formula, you need to submit a pull request to the `h
 
     ```bash
     brew bump-formula-pr --strict --version <VERSION> noir
-    # Example: brew bump-formula-pr --strict --version 0.27.1 noir
+    # Example: brew bump-formula-pr --strict --version 0.28.0 noir
     ```
 
 3.  **Style Check**: (Optional) To ensure your changes meet Homebrew's style guidelines, you can run:
