@@ -7,6 +7,7 @@
 require "./general/client"
 require "./ollama/ollama"
 require "./acp/client"
+require "./native_tool_calling"
 
 module LLM
   # A normalized adapter interface for LLM clients.
@@ -20,6 +21,17 @@ module LLM
 
     # Send a single prompt and get a response as a String.
     abstract def request(prompt : String, format : String = "json") : String
+
+    # Whether this adapter can leverage provider-native tool-calling.
+    def supports_native_tool_calling? : Bool
+      false
+    end
+
+    # Request next step using provider-native tool definitions.
+    # Implementations that do not support this can fallback to regular JSON-mode requests.
+    def request_messages_with_tools(messages : Messages, _tools : String) : String
+      request_messages(messages, "json")
+    end
 
     # Whether this adapter supports server-side KV context reuse across calls.
     def supports_context? : Bool
@@ -48,7 +60,7 @@ module LLM
 
     getter client : LLM::General
 
-    def initialize(@client : LLM::General)
+    def initialize(@client : LLM::General, @native_tool_calling_enabled : Bool = true)
     end
 
     def request_messages(messages : Messages, format : String = "json") : String
@@ -57,6 +69,14 @@ module LLM
 
     def request(prompt : String, format : String = "json") : String
       client.request(prompt, format)
+    end
+
+    def supports_native_tool_calling? : Bool
+      @native_tool_calling_enabled
+    end
+
+    def request_messages_with_tools(messages : Messages, tools : String) : String
+      client.request_messages_with_tools(messages, tools)
     end
   end
 
@@ -128,7 +148,18 @@ module LLM
 
   # Factory for creating LLM adapters based on provider configuration.
   class AdapterFactory
-    def self.for(provider : String, model : String, api_key : String? = nil, event_sink : Proc(String, Nil)? = nil) : Adapter
+    def self.native_tool_calling_enabled_for_provider?(provider : String, allowlist : Array(String)? = nil) : Bool
+      active_allowlist = LLM::NativeToolCalling.normalize_allowlist(allowlist)
+      active_allowlist.includes?(LLM::NativeToolCalling.canonical_provider(provider))
+    end
+
+    def self.for(
+      provider : String,
+      model : String,
+      api_key : String? = nil,
+      event_sink : Proc(String, Nil)? = nil,
+      native_tool_calling_allowlist : Array(String)? = nil,
+    ) : Adapter
       prov = provider.downcase
       if LLM::ACPClient.acp_provider?(prov)
         acp_model = LLM::ACPClient.default_model(provider, model)
@@ -137,7 +168,8 @@ module LLM
         url = provider.includes?("://") ? provider : "http://localhost:11434"
         OllamaAdapter.new(LLM::Ollama.new(url, model))
       else
-        GeneralAdapter.new(LLM::General.new(provider, model, api_key))
+        native_tool_calling = native_tool_calling_enabled_for_provider?(provider, native_tool_calling_allowlist)
+        GeneralAdapter.new(LLM::General.new(provider, model, api_key), native_tool_calling)
       end
     end
   end

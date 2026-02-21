@@ -10,6 +10,11 @@ describe "default_options" do
     noir_options = create_test_options
     noir_options["base"].as_a.should be_empty
   end
+
+  it "has default native tool-calling allowlist" do
+    noir_options = create_test_options
+    noir_options["ai_native_tools_allowlist"].to_s.should eq("openai,xai,github")
+  end
 end
 
 describe "run_options_parser" do
@@ -48,6 +53,51 @@ describe "run_options_parser" do
       noir_options["base"].as_a[0].to_s.should eq("./single_app")
     ensure
       # Restore original ARGV
+      ARGV.clear
+      ARGV.concat(original_argv)
+    end
+  end
+
+  it "supports --ai-agent flag" do
+    original_argv = ARGV.dup
+
+    ARGV.clear
+    ARGV.concat(["-b", "./single_app", "--ai-agent"])
+
+    begin
+      noir_options = run_options_parser()
+      noir_options["ai_agent"].should be_true
+    ensure
+      ARGV.clear
+      ARGV.concat(original_argv)
+    end
+  end
+
+  it "supports --ai-native-tools-allowlist flag" do
+    original_argv = ARGV.dup
+
+    ARGV.clear
+    ARGV.concat(["-b", "./single_app", "--ai-native-tools-allowlist", "openai,github"])
+
+    begin
+      noir_options = run_options_parser()
+      noir_options["ai_native_tools_allowlist"].to_s.should eq("openai,github")
+    ensure
+      ARGV.clear
+      ARGV.concat(original_argv)
+    end
+  end
+
+  it "supports --ai-agent-max-steps flag" do
+    original_argv = ARGV.dup
+
+    ARGV.clear
+    ARGV.concat(["-b", "./single_app", "--ai-agent-max-steps", "10"])
+
+    begin
+      noir_options = run_options_parser()
+      noir_options["ai_agent_max_steps"].as_i.should eq(10)
+    ensure
       ARGV.clear
       ARGV.concat(original_argv)
     end

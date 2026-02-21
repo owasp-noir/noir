@@ -51,3 +51,22 @@ end
 def escape_glob_path(path : String) : String
   path.gsub(/([{}\[\]*?\\])/) { |match| "\\#{match}" }
 end
+
+# Safely checks if a regex matches a string within a given timeout.
+# This helps mitigate ReDoS (Regular Expression Denial of Service) attacks.
+def regex_matches_with_timeout?(regex : Regex, input : String, timeout : Time::Span = 500.milliseconds) : Bool
+  result_channel = Channel(Bool).new
+
+  spawn do
+    result_channel.send(regex.matches?(input))
+  rescue
+    result_channel.send(false)
+  end
+
+  select
+  when matched = result_channel.receive
+    matched
+  when timeout(timeout)
+    false
+  end
+end
