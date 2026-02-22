@@ -1,0 +1,1104 @@
+<!DOCTYPE html>
+<html lang="ko" style="background-color: #000000;">
+
+<head>
+    
+        
+    
+    
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Resource Hints for better performance -->
+    
+
+    <!-- Initialize theme and brightness before CSS loads to prevent FOUC -->
+    <script>
+        (function() {
+            // Theme mapping - maps user-friendly names to actual DaisyUI theme names
+            var themeMapping = { "goyo-dark": "night", "goyo-light": "lofi" };
+
+            
+            
+            
+                
+                
+                
+                
+            
+            // Get default values from config
+            var defaultColorset = "dark";
+            var darkBrightness = "darker";
+            var lightBrightness = "normal";
+            var themeMap = { "dark": "goyo-dark", "light": "goyo-light" };
+            var fallbackTheme = themeMap[defaultColorset] || "goyo-dark";
+
+            // Expose brightness config for global use (e.g., goyo.js)
+            window.darkBrightness = darkBrightness;
+            window.lightBrightness = lightBrightness;
+
+            // Get theme from localStorage or use fallback
+            var currentUserTheme = localStorage.getItem('theme') || fallbackTheme;
+            var actualTheme = themeMapping[currentUserTheme] || currentUserTheme;
+
+            // Determine brightness based on current theme
+            var currentBrightness = (currentUserTheme === "goyo-dark") ? darkBrightness : lightBrightness;
+
+            // Set theme and brightness attributes immediately
+            document.documentElement.setAttribute("data-theme", actualTheme);
+            document.documentElement.setAttribute("data-brightness", currentBrightness);
+        })();
+    </script>
+
+    <style>
+        
+        
+        
+            
+            
+            
+        
+        
+            
+            @font-face {
+                font-family: "Pretendard-Regular";
+                src: url('https://owasp-noir.github.io/noir/fonts/Pretendard-Regular.woff') format("woff");
+                font-weight: 400;
+                font-style: normal;
+                font-display: swap;
+            }
+            body {
+                font-family: "Pretendard-Regular", sans-serif;
+            }
+        
+    </style>
+
+    
+
+    <title>GitHub Action | OWASP Noir</title>
+
+    
+    
+
+      <!-- SEO: Open Graph / Twitter Card -->
+      <meta property="og:title" content="GitHub Action | OWASP Noir" />
+      <meta property="og:description" content="GitHub Actions 워크플로우에서 OWASP Noir를 실행해 엔드포인트 탐지와 수동(패시브) 보안 점검을 수행하는 방법을 안내합니다." />
+      <meta property="og:url" content="https://owasp-noir.github.io/noir/" />
+      <meta property="og:type" content="website" />
+      
+      <meta property="og:image" content="https://owasp-noir.github.io/noir/images/bbb.jpg" />
+      
+
+      <meta name="twitter:card" content="summary_large_image" />
+      <meta name="twitter:title" content="OWASP Noir" />
+      <meta name="twitter:description" content="GitHub Actions 워크플로우에서 OWASP Noir를 실행해 엔드포인트 탐지와 수동(패시브) 보안 점검을 수행하는 방법을 안내합니다." />
+      
+      
+      
+          
+          
+      
+      
+      
+      
+      <meta name="twitter:image" content="https://owasp-noir.github.io/noir/images/bbb.jpg" />
+      
+
+      <!-- Browser address bar color -->
+      <meta name="theme-color" content="#000000">
+
+      <!-- Favicon -->
+      
+      
+      
+      
+          
+          
+          
+          
+          
+          
+      
+      <link rel="icon" type="image/png" href="/icons/favicon-96x96.png" sizes="96x96" />
+      <link rel="icon" type="image/svg+xml" href="/icons/favicon.svg" />
+      <link rel="shortcut icon" href="/icons/favicon.ico" />
+      <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
+      <link rel="manifest" href="/icons/site.webmanifest" />
+
+      <!-- CSS -->
+    <link rel="stylesheet" href="https://owasp-noir.github.io/noir/css/main.css">
+    <link rel="stylesheet" href="https://owasp-noir.github.io/noir/css/font-awesome.min.css">
+
+    <!-- Preload critical fonts -->
+    <link rel="preload" href="https://owasp-noir.github.io/noir/fonts/Pretendard-Regular.woff" as="font" type="font/woff" crossorigin>
+
+    <!-- Defer non-critical scripts -->
+    <script defer src="https://owasp-noir.github.io/noir/js/copy_code.js"></script>
+    <script defer src="https://owasp-noir.github.io/noir/js/copy_heading_link.js"></script>
+
+    <!-- Lazy load Mermaid and KaTeX - only when needed -->
+    <script>
+        // Lazy load KaTeX and Mermaid when needed
+        window.addEventListener('DOMContentLoaded', function() {
+            // Check for both KaTeX inline and block elements in one pass
+            var katexInlineElements = document.querySelectorAll('.katex-inline');
+            var katexBlockElements = document.querySelectorAll('.katex-block');
+            var hasKatex = katexInlineElements.length > 0 || katexBlockElements.length > 0;
+            var hasMermaid = document.querySelector('.mermaid');
+
+            // Load KaTeX if math elements are present
+            if (hasKatex) {
+                // Load KaTeX CSS first
+                var katexCSS = document.createElement('link');
+                katexCSS.rel = 'stylesheet';
+                katexCSS.href = 'https://owasp-noir.github.io/noir/css/katex.min.css';
+                document.head.appendChild(katexCSS);
+
+                // Load KaTeX JS
+                var katexScript = document.createElement('script');
+                katexScript.src = 'https://owasp-noir.github.io/noir/js/katex.min.js';
+                katexScript.onload = function() {
+                    // Render inline elements
+                    katexInlineElements.forEach(function(elem) {
+                        var texContent = elem.textContent || elem.innerText;
+                        try {
+                            katex.render(texContent, elem, {
+                                throwOnError: false,
+                                displayMode: false
+                            });
+                        } catch(e) {
+                            console.error('KaTeX render error:', e);
+                        }
+                    });
+
+                    // Render block elements
+                    katexBlockElements.forEach(function(elem) {
+                        var texContent = elem.textContent || elem.innerText;
+                        try {
+                            katex.render(texContent, elem, {
+                                throwOnError: false,
+                                displayMode: true
+                            });
+                        } catch(e) {
+                            console.error('KaTeX render error:', e);
+                        }
+                    });
+                };
+                document.head.appendChild(katexScript);
+            }
+
+            // Load Mermaid if diagram elements are present
+            if (hasMermaid) {
+                var mermaidScript = document.createElement('script');
+                mermaidScript.src = 'https://owasp-noir.github.io/noir/js/mermaid.min.js';
+                mermaidScript.onload = function() {
+                    // Initialize Mermaid after loading
+                    if (typeof window.initMermaid === 'function') {
+                        window.initMermaid();
+                    }
+                };
+                document.head.appendChild(mermaidScript);
+            }
+        });
+    </script>
+
+    
+    
+</head>
+<body>
+    
+
+
+
+    <div class="drawer lg:drawer-open">
+        <input id="my-drawer-2" type="checkbox" class="drawer-toggle" />
+        <div class="drawer-content flex flex-col pt-16">
+            
+
+
+
+
+
+    
+    
+    
+    
+    
+
+
+
+
+<div class="navbar opacity-95 fixed top-0 left-0 right-0 z-50 h-16 border-b border-gray-500/15 backdrop-blur-3xl">
+    <!-- Mobile hamburger -->
+    <div class="flex-none lg:hidden">
+        <label for="my-drawer-2" class="btn btn-square btn-ghost">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="inline-block w-5 h-5 stroke-current"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+        </label>
+    </div>
+    <!-- Logo -->
+    <div class="flex-1">
+        <a href="/" class="btn btn-ghost hover:animate-pulse hover:bg-transparent hover:border-transparent normal-case text-xl" style="background: linear-gradient(135deg, #9ca3af, #6b7280); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; font-weight: bold; font-size: 1.5rem;">
+            
+                
+                
+                
+                
+                
+                
+                
+                <img 
+                    src="https://owasp-noir.github.io/noir/images/noir-dark.png" 
+                    alt="OWASP Noir" 
+                    class="h-18 w-auto logo-dark"
+                    data-logo-type="dark"
+                    style="padding: 14px;"
+                />
+                
+                <img 
+                    src="https://owasp-noir.github.io/noir/images/noir-light.png" 
+                    alt="OWASP Noir" 
+                    class="h-18 w-auto logo-light hidden"
+                    data-logo-type="light"
+                    style="padding: 14px;"
+                />
+            
+        </a>
+    </div>
+    <!-- Desktop Menu -->
+    <div class="flex-none hidden lg:flex">
+        <ul class="menu menu-horizontal px-1 items-center">
+            
+            
+                
+                
+                    
+                
+            
+            
+                
+                    
+                        <li>
+                            <a class="btn btn-ghost hover:no-underline" href="/ko/noir/get_started/overview">
+                                <i class="fa-solid fa-book"></i>
+                                문서
+                            </a>
+                        </li>
+                    
+                
+                    
+                        <li>
+                            <a class="btn btn-ghost hover:no-underline" href="https://github.com/owasp-noir/noir">
+                                <i class="fa-brands fa-github"></i>
+                                GitHub
+                            </a>
+                        </li>
+                    
+                
+                    
+                        <li class="dropdown dropdown-end">
+                            <div tabindex="0" role="button" class="btn btn-ghost">
+                                <i class="fa-solid fa-globe"></i>
+                                OWASP
+                                <svg class="inline w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                            </div>
+                            <ul tabindex="0" class="dropdown-content menu bg-base-100 border border-gray-500/15 rounded-box z-1 p-2 shadow-sm">
+                                
+                                    <li>
+                                        <a class="btn btn-ghost hover:no-underline" href="https://owasp.org/www-project-noir/">
+                                            <i class="fa-solid fa-flag"></i>
+                                            OWASP Project
+                                        </a>
+                                    </li>
+                                
+                                    <li>
+                                        <a class="btn btn-ghost hover:no-underline" href="https://nest.owasp.dev/projects/noir">
+                                            <i class="fa-solid fa-igloo"></i>
+                                            OWASP Nest
+                                        </a>
+                                    </li>
+                                
+                            </ul>
+                        </li>
+                    
+                
+            
+            
+            
+            
+            
+                
+            
+            <li>
+                <div class="dropdown dropdown-end p-0">
+                    <div tabindex="0" role="button" class="btn btn-ghost px-2" aria-label="Languages">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-7 h-7" width="20" height="20" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                            <path stroke="none" d="M0 0h24v24H0z" fill="none"></path>
+                            <path d="M4 5h7"></path>
+                            <path d="M7 4c0 4.846 0 7 .5 8"></path>
+                            <path d="M10 8.5c0 2.286 -2 4.5 -3.5 4.5s-2.5 -1.135 -2.5 -2c0 -2 1 -3 3 -3s5 .57 5 2.857c0 1.524 -.667 2.571 -2 3.143"></path>
+                            <path d="M12 20l4 -9l4 9"></path>
+                            <path d="M19.1 18h-6.2"></path>
+                        </svg>
+                    </div>
+                    <ul tabindex="0" class="dropdown-content menu bg-base-100 border border-gray-500/15 rounded-box z-1 p-2 shadow-lg min-w-max whitespace-nowrap">
+                        
+                            
+                                
+                                
+                                
+                                    <li><a href="https://owasp-noir.github.io/noir/usage/github_action/">English</a></li>
+                                
+                            
+                            
+                        
+                    </ul>
+                </div>
+            </li>
+            
+
+            
+            
+            
+                
+            
+            
+            <li>
+                <label class="swap swap-rotate btn btn-ghost">
+                  <input type="checkbox" class="theme-controller" value="night" aria-labelledby="swap color"/>
+                  <svg class="swap-off h-5 w-5 fill-current" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M5.64,17l-.71.71a1,1,0,0,0,0,1.41,1,1,0,0,0,1.41,0l.71-.71A1,1,0,0,0,5.64,17ZM5,12a1,1,0,0,0-1-1H3a1,1,0,0,0,0,2H4A1,1,0,0,0,5,12Zm7-7a1,1,0,0,0,1-1V3a1,1,0,0,0-2,0V4A1,1,0,0,0,12,5ZM5.64,7.05a1,1,0,0,0,.7.29,1,1,0,0,0,.71-.29,1,1,0,0,0,0-1.41l-.71-.71A1,1,0,0,0,4.93,6.34Zm12,.29a1,1,0,0,0,.7-.29l.71-.71a1,1,0,1,0-1.41-1.41L17,5.64a1,1,0,0,0,0,1.41A1,1,0,0,0,17.66,7.34ZM21,11H20a1,1,0,0,0,0,2h1a1,1,0,0,0,0-2Zm-9,8a1,1,0,0,0-1,1v1a1,1,0,0,0,2,0V20A1,1,0,0,0,12,19ZM18.36,17A1,1,0,0,0,17,18.36l.71.71a1,1,0,0,0,1.41,0,1,1,0,0,0,0-1.41ZM12,6.5A5.5,5.5,0,1,0,17.5,12,5.51,5.51,0,0,0,12,6.5Zm0,9A3.5,3.5,0,1,1,15.5,12,3.5,3.5,0,0,1,12,15.5Z" /></svg>
+                  <svg class="swap-on h-5 w-5 fill-current" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21.64,13a1,1,0,0,0-1.05-.14,8.05,8.05,0,0,1-3.37.73A8.15,8.15,0,0,1,9.08,5.49a8.59,8.59,0,0,1,.25-2A1,1,0,0,0,8,2.36,10.14,10.14,0,1,0,22,14.05,1,1,0,0,0,21.64,13Zm-9.5,6.69A8.14,8.14,0,0,1,7.08,5.22v.27A10.15,10.15,0,0,0,17.22,15.63a9.79,9.79,0,0,0,2.1-.22A8.11,8.11,0,0,1,12.14,19.73Z" /></svg>
+                </label>
+            </li>
+            
+
+        </ul>
+    </div>
+</div>
+
+
+            
+            
+            
+            
+                
+            
+            
+            <div class="p-8 w-full flex justify-center">
+                <div class="w-full max-w-7xl lg:grid lg:grid-cols-[1fr_250px] lg:gap-8">
+                    <main class="prose w-full">
+                        
+    <div class="mb-12 pb-4 border-b border-gray-500/15">
+        <h1 class="flex items-center gap-3">
+            GitHub Action
+            
+        </h1>
+        <p class="text-gray-500">GitHub Actions 워크플로우에서 OWASP Noir를 실행해 엔드포인트 탐지와 수동(패시브) 보안 점검을 수행하는 방법을 안내합니다.</p>
+    </div>
+    <p>OWASP Noir는 CI에서 코드베이스의 공격 표면을 분석하기 위한 GitHub Action을 제공합니다. 다양한 언어와 프레임워크 전반에서 엔드포인트를 탐지하고, 선택적으로 수동(패시브) 보안 점검을 수행합니다.</p>
+<p>이 문서는 워크플로우에 Noir를 추가하고, 입력값을 구성하며, 출력값을 활용하고, 자주 발생하는 문제를 해결하는 방법을 설명합니다.</p>
+<h2 id="bbareun-sijag">빠른 시작</h2>
+<p>푸시/PR 시 최소 구성을 실행하는 예시:</p>
+<pre class="giallo" style="color: #E1E4E8; background-color: #24292E;"><code data-lang="yaml"><span class="giallo-l"><span style="color: #85E89D;">name</span><span>:</span><span style="color: #9ECBFF;"> Noir Security Analysis</span></span>
+<span class="giallo-l"><span style="color: #79B8FF;">on</span><span>: [</span><span style="color: #9ECBFF;">push</span><span>,</span><span style="color: #9ECBFF;"> pull_request</span><span>]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #85E89D;">jobs</span><span>:</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">  noir-analysis</span><span>:</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">    runs-on</span><span>:</span><span style="color: #9ECBFF;"> ubuntu-latest</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">    steps</span><span>:</span></span>
+<span class="giallo-l"><span>      -</span><span style="color: #85E89D;"> uses</span><span>:</span><span style="color: #9ECBFF;"> actions/checkout@v6</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>      -</span><span style="color: #85E89D;"> name</span><span>:</span><span style="color: #9ECBFF;"> Run OWASP Noir</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">        id</span><span>:</span><span style="color: #9ECBFF;"> noir</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">        uses</span><span>:</span><span style="color: #9ECBFF;"> owasp-noir/noir@main</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">        with</span><span>:</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">          base_path</span><span>:</span><span style="color: #9ECBFF;"> &#39;.&#39;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>      -</span><span style="color: #85E89D;"> name</span><span>:</span><span style="color: #9ECBFF;"> Display results</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">        run</span><span>:</span><span style="color: #9ECBFF;"> echo &#39;${{ steps.noir.outputs.endpoints }}&#39; | jq .</span></span></code></pre>
+<ul>
+<li><code>base_path</code>는 분석 대상 디렉터리입니다(커맨드라인의 <code>-b/--base-path</code>와 동일).</li>
+<li><code>endpoints</code> 출력에는 JSON 결과가 담기며, <code>jq</code> 등으로 후처리할 수 있습니다.</li>
+</ul>
+<h2 id="ibryeoggabs-inputs">입력값(Inputs)</h2>
+<table><thead><tr><th>이름</th><th>설명</th><th>필수</th><th>기본값</th></tr></thead><tbody>
+<tr><td><code>base_path</code></td><td>분석할 기준 경로 (<code>-b/--base-path</code>)</td><td>예</td><td><code>.</code></td></tr>
+<tr><td><code>url</code></td><td>엔드포인트의 기준 URL (<code>-u/--url</code>)</td><td>아니오</td><td>``</td></tr>
+<tr><td><code>format</code></td><td>출력 형식 (<code>plain</code>, <code>yaml</code>, <code>json</code>, <code>jsonl</code>, <code>markdown-table</code>, <code>curl</code>, <code>httpie</code>, <code>oas2</code>, <code>oas3</code> 등)</td><td>아니오</td><td><code>json</code></td></tr>
+<tr><td><code>output_file</code></td><td>결과를 파일로 저장 (<code>-o/--output</code>)</td><td>아니오</td><td>``</td></tr>
+<tr><td><code>techs</code></td><td>포함할 기술 스택 지정 (<code>-t/--techs</code>)</td><td>아니오</td><td>``</td></tr>
+<tr><td><code>exclude_techs</code></td><td>제외할 기술 스택 지정 (<code>--exclude-techs</code>)</td><td>아니오</td><td>``</td></tr>
+<tr><td><code>passive_scan</code></td><td>수동(패시브) 보안 점검 활성화 (<code>-P/--passive-scan</code>)</td><td>아니오</td><td><code>false</code></td></tr>
+<tr><td><code>passive_scan_severity</code></td><td>수동 점검 최소 심각도 (<code>critical</code>, <code>high</code>, <code>medium</code>, <code>low</code>)</td><td>아니오</td><td><code>high</code></td></tr>
+<tr><td><code>use_all_taggers</code></td><td>모든 태거 활성화(광범위 분석) (<code>-T/--use-all-taggers</code>)</td><td>아니오</td><td><code>false</code></td></tr>
+<tr><td><code>use_taggers</code></td><td>특정 태거만 활성화 (<code>--use-taggers</code>)</td><td>아니오</td><td>``</td></tr>
+<tr><td><code>include_path</code></td><td>결과에 소스 파일 경로 포함 (<code>--include-path</code>)</td><td>아니오</td><td><code>false</code></td></tr>
+<tr><td><code>verbose</code></td><td>상세 출력 (<code>--verbose</code>)</td><td>아니오</td><td><code>false</code></td></tr>
+<tr><td><code>debug</code></td><td>디버그 출력 (<code>-d/--debug</code>)</td><td>아니오</td><td><code>false</code></td></tr>
+<tr><td><code>concurrency</code></td><td>동시성 수준 (<code>--concurrency</code>)</td><td>아니오</td><td>``</td></tr>
+<tr><td><code>exclude_codes</code></td><td>제외할 HTTP 상태코드(쉼표 구분) (<code>--exclude-codes</code>)</td><td>아니오</td><td>``</td></tr>
+<tr><td><code>status_codes</code></td><td>발견된 엔드포인트에 HTTP 상태코드 표시 (<code>--status-codes</code>)</td><td>아니오</td><td><code>false</code></td></tr>
+</tbody></table>
+<p>참고:</p>
+<ul>
+<li>YAML의 타입 변환 이슈를 피하려면 불리언은 문자열(<code>'true'</code>/<code>'false'</code>)로 전달하세요.</li>
+<li><code>output_file</code>을 지정하면 출력값 제공과 함께 해당 파일에도 결과가 저장됩니다.</li>
+</ul>
+<h2 id="culryeoggabs-outputs">출력값(Outputs)</h2>
+<table><thead><tr><th>이름</th><th>설명</th></tr></thead><tbody>
+<tr><td><code>endpoints</code></td><td>엔드포인트 분석 결과(JSON)</td></tr>
+<tr><td><code>passive_results</code></td><td>수동(패시브) 점검 결과(JSON, <code>passive_scan</code> 활성화 시 제공)</td></tr>
+</tbody></table>
+<p>출력값 활용 예시:</p>
+<pre class="giallo" style="color: #E1E4E8; background-color: #24292E;"><code data-lang="yaml"><span class="giallo-l"><span>-</span><span style="color: #85E89D;"> name</span><span>:</span><span style="color: #9ECBFF;"> Count endpoints</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">  run</span><span>:</span><span style="color: #9ECBFF;"> echo &#39;${{ steps.noir.outputs.endpoints }}&#39; | jq &#39;.endpoints | length&#39;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>-</span><span style="color: #85E89D;"> name</span><span>:</span><span style="color: #9ECBFF;"> Show passive issues (if enabled)</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">  run</span><span>:</span><span style="color: #9ECBFF;"> echo &#39;${{ steps.noir.outputs.passive_results }}&#39; | jq &#39;. | length&#39;</span></span></code></pre><h2 id="yesi">예시</h2>
+<h3 id="sudong-jeomgeom-mic-atipaegteu-jeojangeul-pohamhan-gogeub-seukaen">수동 점검 및 아티팩트 저장을 포함한 고급 스캔</h3>
+<pre class="giallo" style="color: #E1E4E8; background-color: #24292E;"><code data-lang="yaml"><span class="giallo-l"><span style="color: #85E89D;">name</span><span>:</span><span style="color: #9ECBFF;"> Comprehensive Security Analysis</span></span>
+<span class="giallo-l"><span style="color: #79B8FF;">on</span><span>: [</span><span style="color: #9ECBFF;">push</span><span>,</span><span style="color: #9ECBFF;"> pull_request</span><span>]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #85E89D;">jobs</span><span>:</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">  security-scan</span><span>:</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">    runs-on</span><span>:</span><span style="color: #9ECBFF;"> ubuntu-latest</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">    steps</span><span>:</span></span>
+<span class="giallo-l"><span>      -</span><span style="color: #85E89D;"> uses</span><span>:</span><span style="color: #9ECBFF;"> actions/checkout@v6</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>      -</span><span style="color: #85E89D;"> name</span><span>:</span><span style="color: #9ECBFF;"> Run OWASP Noir with Passive Scanning</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">        id</span><span>:</span><span style="color: #9ECBFF;"> noir</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">        uses</span><span>:</span><span style="color: #9ECBFF;"> owasp-noir/noir@main</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">        with</span><span>:</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">          base_path</span><span>:</span><span style="color: #9ECBFF;"> &#39;src&#39;</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">          format</span><span>:</span><span style="color: #9ECBFF;"> &#39;json&#39;</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">          passive_scan</span><span>:</span><span style="color: #9ECBFF;"> &#39;true&#39;</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">          passive_scan_severity</span><span>:</span><span style="color: #9ECBFF;"> &#39;medium&#39;</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">          use_all_taggers</span><span>:</span><span style="color: #9ECBFF;"> &#39;true&#39;</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">          include_path</span><span>:</span><span style="color: #9ECBFF;"> &#39;true&#39;</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">          verbose</span><span>:</span><span style="color: #9ECBFF;"> &#39;true&#39;</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">          output_file</span><span>:</span><span style="color: #9ECBFF;"> &#39;noir-results.json&#39;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>      -</span><span style="color: #85E89D;"> name</span><span>:</span><span style="color: #9ECBFF;"> Process Results</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">        run</span><span>:</span><span style="color: #F97583;"> |</span></span>
+<span class="giallo-l"><span style="color: #9ECBFF;">          echo &quot;🔍 Endpoints discovered:&quot;</span></span>
+<span class="giallo-l"><span style="color: #9ECBFF;">          echo &#39;${{ steps.noir.outputs.endpoints }}&#39; | jq &#39;.endpoints | length&#39;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9ECBFF;">          echo &quot;🚨 Security issues found:&quot;</span></span>
+<span class="giallo-l"><span style="color: #9ECBFF;">          echo &#39;${{ steps.noir.outputs.passive_results }}&#39; | jq &#39;. | length&#39;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>      -</span><span style="color: #85E89D;"> name</span><span>:</span><span style="color: #9ECBFF;"> Save detailed results</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">        uses</span><span>:</span><span style="color: #9ECBFF;"> actions/upload-artifact@v4</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">        with</span><span>:</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">          name</span><span>:</span><span style="color: #9ECBFF;"> noir-security-results</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">          path</span><span>:</span><span style="color: #9ECBFF;"> noir-results.json</span></span></code></pre><h3 id="monorepo-maeteurigseu-yesi">모노레포/매트릭스 예시</h3>
+<p>여러 서비스를 병렬로 분석:</p>
+<pre class="giallo" style="color: #E1E4E8; background-color: #24292E;"><code data-lang="yaml"><span class="giallo-l"><span style="color: #85E89D;">name</span><span>:</span><span style="color: #9ECBFF;"> Monorepo Noir</span></span>
+<span class="giallo-l"><span style="color: #79B8FF;">on</span><span>: [</span><span style="color: #9ECBFF;">push</span><span>,</span><span style="color: #9ECBFF;"> pull_request</span><span>]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #85E89D;">jobs</span><span>:</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">  noir</span><span>:</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">    runs-on</span><span>:</span><span style="color: #9ECBFF;"> ubuntu-latest</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">    strategy</span><span>:</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">      matrix</span><span>:</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">        service</span><span>: [</span><span style="color: #9ECBFF;">service-a</span><span>,</span><span style="color: #9ECBFF;"> service-b</span><span>,</span><span style="color: #9ECBFF;"> service-c</span><span>]</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">    steps</span><span>:</span></span>
+<span class="giallo-l"><span>      -</span><span style="color: #85E89D;"> uses</span><span>:</span><span style="color: #9ECBFF;"> actions/checkout@v6</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>      -</span><span style="color: #85E89D;"> name</span><span>:</span><span style="color: #9ECBFF;"> Run Noir for ${{ matrix.service }}</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">        id</span><span>:</span><span style="color: #9ECBFF;"> noir</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">        uses</span><span>:</span><span style="color: #9ECBFF;"> owasp-noir/noir@main</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">        with</span><span>:</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">          base_path</span><span>:</span><span style="color: #9ECBFF;"> &#39;${{ matrix.service }}&#39;</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">          format</span><span>:</span><span style="color: #9ECBFF;"> &#39;json&#39;</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">          include_path</span><span>:</span><span style="color: #9ECBFF;"> &#39;true&#39;</span></span></code></pre><h3 id="peureimweokeubyeol-seukaen">프레임워크별 스캔</h3>
+<p>자동 감지가 충분하지 않을 때는 기술 스택을 명시적으로 지정하세요:</p>
+<pre class="giallo" style="color: #E1E4E8; background-color: #24292E;"><code data-lang="yaml"><span class="giallo-l"><span>-</span><span style="color: #85E89D;"> uses</span><span>:</span><span style="color: #9ECBFF;"> owasp-noir/noir@main</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">  with</span><span>:</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">    base_path</span><span>:</span><span style="color: #9ECBFF;"> &#39;.&#39;</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">    techs</span><span>:</span><span style="color: #9ECBFF;"> &#39;rails&#39;</span><span style="color: #6A737D;">           # ruby on rails</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">    passive_scan</span><span>:</span><span style="color: #9ECBFF;"> &#39;true&#39;</span></span></code></pre><pre class="giallo" style="color: #E1E4E8; background-color: #24292E;"><code data-lang="yaml"><span class="giallo-l"><span>-</span><span style="color: #85E89D;"> uses</span><span>:</span><span style="color: #9ECBFF;"> owasp-noir/noir@main</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">  with</span><span>:</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">    base_path</span><span>:</span><span style="color: #9ECBFF;"> &#39;src&#39;</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">    techs</span><span>:</span><span style="color: #9ECBFF;"> &#39;express&#39;</span><span style="color: #6A737D;">         # node.js express</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">    format</span><span>:</span><span style="color: #9ECBFF;"> &#39;json&#39;</span></span></code></pre><pre class="giallo" style="color: #E1E4E8; background-color: #24292E;"><code data-lang="yaml"><span class="giallo-l"><span>-</span><span style="color: #85E89D;"> uses</span><span>:</span><span style="color: #9ECBFF;"> owasp-noir/noir@main</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">  with</span><span>:</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">    base_path</span><span>:</span><span style="color: #9ECBFF;"> &#39;.&#39;</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">    techs</span><span>:</span><span style="color: #9ECBFF;"> &#39;django&#39;</span><span style="color: #6A737D;">          # python django</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">    passive_scan</span><span>:</span><span style="color: #9ECBFF;"> &#39;true&#39;</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">    passive_scan_severity</span><span>:</span><span style="color: #9ECBFF;"> &#39;medium&#39;</span></span></code></pre><h3 id="sangtaekodeu-buga-jeongbo-mic-jeoe-seoljeong">상태코드 부가 정보 및 제외 설정</h3>
+<pre class="giallo" style="color: #E1E4E8; background-color: #24292E;"><code data-lang="yaml"><span class="giallo-l"><span>-</span><span style="color: #85E89D;"> uses</span><span>:</span><span style="color: #9ECBFF;"> owasp-noir/noir@main</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">  with</span><span>:</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">    base_path</span><span>:</span><span style="color: #9ECBFF;"> &#39;.&#39;</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">    status_codes</span><span>:</span><span style="color: #9ECBFF;"> &#39;true&#39;</span><span style="color: #6A737D;">       # HTTP 상태코드 포함</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">    exclude_codes</span><span>:</span><span style="color: #9ECBFF;"> &#39;404,429&#39;</span><span style="color: #6A737D;">   # 소음이 많은 코드 제외</span></span></code></pre><h3 id="ripotingeul-wihan-daece-pomaes">리포팅을 위한 대체 포맷</h3>
+<p>마크다운 표 또는 cURL 명령을 생성:</p>
+<pre class="giallo" style="color: #E1E4E8; background-color: #24292E;"><code data-lang="yaml"><span class="giallo-l"><span>-</span><span style="color: #85E89D;"> uses</span><span>:</span><span style="color: #9ECBFF;"> owasp-noir/noir@main</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">  with</span><span>:</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">    base_path</span><span>:</span><span style="color: #9ECBFF;"> &#39;.&#39;</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">    format</span><span>:</span><span style="color: #9ECBFF;"> &#39;markdown-table&#39;</span><span style="color: #6A737D;">   # 또는: &#39;curl&#39;, &#39;httpie&#39;, &#39;yaml&#39;, &#39;jsonl&#39;, &#39;oas3&#39;</span></span>
+<span class="giallo-l"><span style="color: #85E89D;">    output_file</span><span>:</span><span style="color: #9ECBFF;"> &#39;noir.md&#39;</span></span></code></pre><h2 id="mobeom-sarye">모범 사례</h2>
+<ol>
+<li>수동 점검(<code>passive_scan: 'true'</code>)을 활성화하여 보안 스멜을 조기에 확인하세요.</li>
+<li><code>passive_scan_severity</code>와 <code>exclude_codes</code>로 노이즈를 조절하세요.</li>
+<li><code>include_path: 'true'</code>로 파일 경로를 포함해 트라이애지와 코드 탐색을 빠르게 하세요.</li>
+<li>자동 감지가 부족하면 <code>techs</code>로 기술 스택을 고정하고, 불필요한 분석은 <code>exclude_techs</code>로 배제하세요.</li>
+<li><code>actions/upload-artifact</code>로 결과를 보존하거나, PR 코멘트/상태로 게시해 협업을 촉진하세요.</li>
+</ol>
+<h2 id="teureobeulsyuting">트러블슈팅</h2>
+<ul>
+<li>
+<p>엔드포인트가 발견되지 않음</p>
+<ul>
+<li><code>base_path</code>가 실제 소스 디렉터리를 가리키는지 확인하세요(예: 루트가 아닌 <code>src/</code>).</li>
+<li>지원되는 언어/프레임워크가 포함되어 있는지 확인하세요.</li>
+<li><code>techs</code>를 명시적으로 지정해 보세요(예: <code>rails</code>, <code>express</code>, <code>django</code>).</li>
+</ul>
+</li>
+<li>
+<p>출력이 너무 크거나 처리에 시간이 걸림</p>
+<ul>
+<li>라인 단위 처리를 위해 <code>format: 'jsonl'</code>을 사용하세요.</li>
+<li><code>base_path</code> 범위를 축소하거나 <code>techs</code>/<code>exclude_techs</code>로 필터링하세요.</li>
+</ul>
+</li>
+<li>
+<p>동작을 진단하기 어려움</p>
+<ul>
+<li><code>debug: 'true'</code> 및 <code>verbose: 'true'</code>를 켜서 상세 로그를 확인하세요.</li>
+<li><code>include_path: 'true'</code>로 파일 경로를 포함해 추적 가능성을 높이세요.</li>
+</ul>
+</li>
+<li>
+<p>HTTP 상태코드로 인한 노이즈</p>
+<ul>
+<li><code>status_codes: 'false'</code>로 비활성화하거나 <code>exclude_codes</code>로 소음이 많은 코드를 제외하세요.</li>
+</ul>
+</li>
+</ul>
+<h2 id="guhyeon-camgo-sahang">구현 참고 사항</h2>
+<ul>
+<li>이 액션은 Docker 컨테이너에서 실행되므로 GitHub 호스티드 러너 전반에서 일관되게 동작합니다.</li>
+<li>입력값은 Noir CLI 플래그와 직접 1:1로 매핑됩니다. 로컬에서 사용하던 CLI 옵션을 동일하게 설정하면 쉽게 전환할 수 있습니다.</li>
+</ul>
+<p>지원되는 전체 기술 목록은 로컬에서 <code>--list-techs</code> 옵션으로 확인하거나 프로젝트의 기술 목록 문서를 참고하세요.</p>
+
+
+    
+
+
+                        
+
+
+
+                        <nav class="mt-12 pt-8 border-t border-gray-500/15">
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div class="prev-nav-item">
+                                    
+    
+    
+    
+        
+        
+            
+        
+    
+        
+        
+            
+        
+    
+        
+        
+            
+        
+    
+        
+        
+            
+        
+    
+        
+        
+            
+        
+    
+
+                                </div>
+                                <div class="next-nav-item">
+                                    
+    
+        
+        
+        
+            
+            
+            
+        
+            
+            
+            
+        
+            
+            
+            
+        
+            
+            
+            
+        
+            
+            
+            
+        
+    
+
+                                </div>
+                            </div>
+                        </nav>
+                    </main>
+
+                    
+                    
+                        
+
+<div class="hidden lg:block" >
+    <div class="sticky top-20 px-4 py-2 border-l border-gray-500/15">
+        <h4 class="text-lg font-bold mb-1">ON THIS PAGE</h4>
+            <ul class="menu menu-sm toc-menu">
+            
+                <li>
+                    
+                    <a href="https://owasp-noir.github.io/noir/ko/usage/github_action/#bbareun-sijag" class="toc-link">빠른 시작</a>
+                    
+                </li>
+            
+                <li>
+                    
+                    <a href="https://owasp-noir.github.io/noir/ko/usage/github_action/#ibryeoggabs-inputs" class="toc-link">입력값(Inputs)</a>
+                    
+                </li>
+            
+                <li>
+                    
+                    <a href="https://owasp-noir.github.io/noir/ko/usage/github_action/#culryeoggabs-outputs" class="toc-link">출력값(Outputs)</a>
+                    
+                </li>
+            
+                <li>
+                    
+                    <details class="toc-details" >
+                        <summary>
+                            <a href="https://owasp-noir.github.io/noir/ko/usage/github_action/#yesi" class="toc-link">예시</a>
+                        </summary>
+                        <ul>
+                            
+                                <li>
+                                    <a href="https://owasp-noir.github.io/noir/ko/usage/github_action/#sudong-jeomgeom-mic-atipaegteu-jeojangeul-pohamhan-gogeub-seukaen" class="toc-link">수동 점검 및 아티팩트 저장을 포함한 고급 스캔</a>
+                                </li>
+                            
+                                <li>
+                                    <a href="https://owasp-noir.github.io/noir/ko/usage/github_action/#monorepo-maeteurigseu-yesi" class="toc-link">모노레포&#x2F;매트릭스 예시</a>
+                                </li>
+                            
+                                <li>
+                                    <a href="https://owasp-noir.github.io/noir/ko/usage/github_action/#peureimweokeubyeol-seukaen" class="toc-link">프레임워크별 스캔</a>
+                                </li>
+                            
+                                <li>
+                                    <a href="https://owasp-noir.github.io/noir/ko/usage/github_action/#sangtaekodeu-buga-jeongbo-mic-jeoe-seoljeong" class="toc-link">상태코드 부가 정보 및 제외 설정</a>
+                                </li>
+                            
+                                <li>
+                                    <a href="https://owasp-noir.github.io/noir/ko/usage/github_action/#ripotingeul-wihan-daece-pomaes" class="toc-link">리포팅을 위한 대체 포맷</a>
+                                </li>
+                            
+                        </ul>
+                    </details>
+                    
+                </li>
+            
+                <li>
+                    
+                    <a href="https://owasp-noir.github.io/noir/ko/usage/github_action/#mobeom-sarye" class="toc-link">모범 사례</a>
+                    
+                </li>
+            
+                <li>
+                    
+                    <a href="https://owasp-noir.github.io/noir/ko/usage/github_action/#teureobeulsyuting" class="toc-link">트러블슈팅</a>
+                    
+                </li>
+            
+                <li>
+                    
+                    <a href="https://owasp-noir.github.io/noir/ko/usage/github_action/#guhyeon-camgo-sahang" class="toc-link">구현 참고 사항</a>
+                    
+                </li>
+            
+            </ul>
+    </div>
+</div>
+
+
+                    
+                </div>
+            </div>
+            
+
+            <script>
+              // Determine theme: localStorage > extra.default_colorset > goyo-dark
+              // Expose theme config for global use (e.g., goyo.js)
+              
+              
+              
+                  
+                  
+                  
+                  
+              
+              window.defaultColorset = "dark";
+              window.darkBrightness = "darker";
+              window.lightBrightness = "normal";
+              window.themeMap = { "dark": "goyo-dark", "light": "goyo-light" };
+              window.fallbackTheme = window.themeMap[window.defaultColorset] || "goyo-dark";
+
+              // Theme mapping - maps user-friendly names to actual DaisyUI theme names
+              var themeMapping = { "goyo-dark": "night", "goyo-light": "lofi" };
+              var currentUserTheme = localStorage.getItem('theme') || window.fallbackTheme;
+              var actualTheme = themeMapping[currentUserTheme] || currentUserTheme;
+
+              // Initialize and run Mermaid only when loaded
+              window.initMermaid = function() {
+                var mermaidTheme = "dark";
+                if(currentUserTheme == "goyo-light") {
+                  mermaidTheme = "light";
+                }
+
+                if (typeof mermaid !== 'undefined') {
+                  mermaid.initialize({ startOnLoad: false, theme: mermaidTheme });
+
+                  // Function to render mermaid diagrams
+                  var renderMermaid = async function() {
+                    const mermaidElements = document.querySelectorAll('.mermaid');
+                    if (mermaidElements.length > 0) {
+                        await mermaid.run({
+                            nodes: mermaidElements
+                        });
+                    }
+                  };
+
+                  // Check if DOMContentLoaded has already fired
+                  if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', renderMermaid);
+                  } else {
+                    // DOMContentLoaded already fired, run immediately
+                    renderMermaid();
+                  }
+                }
+              };
+
+              // Auto-initialize if Mermaid is already loaded
+              if (typeof mermaid !== 'undefined') {
+                window.initMermaid();
+              }
+            </script>
+
+        </div>
+
+        
+        
+        
+        
+        
+        <div id="sidebar" class="drawer-side pt-16 border-e border-gray-500&#x2F;15 overflow-hidden">
+            
+                
+
+
+
+    
+
+
+
+    
+
+<label for="my-drawer-2" class="drawer-overlay"></label>
+<div class="pt-4 w-68 h-[calc(100vh-4rem)] bg-base-100 text-base-content flex flex-col overflow-auto thin-scrollbar">
+    
+    <ul class="menu w-full flex-grow">
+        
+        
+        
+        
+            
+            <li>
+                
+                    <details >
+                        <summary ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//get_started">Getting Started</a></summary>
+                        <ul>
+                            
+                            
+                                <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//get_started/overview">Overview</a></li>
+                            
+                                <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//get_started/installation">Installation</a></li>
+                            
+                                <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//get_started/running">Running Noir</a></li>
+                            
+                                <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//get_started/ai-power">AI-Powered Analysis</a></li>
+                            
+                            
+                        </ul>
+                    </details>
+                
+            </li>
+        
+            
+            <li>
+                
+                    <details open>
+                        <summary ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage">Usage Guide</a></summary>
+                        <ul>
+                            
+                            
+                            
+                                
+                                <li>
+                                    
+                                        <details >
+                                            <summary ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/supported">Supported Technologies</a></summary>
+                                            <ul>
+                                                
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/supported/language-and-frameworks">Supported Languages and Frameworks</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/supported/specification">Supported Specifications</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/supported/tech-commands">Managing Technology Scopes</a></li>
+                                                
+                                                
+                                            </ul>
+                                        </details>
+                                    
+                                </li>
+                            
+                                
+                                <li>
+                                    
+                                        <details >
+                                            <summary ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/output_formats">Output Formats</a></summary>
+                                            <ul>
+                                                
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/output_formats/curl">HTTP Client Commands</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/output_formats/json">JSON and JSONL</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/output_formats/html">HTML Report</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/output_formats/yaml">YAML</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/output_formats/openapi">OpenAPI Specification</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/output_formats/mermaid">Mermaid Chart</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/output_formats/sarif">SARIF</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/output_formats/more">Additional Output Formats</a></li>
+                                                
+                                                
+                                            </ul>
+                                        </details>
+                                    
+                                </li>
+                            
+                                
+                                <li>
+                                    
+                                        <details >
+                                            <summary ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/ai_providers">AI Providers</a></summary>
+                                            <ul>
+                                                
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/ai_providers/azure">Using Noir with Azure AI</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/ai_providers/ollama">Using Noir with Ollama</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/ai_providers/lmstudio">Using Noir with LM Studio</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/ai_providers/vllm">Using Noir with vLLM</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/ai_providers/openai">Using Noir with OpenAI</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/ai_providers/xai">Using Noir with xAI</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/ai_providers/github-marketplace">Using Noir with GitHub Marketplace Models</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/ai_providers/openrouter">Using Noir with OpenRouter</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/ai_providers/acp">Using Noir with ACP Agents</a></li>
+                                                
+                                                
+                                            </ul>
+                                        </details>
+                                    
+                                </li>
+                            
+                                
+                                <li>
+                                    
+                                        <details >
+                                            <summary ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/configurations">Configuration</a></summary>
+                                            <ul>
+                                                
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/configurations/configuration-file">Using a Configuration File</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/configurations/shell-completion">Shell Completions</a></li>
+                                                
+                                                
+                                            </ul>
+                                        </details>
+                                    
+                                </li>
+                            
+                                
+                                <li>
+                                    
+                                        <details >
+                                            <summary ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/passive_scan">Passive Security Scanning</a></summary>
+                                            <ul>
+                                                
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/passive_scan/rule">Passive Scan Rule</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/passive_scan/default-rules">Default Passive Scan Rules</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/passive_scan/community-rules">Community-Contributed Passive Scan Rules</a></li>
+                                                
+                                                
+                                            </ul>
+                                        </details>
+                                    
+                                </li>
+                            
+                                
+                                <li>
+                                    <a class="rounded bg-gray-500/15" href="https://owasp-noir.github.io/noir/ko//usage/github_action">GitHub Action</a>
+                                </li>
+                            
+                                
+                                <li>
+                                    
+                                        <details >
+                                            <summary ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/more_features">Additional Features</a></summary>
+                                            <ul>
+                                                
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/more_features/deliver">Delivering Results to Other Tools</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/more_features/diff">Comparing Code with Diff Mode</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/more_features/tagger">Using the Tagger for Contextual Analysis</a></li>
+                                                
+                                                    <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//usage/more_features/pipeline-for-dast">Integrating Noir into Your DAST Pipeline</a></li>
+                                                
+                                                
+                                            </ul>
+                                        </details>
+                                    
+                                </li>
+                            
+                        </ul>
+                    </details>
+                
+            </li>
+        
+            
+            <li>
+                
+                    <details >
+                        <summary ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//community">Community</a></summary>
+                        <ul>
+                            
+                            
+                                <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//community/articles">Community Articles &amp; Talks</a></li>
+                            
+                            
+                        </ul>
+                    </details>
+                
+            </li>
+        
+            
+            <li>
+                
+                    <details >
+                        <summary ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//development">Development</a></summary>
+                        <ul>
+                            
+                            
+                                <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//development/how-to-build">How to Build</a></li>
+                            
+                                <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//development/nix-environment">Build with Nix Env</a></li>
+                            
+                                <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//development/debug-flags">Debug with hidden flags</a></li>
+                            
+                                <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//development/how-to-release">How to Release</a></li>
+                            
+                            
+                        </ul>
+                    </details>
+                
+            </li>
+        
+            
+            <li>
+                
+                    <details >
+                        <summary ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//resources">Resources</a></summary>
+                        <ul>
+                            
+                            
+                                <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//resources/faq">FAQ</a></li>
+                            
+                                <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//resources/artwork">Artwork</a></li>
+                            
+                                <li ><a class="hover:no-underline" href="https://owasp-noir.github.io/noir/ko//resources/contact">Contact Us</a></li>
+                            
+                            
+                        </ul>
+                    </details>
+                
+            </li>
+        
+    </ul>
+
+    
+<footer class="footer py-2 px-4 mt-2 border-t border-gray-500/50">
+    <div class="w-full">
+        <!-- Main footer content -->
+        <div class="flex flex-col items-center gap-4 mb-4">
+            <!-- Powered by section with better styling -->
+            <div class="text-center">
+                <p class="text-sm text-base-content/60 leading-relaxed">
+                    <div style='display: flex; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap;'><a href='https://owasp.org' target='_blank' rel='noopener noreferrer' style='display: inline-flex; align-items: center;'><img src='/noir/images/owasp.png' alt='OWASP' style='height: 24px' /></a><span style='opacity: 0.6;'>•</span><span>Powered by <a href='https://www.getzola.org' class='font-medium text-base-content/70 hover:text-base-content transition-colors duration-200'>Zola</a> and <a href='https://github.com/hahwul/goyo' class='font-medium text-base-content/70 hover:text-base-content transition-colors duration-200'>Goyo</a></span></div>
+                </p>
+            </div>
+        </div>
+
+
+    </div>
+</footer>
+
+</div>
+
+            
+        </div>
+    </div>
+
+    
+        <script type="text/javascript" src="https://owasp-noir.github.io/noir/goyo.js"></script>
+        
+    
+</body>
+</html>
