@@ -191,7 +191,7 @@ snap/                    # Snap package configuration
 ```
 
 ### Key Files
-- `shard.yml`: Dependencies and project metadata (current version: 0.27.1)
+- `shard.yml`: Dependencies and project metadata (current version: 0.28.0)
 - `justfile`: Task definitions and commands (build, test, check, fix, docs-serve, etc.)
 - `src/noir.cr`: Main application entry point
 - `src/options.cr`: CLI options and argument parsing

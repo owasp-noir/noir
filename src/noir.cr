@@ -8,7 +8,7 @@ require "./llm/cache"
 require "./llm/prompt_overrides"
 
 module Noir
-  VERSION = "0.27.1"
+  VERSION = "0.28.0"
 end
 
 # Run options parser
