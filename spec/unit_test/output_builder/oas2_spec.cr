@@ -64,20 +64,16 @@ describe "OutputBuilderOas2" do
 
     # Verify path parameter has required properties
     path_param = get_params.find { |p| p["in"].as_s == "path" }
-    path_param.should_not be_nil
-    if path_param
-      path_param["name"].as_s.should eq("petId")
-      path_param["type"].as_s.should eq("string")
-      path_param["required"].as_bool.should be_true
-    end
+    path_param = path_param.should_not be_nil
+    path_param["name"].as_s.should eq("petId")
+    path_param["type"].as_s.should eq("string")
+    path_param["required"].as_bool.should be_true
 
     # Verify header parameter
     header_param = get_params.find { |p| p["in"].as_s == "header" }
-    header_param.should_not be_nil
-    if header_param
-      header_param["name"].as_s.should eq("api_key")
-      header_param["type"].as_s.should eq("string")
-    end
+    header_param = header_param.should_not be_nil
+    header_param["name"].as_s.should eq("api_key")
+    header_param["type"].as_s.should eq("string")
 
     # Check POST endpoint with JSON body
     post_json_op = paths["/pets"]["post"]
@@ -87,10 +83,8 @@ describe "OutputBuilderOas2" do
 
     # Should have body parameter for JSON content
     body_param = post_json_params.find { |p| p["in"].as_s == "body" }
-    body_param.should_not be_nil
-    if body_param
-      body_param["schema"]["type"].as_s.should eq("object")
-    end
+    body_param = body_param.should_not be_nil
+    body_param["schema"]["type"].as_s.should eq("object")
 
     # Should have consumes field for JSON
     post_json_op.as_h.has_key?("consumes").should be_true

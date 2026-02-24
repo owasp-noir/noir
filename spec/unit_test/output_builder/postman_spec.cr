@@ -77,10 +77,8 @@ describe "OutputBuilderPostman" do
     # Check Content-Type header is added for JSON body
     headers = item2["request"]["header"].as_a
     content_type_header = headers.find { |h| h["key"].as_s == "Content-Type" }
-    content_type_header.should_not be_nil
-    if content_type_header
-      content_type_header["value"].as_s.should eq("application/json")
-    end
+    content_type_header = content_type_header.should_not be_nil
+    content_type_header["value"].as_s.should eq("application/json")
 
     # Check third item (POST with form data and cookie)
     item3 = items[2]
@@ -91,10 +89,8 @@ describe "OutputBuilderPostman" do
 
     # Check Cookie header
     cookie_header = item3["request"]["header"].as_a.find { |h| h["key"].as_s == "Cookie" }
-    cookie_header.should_not be_nil
-    if cookie_header
-      cookie_header["value"].as_s.should contain("session=abc123")
-    end
+    cookie_header = cookie_header.should_not be_nil
+    cookie_header["value"].as_s.should contain("session=abc123")
 
     # Check fourth item (GET with query params)
     item4 = items[3]
