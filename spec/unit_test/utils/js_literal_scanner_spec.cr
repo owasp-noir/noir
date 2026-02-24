@@ -7,7 +7,7 @@ describe Noir::JSLiteralScanner do
       result = Noir::JSLiteralScanner.extract_paren_content("(hello)", 1)
       result = result.should_not be_nil
       result.content.should eq("hello")
-      result.end_pos.should eq(6) # Position OF closing paren
+      result.end_pos.should eq(6) # Position of closing paren
     end
 
     it "handles nested parentheses" do
