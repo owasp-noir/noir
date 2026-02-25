@@ -2,7 +2,7 @@ module github.com/hahwul/test-go-app
 
 go 1.20
 
-require github.com/gofiber/fiber/v2 v2.52.11
+require github.com/gofiber/fiber/v2 v2.52.12
 
 require (
 	github.com/andybalholm/brotli v1.1.0 // indirect
