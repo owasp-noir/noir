@@ -190,6 +190,11 @@ module Noir
         route_item.path = "/#{route_item.path}" unless route_item.path.starts_with?("/")
       end
 
+      # Filter out paths that are not valid HTTP route paths.
+      # This is a single checkpoint that catches routes created by any code path
+      # (fast_scan, parse_generic_route, parse_express_route, etc.).
+      routes.select! { |r| valid_route_path?(r.path) }
+
       # Dedupe by method + path
       seen = Set(String).new
       unique = [] of JSRoutePattern
@@ -264,21 +269,40 @@ module Noir
       return paths unless start_idx < @tokens.size && @tokens[start_idx].type == :lbracket
 
       idx = start_idx + 1
-      while idx < @tokens.size && @tokens[idx].type != :rbracket
+      depth = 0 # Track nesting depth of ( ) [ ] { } within the array
+
+      while idx < @tokens.size
         token = @tokens[idx]
 
-        if token.type == :string
-          paths << PathEntry.new(token.value, false)
-        elsif token.type == :regex
-          paths << PathEntry.new(format_regex_path(token.value), true)
-        elsif token.type == :identifier || token.type == :template_literal
-          resolved = resolve_dynamic_path(idx)
-          paths << PathEntry.new(resolved, false) if resolved
+        # Track nesting depth; break when we reach the closing bracket of our array
+        case token.type
+        when :lparen, :lbrace
+          depth += 1
+        when :lbracket
+          depth += 1
+        when :rparen, :rbrace
+          depth -= 1 if depth > 0
+        when :rbracket
+          break if depth == 0 # Closing bracket of our array
+          depth -= 1
+        end
+
+        # Only extract path tokens at the top level of the array
+        if depth == 0
+          if token.type == :string
+            paths << PathEntry.new(token.value, false)
+          elsif token.type == :regex
+            paths << PathEntry.new(format_regex_path(token.value), true)
+          elsif token.type == :identifier || token.type == :template_literal
+            resolved = resolve_dynamic_path(idx)
+            # Only add if the resolved value looks like a URL path (not a bare variable name)
+            paths << PathEntry.new(resolved, false) if resolved && resolved.starts_with?("/")
+          end
         end
 
         idx += 1
-        # Skip commas
-        idx += 1 if idx < @tokens.size && @tokens[idx].type == :comma
+        # Skip commas at the top level
+        idx += 1 if depth == 0 && idx < @tokens.size && @tokens[idx].type == :comma
       end
 
       paths
@@ -423,7 +447,7 @@ module Noir
           elsif path_token.type == :string || path_token.type == :template_literal || path_token.type == :identifier
             path = resolve_dynamic_path(idx + 4)
             path ||= (path_token.type == :string ? path_token.value : nil)
-            paths << PathEntry.new(path, false) if path
+            paths << PathEntry.new(path, false) if path && valid_route_path?(path)
           elsif path_token.type == :regex
             path = format_regex_path(path_token.value)
             paths << PathEntry.new(path, true)
@@ -1109,6 +1133,15 @@ module Noir
         extract_path_params(path).each { |p| route.push_param(p) }
       end
       route
+    end
+
+    # Returns false for paths that are clearly not HTTP route paths.
+    # Valid route paths never contain "://" (external URLs) or whitespace (SQL, multi-line strings).
+    private def valid_route_path?(path : String) : Bool
+      return false if path.empty?
+      return false if path.includes?("://")
+      return false if path.includes?(' ') || path.includes?('\n') || path.includes?('\t')
+      true
     end
 
     private def extract_path_params(path : String) : Array(Param)
