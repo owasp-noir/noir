@@ -1140,7 +1140,7 @@ module Noir
     private def valid_route_path?(path : String) : Bool
       return false if path.empty?
       return false if path.includes?("://")
-      return false if path.includes?(' ') || path.includes?('\n') || path.includes?('\t')
+      return false if path.each_char.any?(&.whitespace?)
       true
     end
 
