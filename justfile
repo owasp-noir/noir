@@ -53,7 +53,8 @@ check:
 # Run all Crystal spec tests.
 test:
     @echo "Running tests..."
-    crystal spec
+    crystal spec spec/unit_test
+    crystal spec spec/functional_test
 
 # Check version consistency across all files using shard.yml as source of truth.
 version-check:
