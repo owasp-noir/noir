@@ -100,21 +100,17 @@ describe "OutputBuilderSarif" do
 
     # Check endpoint result
     endpoint_result = results.find { |r| r["ruleId"].as_s == "endpoint-discovery" }
-    endpoint_result.should_not be_nil
-    if endpoint_result
-      endpoint_result["level"].as_s.should eq("note")
-      endpoint_result["message"]["text"].as_s.should contain("POST")
-    end
+    endpoint_result = endpoint_result.should_not be_nil
+    endpoint_result["level"].as_s.should eq("note")
+    endpoint_result["message"]["text"].as_s.should contain("POST")
 
     # Check passive scan result
     passive_result_item = results.find { |r| r["ruleId"].as_s == "test-rule" }
-    passive_result_item.should_not be_nil
-    if passive_result_item
-      passive_result_item["level"].as_s.should eq("error")
-      passive_result_item["message"]["text"].as_s.should eq("test finding")
-      passive_result_item["locations"][0]["physicalLocation"]["artifactLocation"]["uri"].as_s.should eq("test.cr")
-      passive_result_item["locations"][0]["physicalLocation"]["region"]["startLine"].as_i.should eq(10)
-    end
+    passive_result_item = passive_result_item.should_not be_nil
+    passive_result_item["level"].as_s.should eq("error")
+    passive_result_item["message"]["text"].as_s.should eq("test finding")
+    passive_result_item["locations"][0]["physicalLocation"]["artifactLocation"]["uri"].as_s.should eq("test.cr")
+    passive_result_item["locations"][0]["physicalLocation"]["region"]["startLine"].as_i.should eq(10)
 
     # Check rules are defined
     rules = runs[0]["tool"]["driver"]["rules"].as_a
@@ -176,10 +172,8 @@ describe "OutputBuilderSarif" do
 
     severities.each do |severity, expected_level|
       result = results.find { |r| r["ruleId"].as_s == "test-#{severity}" }
-      result.should_not be_nil
-      if result
-        result["level"].as_s.should eq(expected_level)
-      end
+      result = result.should_not be_nil
+      result["level"].as_s.should eq(expected_level)
     end
   end
 end

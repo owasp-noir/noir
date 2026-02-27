@@ -125,12 +125,10 @@ describe Analyzer::AI::Unified do
     it "parses action payload shape" do
       analyzer = Analyzer::AI::Unified.new(build_ai_options("."))
       action = analyzer.__test_parse_agent_action(%({"action":"grep","args":{"pattern":"route"}}))
-      action.should_not be_nil
 
-      if action
-        action[:action].should eq("grep")
-        action[:args]["pattern"].as_s.should eq("route")
-      end
+      action = action.should_not be_nil
+      action[:action].should eq("grep")
+      action[:args]["pattern"].as_s.should eq("route")
     end
 
     it "prunes agent context growth by message count and char budget" do

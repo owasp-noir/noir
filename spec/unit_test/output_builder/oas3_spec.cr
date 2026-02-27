@@ -65,20 +65,16 @@ describe "OutputBuilderOas3" do
 
     # Verify path parameter has required properties with schema
     path_param = get_params.find { |p| p["in"].as_s == "path" }
-    path_param.should_not be_nil
-    if path_param
-      path_param["name"].as_s.should eq("petId")
-      path_param["required"].as_bool.should be_true
-      path_param["schema"]["type"].as_s.should eq("string")
-    end
+    path_param = path_param.should_not be_nil
+    path_param["name"].as_s.should eq("petId")
+    path_param["required"].as_bool.should be_true
+    path_param["schema"]["type"].as_s.should eq("string")
 
     # Verify header parameter has schema
     header_param = get_params.find { |p| p["in"].as_s == "header" }
-    header_param.should_not be_nil
-    if header_param
-      header_param["name"].as_s.should eq("api_key")
-      header_param["schema"]["type"].as_s.should eq("string")
-    end
+    header_param = header_param.should_not be_nil
+    header_param["name"].as_s.should eq("api_key")
+    header_param["schema"]["type"].as_s.should eq("string")
 
     # Check response has content
     get_response = get_op["responses"]["200"]
@@ -105,11 +101,9 @@ describe "OutputBuilderOas3" do
 
     # Verify cookie parameter (OAS3 supports cookies)
     cookie_param = post_form_params.find { |p| p["in"].as_s == "cookie" }
-    cookie_param.should_not be_nil
-    if cookie_param
-      cookie_param["name"].as_s.should eq("session")
-      cookie_param["schema"]["type"].as_s.should eq("string")
-    end
+    cookie_param = cookie_param.should_not be_nil
+    cookie_param["name"].as_s.should eq("session")
+    cookie_param["schema"]["type"].as_s.should eq("string")
 
     # Should have requestBody for form data
     post_form_op.as_h.has_key?("requestBody").should be_true

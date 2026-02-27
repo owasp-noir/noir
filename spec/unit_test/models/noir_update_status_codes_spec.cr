@@ -86,15 +86,11 @@ describe "NoirRunner#update_status_codes" do
 
     runner.update_status_codes
 
-    runner.last_request_params.should_not be_nil
-    if params = runner.last_request_params
-      params["id"].should eq("1")
-    end
+    params = runner.last_request_params.should_not be_nil
+    params["id"].should eq("1")
 
-    runner.last_request_body.should_not be_nil
-    if body = runner.last_request_body
-      body["data"].should eq("value")
-    end
+    body = runner.last_request_body.should_not be_nil
+    body["data"].should eq("value")
 
     runner.last_request_json.should be_false
   end
@@ -107,10 +103,8 @@ describe "NoirRunner#update_status_codes" do
 
     runner.update_status_codes
 
-    runner.last_request_body.should_not be_nil
-    if body = runner.last_request_body
-      body["data"].should eq("value")
-    end
+    body = runner.last_request_body.should_not be_nil
+    body["data"].should eq("value")
 
     runner.last_request_json.should be_true
   end

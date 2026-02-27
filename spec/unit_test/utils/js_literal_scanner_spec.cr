@@ -5,59 +5,47 @@ describe Noir::JSLiteralScanner do
   describe "extract_paren_content" do
     it "extracts simple content" do
       result = Noir::JSLiteralScanner.extract_paren_content("(hello)", 1)
-      result.should_not be_nil
-      if result
-        result.content.should eq("hello")
-        result.end_pos.should eq(6) # Position OF closing paren
-      end
+      result = result.should_not be_nil
+      result.content.should eq("hello")
+      result.end_pos.should eq(6) # Position of closing paren
     end
 
     it "handles nested parentheses" do
       result = Noir::JSLiteralScanner.extract_paren_content("(hello(world))", 1)
-      result.should_not be_nil
-      if result
-        result.content.should eq("hello(world)")
-        result.end_pos.should eq(13)
-      end
+      result = result.should_not be_nil
+      result.content.should eq("hello(world)")
+      result.end_pos.should eq(13)
     end
 
     it "ignores parentheses inside strings" do
       result = Noir::JSLiteralScanner.extract_paren_content("('hello(world)')", 1)
-      result.should_not be_nil
-      if result
-        result.content.should eq("'hello(world)'")
-        result.end_pos.should eq(15)
-      end
+      result = result.should_not be_nil
+      result.content.should eq("'hello(world)'")
+      result.end_pos.should eq(15)
     end
 
     it "ignores parentheses inside comments" do
       # Comments are stripped from the extracted content
       result = Noir::JSLiteralScanner.extract_paren_content("(// (hello)\n)", 1)
-      result.should_not be_nil
-      if result
-        result.content.should eq("\n")
-        result.end_pos.should eq(12)
-      end
+      result = result.should_not be_nil
+      result.content.should eq("\n")
+      result.end_pos.should eq(12)
     end
 
     it "handles complex nested structures" do
       content = "({a: (1+2), b: \"(str)\"})"
       result = Noir::JSLiteralScanner.extract_paren_content(content, 1)
-      result.should_not be_nil
-      if result
-        result.content.should eq("{a: (1+2), b: \"(str)\"}")
-        result.end_pos.should eq(23)
-      end
+      result = result.should_not be_nil
+      result.content.should eq("{a: (1+2), b: \"(str)\"}")
+      result.end_pos.should eq(23)
     end
 
     it "returns what it found if parentheses are unbalanced" do
       # If end of string reached, it returns what was collected
       result = Noir::JSLiteralScanner.extract_paren_content("(unbalanced", 1)
-      result.should_not be_nil
-      if result
-        result.content.should eq("unbalanced")
-        result.end_pos.should eq(11)
-      end
+      result = result.should_not be_nil
+      result.content.should eq("unbalanced")
+      result.end_pos.should eq(11)
     end
   end
 
@@ -65,67 +53,55 @@ describe Noir::JSLiteralScanner do
     it "skips single-line comments" do
       content = "// comment\nnext"
       res = Noir::JSLiteralScanner.try_skip_literal(content, 0, "")
-      res.should_not be_nil
-      if res
-        res[:content].should eq("")
-        res[:pos].should eq(10) # Position of newline
-        content[res[:pos]..].should start_with("\nnext")
-      end
+      res = res.should_not be_nil
+      res[:content].should eq("")
+      res[:pos].should eq(10) # Position of newline
+      content[res[:pos]..].should start_with("\nnext")
     end
 
     it "skips multi-line comments" do
       content = "/* comment */next"
       res = Noir::JSLiteralScanner.try_skip_literal(content, 0, "")
-      res.should_not be_nil
-      if res
-        res[:content].should eq("")
-        res[:pos].should eq(13)
-        content[res[:pos]..].should eq("next")
-      end
+      res = res.should_not be_nil
+      res[:content].should eq("")
+      res[:pos].should eq(13)
+      content[res[:pos]..].should eq("next")
     end
 
     it "skips double-quoted strings" do
       content = "\"string\"next"
       res = Noir::JSLiteralScanner.try_skip_literal(content, 0, "")
-      res.should_not be_nil
-      if res
-        res[:content].should eq("\"string\"")
-        res[:pos].should eq(8)
-        content[res[:pos]..].should eq("next")
-      end
+      res = res.should_not be_nil
+      res[:content].should eq("\"string\"")
+      res[:pos].should eq(8)
+      content[res[:pos]..].should eq("next")
     end
 
     it "skips single-quoted strings" do
       content = "'string'next"
       res = Noir::JSLiteralScanner.try_skip_literal(content, 0, "")
-      res.should_not be_nil
-      if res
-        res[:content].should eq("'string'")
-        res[:pos].should eq(8)
-        content[res[:pos]..].should eq("next")
-      end
+      res = res.should_not be_nil
+      res[:content].should eq("'string'")
+      res[:pos].should eq(8)
+      content[res[:pos]..].should eq("next")
     end
 
     it "skips escaped quotes in strings" do
       content = "\"str\\\"ing\"next"
       res = Noir::JSLiteralScanner.try_skip_literal(content, 0, "")
-      res.should_not be_nil
-      if res
-        res[:content].should eq("\"str\\\"ing\"")
-        res[:pos].should eq(10)
-        content[res[:pos]..].should eq("next")
-      end
+      res = res.should_not be_nil
+      res[:content].should eq("\"str\\\"ing\"")
+      res[:pos].should eq(10)
+      content[res[:pos]..].should eq("next")
     end
 
     it "skips template literals" do
       content = "`template`next"
       res = Noir::JSLiteralScanner.try_skip_literal(content, 0, "")
-      res.should_not be_nil
-      if res
-        res[:content].should eq("`template`")
-        res[:pos].should eq(10)
-        content[res[:pos]..].should eq("next")
-      end
+      res = res.should_not be_nil
+      res[:content].should eq("`template`")
+      res[:pos].should eq(10)
+      content[res[:pos]..].should eq("next")
     end
 
     it "skips regex literals" do
@@ -133,23 +109,19 @@ describe Noir::JSLiteralScanner do
       content = "return /regex/;"
       # "return " is 7 chars. '/' is at 7.
       res = Noir::JSLiteralScanner.try_skip_literal(content, 7, "return ")
-      res.should_not be_nil
-      if res
-        res[:content].should eq("return /regex/")
-        res[:pos].should eq(14)
-        content[res[:pos]..].should eq(";")
-      end
+      res = res.should_not be_nil
+      res[:content].should eq("return /regex/")
+      res[:pos].should eq(14)
+      content[res[:pos]..].should eq(";")
     end
 
     it "skips regex literals with flags" do
       content = "return /regex/gi;"
       res = Noir::JSLiteralScanner.try_skip_literal(content, 7, "return ")
-      res.should_not be_nil
-      if res
-        res[:content].should eq("return /regex/gi")
-        res[:pos].should eq(16)
-        content[res[:pos]..].should eq(";")
-      end
+      res = res.should_not be_nil
+      res[:content].should eq("return /regex/gi")
+      res[:pos].should eq(16)
+      content[res[:pos]..].should eq(";")
     end
 
     it "identifies division operator (not regex)" do
@@ -162,21 +134,17 @@ describe Noir::JSLiteralScanner do
     it "handles regex with character classes" do
       content = "return /[a-z]/;"
       res = Noir::JSLiteralScanner.try_skip_literal(content, 7, "return ")
-      res.should_not be_nil
-      if res
-        res[:content].should eq("return /[a-z]/")
-        res[:pos].should eq(14)
-      end
+      res = res.should_not be_nil
+      res[:content].should eq("return /[a-z]/")
+      res[:pos].should eq(14)
     end
 
     it "handles regex with escaped slashes" do
       content = "return /\\//;"
       res = Noir::JSLiteralScanner.try_skip_literal(content, 7, "return ")
-      res.should_not be_nil
-      if res
-        res[:content].should eq("return /\\//")
-        res[:pos].should eq(11)
-      end
+      res = res.should_not be_nil
+      res[:content].should eq("return /\\//")
+      res[:pos].should eq(11)
     end
   end
 
