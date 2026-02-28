@@ -103,7 +103,7 @@ template = "landing"
         <h3>DevSecOps Ready</h3>
         <p>CI/CD native. GitHub Actions, JSON/YAML/SARIF output. Plug into ZAP, Burp, Caido.</p>
       </div>
-      <div class="bento-card bento-wide">
+      <div class="bento-card">
         <div class="bento-number">05</div>
         <h3>SAST-to-DAST Bridge</h3>
         <p>Discovered endpoints feed directly into dynamic testing tools. Static analysis meets dynamic scanning for full coverage.</p>

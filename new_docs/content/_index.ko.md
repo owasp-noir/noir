@@ -103,7 +103,7 @@ template = "landing"
         <h3>DevSecOps 지원</h3>
         <p>CI/CD 네이티브. GitHub Actions, JSON/YAML/SARIF 출력. ZAP, Burp, Caido에 바로 연결.</p>
       </div>
-      <div class="bento-card bento-wide">
+      <div class="bento-card">
         <div class="bento-number">05</div>
         <h3>SAST-DAST 브릿지</h3>
         <p>발견된 엔드포인트가 동적 테스트 도구로 직접 전달됩니다. 정적 분석과 동적 스캐닝을 결합하여 완전한 커버리지를 제공합니다.</p>

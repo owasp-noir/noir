@@ -991,7 +991,7 @@ body {
 }
 .bento-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 1rem;
 }
 .bento-card {
@@ -1008,7 +1008,7 @@ body {
   box-shadow: 0 0 30px rgba(139, 92, 246, 0.06);
 }
 .bento-wide { grid-column: span 2; }
-.bento-full { grid-column: span 2; }
+.bento-full { grid-column: span 3; }
 .bento-number {
   font-family: var(--font-mono);
   font-size: 0.7rem;
@@ -1262,12 +1262,10 @@ body {
   /* Landing: Bento */
   .bento-section { padding: 3rem 1.25rem; }
   .bento-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, 1fr);
   }
-  .bento-card.bento-wide,
-  .bento-card.bento-full {
-    grid-column: span 1;
-  }
+  .bento-card.bento-wide { grid-column: span 2; }
+  .bento-card.bento-full { grid-column: span 2; }
   .bento-heading { font-size: 1.5rem; }
 
   /* Landing: Trust */
@@ -1287,6 +1285,9 @@ body {
   .hero-terminal-body { padding: 0.75rem; }
   .terminal-line { font-size: 0.72rem; }
   .bento-section { padding: 2rem 1rem; }
+  .bento-grid { grid-template-columns: 1fr; }
+  .bento-card.bento-wide,
+  .bento-card.bento-full { grid-column: span 1; }
   .bento-card { padding: 1.25rem; }
   .bento-card h3 { font-size: 1rem; }
   .cta-title { font-size: 1.3rem; }
