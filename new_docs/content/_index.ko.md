@@ -3,51 +3,117 @@ template = "landing"
 +++
 
 <section class="hero">
+  <div class="hero-grid-bg"></div>
+  <div class="hero-scanline"></div>
+  <div class="hero-noise"></div>
   <div class="hero-inner">
-    <span class="hero-badge">v0.28.0</span>
-    <h1 class="hero-title">OWASP <span class="hero-highlight">Noir</span></h1>
-    <p class="hero-desc">코드베이스 내 모든 엔드포인트를 자동으로 탐지하는 고급 하이브리드 분석 도구. 섀도우 API와 문서화되지 않은 엔드포인트까지 놓치지 않고 찾아냅니다.</p>
+    <div class="hero-eyebrow">
+      <span class="hero-badge">v0.28.0</span>
+      <span class="hero-badge hero-badge-owasp">OWASP Project</span>
+    </div>
+    <h1 class="hero-title">
+      <span class="hero-title-line">엔드포인트를 사냥하고,</span>
+      <span class="hero-title-line"><span class="hero-glitch" data-text="Shadow API">Shadow API</span>를 드러내고,</span>
+      <span class="hero-title-line hero-title-accent">공격 표면을 매핑합니다.</span>
+    </h1>
+    <div class="hero-terminal">
+      <div class="hero-terminal-bar">
+        <span class="terminal-dot"></span><span class="terminal-dot"></span><span class="terminal-dot"></span>
+        <span class="terminal-title">noir</span>
+      </div>
+      <div class="hero-terminal-body">
+        <div class="terminal-line"><span class="t-prompt">$</span> noir -b . -u https://testapp.com</div>
+        <div class="terminal-line t-dim">  <span class="t-info">INFO</span> 엔드포인트 탐색 중...</div>
+        <div class="terminal-line t-dim">  <span class="t-info">INFO</span> users_controller에서 mass_assignment 취약점 발견</div>
+        <div class="terminal-line"><span class="t-success">47개 엔드포인트 발견</span> <span class="t-dim">1.2초</span></div>
+        <div class="terminal-line"></div>
+        <div class="terminal-line"><span class="t-method t-get">GET</span> /api/users</div>
+        <div class="terminal-line"><span class="t-method t-post">POST</span> /api/users/login</div>
+        <div class="terminal-line"><span class="t-method t-put">PUT</span> /api/users/:id</div>
+        <div class="terminal-line"><span class="t-method t-del">DELETE</span> /api/users/:id</div>
+        <div class="terminal-line"><span class="t-method t-post">POST</span> /api/admin/config <span class="t-tag">shadow</span></div>
+        <div class="terminal-line"><span class="t-method t-get">GET</span> /api/internal/debug <span class="t-tag">shadow</span></div>
+        <div class="terminal-line t-dim">  ... 외 41개</div>
+        <div class="terminal-line terminal-cursor"></div>
+      </div>
+    </div>
     <div class="hero-actions">
-      <a href="./get_started/overview" class="hero-btn hero-btn-primary">시작하기</a>
-      <a href="https://github.com/owasp-noir/noir" class="hero-btn hero-btn-secondary">GitHub에서 보기</a>
+      <a href="./get_started/overview" class="hero-btn hero-btn-primary">
+        <span>시작하기</span>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+      </a>
+      <a href="https://github.com/owasp-noir/noir" class="hero-btn hero-btn-secondary">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+        <span>GitHub</span>
+      </a>
     </div>
   </div>
 </section>
 
-<section class="features-section">
-  <div class="features-inner">
-    <h2 class="section-title">주요 기능</h2>
-    <p class="section-desc">OWASP Noir의 공격 표면 탐지 및 분석을 위한 핵심 기능을 발견하세요.</p>
-    <div class="features-grid">
-      <div class="feature-card">
-        <div class="feature-icon">&#128269;</div>
+<div class="marquee-bar">
+  <div class="marquee-track">
+    <span class="marquee-item"><strong>50+</strong> 언어 & 프레임워크</span>
+    <span class="marquee-sep">/</span>
+    <span class="marquee-item"><strong>8</strong> 출력 형식</span>
+    <span class="marquee-sep">/</span>
+    <span class="marquee-item"><strong>AI</strong> 기반 분석</span>
+    <span class="marquee-sep">/</span>
+    <span class="marquee-item"><strong>OWASP</strong> 공식 프로젝트</span>
+    <span class="marquee-sep">/</span>
+    <span class="marquee-item"><strong>SAST</strong> to <strong>DAST</strong> 브릿지</span>
+    <span class="marquee-sep">/</span>
+    <span class="marquee-item"><strong>오픈</strong> 소스</span>
+    <span class="marquee-sep">/</span>
+    <span class="marquee-item"><strong>50+</strong> 언어 & 프레임워크</span>
+    <span class="marquee-sep">/</span>
+    <span class="marquee-item"><strong>8</strong> 출력 형식</span>
+    <span class="marquee-sep">/</span>
+    <span class="marquee-item"><strong>AI</strong> 기반 분석</span>
+    <span class="marquee-sep">/</span>
+    <span class="marquee-item"><strong>OWASP</strong> 공식 프로젝트</span>
+    <span class="marquee-sep">/</span>
+    <span class="marquee-item"><strong>SAST</strong> to <strong>DAST</strong> 브릿지</span>
+    <span class="marquee-sep">/</span>
+    <span class="marquee-item"><strong>오픈</strong> 소스</span>
+    <span class="marquee-sep">/</span>
+  </div>
+</div>
+
+<section class="bento-section">
+  <div class="bento-inner">
+    <h2 class="bento-heading">Noir가 하는 일</h2>
+    <div class="bento-grid">
+      <div class="bento-card bento-wide">
+        <div class="bento-number">01</div>
         <h3>공격 표면 발견</h3>
-        <p>소스 코드를 분석하여 숨겨진 엔드포인트, Shadow API 및 기타 보안 사각지대를 포함한 애플리케이션의 전체 공격 표면을 발견합니다.</p>
+        <p>소스 코드를 분석하여 숨겨진 엔드포인트, Shadow API, 문서화되지 않은 경로, 수동 검토에서 놓치는 보안 사각지대를 포함한 전체 공격 표면을 발견합니다.</p>
       </div>
-      <div class="feature-card">
-        <div class="feature-icon">&#127760;</div>
-        <h3>다중 언어 지원</h3>
-        <p>다양한 프로그래밍 언어와 프레임워크를 지원하여 다양한 프로젝트 포트폴리오 전반에서 광범위한 호환성을 보장합니다.</p>
+      <div class="bento-card">
+        <div class="bento-number">02</div>
+        <h3>다중 언어</h3>
+        <p>Crystal, Ruby, Python, Go, Java, Kotlin, JS/TS, PHP, C# 등. 하나의 도구로 전체 스택을 커버합니다.</p>
       </div>
-      <div class="feature-card">
-        <div class="feature-icon">&#9881;</div>
+      <div class="bento-card">
+        <div class="bento-number">03</div>
+        <h3>AI 기반</h3>
+        <p>LLM 통합으로 미지원 프레임워크에서도 엔드포인트를 탐지합니다. 빠져나가는 것은 없습니다.</p>
+      </div>
+      <div class="bento-card">
+        <div class="bento-number">04</div>
         <h3>DevSecOps 지원</h3>
-        <p>CI/CD 파이프라인 및 보안 워크플로우에 원활하게 통합되도록 설계되었으며, cURL, ZAP, Caido 등 인기 도구를 지원합니다.</p>
+        <p>CI/CD 네이티브. GitHub Actions, JSON/YAML/SARIF 출력. ZAP, Burp, Caido에 바로 연결.</p>
       </div>
-      <div class="feature-card">
-        <div class="feature-icon">&#129302;</div>
-        <h3>AI 기반 분석</h3>
-        <p>대규모 언어 모델(LLM)을 활용하여 네이티브로 지원되지 않는 언어나 프레임워크에서도 엔드포인트를 탐지합니다.</p>
+      <div class="bento-card bento-wide">
+        <div class="bento-number">05</div>
+        <h3>SAST-DAST 브릿지</h3>
+        <p>발견된 엔드포인트가 동적 테스트 도구로 직접 전달됩니다. 정적 분석과 동적 스캐닝을 결합하여 완전한 커버리지를 제공합니다.</p>
       </div>
-      <div class="feature-card">
-        <div class="feature-icon">&#128279;</div>
-        <h3>SAST-DAST 연결</h3>
-        <p>발견된 엔드포인트를 ZAP, Burp Suite 같은 DAST 도구에 제공하여 정적 코드 분석과 동적 테스트를 연결합니다.</p>
-      </div>
-      <div class="feature-card">
-        <div class="feature-icon">&#128196;</div>
-        <h3>유연한 출력 형식</h3>
-        <p>JSON, YAML, OpenAPI를 포함한 다양한 형식으로 명확하고 실행 가능한 결과를 생성합니다.</p>
+      <div class="bento-card bento-full">
+        <div class="bento-number">06</div>
+        <h3>유연한 출력</h3>
+        <div class="bento-formats">
+          <code>JSON</code><code>YAML</code><code>OpenAPI</code><code>SARIF</code><code>cURL</code><code>HTML</code><code>Mermaid</code><code>OAS</code>
+        </div>
       </div>
     </div>
   </div>
@@ -64,10 +130,15 @@ template = "landing"
 </section>
 
 <section class="cta-section">
+  <div class="cta-glow"></div>
   <div class="cta-inner">
-    <h2 class="section-title">오픈 소스 프로젝트</h2>
-    <p class="section-desc">OWASP Noir는 커뮤니티가 사랑으로 구축한 오픈 소스 프로젝트입니다. 기여하고 싶으시다면 기여 가이드를 참조하고 멋진 변경 사항과 함께 풀 리퀘스트를 제출해 주세요!</p>
-    <a href="https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md" class="cta-btn" target="_blank" rel="noopener noreferrer">기여 가이드 보기</a>
+    <p class="cta-label">오픈 소스</p>
+    <h2 class="cta-title">커뮤니티에 참여하세요</h2>
+    <p class="section-desc">OWASP Noir는 커뮤니티가 만듭니다. 기여하고, 이슈를 보고하고, 스타를 눌러주세요.</p>
+    <div class="cta-buttons">
+      <a href="https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md" class="cta-btn" target="_blank" rel="noopener noreferrer">기여 가이드</a>
+      <a href="https://github.com/owasp-noir/noir" class="cta-btn cta-btn-ghost" target="_blank" rel="noopener noreferrer">GitHub에서 스타</a>
+    </div>
     <div class="cta-image">
       <img src="https://github.com/owasp-noir/noir/raw/main/docs/static/CONTRIBUTORS.svg" alt="Contributors" loading="lazy">
     </div>
