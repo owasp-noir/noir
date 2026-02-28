@@ -1,6 +1,6 @@
 +++
 title = "Mermaid Chart"
-description = "Learn how to generate interactive API mindmaps from your Noir scan results using the Mermaid output format. This is a powerful way to visualize your API structure and share it with your team."
+description = "Generate Mermaid mindmaps to visualize API structure from Noir scan results."
 weight = 5
 sort_by = "weight"
 
@@ -15,8 +15,6 @@ Generate mindmap:
 ```bash
 noir -b . -f mermaid
 ```
-
-Copy output to Mermaid live editor or compatible tools.
 
 ## Example Output
 
@@ -114,7 +112,7 @@ mindmap
 
 </details>
 
-You can visualize this mindmap by pasting the output into any [Mermaid live editor](https://mermaid.live/) or embedding it in your documentation.
+Paste the output into the [Mermaid live editor](https://mermaid.live/) or embed it in documentation.
 
 {% mermaid() %}
 mindmap
@@ -205,17 +203,8 @@ mindmap
       DELETE
 {% end %}
 
-## Why Use Mermaid Mindmaps?
-
-- **Visualize API structure** at a glance
-- **Share endpoint maps** with your team or stakeholders
-- **Quickly spot missing or duplicate endpoints**
-- **Integrate with docs**: Mermaid is supported by many documentation tools
-
 ## Tips
 
-- The root node is always labeled `API` for clarity.
-- HTTP methods (GET, POST, etc.), endpoint paths, and parameters are all represented in the mindmap.
-- For large APIs, you can collapse or expand branches in Mermaid-compatible viewers for easier navigation.
-
-By using the Mermaid output, you can instantly turn your Noir scan results into a visual, navigable map of your API surface.
+- The root node is always labeled `API`.
+- HTTP methods, endpoint paths, and parameters are all represented in the mindmap.
+- For large APIs, collapse or expand branches in Mermaid-compatible viewers.

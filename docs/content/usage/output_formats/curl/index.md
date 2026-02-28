@@ -1,6 +1,6 @@
 +++
 title = "HTTP Client Commands"
-description = "Learn how to generate executable commands for popular HTTP clients like cURL, HTTPie, and PowerShell directly from your Noir scan results. This makes it easy to test and interact with your discovered endpoints."
+description = "Generate executable cURL, HTTPie, and PowerShell commands from Noir scan results."
 weight = 1
 sort_by = "weight"
 

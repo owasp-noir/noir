@@ -1,6 +1,6 @@
 +++
 title = "OpenAPI Specification"
-description = "Learn how to generate OpenAPI Specification (OAS) 2.0 and 3.0 documents from your Noir scan results. This is a powerful way to create API documentation and integrate with other security tools."
+description = "Generate OpenAPI Specification (OAS) 2.0 and 3.0 documents from Noir scan results."
 weight = 4
 sort_by = "weight"
 

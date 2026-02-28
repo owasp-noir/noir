@@ -6,11 +6,9 @@ sort_by = "weight"
 
 +++
 
-You can set up a reproducible development environment using Nix. This approach ensures consistency across different development machines and simplifies dependency management.
+Nix provides a reproducible development environment with consistent dependencies across machines.
 
 ## Installing Nix
-
-If you don't have Nix installed, install it with:
 
 ```sh
 # Multi-user installation (recommended for Linux/macOS)
@@ -20,11 +18,9 @@ sh <(curl -L https://nixos.org/nix/install) --daemon
 sh <(curl -L https://nixos.org/nix/install) --no-daemon
 ```
 
-For more details, see the [official Nix installation guide](https://nixos.org/download.html).
+See the [official Nix installation guide](https://nixos.org/download.html) for details.
 
 ## Setup with Nix Flakes
-
-The project uses Nix Flakes for development environment management.
 
 ### Enable Flakes
 
@@ -41,43 +37,35 @@ cd noir
 nix develop
 ```
 
-This will automatically set up Crystal, shards, and all dependencies.
+This sets up Crystal, shards, and all dependencies automatically.
 
 ## Alternative: Using Docker with Nix
-
-For a completely isolated environment, you can use Docker:
 
 ```sh
 docker run -it --rm -v $(pwd):/workspace -w /workspace nixos/nix bash
 ```
 
-Inside the container, activate the development environment:
+Inside the container:
 
 ```sh
 nix develop
 ```
 
-This will set up all the necessary dependencies and tools for developing Noir in an isolated, reproducible environment.
-
 ## Updating Dependencies
 
-When you update the `shard.yml` file (adding, removing, or updating dependencies), you must also regenerate the `shards.nix` file. This ensures that the Nix environment stays in sync with your project dependencies.
-
-To update `shards.nix` after modifying `shard.yml`:
+After modifying `shard.yml`, regenerate `shards.nix` to keep Nix in sync:
 
 ```sh
 nix-shell -p crystal2nix --run crystal2nix
 ```
 
-This command uses the `crystal2nix` tool to automatically generate the `shards.nix` file based on your `shard.yml` configuration.
-
 ## Benefits
 
 - **Reproducibility**: Same environment across all machines
 - **Isolation**: No interference with system-wide dependencies
-- **Consistency**: Ensures all team members use the same tool versions
+- **Consistency**: All team members use the same tool versions
 - **Easy Setup**: Single command to get started
 
 ## Next Steps
 
-Once your Nix environment is set up, you can proceed with the standard [build and test procedures](../how_to_build/).
+Proceed with the standard [build and test procedures](../how_to_build/).

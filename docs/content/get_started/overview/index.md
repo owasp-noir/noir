@@ -1,22 +1,20 @@
 +++
 title = "Overview"
-description = "Learn what OWASP Noir is, how it works, and what its goals are. This page provides a high-level introduction to the project and its key features."
+description = "OWASP Noir is an attack surface detector that identifies endpoints by static analysis."
 weight = 1
 sort_by = "weight"
 
 +++
 
-Noir bridges SAST and DAST by analyzing source code to discover endpoints—including shadow APIs, deprecated routes, and hidden paths that other tools miss.
-
-Using source code as the single source of truth, Noir delivers comprehensive attack surface data that integrates with DAST tools, eliminating blind spots in your DevSecOps pipeline.
+Noir is an attack surface detector that analyzes source code to discover API endpoints, including shadow APIs and undocumented routes. It bridges SAST and DAST by feeding discovered endpoints directly into dynamic testing tools.
 
 ## Key Capabilities
 
-- **Attack Surface Discovery**: Identifies complete attack surface including hidden endpoints and shadow APIs
-- **AI-Powered Analysis**: Uses LLMs to detect endpoints in unsupported languages and frameworks
-- **SAST-to-DAST Bridge**: Provides discovered endpoints to DAST tools for comprehensive security scans
-- **DevSecOps Ready**: Integrates with CI/CD pipelines and tools like ZAP, Burp Suite, and Caido
-- **Multi-Format Output**: Exports in JSON, YAML, OpenAPI, and other formats
+- **Attack Surface Discovery** — Uncovers hidden endpoints, shadow APIs, and undocumented routes from source code
+- **Multi-Language** — Supports 50+ languages and frameworks with a single tool
+- **AI-Powered** — Uses LLMs to detect endpoints even in unsupported frameworks
+- **SAST-to-DAST Bridge** — Feeds results into ZAP, Burp Suite, Caido, and other DAST tools
+- **Flexible Output** — Exports as JSON, YAML, OpenAPI, SARIF, cURL, and more
 
 [GitHub](https://github.com/owasp-noir/noir) | [OWASP Project Page](https://owasp.org/www-project-noir)
 
@@ -24,14 +22,14 @@ Using source code as the single source of truth, Noir delivers comprehensive att
 
 ## How It Works
 
-Noir is built with [Crystal](https://crystal-lang.org) and uses these components:
+Noir is built with [Crystal](https://crystal-lang.org) and processes code through these stages:
 
-*   **Detectors**: Identify technologies in the codebase
-*   **Analyzers**: Parse code to find endpoints and parameters
-*   **LLM Analyzer**: Discover endpoints using AI for unsupported frameworks
-*   **Passive Scanner & Tagger**: Identify vulnerabilities and add contextual tags
-*   **Deliver**: Send results to external tools
-*   **Output Builder**: Generate reports in multiple formats
+1. **Detectors** identify technologies in the codebase
+2. **Analyzers** parse code to extract endpoints and parameters
+3. **LLM Analyzer** discovers endpoints using AI for unsupported frameworks
+4. **Passive Scanner & Tagger** identify vulnerabilities and add contextual tags
+5. **Deliver** sends results to external tools (ZAP, Burp, etc.)
+6. **Output Builder** generates reports in the desired format
 
 {% mermaid() %}
 flowchart LR
@@ -71,26 +69,10 @@ flowchart LR
     classDef highlight fill:#000,stroke:#333,stroke-width:4px;
 {% end %}
 
-## Project Goals
-
-Bridge static code analysis and dynamic security testing by providing comprehensive endpoint discovery—including hidden and undocumented endpoints—enabling more effective DAST scans.
-
-Future plans include expanding language support, improving analysis accuracy, and enhancing AI capabilities.
-
 ## Contributing
 
-Noir is open-source and welcomes contributions. See our [Contributing Guide](https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md) for details.
+Noir is open-source and welcomes contributions. See the [Contributing Guide](https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md) for details.
 
 ### Contributors
 
-Thank you to everyone who has contributed to Noir! ♥️
-
 ![](https://raw.githubusercontent.com/owasp-noir/noir/refs/heads/main/docs/static/CONTRIBUTORS.svg)
-
-## Code of Conduct
-
-Review our [Code of Conduct](https://github.com/owasp-noir/noir/blob/main/CODE_OF_CONDUCT.md) on GitHub.
-
-## Help and Feedback
-
-Questions or feedback? Use GitHub [discussions](https://github.com/orgs/owasp-noir/discussions) or [issues](https://github.com/owasp-noir/noir/issues).

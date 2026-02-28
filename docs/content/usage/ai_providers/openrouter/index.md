@@ -1,6 +1,6 @@
 +++
 title = "Using Noir with OpenRouter"
-description = "Learn how to use OpenRouter with Noir to access multiple AI models through a unified API. This guide covers how to set up your OpenRouter API key and run Noir with various models."
+description = "Use OpenRouter with Noir to access multiple AI models through a unified API."
 weight = 7
 sort_by = "weight"
 

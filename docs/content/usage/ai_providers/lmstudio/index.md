@@ -1,6 +1,6 @@
 +++
 title = "Using Noir with LM Studio"
-description = "Learn how to integrate Noir with LM Studio to run local language models for code analysis. This guide shows you how to set up the LM Studio server and connect it to Noir."
+description = "Integrate Noir with LM Studio for local, private code analysis."
 weight = 3
 sort_by = "weight"
 

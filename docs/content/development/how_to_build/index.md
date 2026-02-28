@@ -1,12 +1,12 @@
 +++
 title = "How to Build"
-description = "Learn how to set up your development environment, build the project from source, run tests, and contribute to OWASP Noir."
+description = "Set up a development environment, build from source, run tests, and contribute to OWASP Noir."
 weight = 1
 sort_by = "weight"
 
 +++
 
-OWASP Noir welcomes all contributions—bug fixes, features, and documentation improvements.
+All contributions are welcome — bug fixes, features, and documentation improvements.
 
 ## How to Contribute
 
@@ -29,7 +29,7 @@ See [CONTRIBUTING.md](https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.
 
 ### Installing Crystal
 
-Noir is built with the Crystal programming language. Here are the quick installation methods for common platforms:
+Noir is built with Crystal. Install it for your platform:
 
 #### Ubuntu/Debian
 ```sh
@@ -42,7 +42,7 @@ brew install crystal
 ```
 
 #### Other Platforms
-For other platforms, see the [official Crystal installation guide](https://crystal-lang.org/install/).
+See the [official Crystal installation guide](https://crystal-lang.org/install/).
 
 ### Building and Testing
 
@@ -52,14 +52,14 @@ cd noir
 shards install
 ```
 
-To build the project, run:
+Build:
 
 ```sh
 shards build
 # The binary will be located at ./bin/noir
 ```
 
-To run the unit and functional tests:
+Run tests:
 
 ```sh
 crystal spec
@@ -70,19 +70,19 @@ crystal spec -v
 
 ### Linting
 
-We use `ameba` for linting our code. To check the code for style issues, run:
+Noir uses `ameba` for linting. Check for style issues:
 
 ```sh
 bin/ameba.cr
 ```
 
-To automatically fix any style issues, you can run:
+Auto-fix:
 
 ```sh
 bin/ameba.cr --fix
 ```
 
-Alternatively, you can use the `just` command to run the linter:
+Or use `just`:
 
 ```sh
 just fix

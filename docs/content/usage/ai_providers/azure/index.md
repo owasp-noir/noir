@@ -1,6 +1,6 @@
 +++
 title = "Using Noir with Azure AI"
-description = "This guide shows you how to connect Noir with Azure AI's language models through GitHub Models. Learn how to configure your API key and run Noir with Azure AI."
+description = "Connect Noir with Azure AI language models for code analysis."
 weight = 2
 sort_by = "weight"
 
@@ -33,7 +33,4 @@ export NOIR_AI_KEY=YOUR_API_KEY
 noir -b ./myapp --ai-provider=azure --ai-model=YOUR_MODEL_NAME
 ```
 
-Azure AI provides:
-*   Natural language endpoint descriptions
-*   Security vulnerability identification
-*   Code quality improvement suggestions
+Azure AI enables natural language endpoint descriptions, security vulnerability identification, and code quality suggestions.

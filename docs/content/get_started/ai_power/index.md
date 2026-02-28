@@ -1,6 +1,6 @@
 +++
 title = "AI-Powered Analysis"
-description = "Learn how to use Noir's AI integration to get advanced analysis of your code. This guide covers the necessary flags and options for connecting to LLM providers like OpenAI, xAI, and local models."
+description = "Connect Noir to LLM providers for deeper code analysis and endpoint discovery."
 weight = 4
 sort_by = "weight"
 
@@ -26,17 +26,17 @@ noir -b . --ai-provider acp:codex
 
 ### Command-Line Flags
 
-*   `--ai-provider`: AI provider prefix (e.g., `openai`, `ollama`, `acp:codex`) or custom API URL
-*   `--ai-model`: Model name (e.g., `gpt-4o`), optional for `acp:*`
-*   `--ai-key`: API key (or use `NOIR_AI_KEY` environment variable)
-*   `--ai-agent`: Enable agentic AI workflow (iterative tool-calling loop)
-*   `--ai-agent-max-steps`: Maximum steps for AI agent loop (default: `20`)
-*   `--ai-native-tools-allowlist`: Provider allowlist for native tool-calling (comma-separated, default: `openai,xai,github`)
-*   `--ai-max-token`: Maximum tokens for AI requests (optional)
-*   `--cache-disable`: Disable LLM cache
-*   `--cache-clear`: Clear LLM cache before run
-
-AI responses are cached on disk by default to speed up analysis and reduce costs.
+| Flag | Description |
+|---|---|
+| `--ai-provider` | Provider prefix (e.g., `openai`, `ollama`, `acp:codex`) or custom API URL |
+| `--ai-model` | Model name (e.g., `gpt-4o`), optional for `acp:*` |
+| `--ai-key` | API key (or use `NOIR_AI_KEY` env var) |
+| `--ai-agent` | Enable agentic AI workflow (iterative tool-calling loop) |
+| `--ai-agent-max-steps` | Max steps for AI agent loop (default: `20`) |
+| `--ai-native-tools-allowlist` | Provider allowlist for native tool-calling (comma-separated, default: `openai,xai,github`) |
+| `--ai-max-token` | Max tokens for AI requests (optional) |
+| `--cache-disable` | Disable LLM response cache |
+| `--cache-clear` | Clear LLM cache before run |
 
 ### Supported AI Providers
 
@@ -60,15 +60,7 @@ For custom providers, use the full API URL: `--ai-provider=http://my-custom-api:
 
 For raw ACP and agent stderr logs, set `NOIR_ACP_RAW_LOG=1`.
 
-### Benefits and Considerations
-
-*   **Expanded Support**: Analyze unsupported frameworks and languages
-*   **Deeper Insights**: Identify subtle or complex endpoints
-*   **Trade-offs**: May produce false positives and slower performance
-
 ## How AI-Powered Analysis Works
-
-Noir's AI integration follows a sophisticated workflow that combines intelligent file filtering, optimized bundling, response caching, and endpoint optimization to deliver comprehensive analysis results.
 
 {% mermaid() %}
 flowchart TB
@@ -155,35 +147,17 @@ flowchart TB
 
 ### Key Components
 
-#### 1. LLM Adapter Layer
-Noir uses a provider-agnostic adapter pattern that supports multiple LLM providers:
-- **General Adapter**: For OpenAI-compatible APIs (OpenAI, xAI, Azure, GitHub Models, etc.)
-- **Ollama Adapter**: Specialized adapter with server-side context reuse for improved performance
-- **ACP Adapter**: For ACP agent runtimes (for example `acp:codex`, `acp:gemini`, `acp:claude`)
+#### LLM Adapter Layer
+Provider-agnostic adapters: **General** (OpenAI-compatible APIs), **Ollama** (with server-side context reuse), and **ACP** (agent runtimes like `acp:codex`).
 
-#### 2. Intelligent File Filtering
-When analyzing projects with many files (>10), Noir uses the LLM to intelligently filter which files are likely to contain endpoints:
-- Sends file path list to LLM with FILTER prompt
-- LLM identifies potential endpoint files
-- Reduces analysis time and costs
+#### Intelligent File Filtering
+For projects with >10 files, the LLM filters the file list to identify likely endpoint files before analysis.
 
-#### 3. Bundle Analysis
-For large codebases, Noir bundles multiple files together to maximize efficiency:
-- Estimates token usage for each file
-- Creates bundles within model token limits (with 80% safety margin)
-- Processes bundles concurrently for speed
-- Uses BUNDLE_ANALYZE prompt to extract endpoints from all files in bundle
+#### Bundle Analysis
+Groups files into token-limited bundles and processes them concurrently to maximize throughput on large codebases.
 
-#### 4. Response Caching
-All LLM responses are cached on disk to improve performance and reduce costs:
-- Cache key: SHA256 hash of (provider + model + operation + format + payload)
-- Cache location: `~/.local/share/noir/cache/ai/` (or `NOIR_HOME` if set)
-- Enables instant re-analysis of unchanged code
-- Can be disabled with `--cache-disable` or cleared with `--cache-clear`
+#### Response Caching
+LLM responses are cached on disk (SHA256-keyed) at `~/.local/share/noir/cache/ai/`. Use `--cache-disable` or `--cache-clear` to control caching.
 
-#### 5. LLM Optimizer
-An optional post-processing step that refines endpoint results:
-- Identifies non-standard patterns (wildcards, unusual naming, etc.)
-- Normalizes URLs and parameter names
-- Applies RESTful conventions
-- Improves overall endpoint quality
+#### LLM Optimizer
+Optional post-processing that normalizes URLs, parameter names, and applies RESTful conventions to improve endpoint quality.

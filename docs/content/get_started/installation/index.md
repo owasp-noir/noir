@@ -1,16 +1,12 @@
 +++
 title = "Installation"
-description = "Learn how to install OWASP Noir on your system. This guide provides instructions for installing Noir using Homebrew, Snapcraft, Docker, Nix, or by building from source."
+description = "Install OWASP Noir via Homebrew, Snapcraft, Docker, Nix, binary download, or from source."
 weight = 2
 sort_by = "weight"
 
 +++
 
-Choose your preferred installation method:
-
 ## Homebrew (macOS and Linux)
-
-Install using [Homebrew](https://brew.sh/):
 
 ```bash
 brew install noir
@@ -22,25 +18,19 @@ Shell completions for Zsh, Bash, and Fish are automatically installed.
 
 ## Snapcraft (Linux)
 
-Install from [Snap Store](https://snapcraft.io/):
-
 ```bash
 sudo snap install noir
 ```
 
 ## Docker
 
-Pull from GitHub Container Registry:
-
 ```bash
 docker pull ghcr.io/owasp-noir/noir:latest
 ```
 
-See all available tags on the [GitHub Packages page](https://github.com/owasp-noir/noir/pkgs/container/noir).
+All available tags are on the [GitHub Packages page](https://github.com/owasp-noir/noir/pkgs/container/noir).
 
 ## Nix
-
-Install using [Nix](https://nixos.org/):
 
 ```bash
 nix profile add github:owasp-noir/noir
@@ -53,7 +43,7 @@ nix --extra-experimental-features "nix-command flakes" profile add github:owasp-
 ```
 {% end %}
 
-Or run directly:
+Or run directly without installing:
 
 ```bash
 nix run github:owasp-noir/noir -- -h
@@ -61,23 +51,22 @@ nix run github:owasp-noir/noir -- -h
 
 ## Direct Binary Download
 
-You can download the latest prebuilt binaries directly from the
-[GitHub Releases page](https://github.com/owasp-noir/noir/releases/latest).
+Download prebuilt binaries from the [GitHub Releases page](https://github.com/owasp-noir/noir/releases/latest).
 
-1. Download the appropriate archive for your platform (for example, `noir-linux-x86_64.tar.gz` or `noir-macos-universal.tar.gz`).
-2. Extract the archive:
+1. Download the archive for your platform (e.g., `noir-linux-x86_64.tar.gz` or `noir-macos-universal.tar.gz`).
+2. Extract:
 
     ```bash
     tar xzf noir-*.tar.gz
     ```
 
-3. Move the `noir` binary somewhere on your `PATH`, for example:
+3. Move to a directory on your `PATH`:
 
     ```bash
     sudo mv noir /usr/local/bin/
     ```
 
-4. Verify the installation:
+4. Verify:
 
     ```bash
     noir --version
@@ -85,28 +74,27 @@ You can download the latest prebuilt binaries directly from the
 
 ## Debian Package (.deb)
 
-For Debian and Ubuntu (or derivatives), you can install Noir using the `.deb` package from the
-[GitHub Releases page](https://github.com/owasp-noir/noir/releases/latest).
+For Debian/Ubuntu and derivatives, use the `.deb` package from the [GitHub Releases page](https://github.com/owasp-noir/noir/releases/latest).
 
-1. Download the latest `.deb` package (for example, `noir_latest_amd64.deb`):
+1. Download the `.deb` package:
 
     ```bash
     wget https://github.com/owasp-noir/noir/releases/latest/download/noir_latest_amd64.deb
     ```
 
-2. Install the package:
+2. Install:
 
     ```bash
     sudo dpkg -i noir_latest_amd64.deb
     ```
 
-3. If there are missing dependencies, fix them with:
+3. Fix missing dependencies if needed:
 
     ```bash
     sudo apt-get -f install
     ```
 
-4. Verify the installation:
+4. Verify:
 
     ```bash
     noir --version
@@ -115,8 +103,6 @@ For Debian and Ubuntu (or derivatives), you can install Noir using the `.deb` pa
 ## Unofficial
 
 ### Arch AUR
-
-Install from [AUR](https://aur.archlinux.org/packages/noir):
 
 ```bash
 yay -S noir
@@ -128,33 +114,23 @@ yay -S noir
 Requires Crystal programming language installed.
 {% end %}
 
-1.  **Clone the repository**:
+1.  **Clone the repository:**
 
     ```bash
     git clone https://github.com/owasp-noir/noir
     cd noir
     ```
 
-2.  **Install dependencies**:
+2.  **Install dependencies:**
 
     ```bash
     shards install
     ```
 
-3.  **Build the project**:
+3.  **Build:**
 
     ```bash
     shards build --release --no-debug
     ```
 
-    The compiled binary will be located at `./bin/noir`.
-
-## Verifying the Installation
-
-Once you have installed Noir, you can verify that it is working correctly by running:
-
-```bash
-noir --version
-```
-
-This should print the installed version of Noir.
+    The compiled binary is at `./bin/noir`.
