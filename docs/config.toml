@@ -4,8 +4,7 @@
 
 title = "OWASP Noir"
 description = "Attack surface detector that identifies endpoints by static analysis."
-base_url = ""
-#base_url = "https://owasp-noir.github.io/noir"
+base_url = "https://owasp-noir.github.io/noir"
 
 # =============================================================================
 # Multilingual
