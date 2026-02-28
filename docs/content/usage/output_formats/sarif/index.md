@@ -4,7 +4,6 @@ description = "Learn how to generate scan results in SARIF (Static Analysis Resu
 weight = 5
 sort_by = "weight"
 
-[extra]
 +++
 
 Generate SARIF v2.1.0 (Static Analysis Results Interchange Format) output for CI/CD integration.

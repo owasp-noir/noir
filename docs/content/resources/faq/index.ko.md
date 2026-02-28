@@ -4,7 +4,6 @@ description = "OWASP Noir에 대한 일반적인 질문의 답변을 찾아보�
 weight = 3
 sort_by = "weight"
 
-[extra]
 +++
 
 ### OWASP Noir란 무엇인가요?

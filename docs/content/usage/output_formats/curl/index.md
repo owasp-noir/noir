@@ -4,7 +4,6 @@ description = "Learn how to generate executable commands for popular HTTP client
 weight = 1
 sort_by = "weight"
 
-[extra]
 +++
 
 Generate executable commands for command-line HTTP clients to test discovered endpoints.

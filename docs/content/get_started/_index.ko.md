@@ -4,7 +4,6 @@ description = "이 섹션은 설치부터 첫 번째 스캔까지 OWASP Noir를 
 weight = 1
 sort_by = "weight"
 
-[extra]
 +++
 
 OWASP Noir에 오신 것을 환영합니다! 이 섹션은 Noir 설치 및 첫 번째 스캔 실행 과정을 안내합니다. 워크플로에 Noir를 통합하려는 개발자든 화이트박스 테스트에 사용하는 보안 전문가든, 이 가이드들이 빠르게 시작하는 데 도움이 될 것입니다.

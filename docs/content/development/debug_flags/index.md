@@ -4,7 +4,6 @@ description = "Developer-only flags not shown in --help for debugging and experi
 weight = 3
 sort_by = "weight"
 
-[extra]
 +++
 
 These are developer-only flags. They do not appear in the CLI help output, but they are available for advanced experimentation and debugging. Names, behavior, and availability may change without notice.

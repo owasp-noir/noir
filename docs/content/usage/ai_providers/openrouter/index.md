@@ -4,7 +4,6 @@ description = "Learn how to use OpenRouter with Noir to access multiple AI model
 weight = 7
 sort_by = "weight"
 
-[extra]
 +++
 
 Use [OpenRouter](https://openrouter.ai) to access multiple AI models (OpenAI, Anthropic, Google, Meta, etc.) through a single unified API.

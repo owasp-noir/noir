@@ -4,7 +4,6 @@ description = "웹 전반에서 OWASP Noir에 대한 기사와 블로그 게시�
 weight = 9
 sort_by = "weight"
 
-[extra]
 +++
 
 ## 발표

@@ -4,7 +4,6 @@ description = "심층적인 엔드포인트 분석을 위해 Noir를 Ollama와 �
 weight = 2
 sort_by = "weight"
 
-[extra]
 +++
 
 [Ollama](https://ollama.com)는 자신의 컴퓨터에서 로컬로 대규모 언어 모델(LLM)을 실행할 수 있게 해주는 강력한 도구입니다. Noir를 Ollama와 통합하면 외부 서비스로 데이터를 전송하지 않고도 이러한 모델의 분석 기능을 활용하여 코드에 대한 더 깊은 통찰력을 얻을 수 있습니다.

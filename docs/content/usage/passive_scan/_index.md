@@ -4,7 +4,6 @@ description = "Learn how to use Noir's passive scanning feature to identify pote
 weight = 5
 sort_by = "weight"
 
-[extra]
 +++
 
 Analyze code for potential security issues using predefined rules without active exploitation. Uses regular expressions and string matching to identify common security risks.

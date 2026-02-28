@@ -4,7 +4,6 @@ description = "Learn what OWASP Noir is, how it works, and what its goals are. T
 weight = 1
 sort_by = "weight"
 
-[extra]
 +++
 
 Noir bridges SAST and DAST by analyzing source code to discover endpoints—including shadow APIs, deprecated routes, and hidden paths that other tools miss.

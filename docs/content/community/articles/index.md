@@ -4,7 +4,6 @@ description = "A collection of articles and blog posts about OWASP Noir from aro
 weight = 9
 sort_by = "weight"
 
-[extra]
 +++
 
 ## Talks

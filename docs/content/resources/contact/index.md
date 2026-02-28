@@ -4,7 +4,6 @@ description = "Find out how to get in touch with the OWASP Noir team. Whether yo
 weight = 5
 sort_by = "weight"
 
-[extra]
 +++
 
 We are always happy to hear from our users. Whether you have a question, a suggestion for a new feature, or want to report a bug, there are several ways to get in touch with the OWASP Noir team.

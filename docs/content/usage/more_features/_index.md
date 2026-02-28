@@ -4,7 +4,6 @@ description = "Explore Noir's advanced features, including the Tagger for contex
 weight = 10
 sort_by = "weight"
 
-[extra]
 +++
 
 Beyond its core functionality of endpoint discovery, Noir offers several advanced features that can help you streamline your workflow and gain deeper insights into your code.

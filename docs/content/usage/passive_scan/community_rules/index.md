@@ -4,7 +4,6 @@ description = "Learn how to enhance Noir's passive scanning capabilities by usin
 weight = 3
 sort_by = "weight"
 
-[extra]
 +++
 
 In addition to the default rules that come with Noir, you can also leverage rule sets that have been created and shared by the community. These community-contributed rules can help you find a wider range of potential security issues and can be a great way to benefit from the collective knowledge of the security community.

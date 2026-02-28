@@ -4,7 +4,6 @@ description = "Learn how to use Noir's diff mode to compare two different versio
 weight = 2
 sort_by = "weight"
 
-[extra]
 +++
 
 Compare two versions of a codebase to identify endpoint changes. Useful for code reviews, security assessments, and understanding feature impacts.

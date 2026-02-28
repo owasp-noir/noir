@@ -4,7 +4,6 @@ description = "Learn how to use Noir's Tagger feature to automatically add conte
 weight = 3
 sort_by = "weight"
 
-[extra]
 +++
 
 Automatically add descriptive tags to endpoints and parameters to identify functionality and potential security risks (e.g., SQL injection, authentication endpoints).

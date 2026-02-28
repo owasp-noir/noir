@@ -4,7 +4,6 @@ description = "This section provides everything you need to get started with OWA
 weight = 1
 sort_by = "weight"
 
-[extra]
 +++
 
 Welcome to OWASP Noir! This section will guide you through the process of installing Noir and running your first scan. Whether you are a developer looking to integrate Noir into your workflow or a security professional using it for white-box testing, these guides will help you get up and running quickly.

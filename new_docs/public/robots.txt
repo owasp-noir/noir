@@ -1,7 +1,0 @@
-User-agent: *
-Disallow: /admin
-Disallow: /private
-
-User-agent: GPTBot
-Disallow: /
-

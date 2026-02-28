@@ -4,7 +4,6 @@ description = "`techs` 및 `exclude-techs` 명령을 사용하여 Noir가 스캔
 weight = 3
 sort_by = "weight"
 
-[extra]
 +++
 
 Noir는 다양한 프로그래밍 언어와 프레임워크를 분석할 수 있습니다. 스캐닝 프로세스를 더 잘 제어할 수 있도록 Noir는 포함하거나 제외할 기술을 정확히 지정할 수 있는 명령을 제공합니다.

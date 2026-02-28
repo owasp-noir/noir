@@ -4,7 +4,6 @@ description = "Learn how to generate interactive API mindmaps from your Noir sca
 weight = 5
 sort_by = "weight"
 
-[extra]
 +++
 
 Visualize API endpoints as an interactive [Mermaid mindmap](https://mermaid-js.github.io/mermaid/#/mindmap) for understanding API structure.

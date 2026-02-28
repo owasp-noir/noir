@@ -4,7 +4,6 @@ description = "고성능 로컬 LLM 추론을 위해 Noir를 vLLM과 통합하�
 weight = 3
 sort_by = "weight"
 
-[extra]
 +++
 
 [vLLM](https://docs.vllm.ai)은 대규모 언어 모델(LLM)을 위한 고처리량 및 메모리 효율적인 추론 엔진입니다. vLLM을 Noir와 함께 사용하면 특히 크거나 복잡한 모델로 작업할 때 코드베이스 분석을 크게 가속화할 수 있습니다. 이 통합은 빠르고 로컬이며 비공개 코드 분석이 필요한 개발자에게 완벽합니다.

@@ -4,7 +4,6 @@ description = "Set up a reproducible development environment for OWASP Noir usin
 weight = 2
 sort_by = "weight"
 
-[extra]
 +++
 
 You can set up a reproducible development environment using Nix. This approach ensures consistency across different development machines and simplifies dependency management.

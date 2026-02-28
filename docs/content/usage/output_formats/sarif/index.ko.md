@@ -4,7 +4,6 @@ description = "SARIF(정적 분석 결과 교환 형식) v2.1.0로 스캔 결과
 weight = 5
 sort_by = "weight"
 
-[extra]
 +++
 
 SARIF(정적 분석 결과 교환 형식)는 정적 분석 도구의 출력을 나타내기 위한 OASIS 표준입니다. Noir는 SARIF v2.1.0 호환 출력을 생성할 수 있어 스캔 결과를 최신 CI/CD 플랫폼 및 보안 대시보드와 쉽게 통합할 수 있습니다.

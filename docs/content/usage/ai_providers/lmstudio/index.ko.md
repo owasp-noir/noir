@@ -4,7 +4,6 @@ description = "코드 분석을 위해 로컬 언어 모델을 실행하기 위�
 weight = 3
 sort_by = "weight"
 
-[extra]
 +++
 
 [LM Studio](https://lmstudio.ai)는 로컬 컴퓨터에서 대규모 언어 모델(LLM)을 쉽게 다운로드하고 실행할 수 있게 해주는 인기 있는 애플리케이션입니다. Noir를 LM Studio와 통합하면 코드를 제3자 서비스로 전송하지 않고도 AI 기반 코드 분석의 이점을 얻을 수 있습니다.

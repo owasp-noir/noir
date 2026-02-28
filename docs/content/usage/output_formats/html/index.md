@@ -4,7 +4,6 @@ description = "Generate a comprehensive, visual HTML report of your attack surfa
 weight = 3
 sort_by = "weight"
 
-[extra]
 +++
 
 The HTML report format generates a self-contained, interactive HTML file that visualizes the results of your Noir scan. It's designed to be easily shared with stakeholders, used for documentation, or reviewed for a quick overview of the application's attack surface.

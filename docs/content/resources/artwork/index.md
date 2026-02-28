@@ -4,7 +4,6 @@ description = "Access OWASP Noir's official logos, mascots, and visual resources
 weight = 4
 sort_by = "weight"
 
-[extra]
 +++
 
 The OWASP Noir project maintains a dedicated repository for official artwork, including logos, mascots, and other visual resources. This repository serves as a central location for all branding materials related to the project.

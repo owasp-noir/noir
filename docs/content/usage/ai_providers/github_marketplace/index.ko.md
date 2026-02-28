@@ -4,7 +4,6 @@ description = "GitHub Marketplace의 AI 모델을 Noir와 함께 사용하는 �
 weight = 6
 sort_by = "weight"
 
-[extra]
 +++
 
 Noir는 [GitHub Marketplace](https://github.com/marketplace/models)를 통해 제공되는 AI 모델과 통합되어 코드 분석을 위해 다양한 강력한 언어 모델을 활용할 수 있습니다.

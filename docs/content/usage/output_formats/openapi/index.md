@@ -4,7 +4,6 @@ description = "Learn how to generate OpenAPI Specification (OAS) 2.0 and 3.0 doc
 weight = 4
 sort_by = "weight"
 
-[extra]
 +++
 
 Generate OpenAPI Specification (OAS) documents from your codebase for API documentation, testing, and tool integration.

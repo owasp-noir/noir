@@ -4,7 +4,6 @@ description = "A guide for maintainers on how to create and publish new releases
 weight = 4
 sort_by = "weight"
 
-[extra]
 +++
 
 This document outlines the process for creating and publishing a new release of Noir. It is intended for project maintainers.

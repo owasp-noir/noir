@@ -4,7 +4,6 @@ description = "통합 API를 통해 여러 AI 모델에 액세스하기 위해 O
 weight = 7
 sort_by = "weight"
 
-[extra]
 +++
 
 [OpenRouter](https://openrouter.ai)를 사용하면 단일 통합 API를 통해 여러 AI 모델(OpenAI, Anthropic, Google, Meta 등)에 액세스할 수 있습니다. 이 통합을 통해 다양한 제공업체의 모델을 쉽게 전환하고 코드 분석에 가장 적합한 모델을 선택할 수 있습니다.

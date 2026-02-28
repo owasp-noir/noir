@@ -4,7 +4,6 @@ description = "This guide shows you how to connect Noir with OpenAI's powerful l
 weight = 4
 sort_by = "weight"
 
-[extra]
 +++
 
 Integrate Noir with [OpenAI](https://openai.com) to leverage language models like GPT-4o for advanced code analysis and endpoint detection.

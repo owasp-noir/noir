@@ -4,7 +4,6 @@ description = "GPT-4o와 같은 OpenAI의 강력한 언어 모델과 Noir를 연
 weight = 4
 sort_by = "weight"
 
-[extra]
 +++
 
 Noir를 [OpenAI](https://openai.com)와 통합하면 GPT-4o와 같은 최첨단 언어 모델의 힘을 활용하여 코드베이스를 분석할 수 있습니다. 이 조합을 통해 단순한 엔드포인트 탐지를 넘어 애플리케이션의 동작, 잠재적 보안 위험 및 전반적인 품질에 대한 정교한 통찰력을 얻을 수 있습니다.

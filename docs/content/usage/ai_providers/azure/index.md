@@ -4,7 +4,6 @@ description = "This guide shows you how to connect Noir with Azure AI's language
 weight = 2
 sort_by = "weight"
 
-[extra]
 +++
 
 Use [Azure AI](https://azure.microsoft.com/en-us/products/ai-services) language models through GitHub Models inference endpoint.

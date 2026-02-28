@@ -4,7 +4,6 @@ description = "Run OWASP Noir in GitHub Actions workflows for endpoint discovery
 weight = 6
 sort_by = "weight"
 
-[extra]
 +++
 
 Run OWASP Noir in GitHub Actions for endpoint discovery and optional passive security scanning during CI.

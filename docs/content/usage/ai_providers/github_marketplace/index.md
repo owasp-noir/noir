@@ -4,7 +4,6 @@ description = "Learn how to use AI models from the GitHub Marketplace with Noir.
 weight = 6
 sort_by = "weight"
 
-[extra]
 +++
 
 Noir can integrate with AI models available through the [GitHub Marketplace](https://github.com/marketplace/models), allowing you to leverage a wide range of powerful language models for your code analysis.

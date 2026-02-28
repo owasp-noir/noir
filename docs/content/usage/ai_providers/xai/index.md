@@ -4,7 +4,6 @@ description = "Learn how to integrate Noir with xAI's Grok models for advanced c
 weight = 5
 sort_by = "weight"
 
-[extra]
 +++
 
 Use [xAI](https://x.ai) Grok models for advanced code analysis and endpoint discovery.

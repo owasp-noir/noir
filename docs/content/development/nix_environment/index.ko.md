@@ -4,7 +4,6 @@ description = "Nix와 Docker를 사용하여 OWASP Noir를 위한 재현 가능�
 weight = 2
 sort_by = "weight"
 
-[extra]
 +++
 
 Nix를 사용하여 재현 가능한 개발 환경을 설정할 수 있습니다. 이 접근 방식은 다양한 개발 머신에서 일관성을 보장하고 종속성 관리를 단순화합니다.

@@ -4,7 +4,6 @@ description = "Noir 스캔 결과에서 OpenAPI 명세(OAS) 2.0 및 3.0 문서�
 weight = 4
 sort_by = "weight"
 
-[extra]
 +++
 
 OpenAPI 명세(OAS)는 RESTful API를 설명하기 위한 표준적이고 언어에 구애받지 않는 인터페이스입니다. 코드베이스에서 OAS 문서를 생성하면 대화형 API 문서를 쉽게 만들고, 자동화된 테스트를 설정하거나, API 정의를 다양한 다른 도구로 가져올 수 있습니다.

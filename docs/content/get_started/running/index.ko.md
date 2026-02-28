@@ -4,7 +4,6 @@ description = "Noir를 시작하기 위한 기본 명령을 알아보세요. 이
 weight = 3
 sort_by = "weight"
 
-[extra]
 +++
 
 Noir를 설치한 후에는 코드를 분석하는 데 사용할 수 있습니다. 가장 기본적인 명령은 디렉토리에서 스캔을 실행하는 것입니다.

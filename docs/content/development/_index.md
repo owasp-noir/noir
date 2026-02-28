@@ -4,7 +4,6 @@ description = "Resources for developers contributing to OWASP Noir, including bu
 weight = 10
 sort_by = "weight"
 
-[extra]
 +++
 
 This section provides resources for developers who want to contribute to the OWASP Noir project. Whether you're building from source, setting up your development environment, or preparing a release, you'll find the information you need here.

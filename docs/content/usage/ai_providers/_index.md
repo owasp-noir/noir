@@ -4,7 +4,6 @@ description = "Learn how to connect Noir to various AI providers, including Open
 weight = 3
 sort_by = "weight"
 
-[extra]
 +++
 
 Noir's AI-powered analysis can be used with a variety of different Large Language Model (LLM) providers. Whether you want to use a powerful cloud-based model or a local model for privacy and offline use, Noir has you covered.

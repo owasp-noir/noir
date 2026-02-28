@@ -4,7 +4,6 @@ description = "고급 코드 분석을 위해 Noir를 xAI의 Grok 모델과 통�
 weight = 5
 sort_by = "weight"
 
-[extra]
 +++
 
 Noir를 [xAI](https://x.ai)와 연결하면 Grok과 같은 모델의 고급 추론 기능을 활용하여 코드베이스에 대한 심층 분석을 수행할 수 있습니다. 이 통합을 통해 단순한 엔드포인트 탐지를 넘어 애플리케이션의 기능과 잠재적 보안 상태에 대한 더 깊은 이해를 얻을 수 있습니다.

@@ -4,7 +4,6 @@ description = "This page provides a detailed overview of the API and data specif
 weight = 2
 sort_by = "weight"
 
-[extra]
 +++
 
 In addition to analyzing source code directly, Noir can also parse various API and data specification formats. This allows you to use Noir to analyze existing API documentation, captured network traffic, and more.

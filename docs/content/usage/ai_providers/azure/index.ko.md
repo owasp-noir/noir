@@ -4,7 +4,6 @@ description = "GitHub Models를 통해 Azure AI의 언어 모델과 Noir를 연�
 weight = 2
 sort_by = "weight"
 
-[extra]
 +++
 
 Noir를 [Azure AI](https://azure.microsoft.com/ko-kr/products/ai-services)와 통합하면 Microsoft의 Azure 플랫폼에서 호스팅되는 강력한 언어 모델을 활용할 수 있습니다. Azure AI는 GitHub Models 추론 엔드포인트를 통해 다양한 모델에 대한 액세스를 제공하여 코드베이스에 대한 AI 기반 분석을 쉽게 받을 수 있습니다.

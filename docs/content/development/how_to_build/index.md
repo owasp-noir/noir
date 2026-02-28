@@ -4,7 +4,6 @@ description = "Learn how to set up your development environment, build the proje
 weight = 1
 sort_by = "weight"
 
-[extra]
 +++
 
 OWASP Noir welcomes all contributions—bug fixes, features, and documentation improvements.

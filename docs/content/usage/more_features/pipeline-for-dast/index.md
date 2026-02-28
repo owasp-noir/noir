@@ -4,7 +4,6 @@ description = "Learn how to integrate Noir into your Dynamic Application Securit
 weight = 12
 sort_by = "weight"
 
-[extra]
 +++
 
 Dynamic Application Security Testing (DAST) is a crucial part of any security program. By integrating Noir into your DAST pipeline, you can ensure that your security tools are testing all of the endpoints that exist in your application, not just the ones that are easy to find.

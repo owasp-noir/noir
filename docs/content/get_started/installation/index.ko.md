@@ -4,7 +4,6 @@ description = "시스템에 OWASP Noir를 설치하는 방법을 알아보세요
 weight = 2
 sort_by = "weight"
 
-[extra]
 +++
 
 OWASP Noir를 설치하는 방법은 여러 가지가 있으므로 운영 체제와 워크플로에 가장 적합한 방법을 선택할 수 있습니다.

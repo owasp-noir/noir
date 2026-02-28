@@ -4,7 +4,6 @@ description = "Learn how to use Noir's 'Deliver' feature to send discovered endp
 weight = 1
 sort_by = "weight"
 
-[extra]
 +++
 
 Send discovered endpoints directly to security tools like Burp Suite, ZAP, or Elasticsearch for further analysis.

@@ -4,7 +4,6 @@ description = "Learn how to use Noir's AI integration to get advanced analysis o
 weight = 4
 sort_by = "weight"
 
-[extra]
 +++
 
 Connect Noir to Large Language Models (cloud-based, local, or ACP agent-based) for deeper code analysis. AI helps identify endpoints in unsupported languages and frameworks.

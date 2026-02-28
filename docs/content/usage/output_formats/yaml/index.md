@@ -4,7 +4,6 @@ description = "This page explains how to generate scan results in YAML format, w
 weight = 3
 sort_by = "weight"
 
-[extra]
 +++
 
 Output scan results in human-readable YAML format for manual inspection or automated processing.

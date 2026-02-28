@@ -16,12 +16,10 @@ build:
     @echo "Building the application..."
     shards build
 
-# Serve the documentation site using Zola.
-
-# This requires you to be in the 'docs' directory.
+# Serve the documentation site using Hwaro.
 docs-serve:
-    @echo "Serving the documentation site at http://localhost:1111/ ..."
-    cd docs && zola serve
+    @echo "Serving the documentation site at http://localhost:3000/ ..."
+    hwaro serve -i docs
 
 # Generate supported docs from current ./bin/noir --list-techs output.
 docs-supported: build
@@ -30,8 +28,8 @@ docs-supported: build
 
 # Generate supported docs and then serve the docs.
 docs-serve-supported: docs-supported
-    @echo "Serving the documentation site at http://localhost:1111/ ..."
-    cd docs && zola serve
+    @echo "Serving the documentation site at http://localhost:3000/ ..."
+    hwaro serve -i docs
 
 # Check for missing i18n (Korean) documentation files.
 docs-i18n-check:

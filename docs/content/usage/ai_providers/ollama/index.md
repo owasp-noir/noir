@@ -4,7 +4,6 @@ description = "Learn how to integrate Noir with Ollama to run local large langua
 weight = 2
 sort_by = "weight"
 
-[extra]
 +++
 
 Run large language models locally using [Ollama](https://ollama.com) for code analysis without sending data to external services.

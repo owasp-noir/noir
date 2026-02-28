@@ -4,7 +4,6 @@ description = "Improve your productivity by enabling shell auto-completion for N
 weight = 2
 sort_by = "weight"
 
-[extra]
 +++
 
 Enable shell auto-completion for commands and flags.

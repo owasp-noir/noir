@@ -4,7 +4,6 @@ description = "Noir의 기본 옵션을 설정하기 위해 `config.yaml` 파일
 weight = 1
 sort_by = "weight"
 
-[extra]
 +++
 
 Noir 실행을 더 쉽고 일관되게 만들기 위해 구성 파일을 사용하여 많은 명령줄 플래그의 기본값을 설정할 수 있습니다. 이렇게 하면 스캔을 실행할 때마다 같은 옵션을 입력할 필요가 없습니다.

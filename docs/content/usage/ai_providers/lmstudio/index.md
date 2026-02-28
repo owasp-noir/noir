@@ -4,7 +4,6 @@ description = "Learn how to integrate Noir with LM Studio to run local language 
 weight = 3
 sort_by = "weight"
 
-[extra]
 +++
 
 Run local language models using [LM Studio](https://lmstudio.ai) for private code analysis.

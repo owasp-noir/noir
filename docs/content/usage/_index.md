@@ -4,7 +4,6 @@ description = "This section provides a comprehensive guide to using Noir, includ
 weight = 2
 sort_by = "weight"
 
-[extra]
 +++
 
 This guide provides detailed information on how to use Noir and its various features. Whether you are a new user or an experienced one, you will find valuable information here to help you get the most out of the tool.

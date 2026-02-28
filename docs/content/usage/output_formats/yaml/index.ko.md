@@ -4,7 +4,6 @@ description = "이 페이지는 YAML 형식으로 스캔 결과를 생성하는 
 weight = 3
 sort_by = "weight"
 
-[extra]
 +++
 
 YAML (YAML Ain't Markup Language)은 사람이 읽기 쉬운 구문으로 알려진 인기 있는 데이터 직렬화 형식입니다. Noir는 수동 검사부터 다른 도구와의 자동화된 처리까지 다양한 목적에 유용한 YAML로 결과를 출력할 수 있습니다.

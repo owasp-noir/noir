@@ -4,7 +4,6 @@ description = "Learn how to install OWASP Noir on your system. This guide provid
 weight = 2
 sort_by = "weight"
 
-[extra]
 +++
 
 Choose your preferred installation method:

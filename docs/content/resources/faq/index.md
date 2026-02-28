@@ -4,7 +4,6 @@ description = "Find answers to common questions about OWASP Noir. This page cove
 weight = 3
 sort_by = "weight"
 
-[extra]
 +++
 
 ### What is OWASP Noir?

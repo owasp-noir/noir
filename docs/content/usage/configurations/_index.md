@@ -4,7 +4,6 @@ description = "Learn how to configure Noir to fit your needs. This section cover
 weight = 4
 sort_by = "weight"
 
-[extra]
 +++
 
 Noir is designed to be flexible and can be configured to match your specific workflow. Proper configuration can save you time and make the tool even more powerful.

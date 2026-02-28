@@ -4,7 +4,6 @@ description = "Learn the basic commands to get started with Noir. This guide sho
 weight = 3
 sort_by = "weight"
 
-[extra]
 +++
 
 ## Basic Scan

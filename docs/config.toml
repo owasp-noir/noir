@@ -1,62 +1,122 @@
-# The URL the site will be built for
-base_url = "https://owasp-noir.github.io/noir/"
+# =============================================================================
+# OWASP Noir Documentation - Hwaro Configuration
+# =============================================================================
+
 title = "OWASP Noir"
-theme = "goyo"
+description = "Attack surface detector that identifies endpoints by static analysis."
+base_url = ""
+#base_url = "https://owasp-noir.github.io/noir"
 
-# Whether to automatically compile all Sass files in the sass directory
-compile_sass = false
+# =============================================================================
+# Multilingual
+# =============================================================================
 
-# Whether to build a search index to be used later on by a JavaScript library
-build_search_index = true
+default_language = "en"
+
+[languages.en]
+language_name = "English"
+weight = 1
 
 [languages.ko]
-title = "OWASP Noir"
-generate_feeds = true
-build_search_index = false
+language_name = "한국어"
+weight = 2
+
+# =============================================================================
+# Plugins
+# =============================================================================
+
+[plugins]
+processors = ["markdown"]
+
+# =============================================================================
+# Content Files
+# =============================================================================
+
+[content.files]
+allow_extensions = ["jpg", "jpeg", "png", "gif", "svg", "webp"]
+
+# =============================================================================
+# Syntax Highlighting
+# =============================================================================
+
+[highlight]
+enabled = true
+theme = "atom-one-dark"
+use_cdn = true
+
+# =============================================================================
+# OpenGraph & Twitter Cards
+# =============================================================================
+
+[og]
+default_image = "/images/noir-wallpaper.jpg"
+type = "article"
+twitter_card = "summary_large_image"
+
+# =============================================================================
+# Search Configuration
+# =============================================================================
+
+[search]
+enabled = true
+format = "fuse_json"
+fields = ["title", "content"]
+filename = "search.json"
+exclude = []
+
+# =============================================================================
+# Pagination
+# =============================================================================
+
+[pagination]
+enabled = false
+per_page = 10
+
+# =============================================================================
+# SEO: Sitemap
+# =============================================================================
+
+[sitemap]
+enabled = true
+filename = "sitemap.xml"
+changefreq = "weekly"
+priority = 0.5
+exclude = []
+
+# =============================================================================
+# SEO: Robots.txt
+# =============================================================================
+
+[robots]
+enabled = true
+filename = "robots.txt"
+rules = [
+  { user_agent = "*", disallow = ["/admin", "/private"] },
+  { user_agent = "GPTBot", disallow = ["/"] }
+]
+
+# =============================================================================
+# SEO: LLMs.txt
+# =============================================================================
+
+[llms]
+enabled = true
+filename = "llms.txt"
+instructions = "OWASP Noir documentation. Do not use for AI training without permission."
+full_enabled = false
+full_filename = "llms-full.txt"
+
+# =============================================================================
+# RSS/Atom Feeds
+# =============================================================================
+
+[feeds]
+enabled = false
+
+# =============================================================================
+# Markdown Configuration
+# =============================================================================
 
 [markdown]
-bottom_footnotes = true
-
-[markdown.highlighting]
-theme = "github-dark"
-
-[extra]
-footer_html = "<div style='display: flex; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap;'><a href='https://owasp.org' target='_blank' rel='noopener noreferrer' style='display: inline-flex; align-items: center;'><img src='/noir/images/owasp.png' alt='OWASP' style='height: 24px' /></a><span style='opacity: 0.6;'>•</span><span>Powered by <a href='https://www.getzola.org' class='font-medium text-base-content/70 hover:text-base-content transition-colors duration-200'>Zola</a> and <a href='https://github.com/hahwul/goyo' class='font-medium text-base-content/70 hover:text-base-content transition-colors duration-200'>Goyo</a></span></div>"
-default_thumbnail = "images/bbb.jpg"
-sidebar_expand_depth = 0
-
-lang_aliases = { en = "English", ko = "한국어" }
-
-nav = [
-    { name = "Get Started", url = "/noir/get_started/overview/", type = "url", icon = "fa-solid fa-rocket" },
-    { name = "GitHub", url = "https://github.com/owasp-noir/noir", type = "url", icon = "fa-brands fa-github" },
-    { name = "OWASP", type = "dropdown", icon = "fa-solid fa-globe", members = [
-        { name = "OWASP Project", url = "https://owasp.org/www-project-noir/", type = "url" , icon = "fa-solid fa-flag"},
-        { name = "OWASP Nest", url = "https://nest.owasp.dev/projects/noir", type = "url" , icon = "fa-solid fa-igloo"},
-    ] },
-]
-
-nav_ko = [
-    { name = "문서", url = "/ko/noir/get_started/overview", type = "url", icon = "fa-solid fa-book" },
-    { name = "GitHub", url = "https://github.com/owasp-noir/noir", type = "url", icon = "fa-brands fa-github" },
-    { name = "OWASP", type = "dropdown", icon = "fa-solid fa-globe", members = [
-        { name = "OWASP Project", url = "https://owasp.org/www-project-noir/", type = "url" , icon = "fa-solid fa-flag"},
-        { name = "OWASP Nest", url = "https://nest.owasp.dev/projects/noir", type = "url" , icon = "fa-solid fa-igloo"},
-    ] },
-]
-
-[extra.logo]
-text = "OWASP Noir"                              # Text when no logo image
-image_path = "images/logo.png"             # Default logo image path
-image_padding = "14px"                      # Optional padding
-dark_image_path = "images/noir-dark.png"   # Logo for dark theme (optional)
-light_image_path = "images/noir-light.png" # Logo for light theme (optional)
-
-[extra.theme]
-colorset = "dark"           # Options: "dark" or "light"
-brightness = "normal"       # Common brightness: "darker", "normal", "lighter"
-dark_brightness = "darker"  # Override brightness for dark theme (optional)
-light_brightness = "normal" # Override brightness for light theme (optional)
-disable_toggle = false      # Hides dark/light mode toggle
-default_theme_dark = "goyo-dark"
-default_theme_light = "goyo-light"
+safe = false
+lazy_loading = true

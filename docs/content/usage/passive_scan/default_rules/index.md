@@ -4,7 +4,6 @@ description = "Learn where Noir stores its default passive scanning rules and ho
 weight = 2
 sort_by = "weight"
 
-[extra]
 +++
 
 Noir comes with a set of default rules for its passive scanning feature. These rules are curated by the Noir team to detect common security vulnerabilities. When passive scanning is enabled (`-P`), Noir will automatically initialize the rules on first run, check for updates on startup, notify you if your local rules are behind, and can optionally auto-update them.

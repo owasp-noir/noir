@@ -4,7 +4,6 @@ description = "Noir provides a variety of additional output formats to help you 
 weight = 6
 sort_by = "weight"
 
-[extra]
 +++
 
 Noir supports a range of specialized output formats for when you need to isolate specific pieces of information. These formats are designed to give you quick access to the data you need without any extra noise. Below are some of the most useful additional formats available.

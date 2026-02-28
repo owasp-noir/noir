@@ -4,7 +4,6 @@ description = "Learn how to control which technologies Noir scans by using the `
 weight = 3
 sort_by = "weight"
 
-[extra]
 +++
 
 Noir is capable of analyzing many different programming languages and frameworks. To give you more control over the scanning process, Noir provides commands that allow you to specify exactly which technologies you want to include or exclude.

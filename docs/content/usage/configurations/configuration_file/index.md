@@ -4,7 +4,6 @@ description = "Learn how to use a `config.yaml` file to set default options for 
 weight = 1
 sort_by = "weight"
 
-[extra]
 +++
 
 Use a `config.yaml` file to set default options for consistent scans.

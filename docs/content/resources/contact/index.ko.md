@@ -4,7 +4,6 @@ description = "OWASP Noir 팀과 연락하는 방법을 알아보세요. 질문,
 weight = 5
 sort_by = "weight"
 
-[extra]
 +++
 
 저희는 항상 사용자들의 의견을 듣기를 기뻐합니다. 질문, 새로운 기능에 대한 제안, 또는 버그를 보고하고 싶으시든, OWASP Noir 팀과 연락할 수 있는 여러 가지 방법이 있습니다.

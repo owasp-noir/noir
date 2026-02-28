@@ -4,7 +4,6 @@ description = "This guide explains how to integrate Noir with vLLM for high-perf
 weight = 3
 sort_by = "weight"
 
-[extra]
 +++
 
 [vLLM](https://docs.vllm.ai) is a high-throughput and memory-efficient inference engine for large language models (LLMs). By using vLLM with Noir, you can significantly speed up the analysis of your codebase, especially when working with large or complex models. This integration is perfect for developers who need fast, local, and private code analysis.

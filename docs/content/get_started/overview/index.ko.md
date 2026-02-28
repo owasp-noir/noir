@@ -4,7 +4,6 @@ description = "OWASP Noir가 무엇인지, 어떻게 작동하는지, 그리고 
 weight = 1
 sort_by = "weight"
 
-[extra]
 +++
 
 Noir는 소스 코드를 분석하여 섀도우 API, 관리되지 않는 엔드포인트, 숨겨진 경로 등을 발견함으로써 SAST와 DAST의 격차를 메웁니다.
