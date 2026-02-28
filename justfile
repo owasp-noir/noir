@@ -19,7 +19,7 @@ build:
 # Serve the documentation site using Hwaro.
 docs-serve:
     @echo "Serving the documentation site at http://localhost:3000/ ..."
-    hwaro serve -i docs
+    hwaro serve -i docs --base-url="http://localhost:3000"
 
 # Generate supported docs directly from NoirTechs::TECHS (no build required).
 docs-supported:
@@ -29,12 +29,16 @@ docs-supported:
 # Generate supported docs and then serve the docs (no build required).
 docs-serve-supported: docs-supported
     @echo "Serving the documentation site at http://localhost:3000/ ..."
-    hwaro serve -i docs
+    hwaro serve -i docs --base-url="http://localhost:3000"
 
 # Check for missing i18n (Korean) documentation files.
 docs-i18n-check:
     @echo "Checking for missing i18n documentation files..."
     crystal run scripts/check_i18n_docs.cr
+
+docs-dependencies:
+    @echo "Install docs dependencies"
+    brew install hahwul/hwaro/hwaro
 
 # Automatically format code and fix linting issues.
 fix:
