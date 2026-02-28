@@ -79,8 +79,6 @@ per_page = 10
 [sitemap]
 enabled = true
 filename = "sitemap.xml"
-changefreq = "weekly"
-priority = 0.5
 exclude = []
 
 # =============================================================================
@@ -91,8 +89,7 @@ exclude = []
 enabled = true
 filename = "robots.txt"
 rules = [
-  { user_agent = "*", disallow = ["/admin", "/private"] },
-  { user_agent = "GPTBot", disallow = ["/"] }
+  { user_agent = "*", disallow = [] }
 ]
 
 # =============================================================================
@@ -102,8 +99,8 @@ rules = [
 [llms]
 enabled = true
 filename = "llms.txt"
-instructions = "OWASP Noir documentation. Do not use for AI training without permission."
-full_enabled = false
+instructions = "OWASP Noir documentation."
+full_enabled = true
 full_filename = "llms-full.txt"
 
 # =============================================================================
