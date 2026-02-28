@@ -21,12 +21,12 @@ docs-serve:
     @echo "Serving the documentation site at http://localhost:3000/ ..."
     hwaro serve -i docs
 
-# Generate supported docs from current ./bin/noir --list-techs output.
-docs-supported: build
-    @echo "Generating supported docs from --list-techs..."
+# Generate supported docs directly from NoirTechs::TECHS (no build required).
+docs-supported:
+    @echo "Generating supported docs from techs.cr..."
     crystal run scripts/generate_supported_docs.cr
 
-# Generate supported docs and then serve the docs.
+# Generate supported docs and then serve the docs (no build required).
 docs-serve-supported: docs-supported
     @echo "Serving the documentation site at http://localhost:3000/ ..."
     hwaro serve -i docs
