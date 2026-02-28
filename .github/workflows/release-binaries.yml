@@ -51,7 +51,7 @@ jobs:
             -o build/noir-${GITHUB_REF_SLUG}-osx-${ARCH} \
             --no-debug --release
       - name: Upload artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: build-${{ matrix.os }}-${{ env.ARCH }}
           path: build
