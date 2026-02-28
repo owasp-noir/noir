@@ -46,9 +46,10 @@
         </div>
         <script>
         (function(){
-          var base = '{{ base_url }}';
+          var basePath = new URL('{{ base_url }}').pathname.replace(/\/+$/, '');
           var path = window.location.pathname;
-          var isKo = path.startsWith(base + '/ko/') || path === base + '/ko';
+          var rel = path.substring(basePath.length) || '/';
+          var isKo = rel.startsWith('/ko/') || rel === '/ko';
           var switcher = document.getElementById('lang-switcher');
           var links = switcher.querySelectorAll('.lang-link');
           for (var i = 0; i < links.length; i++) {
@@ -57,19 +58,9 @@
               links[i].classList.add('active');
             }
             if (lang === 'ko') {
-              if (isKo) {
-                links[i].href = path;
-              } else {
-                var rel = path.replace(base, '') || '/';
-                links[i].href = base + '/ko' + rel;
-              }
+              links[i].href = isKo ? path : basePath + '/ko' + rel;
             } else {
-              if (isKo) {
-                var rel = path.replace(base + '/ko', '') || '/';
-                links[i].href = base + rel;
-              } else {
-                links[i].href = path;
-              }
+              links[i].href = isKo ? basePath + rel.replace(/^\/ko/, '') : path;
             }
           }
         })();

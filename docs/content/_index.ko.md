@@ -23,18 +23,17 @@ template = "landing"
         <span class="terminal-title">noir</span>
       </div>
       <div class="hero-terminal-body">
-        <div class="terminal-line"><span class="t-prompt">$</span> noir -b . -u https://testapp.com</div>
-        <div class="terminal-line t-dim">  <span class="t-info">INFO</span> 엔드포인트 탐색 중...</div>
-        <div class="terminal-line t-dim">  <span class="t-info">INFO</span> users_controller에서 mass_assignment 취약점 발견</div>
-        <div class="terminal-line"><span class="t-success">47개 엔드포인트 발견</span> <span class="t-dim">1.2초</span></div>
+        <div class="terminal-line"><span class="t-prompt">$</span> noir -b .</div>
+        <div class="terminal-line t-dim">  <span class="t-info">INFO</span> Detected 1 technologies: crystal_kemal</div>
+        <div class="terminal-line t-dim">  <span class="t-info">INFO</span> Analysis Started. Code Analyzer: 1 in use</div>
+        <div class="terminal-line"><span class="t-success">✔ Finally identified 6 endpoints.</span> <span class="t-dim">in 0.0032s</span></div>
         <div class="terminal-line"></div>
-        <div class="terminal-line"><span class="t-method t-get">GET</span> /api/users</div>
-        <div class="terminal-line"><span class="t-method t-post">POST</span> /api/users/login</div>
-        <div class="terminal-line"><span class="t-method t-put">PUT</span> /api/users/:id</div>
-        <div class="terminal-line"><span class="t-method t-del">DELETE</span> /api/users/:id</div>
-        <div class="terminal-line"><span class="t-method t-post">POST</span> /api/admin/config <span class="t-tag">shadow</span></div>
-        <div class="terminal-line"><span class="t-method t-get">GET</span> /api/internal/debug <span class="t-tag">shadow</span></div>
-        <div class="terminal-line t-dim">  ... 외 41개</div>
+        <div class="terminal-line"><span class="t-method t-get">GET</span> /</div>
+        <div class="terminal-line"><span class="t-method t-post">POST</span> /query</div>
+        <div class="terminal-line"><span class="t-method t-get">GET</span> /token</div>
+        <div class="terminal-line"><span class="t-method t-get">GET</span> /socket <span class="t-tag">websocket</span></div>
+        <div class="terminal-line"><span class="t-method t-post">POST</span> /admin/config <span class="t-tag">shadow</span></div>
+        <div class="terminal-line"><span class="t-method t-get">GET</span> /admin/debug <span class="t-tag">shadow</span></div>
         <div class="terminal-line terminal-cursor"></div>
       </div>
     </div>
