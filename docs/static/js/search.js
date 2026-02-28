@@ -19,6 +19,23 @@
 
   var baseUrl = getBaseUrl();
 
+  function getCurrentLang() {
+    var path = window.location.pathname;
+    if (path.startsWith(baseUrl + '/ko/') || path === baseUrl + '/ko') {
+      return 'ko';
+    }
+    return 'en';
+  }
+
+  function matchesCurrentLang(item) {
+    var url = item.url || item.permalink || '';
+    var lang = getCurrentLang();
+    if (lang === 'ko') {
+      return url.startsWith('/ko/') || url.startsWith(baseUrl + '/ko/');
+    }
+    return !url.startsWith('/ko/') && !url.startsWith(baseUrl + '/ko/');
+  }
+
   function loadSearchData() {
     if (searchData) return Promise.resolve(searchData);
     return fetch(baseUrl + '/search.json')
@@ -57,6 +74,7 @@
     var matches = [];
     for (var i = 0; i < searchData.length && matches.length < 10; i++) {
       var item = searchData[i];
+      if (!matchesCurrentLang(item)) continue;
       if (fuzzyMatch(query, item.title) || fuzzyMatch(query, item.content)) {
         matches.push(item);
       }

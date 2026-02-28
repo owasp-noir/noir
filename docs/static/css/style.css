@@ -1362,7 +1362,7 @@ p:has(> .member-card) {
     margin-top: 1.5rem;
 }
 .trust-logo {
-    height: 40px;
+    height: 90px;
     width: auto;
     opacity: 0.7;
     transition: opacity 0.2s;
