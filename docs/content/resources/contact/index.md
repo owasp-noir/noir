@@ -15,7 +15,5 @@ Reach us through the [GitHub repository](https://github.com/owasp-noir/noir):
 
 ## Project Leaders
 
-{% members(cols=2) %}
-HAHWUL | Co-Lead, Creator | ./hahwul.jpeg | [𝕏](https://x.com/hahwul), [GitHub](https://github.com/hahwul)
-KSG | Co-Lead | ./ksg.jpeg | [GitHub](https://github.com/ksg97031)
-{% end %}
+{% member(name="HAHWUL", role="Co-Lead, Creator", image="./hahwul.jpeg", links="𝕏|https://x.com/hahwul, GitHub|https://github.com/hahwul") %}{% end %}
+{% member(name="KSG", role="Co-Lead", image="./ksg.jpeg", links="GitHub|https://github.com/ksg97031") %}{% end %}

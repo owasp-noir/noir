@@ -654,12 +654,99 @@ body {
 }
 
 /* ==========================================================================
-   Members Grid
+   Members Grid & Member Card
    ========================================================================== */
 .members-grid {
     display: grid;
-    gap: 1.5rem;
+    gap: 1rem;
     margin: 1rem 0;
+}
+/* When markdown wraps member-cards in a <p>, make it a grid */
+p:has(> .member-card) {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1rem;
+    margin: 1rem 0;
+}
+.member-card {
+    display: flex;
+    align-items: center;
+    gap: 1.25rem;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 20px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    transition:
+        border-color 0.2s,
+        box-shadow 0.2s;
+}
+.member-card:hover {
+    border-color: rgba(139, 92, 246, 0.3);
+    box-shadow: 0 0 24px rgba(139, 92, 246, 0.06);
+}
+.member-avatar {
+    flex-shrink: 0;
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    overflow: hidden;
+    border: 2px solid var(--border-light);
+    background: var(--bg-hover);
+}
+.member-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    border-radius: 0;
+    margin: 0;
+}
+.member-info {
+    min-width: 0;
+}
+.member-name {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 0 0 0.15rem 0;
+    line-height: 1.3;
+}
+.member-role {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin: 0 0 0.5rem 0;
+    font-weight: 500;
+}
+.member-links {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+.member-links a {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.2rem 0.6rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    background: var(--bg-hover);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    text-decoration: none;
+    transition:
+        color 0.15s,
+        border-color 0.15s,
+        background 0.15s;
+}
+.member-links a:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--accent-dim);
+}
+.member-links p {
+    margin: 0;
+    display: contents;
 }
 
 /* ==========================================================================
