@@ -62,7 +62,7 @@ jobs:
         run: |
           dpkg-deb --build noir_${{ env.VERSION }}_${{ matrix.arch }}
       - name: Upload artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: noir_${{ env.VERSION }}_${{ matrix.arch }}.deb
           path: ./
