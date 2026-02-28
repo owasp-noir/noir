@@ -1,0 +1,32 @@
+    </main>
+    {% include "toc.html" %}
+  </div>
+  <div class="search-modal" id="search-modal">
+    <div class="search-modal-overlay"></div>
+    <div class="search-modal-content">
+      <div class="search-input-wrap">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <input type="text" id="search-input" placeholder="Search documentation..." autocomplete="off">
+        <kbd class="search-esc">Esc</kbd>
+      </div>
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <div class="footer-branding">
+        <a href="https://owasp.org" target="_blank" rel="noopener noreferrer">
+          <img src="{{ base_url }}/images/owasp.png" alt="OWASP" class="footer-owasp-logo">
+        </a>
+        <span class="footer-sep">&middot;</span>
+        <span>Powered by <a href="https://github.com/hahwul/hwaro">Hwaro</a></span>
+      </div>
+    </div>
+  </footer>
+  <script src="{{ base_url }}/js/sidebar.js"></script>
+  <script src="{{ base_url }}/js/toc.js"></script>
+  <script src="{{ base_url }}/js/search.js" defer></script>
+  {{ highlight_js }}
+  {{ auto_includes_js }}
+</body>
+</html>

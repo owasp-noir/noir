@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="공격 표면 스캔 결과에 대한 포괄적이고 시각적인 HTML 보고서를 생성합니다.">
+  <title>HTML 리포트 - OWASP Noir</title>
+  <meta property="og:title" content="HTML 리포트">
+<meta property="og:type" content="article">
+<meta property="og:url" content="/ko/usage/output_formats/html/">
+<meta property="og:description" content="공격 표면 스캔 결과에 대한 포괄적이고 시각적인 HTML 보고서를 생성합니다.">
+<meta property="og:image" content="/images/noir-wallpaper.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="HTML 리포트">
+<meta name="twitter:description" content="공격 표면 스캔 결과에 대한 포괄적이고 시각적인 HTML 보고서를 생성합니다.">
+<meta name="twitter:image" content="/images/noir-wallpaper.jpg">
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/favicon-96x96.png" type="image/png" sizes="96x96">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="manifest" href="/site.webmanifest">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="header-left">
+        <button class="hamburger" id="hamburger-toggle" aria-label="Toggle navigation">
+          <span></span><span></span><span></span>
+        </button>
+        <a href="/" class="header-logo">
+          <img src="/images/logo.png" alt="OWASP Noir" class="header-logo-img">
+          <span class="header-logo-text">OWASP Noir</span>
+        </a>
+      </div>
+      <nav class="header-nav">
+        <a href="/get_started/overview/">Get Started</a>
+        <a href="/usage/supported/language_and_frameworks/">Usage</a>
+        <a href="/development/how_to_build/">Development</a>
+        <a href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer">GitHub</a>
+      </nav>
+      <div class="header-right">
+        <button class="search-trigger" id="search-trigger" aria-label="Search">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <span class="search-shortcut">Ctrl+K</span>
+        </button>
+        <div class="lang-switcher" id="lang-switcher">
+          <a href="#" class="lang-link" data-lang="en">EN</a>
+          <a href="#" class="lang-link" data-lang="ko">KO</a>
+        </div>
+        <script>
+        (function(){
+          var base = '';
+          var path = window.location.pathname;
+          var isKo = path.startsWith(base + '/ko/') || path === base + '/ko';
+          var switcher = document.getElementById('lang-switcher');
+          var links = switcher.querySelectorAll('.lang-link');
+          for (var i = 0; i < links.length; i++) {
+            var lang = links[i].getAttribute('data-lang');
+            if ((lang === 'ko' && isKo) || (lang === 'en' && !isKo)) {
+              links[i].classList.add('active');
+            }
+            if (lang === 'ko') {
+              if (isKo) {
+                links[i].href = path;
+              } else {
+                var rel = path.replace(base, '') || '/';
+                links[i].href = base + '/ko' + rel;
+              }
+            } else {
+              if (isKo) {
+                var rel = path.replace(base + '/ko', '') || '/';
+                links[i].href = base + rel;
+              } else {
+                links[i].href = path;
+              }
+            }
+          }
+        })();
+        </script>
+      </div>
+    </div>
+  </header>
+  <div class="site-overlay" id="site-overlay"></div>
+  <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar">
+    <nav class="sidebar-nav">
+      <div class="sidebar-section" data-section="get_started">
+        <button class="sidebar-heading">
+          <span><svg class="sidebar-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg> Get Started</span>
+          <svg class="sidebar-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <ul class="sidebar-links">
+          <li><a href="/get_started/overview/">Overview</a></li>
+          <li><a href="/get_started/installation/">Installation</a></li>
+          <li><a href="/get_started/running/">Running</a></li>
+          <li><a href="/get_started/ai_power/">AI Power</a></li>
+        </ul>
+      </div>
+      <div class="sidebar-section" data-section="usage">
+        <button class="sidebar-heading">
+          <span><svg class="sidebar-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg> Usage</span>
+          <svg class="sidebar-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <ul class="sidebar-links">
+          <li class="sidebar-subsection">
+            <button class="sidebar-subheading">
+              <span>Supported</span>
+              <svg class="sidebar-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <ul class="sidebar-sublinks">
+              <li><a href="/usage/supported/language_and_frameworks/">Languages & Frameworks</a></li>
+              <li><a href="/usage/supported/specification/">Specification</a></li>
+              <li><a href="/usage/supported/tech-commands/">Tech Commands</a></li>
+            </ul>
+          </li>
+          <li class="sidebar-subsection">
+            <button class="sidebar-subheading">
+              <span>Output Formats</span>
+              <svg class="sidebar-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <ul class="sidebar-sublinks">
+              <li><a href="/usage/output_formats/json/">JSON</a></li>
+              <li><a href="/usage/output_formats/yaml/">YAML</a></li>
+              <li><a href="/usage/output_formats/curl/">cURL</a></li>
+              <li><a href="/usage/output_formats/openapi/">OpenAPI</a></li>
+              <li><a href="/usage/output_formats/sarif/">SARIF</a></li>
+              <li><a href="/usage/output_formats/html/">HTML</a></li>
+              <li><a href="/usage/output_formats/mermaid/">Mermaid</a></li>
+              <li><a href="/usage/output_formats/more/">More</a></li>
+            </ul>
+          </li>
+          <li class="sidebar-subsection">
+            <button class="sidebar-subheading">
+              <span>AI Providers</span>
+              <svg class="sidebar-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <ul class="sidebar-sublinks">
+              <li><a href="/usage/ai_providers/openai/">OpenAI</a></li>
+              <li><a href="/usage/ai_providers/ollama/">Ollama</a></li>
+              <li><a href="/usage/ai_providers/lmstudio/">LM Studio</a></li>
+              <li><a href="/usage/ai_providers/azure/">Azure</a></li>
+              <li><a href="/usage/ai_providers/github_marketplace/">GitHub Marketplace</a></li>
+              <li><a href="/usage/ai_providers/openrouter/">OpenRouter</a></li>
+              <li><a href="/usage/ai_providers/vllm/">vLLM</a></li>
+              <li><a href="/usage/ai_providers/xai/">xAI</a></li>
+              <li><a href="/usage/ai_providers/acp/">ACP</a></li>
+            </ul>
+          </li>
+          <li class="sidebar-subsection">
+            <button class="sidebar-subheading">
+              <span>Configurations</span>
+              <svg class="sidebar-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <ul class="sidebar-sublinks">
+              <li><a href="/usage/configurations/configuration_file/">Configuration File</a></li>
+              <li><a href="/usage/configurations/shell-completion/">Shell Completion</a></li>
+            </ul>
+          </li>
+          <li class="sidebar-subsection">
+            <button class="sidebar-subheading">
+              <span>Passive Scan</span>
+              <svg class="sidebar-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <ul class="sidebar-sublinks">
+              <li><a href="/usage/passive_scan/rule/">Rule</a></li>
+              <li><a href="/usage/passive_scan/default_rules/">Default Rules</a></li>
+              <li><a href="/usage/passive_scan/community_rules/">Community Rules</a></li>
+            </ul>
+          </li>
+          <li><a href="/usage/github_action/" class="sidebar-direct-link">GitHub Action</a></li>
+          <li class="sidebar-subsection">
+            <button class="sidebar-subheading">
+              <span>More Features</span>
+              <svg class="sidebar-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <ul class="sidebar-sublinks">
+              <li><a href="/usage/more_features/deliver/">Deliver</a></li>
+              <li><a href="/usage/more_features/diff/">Diff</a></li>
+              <li><a href="/usage/more_features/pipeline-for-dast/">Pipeline for DAST</a></li>
+              <li><a href="/usage/more_features/tagger/">Tagger</a></li>
+            </ul>
+          </li>
+        </ul>
+      </div>
+      <div class="sidebar-section" data-section="development">
+        <button class="sidebar-heading">
+          <span><svg class="sidebar-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg> Development</span>
+          <svg class="sidebar-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <ul class="sidebar-links">
+          <li><a href="/development/how_to_build/">How to Build</a></li>
+          <li><a href="/development/how_to_release/">How to Release</a></li>
+          <li><a href="/development/debug_flags/">Debug Flags</a></li>
+          <li><a href="/development/nix_environment/">Nix Environment</a></li>
+        </ul>
+      </div>
+      <div class="sidebar-section" data-section="community">
+        <button class="sidebar-heading">
+          <span><svg class="sidebar-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> Community</span>
+          <svg class="sidebar-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <ul class="sidebar-links">
+          <li><a href="/community/articles/">Articles</a></li>
+        </ul>
+      </div>
+      <div class="sidebar-section" data-section="resources">
+        <button class="sidebar-heading">
+          <span><svg class="sidebar-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg> Resources</span>
+          <svg class="sidebar-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <ul class="sidebar-links">
+          <li><a href="/resources/faq/">FAQ</a></li>
+          <li><a href="/resources/contact/">Contact</a></li>
+          <li><a href="/resources/artwork/">Artwork</a></li>
+        </ul>
+      </div>
+    </nav>
+  </aside>
+    <main class="docs-main">
+      <article class="docs-article">
+        <h1>HTML 리포트</h1>
+        <p>HTML 보고서 형식은 Noir 스캔 결과를 시각화하는 독립적이고 대화형인 HTML 파일을 생성합니다. 이해관계자와 공유하거나 문서화에 사용하거나 애플리케이션의 공격 표면을 빠르게 검토할 수 있도록 설계되었습니다.</p>
+<h2 id="">기본 사용법</h2>
+<p>HTML 보고서를 생성하려면 <code>-f html</code> 플래그를 사용하십시오. 일반적으로 <code>-o</code>를 사용하여 출력을 파일로 저장합니다.</p>
+<pre><code class="language-bash hljs">noir -b . -f html -o report.html
+</code></pre>
+<p>생성된 <code>report.html</code> 파일을 최신 웹 브라우저에서 열어 결과를 확인하십시오.</p>
+<h3 id="-1">주요 기능</h3>
+<p>표준 HTML 보고서에는 다음이 포함됩니다:</p>
+<ul>
+<li><strong>대시보드 요약</strong>: 전체 엔드포인트, 매개변수 및 패시브 스캔 결과에 대한 고수준 요약.</li>
+<li><strong>엔드포인트 세부 정보</strong>: 발견된 모든 엔드포인트 목록(HTTP 메서드별 분류).</li>
+<li><strong>매개변수 분석</strong>: 매개변수, 유형(쿼리, 폼, JSON 등) 및 값을 보여주는 상세 테이블.</li>
+<li><strong>패시브 스캔 결과</strong>: 패시브 스캐닝이 활성화된 경우 설명, 심각도 및 코드 스니펫과 함께 결과가 표시됩니다.</li>
+<li><strong>소스 코드 링크</strong>: 엔드포인트가 정의된 위치를 가리키는 파일 경로 및 줄 번호.</li>
+</ul>
+<h2 id="-2">템플릿 사용자 정의</h2>
+<p>자체 템플릿을 제공하여 HTML 보고서의 모양과 구조를 사용자 정의할 수 있습니다. 이는 브랜딩, 사용자 정의 스크립트 추가 또는 내부 보고 표준 통합에 유용합니다.</p>
+<h3 id="-3">작동 방식</h3>
+<p>Noir는 Noir 구성 디렉토리에서 <code>report-template.html</code> 파일을 찾습니다:</p>
+<ul>
+<li><strong>Linux/macOS</strong>: <code>~/.config/noir/report-template.html</code></li>
+<li><strong>Windows</strong>: <code>%APPDATA%\noir\report-template.html</code></li>
+<li><strong>Custom Home</strong>: <code>NOIR_HOME</code>이 설정된 경우 <code>$NOIR_HOME/report-template.html</code>에서 찾습니다.</li>
+</ul>
+<p>이 파일이 존재하면 Noir는 내장된 기본값 대신 이 파일을 템플릿으로 사용합니다.</p>
+<h3 id="-4">템플릿 만들기</h3>
+<p>템플릿은 특정 플레이스홀더를 포함하는 표준 HTML 파일입니다. Noir는 보고서 생성 중에 이러한 플레이스홀더를 생성된 콘텐츠로 대체합니다.</p>
+<h4 id="-5">사용 가능한 플레이스홀더</h4>
+<table>
+<thead>
+<tr>
+<th>플레이스홀더</th>
+<th>설명</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>`&lt;%= noir_head %&gt;`</td>
+<td>기본 CSS 및 메타데이터를 포함한 `&lt;head&gt;` 태그의 내용.</td>
+</tr>
+<tr>
+<td>`&lt;%= noir_header %&gt;`</td>
+<td>제목과 로고가 포함된 헤더 섹션.</td>
+</tr>
+<tr>
+<td>`&lt;%= noir_summary %&gt;`</td>
+<td>요약 대시보드(카운트를 보여주는 카드).</td>
+</tr>
+<tr>
+<td>`&lt;%= noir_endpoints %&gt;`</td>
+<td>발견된 모든 엔드포인트를 나열하는 주요 섹션.</td>
+</tr>
+<tr>
+<td>`&lt;%= noir_passive_scans %&gt;`</td>
+<td>패시브 스캔 결과를 나열하는 섹션.</td>
+</tr>
+<tr>
+<td>`&lt;%= noir_footer %&gt;`</td>
+<td>바닥글 섹션.</td>
+</tr>
+</tbody>
+</table>
+<h4 id="-6">예제 템플릿</h4>
+<p>다음은 회사 로고와 사용자 정의 헤더를 추가하는 간단한 사용자 정의 템플릿 예제입니다:</p>
+<pre><code class="language-html hljs">&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;head&gt;
+    &lt;!-- 기본 스타일 및 스크립트 포함 --&gt;
+    &lt;%= noir_head %&gt;
+    &lt;style&gt;
+        /* 사용자 정의 스타일 추가 */
+        body { background-color: #f0f2f5; }
+        .company-header { padding: 20px; text-align: center; background: #333; color: #fff; }
+    &lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+    &lt;div class=&quot;company-header&quot;&gt;
+        &lt;h1&gt;My Company Security Report&lt;/h1&gt;
+    &lt;/div&gt;
+
+    &lt;!-- 원래 헤더 --&gt;
+    &lt;%= noir_header %&gt;
+
+    &lt;main class=&quot;container&quot;&gt;
+        &lt;!-- 요약 섹션 --&gt;
+        &lt;%= noir_summary %&gt;
+
+        &lt;h2&gt;Detailed Findings&lt;/h2&gt;
+        
+        &lt;!-- 엔드포인트 목록 --&gt;
+        &lt;%= noir_endpoints %&gt;
+
+        &lt;!-- 패시브 스캔 결과 --&gt;
+        &lt;%= noir_passive_scans %&gt;
+    &lt;/main&gt;
+
+    &lt;%= noir_footer %&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</code></pre>
+<p>이 파일을 <code>~/.config/noir/report-template.html</code>에 배치하면 이후 Noir가 생성하는 모든 HTML 보고서에 이 레이아웃이 사용됩니다.</p>
+
+      </article>
+    </main>
+      <aside class="docs-toc" id="docs-toc">
+    <div class="toc-inner">
+      <div class="toc-title">On this page</div>
+      <nav class="toc-nav" id="toc-nav">
+      </nav>
+    </div>
+  </aside>
+  </div>
+  <div class="search-modal" id="search-modal">
+    <div class="search-modal-overlay"></div>
+    <div class="search-modal-content">
+      <div class="search-input-wrap">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <input type="text" id="search-input" placeholder="Search documentation..." autocomplete="off">
+        <kbd class="search-esc">Esc</kbd>
+      </div>
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <div class="footer-branding">
+        <a href="https://owasp.org" target="_blank" rel="noopener noreferrer">
+          <img src="/images/owasp.png" alt="OWASP" class="footer-owasp-logo">
+        </a>
+        <span class="footer-sep">&middot;</span>
+        <span>Powered by <a href="https://github.com/hahwul/hwaro">Hwaro</a></span>
+      </div>
+    </div>
+  </footer>
+  <script src="/js/sidebar.js"></script>
+  <script src="/js/toc.js"></script>
+  <script src="/js/search.js" defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>hljs.highlightAll();</script>
+  
+</body>
+</html>

@@ -1,0 +1,66 @@
++++
+title = "Using the Tagger for Contextual Analysis"
+description = "Learn how to use Noir's Tagger feature to automatically add contextual tags to endpoints and parameters. This can help you quickly identify interesting or potentially vulnerable areas of your application."
+weight = 3
+sort_by = "weight"
+
++++
+
+Automatically add descriptive tags to endpoints and parameters to identify functionality and potential security risks (e.g., SQL injection, authentication endpoints).
+
+![](./tagger.png)
+
+## Usage
+
+Tagger is disabled by default. Enable it:
+
+**Enable all taggers**:
+
+```bash
+noir -b <BASE_PATH> -T
+```
+
+**Enable specific taggers** (list available with `noir --list-taggers`):
+
+```bash
+noir -b <BASE_PATH> --use-taggers hunt,oauth
+```
+
+## Output
+
+Tags are added to the `tags` array for each endpoint and parameter:
+
+```json
+{
+  "url": "/query",
+  "method": "POST",
+  "params": [
+    {
+      "name": "query",
+      "value": "",
+      "param_type": "form",
+      "tags": [
+        {
+          "name": "sqli",
+          "description": "This parameter may be vulnerable to SQL Injection attacks.",
+          "tagger": "Hunt"
+        }
+      ]
+    }
+  ],
+  "protocol": "http",
+  "tags": []
+},
+{
+  "url": "/token",
+  "method": "GET",
+  "protocol": "http",
+  "tags": [
+    {
+      "name": "oauth",
+      "description": "Suspected OAuth endpoint for granting 3rd party access.",
+      "tagger": "Oauth"
+    }
+  ]
+}
+```

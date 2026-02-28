@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Attack surface detector that identifies endpoints by static analysis.">
+  <title>Untitled - OWASP Noir</title>
+  <meta property="og:title" content="Untitled">
+<meta property="og:type" content="article">
+<meta property="og:url" content="/ko/">
+<meta property="og:image" content="/images/noir-wallpaper.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Untitled">
+<meta name="twitter:image" content="/images/noir-wallpaper.jpg">
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/favicon-96x96.png" type="image/png" sizes="96x96">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="manifest" href="/site.webmanifest">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="header-left">
+        <button class="hamburger" id="hamburger-toggle" aria-label="Toggle navigation">
+          <span></span><span></span><span></span>
+        </button>
+        <a href="/" class="header-logo">
+          <img src="/images/logo.png" alt="OWASP Noir" class="header-logo-img">
+          <span class="header-logo-text">OWASP Noir</span>
+        </a>
+      </div>
+      <nav class="header-nav">
+        <a href="/get_started/overview/">Get Started</a>
+        <a href="/usage/supported/language_and_frameworks/">Usage</a>
+        <a href="/development/how_to_build/">Development</a>
+        <a href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer">GitHub</a>
+      </nav>
+      <div class="header-right">
+        <button class="search-trigger" id="search-trigger" aria-label="Search">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <span class="search-shortcut">Ctrl+K</span>
+        </button>
+        <div class="lang-switcher" id="lang-switcher">
+          <a href="#" class="lang-link" data-lang="en">EN</a>
+          <a href="#" class="lang-link" data-lang="ko">KO</a>
+        </div>
+        <script>
+        (function(){
+          var base = '';
+          var path = window.location.pathname;
+          var isKo = path.startsWith(base + '/ko/') || path === base + '/ko';
+          var switcher = document.getElementById('lang-switcher');
+          var links = switcher.querySelectorAll('.lang-link');
+          for (var i = 0; i < links.length; i++) {
+            var lang = links[i].getAttribute('data-lang');
+            if ((lang === 'ko' && isKo) || (lang === 'en' && !isKo)) {
+              links[i].classList.add('active');
+            }
+            if (lang === 'ko') {
+              if (isKo) {
+                links[i].href = path;
+              } else {
+                var rel = path.replace(base, '') || '/';
+                links[i].href = base + '/ko' + rel;
+              }
+            } else {
+              if (isKo) {
+                var rel = path.replace(base + '/ko', '') || '/';
+                links[i].href = base + rel;
+              } else {
+                links[i].href = path;
+              }
+            }
+          }
+        })();
+        </script>
+      </div>
+    </div>
+  </header>
+  <div class="site-overlay" id="site-overlay"></div>
+  <div class="landing">
+    <section class="hero">
+  <div class="hero-inner">
+    <span class="hero-badge">v0.28.0</span>
+    <h1 class="hero-title" id="owasp-noir">OWASP <span class="hero-highlight">Noir</span></h1>
+    <p class="hero-desc">코드베이스 내 모든 엔드포인트를 자동으로 탐지하는 고급 하이브리드 분석 도구. 섀도우 API와 문서화되지 않은 엔드포인트까지 놓치지 않고 찾아냅니다.</p>
+    <div class="hero-actions">
+      <a href="./get_started/overview" class="hero-btn hero-btn-primary">시작하기</a>
+      <a href="https://github.com/owasp-noir/noir" class="hero-btn hero-btn-secondary">GitHub에서 보기</a>
+    </div>
+  </div>
+</section>
+<section class="features-section">
+  <div class="features-inner">
+    <h2 class="section-title" id="">주요 기능</h2>
+    <p class="section-desc">OWASP Noir의 공격 표면 탐지 및 분석을 위한 핵심 기능을 발견하세요.</p>
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">&#128269;</div>
+        <h3 id="-1">공격 표면 발견</h3>
+        <p>소스 코드를 분석하여 숨겨진 엔드포인트, Shadow API 및 기타 보안 사각지대를 포함한 애플리케이션의 전체 공격 표면을 발견합니다.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#127760;</div>
+        <h3 id="-2">다중 언어 지원</h3>
+        <p>다양한 프로그래밍 언어와 프레임워크를 지원하여 다양한 프로젝트 포트폴리오 전반에서 광범위한 호환성을 보장합니다.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#9881;</div>
+        <h3 id="devsecops">DevSecOps 지원</h3>
+        <p>CI/CD 파이프라인 및 보안 워크플로우에 원활하게 통합되도록 설계되었으며, cURL, ZAP, Caido 등 인기 도구를 지원합니다.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#129302;</div>
+        <h3 id="ai">AI 기반 분석</h3>
+        <p>대규모 언어 모델(LLM)을 활용하여 네이티브로 지원되지 않는 언어나 프레임워크에서도 엔드포인트를 탐지합니다.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#128279;</div>
+        <h3 id="sast-dast">SAST-DAST 연결</h3>
+        <p>발견된 엔드포인트를 ZAP, Burp Suite 같은 DAST 도구에 제공하여 정적 코드 분석과 동적 테스트를 연결합니다.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#128196;</div>
+        <h3 id="-3">유연한 출력 형식</h3>
+        <p>JSON, YAML, OpenAPI를 포함한 다양한 형식으로 명확하고 실행 가능한 결과를 생성합니다.</p>
+      </div>
+    </div>
+  </div>
+</section>
+<section class="trust-section">
+  <div class="trust-inner">
+    <h2 class="section-title" id="-4">개발 환경</h2>
+    <div class="trust-logos">
+      <img loading="lazy" src="./images/owasp.png" alt="OWASP" class="trust-logo" />
+      <img loading="lazy" src="./images/crystal.png" alt="Crystal" class="trust-logo" />
+    </div>
+  </div>
+</section>
+<section class="cta-section">
+  <div class="cta-inner">
+    <h2 class="section-title" id="-5">오픈 소스 프로젝트</h2>
+    <p class="section-desc">OWASP Noir는 커뮤니티가 사랑으로 구축한 오픈 소스 프로젝트입니다. 기여하고 싶으시다면 기여 가이드를 참조하고 멋진 변경 사항과 함께 풀 리퀘스트를 제출해 주세요!</p>
+    <a href="https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md" class="cta-btn" target="_blank" rel="noopener noreferrer">기여 가이드 보기</a>
+    <div class="cta-image">
+      <img src="https://github.com/owasp-noir/noir/raw/main/docs/static/CONTRIBUTORS.svg" alt="Contributors" loading="lazy">
+    </div>
+  </div>
+</section>
+
+  </div>
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <div class="footer-branding">
+        <a href="https://owasp.org" target="_blank" rel="noopener noreferrer">
+          <img src="/images/owasp.png" alt="OWASP" class="footer-owasp-logo">
+        </a>
+        <span class="footer-sep">&middot;</span>
+        <span>Powered by <a href="https://github.com/hahwul/hwaro">Hwaro</a></span>
+      </div>
+    </div>
+  </footer>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>hljs.highlightAll();</script>
+  
+</body>
+</html>

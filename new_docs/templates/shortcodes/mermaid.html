@@ -1,0 +1,14 @@
+<div class="mermaid-container">
+  <pre class="mermaid">{{ body }}</pre>
+</div>
+<script>
+if (!window._mermaidLoaded) {
+  window._mermaidLoaded = true;
+  var s = document.createElement('script');
+  s.src = 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js';
+  s.onload = function() {
+    mermaid.initialize({ theme: 'dark', startOnLoad: true });
+  };
+  document.head.appendChild(s);
+}
+</script>

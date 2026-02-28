@@ -1,0 +1,510 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>OWASP Noir (한국어)</title>
+    <link></link>
+    <description>Attack surface detector that identifies endpoints by static analysis.</description>
+    <language>ko</language>
+    <atom:link href="/ko/rss.xml" rel="self" type="application/rss+xml" />
+    <item>
+      <title>빌드 방법</title>
+      <link>/ko/development/how_to_build/</link>
+      <guid>/ko/development/how_to_build/</guid>
+      <description>&lt;p&gt;OWASP Noir는 커뮤니티 주도 프로젝트이며, 모든 종류의 기여를 환영합니다. 버그 수정, 새로운 기능 추가, 문서 개선 등 어떤 도움이든 크게 감사드립니다.&lt;/p&gt;
+&lt;h2 id=&quot;&quot;&gt;기여 방법&lt;/h2&gt;
+&lt;p&gt;기여하는 가장 좋은 방법은 다음 단계를 따르는 것입니다:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;저장소 포크&lt;/strong&gt;: GitHub에서 &lt;a href=&quot;https://github.com/owasp-noir/noir&quot;&gt;Noir 저장소&lt;/a&gt;의 자신만의 복사본을 만드는 것부터 시작하세요.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;새 브랜치 생성&lt;/strong&gt;: 변경 사항을 위해 포크에서 새 브랜치를 생성하세요.
+&lt;pre&gt;&lt;code class=&quot;language-sh hljs&quot;&gt;git checkout -b your-feature-or-fix-name
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;변경 사항 적용&lt;/strong&gt;: 코드나 문서에 변경 사항을 적용하세요.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;변경 사항 커밋&lt;/strong&gt;: 명확하고 설명적인 커밋 메시지와 함께 변경 사항을 커밋하세요.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;변경 사항 푸시&lt;/strong&gt;: 변경 사항을 포크에 푸시하세요.
+&lt;pre&gt;&lt;code class=&quot;language-sh hljs&quot;&gt;git push origin your-feature-or-fix-name
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;풀 리퀘스트 생성&lt;/strong&gt;: 포크에서 메인 Noir 저장소로 풀 리퀘스트를 엽니다. 적용한 변경 사항에 대한 명확한 설명을 제공해 주세요.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;더 자세한 가이드라인은 공식 &lt;a href=&quot;https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md&quot;&gt;CONTRIBUTING.md&lt;/a&gt; 파일을 참조하세요.&lt;/p&gt;
+&lt;h2 id=&quot;-1&quot;&gt;개발 환경 설정&lt;/h2&gt;
+&lt;p&gt;코드에 기여하는 경우 로컬 개발 환경을 설정해야 합니다.&lt;/p&gt;
+&lt;h3 id=&quot;crystal&quot;&gt;Crystal 설치&lt;/h3&gt;
+&lt;p&gt;Noir는 Crystal 프로그래밍 언어로 구축되었습니다. 주요 플랫폼에 대한 빠른 설치 방법은 다음과 같습니다:&lt;/p&gt;
+&lt;h4 id=&quot;ubuntudebian&quot;&gt;Ubuntu/Debian&lt;/h4&gt;
+&lt;pre&gt;&lt;code class=&quot;language-sh hljs&quot;&gt;curl -fsSL https://crystal-lang.org/install.sh | sudo bash
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h4 id=&quot;macos-homebrew&quot;&gt;macOS (Homebrew)&lt;/h4&gt;
+&lt;pre&gt;&lt;code class=&quot;language-sh hljs&quot;&gt;brew install crystal
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h4 id=&quot;-2&quot;&gt;기타 플랫폼&lt;/h4&gt;
+&lt;p&gt;다른 플랫폼의 경우 공식 &lt;a href=&quot;https://crystal-lang.org/install/&quot;&gt;Crystal 설치 가이드&lt;/a&gt;를 참조하세요.&lt;/p&gt;
+&lt;h3 id=&quot;-3&quot;&gt;빌드 및 테스트&lt;/h3&gt;
+&lt;p&gt;Crystal이 설치되면 저장소를 클론하고 종속성을 설치할 수 있습니다:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&quot;language-sh hljs&quot;&gt;# 포크 클론
+git clone https://github.com/&amp;lt;YOUR-USERNAME&amp;gt;/noir
+cd noir
+
+# 종속성 설치
+shards install
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;프로젝트를 빌드하려면 다음을 실행하세요:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&quot;language-sh hljs&quot;&gt;shards build
+# 바이너리는 ./bin/noir에 위치합니다
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;유닛 및 기능 테스트를 실행하려면:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&quot;language-sh hljs&quot;&gt;crystal spec
+
+# 더 자세한 출력을 위해
+crystal spec -v
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3 id=&quot;-4&quot;&gt;린팅&lt;/h3&gt;
+&lt;p&gt;코드 린팅에는 &lt;code&gt;ameba&lt;/code&gt;를 사용합니다. 스타일 이슈를 확인하려면 다음을 실행하세요:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&quot;language-sh hljs&quot;&gt;bin/ameba.cr
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;스타일 이슈를 자동으로 수정하려면 다음을 실행할 수 있습니다:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&quot;language-sh hljs&quot;&gt;bin/ameba.cr --fix
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;또는 &lt;code&gt;just&lt;/code&gt; 명령을 사용하여 린터를 실행할 수 있습니다:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&quot;language-sh hljs&quot;&gt;just fix
+&lt;/code&gt;&lt;/pre&gt;
+</description>
+    </item>
+    <item>
+      <title>Nix 환경으로 빌드</title>
+      <link>/ko/development/nix_environment/</link>
+      <guid>/ko/development/nix_environment/</guid>
+      <description>&lt;p&gt;Nix를 사용하여 재현 가능한 개발 환경을 설정할 수 있습니다. 이 접근 방식은 다양한 개발 머신에서 일관성을 보장하고 종속성 관리를 단순화합니다.&lt;/p&gt;
+&lt;h2 id=&quot;nix&quot;&gt;Nix 설치&lt;/h2&gt;
+&lt;p&gt;Nix가 설치되어 있지 않다면 다음 명령으로 설치하세요:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&quot;language-sh hljs&quot;&gt;# 다중 사용자 설치 (Linux/macOS 권장)
+sh &amp;lt;(curl -L https://nixos.org/nix/install) --daemon
+
+# 단일 사용자 설치
+sh &amp;lt;(curl -L https://nixos.org/nix/install) --no-daemon
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;자세한 내용은 &lt;a href=&quot;https://nixos.org/download.html&quot;&gt;공식 Nix 설치 가이드&lt;/a&gt;를 참조하세요.&lt;/p&gt;
+&lt;h2 id=&quot;nix-flakes&quot;&gt;Nix Flakes를 사용한 설정&lt;/h2&gt;
+&lt;p&gt;이 프로젝트는 개발 환경 관리를 위해 Nix Flakes를 사용합니다.&lt;/p&gt;
+&lt;h3 id=&quot;flakes&quot;&gt;Flakes 활성화&lt;/h3&gt;
+&lt;p&gt;&lt;code&gt;~/.config/nix/nix.conf&lt;/code&gt; (또는 &lt;code&gt;/etc/nix/nix.conf&lt;/code&gt;)에 다음을 추가하세요:&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;experimental-features = nix-command flakes
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3 id=&quot;&quot;&gt;개발 셸 진입&lt;/h3&gt;
+&lt;pre&gt;&lt;code class=&quot;language-sh hljs&quot;&gt;cd noir
+nix develop
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;이렇게 하면 Crystal, shards 및 모든 종속성이 자동으로 설정됩니다.&lt;/p&gt;
+&lt;h2 id=&quot;docker-nix&quot;&gt;대안: Docker와 Nix 사용&lt;/h2&gt;
+&lt;p&gt;완전히 격리된 환경을 원한다면 Docker를 사용할 수 있습니다:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&quot;language-sh hljs&quot;&gt;docker run -it --rm -v $(pwd):/workspace -w /workspace nixos/nix bash
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;컨테이너 내부에서 개발 환경을 활성화합니다:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&quot;language-sh hljs&quot;&gt;nix develop
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;이렇게 하면 Noir 개발에 필요한 모든 종속성과 도구가 격리되고 재현 가능한 환경에 설정됩니다.&lt;/p&gt;
+&lt;h2 id=&quot;-1&quot;&gt;종속성 업데이트&lt;/h2&gt;
+&lt;p&gt;&lt;code&gt;shard.yml&lt;/code&gt; 파일을 업데이트할 때 (종속성 추가, 제거 또는 업데이트 시), &lt;code&gt;shards.nix&lt;/code&gt; 파일도 함께 재생성해야 합니다. 이를 통해 Nix 환경이 프로젝트 종속성과 동기화 상태를 유지할 수 있습니다.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;shard.yml&lt;/code&gt;을 수정한 후 &lt;code&gt;shards.nix&lt;/code&gt;를 업데이트하려면:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&quot;language-sh hljs&quot;&gt;nix-shell -p crystal2nix --run crystal2nix
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;이 명령은 &lt;code&gt;crystal2nix&lt;/code&gt; 도구를 사용하여 &lt;code&gt;shard.yml&lt;/code&gt; 구성을 기반으로 &lt;code&gt;shards.nix&lt;/code&gt; 파일을 자동으로 생성합니다.&lt;/p&gt;
+&lt;h2 id=&quot;-2&quot;&gt;장점&lt;/h2&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;재현성&lt;/strong&gt;: 모든 머신에서 동일한 환경&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;격리&lt;/strong&gt;: 시스템 전체 종속성과의 간섭 없음&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;일관성&lt;/strong&gt;: 모든 팀원이 동일한 도구 버전을 사용하도록 보장&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;간편한 설정&lt;/strong&gt;: 시작하기 위한 단일 명령&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&quot;-3&quot;&gt;다음 단계&lt;/h2&gt;
+&lt;p&gt;Nix 환경이 설정되면 표준 &lt;a href=&quot;../how_to_build/&quot;&gt;빌드 및 테스트 절차&lt;/a&gt;를 진행할 수 있습니다.&lt;/p&gt;
+</description>
+    </item>
+    <item>
+      <title>숨겨진 플래그로 디버그</title>
+      <link>/ko/development/debug_flags/</link>
+      <guid>/ko/development/debug_flags/</guid>
+      <description>&lt;p&gt;이 문서는 개발자 전용 숨겨진 플래그를 설명합니다. 해당 플래그들은 &lt;code&gt;--help&lt;/code&gt; 출력에 나타나지 않지만, 고급 실험과 디버깅 목적으로 사용할 수 있습니다. 이름과 동작은 사전 공지 없이 변경될 수 있습니다.&lt;/p&gt;
+&lt;p&gt;사용 가능한 플래그&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;--override-analyze-prompt&lt;/code&gt;
+&lt;ul&gt;
+&lt;li&gt;개별 파일 분석에 사용되는 내부 ANALYZE_PROMPT를 덮어씁니다.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;--override-llm-optimize-prompt&lt;/code&gt;
+&lt;ul&gt;
+&lt;li&gt;엔드포인트 최적화에 사용되는 내부 LLM_OPTIMIZE_PROMPT를 덮어씁니다.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;--override-bundle-analyze-prompt&lt;/code&gt;
+&lt;ul&gt;
+&lt;li&gt;번들(다중 파일) 분석에 사용되는 내부 BUNDLE_ANALYZE_PROMPT를 덮어씁니다.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;--override-filter-prompt&lt;/code&gt;
+&lt;ul&gt;
+&lt;li&gt;파일 필터링에 사용되는 내부 FILTER_PROMPT를 덮어씁니다.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;언제 사용하나요&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;분석/필터링/최적화 단계의 프롬프트 전략을 실험하거나 개선할 때&lt;/li&gt;
+&lt;li&gt;재빌드 없이 프롬프트를 빠르게 변경/반복 테스트하고 싶을 때&lt;/li&gt;
+&lt;li&gt;프롬프트 변화가 결과 품질에 미치는 영향을 비교하고 싶을 때&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;사용 팁&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;공백과 특수문자를 보존하려면 프롬프트 문자열을 따옴표로 감싸세요.&lt;/li&gt;
+&lt;li&gt;길고 여러 줄인 프롬프트는 파일로 분리하고 명령 치환(&lt;code&gt;$(cat ...)&lt;/code&gt;)으로 읽어오면 관리가 쉽습니다.&lt;/li&gt;
+&lt;li&gt;먼저 작은 고정 픽스처(예: &lt;code&gt;spec/functional_test/fixtures/...&lt;/code&gt;)로 동작을 검증한 뒤 범위를 넓히세요.&lt;/li&gt;
+&lt;li&gt;중간 결과를 자세히 보고 싶다면 &lt;code&gt;--verbose&lt;/code&gt;와 함께 사용하세요.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;예시&lt;/p&gt;
+&lt;p&gt;짧은 리터럴 문자열로 분석 프롬프트 덮어쓰기(개별 파일 분석)&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&quot;language-bash hljs&quot;&gt;./bin/noir -b spec/functional_test/fixtures/crystal \
+  --override-analyze-prompt &apos;HTTP 엔드포인트와 파라미터를 식별하고, 간결한 구조화된 결과를 반환하라.&apos;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;파일에서 여러 줄 프롬프트 읽어오기(분석 프롬프트)&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&quot;language-bash hljs&quot;&gt;./bin/noir -b spec/functional_test/fixtures/crystal \
+  --override-analyze-prompt &amp;quot;$(cat prompts/analyze_prompt.txt)&amp;quot;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;LLM 최적화 프롬프트 덮어쓰기&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&quot;language-bash hljs&quot;&gt;./bin/noir -b spec/functional_test/fixtures/crystal \
+  --override-llm-optimize-prompt &amp;quot;$(cat prompts/llm_optimize_prompt.txt)&amp;quot;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;번들(다중 파일) 분석 프롬프트 덮어쓰기&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&quot;language-bash hljs&quot;&gt;./bin/noir -b spec/functional_test/fixtures/crystal \
+  --override-bundle-analyze-prompt &amp;quot;$(cat prompts/bundle_analyze_prompt.txt)&amp;quot;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;파일 필터링 프롬프트 덮어쓰기&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&quot;language-bash hljs&quot;&gt;./bin/noir -b spec/functional_test/fixtures/crystal \
+  --override-filter-prompt &apos;HTTP 라우트나 미들웨어를 선언할 가능성이 있는 애플리케이션 소스만 선택하라.&apos;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;스크린샷 예시&lt;/p&gt;
+&lt;p&gt;플래그 없이 실행:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&quot;language-bash hljs&quot;&gt;./bin/noir -b ./spec/functional_test/fixtures/crystal/kemal --ai-provider=lmstudio --ai-model=kanana-nano-2.1b-instruct --exclude-techs kemal --cache-disable
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img loading=&quot;lazy&quot; src=&quot;images/noflag.jpg&quot; alt=&quot;No hidden flag result&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;--override-analyze-prompt 사용:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&quot;language-bash hljs&quot;&gt;./bin/noir -b ./spec/functional_test/fixtures/crystal/kemal --ai-provider=lmstudio --ai-model=kanana-nano-2.1b-instruct --exclude-techs kemal --cache-disable --override-analyze-prompt &amp;quot;This is custom prompt for testttttt&amp;quot;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img loading=&quot;lazy&quot; src=&quot;images/withflag.jpg&quot; alt=&quot;With hidden flag result&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;주의사항&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;숨겨진 플래그는 개발용이며, 향후 예고 없이 변경되거나 제거될 수 있습니다.&lt;/li&gt;
+&lt;li&gt;프롬프트 내용과 LLM 동작에 따라 출력이 불안정하거나 실행마다 달라질 수 있습니다.&lt;/li&gt;
+&lt;li&gt;셸이 문자를 예기치 않게 해석한다면 리터럴 문자열에는 작은따옴표를, 복잡한 내용은 파일 입력 방식을 권장합니다.&lt;/li&gt;
+&lt;li&gt;최적화 단계 등 LLM 기능을 사용하는 워크플로우라면 관련 환경 설정(API 키 등)을 사전에 준비하세요.&lt;/li&gt;
+&lt;/ul&gt;
+</description>
+    </item>
+    <item>
+      <title>릴리스 방법</title>
+      <link>/ko/development/how_to_release/</link>
+      <guid>/ko/development/how_to_release/</guid>
+      <description>&lt;p&gt;이 문서는 Noir의 새로운 릴리스를 생성하고 게시하는 프로세스를 설명합니다. 프로젝트 관리자를 위한 문서입니다.&lt;/p&gt;
+&lt;h2 id=&quot;&quot;&gt;릴리스 채널&lt;/h2&gt;
+&lt;p&gt;Noir는 여러 채널을 통해 배포됩니다. 일부는 GitHub Actions를 통해 자동으로 업데이트되며, 다른 것들은 수동 개입이 필요합니다.&lt;/p&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;채널&lt;/th&gt;
+&lt;th&gt;패키지 이름 및 링크&lt;/th&gt;
+&lt;th&gt;릴리스 프로세스&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;Homebrew (Core)&lt;/td&gt;
+&lt;td&gt;[noir](https://formulae.brew.sh/formula/noir)&lt;/td&gt;
+&lt;td&gt;수동&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Homebrew (Tap)&lt;/td&gt;
+&lt;td&gt;`owasp-noir/noir`&lt;/td&gt;
+&lt;td&gt;자동화&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Snapcraft&lt;/td&gt;
+&lt;td&gt;[noir](https://snapcraft.io/noir)&lt;/td&gt;
+&lt;td&gt;자동화&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Docker Hub&lt;/td&gt;
+&lt;td&gt;[ghcr.io/owasp-noir/noir](https://github.com/owasp-noir/noir/pkgs/container/noir)&lt;/td&gt;
+&lt;td&gt;자동화&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;OWASP 프로젝트 페이지&lt;/td&gt;
+&lt;td&gt;[OWASP/www-project-noir](https://github.com/OWASP/www-project-noir)&lt;/td&gt;
+&lt;td&gt;수동&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h2 id=&quot;-1&quot;&gt;일반 절차&lt;/h2&gt;
+&lt;ol&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;버전 업데이트&lt;/strong&gt;: Noir 소스 코드와 관련 문서의 패키지 버전이 업데이트되었는지 확인합니다.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;버전 일관성 확인&lt;/strong&gt;: 릴리스를 생성하기 전에 버전 일관성 검사를 실행하여 모든 파일의 버전 번호가 일치하는지 확인합니다:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&quot;language-bash hljs&quot;&gt;just version-check
+# 또는
+just vc
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;이 명령은 추적되는 13개 파일의 버전 문자열이 모두 &lt;code&gt;shard.yml&lt;/code&gt;의 버전과 일치하는지 확인합니다. 릴리스를 진행하기 전에 모든 검사가 통과(✅ 표시)해야 합니다.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;GitHub 릴리스 생성&lt;/strong&gt;: &lt;a href=&quot;https://github.com/owasp-noir/noir/releases&quot;&gt;GitHub 릴리스 페이지&lt;/a&gt;에서 새 릴리스를 생성합니다. 이는 자동화된 릴리스 워크플로를 트리거합니다.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;수동 릴리스&lt;/strong&gt;: 자동화되지 않은 채널에 대해서는 수동 릴리스 절차를 따릅니다.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h2 id=&quot;-2&quot;&gt;수동 릴리스 지침&lt;/h2&gt;
+&lt;h3 id=&quot;homebrew-core&quot;&gt;Homebrew (Core)&lt;/h3&gt;
+&lt;p&gt;메인 Homebrew 공식을 업데이트하려면 &lt;code&gt;homebrew-core&lt;/code&gt; 저장소에 풀 리퀘스트를 제출해야 합니다.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;포크 및 동기화&lt;/strong&gt;: &lt;a href=&quot;https://github.com/Homebrew/homebrew-core&quot;&gt;Homebrew/homebrew-core&lt;/a&gt; 저장소의 포크가 있고 최신 상태인지 확인합니다.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;Bump 명령 실행&lt;/strong&gt;: &lt;code&gt;brew bump-formula-pr&lt;/code&gt; 명령을 사용하여 새 버전으로 풀 리퀘스트를 자동으로 생성합니다.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&quot;language-bash hljs&quot;&gt;brew bump-formula-pr --strict --version &amp;lt;VERSION&amp;gt; noir
+# 예: brew bump-formula-pr --strict --version 0.28.0 noir
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;스타일 확인&lt;/strong&gt;: (선택사항) 변경 사항이 Homebrew의 스타일 가이드라인을 충족하는지 확인하려면 다음을 실행할 수 있습니다:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&quot;language-bash hljs&quot;&gt;cd $(brew --repository)/Library/Taps/homebrew/homebrew-core/Formula
+brew style noir.rb
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h3 id=&quot;owasp&quot;&gt;OWASP 프로젝트 페이지&lt;/h3&gt;
+&lt;p&gt;OWASP 프로젝트 페이지를 업데이트하려면 &lt;a href=&quot;https://github.com/OWASP/www-project-noir&quot;&gt;OWASP/www-project-noir&lt;/a&gt; 저장소에 풀 리퀘스트를 제출해야 합니다.&lt;/p&gt;
+&lt;p&gt;이 프로세스는 일반적으로 새로운 주요 기능이나 중요한 마일스톤이 있을 때만 필요합니다.&lt;/p&gt;
+</description>
+    </item>
+    <item>
+      <title>연락처</title>
+      <link>/ko/resources/contact/</link>
+      <guid>/ko/resources/contact/</guid>
+      <description>&lt;p&gt;저희는 항상 사용자들의 의견을 듣기를 기뻐합니다. 질문, 새로운 기능에 대한 제안, 또는 버그를 보고하고 싶으시든, OWASP Noir 팀과 연락할 수 있는 여러 가지 방법이 있습니다.&lt;/p&gt;
+&lt;h2 id=&quot;github&quot;&gt;GitHub&lt;/h2&gt;
+&lt;p&gt;저희와 연락하는 가장 좋은 방법은 &lt;a href=&quot;https://github.com/owasp-noir/noir&quot;&gt;GitHub 저장소&lt;/a&gt;를 통하는 것입니다.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;버그 보고 및 기능 요청&lt;/strong&gt;의 경우, &lt;a href=&quot;https://github.com/owasp-noir/noir/issues&quot;&gt;이슈&lt;/a&gt;를 열어주세요.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;일반적인 질문 및 토론&lt;/strong&gt;의 경우, &lt;a href=&quot;https://github.com/orgs/owasp-noir/discussions&quot;&gt;토론&lt;/a&gt; 페이지를 사용해 주세요.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&quot;&quot;&gt;프로젝트 리더&lt;/h2&gt;
+&lt;p&gt;OWASP Noir는 두 명의 공동 리더가 이끌고 있습니다. 업데이트를 받아보거나 직접 연락할 수 있습니다:&lt;/p&gt;
+&lt;p&gt;&lt;div class=&quot;members-grid&quot; style=&quot;grid-template-columns: repeat(2, 1fr);&quot;&gt;
+  HAHWUL | 공동 리더, 창시자 | ./hahwul.jpeg | [𝕏](https://x.com/hahwul) [GitHub](https://github.com/hahwul)
+KSG | 공동 리더 | ./ksg.jpeg | [GitHub](https://github.com/ksg97031)
+&lt;/div&gt;&lt;/p&gt;
+</description>
+    </item>
+    <item>
+      <title>아트워크</title>
+      <link>/ko/resources/artwork/</link>
+      <guid>/ko/resources/artwork/</guid>
+      <description>&lt;p&gt;OWASP Noir 프로젝트는 공식 아트워크 전용 저장소를 운영하고 있습니다. 여기에는 로고, 마스코트 및 기타 시각적 리소스가 포함되어 있으며, 프로젝트와 관련된 모든 브랜딩 자료의 중앙 저장소 역할을 합니다.&lt;/p&gt;
+&lt;p&gt;&lt;img loading=&quot;lazy&quot; src=&quot;banner.jpg&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;h2 id=&quot;&quot;&gt;제공되는 자료&lt;/h2&gt;
+&lt;p&gt;아트워크 저장소에는 다음이 포함됩니다:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;공식 로고&lt;/strong&gt;: 다양한 형식과 색상 조합의 Noir 로고&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;마스코트&lt;/strong&gt;: 공식 마스코트 디자인 및 일러스트레이션&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;브랜드 가이드라인&lt;/strong&gt;: Noir 브랜딩의 올바른 사용법에 대한 정보&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;기타 리소스&lt;/strong&gt;: 프레젠테이션 및 문서화를 위한 추가 시각적 자산&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&quot;-1&quot;&gt;아트워크 액세스&lt;/h2&gt;
+&lt;p&gt;OWASP Noir의 모든 공식 아트워크는 GitHub 저장소에서 찾을 수 있습니다:&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;&lt;a href=&quot;https://github.com/owasp-noir/noir-artwork&quot;&gt;OWASP Noir 아트워크 저장소&lt;/a&gt;&lt;/strong&gt;&lt;/p&gt;
+&lt;h2 id=&quot;-2&quot;&gt;기여하기&lt;/h2&gt;
+&lt;p&gt;새로운 아트워크에 대한 제안이나 기존 디자인 개선 사항이 있다면, 아트워크 저장소에 이슈나 토론을 자유롭게 열어주세요.&lt;/p&gt;
+</description>
+    </item>
+    <item>
+      <title>FAQ</title>
+      <link>/ko/resources/faq/</link>
+      <guid>/ko/resources/faq/</guid>
+      <description>&lt;h3 id=&quot;owasp-noir&quot;&gt;OWASP Noir란 무엇인가요?&lt;/h3&gt;
+&lt;p&gt;OWASP Noir는 애플리케이션의 공격 표면을 찾는 데 도움이 되는 오픈 소스 도구입니다. 소스 코드에 대한 정적 분석을 수행하여 API 엔드포인트, 웹 페이지 및 기타 잠재적 진입점을 발견합니다.&lt;/p&gt;
+&lt;h3 id=&quot;noir&quot;&gt;Noir를 어떻게 설치하나요?&lt;/h3&gt;
+&lt;p&gt;Homebrew, Snapcraft, Docker를 포함한 다양한 방법으로 Noir를 설치할 수 있습니다. 자세한 지침은 &lt;a href=&quot;@/get_started/installation/index.md&quot;&gt;설치&lt;/a&gt; 페이지를 참조하세요.&lt;/p&gt;
+&lt;h3 id=&quot;noir-1&quot;&gt;Noir는 어떤 언어와 프레임워크를 지원하나요?&lt;/h3&gt;
+&lt;p&gt;Noir는 광범위한 프로그래밍 언어와 프레임워크를 지원합니다. 전체 목록은 &lt;a href=&quot;@/usage/supported/language_and_frameworks/index.md&quot;&gt;지원되는 언어 및 프레임워크&lt;/a&gt; 페이지를 참조하세요.&lt;/p&gt;
+&lt;h3 id=&quot;noir-2&quot;&gt;Noir에 어떻게 기여할 수 있나요?&lt;/h3&gt;
+&lt;p&gt;커뮤니티의 기여를 환영합니다! 시작하려면 &lt;a href=&quot;https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md&quot;&gt;기여 가이드&lt;/a&gt;를 읽어보세요.&lt;/p&gt;
+&lt;h3 id=&quot;noir-3&quot;&gt;Noir는 무료인가요?&lt;/h3&gt;
+&lt;p&gt;네, OWASP Noir는 완전히 무료이며 오픈 소스입니다. MIT 라이선스 하에 배포되므로 상업적 용도로도 자유롭게 사용할 수 있습니다.&lt;/p&gt;
+&lt;h3 id=&quot;noir-4&quot;&gt;다른 보안 도구와 Noir를 어떻게 통합할 수 있나요?&lt;/h3&gt;
+&lt;p&gt;Noir는 ZAP, Burp Suite, Caido와 같은 인기 있는 보안 도구와 쉽게 통합할 수 있습니다. 자세한 내용은 &lt;a href=&quot;@/usage/more_features/pipeline-for-dast/index.md&quot;&gt;DAST 파이프라인&lt;/a&gt; 가이드를 참조하세요.&lt;/p&gt;
+&lt;h3 id=&quot;noir-5&quot;&gt;Noir가 발견한 결과를 어떻게 내보낼 수 있나요?&lt;/h3&gt;
+&lt;p&gt;Noir는 JSON, YAML, OpenAPI 명세, cURL 명령 등 다양한 출력 형식을 지원합니다. 자세한 내용은 &lt;a href=&quot;@/usage/output_formats/_index.md&quot;&gt;출력 형식&lt;/a&gt; 섹션을 참조하세요.&lt;/p&gt;
+&lt;h3 id=&quot;&quot;&gt;버그를 발견했거나 기능을 요청하고 싶다면 어떻게 해야 하나요?&lt;/h3&gt;
+&lt;p&gt;&lt;a href=&quot;https://github.com/owasp-noir/noir/issues&quot;&gt;GitHub 이슈&lt;/a&gt;를 열어 버그를 보고하거나 새로운 기능을 요청해 주세요. 가능한 한 많은 세부 정보를 제공해 주시면 도움이 됩니다.&lt;/p&gt;
+</description>
+    </item>
+    <item>
+      <title>구성 파일 사용하기</title>
+      <link>/ko/usage/configurations/configuration_file/</link>
+      <guid>/ko/usage/configurations/configuration_file/</guid>
+      <description>&lt;p&gt;Noir 실행을 더 쉽고 일관되게 만들기 위해 구성 파일을 사용하여 많은 명령줄 플래그의 기본값을 설정할 수 있습니다. 이렇게 하면 스캔을 실행할 때마다 같은 옵션을 입력할 필요가 없습니다.&lt;/p&gt;
+&lt;h2 id=&quot;&quot;&gt;구성 파일 위치&lt;/h2&gt;
+&lt;p&gt;Noir는 운영 체제에 따라 특정 디렉토리에서 &lt;code&gt;config.yaml&lt;/code&gt;이라는 파일을 찾습니다:&lt;/p&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;OS&lt;/th&gt;
+&lt;th&gt;경로&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;macOS&lt;/td&gt;
+&lt;td&gt;`~/.config/noir/`&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Linux&lt;/td&gt;
+&lt;td&gt;`~/.config/noir/`&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Windows&lt;/td&gt;
+&lt;td&gt;`%APPDATA%\noir\`&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;이 파일에서 정의한 모든 설정이 기본값으로 사용되지만 명령줄에서 다른 값을 제공하여 언제든지 재정의할 수 있습니다.&lt;/p&gt;
+&lt;h2 id=&quot;noir&quot;&gt;Noir 홈 디렉터리 구조&lt;/h2&gt;
+&lt;p&gt;Noir는 동일한 홈 디렉터리 경로 아래에 구성과 캐시를 저장합니다(위 표의 경로 참고). 일반적인 구조는 다음과 같습니다:&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;~/.config/noir/
+├── config.yaml          # 기본 구성 파일
+├── cache/
+│   └── ai/              # AI 기반 분석을 위한 LLM 응답 캐시
+└── passive_rules/       # Passive Scan을 위한 룰 디렉토리
+&lt;/code&gt;&lt;/pre&gt;
+&lt;ul&gt;
+&lt;li&gt;config.yaml: 기본 구성 파일&lt;/li&gt;
+&lt;li&gt;cache/ai: 반복 분석 속도 향상과 비용 절감을 위한 AI 응답 캐시 저장 위치&lt;/li&gt;
+&lt;li&gt;passive_rules: Passive Scan 규칙 파일 저장 위치&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&quot;configyaml&quot;&gt;&lt;code&gt;config.yaml&lt;/code&gt; 예제&lt;/h2&gt;
+&lt;p&gt;다음은 일반적인 설정이 포함된 &lt;code&gt;config.yaml&lt;/code&gt; 파일의 예제입니다:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&quot;language-yaml hljs&quot;&gt;---
+# 스캔의 기본 베이스 경로
+base: &amp;quot;/path/to/my/project&amp;quot;
+
+# 출력에서 항상 색상 사용
+color: true
+
+# 기본 출력 형식
+format: &amp;quot;json&amp;quot;
+
+# 특정 상태 코드 제외
+exclude_codes: &amp;quot;404,500&amp;quot;
+
+# 기본적으로 모든 태거 활성화
+all_taggers: true
+
+# 기본 AI 제공자 및 모델
+ai_provider: &amp;quot;openai&amp;quot;
+ai_model: &amp;quot;gpt-4o&amp;quot;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;이 구성으로 단순히 &lt;code&gt;noir&lt;/code&gt;를 실행하면 다음 명령과 동일합니다:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&quot;language-bash hljs&quot;&gt;noir -b /path/to/my/project -f json --exclude-codes &amp;quot;404,500&amp;quot; -T --ai-provider openai --ai-model gpt-4o
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;구성 파일을 사용하면 특정 요구사항에 맞춤화된 개인화되고 효율적인 워크플로를 만들 수 있습니다.&lt;/p&gt;
+</description>
+    </item>
+    <item>
+      <title>셸 자동완성</title>
+      <link>/ko/usage/configurations/shell-completion/</link>
+      <guid>/ko/usage/configurations/shell-completion/</guid>
+      <description>&lt;p&gt;셸 자동완성은 명령줄을 사용할 때 더 효율적으로 만들어주는 강력한 기능입니다. Noir에 대해 활성화하면 입력하는 동안 명령어와 플래그에 대한 제안을 받을 수 있어 오타를 줄이고 모든 옵션을 기억할 필요가 없습니다.&lt;/p&gt;
+&lt;p&gt;Noir는 여러 인기 있는 셸에 대한 자동완성 스크립트를 생성할 수 있습니다. 설정 방법은 다음과 같습니다.&lt;/p&gt;
+&lt;h2 id=&quot;zsh&quot;&gt;Zsh&lt;/h2&gt;
+&lt;p&gt;Zsh에 대한 자동완성을 활성화하려면 먼저 자동완성 스크립트를 생성해야 합니다:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&quot;language-bash hljs&quot;&gt;noir --generate-completion zsh
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;이렇게 하면 스크립트가 터미널에 출력됩니다. 활성화하려면 Zsh 자동완성 디렉토리에 저장해야 합니다. 일반적인 위치는 &lt;code&gt;~/.zsh/completion/&lt;/code&gt;입니다. Zsh의 규칙에 따라 파일 이름을 &lt;code&gt;_noir&lt;/code&gt;로 지정해야 합니다.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&quot;language-bash hljs&quot;&gt;# 디렉토리가 없으면 생성
+mkdir -p ~/.zsh/completion
+
+# 스크립트를 올바른 위치에 저장
+noir --generate-completion zsh &amp;gt; ~/.zsh/completion/_noir
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h2 id=&quot;bash&quot;&gt;Bash&lt;/h2&gt;
+&lt;p&gt;Bash의 경우 과정은 비슷합니다. 먼저 스크립트를 생성합니다:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&quot;language-bash hljs&quot;&gt;noir --generate-completion bash
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Bash 자동완성 스크립트의 위치는 다양할 수 있지만, 사용자별 자동완성을 위한 좋은 장소는 &lt;code&gt;~/.local/share/bash-completion/completions/&lt;/code&gt;입니다. 스크립트를 거기에 저장하세요.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&quot;language-bash hljs&quot;&gt;# 디렉토리가 없으면 생성
+mkdir -p ~/.local/share/bash-completion/completions
+
+# 스크립트 저장
+noir --generate-completion bash &amp;gt; ~/.local/share/bash-completion/completions/noir
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h2 id=&quot;fish&quot;&gt;Fish&lt;/h2&gt;
+&lt;p&gt;Fish 셸의 경우 다음과 같이 스크립트를 생성합니다:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&quot;language-bash hljs&quot;&gt;noir --generate-completion fish
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Fish는 자동완성 스크립트를 &lt;code&gt;~/.config/fish/completions/&lt;/code&gt;에 보관합니다. 해당 디렉토리에 &lt;code&gt;noir.fish&lt;/code&gt;라는 이름의 파일로 출력을 저장해야 합니다.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&quot;language-bash hljs&quot;&gt;# 디렉토리가 없으면 생성
+mkdir -p ~/.config/fish/completions
+
+# 스크립트 저장
+noir --generate-completion fish &amp;gt; ~/.config/fish/completions/noir.fish
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h2 id=&quot;homebrew&quot;&gt;Homebrew 사용자&lt;/h2&gt;
+&lt;p&gt;Homebrew를 사용하여 Noir를 설치했다면 셸 자동완성이 자동으로 설치됩니다. 추가 설정이 필요하지 않으며 바로 작동합니다.&lt;/p&gt;
+</description>
+    </item>
+    <item>
+      <title>Diff 모드로 코드 비교하기</title>
+      <link>/ko/usage/more_features/diff/</link>
+      <guid>/ko/usage/more_features/diff/</guid>
+      <description>&lt;p&gt;Diff 모드는 Noir의 강력한 기능으로 코드베이스의 두 버전을 비교하고 발견된 엔드포인트 측면에서 정확히 무엇이 변경되었는지 볼 수 있습니다. 이는 코드 리뷰, 보안 평가, 새로운 기능의 영향을 이해하는 데 매우 유용할 수 있습니다.&lt;/p&gt;
+&lt;p&gt;diff 모드를 사용하려면 &lt;code&gt;-b&lt;/code&gt; 플래그로 베이스 경로(코드의 새 버전을 나타냄)를 제공하고 &lt;code&gt;--diff-path&lt;/code&gt; 플래그로 비교 경로(코드의 이전 버전을 나타냄)를 제공합니다.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&quot;language-bash hljs&quot;&gt;noir -b &amp;lt;NEW_VERSION_PATH&amp;gt; --diff-path &amp;lt;OLD_VERSION_PATH&amp;gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h2 id=&quot;&quot;&gt;출력 이해하기&lt;/h2&gt;
+&lt;p&gt;diff 모드의 출력은 두 버전 간에 추가, 제거 또는 변경된 엔드포인트를 보여줍니다.&lt;/p&gt;
+&lt;h3 id=&quot;-1&quot;&gt;일반 텍스트 출력&lt;/h3&gt;
+&lt;p&gt;기본 일반 텍스트 출력에서는 변경사항의 간단한 요약을 얻습니다:&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;[*] ============== DIFF ==============
+[I] Added: / GET
+[I] Added: /update POST
+[I] Removed: /secret.html GET
+[I] Removed: /posts GET
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3 id=&quot;json-yaml&quot;&gt;JSON 및 YAML 출력&lt;/h3&gt;
+&lt;p&gt;더 자세하고 기계가 읽을 수 있는 출력을 원한다면 JSON 또는 YAML 형식(&lt;code&gt;-f json&lt;/code&gt; 또는 &lt;code&gt;-f yaml&lt;/code&gt;)을 사용할 수 있습니다. 이는 전체 세부사항을 포함하여 추가, 제거 및 변경된 엔드포인트의 구조화된 보기를 제공합니다.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&quot;language-json hljs&quot;&gt;{
+  &amp;quot;added&amp;quot;: [
+    {
+      &amp;quot;url&amp;quot;: &amp;quot;/&amp;quot;,
+      &amp;quot;method&amp;quot;: &amp;quot;GET&amp;quot;,
+      // ... 전체 엔드포인트 세부사항
+    }
+  ],
+  &amp;quot;removed&amp;quot;: [
+    {
+      &amp;quot;url&amp;quot;: &amp;quot;/secret.html&amp;quot;,
+      &amp;quot;method&amp;quot;: &amp;quot;GET&amp;quot;,
+      // ... 전체 엔드포인트 세부사항
+    }
+  ],
+  &amp;quot;changed&amp;quot;: []
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;diff 모드를 사용하면 더 효율적인 CI/CD 파이프라인을 구축할 수 있습니다. 예를 들어, DAST(Dynamic Application Security Testing) 도구를 구성하여 새 릴리스에서 추가되거나 수정된 엔드포인트만 스캔하도록 하여 시간과 자원을 절약할 수 있습니다.&lt;/p&gt;
+</description>
+    </item>
+  </channel>
+</rss>

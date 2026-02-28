@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="{{ page.lang | default("en") }}">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="{{ page.description | default(site.description) }}">
+  <title>{% if page.title %}{{ page.title }} - {{ site.title }}{% else %}{{ site.title }}{% endif %}</title>
+  {{ og_all_tags }}
+  <link rel="icon" href="{{ base_url }}/favicon.ico" sizes="any">
+  <link rel="icon" href="{{ base_url }}/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="{{ base_url }}/favicon-96x96.png" type="image/png" sizes="96x96">
+  <link rel="apple-touch-icon" href="{{ base_url }}/apple-touch-icon.png">
+  <link rel="manifest" href="{{ base_url }}/site.webmanifest">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ base_url }}/css/style.css">
+  {{ highlight_css }}
+  {{ auto_includes_css }}
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="header-left">
+        <button class="hamburger" id="hamburger-toggle" aria-label="Toggle navigation">
+          <span></span><span></span><span></span>
+        </button>
+        <a href="{{ base_url }}/" class="header-logo">
+          <img src="{{ base_url }}/images/logo.png" alt="OWASP Noir" class="header-logo-img">
+          <span class="header-logo-text">OWASP Noir</span>
+        </a>
+      </div>
+      <nav class="header-nav">
+        <a href="{{ base_url }}/get_started/overview/">Get Started</a>
+        <a href="{{ base_url }}/usage/supported/language_and_frameworks/">Usage</a>
+        <a href="{{ base_url }}/development/how_to_build/">Development</a>
+        <a href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer">GitHub</a>
+      </nav>
+      <div class="header-right">
+        <button class="search-trigger" id="search-trigger" aria-label="Search">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <span class="search-shortcut">Ctrl+K</span>
+        </button>
+        <div class="lang-switcher" id="lang-switcher">
+          <a href="#" class="lang-link" data-lang="en">EN</a>
+          <a href="#" class="lang-link" data-lang="ko">KO</a>
+        </div>
+        <script>
+        (function(){
+          var base = '{{ base_url }}';
+          var path = window.location.pathname;
+          var isKo = path.startsWith(base + '/ko/') || path === base + '/ko';
+          var switcher = document.getElementById('lang-switcher');
+          var links = switcher.querySelectorAll('.lang-link');
+          for (var i = 0; i < links.length; i++) {
+            var lang = links[i].getAttribute('data-lang');
+            if ((lang === 'ko' && isKo) || (lang === 'en' && !isKo)) {
+              links[i].classList.add('active');
+            }
+            if (lang === 'ko') {
+              if (isKo) {
+                links[i].href = path;
+              } else {
+                var rel = path.replace(base, '') || '/';
+                links[i].href = base + '/ko' + rel;
+              }
+            } else {
+              if (isKo) {
+                var rel = path.replace(base + '/ko', '') || '/';
+                links[i].href = base + rel;
+              } else {
+                links[i].href = path;
+              }
+            }
+          }
+        })();
+        </script>
+      </div>
+    </div>
+  </header>
+  <div class="site-overlay" id="site-overlay"></div>

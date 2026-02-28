@@ -1,0 +1,19 @@
+{% include "header.html" %}
+  <div class="landing">
+    {{ content }}
+  </div>
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <div class="footer-branding">
+        <a href="https://owasp.org" target="_blank" rel="noopener noreferrer">
+          <img src="{{ base_url }}/images/owasp.png" alt="OWASP" class="footer-owasp-logo">
+        </a>
+        <span class="footer-sep">&middot;</span>
+        <span>Powered by <a href="https://github.com/hahwul/hwaro">Hwaro</a></span>
+      </div>
+    </div>
+  </footer>
+  {{ highlight_js }}
+  {{ auto_includes_js }}
+</body>
+</html>
