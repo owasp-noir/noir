@@ -4,7 +4,6 @@ description = "Noir supports a wide range of output formats to help you make the
 weight = 2
 sort_by = "weight"
 
-[extra]
 +++
 
 Noir is built to be a versatile tool that can fit into any workflow. A key part of this flexibility is the ability to output scan results in a variety of formats. Whether you need a machine-readable format for automation or a human-readable one for manual review, Noir has you covered.

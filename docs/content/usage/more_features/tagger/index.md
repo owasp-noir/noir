@@ -1,10 +1,9 @@
 +++
 title = "Using the Tagger for Contextual Analysis"
-description = "Learn how to use Noir's Tagger feature to automatically add contextual tags to endpoints and parameters. This can help you quickly identify interesting or potentially vulnerable areas of your application."
+description = "Automatically tag endpoints and parameters to identify potential security risks."
 weight = 3
 sort_by = "weight"
 
-[extra]
 +++
 
 Automatically add descriptive tags to endpoints and parameters to identify functionality and potential security risks (e.g., SQL injection, authentication endpoints).

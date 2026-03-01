@@ -1,10 +1,9 @@
 +++
 title = "Using Noir with xAI"
-description = "Learn how to integrate Noir with xAI's Grok models for advanced code analysis. This guide covers how to set up your xAI API key and run Noir to get deep insights into your endpoints."
+description = "Integrate Noir with xAI Grok models for code analysis."
 weight = 5
 sort_by = "weight"
 
-[extra]
 +++
 
 Use [xAI](https://x.ai) Grok models for advanced code analysis and endpoint discovery.
@@ -25,8 +24,5 @@ noir -b ./spec/functional_test/fixtures/hahwul \
      --ai-key=xai-...
 ```
 
-xAI provides:
-*   Complex endpoint analysis
-*   Security vulnerability identification
-*   Code improvement suggestions
+xAI enables endpoint analysis, security vulnerability identification, and code improvement suggestions.
 

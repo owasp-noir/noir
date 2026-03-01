@@ -1,0 +1,27 @@
+name: Hwaro on GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "docs/**"
+      - ".github/workflows/hwaro.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    name: Build and deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Build and Deploy
+        uses: hahwul/hwaro@main
+        with:
+          build_dir: "docs"
+          token: ${{ secrets.GITHUB_TOKEN }}

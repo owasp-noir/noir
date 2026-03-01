@@ -4,34 +4,29 @@ description = "Developer-only flags not shown in --help for debugging and experi
 weight = 3
 sort_by = "weight"
 
-[extra]
 +++
 
-These are developer-only flags. They do not appear in the CLI help output, but they are available for advanced experimentation and debugging. Names, behavior, and availability may change without notice.
+Developer-only flags that do not appear in `--help` output. Names, behavior, and availability may change without notice.
 
 Available flags
 
-- `--override-analyze-prompt`
-  - Overrides the internal ANALYZE_PROMPT used for individual file analysis.
-- `--override-llm-optimize-prompt`
-  - Overrides the internal LLM_OPTIMIZE_PROMPT used for endpoint optimization.
-- `--override-bundle-analyze-prompt`
-  - Overrides the internal BUNDLE_ANALYZE_PROMPT used for bundled (multi-file) analysis.
-- `--override-filter-prompt`
-  - Overrides the internal FILTER_PROMPT used for file filtering.
+- `--override-analyze-prompt` — Overrides the internal ANALYZE_PROMPT for individual file analysis.
+- `--override-llm-optimize-prompt` — Overrides the internal LLM_OPTIMIZE_PROMPT for endpoint optimization.
+- `--override-bundle-analyze-prompt` — Overrides the internal BUNDLE_ANALYZE_PROMPT for bundled (multi-file) analysis.
+- `--override-filter-prompt` — Overrides the internal FILTER_PROMPT for file filtering.
 
 When to use these flags
 
-- You are developing or testing new prompt strategies for analysis, filtering, or optimization.
-- You need to rapidly iterate without rebuilding.
-- You want to compare the impact of prompt variations on output quality.
+- Testing new prompt strategies for analysis, filtering, or optimization
+- Rapidly iterating without rebuilding
+- Comparing prompt variations' impact on output quality
 
-General usage tips
+Usage tips
 
-- Quote your prompt strings to preserve spaces and special characters.
-- For long, multi-line prompts, read from a file with command substitution.
-- Start with a small fixture directory to validate behavior before scaling up.
-- Combine with `--verbose` to inspect intermediate steps more easily.
+- Quote prompt strings to preserve spaces and special characters.
+- For multi-line prompts, read from a file with command substitution.
+- Validate with a small fixture directory before scaling up.
+- Combine with `--verbose` to inspect intermediate steps.
 
 Examples
 
@@ -56,14 +51,14 @@ Override the LLM optimizer prompt
   --override-llm-optimize-prompt "$(cat prompts/llm_optimize_prompt.txt)"
 ```
 
-Override the bundled analysis prompt (for multi-file reasoning)
+Override the bundled analysis prompt (multi-file reasoning)
 
 ```bash
 ./bin/noir -b spec/functional_test/fixtures/crystal \
   --override-bundle-analyze-prompt "$(cat prompts/bundle_analyze_prompt.txt)"
 ```
 
-Override the file filtering prompt (affects which files are analyzed)
+Override the file filtering prompt
 
 ```bash
 ./bin/noir -b spec/functional_test/fixtures/crystal \
@@ -72,10 +67,10 @@ Override the file filtering prompt (affects which files are analyzed)
 
 Notes and caveats
 
-- Hidden flags are intended for development and may be removed or changed without notice.
-- Output may be unstable or differ significantly across runs, depending on the prompt content and LLM behavior.
-- If your shell expands characters unexpectedly, prefer single quotes for literal strings or read prompts from files.
-- Ensure your environment is configured for LLM-backed features if your workflow relies on optimization steps.
+- Hidden flags may be removed or changed without notice.
+- Output may vary across runs depending on prompt content and LLM behavior.
+- Use single quotes for literal strings if your shell expands characters unexpectedly, or read prompts from files.
+- Ensure LLM environment is configured (API keys, etc.) if your workflow relies on optimization steps.
 
 Screenshot examples
 

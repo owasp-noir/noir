@@ -1,10 +1,9 @@
 +++
 title = "Comparing Code with Diff Mode"
-description = "Learn how to use Noir's diff mode to compare two different versions of a codebase and identify what has changed. This is a powerful feature for understanding the impact of code changes on your API."
+description = "Compare two codebase versions to identify endpoint changes."
 weight = 2
 sort_by = "weight"
 
-[extra]
 +++
 
 Compare two versions of a codebase to identify endpoint changes. Useful for code reviews, security assessments, and understanding feature impacts.

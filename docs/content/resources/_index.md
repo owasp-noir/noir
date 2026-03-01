@@ -4,7 +4,6 @@ description = "Find additional resources for OWASP Noir, including the changelog
 weight = 12
 sort_by = "weight"
 
-[extra]
 +++
 
 This section provides additional resources to help you get the most out of OWASP Noir.

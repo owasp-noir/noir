@@ -1,10 +1,9 @@
 +++
 title = "Using Noir with OpenAI"
-description = "This guide shows you how to connect Noir with OpenAI's powerful language models, like GPT-4o, to get advanced analysis of your code. Learn how to configure your API key and run Noir with OpenAI."
+description = "Connect Noir with OpenAI models like GPT-4o for AI-powered code analysis."
 weight = 4
 sort_by = "weight"
 
-[extra]
 +++
 
 Integrate Noir with [OpenAI](https://openai.com) to leverage language models like GPT-4o for advanced code analysis and endpoint detection.
@@ -25,8 +24,5 @@ noir -b ./spec/functional_test/fixtures/hahwul \
      --ai-key=sk-...
 ```
 
-OpenAI provides:
-*   Natural language descriptions of endpoints
-*   Identification of potential security vulnerabilities
-*   Code quality improvement suggestions
+OpenAI enables natural language endpoint descriptions, security vulnerability identification, and code quality suggestions.
 

@@ -4,7 +4,6 @@ description = "변경 로그, FAQ, 연락처 정보를 포함하여 OWASP Noir�
 weight = 12
 sort_by = "weight"
 
-[extra]
 +++
 
 이 섹션은 OWASP Noir를 최대한 활용하는 데 도움이 되는 추가 리소스를 제공합니다.

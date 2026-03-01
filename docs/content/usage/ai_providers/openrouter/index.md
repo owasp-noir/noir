@@ -1,10 +1,9 @@
 +++
 title = "Using Noir with OpenRouter"
-description = "Learn how to use OpenRouter with Noir to access multiple AI models through a unified API. This guide covers how to set up your OpenRouter API key and run Noir with various models."
+description = "Use OpenRouter with Noir to access multiple AI models through a unified API."
 weight = 7
 sort_by = "weight"
 
-[extra]
 +++
 
 Use [OpenRouter](https://openrouter.ai) to access multiple AI models (OpenAI, Anthropic, Google, Meta, etc.) through a single unified API.

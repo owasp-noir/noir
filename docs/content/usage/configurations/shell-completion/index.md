@@ -1,10 +1,9 @@
 +++
 title = "Shell Completions"
-description = "Improve your productivity by enabling shell auto-completion for Noir. This guide provides instructions for setting up completions in Zsh, Bash, and Fish."
+description = "Set up shell auto-completion for Noir in Zsh, Bash, and Fish."
 weight = 2
 sort_by = "weight"
 
-[extra]
 +++
 
 Enable shell auto-completion for commands and flags.

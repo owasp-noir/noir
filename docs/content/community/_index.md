@@ -4,7 +4,6 @@ description = "This section provides resources for the OWASP Noir community, inc
 weight = 9
 sort_by = "weight"
 
-[extra]
 +++
 
 OWASP Noir is a community-driven project, and we welcome contributions and feedback from everyone. This section provides resources to help you get involved with the community and learn more about how to use Noir effectively.

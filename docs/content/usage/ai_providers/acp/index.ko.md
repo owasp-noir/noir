@@ -4,7 +4,6 @@ description = "Codex, Gemini, Claude 같은 ACP 기반 에이전트를 Noir와 �
 weight = 8
 sort_by = "weight"
 
-[extra]
 +++
 
 ACP(Agent Client Protocol) 제공자를 사용하면 Noir가 직접 HTTP LLM API 대신 AI 에이전트 프로세스와 통신합니다.

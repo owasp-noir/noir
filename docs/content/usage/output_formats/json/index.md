@@ -1,10 +1,9 @@
 +++
 title = "JSON and JSONL"
-description = "Learn how to get your Noir scan results in JSON or JSONL format. This guide provides examples of both formats and explains how to generate them."
+description = "Generate Noir scan results in JSON or JSONL format."
 weight = 2
 sort_by = "weight"
 
-[extra]
 +++
 
 Noir supports JSON and JSONL output formats:

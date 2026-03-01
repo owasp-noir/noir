@@ -4,7 +4,6 @@ description = "Use ACP-based agents such as Codex, Gemini, and Claude with Noir 
 weight = 8
 sort_by = "weight"
 
-[extra]
 +++
 
 Use ACP (Agent Client Protocol) providers when you want Noir to talk to an AI agent process instead of a direct HTTP LLM API.

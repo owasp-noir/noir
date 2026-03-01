@@ -1,10 +1,9 @@
 +++
 title = "YAML"
-description = "This page explains how to generate scan results in YAML format, which is a human-readable and easy-to-parse option for integrating with other tools or for manual review."
+description = "Generate scan results in human-readable YAML format."
 weight = 3
 sort_by = "weight"
 
-[extra]
 +++
 
 Output scan results in human-readable YAML format for manual inspection or automated processing.

@@ -1,10 +1,9 @@
 +++
 title = "Delivering Results to Other Tools"
-description = "Learn how to use Noir's 'Deliver' feature to send discovered endpoints to other tools like Burp Suite, ZAP, or Elasticsearch for further analysis and security testing."
+description = "Send discovered endpoints to Burp Suite, ZAP, or Elasticsearch."
 weight = 1
 sort_by = "weight"
 
-[extra]
 +++
 
 Send discovered endpoints directly to security tools like Burp Suite, ZAP, or Elasticsearch for further analysis.

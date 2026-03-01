@@ -1,10 +1,9 @@
 +++
 title = "SARIF"
-description = "Learn how to generate scan results in SARIF (Static Analysis Results Interchange Format) v2.1.0, the industry-standard format for security tool output that integrates seamlessly with CI/CD platforms like GitHub, GitLab, and Azure DevOps."
+description = "Generate SARIF v2.1.0 output for CI/CD integration with GitHub, GitLab, and Azure DevOps."
 weight = 5
 sort_by = "weight"
 
-[extra]
 +++
 
 Generate SARIF v2.1.0 (Static Analysis Results Interchange Format) output for CI/CD integration.
@@ -178,4 +177,3 @@ Publish SARIF results in Azure Pipelines:
 *   [GitLab SAST Documentation](https://docs.gitlab.com/ee/user/application_security/sast/)
 *   [SARIF Tutorials](https://github.com/microsoft/sarif-tutorials)
 
-By using SARIF output, you can seamlessly integrate Noir into your existing security workflows and take advantage of the rich visualization and tracking features offered by modern DevSecOps platforms.

@@ -1,19 +1,14 @@
 +++
 title = "GitHub Action"
-description = "GitHub Actions 워크플로우에서 OWASP Noir를 실행해 엔드포인트 탐지와 수동(패시브) 보안 점검을 수행하는 방법을 안내합니다."
+description = "GitHub Actions에서 OWASP Noir로 엔드포인트 탐지와 패시브 보안 점검을 수행합니다."
 weight = 6
 sort_by = "weight"
 
-[extra]
 +++
 
-OWASP Noir는 CI에서 코드베이스의 공격 표면을 분석하기 위한 GitHub Action을 제공합니다. 다양한 언어와 프레임워크 전반에서 엔드포인트를 탐지하고, 선택적으로 수동(패시브) 보안 점검을 수행합니다.
-
-이 문서는 워크플로우에 Noir를 추가하고, 입력값을 구성하며, 출력값을 활용하고, 자주 발생하는 문제를 해결하는 방법을 설명합니다.
+GitHub Actions에서 OWASP Noir를 실행하여 엔드포인트 탐지와 패시브 보안 점검을 수행합니다.
 
 ## 빠른 시작
-
-푸시/PR 시 최소 구성을 실행하는 예시:
 
 ~~~yaml
 name: Noir Security Analysis
@@ -35,8 +30,8 @@ jobs:
         run: echo '${{ steps.noir.outputs.endpoints }}' | jq .
 ~~~
 
-- `base_path`는 분석 대상 디렉터리입니다(커맨드라인의 `-b/--base-path`와 동일).
-- `endpoints` 출력에는 JSON 결과가 담기며, `jq` 등으로 후처리할 수 있습니다.
+- `base_path`: 분석 대상 디렉터리 (`-b/--base-path`)
+- `endpoints`: 후처리 가능한 JSON 출력
 
 ## 입력값(Inputs)
 
@@ -59,9 +54,9 @@ jobs:
 | `exclude_codes` | 제외할 HTTP 상태코드(쉼표 구분) (`--exclude-codes`) | 아니오 | `` |
 | `status_codes` | 발견된 엔드포인트에 HTTP 상태코드 표시 (`--status-codes`) | 아니오 | `false` |
 
-참고:
-- YAML의 타입 변환 이슈를 피하려면 불리언은 문자열(`'true'`/`'false'`)로 전달하세요.
-- `output_file`을 지정하면 출력값 제공과 함께 해당 파일에도 결과가 저장됩니다.
+**참고:**
+- 불리언 옵션은 문자열(`'true'`/`'false'`)로 전달
+- `output_file` 지정 시 파일 저장과 출력값 모두 제공
 
 ## 출력값(Outputs)
 
@@ -70,7 +65,7 @@ jobs:
 | `endpoints` | 엔드포인트 분석 결과(JSON) |
 | `passive_results` | 수동(패시브) 점검 결과(JSON, `passive_scan` 활성화 시 제공) |
 
-출력값 활용 예시:
+출력값 활용:
 
 ~~~yaml
 - name: Count endpoints
@@ -82,7 +77,7 @@ jobs:
 
 ## 예시
 
-### 수동 점검 및 아티팩트 저장을 포함한 고급 스캔
+### 고급 스캔
 
 ~~~yaml
 name: Comprehensive Security Analysis
@@ -122,9 +117,7 @@ jobs:
           path: noir-results.json
 ~~~
 
-### 모노레포/매트릭스 예시
-
-여러 서비스를 병렬로 분석:
+### 모노레포 매트릭스
 
 ~~~yaml
 name: Monorepo Noir
@@ -149,8 +142,6 @@ jobs:
 ~~~
 
 ### 프레임워크별 스캔
-
-자동 감지가 충분하지 않을 때는 기술 스택을 명시적으로 지정하세요:
 
 ~~~yaml
 - uses: owasp-noir/noir@main
@@ -177,7 +168,7 @@ jobs:
     passive_scan_severity: 'medium'
 ~~~
 
-### 상태코드 부가 정보 및 제외 설정
+### 상태코드 설정
 
 ~~~yaml
 - uses: owasp-noir/noir@main
@@ -187,9 +178,7 @@ jobs:
     exclude_codes: '404,429'   # 소음이 많은 코드 제외
 ~~~
 
-### 리포팅을 위한 대체 포맷
-
-마크다운 표 또는 cURL 명령을 생성:
+### 대체 포맷
 
 ~~~yaml
 - uses: owasp-noir/noir@main
@@ -201,33 +190,32 @@ jobs:
 
 ## 모범 사례
 
-1. 수동 점검(`passive_scan: 'true'`)을 활성화하여 보안 스멜을 조기에 확인하세요.
-2. `passive_scan_severity`와 `exclude_codes`로 노이즈를 조절하세요.
-3. `include_path: 'true'`로 파일 경로를 포함해 트라이애지와 코드 탐색을 빠르게 하세요.
-4. 자동 감지가 부족하면 `techs`로 기술 스택을 고정하고, 불필요한 분석은 `exclude_techs`로 배제하세요.
-5. `actions/upload-artifact`로 결과를 보존하거나, PR 코멘트/상태로 게시해 협업을 촉진하세요.
+1. `passive_scan: 'true'`로 보안 문제를 조기에 탐지
+2. `passive_scan_severity`와 `exclude_codes`로 노이즈 조절
+3. `include_path: 'true'`로 트리아지 및 코드 탐색 가속화
+4. `techs`로 프레임워크를 지정하고, `exclude_techs`로 불필요한 분석 배제
+5. `actions/upload-artifact`로 결과 보존
 
 ## 트러블슈팅
 
-- 엔드포인트가 발견되지 않음
-  - `base_path`가 실제 소스 디렉터리를 가리키는지 확인하세요(예: 루트가 아닌 `src/`).
-  - 지원되는 언어/프레임워크가 포함되어 있는지 확인하세요.
-  - `techs`를 명시적으로 지정해 보세요(예: `rails`, `express`, `django`).
+**엔드포인트 미발견:**
+- `base_path`가 소스 디렉터리를 가리키는지 확인
+- 지원되는 프레임워크가 포함되어 있는지 확인
+- `techs`를 명시적으로 지정
 
-- 출력이 너무 크거나 처리에 시간이 걸림
-  - 라인 단위 처리를 위해 `format: 'jsonl'`을 사용하세요.
-  - `base_path` 범위를 축소하거나 `techs`/`exclude_techs`로 필터링하세요.
+**출력이 크거나 느린 경우:**
+- `format: 'jsonl'`로 스트리밍 처리
+- `base_path` 범위 축소 또는 `techs`/`exclude_techs`로 필터링
 
-- 동작을 진단하기 어려움
-  - `debug: 'true'` 및 `verbose: 'true'`를 켜서 상세 로그를 확인하세요.
-  - `include_path: 'true'`로 파일 경로를 포함해 추적 가능성을 높이세요.
+**진단이 어려운 경우:**
+- `debug: 'true'` 및 `verbose: 'true'` 활성화
+- `include_path: 'true'`로 추적성 확보
 
-- HTTP 상태코드로 인한 노이즈
-  - `status_codes: 'false'`로 비활성화하거나 `exclude_codes`로 소음이 많은 코드를 제외하세요.
+**HTTP 상태코드 노이즈:**
+- `status_codes: 'false'`로 비활성화 또는 `exclude_codes`로 제외
 
 ## 구현 참고 사항
 
-- 이 액션은 Docker 컨테이너에서 실행되므로 GitHub 호스티드 러너 전반에서 일관되게 동작합니다.
-- 입력값은 Noir CLI 플래그와 직접 1:1로 매핑됩니다. 로컬에서 사용하던 CLI 옵션을 동일하게 설정하면 쉽게 전환할 수 있습니다.
-
-지원되는 전체 기술 목록은 로컬에서 `--list-techs` 옵션으로 확인하거나 프로젝트의 기술 목록 문서를 참고하세요.
+- Docker 컨테이너에서 실행되어 일관된 동작 보장
+- 입력값은 CLI 플래그와 1:1 매핑
+- 지원 기술 목록: `noir --list-techs`

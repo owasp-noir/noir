@@ -1,10 +1,9 @@
 +++
 title = "Using Noir with Ollama"
-description = "Learn how to integrate Noir with Ollama to run local large language models (LLMs) for in-depth endpoint analysis. This guide provides setup instructions and example commands."
+description = "Integrate Noir with Ollama for local LLM-powered code analysis."
 weight = 2
 sort_by = "weight"
 
-[extra]
 +++
 
 Run large language models locally using [Ollama](https://ollama.com) for code analysis without sending data to external services.

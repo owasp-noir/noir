@@ -1,0 +1,19 @@
+<div class="member-card">
+  <div class="member-avatar">
+    <img src="{{ image }}" alt="{{ name }}">
+  </div>
+  <div class="member-info">
+    <h3 class="member-name">{{ name }}</h3>
+    <p class="member-role">{{ role }}</p>
+    {% if links %}
+    <div class="member-links">
+      {% for link in links | split(pat=",") %}
+        {% set parts = link | trim | split(pat="|") %}
+        {% if parts | length >= 2 %}
+          <a href="{{ parts[1] | trim }}" target="_blank" rel="noopener noreferrer">{{ parts[0] | trim }}</a>
+        {% endif %}
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+</div>

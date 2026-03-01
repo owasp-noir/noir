@@ -4,7 +4,6 @@ description = "This section provides a comprehensive overview of the technologie
 weight = 1
 sort_by = "weight"
 
-[extra]
 +++
 
 Noir is designed to be a versatile tool that can work with a wide variety of technologies. To help you understand what you can use Noir with, this section provides detailed information on our supported:
