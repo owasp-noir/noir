@@ -99,16 +99,20 @@ By doing so, you'll help us keep our project up-to-date and well-organized. Your
 
 To set up the documentation site locally, follow these steps:
 
-#### Install Zola
+#### Install Hwaro
 
-> https://www.getzola.org/documentation/getting-started/installation/
+> https://hwaro.hahwul.com/start/installation/
 
 #### Serve the Documentation Site
 
-After installing Zola, you can serve the documentation site locally using the following Just task:
+After installing Hwaro, you can serve the documentation site locally using the following Just task:
 
 ```sh
 just docs-serve
+
+# or
+
+just ds
 ```
 
-This will start a local server, and you can view the documentation by navigating to http://localhost:1313 in your web browser.
+This will start a local server, and you can view the documentation by navigating to http://localhost:3000 in your web browser.
