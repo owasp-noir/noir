@@ -35,7 +35,7 @@
     --header-h: 56px;
     --sidebar-w: 260px;
     --toc-w: 220px;
-    --content-max: 100%;
+    --content-max: 1000px;
 
     /* Fonts */
     --font-sans:
