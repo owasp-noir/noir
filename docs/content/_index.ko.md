@@ -123,8 +123,8 @@ template = "landing"
   <div class="trust-inner">
     <h2 class="section-title">개발 환경</h2>
     <div class="trust-logos">
-      <img src="./images/owasp.png" alt="OWASP" class="trust-logo">
-      <img src="./images/crystal.png" alt="Crystal" class="trust-logo">
+      <img src="../images/owasp.png" alt="OWASP" class="trust-logo">
+      <img src="../images/crystal.png" alt="Crystal" class="trust-logo">
     </div>
   </div>
 </section>
