@@ -35,7 +35,7 @@
     --header-h: 56px;
     --sidebar-w: 260px;
     --toc-w: 220px;
-    --content-max: 760px;
+    --content-max: 100%;
 
     /* Fonts */
     --font-sans:
@@ -58,7 +58,7 @@ html {
 }
 body {
     font-family: var(--font-sans);
-    font-size: 15px;
+    font-size: 18px;
     line-height: 1.7;
     color: var(--text-primary);
     background: var(--bg-body);
