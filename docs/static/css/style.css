@@ -535,28 +535,120 @@ body {
 /* Inline code */
 .docs-article code {
     background: var(--bg-surface);
-    padding: 0.15rem 0.4rem;
-    border-radius: 4px;
-    font-size: 0.85em;
+    padding: 0.2rem 0.45rem;
+    border-radius: 5px;
+    font-size: 0.84em;
     font-family: var(--font-mono);
     color: var(--accent-hover);
+    border: 1px solid var(--border);
 }
 
-/* Code blocks */
+/* Code block wrapper (terminal-style card) */
+.codeblock {
+    margin: 0 0 1.25rem 0;
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid var(--border-light);
+    background: var(--bg-code);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
+}
+.codeblock-header {
+    display: flex;
+    align-items: center;
+    padding: 0.55rem 0.9rem;
+    background: #161618;
+    border-bottom: 1px solid var(--border);
+    gap: 0.5rem;
+    user-select: none;
+    -webkit-user-select: none;
+}
+.codeblock-dots {
+    display: flex;
+    gap: 5px;
+    flex-shrink: 0;
+}
+.codeblock-dots span {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #333;
+}
+.codeblock-dots span:nth-child(1) {
+    background: #ff5f57;
+}
+.codeblock-dots span:nth-child(2) {
+    background: #febc2e;
+}
+.codeblock-dots span:nth-child(3) {
+    background: #28c840;
+}
+.codeblock-lang {
+    flex: 1;
+    text-align: center;
+    font-size: 0.7rem;
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+    letter-spacing: 0.02em;
+}
+.codeblock-copy {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    cursor: pointer;
+    padding: 0.2rem 0.5rem;
+    transition:
+        color 0.2s,
+        border-color 0.2s,
+        background 0.2s;
+    flex-shrink: 0;
+}
+.codeblock-copy:hover {
+    color: var(--text-primary);
+    border-color: var(--border-light);
+    background: var(--bg-hover);
+}
+.codeblock-copy.copied {
+    color: #28c840;
+    border-color: rgba(40, 200, 64, 0.3);
+}
+.codeblock-copy span {
+    line-height: 1;
+}
+
+/* Code blocks (inside wrapper) */
+.codeblock pre {
+    margin: 0;
+    border: none;
+    border-radius: 0;
+    border-left: none;
+}
 .docs-article pre {
     background: var(--bg-code);
     padding: 1rem 1.25rem;
-    border-radius: 8px;
+    border-radius: 10px;
     overflow-x: auto;
     margin: 0 0 1.25rem 0;
-    border-left: 3px solid var(--accent);
+    border: 1px solid var(--border-light);
     line-height: 1.6;
+}
+.docs-article .codeblock pre {
+    border: none;
+    border-radius: 0;
+    margin: 0;
+    box-shadow: none;
 }
 .docs-article pre code {
     background: none;
     padding: 0;
     color: var(--text-primary);
     font-size: 0.85rem;
+    border: none;
 }
 
 /* Blockquote */
@@ -1605,6 +1697,18 @@ p:has(> .member-card) {
         font-size: 1.5rem;
     }
 
+    /* Code blocks */
+    .codeblock-copy span {
+        display: none;
+    }
+    .codeblock-header {
+        padding: 0.45rem 0.75rem;
+    }
+    .codeblock-dots span {
+        width: 8px;
+        height: 8px;
+    }
+
     /* Landing: Trust */
     .trust-section {
         padding: 2rem 1.25rem;
@@ -1642,6 +1746,18 @@ p:has(> .member-card) {
     }
     .terminal-line {
         font-size: 0.72rem;
+    }
+    /* Code blocks */
+    .docs-article pre {
+        padding: 0.75rem 1rem;
+        font-size: 0.8rem;
+        border-radius: 8px;
+    }
+    .codeblock {
+        border-radius: 8px;
+    }
+    .codeblock-lang {
+        font-size: 0.65rem;
     }
     .bento-section {
         padding: 2rem 1rem;
