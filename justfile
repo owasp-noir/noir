@@ -56,7 +56,8 @@ check:
 # Run all tests.
 [group('development')]
 test:
-    crystal spec
+    crystal spec spec/unit_test
+    crystal spec spec/functional_test
 
 # Run unit tests only.
 [group('development')]
