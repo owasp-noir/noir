@@ -5,7 +5,7 @@ module Detector::Java
     def detect(filename : String, file_contents : String) : Bool
       if (
            (filename.includes? "pom.xml") || (filename.includes? "build.gradle") ||
-           (filename.includes? "build.gradle.kts") || (filename.includes? "settings.gradle.kts")
+           (filename.includes? "build.gradle.kts") || (filename.includes? "settings.gradle.kts") || (filename.includes? ".java")
          ) && (file_contents.includes? "io.vertx")
         true
       else
