@@ -9,14 +9,17 @@ module Detector::Java
       # Check Java files for JSP imports
       if filename.ends_with?(".java")
         return file_contents.includes?("javax.servlet.jsp") ||
-               file_contents.includes?("jakarta.servlet.jsp")
+          file_contents.includes?("jakarta.servlet.jsp")
       end
 
-      # Check web.xml or .xml for JSP servlet configuration
-      if filename.ends_with?("web.xml") || filename.ends_with?(".xml")
+      # web.xml often contains servlet mappings; allow broader heuristic there
+      if filename.ends_with?("web.xml")
         return file_contents.includes?("<jsp-file>") ||
-               file_contents.includes?("JspServlet") ||
-               (file_contents.includes?(".jsp") && file_contents.includes?("servlet"))
+          file_contents.includes?("JspServlet") ||
+          (file_contents.includes?(".jsp") && file_contents.includes?("servlet"))
+      elsif filename.ends_with?(".xml")
+        return file_contents.includes?("<jsp-file>") ||
+          file_contents.includes?("JspServlet")
       end
 
       false
