@@ -69,6 +69,11 @@ test-unit:
 test-func:
     crystal spec spec/functional_test
 
+# Run uncovered tests only (not included in CI).
+[group('development')]
+test-uncovered:
+    crystal spec spec/uncovered_test
+
 # Check version consistency across all files.
 [group('development')]
 version-check:

@@ -49,17 +49,16 @@ module Noir
             match_start = m.begin(0)
             next unless match_start
 
-            open_brace_idx = nil
-            if kind == :arrow
-              arrow_idx = content.index("=>", match_start)
-              next unless arrow_idx
-              open_brace_idx = content.index("{", arrow_idx + 2)
-            else
-              param_start = content.index("(", match_start)
-              next unless param_start
-              param_end = find_matching_paren(content, param_start) || param_start
-              open_brace_idx = content.index("{", param_end + 1)
-            end
+            open_brace_idx = if kind == :arrow
+                               arrow_idx = content.index("=>", match_start)
+                               next unless arrow_idx
+                               content.index("{", arrow_idx + 2)
+                             else
+                               param_start = content.index("(", match_start)
+                               next unless param_start
+                               param_end = find_matching_paren(content, param_start) || param_start
+                               content.index("{", param_end + 1)
+                             end
 
             next unless open_brace_idx
             close_brace_idx = find_matching_brace(content, open_brace_idx)

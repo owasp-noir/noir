@@ -15,14 +15,13 @@ class SendWithProxy < Deliver
         begin
           if endpoint.params.size > 0
             endpoint_hash = endpoint.params_to_hash
-            body = {} of String => String
             is_json = false
-            if endpoint_hash["json"].size > 0
-              is_json = true
-              body = endpoint_hash["json"]
-            else
-              body = endpoint_hash["form"]
-            end
+            body = if endpoint_hash["json"].size > 0
+                     is_json = true
+                     endpoint_hash["json"]
+                   else
+                     endpoint_hash["form"]
+                   end
 
             Crest::Request.execute(
               method: get_symbol(endpoint.method),

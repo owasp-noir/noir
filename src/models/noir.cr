@@ -155,14 +155,13 @@ class NoirRunner
       begin
         if !endpoint.params.empty?
           endpoint_hash = endpoint.params_to_hash
-          body = {} of String => String
           is_json = false
-          if !endpoint_hash["json"].empty?
-            is_json = true
-            body = endpoint_hash["json"]
-          else
-            body = endpoint_hash["form"]
-          end
+          body = if !endpoint_hash["json"].empty?
+                   is_json = true
+                   endpoint_hash["json"]
+                 else
+                   endpoint_hash["form"]
+                 end
 
           response = perform_request(
             get_symbol(endpoint.method),
