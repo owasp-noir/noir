@@ -36,6 +36,28 @@ expected_endpoints = [
     Param.new("action", "", "query"),
     Param.new("X-Admin-Key", "", "header"),
   ]),
+  # api_router.go: PATCH method with path and form params
+  Endpoint.new("/items/:id", "PATCH", [
+    Param.new("id", "", "path"),
+    Param.new("name", "", "form"),
+  ]),
+  # api_router.go: multiple path params with query param
+  Endpoint.new("/shops/:shopId/items/:itemId", "GET", [
+    Param.new("shopId", "", "path"),
+    Param.new("itemId", "", "path"),
+    Param.new("detail", "", "query"),
+  ]),
+  # api_router.go: POST with form, header and cookie
+  Endpoint.new("/upload", "POST", [
+    Param.new("file_name", "", "form"),
+    Param.new("Content-Type", "", "header"),
+    Param.new("auth_token", "", "cookie"),
+  ]),
+  # api_router.go: DELETE with path param and header
+  Endpoint.new("/cache/:key", "DELETE", [
+    Param.new("key", "", "path"),
+    Param.new("X-Admin-Key", "", "header"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/go/fasthttp/", {
