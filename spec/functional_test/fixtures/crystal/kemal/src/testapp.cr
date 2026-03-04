@@ -20,6 +20,18 @@ ws "/socket" do |socket|
   socket.send "Hello from Kemal!"
 end
 
+api = Kemal::Router.new
+api.namespace "/users" do
+  get "/" do |env|
+    env.params.query["page"]
+    "user list"
+  end
+  get "/:id" do |env|
+    "user detail"
+  end
+end
+mount "/api/v1", api
+
 public_folder "custom_public"
 
 Kemal.run

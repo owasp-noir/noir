@@ -1,7 +1,12 @@
 require "../../../models/analyzer"
+require "../../../utils/url_path"
 
 module Analyzer::Crystal
   class Kemal < Analyzer
+    NAMESPACE_PATTERN = /^(\s*)(?:(\w+)\.)?namespace\s+["'](.+?)["']/
+    MOUNT_PATTERN     = /^\s*mount\s+["'](.+?)["']\s*,\s*(\w+)/
+    ROUTER_PATTERN    = /^\s*(\w+)\s*=\s*Kemal::Router\.new/
+
     def analyze
       # Variables
       is_public = true
@@ -21,24 +26,13 @@ module Analyzer::Crystal
                   break if path.nil?
                   next if File.directory?(path)
                   if File.exists?(path) && File.extname(path) == ".cr" && !path.includes?("lib")
+                    analyze_file(path).each do |endpoint|
+                      result << endpoint
+                    end
+
+                    # Extract public folder and serve_static info
                     File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-                      last_endpoint = Endpoint.new("", "")
-                      file.each_line.with_index do |line, index|
-                        endpoint = line_to_endpoint(line)
-                        if endpoint.method != ""
-                          details = Details.new(PathInfo.new(path, index + 1))
-                          endpoint.details = details
-                          result << endpoint
-                          last_endpoint = endpoint
-                        end
-
-                        param = line_to_param(line)
-                        if param.name != ""
-                          if last_endpoint.method != ""
-                            last_endpoint.push_param(param)
-                          end
-                        end
-
+                      file.each_line do |line|
                         if line.includes?("serve_static false") || line.includes?("serve_static(false)")
                           is_public = false
                         end
@@ -48,12 +42,10 @@ module Analyzer::Crystal
                             split = line.split("public_folder")
 
                             if split.size > 1
-                              # Extract path more carefully handling quotes and spaces
                               match_data = split[1].match(/[=\(]\s*['"]?(.*?)['"]?\s*[\),]/)
                               public_folder = if match_data && match_data[1]?
                                                 match_data[1].strip
                                               else
-                                                # Fallback to the previous approach
                                                 split[1].gsub("(", "").gsub(")", "").gsub(" ", "").gsub("\"", "").gsub("'", "")
                                               end
 
@@ -81,27 +73,21 @@ module Analyzer::Crystal
       # Public Dir Analysis
       if is_public
         begin
-          # Process public folder files
           get_public_files(@base_path).each do |file|
-            # Extract the path after "/public/" regardless of depth
             if file =~ /\/public\/(.*)/
               relative_path = $1
               @result << Endpoint.new("/#{relative_path}", "GET")
             end
           end
 
-          # Process other public folders
           public_folders.each do |folder|
             get_public_dir_files(@base_path, folder).each do |file|
-              # Extract relative path from the custom folder
               if folder.includes?("/")
-                # For absolute paths or paths with directories
                 folder_path = folder.ends_with?("/") ? folder : "#{folder}/"
                 if file.starts_with?(folder_path)
                   relative_path = file.sub(folder_path, "")
                   @result << Endpoint.new("/#{relative_path}", "GET")
                 else
-                  # Try to find the folder component in the path
                   folder_name = folder.split("/").last
                   if file =~ /\/#{folder_name}\/(.*)/
                     relative_path = $1
@@ -109,7 +95,6 @@ module Analyzer::Crystal
                   end
                 end
               else
-                # For simple folder names (no slashes)
                 if file =~ /\/#{folder}\/(.*)/
                   relative_path = $1
                   @result << Endpoint.new("/#{relative_path}", "GET")
@@ -123,6 +108,91 @@ module Analyzer::Crystal
       end
 
       result
+    end
+
+    def analyze_file(path : String) : Array(Endpoint)
+      endpoints = [] of Endpoint
+      lines = File.read_lines(path)
+
+      # Pre-scan: build mount_map (variable_name => mount_path)
+      mount_map = {} of String => String
+      router_vars = Set(String).new
+
+      lines.each do |line|
+        if match = line.match(ROUTER_PATTERN)
+          router_vars << match[1]
+        end
+        if match = line.match(MOUNT_PATTERN)
+          mount_map[match[2]] = match[1]
+        end
+      end
+
+      # Main scan with namespace stack
+      namespace_stack = [] of NamedTuple(prefix: String, indent: Int32, router_var: String)
+      last_endpoint : Endpoint? = nil
+
+      lines.each_with_index do |line, index|
+        # Check for namespace open
+        if match = line.match(NAMESPACE_PATTERN)
+          indent = match[1].size
+          router_var = match[2]? || ""
+          prefix = match[3]
+          namespace_stack << {prefix: prefix, indent: indent, router_var: router_var}
+          next
+        end
+
+        # Check for end that closes a namespace
+        if !namespace_stack.empty?
+          if end_match = line.match(/^(\s*)end\b/)
+            end_indent = end_match[1].size
+            if end_indent == namespace_stack.last[:indent]
+              namespace_stack.pop
+              next
+            end
+          end
+        end
+
+        # Parse endpoint
+        endpoint = line_to_endpoint(line)
+        if endpoint.method != ""
+          # Build full path with namespace prefixes and mount path
+          route_path = endpoint.url
+          full_path = route_path
+
+          if !namespace_stack.empty?
+            # Combine all namespace prefixes
+            ns_prefix = ""
+            namespace_stack.each do |ns|
+              ns_prefix = Noir::URLPath.join(ns_prefix, ns[:prefix])
+            end
+            full_path = Noir::URLPath.join(ns_prefix, route_path)
+
+            # Determine router variable for mount lookup
+            router_var = namespace_stack.first[:router_var]
+            if !router_var.empty? && mount_map.has_key?(router_var)
+              full_path = Noir::URLPath.join(mount_map[router_var], full_path)
+            end
+          end
+
+          endpoint.url = full_path
+          details = Details.new(PathInfo.new(path, index + 1))
+          endpoint.details = details
+          endpoints << endpoint
+          last_endpoint = endpoint
+        end
+
+        # Parse params
+        param = line_to_param(line)
+        if param.name != ""
+          if le = last_endpoint
+            if le.method != ""
+              le.push_param(param)
+            end
+          end
+        end
+      end
+
+      endpoints
     end
 
     def line_to_param(content : String) : Param
