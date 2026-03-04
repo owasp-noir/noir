@@ -208,7 +208,6 @@ class PythonParser
     index = 0
     while index < tokens.size
       if (index == 0 || tokens[index - 1].type == :NEWLINE) && index + 3 < tokens.size
-        type = nil
         if tokens[index].type == :IDENTIFIER && tokens[index + 1].type == :COLON && tokens[index + 3].type == :ASSIGN
           name = tokens[index].value
           type = tokens[index + 2].value

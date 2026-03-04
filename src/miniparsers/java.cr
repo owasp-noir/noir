@@ -312,22 +312,12 @@ class JavaParser
       end
 
       if !is_method_token
-        assign_index = nil
-        field_name = ""
         field_index = semi_index
         while 0 < field_index
           field_index -= 1
           token = class_tokens[field_index]
-          if token.type == :ASSIGN
-            assign_index = field_index
-          elsif token.type == :NEWLINE
+          if token.type == :NEWLINE
             # [access_modifier] [static] [final] type name [= initial value] ;
-
-            if assign_index.nil?
-              field_name = class_tokens[semi_index - 1].value
-            else
-              field_name = class_tokens[assign_index - 1].value
-            end
 
             line_tokens = Array(Token).new
             class_tokens[field_index + 1..semi_index - 1].each do |line_token|

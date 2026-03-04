@@ -25,7 +25,6 @@ class Deliver
     options["send_with_headers"].as_a.each do |set_header|
       if set_header.to_s.includes? ":"
         split = set_header.to_s.split(":")
-        value = ""
         begin
           if split[1][0].to_s == " "
             value = split[1][1..-1].to_s

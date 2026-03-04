@@ -59,7 +59,6 @@ FileAnalyzer.add_hook(->(path : String, _url : String) : Array(Endpoint) {
   # Only process .graphql files
   return [] of Endpoint unless path.ends_with?(".graphql")
 
-  file_content = ""
   begin
     file_content = File.read(path, encoding: "utf-8", invalid: :skip)
   rescue ex

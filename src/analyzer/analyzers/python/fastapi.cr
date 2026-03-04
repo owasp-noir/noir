@@ -121,7 +121,6 @@ module Analyzer::Python
 
                           if param_type.nil?
                             if /^#{PYTHON_VAR_NAME_REGEX}$/.match(param.type)
-                              new_params = nil
                               if param.type.in?(%w[Request dict])
                                 function_codeblock = parse_code_block(codelines[index + 1..])
                                 next if function_codeblock.nil?
@@ -258,7 +257,6 @@ module Analyzer::Python
           break unless line.split(":").size == 2
 
           param_name, extra = line.split(":", 2)
-          param_type = ""
           param_default = ""
           param_type_and_default = extra.split("=", 2)
           if param_type_and_default.size == 2

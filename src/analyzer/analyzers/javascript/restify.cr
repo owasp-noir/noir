@@ -234,7 +234,6 @@ module Analyzer::Javascript
              server_vars.any? { |var| content.includes?("#{function_name}(#{var})") }
             # Extract function body
             start_index = m.begin(0)
-            open_braces = 0
             function_start = content.index('{', start_index) || 0
             function_end = function_start + 1
 

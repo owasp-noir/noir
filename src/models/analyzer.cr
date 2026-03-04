@@ -47,7 +47,6 @@ class Analyzer
       worker_count.times do
         wg.spawn do
           loop do
-            path = nil
             begin
               path = channel.receive?
               break if path.nil?
