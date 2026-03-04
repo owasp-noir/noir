@@ -28,6 +28,26 @@ expected_endpoints = [
   Endpoint.new("/multiline", "GET", [
     Param.new("ml_param", "", "query"),
   ]),
+  # handlers.go: PATCH method with path param
+  Endpoint.new("/users/:id", "PATCH", [
+    Param.new("id", "", "path"),
+  ]),
+  # handlers.go: OPTIONS method
+  Endpoint.new("/cors-check", "OPTIONS"),
+  # handlers.go: multiple query params
+  Endpoint.new("/search", "GET", [
+    Param.new("q", "", "query"),
+    Param.new("page", "", "query"),
+    Param.new("limit", "", "query"),
+  ]),
+  # handlers.go: path param with query param
+  Endpoint.new("/items/:itemId/reviews", "GET", [
+    Param.new("sort", "", "query"),
+  ]),
+  # handlers.go: handler reference (non-inline)
+  Endpoint.new("/health", "GET"),
+  # handlers.go: deeply nested groups
+  Endpoint.new("/v2/admin/cache", "DELETE"),
 ]
 
 FunctionalTester.new("fixtures/go/echo/", {

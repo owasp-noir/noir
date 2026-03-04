@@ -40,6 +40,26 @@ expected_endpoints = [
   Endpoint.new("/admin/settings/", "GET"),
   Endpoint.new("/admin/settings/", "PUT"),
   Endpoint.new("/admin/webhook", "POST"),
+  # routes.go: PATCH method with path param
+  Endpoint.new("/items/{id}", "PATCH", [
+    Param.new("id", "", "path"),
+  ]),
+  # routes.go: nested Route with GET
+  Endpoint.new("/v2/status", "GET"),
+  # routes.go: nested Route with POST and form param
+  Endpoint.new("/v2/data", "POST", [
+    Param.new("payload", "", "form"),
+  ]),
+  # routes.go: multiple query and header params
+  Endpoint.new("/analytics", "GET", [
+    Param.new("from", "", "query"),
+    Param.new("to", "", "query"),
+    Param.new("X-Analytics-Key", "", "header"),
+  ]),
+  # routes.go: cookie extraction
+  Endpoint.new("/dashboard", "GET", [
+    Param.new("session_token", "", "cookie"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/go/chi/", {

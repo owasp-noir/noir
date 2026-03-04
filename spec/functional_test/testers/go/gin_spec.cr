@@ -25,6 +25,32 @@ expected_endpoints = [
   Endpoint.new("/multiline", "GET", [
     Param.new("ml_param", "", "query"),
   ]),
+  # handlers.go: PATCH method with path param
+  Endpoint.new("/items/:id", "PATCH", [
+    Param.new("id", "", "path"),
+  ]),
+  # handlers.go: multiple query params with DefaultQuery
+  Endpoint.new("/search", "GET", [
+    Param.new("q", "", "query"),
+    Param.new("page", "", "query"),
+    Param.new("limit", "", "query"),
+  ]),
+  # handlers.go: handler reference (non-inline)
+  Endpoint.new("/healthz", "GET"),
+  # handlers.go: deeply nested groups with form param
+  Endpoint.new("/api/v2/data", "POST", [
+    Param.new("payload", "", "form"),
+  ]),
+  # handlers.go: POST with header and form
+  Endpoint.new("/webhook", "POST", [
+    Param.new("X-Webhook-Secret", "", "header"),
+    Param.new("event", "", "form"),
+  ]),
+  # handlers.go: cookie and query param combined
+  Endpoint.new("/profile", "GET", [
+    Param.new("session_id", "", "cookie"),
+    Param.new("tab", "", "query"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/go/gin/", {
