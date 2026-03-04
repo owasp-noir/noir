@@ -83,8 +83,10 @@ jobs:
           crystal: ${{ matrix.crystal-version }}
       - name: Install dependencies
         run: shards install
-      - name: Run tests
-        run: crystal spec
+      - name: Run unit tests
+        run: crystal spec spec/unit_test
+      - name: Run functional tests
+        run: crystal spec spec/functional_test
   build-snapcraft:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
