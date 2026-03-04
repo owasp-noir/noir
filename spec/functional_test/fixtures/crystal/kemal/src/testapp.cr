@@ -26,7 +26,7 @@ api.namespace "/users" do
     env.params.query["page"]
     "user list"
   end
-  get "/:id" do |env|
+  get "/:id" do |_|
     "user detail"
   end
 end

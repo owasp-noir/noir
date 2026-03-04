@@ -37,22 +37,22 @@ describe "kemal namespace routing" do
     temp_file = File.join(temp_dir, "test.cr")
 
     File.write(temp_file, <<-CRYSTAL)
-    api = Kemal::Router.new
-    api.namespace "/users" do
-      get "/" do |env|
-        "user list"
+      api = Kemal::Router.new
+      api.namespace "/users" do
+        get "/" do |env|
+          "user list"
+        end
+        get "/:id" do |env|
+          "user detail"
+        end
       end
-      get "/:id" do |env|
-        "user detail"
-      end
-    end
-    mount "/api/v1", api
-    CRYSTAL
+      mount "/api/v1", api
+      CRYSTAL
 
     endpoints = instance.analyze_file(temp_file)
     endpoints.size.should eq(2)
 
-    urls = endpoints.map(&.url).sort
+    urls = endpoints.map(&.url).sort!
     urls.should contain("/api/v1/users/")
     urls.should contain("/api/v1/users/:id")
 
@@ -70,20 +70,20 @@ describe "kemal namespace routing" do
     temp_file = File.join(temp_dir, "test.cr")
 
     File.write(temp_file, <<-CRYSTAL)
-    namespace "/admin" do
-      get "/dashboard" do |env|
-        "dashboard"
+      namespace "/admin" do
+        get "/dashboard" do |env|
+          "dashboard"
+        end
+        post "/settings" do |env|
+          "settings"
+        end
       end
-      post "/settings" do |env|
-        "settings"
-      end
-    end
-    CRYSTAL
+      CRYSTAL
 
     endpoints = instance.analyze_file(temp_file)
     endpoints.size.should eq(2)
 
-    urls = endpoints.map(&.url).sort
+    urls = endpoints.map(&.url).sort!
     urls.should contain("/admin/dashboard")
     urls.should contain("/admin/settings")
 
@@ -98,14 +98,14 @@ describe "kemal namespace routing" do
     temp_file = File.join(temp_dir, "test.cr")
 
     File.write(temp_file, <<-CRYSTAL)
-    namespace "/api" do
-      namespace "/v2" do
-        get "/items" do |env|
-          "items"
+      namespace "/api" do
+        namespace "/v2" do
+          get "/items" do |env|
+            "items"
+          end
         end
       end
-    end
-    CRYSTAL
+      CRYSTAL
 
     endpoints = instance.analyze_file(temp_file)
     endpoints.size.should eq(1)
@@ -122,15 +122,15 @@ describe "kemal namespace routing" do
     temp_file = File.join(temp_dir, "test.cr")
 
     File.write(temp_file, <<-CRYSTAL)
-    api = Kemal::Router.new
-    api.namespace "/users" do
-      get "/" do |env|
-        env.params.query["page"]
-        "user list"
+      api = Kemal::Router.new
+      api.namespace "/users" do
+        get "/" do |env|
+          env.params.query["page"]
+          "user list"
+        end
       end
-    end
-    mount "/api/v1", api
-    CRYSTAL
+      mount "/api/v1", api
+      CRYSTAL
 
     endpoints = instance.analyze_file(temp_file)
     endpoints.size.should eq(1)
@@ -150,23 +150,23 @@ describe "kemal namespace routing" do
     temp_file = File.join(temp_dir, "test.cr")
 
     File.write(temp_file, <<-CRYSTAL)
-    get "/health" do |env|
-      "ok"
-    end
-
-    api = Kemal::Router.new
-    api.namespace "/users" do
-      get "/" do |env|
-        "users"
+      get "/health" do |env|
+        "ok"
       end
-    end
-    mount "/api", api
-    CRYSTAL
+
+      api = Kemal::Router.new
+      api.namespace "/users" do
+        get "/" do |env|
+          "users"
+        end
+      end
+      mount "/api", api
+      CRYSTAL
 
     endpoints = instance.analyze_file(temp_file)
     endpoints.size.should eq(2)
 
-    urls = endpoints.map(&.url).sort
+    urls = endpoints.map(&.url).sort!
     urls.should contain("/health")
     urls.should contain("/api/users/")
 
