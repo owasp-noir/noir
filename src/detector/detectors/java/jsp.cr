@@ -3,12 +3,26 @@ require "../../../models/detector"
 module Detector::Java
   class Jsp < Detector
     def detect(filename : String, file_contents : String) : Bool
-      return false unless filename.includes?(".jsp")
+      # Any .jsp file is part of JSP attack surface
+      return true if filename.ends_with?(".jsp")
 
-      check = file_contents.includes?("<%")
-      check = check && file_contents.includes?("%>")
+      # Check Java files for JSP imports
+      if filename.ends_with?(".java")
+        return file_contents.includes?("javax.servlet.jsp") ||
+          file_contents.includes?("jakarta.servlet.jsp")
+      end
 
-      check
+      # web.xml often contains servlet mappings; allow broader heuristic there
+      if filename.ends_with?("web.xml")
+        return file_contents.includes?("<jsp-file>") ||
+          file_contents.includes?("JspServlet") ||
+          (file_contents.includes?(".jsp") && file_contents.includes?("servlet"))
+      elsif filename.ends_with?(".xml")
+        return file_contents.includes?("<jsp-file>") ||
+          file_contents.includes?("JspServlet")
+      end
+
+      false
     end
 
     def set_name

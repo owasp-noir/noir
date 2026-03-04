@@ -4,8 +4,8 @@ module Detector::Java
   class Vertx < Detector
     def detect(filename : String, file_contents : String) : Bool
       if (
-           (filename.includes? "pom.xml") || (filename.includes? "build.gradle") ||
-           (filename.includes? "build.gradle.kts") || (filename.includes? "settings.gradle.kts")
+           (filename.ends_with?("pom.xml")) || (filename.ends_with?("build.gradle")) ||
+           (filename.ends_with?("build.gradle.kts")) || (filename.ends_with?("settings.gradle.kts")) || (filename.ends_with?(".java"))
          ) && (file_contents.includes? "io.vertx")
         true
       else

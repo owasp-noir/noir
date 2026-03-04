@@ -22,7 +22,10 @@ module Detector::Php
       end
 
       # Check for Laravel namespaces in PHP files
-      if filename.ends_with?(".php") && file_contents.includes?("use Illuminate\\")
+      if filename.ends_with?(".php") && (file_contents.includes?("use Illuminate\\") ||
+         file_contents.includes?("namespace Illuminate\\") ||
+         file_contents.includes?("use Laravel\\") ||
+         file_contents.includes?("namespace Laravel\\"))
         return true
       end
 
