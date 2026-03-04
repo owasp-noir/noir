@@ -59,8 +59,8 @@ class UncoveredFunctionalTester
   end
 
   def find_param(param_name)
-    if @expected_endpoints.params.size > 0
-      @expected_endpoints.params.each do |param|
+    @expected_endpoints.each do |endpoint|
+      endpoint.params.each do |param|
         if param.name.to_s == param_name.to_s
           return param
         end
