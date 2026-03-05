@@ -1,7 +1,7 @@
 require "./logger"
 require "./endpoint"
 require "./file_helper"
-require "../utils/wait_group"
+require "wait_group"
 require "../utils/media_filter"
 require "../utils/utils"
 

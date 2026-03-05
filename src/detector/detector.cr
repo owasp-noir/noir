@@ -3,7 +3,7 @@ require "../models/detector"
 require "../models/passive_scan"
 require "../techs/techs.cr" # Added to define NoirTechs
 require "../passive_scan/detect.cr"
-require "../utils/wait_group"
+require "wait_group"
 require "../utils/media_filter"
 require "yaml"
 

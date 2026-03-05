@@ -1,5 +1,5 @@
 require "../../spec_helper"
-require "../../../src/utils/wait_group.cr"
+require "wait_group"
 
 describe "WaitGroup" do
   describe "basic functionality" do
