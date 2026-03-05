@@ -61,8 +61,9 @@ module Analyzer::AI
         @api_key = nil
       end
 
-      if options.has_key?("ai_max_token") && !options["ai_max_token"].nil?
-        @max_tokens = options["ai_max_token"].as_i
+      user_max = options["ai_max_token"]?.try(&.as_i) || 0
+      if user_max > 0
+        @max_tokens = user_max
       else
         @max_tokens = LLM.get_max_tokens(@provider, @model)
       end
