@@ -12,6 +12,8 @@ expected_endpoints = [
     Param.new("redirect_url", "", "form"),
     Param.new("client_id", "", "form"),
   ]),
+  Endpoint.new("/api/v1/users/", "GET", [Param.new("page", "", "query")]),
+  Endpoint.new("/api/v1/users/:id", "GET"),
   Endpoint.new("/1.html", "GET"),
   Endpoint.new("/2.html", "GET"),
 ]
