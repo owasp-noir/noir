@@ -505,6 +505,9 @@ module LLM
   def self.bundle_files(files : Array(Tuple(String, String)),
                         max_tokens : Int32,
                         safety_margin : Float64 = 0.8) : Array(Tuple(String, Int32))
+    if max_tokens <= 0
+      max_tokens = MODEL_TOKEN_LIMITS["default"].as(Int32)
+    end
     safe_limit = (max_tokens * safety_margin).to_i
     bundles = [] of Tuple(String, Int32)
     current_bundle = ""
