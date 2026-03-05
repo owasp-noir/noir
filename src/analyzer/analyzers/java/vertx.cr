@@ -1,5 +1,5 @@
 require "../../../models/analyzer"
-require "../../../utils/wait_group"
+require "wait_group"
 
 module Analyzer::Java
   class Vertx < Analyzer
