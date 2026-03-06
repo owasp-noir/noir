@@ -1159,8 +1159,16 @@ module NoirTechs
   end
 
   def self.similar_to_tech(word)
+    w = word.to_s
+
+    # Accept canonical tech keys exactly (e.g. js_fastify)
+    TECHS.each_key do |key|
+      return key.to_s if key.to_s == w
+    end
+
+    # Fall back to alias lookup
     TECHS.each do |key, value|
-      if value[:similar].includes? word.downcase
+      if value[:similar].includes?(w.downcase)
         return key.to_s
       end
     end
