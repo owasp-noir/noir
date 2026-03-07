@@ -296,6 +296,11 @@ describe "--only-techs and --exclude-techs functionality" do
       NoirTechs.similar_to_tech("go_gin").should eq("go_gin")
     end
 
+    it "accepts canonical tech keys for --only-techs" do
+      NoirTechs.similar_to_tech("js_fastify").should eq("js_fastify")
+      NoirTechs.similar_to_tech("js_express").should eq("js_express")
+    end
+
     it "returns empty string for unknown techs" do
       NoirTechs.similar_to_tech("unknown_framework").should eq("")
       NoirTechs.similar_to_tech("nonexistent").should eq("")
