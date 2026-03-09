@@ -60,6 +60,15 @@ describe "Detect Java JSP" do
     instance.detect("config.xml", content).should be_false
   end
 
+  it "does not detect xml with JspServlet outside servlet-class tag" do
+    content = <<-XML
+      <config>
+        <description>Uses JspServlet for docs</description>
+      </config>
+      XML
+    instance.detect("config.xml", content).should be_false
+  end
+
   it "does not detect non-JSP files" do
     instance.detect("index.html", "<html></html>").should be_false
     instance.detect("app.js", "console.log('hello')").should be_false
