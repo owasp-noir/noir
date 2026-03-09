@@ -27,6 +27,11 @@ describe "Detect Symfony" do
     instance.detect("src/Controller/MyController.php", content).should be_true
   end
 
+  it "detects one-line PHP open tag with Symfony import" do
+    content = "<?php use Symfony\\Component\\HttpFoundation\\Response; class MyController {}"
+    instance.detect("src/Controller/MyController.php", content).should be_true
+  end
+
   it "detects config/bundles.php with Symfony\\" do
     content = <<-PHP
       <?php
