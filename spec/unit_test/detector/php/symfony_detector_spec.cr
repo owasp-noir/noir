@@ -28,10 +28,10 @@ describe "Detect Symfony" do
   end
 
   it "detects config/bundles.php with Symfony\\" do
-    content = <<-'PHP'
+    content = <<-PHP
       <?php
       return [
-          Symfony\Bundle\FrameworkBundle\FrameworkBundle::class => ['all' => true],
+          Symfony\\Bundle\\FrameworkBundle\\FrameworkBundle::class => ['all' => true],
       ];
       PHP
     instance.detect("config/bundles.php", content).should be_true
@@ -58,9 +58,9 @@ describe "Detect Symfony" do
   end
 
   it "detects public/index.php with Symfony" do
-    content = <<-'PHP'
+    content = <<-PHP
       <?php
-      use App\Kernel;
+      use App\\Kernel;
       require_once dirname(__DIR__).'/vendor/autoload_runtime.php';
       return function (array $context) {
           return new Kernel($context['APP_ENV'], (bool) $context['APP_DEBUG']);
@@ -76,10 +76,10 @@ describe "Detect Symfony" do
   end
 
   it "does not detect PHP test file with Symfony string literal only" do
-    content = <<-'PHP'
+    content = <<-PHP
       <?php
-      namespace Tests\Integration;
-      use PHPUnit\Framework\TestCase;
+      namespace Tests\\Integration;
+      use PHPUnit\\Framework\\TestCase;
 
       class TraceTest extends TestCase {
           public function testTrace(): void {
