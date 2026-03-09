@@ -118,9 +118,9 @@ class VersionChecker
   end
 
   private def check_sarif_cr : CheckResult
-    # Match the tool version in the driver section, not the SARIF schema version
-    # Look for "driver" followed by "name" and "version" fields
-    check_file("src/output_builder/sarif.cr", /"driver".*?"name",\s*"OWASP Noir".*?"version",\s*"([^"]+)"/m, @shard_version)
+    # SARIF output now uses Noir::VERSION constant, no hardcoded version to check.
+    # Version consistency is ensured by check_noir_cr via src/noir/version.cr.
+    CheckResult.new("src/output_builder/sarif.cr", "Noir::VERSION (indirect)", @shard_version, @shard_version, true)
   end
 
   private def check_snapcraft_yaml : CheckResult
@@ -171,7 +171,9 @@ class VersionChecker
   end
 
   private def check_sarif_spec : CheckResult
-    check_file("spec/unit_test/output_builder/sarif_spec.cr", /tool\["version"\]\.as_s\.should\s+eq\("([^"]+)"\)/, @shard_version)
+    # SARIF spec now uses Noir::VERSION constant, no hardcoded version to check.
+    # Version consistency is ensured by check_noir_cr via src/noir/version.cr.
+    CheckResult.new("spec/unit_test/output_builder/sarif_spec.cr", "Noir::VERSION (indirect)", @shard_version, @shard_version, true)
   end
 
   private def check_copilot_instructions : CheckResult

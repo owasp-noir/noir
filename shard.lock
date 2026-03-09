@@ -28,6 +28,10 @@ shards:
     git: https://github.com/mamantoha/http_proxy.git
     version: 0.14.0
 
+  sarif:
+    git: https://github.com/hahwul/sarif.cr.git
+    version: 0.1.0+git.commit.5d248bb0e7c6527f8ee7aed1aa1a1add5424acbc
+
   toml:
     git: https://github.com/crystal-community/toml.cr.git
     version: 0.8.1
