@@ -1,6 +1,6 @@
 require "../models/output_builder"
 require "../models/endpoint"
-require "json"
+require "sarif"
 
 class OutputBuilderSarif < OutputBuilder
   def print(endpoints : Array(Endpoint))
@@ -14,198 +14,86 @@ class OutputBuilderSarif < OutputBuilder
   end
 
   private def build_sarif(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult))
-    sarif = JSON.build do |json|
-      json.object do
-        json.field "$schema", "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json"
-        json.field "version", "2.1.0"
-        json.field "runs" do
-          json.array do
-            json.object do
-              json.field "tool" do
-                json.object do
-                  json.field "driver" do
-                    json.object do
-                      json.field "name", "OWASP Noir"
-                      json.field "version", "0.28.0"
-                      json.field "informationUri", "https://github.com/owasp-noir/noir"
-                      json.field "rules" do
-                        build_rules(json, endpoints, passive_results)
-                      end
-                    end
-                  end
-                end
-              end
-              json.field "results" do
-                build_results(json, endpoints, passive_results)
-              end
-            end
-          end
-        end
-      end
-    end
+    log = Sarif::Builder.build do |b|
+      b.run("OWASP Noir", Noir::VERSION) do |r|
+        r.information_uri("https://github.com/owasp-noir/noir")
 
-    sarif
-  end
-
-  private def build_rules(json : JSON::Builder, endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult))
-    json.array do
-      # Add endpoint discovery rule
-      if endpoints.size > 0
-        json.object do
-          json.field "id", "endpoint-discovery"
-          json.field "name", "Endpoint Discovery"
-          json.field "shortDescription" do
-            json.object do
-              json.field "text", "Discovered API endpoints through static analysis"
-            end
-          end
-          json.field "fullDescription" do
-            json.object do
-              json.field "text", "This rule identifies API endpoints, their HTTP methods, and parameters discovered through static code analysis"
-            end
-          end
-          json.field "defaultConfiguration" do
-            json.object do
-              json.field "level", "note"
-            end
-          end
-          json.field "helpUri", "https://github.com/owasp-noir/noir"
-        end
-      end
-
-      # Add passive scan rules
-      added_rule_ids = Set(String).new
-      passive_results.each do |result|
-        rule_id = result.id
-        unless added_rule_ids.includes?(rule_id)
-          added_rule_ids.add(rule_id)
-          json.object do
-            json.field "id", rule_id
-            json.field "name", result.info.name
-            json.field "shortDescription" do
-              json.object do
-                json.field "text", result.info.name
-              end
-            end
-            json.field "fullDescription" do
-              json.object do
-                json.field "text", result.info.description
-              end
-            end
-            json.field "defaultConfiguration" do
-              json.object do
-                json.field "level", map_severity_to_sarif_level(result.info.severity)
-              end
-            end
-            unless result.info.reference.empty?
-              json.field "helpUri", result.info.reference[0].to_s
-            end
-          end
-        end
-      end
-    end
-  end
-
-  private def build_results(json : JSON::Builder, endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult))
-    json.array do
-      # Add endpoint results
-      endpoints.each do |endpoint|
-        bake_endpoint(endpoint.url, endpoint.params)
-        params_info = [] of String
-
-        endpoint.params.each do |param|
-          params_info << "#{param.param_type}: #{param.name}"
+        # Add endpoint discovery rule
+        if endpoints.size > 0
+          r.rule("endpoint-discovery",
+            name: "Endpoint Discovery",
+            short_description: "Discovered API endpoints through static analysis",
+            full_description: "This rule identifies API endpoints, their HTTP methods, and parameters discovered through static code analysis",
+            level: Sarif::Level::Note,
+            help_uri: "https://github.com/owasp-noir/noir")
         end
 
-        message_text = "#{endpoint.method} #{endpoint.url}"
-        if params_info.size > 0
-          message_text += " (Parameters: #{params_info.join(", ")})"
+        # Add passive scan rules
+        passive_results.group_by(&.id).each_value do |results_for_rule|
+          result = results_for_rule.first
+          help_uri = result.info.reference.empty? ? nil : result.info.reference[0].to_s
+          r.rule(result.id,
+            name: result.info.name,
+            short_description: result.info.name,
+            full_description: result.info.description,
+            level: map_severity_to_sarif_level(result.info.severity),
+            help_uri: help_uri)
         end
 
-        json.object do
-          json.field "ruleId", "endpoint-discovery"
-          json.field "level", "note"
-          json.field "message" do
-            json.object do
-              json.field "text", message_text
-            end
+        # Add endpoint results
+        endpoints.each do |endpoint|
+          bake_endpoint(endpoint.url, endpoint.params)
+          params_info = [] of String
+
+          endpoint.params.each do |param|
+            params_info << "#{param.param_type}: #{param.name}"
           end
 
-          # Add location information if available
+          message_text = "#{endpoint.method} #{endpoint.url}"
+          if params_info.size > 0
+            message_text += " (Parameters: #{params_info.join(", ")})"
+          end
+
           if endpoint.details.code_paths && endpoint.details.code_paths.size > 0
-            json.field "locations" do
-              json.array do
-                endpoint.details.code_paths.each do |code_path|
-                  json.object do
-                    json.field "physicalLocation" do
-                      json.object do
-                        json.field "artifactLocation" do
-                          json.object do
-                            json.field "uri", code_path.path
-                          end
-                        end
-                        if code_path.line
-                          json.field "region" do
-                            json.object do
-                              json.field "startLine", code_path.line
-                            end
-                          end
-                        end
-                      end
-                    end
-                  end
-                end
+            r.result do |rb|
+              rb.message(message_text)
+              rb.rule_id("endpoint-discovery")
+              rb.level(Sarif::Level::Note)
+              endpoint.details.code_paths.each do |code_path|
+                rb.location(uri: code_path.path, start_line: code_path.line)
               end
             end
+          else
+            r.result(message_text,
+              rule_id: "endpoint-discovery",
+              level: Sarif::Level::Note)
           end
         end
-      end
 
-      # Add passive scan results
-      passive_results.each do |result|
-        json.object do
-          json.field "ruleId", result.id
-          json.field "level", map_severity_to_sarif_level(result.info.severity)
-          json.field "message" do
-            json.object do
-              json.field "text", result.extract
-            end
-          end
-          json.field "locations" do
-            json.array do
-              json.object do
-                json.field "physicalLocation" do
-                  json.object do
-                    json.field "artifactLocation" do
-                      json.object do
-                        json.field "uri", result.file_path
-                      end
-                    end
-                    json.field "region" do
-                      json.object do
-                        json.field "startLine", result.line_number
-                      end
-                    end
-                  end
-                end
-              end
-            end
-          end
+        # Add passive scan results
+        passive_results.each do |result|
+          r.result(result.extract,
+            rule_id: result.id,
+            level: map_severity_to_sarif_level(result.info.severity),
+            uri: result.file_path,
+            start_line: result.line_number)
         end
       end
     end
+
+    log.to_json
   end
 
-  private def map_severity_to_sarif_level(severity : String) : String
+  private def map_severity_to_sarif_level(severity : String) : Sarif::Level
     case severity.downcase
     when "critical", "high"
-      "error"
+      Sarif::Level::Error
     when "medium"
-      "warning"
+      Sarif::Level::Warning
     when "low"
-      "note"
+      Sarif::Level::Note
     else
-      "none"
+      Sarif::Level::None
     end
   end
 end
