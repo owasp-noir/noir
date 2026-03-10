@@ -12,14 +12,10 @@ module Detector::Java
           file_contents.includes?("jakarta.servlet.jsp")
       end
 
-      # web.xml often contains servlet mappings; allow broader heuristic there
-      if filename.ends_with?("web.xml")
-        return file_contents.includes?("<jsp-file>") ||
-          file_contents.includes?("JspServlet") ||
-          (file_contents.includes?(".jsp") && file_contents.includes?("servlet"))
-      elsif filename.ends_with?(".xml")
-        return file_contents.includes?("<jsp-file>") ||
-          file_contents.includes?("JspServlet")
+      if filename.ends_with?(".xml")
+        xml_without_comments = file_contents.gsub(/<!--.*?-->/m, "")
+        return xml_without_comments.includes?("<jsp-file>") ||
+          !!xml_without_comments.match(/<servlet-class>\s*[^<]*\bJspServlet\b[^<]*<\/servlet-class>/)
       end
 
       false
