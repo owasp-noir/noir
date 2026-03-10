@@ -9,17 +9,16 @@ module Detector::Php
       end
 
       # Check for Symfony directory structure
-      if filename.includes?("config/bundles.php") || filename.includes?("config/services.yaml")
+      if filename.includes?("config/bundles.php") && file_contents.includes?("Symfony\\")
         return true
       end
 
-      # Check for Symfony namespaces in PHP files
-      if filename.ends_with?(".php") && file_contents.includes?("use Symfony\\")
+      if filename.includes?("config/services.yaml") && file_contents.includes?("App\\")
         return true
       end
 
-      # Check for Symfony annotations/attributes
-      if filename.ends_with?(".php") && (file_contents.includes?("@Route") || file_contents.includes?("#[Route"))
+      # Check for Symfony namespaces in PHP files (real imports only)
+      if filename.ends_with?(".php") && file_contents.match(/(?:^|\n|<\?php\s+)\s*use\s+Symfony\\[^;\n]*;/)
         return true
       end
 
