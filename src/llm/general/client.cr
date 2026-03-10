@@ -10,7 +10,7 @@ module LLM
     def initialize(url : String, model : String, api_key : String?)
       @url = url
       @api = if url.includes?("://")
-               url
+               ensure_chat_completions_path(url)
              else
                case url.downcase
                when "openai"
@@ -146,6 +146,12 @@ module LLM
 
     private def self.clean_content(text : String) : String
       text.gsub("```json", "").gsub("```", "").strip
+    end
+
+    private def ensure_chat_completions_path(url : String) : String
+      normalized = url.chomp("/")
+      return normalized if normalized.ends_with?("/chat/completions")
+      "#{normalized}/chat/completions"
     end
 
     def self.parse_tools_cached(tools : String) : JSON::Any

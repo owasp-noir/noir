@@ -10,6 +10,10 @@ class LLM::General
   def self.__test_tools_cache_size : Int32
     @@tools_cache.size
   end
+
+  def __test_api : String
+    @api
+  end
 end
 
 private def build_tool_response(action : String, arguments_raw : String) : JSON::Any
@@ -102,6 +106,43 @@ describe LLM::General do
       second.as_a[0]["function"]["name"].as_s.should eq("cache_probe_tool")
       size_after_first.should eq(size_before + 1)
       size_after_second.should eq(size_after_first)
+    end
+  end
+
+  describe "URL normalization" do
+    it "appends /chat/completions to base URL with /v1 path" do
+      client = LLM::General.new("http://localhost:11434/v1", "test-model", nil)
+      client.__test_api.should eq("http://localhost:11434/v1/chat/completions")
+    end
+
+    it "appends /chat/completions to bare server URL" do
+      client = LLM::General.new("http://host.docker.internal:11434/", "test-model", nil)
+      client.__test_api.should eq("http://host.docker.internal:11434/chat/completions")
+    end
+
+    it "appends /chat/completions to bare server URL without trailing slash" do
+      client = LLM::General.new("http://host.docker.internal:11434", "test-model", nil)
+      client.__test_api.should eq("http://host.docker.internal:11434/chat/completions")
+    end
+
+    it "preserves URL that already ends with /chat/completions" do
+      client = LLM::General.new("http://localhost:9999/v1/chat/completions", "test-model", nil)
+      client.__test_api.should eq("http://localhost:9999/v1/chat/completions")
+    end
+
+    it "appends /chat/completions to custom path" do
+      client = LLM::General.new("http://custom-server.com/api/v1", "test-model", nil)
+      client.__test_api.should eq("http://custom-server.com/api/v1/chat/completions")
+    end
+
+    it "resolves prefix 'openai' to full endpoint URL" do
+      client = LLM::General.new("openai", "test-model", "test-key")
+      client.__test_api.should eq("https://api.openai.com/v1/chat/completions")
+    end
+
+    it "resolves prefix 'ollama' to full endpoint URL" do
+      client = LLM::General.new("ollama", "test-model", nil)
+      client.__test_api.should eq("http://localhost:11434/v1/chat/completions")
     end
   end
 end
