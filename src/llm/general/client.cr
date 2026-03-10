@@ -1,4 +1,5 @@
 require "json"
+require "uri"
 require "http/client"
 
 module LLM
@@ -151,7 +152,14 @@ module LLM
     private def ensure_chat_completions_path(url : String) : String
       normalized = url.chomp("/")
       return normalized if normalized.ends_with?("/chat/completions")
-      "#{normalized}/chat/completions"
+
+      uri = URI.parse(normalized)
+      path = uri.path || ""
+      if path.empty? || path == "/"
+        "#{normalized}/v1/chat/completions"
+      else
+        "#{normalized}/chat/completions"
+      end
     end
 
     def self.parse_tools_cached(tools : String) : JSON::Any

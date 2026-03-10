@@ -115,14 +115,14 @@ describe LLM::General do
       client.__test_api.should eq("http://localhost:11434/v1/chat/completions")
     end
 
-    it "appends /chat/completions to bare server URL" do
+    it "appends /v1/chat/completions to bare server URL" do
       client = LLM::General.new("http://host.docker.internal:11434/", "test-model", nil)
-      client.__test_api.should eq("http://host.docker.internal:11434/chat/completions")
+      client.__test_api.should eq("http://host.docker.internal:11434/v1/chat/completions")
     end
 
-    it "appends /chat/completions to bare server URL without trailing slash" do
+    it "appends /v1/chat/completions to bare server URL without trailing slash" do
       client = LLM::General.new("http://host.docker.internal:11434", "test-model", nil)
-      client.__test_api.should eq("http://host.docker.internal:11434/chat/completions")
+      client.__test_api.should eq("http://host.docker.internal:11434/v1/chat/completions")
     end
 
     it "preserves URL that already ends with /chat/completions" do
