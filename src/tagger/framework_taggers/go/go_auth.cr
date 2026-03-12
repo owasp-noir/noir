@@ -115,7 +115,7 @@ class GoAuthTagger < FrameworkTagger
           prefix = "/" if prefix.empty?
           @middleware_scopes << {
             prefix:      prefix,
-            middleware:   middleware_name,
+            middleware:  middleware_name,
             description: "Protected by Go middleware #{middleware_name}",
           }
         end
@@ -130,7 +130,7 @@ class GoAuthTagger < FrameworkTagger
           jwt_name = jwt_match ? jwt_match[0] : "JWT"
           @middleware_scopes << {
             prefix:      prefix,
-            middleware:   jwt_name,
+            middleware:  jwt_name,
             description: "Protected by Go JWT middleware (#{jwt_name})",
           }
         end

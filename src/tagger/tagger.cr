@@ -73,6 +73,76 @@ module NoirTaggers
       desc:   "Identifies Rust authentication patterns (guards, extractors, middleware)",
       runner: RustAuthTagger,
     },
+    flask_auth: {
+      name:   "Flask Auth Tagger",
+      desc:   "Identifies Flask authentication patterns (flask-login, flask-jwt, flask-httpauth)",
+      runner: FlaskAuthTagger,
+    },
+    fastapi_auth: {
+      name:   "FastAPI Auth Tagger",
+      desc:   "Identifies FastAPI authentication patterns (Depends, Security, OAuth2)",
+      runner: FastAPIAuthTagger,
+    },
+    python_misc_auth: {
+      name:   "Python Misc Auth Tagger",
+      desc:   "Identifies Sanic/Tornado authentication patterns",
+      runner: PythonMiscAuthTagger,
+    },
+    ruby_auth: {
+      name:   "Ruby Auth Tagger",
+      desc:   "Identifies Ruby authentication patterns (Devise, Pundit, CanCanCan, Warden)",
+      runner: RubyAuthTagger,
+    },
+    php_auth: {
+      name:   "PHP Auth Tagger",
+      desc:   "Identifies PHP authentication patterns (Laravel, Symfony, CakePHP)",
+      runner: PhpAuthTagger,
+    },
+    nestjs_auth: {
+      name:   "NestJS Auth Tagger",
+      desc:   "Identifies NestJS authentication patterns (Guards, decorators)",
+      runner: NestjsAuthTagger,
+    },
+    js_misc_auth: {
+      name:   "JS Misc Auth Tagger",
+      desc:   "Identifies Fastify/Koa/Restify authentication patterns",
+      runner: JsMiscAuthTagger,
+    },
+    aspnet_auth: {
+      name:   "ASP.NET Auth Tagger",
+      desc:   "Identifies ASP.NET authentication patterns ([Authorize], policies)",
+      runner: AspnetAuthTagger,
+    },
+    elixir_auth: {
+      name:   "Elixir Auth Tagger",
+      desc:   "Identifies Phoenix/Plug authentication patterns (plugs, Guardian, Pow)",
+      runner: ElixirAuthTagger,
+    },
+    ktor_auth: {
+      name:   "Ktor Auth Tagger",
+      desc:   "Identifies Ktor authentication patterns (authenticate blocks, principals)",
+      runner: KtorAuthTagger,
+    },
+    java_misc_auth: {
+      name:   "Java Misc Auth Tagger",
+      desc:   "Identifies Vert.x/Armeria/JSP authentication patterns",
+      runner: JavaMiscAuthTagger,
+    },
+    swift_auth: {
+      name:   "Swift Auth Tagger",
+      desc:   "Identifies Vapor/Kitura/Hummingbird authentication patterns",
+      runner: SwiftAuthTagger,
+    },
+    scala_auth: {
+      name:   "Scala Auth Tagger",
+      desc:   "Identifies Play/Akka/Scalatra authentication patterns",
+      runner: ScalaAuthTagger,
+    },
+    crystal_auth: {
+      name:   "Crystal Auth Tagger",
+      desc:   "Identifies Crystal framework authentication patterns (Kemal, Amber, Lucky)",
+      runner: CrystalAuthTagger,
+    },
   }
 
   def self.taggers
