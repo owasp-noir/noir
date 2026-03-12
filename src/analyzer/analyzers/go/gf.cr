@@ -90,15 +90,15 @@ module Analyzer::Go
                           end
                         else
                           # Normal route
-                          get_route_path(line, groups).tap do |route_path|
+                          get_route_path(line, groups).tap do |rpath|
                             # Handle multi-line routes - check next lines if route is empty
-                            if route_path.size == 0 && index + 1 < lines.size
+                            if rpath.size == 0 && index + 1 < lines.size
                               next_line = lines[index + 1]
-                              route_path = get_route_path(next_line, groups)
+                              rpath = get_route_path(next_line, groups)
                             end
 
-                            if route_path.size > 0
-                              full_path = current_closure_prefix + route_path
+                            if rpath.size > 0
+                              full_path = current_closure_prefix + rpath
                               new_endpoint = Endpoint.new(full_path, method, details)
                               result << new_endpoint
                               last_endpoint = new_endpoint
