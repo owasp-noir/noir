@@ -141,11 +141,10 @@ class ExpressAuthTagger < FrameworkTagger
     i = line_idx - 1
     while i >= 0 && i >= line_idx - 2
       stripped = lines[i].strip
-      break if stripped.empty? || stripped.ends_with?(";") || stripped.ends_with?(")")
+      break if stripped.empty? || stripped.ends_with?(";")
       # Only include if this looks like part of the route definition
       if stripped.matches?(/\.(get|post|put|patch|delete|all|use)\s*\(/) ||
-         stripped.includes?("passport") || stripped.includes?("jwt") ||
-         stripped.includes?("Auth") || stripped.includes?("auth")
+         stripped.includes?("passport") || stripped.includes?("expressjwt")
         result.unshift(lines[i])
       else
         break

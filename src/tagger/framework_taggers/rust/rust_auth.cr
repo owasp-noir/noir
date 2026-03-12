@@ -117,8 +117,8 @@ class RustAuthTagger < FrameworkTagger
         # If no scope found, skip — don't default to "/" (global)
       end
 
-      # Reset scope context on closing parenthesis/brace
-      if stripped == ")" || stripped == ");" || stripped == "}"
+      # Reset scope context on closing parenthesis/brace that ends a scope block
+      if stripped == ")" || stripped == ");" || stripped == "})" || stripped == "});"
         current_scope = nil
       end
     end
@@ -191,7 +191,12 @@ class RustAuthTagger < FrameworkTagger
     idx = route_line_idx - 1
     while idx >= 0 && idx >= route_line_idx - 5
       current = lines[idx].strip
-      break if current.empty? && idx < route_line_idx - 1
+      # Skip empty lines; stop at non-attribute code boundaries
+      if current.empty?
+        idx -= 1
+        next
+      end
+      break unless current.starts_with?("#[") || current.starts_with?("//")
 
       GUARD_ATTRIBUTE_PATTERNS.each do |pattern|
         match = current.match(pattern)

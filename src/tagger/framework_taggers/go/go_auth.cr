@@ -101,8 +101,8 @@ class GoAuthTagger < FrameworkTagger
         group_stack << group_match[1]
       end
 
-      # Track closing braces (rough scope tracking)
-      if stripped == "})" || stripped == "}"
+      # Track closing braces for scope tracking
+      if stripped.starts_with?("}") || stripped == "})"
         group_stack.pop? unless group_stack.empty?
       end
 
@@ -111,7 +111,7 @@ class GoAuthTagger < FrameworkTagger
         match = stripped.match(pattern)
         if match
           middleware_name = match[1]
-          prefix = group_stack.join("")
+          prefix = normalize_prefix(group_stack)
           prefix = "/" if prefix.empty?
           @middleware_scopes << {
             prefix:      prefix,
@@ -124,7 +124,7 @@ class GoAuthTagger < FrameworkTagger
       # Check for JWT library middleware
       JWT_PATTERNS.each do |pattern|
         if stripped.matches?(pattern) && stripped.includes?(".Use")
-          prefix = group_stack.join("")
+          prefix = normalize_prefix(group_stack)
           prefix = "/" if prefix.empty?
           jwt_match = stripped.match(pattern)
           jwt_name = jwt_match ? jwt_match[0] : "JWT"
@@ -207,5 +207,13 @@ class GoAuthTagger < FrameworkTagger
     end
 
     nil
+  end
+
+  private def normalize_prefix(segments : Array(String)) : String
+    joined = segments.join("")
+    # Ensure segments that lack a leading "/" are joined properly
+    # e.g., ["api", "v1"] → "/api/v1", ["/api", "/v1"] → "/api/v1"
+    parts = joined.split("/").reject(&.empty?)
+    parts.empty? ? "/" : "/" + parts.join("/")
   end
 end

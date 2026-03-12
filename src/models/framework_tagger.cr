@@ -60,6 +60,8 @@ class FrameworkTagger
       line = path_info.line
 
       if line
+        # Note: `line` is 1-indexed (from PathInfo), but `context` is a 0-indexed array slice.
+        # To map back: context[line - start_line - 1] is the endpoint's line.
         start_line = [line - context_lines, 0].max
         end_line = [line + context_lines, lines.size - 1].min
         context = lines[start_line..end_line]

@@ -88,14 +88,22 @@ class SpringAuthTagger < FrameworkTagger
     return unless line
 
     # Walk backwards from endpoint line to find annotations
+    # Note: `line` is 1-indexed (from PathInfo), context array is 0-indexed
     lines = ctx.context
     context_start = [line - 15, 0].max
-    endpoint_idx = line - context_start
+    endpoint_idx = line - 1 - context_start
 
     idx = [endpoint_idx - 1, lines.size - 1].min
     while idx >= 0 && idx < lines.size
       current_line = lines[idx].strip
-      break if current_line.empty? && idx < endpoint_idx - 2
+      # Skip empty lines but stop at method/class boundaries
+      if current_line.empty?
+        idx -= 1
+        next
+      end
+      break if current_line.starts_with?("public ") || current_line.starts_with?("private ") || current_line.starts_with?("protected ")
+      break if current_line.starts_with?("class ") || current_line.starts_with?("}")
+      break if current_line.ends_with?("}")
 
       ANNOTATION_PATTERNS.each do |pattern|
         if current_line.matches?(pattern)
