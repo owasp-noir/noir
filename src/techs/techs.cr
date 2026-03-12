@@ -38,6 +38,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :go_gf => {
+      :framework => "GoFrame",
+      :language  => "Go",
+      :similar   => ["gf", "goframe", "go-gf", "go_gf", "gogf/gf"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => true,
+        :websocket   => false,
+      },
+    },
     :crystal_lucky => {
       :framework => "Lucky",
       :language  => "Crystal",
