@@ -3,11 +3,7 @@ require "../../../models/detector"
 module Detector::Go
   class Gf < Detector
     def detect(filename : String, file_contents : String) : Bool
-      if (filename.includes? "go.mod") && (file_contents.includes? "github.com/gogf/gf")
-        true
-      else
-        false
-      end
+      (filename.includes? "go.mod") && (file_contents.includes? "github.com/gogf/gf")
     end
 
     def set_name

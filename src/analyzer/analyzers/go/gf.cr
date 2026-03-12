@@ -23,16 +23,40 @@ module Analyzer::Go
                     lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
                     last_endpoint = Endpoint.new("", "")
 
+                    # Track closure-style groups with brace depth
+                    closure_groups = [] of Tuple(String, Int32)
+                    brace_depth = 0
+
                     lines.each_with_index do |line, index|
                       details = Details.new(PathInfo.new(path, index + 1))
                       lexer = GolangLexer.new
 
+                      # Update brace depth
+                      brace_depth += line.count('{') - line.count('}')
+
+                      # Pop closure groups whose scope has ended
+                      while closure_groups.size > 0 && brace_depth < closure_groups.last[1]
+                        closure_groups.pop
+                      end
+
+                      current_closure_prefix = closure_groups.size > 0 ? closure_groups.last[0] : ""
+
+                      # Detect closure-style group: s.Group("/api", func(group *ghttp.RouterGroup) {
+                      if line.includes?(".Group(") && line.includes?("func(")
+                        if str_match = line.match(/\.Group\(\s*"([^"]*)"/)
+                          new_prefix = current_closure_prefix + str_match[1]
+                          closure_groups << {new_prefix, brace_depth}
+                        end
+                      end
+
+                      # Handle variable-assigned groups via common analyze_group
                       analyze_group(line, lexer, groups)
 
                       if line.includes?(".BindHandler(") || line.includes?(".BindMiddleware(")
                         get_route_path(line, groups).tap do |route_path|
                           if route_path.size > 0
-                            new_endpoint = Endpoint.new("#{route_path}", "ALL", details)
+                            full_path = current_closure_prefix + route_path
+                            new_endpoint = Endpoint.new(full_path, "ALL", details)
                             result << new_endpoint
                             last_endpoint = new_endpoint
                           end
@@ -42,17 +66,43 @@ module Analyzer::Go
                       # Exclude logger matches or variable assignments like err = ... or info := ...
                       if !line.includes?("logger.") && (match = line.match(/\.(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD|TRACE|ALL)\s*\(/i))
                         method = match[1].upcase
-                        get_route_path(line, groups).tap do |route_path|
-                          # Handle multi-line routes - check next lines if route is empty
-                          if route_path.size == 0 && index + 1 < lines.size
-                            next_line = lines[index + 1]
-                            route_path = get_route_path(next_line, groups)
-                          end
 
-                          if route_path.size > 0
-                            new_endpoint = Endpoint.new("#{route_path}", method, details)
-                            result << new_endpoint
-                            last_endpoint = new_endpoint
+                        if line.includes?(".Group(") && !line.includes?("func(")
+                          # Chained group+method: s.Group("/multi").GET("/line", ...)
+                          if group_match = line.match(/\.Group\(\s*"([^"]*)"/)
+                            chain_prefix = current_closure_prefix + group_match[1]
+                            tokens = lexer.tokenize(line)
+                            path_strings = tokens.select { |t| t.type == :string && t.value.to_s.starts_with?("/") }
+                            route_path = ""
+                            if path_strings.size >= 2
+                              route_path = chain_prefix + path_strings[1].value.to_s
+                            elsif index + 1 < lines.size
+                              next_route = get_route_path(lines[index + 1], [] of Hash(String, String))
+                              if next_route.size > 0
+                                route_path = chain_prefix + next_route
+                              end
+                            end
+                            if route_path.size > 0
+                              new_endpoint = Endpoint.new(route_path, method, details)
+                              result << new_endpoint
+                              last_endpoint = new_endpoint
+                            end
+                          end
+                        else
+                          # Normal route
+                          get_route_path(line, groups).tap do |route_path|
+                            # Handle multi-line routes - check next lines if route is empty
+                            if route_path.size == 0 && index + 1 < lines.size
+                              next_line = lines[index + 1]
+                              route_path = get_route_path(next_line, groups)
+                            end
+
+                            if route_path.size > 0
+                              full_path = current_closure_prefix + route_path
+                              new_endpoint = Endpoint.new(full_path, method, details)
+                              result << new_endpoint
+                              last_endpoint = new_endpoint
+                            end
                           end
                         end
                       end
@@ -101,25 +151,20 @@ module Analyzer::Go
     end
 
     def get_param(line : String) : Param
-      param_type = "json"
-      if line.includes?("GetQuery(")
-        param_type = "query"
-      end
-      if line.includes?("GetForm(") || line.includes?("GetUploadFile(")
-        param_type = "form"
-      end
-      if line.includes?("GetHeader(")
-        param_type = "header"
-      end
-
-      first = line.strip.split("(")
-      if first.size > 1
-        second = first[1].split(")")
-        if second.size > 1
-          param_name = second[0].gsub("\"", "")
-          rtn = Param.new(param_name, "", param_type)
-          return rtn
+      param_type =
+        if line.includes?("GetQuery(")
+          "query"
+        elsif line.includes?("GetForm(") || line.includes?("GetUploadFile(")
+          "form"
+        elsif line.includes?("GetHeader(")
+          "header"
+        else
+          "json"
         end
+
+      match = line.match(/\(\s*"([^"]+)"\s*\)/)
+      if match
+        return Param.new(match[1], "", param_type)
       end
 
       Param.new("", "", "")

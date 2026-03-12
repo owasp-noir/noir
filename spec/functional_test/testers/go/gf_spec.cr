@@ -10,22 +10,22 @@ expected_endpoints = [
   Endpoint.new("/admin", "GET", [
     Param.new("abcd_token", "", "cookie"),
   ]),
-  Endpoint.new("/users", "GET", [
+  Endpoint.new("/api/users", "GET", [
     Param.new("status", "", "query"),
   ]),
-  Endpoint.new("/submit", "POST", [
+  Endpoint.new("/api/submit", "POST", [
     Param.new("username", "", "form"),
     Param.new("password", "", "json"),
     Param.new("User-Agent", "", "header"),
   ]),
-  Endpoint.new("/v1/migration", "GET"),
-  Endpoint.new("/v1/update", "PUT"),
-  Endpoint.new("/get", "GET"),
-  Endpoint.new("/post", "POST", [
+  Endpoint.new("/api/v1/migration", "GET"),
+  Endpoint.new("/api/v1/update", "PUT"),
+  Endpoint.new("/mixed/get", "GET"),
+  Endpoint.new("/mixed/post", "POST", [
     Param.new("field1", "", "form"),
   ]),
-  Endpoint.new("/delete", "DELETE"),
-  Endpoint.new("/multi", "GET", [
+  Endpoint.new("/mixed/delete", "DELETE"),
+  Endpoint.new("/multi/line", "GET", [
     Param.new("ml_param", "", "query"),
   ]),
 ]
