@@ -83,7 +83,7 @@ class JsMiscAuthTagger < FrameworkTagger
   end
 
   private def check_route_line(lines : Array(String), line_idx : Int32) : String?
-    return nil if line_idx < 0 || line_idx >= lines.size
+    return if line_idx < 0 || line_idx >= lines.size
 
     # Check the route definition line and adjacent lines
     start_idx = [line_idx - 2, 0].max

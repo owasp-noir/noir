@@ -85,7 +85,7 @@ class SpringAuthTagger < FrameworkTagger
 
   private def check_annotations(ctx : SourceContext) : String?
     line = ctx.line
-    return nil unless line
+    return unless line
 
     # Walk backwards from endpoint line to find annotations
     lines = ctx.context

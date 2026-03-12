@@ -71,7 +71,7 @@ class KtorAuthTagger < FrameworkTagger
 
       # Detect authenticate block (only record if route prefix is known)
       if !current_prefix.empty?
-        AUTHENTICATE_BLOCK_PATTERNS.each do |pattern, desc|
+        AUTHENTICATE_BLOCK_PATTERNS.each do |pattern, _desc|
           if stripped.matches?(pattern)
             in_authenticate = true
             auth_match = stripped.match(/authenticate\s*\(\s*"([^"]+)"/)
@@ -129,7 +129,7 @@ class KtorAuthTagger < FrameworkTagger
 
       # Check pattern BEFORE counting braces on this line
       # brace_depth == 0 means no net block boundaries crossed → we're inside
-      AUTHENTICATE_BLOCK_PATTERNS.each do |pattern, desc|
+      AUTHENTICATE_BLOCK_PATTERNS.each do |pattern, _desc|
         if stripped.matches?(pattern) && brace_depth == 0
           auth_match = stripped.match(/authenticate\s*\(\s*"([^"]+)"/)
           if auth_match

@@ -78,7 +78,7 @@ class DjangoAuthTagger < FrameworkTagger
   private def check_decorators(lines : Array(String), endpoint_line : Int32) : String?
     # Walk backwards from the line before the endpoint definition
     idx = endpoint_line - 2 # 0-indexed, one line before
-    return nil if idx < 0
+    return if idx < 0
 
     while idx >= 0
       current = lines[idx].strip
@@ -113,11 +113,11 @@ class DjangoAuthTagger < FrameworkTagger
           end
         end
         # Found a class but no mixin — stop searching
-        return nil
+        return
       end
       # If we hit a top-level def (not indented), we're not in a class
       if current.starts_with?("def ") && lines[idx] == lines[idx].lstrip
-        return nil
+        return
       end
       idx -= 1
     end
@@ -132,11 +132,11 @@ class DjangoAuthTagger < FrameworkTagger
       current = lines[idx].lstrip
       # If we hit the class definition, stop
       if current.starts_with?("class ")
-        return nil
+        return
       end
       # If we hit a top-level def (not indented), we're not in a class
       if current.starts_with?("def ") && lines[idx] == lines[idx].lstrip
-        return nil
+        return
       end
 
       DRF_PATTERNS.each do |pattern|

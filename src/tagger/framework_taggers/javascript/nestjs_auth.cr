@@ -65,7 +65,7 @@ class NestjsAuthTagger < FrameworkTagger
       line_idx = line_num - 1
 
       # Check if endpoint is explicitly public
-      if is_public?(lines, line_idx)
+      if public?(lines, line_idx)
         return
       end
 
@@ -85,7 +85,7 @@ class NestjsAuthTagger < FrameworkTagger
     end
   end
 
-  private def is_public?(lines : Array(String), method_line : Int32) : Bool
+  private def public?(lines : Array(String), method_line : Int32) : Bool
     idx = method_line - 1
     while idx >= 0 && idx >= method_line - 5
       current = lines[idx].strip

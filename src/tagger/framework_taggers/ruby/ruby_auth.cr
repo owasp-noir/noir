@@ -97,7 +97,6 @@ class RubyAuthTagger < FrameworkTagger
     # Walk backwards to find the controller class and before_action declarations
     idx = action_line
     action_name = extract_action_name(lines, action_line)
-    found_class = false
 
     while idx >= 0
       current = lines[idx].strip
@@ -108,10 +107,10 @@ class RubyAuthTagger < FrameworkTagger
           # Check if it applies to this specific action via only: []
           if current.includes?("only:")
             if action_name && current.includes?(":#{action_name}")
-              return nil # Explicitly skipped
+              return # Explicitly skipped
             end
           else
-            return nil # Broadly skipped
+            return # Broadly skipped
           end
         end
       end
@@ -142,10 +141,7 @@ class RubyAuthTagger < FrameworkTagger
         end
       end
 
-      if current.starts_with?("class ")
-        found_class = true
-        break
-      end
+      break if current.starts_with?("class ")
 
       idx -= 1
     end
@@ -193,7 +189,7 @@ class RubyAuthTagger < FrameworkTagger
   end
 
   private def extract_action_name(lines : Array(String), line_idx : Int32) : String?
-    return nil if line_idx < 0 || line_idx >= lines.size
+    return if line_idx < 0 || line_idx >= lines.size
     line = lines[line_idx].strip
     match = line.match(/def\s+(\w+)/)
     match ? match[1] : nil

@@ -77,13 +77,13 @@ class SwiftAuthTagger < FrameworkTagger
   end
 
   private def check_middleware_group(lines : Array(String), route_line : Int32) : String?
-    return nil if route_line < 0 || route_line >= lines.size
+    return if route_line < 0 || route_line >= lines.size
 
     route_line_text = lines[route_line].strip
 
     # Extract the receiver variable from the route line (e.g., "protected" from "protected.get(...)")
     receiver_match = route_line_text.match(/^(\w+)\.(get|post|put|delete|patch|group)/)
-    return nil unless receiver_match
+    return unless receiver_match
     receiver = receiver_match[1]
 
     # Walk backwards to find if this receiver was assigned from .grouped(AuthMiddleware)
