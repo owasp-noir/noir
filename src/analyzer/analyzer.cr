@@ -145,7 +145,7 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
   end
 
   if options["url"] != ""
-    logger.sub "➔ File-based Analyzer: #{file_analyzer.hooks_count} hook in use"
+    logger.sub "➔ File-based Analyzer: #{file_analyzer.hooks_count} #{file_analyzer.hooks_count == 1 ? "hook" : "hooks"} in use"
     result = result + file_analyzer.analyze
   end
 
