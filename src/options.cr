@@ -227,6 +227,11 @@ def run_options_parser
         puts " #{tagger.to_s.colorize(:green)}"
         info.each { |k, v| puts "   #{k.to_s.colorize(:blue)}: #{v}" }
       end
+      puts "\nFramework-specific taggers:"
+      NoirTaggers.framework_taggers.each do |tagger, info|
+        puts " #{tagger.to_s.colorize(:green)}"
+        info.each { |k, v| puts "   #{k.to_s.colorize(:blue)}: #{v}" }
+      end
       exit
     end
 
