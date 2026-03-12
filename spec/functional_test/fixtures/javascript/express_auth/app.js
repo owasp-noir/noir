@@ -17,8 +17,8 @@ app.get('/profile', passport.authenticate('jwt', { session: false }), (req, res)
   res.json({ user: req.user });
 });
 
-// JWT middleware protected route
-app.post('/api/data', expressjwt({ secret: 'secret', algorithms: ['HS256'] }), (req, res) => {
+// JWT middleware protected route (secret is a fixture placeholder, not production code)
+app.post('/api/data', expressjwt({ secret: process.env.JWT_SECRET || 'fixture-placeholder', algorithms: ['HS256'] }), (req, res) => {
   res.json({ data: [] });
 });
 

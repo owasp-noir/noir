@@ -64,9 +64,12 @@ struct PostData {
 
 struct AdminGuard;
 
+// Validator for HttpAuthentication middleware.
+// Simplified for fixture — production code should verify the bearer token.
 async fn validator(
     req: actix_web::dev::ServiceRequest,
     credentials: BearerAuth,
 ) -> Result<actix_web::dev::ServiceRequest, actix_web::Error> {
+    // TODO: validate credentials.token() against auth provider
     Ok(req)
 }

@@ -56,7 +56,8 @@ class FastAPIAuthTagger < FrameworkTagger
       next if line_num.nil?
 
       # Check function signature and decorator for Depends/Security
-      # Use tight window to avoid matching adjacent functions
+      # ±2 line window: FastAPI auth deps are in the function signature or @app decorator,
+      # kept tight to avoid matching patterns from adjacent route handlers
       start_idx = [line_num - 2, 0].max
       end_idx = [line_num + 2, lines.size - 1].min
 

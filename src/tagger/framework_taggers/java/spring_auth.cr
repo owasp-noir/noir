@@ -143,7 +143,8 @@ class SpringAuthTagger < FrameworkTagger
         .gsub("DOUBLE_STAR", ".*")
       url.matches?(/^#{regex_str}/)
     end
-  rescue
+  rescue ex
+    @logger.debug "SpringAuthTagger: Failed to match ant pattern '#{pattern}': #{ex.message}"
     false
   end
 end

@@ -38,17 +38,6 @@ class GoAuthTagger < FrameworkTagger
     /\b[Pp]ermission[Cc]heck\b/,
   ]
 
-  # Import patterns for auth packages
-  AUTH_IMPORT_PATTERNS = [
-    /golang-jwt/,
-    /dgrijalva\/jwt-go/,
-    /go-chi\/jwtauth/,
-    /labstack\/echo.*\/middleware/,
-    /gin-contrib\/sessions/,
-    /gorilla\/sessions/,
-    /casbin/,
-  ]
-
   def initialize(options : Hash(String, YAML::Any))
     super
     @name = "go_auth"
@@ -164,7 +153,8 @@ class GoAuthTagger < FrameworkTagger
         end
       end
 
-      # Check lines just above for middleware applied to this specific route
+      # Check up to 5 lines above for middleware applied to this specific route
+      # Go middleware is typically chained immediately before the route handler
       check_idx = line_idx - 1
       while check_idx >= 0 && check_idx >= line_idx - 5
         above_line = lines[check_idx].strip

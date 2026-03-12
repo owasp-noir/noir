@@ -6,20 +6,20 @@ describe "FastAPIAuthTagger" do
   main_path = "#{fixture_base}/main.py"
 
   # main.py line reference:
-  # 10: @app.get("/public")
-  # 11: async def public_page():
-  # 15: @app.get("/profile")
-  # 16: async def profile(current_user: User = Depends(get_current_user)):
-  # 20: @app.get("/admin")
-  # 21: async def admin(token: str = Security(oauth2_scheme)):
-  # 25: @app.get("/open")
-  # 26: async def open_page():
+  # 18: @app.get("/public")
+  # 19: async def public_page():
+  # 23: @app.get("/profile")
+  # 24: async def profile(current_user: User = Depends(get_current_user)):
+  # 28: @app.get("/admin")
+  # 29: async def admin(token: str = Security(oauth2_scheme)):
+  # 33: @app.get("/open")
+  # 34: async def open_page():
 
   it "detects Depends(get_current_user)" do
     noir_options = create_test_options
     noir_options["base"] = YAML::Any.new(fixture_base)
 
-    details = Details.new(PathInfo.new(main_path, 15))
+    details = Details.new(PathInfo.new(main_path, 24))
     details.technology = "python_fastapi"
     endpoint = Endpoint.new("/profile", "GET", [] of Param, details)
 
@@ -36,7 +36,7 @@ describe "FastAPIAuthTagger" do
     noir_options = create_test_options
     noir_options["base"] = YAML::Any.new(fixture_base)
 
-    details = Details.new(PathInfo.new(main_path, 20))
+    details = Details.new(PathInfo.new(main_path, 29))
     details.technology = "python_fastapi"
     endpoint = Endpoint.new("/admin", "GET", [] of Param, details)
 
@@ -52,7 +52,7 @@ describe "FastAPIAuthTagger" do
     noir_options = create_test_options
     noir_options["base"] = YAML::Any.new(fixture_base)
 
-    details = Details.new(PathInfo.new(main_path, 10))
+    details = Details.new(PathInfo.new(main_path, 19))
     details.technology = "python_fastapi"
     endpoint = Endpoint.new("/public", "GET", [] of Param, details)
 

@@ -76,7 +76,8 @@ class DjangoAuthTagger < FrameworkTagger
   end
 
   private def check_decorators(lines : Array(String), endpoint_line : Int32) : String?
-    # Walk backwards from the line before the endpoint definition
+    # Walk backwards with no fixed limit — Python decorators stack directly above the def,
+    # separated only by other decorators, so we stop at the first blank line or definition.
     idx = endpoint_line - 2 # 0-indexed, one line before
     return if idx < 0
 

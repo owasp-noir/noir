@@ -22,6 +22,14 @@ fun Application.configureRouting() {
             }
         }
 
+        authenticate("auth-session") {
+            route("/admin") {
+                get("/dashboard") {
+                    call.respondText("admin dashboard")
+                }
+            }
+        }
+
         get("/health") {
             call.respondText("ok")
         }

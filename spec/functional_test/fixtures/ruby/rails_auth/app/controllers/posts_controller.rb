@@ -11,8 +11,9 @@ class PostsController < ApplicationController
   end
 
   def create
-    authorize @post
-    render json: Post.create(post_params)
+    post = Post.new(params.permit(:title, :body))
+    authorize post
+    render json: post.save
   end
 
   def destroy

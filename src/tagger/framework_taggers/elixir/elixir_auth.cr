@@ -72,32 +72,36 @@ class ElixirAuthTagger < FrameworkTagger
 
   private def scan_router(content : String)
     lines = content.split("\n")
-    current_scope : String? = nil
-    in_auth_scope = false
+    # Stack-based scope tracking for nested Phoenix scopes
+    scope_stack = [] of String
 
     lines.each do |line|
       stripped = line.strip
 
-      # Track scope
+      # Track scope nesting
       scope_match = stripped.match(/scope\s+["']([^"']+)["']/)
       if scope_match
-        current_scope = scope_match[1]
-        in_auth_scope = false
+        scope_stack << scope_match[1]
       end
 
-      # Check for authenticated pipeline
+      # Check for authenticated pipeline within current scope
       PIPELINE_AUTH_PATTERNS.each do |pattern, desc|
-        if stripped.matches?(pattern) && current_scope
-          @auth_scopes << {prefix: current_scope, description: "Protected by #{desc}"}
-          in_auth_scope = true
+        if stripped.matches?(pattern) && !scope_stack.empty?
+          prefix = normalize_scope(scope_stack)
+          @auth_scopes << {prefix: prefix, description: "Protected by #{desc}"}
         end
       end
 
-      if stripped == "end"
-        current_scope = nil
-        in_auth_scope = false
+      if stripped == "end" && !scope_stack.empty?
+        scope_stack.pop
       end
     end
+  end
+
+  private def normalize_scope(segments : Array(String)) : String
+    joined = segments.join("")
+    parts = joined.split("/").reject(&.empty?)
+    parts.empty? ? "/" : "/" + parts.join("/")
   end
 
   private def check_endpoint(endpoint : Endpoint)

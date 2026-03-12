@@ -81,15 +81,16 @@ class RustAuthTagger < FrameworkTagger
 
   private def scan_scope_middleware(content : String)
     lines = content.split("\n")
-    current_scope : String? = nil
+    # Stack-based scope tracking for nested Actix-Web scopes
+    scope_stack = [] of String
 
     lines.each_with_index do |line, idx|
       stripped = line.strip
 
-      # Track current scope context
+      # Track scope nesting
       scope_match = stripped.match(/web::(?:scope|resource)\s*\(\s*"([^"]*)"/)
       if scope_match
-        current_scope = scope_match[1]
+        scope_stack << scope_match[1]
       end
 
       # Check if this line has auth middleware
@@ -106,7 +107,8 @@ class RustAuthTagger < FrameworkTagger
       end
 
       if has_auth
-        # Determine scope: check current line, then walk back to find scope
+        # Determine scope: use stack or walk back to find scope
+        current_scope = scope_stack.empty? ? nil : normalize_scope(scope_stack)
         prefix = find_scope_for_line(lines, idx, current_scope)
         if prefix
           @middleware_scopes << {
@@ -114,14 +116,19 @@ class RustAuthTagger < FrameworkTagger
             description: "Protected by Rust #{middleware_name} middleware on #{prefix}",
           }
         end
-        # If no scope found, skip — don't default to "/" (global)
       end
 
-      # Reset scope context on closing parenthesis/brace that ends a scope block
+      # Pop scope on closing parenthesis/brace that ends a scope block
       if stripped == ")" || stripped == ");" || stripped == "})" || stripped == "});"
-        current_scope = nil
+        scope_stack.pop unless scope_stack.empty?
       end
     end
+  end
+
+  private def normalize_scope(segments : Array(String)) : String
+    joined = segments.join("")
+    parts = joined.split("/").reject(&.empty?)
+    parts.empty? ? "/" : "/" + parts.join("/")
   end
 
   private def find_scope_for_line(lines : Array(String), line_idx : Int32, current_scope : String?) : String?

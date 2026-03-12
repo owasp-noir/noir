@@ -1,8 +1,18 @@
 from fastapi import FastAPI, Depends, Security
 from fastapi.security import OAuth2PasswordBearer
+from pydantic import BaseModel
 
 app = FastAPI()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+
+class User(BaseModel):
+    username: str
+
+
+async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
+    # Mock: decode token and return user
+    return User(username="testuser")
 
 
 @app.get("/public")

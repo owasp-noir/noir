@@ -6,13 +6,13 @@ describe "GoAuthTagger" do
   main_path = "#{fixture_base}/main.go"
 
   # main.go line reference:
-  # 14: r.GET("/health", func(c *gin.Context) {
-  # 18: r.GET("/public", func(c *gin.Context) {
-  # 23: api := r.Group("/api")
-  # 24: api.Use(AuthMiddleware())
-  # 25: api.GET("/profile", func(c *gin.Context) {
-  # 30: r.GET("/dashboard", AuthRequired, func(c *gin.Context) {
-  # 35: r.DELETE("/admin/users/:id", AdminOnly, func(c *gin.Context) {
+  # 13: r.GET("/health", func(c *gin.Context) {
+  # 17: r.GET("/public", func(c *gin.Context) {
+  # 22: api := r.Group("/api")
+  # 23: api.Use(AuthMiddleware())
+  # 24: api.GET("/profile", func(c *gin.Context) {
+  # 29: r.GET("/dashboard", AuthRequired, func(c *gin.Context) {
+  # 34: r.DELETE("/admin/users/:id", AdminOnly, func(c *gin.Context) {
 
   before_each do
     CodeLocator.instance.clear_all
@@ -28,7 +28,7 @@ describe "GoAuthTagger" do
       locator.push("file_map", file)
     end
 
-    details = Details.new(PathInfo.new(main_path, 30))
+    details = Details.new(PathInfo.new(main_path, 29))
     details.technology = "go_gin"
     endpoint = Endpoint.new("/dashboard", "GET", [] of Param, details)
 
@@ -51,7 +51,7 @@ describe "GoAuthTagger" do
       locator.push("file_map", file)
     end
 
-    details = Details.new(PathInfo.new(main_path, 35))
+    details = Details.new(PathInfo.new(main_path, 34))
     details.technology = "go_gin"
     endpoint = Endpoint.new("/admin/users/1", "DELETE", [] of Param, details)
 
@@ -73,7 +73,7 @@ describe "GoAuthTagger" do
       locator.push("file_map", file)
     end
 
-    details = Details.new(PathInfo.new(main_path, 25))
+    details = Details.new(PathInfo.new(main_path, 24))
     details.technology = "go_gin"
     endpoint = Endpoint.new("/api/profile", "GET", [] of Param, details)
 
@@ -95,7 +95,7 @@ describe "GoAuthTagger" do
       locator.push("file_map", file)
     end
 
-    details = Details.new(PathInfo.new(main_path, 14))
+    details = Details.new(PathInfo.new(main_path, 13))
     details.technology = "go_gin"
     endpoint = Endpoint.new("/health", "GET", [] of Param, details)
 

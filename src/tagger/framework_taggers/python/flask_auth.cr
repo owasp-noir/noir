@@ -43,6 +43,7 @@ class FlaskAuthTagger < FrameworkTagger
       next if line_num.nil?
 
       # Walk backwards from function definition to find decorators
+      # 8-line window: Flask decorators stack above def, typically 1-5 decorators
       idx = line_num - 2 # 0-indexed, one line before
       while idx >= 0 && idx >= line_num - 10
         current = lines[idx].strip

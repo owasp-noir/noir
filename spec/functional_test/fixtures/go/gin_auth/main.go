@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
 )
 
 func main() {
@@ -39,6 +38,8 @@ func main() {
 	r.Run(":8080")
 }
 
+// AuthMiddleware validates JWT tokens from the Authorization header.
+// Simplified for fixture purposes — production code should verify token signature.
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token := c.GetHeader("Authorization")
@@ -46,6 +47,7 @@ func AuthMiddleware() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 			return
 		}
+		// TODO: validate token signature in production
 		c.Next()
 	}
 }

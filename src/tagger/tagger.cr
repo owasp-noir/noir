@@ -191,20 +191,23 @@ module NoirTaggers
 
     return if endpoints_by_tech.empty?
 
+    is_all = use_taggers_arr.includes?("all")
+
     HasFrameworkTaggers.each_value do |tagger_info|
-      instance = tagger_info[:runner].new(options)
-
-      next unless use_taggers_arr.includes?(instance.name) || use_taggers_arr.includes?("all")
-
-      # Get endpoints matching this tagger's target technologies
+      # Check if any target tech has endpoints before instantiating
+      target_techs = tagger_info[:runner].target_techs
       matching_endpoints = [] of Endpoint
-      tagger_info[:runner].target_techs.each do |tech|
+      target_techs.each do |tech|
         if endpoints_by_tech.has_key?(tech)
           matching_endpoints.concat(endpoints_by_tech[tech])
         end
       end
 
       next if matching_endpoints.empty?
+
+      # Instantiate only when there are matching endpoints
+      instance = tagger_info[:runner].new(options)
+      next unless is_all || use_taggers_arr.includes?(instance.name)
 
       instance.perform(matching_endpoints)
     end

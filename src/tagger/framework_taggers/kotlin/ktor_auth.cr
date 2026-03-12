@@ -8,12 +8,6 @@ class KtorAuthTagger < FrameworkTagger
     {/authenticate\s*\(\s*"([^"]+)"/, "Ktor named authenticate"},
   ]
 
-  # Ktor auth configuration install patterns
-  AUTH_INSTALL_PATTERNS = [
-    {/install\s*\(\s*Authentication\s*\)/, "Ktor Authentication plugin"},
-    {/authentication\s*\{/, "Ktor authentication configuration"},
-  ]
-
   # Ktor session/JWT/basic auth in route context
   ROUTE_AUTH_PATTERNS = [
     {/principal</, "Ktor principal extraction"},
@@ -57,33 +51,44 @@ class KtorAuthTagger < FrameworkTagger
 
   private def scan_auth_blocks(content : String)
     lines = content.split("\n")
-    in_authenticate = false
-    current_prefix = ""
+    # Stack-based prefix tracking for nested route() blocks
+    prefix_stack = [] of String
 
     lines.each do |line|
       stripped = line.strip
 
-      # Track route() prefix
+      # Track route() prefix nesting
       route_match = stripped.match(/route\s*\(\s*"([^"]+)"/)
       if route_match
-        current_prefix = route_match[1]
+        prefix_stack << route_match[1]
       end
 
       # Detect authenticate block (only record if route prefix is known)
-      if !current_prefix.empty?
+      if !prefix_stack.empty?
         AUTHENTICATE_BLOCK_PATTERNS.each do |pattern, _desc|
           if stripped.matches?(pattern)
-            in_authenticate = true
             auth_match = stripped.match(/authenticate\s*\(\s*"([^"]+)"/)
             auth_name = auth_match ? auth_match[1] : "default"
+            prefix = normalize_prefix(prefix_stack)
             @auth_scopes << {
-              prefix:      current_prefix,
+              prefix:      prefix,
               description: "Protected by Ktor authenticate(\"#{auth_name}\") block",
             }
           end
         end
       end
+
+      # Pop prefix on closing brace (end of route block)
+      if (stripped == "}" || stripped == "})") && !prefix_stack.empty?
+        prefix_stack.pop
+      end
     end
+  end
+
+  private def normalize_prefix(segments : Array(String)) : String
+    joined = segments.join("")
+    parts = joined.split("/").reject(&.empty?)
+    parts.empty? ? "/" : "/" + parts.join("/")
   end
 
   private def check_endpoint(endpoint : Endpoint)
@@ -120,6 +125,7 @@ class KtorAuthTagger < FrameworkTagger
 
   private def check_enclosing_authenticate(lines : Array(String), route_line : Int32) : String?
     # Walk backwards to find an enclosing authenticate {} block
+    # 30-line window: Ktor authenticate blocks can wrap multiple route definitions
     idx = route_line - 1
     brace_depth = 0
 
@@ -128,9 +134,9 @@ class KtorAuthTagger < FrameworkTagger
       stripped = current.strip
 
       # Check pattern BEFORE counting braces on this line
-      # brace_depth == 0 means no net block boundaries crossed → we're inside
+      # brace_depth <= 0 means we haven't left the enclosing scope (handles nested route blocks)
       AUTHENTICATE_BLOCK_PATTERNS.each do |pattern, _desc|
-        if stripped.matches?(pattern) && brace_depth == 0
+        if stripped.matches?(pattern) && brace_depth <= 0
           auth_match = stripped.match(/authenticate\s*\(\s*"([^"]+)"/)
           if auth_match
             return "Ktor authenticate(\"#{auth_match[1]}\") block"
