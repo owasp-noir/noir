@@ -205,11 +205,15 @@ module NoirTaggers
 
         next if matching_endpoints.empty?
 
-        instance = tagger_info[:runner].new(options)
-        next unless is_all || use_taggers_arr.includes?(instance.name)
+        tagger_instance = tagger_info[:runner].new(options)
+        next unless is_all || use_taggers_arr.includes?(tagger_instance.name)
+
+        # Bind to local variables to ensure each fiber captures its own copy
+        local_instance = tagger_instance
+        local_endpoints = matching_endpoints
 
         wg.spawn do
-          instance.perform(matching_endpoints)
+          local_instance.perform(local_endpoints)
         end
       end
     end

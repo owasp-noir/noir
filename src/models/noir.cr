@@ -100,6 +100,10 @@ class NoirRunner
     @techs = detected_techs[0]
     @passive_results = detected_techs[1]
 
+    # Build extension index eagerly after file_map is finalized
+    # to avoid concurrent lazy-build race in analyzers
+    CodeLocator.instance.build_extension_index
+
     if @is_debug
       @logger.debug("CodeLocator Table:")
       locator = CodeLocator.instance

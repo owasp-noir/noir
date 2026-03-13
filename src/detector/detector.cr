@@ -125,7 +125,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
     end
   end
 
-  channel = Channel(Tuple(String, String)).new(Analyzer::DEFAULT_CHANNEL_CAPACITY)
+  channel = Channel(Tuple(String, String)).new(Analyzer::DEFAULT_CONTENT_CHANNEL_CAPACITY)
   locator = CodeLocator.instance
   wg = WaitGroup.new
 
@@ -213,12 +213,16 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
 
             detector_list.each do |detector|
               if detector.detect(file, content)
+                newly_added = false
                 mutex.synchronize do
                   unless techs.includes?(detector.name)
                     techs << detector.name
-                    logger.debug_sub "└── Detected: #{detector.name}"
-                    logger.verbose_sub "└── Detected: #{detector.name} in #{file}"
+                    newly_added = true
                   end
+                end
+                if newly_added
+                  logger.debug_sub "└── Detected: #{detector.name}"
+                  logger.verbose_sub "└── Detected: #{detector.name} in #{file}"
                 end
               end
             end
