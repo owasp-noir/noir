@@ -20,4 +20,6 @@ extend-exclude = [
   "docs/themes/goyo/**",
   # individual files to exclude
   "spec/functional_test/fixtures/python/django/djangoblog/settings.py",
+  # framework taggers contain regex patterns with intentional partial words
+  "src/tagger/framework_taggers/**",
 ]
