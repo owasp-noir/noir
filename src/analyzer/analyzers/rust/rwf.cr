@@ -6,7 +6,7 @@ module Analyzer::Rust
       # Source Analysis
       # Look for route! macro calls and Controller implementations
       route_pattern = /route!\("([^"]+)"\s*=>\s*(\w+)\)/
-      channel = Channel(String).new(128)
+      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
       begin
         populate_channel_with_files(channel)

@@ -15,7 +15,7 @@ module Analyzer::Javascript
 
     def analyze
       # Source Analysis
-      channel = Channel(String).new(128)
+      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
 

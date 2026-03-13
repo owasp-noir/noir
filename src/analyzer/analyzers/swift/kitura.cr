@@ -13,7 +13,7 @@ module Analyzer::Swift
       # router.all("/path") { ... }
       # Pattern should have router. or any router variable before the method
       pattern = /(\w+)\.(get|post|put|delete|patch|all)\(([^)]+)\)/
-      channel = Channel(String).new(128)
+      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
       begin
         populate_channel_with_files(channel)

@@ -4,7 +4,7 @@ require "../../../miniparsers/js_route_extractor"
 module Analyzer::Javascript
   class Koa < Analyzer
     def analyze
-      channel = Channel(String).new(128)
+      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
 

@@ -8,6 +8,9 @@ require "../utils/utils"
 class Analyzer
   include FileHelper
 
+  DEFAULT_CHANNEL_CAPACITY = 128
+  MAX_ANALYZER_WORKERS     =  64
+
   @result : Array(Endpoint)
   @endpoint_references : Array(EndpointReference)
   @base_path : String
@@ -42,7 +45,7 @@ class Analyzer
   def parallel_analyze(channel : Channel(String), &block : String -> Nil)
     WaitGroup.wait do |wg|
       worker_count = @options["concurrency"].to_s.to_i
-      worker_count = 64 if worker_count > 64
+      worker_count = MAX_ANALYZER_WORKERS if worker_count > MAX_ANALYZER_WORKERS
       worker_count = 1 if worker_count < 1
       worker_count.times do
         wg.spawn do
@@ -89,7 +92,7 @@ class FileAnalyzer < Analyzer
   end
 
   def analyze
-    channel = Channel(String).new(128)
+    channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
     populate_channel_with_files(channel)
 
     WaitGroup.wait do |wg|

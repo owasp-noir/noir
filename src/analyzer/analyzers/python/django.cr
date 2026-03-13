@@ -60,7 +60,7 @@ module Analyzer::Python
     # Find all root Django URLs
     def find_root_django_urls : Array(DjangoUrls)
       root_django_urls_list = [] of DjangoUrls
-      channel = Channel(String).new(128)
+      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       search_dir = @base_path
 
       populate_channel_with_files(channel)
