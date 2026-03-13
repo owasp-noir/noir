@@ -5,7 +5,7 @@ module Analyzer::Javascript
   class Fastify < Analyzer
     def analyze
       # Source Analysis
-      channel = Channel(String).new
+      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
 

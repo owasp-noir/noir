@@ -7,10 +7,10 @@ module Analyzer::Go
       # Source Analysis
       public_dirs = [] of (Hash(String, String))
       groups = [] of Hash(String, String)
-      channel = Channel(String).new
+      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
       begin
-        populate_channel_with_files(channel)
+        populate_channel_with_filtered_files(channel, ".go")
 
         WaitGroup.wait do |wg|
           @options["concurrency"].to_s.to_i.times do
@@ -20,7 +20,7 @@ module Analyzer::Go
                   path = channel.receive?
                   break if path.nil?
                   next if File.directory?(path)
-                  if File.exists?(path) && File.extname(path) == ".go"
+                  if File.exists?(path)
                     File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
                       last_endpoint = Endpoint.new("", "")
                       file.each_line.with_index do |line, index|

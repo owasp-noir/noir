@@ -4,7 +4,7 @@ require "../../../miniparsers/js_route_extractor"
 module Analyzer::Javascript
   class Nestjs < Analyzer
     def analyze
-      channel = Channel(String).new
+      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
 

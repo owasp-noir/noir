@@ -11,9 +11,9 @@ module Analyzer::Go
   class Chi < Analyzer
     def analyze
       result = [] of Endpoint
-      channel = Channel(String).new
+      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       begin
-        populate_channel_with_files(channel)
+        populate_channel_with_filtered_files(channel, ".go")
 
         WaitGroup.wait do |wg|
           @options["concurrency"].to_s.to_i.times do
@@ -22,7 +22,7 @@ module Analyzer::Go
                 path = channel.receive?
                 break if path.nil?
                 next if File.directory?(path)
-                if File.exists?(path) && File.extname(path) == ".go"
+                if File.exists?(path)
                   # Read all lines for multi-line pattern support
                   lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
                   state = ChiRouteState.new

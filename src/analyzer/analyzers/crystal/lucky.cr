@@ -16,7 +16,7 @@ module Analyzer::Crystal
         logger.debug e
       end
 
-      channel = Channel(String).new
+      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       populate_channel_with_files(channel)
 
       # Source Analysis

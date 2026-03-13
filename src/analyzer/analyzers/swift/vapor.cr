@@ -13,7 +13,7 @@ module Analyzer::Swift
       # routes.get("path", ":param") { ... }
       # Route pattern should have app. or routes. or any grouped route before the method
       pattern = /(\w+)\.(get|post|put|delete|patch)\(([^)]+)\)/
-      channel = Channel(String).new
+      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
       begin
         populate_channel_with_files(channel)

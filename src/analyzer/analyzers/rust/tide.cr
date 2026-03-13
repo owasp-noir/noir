@@ -5,7 +5,7 @@ module Analyzer::Rust
     def analyze
       # Tide routing patterns: app.at("/path").get(handler), app.at("/path").post(handler), etc.
 
-      channel = Channel(String).new
+      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
       begin
         populate_channel_with_files(channel)

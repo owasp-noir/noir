@@ -10,7 +10,7 @@ module Analyzer::Rust
       # Simple pattern to match function definitions
       pattern = /pub\s+async\s+fn\s+(\w+)/
 
-      channel = Channel(String).new
+      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
       begin
         populate_channel_with_files(channel)

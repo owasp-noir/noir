@@ -8,6 +8,10 @@ require "../utils/utils"
 class Analyzer
   include FileHelper
 
+  DEFAULT_CHANNEL_CAPACITY         = 128
+  DEFAULT_CONTENT_CHANNEL_CAPACITY =  16
+  MAX_ANALYZER_WORKERS             =  64
+
   @result : Array(Endpoint)
   @endpoint_references : Array(EndpointReference)
   @base_path : String
@@ -42,7 +46,7 @@ class Analyzer
   def parallel_analyze(channel : Channel(String), &block : String -> Nil)
     WaitGroup.wait do |wg|
       worker_count = @options["concurrency"].to_s.to_i
-      worker_count = 16 if worker_count > 16
+      worker_count = MAX_ANALYZER_WORKERS if worker_count > MAX_ANALYZER_WORKERS
       worker_count = 1 if worker_count < 1
       worker_count.times do
         wg.spawn do
@@ -89,7 +93,7 @@ class FileAnalyzer < Analyzer
   end
 
   def analyze
-    channel = Channel(String).new
+    channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
     populate_channel_with_files(channel)
 
     WaitGroup.wait do |wg|
@@ -100,16 +104,6 @@ class FileAnalyzer < Analyzer
               path = channel.receive?
               break if path.nil?
               next if File.directory?(path)
-
-              # Skip media or large files (reuse detector MediaFilter logic)
-              if MediaFilter.should_skip_file?(path)
-                if reason = MediaFilter.skip_reason(path)
-                  logger.debug "Skipping #{path}: #{reason}"
-                else
-                  logger.debug "Skipping #{path}: filtered"
-                end
-                next
-              end
 
               logger.debug "Analyzing: #{path}"
 
