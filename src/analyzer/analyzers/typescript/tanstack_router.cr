@@ -3,7 +3,7 @@ require "../../../models/analyzer"
 module Analyzer::Typescript
   class TanstackRouter < Analyzer
     def analyze
-      channel = Channel(String).new
+      channel = Channel(String).new(128)
       result = [] of Endpoint
 
       begin

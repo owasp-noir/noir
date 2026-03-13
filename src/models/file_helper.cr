@@ -13,9 +13,9 @@ module FileHelper
     all_files.select { |file| file.starts_with?(prefix) && !File.directory?(file) }
   end
 
-  # Get files filtered by extension
+  # Get files filtered by extension (uses cached index for O(1) lookup)
   def get_files_by_extension(extension : String) : Array(String)
-    all_files.select { |file| !File.directory?(file) && File.extname(file) == extension }
+    CodeLocator.instance.files_by_extension(extension)
   end
 
   # Get files filtered by both prefix and extension
@@ -45,6 +45,17 @@ module FileHelper
   # Helper to populate a channel from file list instead of using Dir.glob
   def populate_channel_with_files(channel : Channel(String))
     files = all_files
+    spawn do
+      files.each do |file|
+        channel.send(file)
+      end
+      channel.close
+    end
+  end
+
+  # Helper to populate a channel with only files matching the given extension
+  def populate_channel_with_filtered_files(channel : Channel(String), extension : String)
+    files = get_files_by_extension(extension)
     spawn do
       files.each do |file|
         channel.send(file)

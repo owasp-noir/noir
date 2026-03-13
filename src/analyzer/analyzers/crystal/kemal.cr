@@ -11,7 +11,7 @@ module Analyzer::Crystal
       # Variables
       is_public = true
       public_folders = [] of String
-      channel = Channel(String).new
+      channel = Channel(String).new(128)
 
       # Source Analysis
       begin

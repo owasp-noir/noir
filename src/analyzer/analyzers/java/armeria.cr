@@ -13,7 +13,7 @@ module Analyzer::Java
 
     def analyze
       # Source Analysis
-      channel = Channel(String).new
+      channel = Channel(String).new(128)
 
       begin
         populate_channel_with_files(channel)

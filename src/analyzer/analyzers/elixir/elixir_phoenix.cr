@@ -15,7 +15,7 @@ module Analyzer::Elixir
 
     def analyze
       # Source Analysis - First pass: collect routes
-      channel = Channel(String).new
+      channel = Channel(String).new(128)
 
       begin
         populate_channel_with_files(channel)

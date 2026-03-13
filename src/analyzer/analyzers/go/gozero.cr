@@ -7,7 +7,7 @@ module Analyzer::Go
       # Source Analysis
       public_dirs = [] of (Hash(String, String))
       groups = [] of Hash(String, String)
-      channel = Channel(String).new
+      channel = Channel(String).new(128)
       begin
         populate_channel_with_files(channel)
 

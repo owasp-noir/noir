@@ -5,7 +5,7 @@ module Analyzer::Javascript
   class Restify < Analyzer
     def analyze
       # Source Analysis
-      channel = Channel(String).new
+      channel = Channel(String).new(128)
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
 

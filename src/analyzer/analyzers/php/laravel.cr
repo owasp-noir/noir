@@ -5,7 +5,7 @@ module Analyzer::Php
   class Laravel < Analyzer
     def analyze
       result = [] of Endpoint
-      channel = Channel(String).new
+      channel = Channel(String).new(128)
 
       begin
         populate_channel_with_files(channel)

@@ -10,7 +10,7 @@ module Analyzer::Rust
       # Gotham uses builder pattern: Router::builder().get("/path").to(handler)
       # Route paths must start with /
       pattern = /\.(get|post|put|delete|patch|head|options)\s*\(\s*"(\/[^"]*)"\s*\)/
-      channel = Channel(String).new
+      channel = Channel(String).new(128)
 
       begin
         populate_channel_with_files(channel)

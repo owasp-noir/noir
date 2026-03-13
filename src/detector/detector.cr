@@ -125,7 +125,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
     end
   end
 
-  channel = Channel(Tuple(String, String)).new
+  channel = Channel(Tuple(String, String)).new(128)
   locator = CodeLocator.instance
   wg = WaitGroup.new
 
@@ -148,13 +148,21 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
       ]
 
       base_paths.each do |base_path|
+        # Pre-compute base path prefix for fast relative path calculation
+        base_prefix = base_path.ends_with?("/") ? base_path : base_path + "/"
+
         Dir.glob("#{escape_glob_path(base_path)}/**/**") do |file|
           next if File.directory?(file)
           total_files += 1
 
           # Skip files in ignored directories early
-          # Only check the relative path
-          relative_path = "/" + Path.new(file).relative_to(Path.new(base_path)).to_s
+          # Use simple string slicing instead of Path objects
+          relative_path = if file.starts_with?(base_prefix)
+                            "/" + file[base_prefix.size..]
+                          else
+                            "/" + file
+                          end
+
           if ignored_dir_patterns.any? { |pat| relative_path.includes?(pat) }
             skipped_ignored_dirs += 1
             next
@@ -205,11 +213,13 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
 
             detector_list.each do |detector|
               if detector.detect(file, content)
-                mutex.synchronize do
-                  techs << detector.name
+                unless techs.includes?(detector.name)
+                  mutex.synchronize do
+                    techs << detector.name
+                  end
+                  logger.debug_sub "└── Detected: #{detector.name}"
+                  logger.verbose_sub "└── Detected: #{detector.name} in #{file}"
                 end
-                logger.debug_sub "└── Detected: #{detector.name}"
-                logger.verbose_sub "└── Detected: #{detector.name} in #{file}"
               end
             end
 

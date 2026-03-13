@@ -9,7 +9,7 @@ module Analyzer::Rust
       # Source Analysis
       # Enhanced pattern to capture path, query parameters, and data parameters
       pattern = /#\[(get|post|delete|put|patch)\("([^"]+)"(?:, data = "<([^>]+)>")?\)\]/
-      channel = Channel(String).new
+      channel = Channel(String).new(128)
 
       begin
         populate_channel_with_files(channel)

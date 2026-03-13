@@ -3,7 +3,7 @@ require "../../../models/analyzer"
 module Analyzer::Crystal
   class Grip < Analyzer
     def analyze
-      channel = Channel(String).new
+      channel = Channel(String).new(128)
 
       # Source Analysis
       begin

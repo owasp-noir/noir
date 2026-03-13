@@ -2,6 +2,7 @@ require "./taggers/*"
 require "./framework_taggers/**"
 require "../models/tagger"
 require "../models/framework_tagger"
+require "wait_group"
 
 module NoirTaggers
   HasTaggers = {
@@ -191,21 +192,26 @@ module NoirTaggers
 
     is_all = use_taggers_arr.includes?("all")
 
-    HasFrameworkTaggers.each_value do |tagger_info|
-      target_techs = tagger_info[:runner].target_techs
-      matching_endpoints = [] of Endpoint
-      target_techs.each do |tech|
-        if endpoints_by_tech.has_key?(tech)
-          matching_endpoints.concat(endpoints_by_tech[tech])
+    # Collect tagger work items, then run in parallel
+    WaitGroup.wait do |wg|
+      HasFrameworkTaggers.each_value do |tagger_info|
+        target_techs = tagger_info[:runner].target_techs
+        matching_endpoints = [] of Endpoint
+        target_techs.each do |tech|
+          if endpoints_by_tech.has_key?(tech)
+            matching_endpoints.concat(endpoints_by_tech[tech])
+          end
+        end
+
+        next if matching_endpoints.empty?
+
+        instance = tagger_info[:runner].new(options)
+        next unless is_all || use_taggers_arr.includes?(instance.name)
+
+        wg.spawn do
+          instance.perform(matching_endpoints)
         end
       end
-
-      next if matching_endpoints.empty?
-
-      instance = tagger_info[:runner].new(options)
-      next unless is_all || use_taggers_arr.includes?(instance.name)
-
-      instance.perform(matching_endpoints)
     end
   end
 end

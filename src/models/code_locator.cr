@@ -9,6 +9,8 @@ class CodeLocator
   @s_map : Hash(String, String)
   @a_map : Hash(String, Array(String))
   @file_usage_stats : Hash(String, Int32) # Track number of file reads
+  @extension_index : Hash(String, Array(String))
+  @extension_index_built : Bool
 
   def initialize
     options = {"debug" => "false", "verbose" => "false", "color" => "true", "nolog" => "false"}
@@ -21,6 +23,8 @@ class CodeLocator
     @s_map = Hash(String, String).new
     @a_map = Hash(String, Array(String)).new
     @file_usage_stats = Hash(String, Int32).new
+    @extension_index = Hash(String, Array(String)).new
+    @extension_index_built = false
   end
 
   def self.instance : CodeLocator
@@ -53,15 +57,41 @@ class CodeLocator
     Array(String).new
   end
 
+  # Build extension index from file_map for fast lookups
+  def build_extension_index
+    return if @extension_index_built
+    @extension_index.clear
+    files = @a_map["file_map"]?
+    return unless files
+    files.each do |file|
+      ext = File.extname(file)
+      @extension_index[ext] ||= Array(String).new
+      @extension_index[ext] << file
+    end
+    @extension_index_built = true
+  end
+
+  # Get files by extension using the index (O(1) lookup)
+  def files_by_extension(extension : String) : Array(String)
+    build_extension_index
+    @extension_index[extension]? || Array(String).new
+  end
+
   def clear(key : String)
     @s_map.delete(key)
     @a_map.delete(key)
+    if key == "file_map"
+      @extension_index.clear
+      @extension_index_built = false
+    end
   end
 
   def clear_all
     @s_map.clear
     @a_map.clear
     @file_usage_stats.clear
+    @extension_index.clear
+    @extension_index_built = false
   end
 
   def show_table
