@@ -34,6 +34,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"go_gozero", Go::GoZero},
     {"go_goyave", Go::Goyave},
     {"go_mux", Go::Mux},
+    {"go_gf", Go::Gf},
     {"har", Specification::Har},
     {"java_armeria", Java::Armeria},
     {"java_jsp", Java::Jsp},
