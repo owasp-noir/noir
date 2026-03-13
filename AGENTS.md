@@ -49,6 +49,7 @@ src/
 ├── llm/                    # AI/LLM integration (general/, ollama/)
 ├── optimizer/              # Endpoint normalization/dedup and LLM optimizer
 ├── tagger/taggers/         # Endpoint tagging implementations
+├── tagger/framework_taggers/ # Framework-specific auth taggers (by language)
 ├── deliver/                # Results delivery (proxy, elasticsearch)
 ├── minilexers/             # Custom lexers
 ├── miniparsers/            # Custom parsers
@@ -98,7 +99,25 @@ spec/
 ### Taggers
 1. Create `src/tagger/taggers/{tagger_name}.cr`
 2. Add unit test: `spec/unit_test/tagger/{tagger_name}_spec.cr`
-3. Register in tagger registry
+3. Register in `HasTaggers` in `src/tagger/tagger.cr`
+
+### Framework Taggers (Auth Taggers)
+Framework taggers detect framework-specific patterns (e.g., auth decorators, middleware, guards) and tag endpoints accordingly. They extend `FrameworkTagger < Tagger` which provides file caching and `read_source_context()`.
+
+1. Create `src/tagger/framework_taggers/{language}/{tagger_name}.cr`
+   - Inherit from `FrameworkTagger`
+   - Override `self.target_techs` to return matching technology strings (e.g., `["python_django"]`)
+   - Override `perform(endpoints)` to check and tag endpoints
+   - Use `read_file(path)` (cached) and `read_source_context(endpoint)` helpers
+2. Add unit test: `spec/unit_test/tagger/framework_taggers/{tagger_name}_spec.cr`
+3. Add fixtures: `spec/functional_test/fixtures/{language}/{framework}_auth/`
+4. Register in `HasFrameworkTaggers` in `src/tagger/tagger.cr`
+
+Key design notes:
+- `FrameworkTagger` inherits from `Tagger` — shares `@logger`, `@options`, `@name`, `perform()` interface
+- `@file_cache` prevents redundant reads within a tagger run (pre-scan + per-endpoint checks)
+- Framework taggers are dispatched only when endpoints matching their `target_techs` exist
+- Scope tracking (Go groups, Ktor authenticate blocks, Express app.use) uses heuristic brace counting — not AST-level, so edge cases with braces in strings/comments may occur
 
 **After any new component: run `just test` to validate.**
 
