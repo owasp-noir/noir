@@ -67,7 +67,7 @@ class SpringAuthTagger < FrameworkTagger
 
   private def check_endpoint(endpoint : Endpoint)
     # Phase 2: Check annotations near code_paths
-    contexts = read_source_context(endpoint, 15)
+    contexts = read_source_context(endpoint)
     contexts.each do |ctx|
       description = check_annotations(ctx)
       if description
@@ -88,13 +88,12 @@ class SpringAuthTagger < FrameworkTagger
     return unless line
 
     # Walk backwards from endpoint line to find annotations
-    # Note: `line` is 1-indexed (from PathInfo), context array is 0-indexed
-    lines = ctx.context
-    context_start = [line - 15, 0].max
-    endpoint_idx = line - 1 - context_start
+    # `line` is 1-indexed (from PathInfo), array is 0-indexed
+    lines = ctx.full_content.split("\n")
+    endpoint_idx = line - 1
 
     idx = [endpoint_idx - 1, lines.size - 1].min
-    while idx >= 0 && idx < lines.size
+    while idx >= 0 && idx >= endpoint_idx - 15
       current_line = lines[idx].strip
       # Skip empty lines but stop at method/class boundaries
       if current_line.empty?

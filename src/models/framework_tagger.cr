@@ -1,4 +1,4 @@
-require "./logger"
+require "./tagger"
 require "./endpoint"
 require "./code_locator"
 require "./file_helper"
@@ -6,73 +6,38 @@ require "./file_helper"
 struct SourceContext
   property path : String
   property line : Int32?
-  property context : Array(String)
   property full_content : String
 
-  def initialize(@path : String, @line : Int32?, @context : Array(String), @full_content : String)
+  def initialize(@path : String, @line : Int32?, @full_content : String)
   end
 end
 
-class FrameworkTagger
+class FrameworkTagger < Tagger
   include FileHelper
 
-  @logger : NoirLogger
-  @options : Hash(String, YAML::Any)
-  @is_debug : Bool
-  @is_verbose : Bool
-  @is_color : Bool
-  @is_log : Bool
-  @name : String
   @base_path : String
+  @file_cache : Hash(String, String)
 
   def initialize(options : Hash(String, YAML::Any))
-    @is_debug = any_to_bool(options["debug"])
-    @is_verbose = any_to_bool(options["verbose"])
-    @options = options
-    @is_color = any_to_bool(options["color"])
-    @is_log = any_to_bool(options["nolog"])
-    @name = ""
+    super
     @base_path = options["base"].to_s
-
-    @logger = NoirLogger.new @is_debug, @is_verbose, @is_color, @is_log
-  end
-
-  def name
-    @name
+    @file_cache = Hash(String, String).new
   end
 
   def self.target_techs : Array(String)
     [] of String
   end
 
-  def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
-    endpoints
-  end
-
-  def read_source_context(endpoint : Endpoint, context_lines : Int32 = 30) : Array(SourceContext)
+  def read_source_context(endpoint : Endpoint) : Array(SourceContext)
     results = [] of SourceContext
 
     endpoint.details.code_paths.each do |path_info|
       content = read_file(path_info.path)
       next if content.nil?
 
-      lines = content.split("\n")
-      line = path_info.line
-
-      if line
-        # Note: `line` is 1-indexed (from PathInfo), but `context` is a 0-indexed array slice.
-        # To map back: context[line - start_line - 1] is the endpoint's line.
-        start_line = [line - context_lines, 0].max
-        end_line = [line + context_lines, lines.size - 1].min
-        context = lines[start_line..end_line]
-      else
-        context = lines
-      end
-
       results << SourceContext.new(
         path: path_info.path,
-        line: line,
-        context: context,
+        line: path_info.line,
         full_content: content
       )
     end
@@ -81,7 +46,13 @@ class FrameworkTagger
   end
 
   def read_file(path : String) : String?
-    File.read(path)
+    if cached = @file_cache[path]?
+      return cached
+    end
+
+    content = File.read(path)
+    @file_cache[path] = content
+    content
   rescue ex
     @logger.debug "FrameworkTagger: Failed to read file #{path}: #{ex.message}"
     nil

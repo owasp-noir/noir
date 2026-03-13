@@ -43,7 +43,7 @@ class DjangoAuthTagger < FrameworkTagger
   end
 
   private def check_endpoint(endpoint : Endpoint)
-    contexts = read_source_context(endpoint, 30)
+    contexts = read_source_context(endpoint)
     return if contexts.empty?
 
     contexts.each do |ctx|

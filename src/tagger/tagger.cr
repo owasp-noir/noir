@@ -154,10 +154,8 @@ module NoirTaggers
   end
 
   def self.run_tagger(endpoints : Array(Endpoint), options : Hash(String, YAML::Any), use_taggers : String)
-    tagger_list = [] of Tagger # This will hold instances of taggers
+    tagger_list = [] of Tagger
 
-    # Define taggers by creating instances
-    # Assuming HuntParamTagger is defined and is the only tagger
     HasTaggers.each_value do |tagger|
       if tagger[:runner].class.to_s == "Class"
         instance = tagger[:runner].new(options)
@@ -174,12 +172,12 @@ module NoirTaggers
       tagger.perform(endpoints) if use_taggers_arr.includes?(tagger.name) || use_taggers_arr.includes?("all")
     end
 
-    # Run framework taggers
+    # Run framework taggers (tech-aware, only instantiated when matching endpoints exist)
     run_framework_taggers(endpoints, options, use_taggers_arr)
   end
 
   private def self.run_framework_taggers(endpoints : Array(Endpoint), options : Hash(String, YAML::Any), use_taggers_arr : Array(String))
-    # Group endpoints by technology
+    # Group endpoints by technology for efficient dispatch
     endpoints_by_tech = Hash(String, Array(Endpoint)).new
 
     endpoints.each do |endpoint|
@@ -194,7 +192,6 @@ module NoirTaggers
     is_all = use_taggers_arr.includes?("all")
 
     HasFrameworkTaggers.each_value do |tagger_info|
-      # Check if any target tech has endpoints before instantiating
       target_techs = tagger_info[:runner].target_techs
       matching_endpoints = [] of Endpoint
       target_techs.each do |tech|
@@ -205,7 +202,6 @@ module NoirTaggers
 
       next if matching_endpoints.empty?
 
-      # Instantiate only when there are matching endpoints
       instance = tagger_info[:runner].new(options)
       next unless is_all || use_taggers_arr.includes?(instance.name)
 
