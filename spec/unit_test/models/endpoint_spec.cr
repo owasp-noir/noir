@@ -88,7 +88,7 @@ describe "Endpoint equality" do
     (endpoint1 == endpoint2).should be_false
   end
 
-  it "same endpoints and suffled params" do
+  it "same endpoints and shuffled params" do
     endpoint1 = Endpoint.new("/abcd", "GET", [Param.new("a", "b", "query"), Param.new("c", "d", "json")])
     endpoint2 = Endpoint.new("/abcd", "GET", [Param.new("c", "d", "json"), Param.new("a", "b", "query")])
     (endpoint1 == endpoint2).should be_true
