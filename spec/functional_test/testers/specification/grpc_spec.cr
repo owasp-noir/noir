@@ -24,6 +24,31 @@ expected_endpoints = [
   Endpoint.new("/api/v1/users/{user_id}", "DELETE", [
     Param.new("user_id", "", "path"),
   ]),
+  # Stream RPC (server-streaming) - pure gRPC
+  Endpoint.new("/example.v1.UserService/StreamUsers", "POST", [
+    Param.new("page", "", "json"),
+    Param.new("page_size", "", "json"),
+  ]),
+  # Search with nested message fields
+  Endpoint.new("/api/v1/users/search", "GET", [
+    Param.new("query", "", "query"),
+    Param.new("filter", "", "query"),
+    Param.new("page", "", "query"),
+  ]),
+  # Additional bindings - primary
+  Endpoint.new("/api/v1/users/{user_id}/profile", "GET", [
+    Param.new("user_id", "", "path"),
+    Param.new("name", "", "query"),
+  ]),
+  # Additional bindings - secondary
+  Endpoint.new("/api/v2/users/{user_id}", "GET", [
+    Param.new("user_id", "", "path"),
+    Param.new("name", "", "query"),
+  ]),
+  # No-package service (health.proto)
+  Endpoint.new("/HealthService/Check", "POST", [
+    Param.new("service", "", "json"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/specification/grpc/", {

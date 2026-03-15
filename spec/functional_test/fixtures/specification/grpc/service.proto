@@ -50,6 +50,23 @@ message ListUsersResponse {
   repeated GetUserResponse users = 1;
 }
 
+// Nested message test
+message SearchRequest {
+  string query = 1;
+
+  message Filter {
+    string field = 1;
+    string value = 2;
+  }
+
+  Filter filter = 2;
+  int32 page = 3;
+}
+
+message SearchResponse {
+  repeated GetUserResponse results = 1;
+}
+
 service UserService {
   // Pure gRPC method (no HTTP annotation)
   rpc ListUsers(ListUsersRequest) returns (ListUsersResponse) {}
@@ -78,6 +95,26 @@ service UserService {
   rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse) {
     option (google.api.http) = {
       delete: "/api/v1/users/{user_id}"
+    };
+  }
+
+  // Stream RPC
+  rpc StreamUsers(ListUsersRequest) returns (stream GetUserResponse) {}
+
+  // Search with nested message request
+  rpc SearchUsers(SearchRequest) returns (SearchResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/users/search"
+    };
+  }
+
+  // Additional bindings test
+  rpc GetUserAlt(GetUserRequest) returns (GetUserResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/users/{user_id}/profile"
+      additional_bindings {
+        get: "/api/v2/users/{user_id}"
+      }
     };
   }
 }
