@@ -639,6 +639,21 @@ module NoirTechs
         },
       },
     },
+    :grpc => {
+      :format    => ["Protobuf"],
+      :similar   => ["grpc", "protobuf", "proto", "grpc-gateway"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => false,
+          :cookie => false,
+        },
+      },
+    },
     :graphql => {
       :format    => ["GRAPHQL"],
       :similar   => ["graphql", ".graphql"],

@@ -1,0 +1,83 @@
+syntax = "proto3";
+
+package example.v1;
+
+import "google/api/annotations.proto";
+
+message GetUserRequest {
+  string user_id = 1;
+  string name = 2;
+}
+
+message GetUserResponse {
+  string user_id = 1;
+  string name = 2;
+  string email = 3;
+}
+
+message CreateUserRequest {
+  string name = 1;
+  string email = 2;
+  int32 age = 3;
+}
+
+message CreateUserResponse {
+  string user_id = 1;
+}
+
+message UpdateUserRequest {
+  string user_id = 1;
+  string name = 2;
+  string email = 3;
+}
+
+message UpdateUserResponse {
+  string user_id = 1;
+}
+
+message DeleteUserRequest {
+  string user_id = 1;
+}
+
+message DeleteUserResponse {}
+
+message ListUsersRequest {
+  int32 page = 1;
+  int32 page_size = 2;
+}
+
+message ListUsersResponse {
+  repeated GetUserResponse users = 1;
+}
+
+service UserService {
+  // Pure gRPC method (no HTTP annotation)
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse) {}
+
+  // gRPC-Gateway annotated methods
+  rpc GetUser(GetUserRequest) returns (GetUserResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/users/{user_id}"
+    };
+  }
+
+  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/users"
+      body: "*"
+    };
+  }
+
+  rpc UpdateUser(UpdateUserRequest) returns (UpdateUserResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/users/{user_id}"
+      body: "*"
+    };
+  }
+
+  rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/users/{user_id}"
+    };
+  }
+}
