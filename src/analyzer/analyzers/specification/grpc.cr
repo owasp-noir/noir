@@ -108,7 +108,7 @@ module Analyzer::Specification
 
     private def parse_rpc_methods(service_body : String, file_path : String, package : String, service_name : String, messages : Hash(String, MessageFields), full_content : String)
       # Find each rpc definition and its associated options block
-      service_body.scan(/rpc\s+(\w+)\s*\(\s*(stream\s+)?(\w+)\s*\)\s*returns\s*\(\s*(stream\s+)?(\w+)\s*\)/m) do |rpc_match|
+      service_body.scan(/rpc\s+(\w+)\s*\(\s*(stream\s+)?(\.?\w+(?:\.\w+)*)\s*\)\s*returns\s*\(\s*(stream\s+)?(\.?\w+(?:\.\w+)*)\s*\)/m) do |rpc_match|
         method_name = rpc_match[1]
         request_streaming = !rpc_match[2]?.nil?
         request_type = rpc_match[3]
@@ -164,9 +164,9 @@ module Analyzer::Specification
             http_method = mapping[:method]
             http_path = mapping[:path]
 
-            # Extract path parameters
+            # Extract path parameters (supports {var}, {var.field}, {var=pattern})
             gateway_params = [] of Param
-            http_path.scan(/\{(\w+(?:\.\w+)*)\}/) do |path_match|
+            http_path.scan(/\{(\w+(?:\.\w+)*)(?:=[^}]*)?\}/) do |path_match|
               gateway_params << Param.new(path_match[1], "", "path")
             end
 
@@ -177,6 +177,12 @@ module Analyzer::Specification
             if body_field && !body_field.empty? && body_field != "*"
               # Specific field is the body
               gateway_params << Param.new(body_field, "", "json")
+              # Remaining non-path, non-body fields become query params
+              params.each do |p|
+                next if p.name == body_field
+                next if gateway_params.any? { |gp| gp.name == p.name }
+                gateway_params << Param.new(p.name, "", "query")
+              end
             elsif is_query_method && body_field.nil?
               # No body for GET/DELETE - remaining fields become query params
               params.each do |p|

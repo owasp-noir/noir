@@ -640,7 +640,7 @@ module NoirTechs
       },
     },
     :grpc => {
-      :format    => ["Protobuf"],
+      :format    => ["PROTOBUF"],
       :similar   => ["grpc", "protobuf", "proto", "grpc-gateway"],
       :supported => {
         :endpoint => true,

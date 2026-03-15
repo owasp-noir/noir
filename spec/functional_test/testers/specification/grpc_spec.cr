@@ -49,6 +49,22 @@ expected_endpoints = [
   Endpoint.new("/HealthService/Check", "POST", [
     Param.new("service", "", "json"),
   ]),
+  # Specific body field - remaining fields become query params
+  Endpoint.new("/api/v1/users/{user_id}", "PATCH", [
+    Param.new("user_id", "", "path"),
+    Param.new("display_name", "", "json"),
+    Param.new("bio", "", "query"),
+  ]),
+  # Qualified response type (google.protobuf.Empty)
+  Endpoint.new("/api/v1/users/{user_id}/ping", "POST", [
+    Param.new("user_id", "", "path"),
+    Param.new("name", "", "json"),
+  ]),
+  # Path parameter with resource pattern {name=projects/*/locations/*}
+  Endpoint.new("/api/v1/{name=projects/*/locations/*}/resource", "GET", [
+    Param.new("name", "", "path"),
+    Param.new("user_id", "", "query"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/specification/grpc/", {

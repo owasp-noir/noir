@@ -67,6 +67,16 @@ message SearchResponse {
   repeated GetUserResponse results = 1;
 }
 
+// Specific body field test
+message PatchUserRequest {
+  string user_id = 1;
+  string display_name = 2;
+  string bio = 3;
+}
+
+// Qualified type test (google.protobuf.Empty)
+message EmptyMessage {}
+
 service UserService {
   // Pure gRPC method (no HTTP annotation)
   rpc ListUsers(ListUsersRequest) returns (ListUsersResponse) {}
@@ -115,6 +125,29 @@ service UserService {
       additional_bindings {
         get: "/api/v2/users/{user_id}"
       }
+    };
+  }
+
+  // Specific body field (body != "*") - remaining fields become query params
+  rpc PatchUser(PatchUserRequest) returns (GetUserResponse) {
+    option (google.api.http) = {
+      patch: "/api/v1/users/{user_id}"
+      body: "display_name"
+    };
+  }
+
+  // Qualified response type test
+  rpc PingUser(GetUserRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = {
+      post: "/api/v1/users/{user_id}/ping"
+      body: "*"
+    };
+  }
+
+  // Path parameter with resource pattern {name=pattern}
+  rpc GetResource(GetUserRequest) returns (GetUserResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/{name=projects/*/locations/*}/resource"
     };
   }
 }
