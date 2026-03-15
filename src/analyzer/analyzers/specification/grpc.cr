@@ -41,7 +41,7 @@ module Analyzer::Specification
       # Find message blocks using brace matching (supports nested messages/enums)
       content.scan(/message\s+(\w+)\s*\{/m) do |match|
         msg_name = match[1]
-        start_pos = match.begin(0).not_nil!
+        start_pos = match.begin(0) || 0
         brace_pos = content.index('{', start_pos)
         next if brace_pos.nil?
         msg_body = extract_brace_block(content, brace_pos)
@@ -72,7 +72,7 @@ module Analyzer::Specification
       # Find service blocks using brace matching
       content.scan(/service\s+(\w+)\s*\{/m) do |service_match|
         service_name = service_match[1]
-        start_pos = service_match.begin(0).not_nil!
+        start_pos = service_match.begin(0) || 0
         brace_pos = content.index('{', start_pos)
         next if brace_pos.nil?
         service_body = extract_brace_block(content, brace_pos)
@@ -113,10 +113,8 @@ module Analyzer::Specification
         request_streaming = !rpc_match[2]?.nil?
         request_type = rpc_match[3]
         response_streaming = !rpc_match[4]?.nil?
-        response_type = rpc_match[5]
-
         # Find the options block after the rpc signature
-        rpc_end = rpc_match.end(0).not_nil!
+        rpc_end = rpc_match.end(0) || 0
         remaining = service_body[rpc_end..]
         options_block = ""
         if remaining =~ /\A\s*\{/
@@ -225,7 +223,7 @@ module Analyzer::Specification
       # Match additional_bindings using brace-aware extraction
       if options_block.includes?("additional_bindings")
         options_block.scan(/additional_bindings\s*\{/) do |binding_start|
-          binding_brace_pos = options_block.index('{', binding_start.begin(0).not_nil!)
+          binding_brace_pos = options_block.index('{', binding_start.begin(0) || 0)
           next if binding_brace_pos.nil?
           binding_body = extract_brace_block(options_block, binding_brace_pos)
           next if binding_body.nil?
