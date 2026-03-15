@@ -1,0 +1,153 @@
+syntax = "proto3";
+
+package example.v1;
+
+import "google/api/annotations.proto";
+
+message GetUserRequest {
+  string user_id = 1;
+  string name = 2;
+}
+
+message GetUserResponse {
+  string user_id = 1;
+  string name = 2;
+  string email = 3;
+}
+
+message CreateUserRequest {
+  string name = 1;
+  string email = 2;
+  int32 age = 3;
+}
+
+message CreateUserResponse {
+  string user_id = 1;
+}
+
+message UpdateUserRequest {
+  string user_id = 1;
+  string name = 2;
+  string email = 3;
+}
+
+message UpdateUserResponse {
+  string user_id = 1;
+}
+
+message DeleteUserRequest {
+  string user_id = 1;
+}
+
+message DeleteUserResponse {}
+
+message ListUsersRequest {
+  int32 page = 1;
+  int32 page_size = 2;
+}
+
+message ListUsersResponse {
+  repeated GetUserResponse users = 1;
+}
+
+// Nested message test
+message SearchRequest {
+  string query = 1;
+
+  message Filter {
+    string field = 1;
+    string value = 2;
+  }
+
+  Filter filter = 2;
+  int32 page = 3;
+}
+
+message SearchResponse {
+  repeated GetUserResponse results = 1;
+}
+
+// Specific body field test
+message PatchUserRequest {
+  string user_id = 1;
+  string display_name = 2;
+  string bio = 3;
+}
+
+// Qualified type test (google.protobuf.Empty)
+message EmptyMessage {}
+
+service UserService {
+  // Pure gRPC method (no HTTP annotation)
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse) {}
+
+  // gRPC-Gateway annotated methods
+  rpc GetUser(GetUserRequest) returns (GetUserResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/users/{user_id}"
+    };
+  }
+
+  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/users"
+      body: "*"
+    };
+  }
+
+  rpc UpdateUser(UpdateUserRequest) returns (UpdateUserResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/users/{user_id}"
+      body: "*"
+    };
+  }
+
+  rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/users/{user_id}"
+    };
+  }
+
+  // Stream RPC
+  rpc StreamUsers(ListUsersRequest) returns (stream GetUserResponse) {}
+
+  // Search with nested message request
+  rpc SearchUsers(SearchRequest) returns (SearchResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/users/search"
+    };
+  }
+
+  // Additional bindings test
+  rpc GetUserAlt(GetUserRequest) returns (GetUserResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/users/{user_id}/profile"
+      additional_bindings {
+        get: "/api/v2/users/{user_id}"
+      }
+    };
+  }
+
+  // Specific body field (body != "*") - remaining fields become query params
+  rpc PatchUser(PatchUserRequest) returns (GetUserResponse) {
+    option (google.api.http) = {
+      patch: "/api/v1/users/{user_id}"
+      body: "display_name"
+    };
+  }
+
+  // Qualified response type test
+  rpc PingUser(GetUserRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = {
+      post: "/api/v1/users/{user_id}/ping"
+      body: "*"
+    };
+  }
+
+  // Path parameter with resource pattern {name=pattern}
+  rpc GetResource(GetUserRequest) returns (GetUserResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/{name=projects/*/locations/*}/resource"
+    };
+  }
+}
