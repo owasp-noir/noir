@@ -94,13 +94,11 @@ module Analyzer::Go
       package_groups = Hash(String, Array(Hash(String, String))).new
       files_by_dir = Hash(String, Array(String)).new
 
-      base_paths.each do |current_base_path|
-        Dir.glob("#{escape_glob_path(current_base_path)}/**/*.go") do |path|
-          next if File.directory?(path)
-          dir = File.dirname(path)
-          files_by_dir[dir] ||= [] of String
-          files_by_dir[dir] << path
-        end
+      get_files_by_extension(".go").each do |path|
+        next if File.directory?(path)
+        dir = File.dirname(path)
+        files_by_dir[dir] ||= [] of String
+        files_by_dir[dir] << path
       end
 
       # Cache file contents to avoid re-reading

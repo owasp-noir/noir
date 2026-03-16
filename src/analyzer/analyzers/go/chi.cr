@@ -18,28 +18,26 @@ module Analyzer::Go
       package_files = Hash(String, Array(String)).new
       file_lines_cache = Hash(String, Array(String)).new
 
-      base_paths.each do |current_base_path|
-        Dir.glob("#{escape_glob_path(current_base_path)}/**/*.go") do |scan_path|
-          next if File.directory?(scan_path)
-          begin
-            dir = File.dirname(scan_path)
-            package_files[dir] ||= [] of String
-            package_files[dir] << scan_path
+      get_files_by_extension(".go").each do |scan_path|
+        next if File.directory?(scan_path)
+        begin
+          dir = File.dirname(scan_path)
+          package_files[dir] ||= [] of String
+          package_files[dir] << scan_path
 
-            lines = File.read_lines(scan_path, encoding: "utf-8", invalid: :skip)
-            file_lines_cache[scan_path] = lines
+          lines = File.read_lines(scan_path, encoding: "utf-8", invalid: :skip)
+          file_lines_cache[scan_path] = lines
 
-            lines.each do |scan_line|
-              if scan_line.includes?(".Mount(")
-                if scan_match = scan_line.match(/[a-zA-Z]\w*\.Mount\(\s*"([^"]+)"\s*,\s*([^(]+)\(\)/)
-                  package_mounted_functions[dir] ||= Set(String).new
-                  package_mounted_functions[dir] << scan_match[2].strip
-                end
+          lines.each do |scan_line|
+            if scan_line.includes?(".Mount(")
+              if scan_match = scan_line.match(/[a-zA-Z]\w*\.Mount\(\s*"([^"]+)"\s*,\s*([^(]+)\(\)/)
+                package_mounted_functions[dir] ||= Set(String).new
+                package_mounted_functions[dir] << scan_match[2].strip
               end
             end
-          rescue File::NotFoundError
-            # skip
           end
+        rescue File::NotFoundError
+          # skip
         end
       end
 
@@ -56,7 +54,7 @@ module Analyzer::Go
                 next if File.directory?(path)
                 if File.exists?(path)
                   # Use cached lines from pre-scan, or read if not cached
-                  lines = file_lines_cache.fetch(path, nil) || File.read_lines(path, encoding: "utf-8", invalid: :skip)
+                  lines = file_lines_cache[path]? || File.read_lines(path, encoding: "utf-8", invalid: :skip)
                   state = ChiRouteState.new
                   last_endpoint = Endpoint.new("", "")
 
@@ -319,7 +317,7 @@ module Analyzer::Go
 
       search_files.each do |search_path|
         begin
-          candidate_lines = (file_lines_cache.try &.fetch(search_path, nil)) || File.read_lines(search_path, encoding: "utf-8", invalid: :skip)
+          candidate_lines = (file_lines_cache.try &.[search_path]?) || File.read_lines(search_path, encoding: "utf-8", invalid: :skip)
           candidate_lines.each_with_index do |line, i|
             if line.includes?("func #{func_name}(")
               actual_file = search_path

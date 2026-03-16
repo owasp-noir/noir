@@ -21,7 +21,7 @@ module Analyzer::Go
                   next if File.directory?(path)
                   if File.exists?(path)
                     # Use cached lines from pre-scan, or read if not cached
-                    lines = file_lines_cache.fetch(path, nil) || File.read_lines(path, encoding: "utf-8", invalid: :skip)
+                    lines = file_lines_cache[path]? || File.read_lines(path, encoding: "utf-8", invalid: :skip)
                     last_endpoint = Endpoint.new("", "")
 
                     groups = groups_for_directory(package_groups, File.dirname(path))
