@@ -29,9 +29,12 @@ module Analyzer::Go
         end
 
         if group_name.size > 0 && group_path.size > 0
-          groups << {
-            group_name => group_path,
-          }
+          # Skip if a group with this name is already registered
+          unless groups.any? { |g| g.has_key?(group_name) }
+            groups << {
+              group_name => group_path,
+            }
+          end
         end
       end
     end
@@ -100,18 +103,32 @@ module Analyzer::Go
         end
       end
 
+      # Cache file contents to avoid re-reading
+      file_lines_cache = Hash(String, Array(String)).new
       files_by_dir.each do |dir, paths|
-        groups = [] of Hash(String, String)
         paths.each do |path|
           begin
-            lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
-            lines.each do |line|
-              lexer = GolangLexer.new
-              analyze_group(line, lexer, groups)
-            end
+            file_lines_cache[path] = File.read_lines(path, encoding: "utf-8", invalid: :skip)
           rescue File::NotFoundError
             # skip
           end
+        end
+      end
+
+      files_by_dir.each do |dir, paths|
+        groups = [] of Hash(String, String)
+        # Repeat until no new groups are discovered, handling cross-file nested groups
+        # where a group in file B depends on a group defined in file A.
+        loop do
+          prev_size = groups.size
+          paths.each do |path|
+            next unless file_lines_cache.has_key?(path)
+            file_lines_cache[path].each do |line|
+              lexer = GolangLexer.new
+              analyze_group(line, lexer, groups)
+            end
+          end
+          break if groups.size == prev_size
         end
         package_groups[dir] = groups unless groups.empty?
       end

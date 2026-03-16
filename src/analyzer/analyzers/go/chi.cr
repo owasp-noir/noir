@@ -294,7 +294,7 @@ module Analyzer::Go
       # Try the given file first, then search other .go files in the same directory
       search_files = [file_path]
       dir = File.dirname(file_path)
-      Dir.glob("#{dir}/*.go") do |other_path|
+      Dir.glob("#{escape_glob_path(dir)}/*.go") do |other_path|
         next if other_path == file_path || File.directory?(other_path)
         search_files << other_path
       end
