@@ -5,7 +5,7 @@ module Analyzer::Go
     def analyze
       # Source Analysis
       public_dirs = [] of (Hash(String, String))
-      package_groups = collect_package_groups
+      package_groups, file_lines_cache = collect_package_groups
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       begin
         populate_channel_with_filtered_files(channel, ".go")
@@ -19,8 +19,8 @@ module Analyzer::Go
                   break if path.nil?
                   next if File.directory?(path)
                   if File.exists?(path)
-                    # Read all lines for multi-line pattern support
-                    lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
+                    # Use cached lines from pre-scan, or read if not cached
+                    lines = file_lines_cache.fetch(path, nil) || File.read_lines(path, encoding: "utf-8", invalid: :skip)
                     last_endpoint = Endpoint.new("", "")
 
                     # Initialize groups from pre-collected package groups (deep copy)

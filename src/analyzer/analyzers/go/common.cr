@@ -90,7 +90,7 @@ module Analyzer::Go
     # Pre-collect all group definitions across Go files grouped by directory (package).
     # This enables cross-file group resolution since all .go files in the same
     # directory share the same Go package scope.
-    def collect_package_groups : Hash(String, Array(Hash(String, String)))
+    def collect_package_groups : Tuple(Hash(String, Array(Hash(String, String))), Hash(String, Array(String)))
       package_groups = Hash(String, Array(Hash(String, String))).new
       files_by_dir = Hash(String, Array(String)).new
 
@@ -133,7 +133,7 @@ module Analyzer::Go
         package_groups[dir] = groups unless groups.empty?
       end
 
-      package_groups
+      {package_groups, file_lines_cache}
     end
 
     def resolve_public_dirs(public_dirs : Array(Hash(String, String)))

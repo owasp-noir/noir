@@ -12,15 +12,24 @@ module Analyzer::Go
     def analyze
       result = [] of Endpoint
 
-      # Pre-collect all mounted function names across all .go files per directory.
-      # This allows skipping mounted function bodies even when .Mount() is in a different file.
+      # Pre-scan: collect per-directory file lists, mounted function names, and cache file contents.
+      # This avoids redundant Dir.glob calls and file reads during analysis.
       package_mounted_functions = Hash(String, Set(String)).new
+      package_files = Hash(String, Array(String)).new
+      file_lines_cache = Hash(String, Array(String)).new
+
       base_paths.each do |current_base_path|
         Dir.glob("#{escape_glob_path(current_base_path)}/**/*.go") do |scan_path|
           next if File.directory?(scan_path)
           begin
             dir = File.dirname(scan_path)
-            File.read_lines(scan_path, encoding: "utf-8", invalid: :skip).each do |scan_line|
+            package_files[dir] ||= [] of String
+            package_files[dir] << scan_path
+
+            lines = File.read_lines(scan_path, encoding: "utf-8", invalid: :skip)
+            file_lines_cache[scan_path] = lines
+
+            lines.each do |scan_line|
               if scan_line.includes?(".Mount(")
                 if scan_match = scan_line.match(/[a-zA-Z]\w*\.Mount\(\s*"([^"]+)"\s*,\s*([^(]+)\(\)/)
                   package_mounted_functions[dir] ||= Set(String).new
@@ -46,8 +55,8 @@ module Analyzer::Go
                 break if path.nil?
                 next if File.directory?(path)
                 if File.exists?(path)
-                  # Read all lines for multi-line pattern support
-                  lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
+                  # Use cached lines from pre-scan, or read if not cached
+                  lines = file_lines_cache.fetch(path, nil) || File.read_lines(path, encoding: "utf-8", invalid: :skip)
                   state = ChiRouteState.new
                   last_endpoint = Endpoint.new("", "")
 
@@ -87,7 +96,7 @@ module Analyzer::Go
                       if match = line.match(/[a-zA-Z]\w*\.Mount\(\s*"([^"]+)"\s*,\s*([^(]+)\(\)/)
                         mount_prefix = match[1]
                         router_function = match[2]
-                        endpoints = analyze_router_function(path, router_function)
+                        endpoints = analyze_router_function(path, router_function, package_files, file_lines_cache)
                         endpoints.each do |ep|
                           ep.url = mount_prefix + ep.url
                           result << ep
@@ -288,15 +297,18 @@ module Analyzer::Go
 
     # Extracts endpoints from a router function definition, searching across
     # all .go files in the same directory (Go package) if not found in the given file.
-    def analyze_router_function(file_path : String, func_name : String) : Array(Endpoint)
+    def analyze_router_function(file_path : String, func_name : String,
+                                package_files : Hash(String, Array(String)) = Hash(String, Array(String)).new,
+                                file_lines_cache : Hash(String, Array(String)) = Hash(String, Array(String)).new) : Array(Endpoint)
       endpoints = [] of Endpoint
 
-      # Try the given file first, then search other .go files in the same directory
-      search_files = [file_path]
+      # Build search list: given file first, then other files in the same directory
       dir = File.dirname(file_path)
-      Dir.glob("#{escape_glob_path(dir)}/*.go") do |other_path|
-        next if other_path == file_path || File.directory?(other_path)
-        search_files << other_path
+      search_files = [file_path]
+      if package_files.has_key?(dir)
+        package_files[dir].each do |other_path|
+          search_files << other_path unless other_path == file_path
+        end
       end
 
       actual_file = ""
@@ -305,7 +317,7 @@ module Analyzer::Go
 
       search_files.each do |search_path|
         begin
-          candidate_lines = File.read_lines(search_path, encoding: "utf-8", invalid: :skip)
+          candidate_lines = file_lines_cache.fetch(search_path, nil) || File.read_lines(search_path, encoding: "utf-8", invalid: :skip)
           candidate_lines.each_with_index do |line, i|
             if line.includes?("func #{func_name}(")
               actual_file = search_path
