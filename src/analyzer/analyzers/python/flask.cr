@@ -51,6 +51,7 @@ module Analyzer::Python
             api_instances = Hash(::String, ::String).new
             path_api_instances[path] = api_instances
             view_assignments = Hash(::String, ::String).new # Maps view_var -> ClassName (per-file scope)
+            import_map_cache : Hash(::String, Tuple(::String, Int32))? = nil
 
             lines.each_with_index do |original_line, line_index|
               line = original_line.gsub(" ", "") # remove spaces for easier regex matching
@@ -147,12 +148,26 @@ module Analyzer::Python
                 url_prefix_match = original_line.match /url_prefix\s*=\s*[rf]?['"]([^'"]*)['"]/
                 if url_prefix_match
                   blueprint_name = register_blueprint_match[2]
+                  resolved = false
                   parser = get_parser(path)
                   if parser.@global_variables.has_key?(blueprint_name)
                     gv = parser.@global_variables[blueprint_name]
                     if gv.type == "Blueprint"
                       register_blueprint[gv.path] ||= Hash(::String, ::String).new
                       register_blueprint[gv.path][blueprint_name] = url_prefix_match[1]
+                      resolved = true
+                    end
+                  end
+
+                  # Cross-file resolution: resolve imported blueprint via import map
+                  unless resolved
+                    import_map_cache ||= find_imported_modules(current_base_path, path)
+                    if import_map_cache.has_key?(blueprint_name)
+                      source_file, _package_type = import_map_cache[blueprint_name]
+                      if !source_file.empty? && File.exists?(source_file)
+                        register_blueprint[source_file] ||= Hash(::String, ::String).new
+                        register_blueprint[source_file][blueprint_name] = url_prefix_match[1]
+                      end
                     end
                   end
                 end

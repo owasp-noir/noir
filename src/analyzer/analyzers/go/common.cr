@@ -29,9 +29,12 @@ module Analyzer::Go
         end
 
         if group_name.size > 0 && group_path.size > 0
-          groups << {
-            group_name => group_path,
-          }
+          # Skip if a group with this name is already registered
+          unless groups.any?(&.has_key?(group_name))
+            groups << {
+              group_name => group_path,
+            }
+          end
         end
       end
     end
@@ -82,6 +85,64 @@ module Analyzer::Go
         "static_path" => "",
         "file_path"   => "",
       }
+    end
+
+    # Pre-collect all group definitions across Go files grouped by directory (package).
+    # This enables cross-file group resolution since all .go files in the same
+    # directory share the same Go package scope.
+    def collect_package_groups : Tuple(Hash(String, Array(Hash(String, String))), Hash(String, Array(String)))
+      package_groups = Hash(String, Array(Hash(String, String))).new
+      files_by_dir = Hash(String, Array(String)).new
+
+      get_files_by_extension(".go").each do |path|
+        next if File.directory?(path)
+        dir = File.dirname(path)
+        files_by_dir[dir] ||= [] of String
+        files_by_dir[dir] << path
+      end
+
+      # Cache file contents to avoid re-reading
+      file_lines_cache = Hash(String, Array(String)).new
+      files_by_dir.each do |_dir, paths|
+        paths.each do |path|
+          begin
+            file_lines_cache[path] = File.read_lines(path, encoding: "utf-8", invalid: :skip)
+          rescue File::NotFoundError
+            # skip
+          end
+        end
+      end
+
+      files_by_dir.each do |dir, paths|
+        groups = [] of Hash(String, String)
+        # Repeat until no new groups are discovered, handling cross-file nested groups
+        # where a group in file B depends on a group defined in file A.
+        loop do
+          prev_size = groups.size
+          paths.each do |path|
+            next unless file_lines_cache.has_key?(path)
+            file_lines_cache[path].each do |line|
+              # GolangLexer is stateful (buffer/quote state leaks between calls),
+              # so a fresh instance is required per line.
+              lexer = GolangLexer.new
+              analyze_group(line, lexer, groups)
+            end
+          end
+          break if groups.size == prev_size
+        end
+        package_groups[dir] = groups unless groups.empty?
+      end
+
+      {package_groups, file_lines_cache}
+    end
+
+    # Returns a deep copy of pre-collected groups for the given directory.
+    def groups_for_directory(package_groups : Hash(String, Array(Hash(String, String))), dir : String) : Array(Hash(String, String))
+      groups = [] of Hash(String, String)
+      if package_groups.has_key?(dir)
+        package_groups[dir].each { |g| groups << g.dup }
+      end
+      groups
     end
 
     def resolve_public_dirs(public_dirs : Array(Hash(String, String)))

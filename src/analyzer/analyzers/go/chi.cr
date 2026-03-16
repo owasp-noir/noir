@@ -11,6 +11,36 @@ module Analyzer::Go
   class Chi < Analyzer
     def analyze
       result = [] of Endpoint
+
+      # Pre-scan: collect per-directory file lists, mounted function names, and cache file contents.
+      # This avoids redundant Dir.glob calls and file reads during analysis.
+      package_mounted_functions = Hash(String, Set(String)).new
+      package_files = Hash(String, Array(String)).new
+      file_lines_cache = Hash(String, Array(String)).new
+
+      get_files_by_extension(".go").each do |scan_path|
+        next if File.directory?(scan_path)
+        begin
+          dir = File.dirname(scan_path)
+          package_files[dir] ||= [] of String
+          package_files[dir] << scan_path
+
+          lines = File.read_lines(scan_path, encoding: "utf-8", invalid: :skip)
+          file_lines_cache[scan_path] = lines
+
+          lines.each do |scan_line|
+            if scan_line.includes?(".Mount(")
+              if scan_match = scan_line.match(/[a-zA-Z]\w*\.Mount\(\s*"([^"]+)"\s*,\s*([^(]+)\(\)/)
+                package_mounted_functions[dir] ||= Set(String).new
+                package_mounted_functions[dir] << scan_match[2].strip
+              end
+            end
+          end
+        rescue File::NotFoundError
+          # skip
+        end
+      end
+
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       begin
         populate_channel_with_filtered_files(channel, ".go")
@@ -23,20 +53,14 @@ module Analyzer::Go
                 break if path.nil?
                 next if File.directory?(path)
                 if File.exists?(path)
-                  # Read all lines for multi-line pattern support
-                  lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
+                  # Use cached lines from pre-scan, or read if not cached
+                  lines = file_lines_cache[path]? || File.read_lines(path, encoding: "utf-8", invalid: :skip)
                   state = ChiRouteState.new
                   last_endpoint = Endpoint.new("", "")
 
-                  # Pre-scan: collect mounted function names to skip their bodies
-                  mounted_functions = Set(String).new
-                  lines.each do |scan_line|
-                    if scan_line.includes?(".Mount(")
-                      if scan_match = scan_line.match(/[a-zA-Z]\w*\.Mount\(\s*"([^"]+)"\s*,\s*([^(]+)\(\)/)
-                        mounted_functions << scan_match[2].strip
-                      end
-                    end
-                  end
+                  # Use package-level mounted function names to skip their bodies
+                  dir = File.dirname(path)
+                  mounted_functions = package_mounted_functions.fetch(dir, Set(String).new)
                   in_mounted_func = false
                   mounted_func_brace_count = 0
 
@@ -70,7 +94,7 @@ module Analyzer::Go
                       if match = line.match(/[a-zA-Z]\w*\.Mount\(\s*"([^"]+)"\s*,\s*([^(]+)\(\)/)
                         mount_prefix = match[1]
                         router_function = match[2]
-                        endpoints = analyze_router_function(path, router_function)
+                        endpoints = analyze_router_function(path, router_function, package_files, file_lines_cache)
                         endpoints.each do |ep|
                           ep.url = mount_prefix + ep.url
                           result << ep
@@ -269,17 +293,42 @@ module Analyzer::Go
       ""
     end
 
-    # 주어진 파일 내에 정의된 router 함수의 내용을 추출하여 엔드포인트 정보로 변환
-    def analyze_router_function(file_path : String, func_name : String) : Array(Endpoint)
+    # Extracts endpoints from a router function definition, searching across
+    # all .go files in the same directory (Go package) if not found in the given file.
+    def analyze_router_function(file_path : String, func_name : String,
+                                package_files : Hash(String, Array(String))? = nil,
+                                file_lines_cache : Hash(String, Array(String))? = nil) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = File.read_lines(file_path, encoding: "utf-8", invalid: :skip)
 
-      # Find function start
+      # Build search list: given file first, then other files in the same directory
+      dir = File.dirname(file_path)
+      search_files = [file_path]
+      if package_files
+        if package_files.has_key?(dir)
+          package_files[dir].each do |other_path|
+            search_files << other_path unless other_path == file_path
+          end
+        end
+      end
+
+      actual_file = ""
+      lines = [] of String
       func_start = -1
-      lines.each_with_index do |line, i|
-        if line.includes?("func #{func_name}(")
-          func_start = i
-          break
+
+      search_files.each do |search_path|
+        begin
+          candidate_lines = (file_lines_cache.try &.[search_path]?) || File.read_lines(search_path, encoding: "utf-8", invalid: :skip)
+          candidate_lines.each_with_index do |line, i|
+            if line.includes?("func #{func_name}(")
+              actual_file = search_path
+              lines = candidate_lines
+              func_start = i
+              break
+            end
+          end
+          break if func_start >= 0
+        rescue File::NotFoundError
+          next
         end
       end
       return endpoints if func_start < 0
@@ -301,7 +350,7 @@ module Analyzer::Go
         brace_count -= line.count("}")
 
         next_line = index + 1 < lines.size ? lines[index + 1] : nil
-        details = Details.new(PathInfo.new(file_path))
+        details = Details.new(PathInfo.new(actual_file))
         endpoint, _ = process_route_line(line, next_line, state, details)
         endpoints << endpoint if endpoint
 
