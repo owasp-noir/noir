@@ -5,7 +5,7 @@ module Analyzer::Go
     def analyze
       # Source Analysis
       public_dirs = [] of (Hash(String, String))
-      groups = [] of Hash(String, String)
+      package_groups = collect_package_groups
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
       begin
@@ -24,11 +24,17 @@ module Analyzer::Go
                     lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
                     last_endpoint = Endpoint.new("", "")
 
+                    # Initialize groups from pre-collected package groups (deep copy)
+                    dir = File.dirname(path)
+                    groups = [] of Hash(String, String)
+                    if package_groups.has_key?(dir)
+                      package_groups[dir].each do |g|
+                        groups << g.dup
+                      end
+                    end
+
                     lines.each_with_index do |line, index|
                       details = Details.new(PathInfo.new(path, index + 1))
-                      lexer = GolangLexer.new
-
-                      analyze_group(line, lexer, groups)
 
                       # Use case-insensitive regex for HTTP method detection
                       # Matches patterns like: .GET(, .Get(, .get(, .POST(, .Post(, .post(, etc.

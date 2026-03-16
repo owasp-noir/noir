@@ -147,12 +147,26 @@ module Analyzer::Python
                 url_prefix_match = original_line.match /url_prefix\s*=\s*[rf]?['"]([^'"]*)['"]/
                 if url_prefix_match
                   blueprint_name = register_blueprint_match[2]
+                  resolved = false
                   parser = get_parser(path)
                   if parser.@global_variables.has_key?(blueprint_name)
                     gv = parser.@global_variables[blueprint_name]
                     if gv.type == "Blueprint"
                       register_blueprint[gv.path] ||= Hash(::String, ::String).new
                       register_blueprint[gv.path][blueprint_name] = url_prefix_match[1]
+                      resolved = true
+                    end
+                  end
+
+                  # Cross-file resolution: resolve imported blueprint via import map
+                  unless resolved
+                    import_map = find_imported_modules(current_base_path, path)
+                    if import_map.has_key?(blueprint_name)
+                      source_file, _package_type = import_map[blueprint_name]
+                      if !source_file.empty? && File.exists?(source_file)
+                        register_blueprint[source_file] ||= Hash(::String, ::String).new
+                        register_blueprint[source_file][blueprint_name] = url_prefix_match[1]
+                      end
                     end
                   end
                 end

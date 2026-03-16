@@ -84,6 +84,41 @@ module Analyzer::Go
       }
     end
 
+    # Pre-collect all group definitions across Go files grouped by directory (package).
+    # This enables cross-file group resolution since all .go files in the same
+    # directory share the same Go package scope.
+    def collect_package_groups : Hash(String, Array(Hash(String, String)))
+      package_groups = Hash(String, Array(Hash(String, String))).new
+      files_by_dir = Hash(String, Array(String)).new
+
+      base_paths.each do |current_base_path|
+        Dir.glob("#{escape_glob_path(current_base_path)}/**/*.go") do |path|
+          next if File.directory?(path)
+          dir = File.dirname(path)
+          files_by_dir[dir] ||= [] of String
+          files_by_dir[dir] << path
+        end
+      end
+
+      files_by_dir.each do |dir, paths|
+        groups = [] of Hash(String, String)
+        paths.each do |path|
+          begin
+            lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
+            lines.each do |line|
+              lexer = GolangLexer.new
+              analyze_group(line, lexer, groups)
+            end
+          rescue File::NotFoundError
+            # skip
+          end
+        end
+        package_groups[dir] = groups unless groups.empty?
+      end
+
+      package_groups
+    end
+
     def resolve_public_dirs(public_dirs : Array(Hash(String, String)))
       public_dirs.each do |p_dir|
         # Join path manually first to handle concatenation
