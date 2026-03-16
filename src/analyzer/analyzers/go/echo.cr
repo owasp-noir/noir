@@ -24,18 +24,10 @@ module Analyzer::Go
                     lines = file_lines_cache.fetch(path, nil) || File.read_lines(path, encoding: "utf-8", invalid: :skip)
                     last_endpoint = Endpoint.new("", "")
 
-                    # Initialize groups from pre-collected package groups (deep copy)
-                    dir = File.dirname(path)
-                    groups = [] of Hash(String, String)
-                    if package_groups.has_key?(dir)
-                      package_groups[dir].each do |g|
-                        groups << g.dup
-                      end
-                    end
+                    groups = groups_for_directory(package_groups, File.dirname(path))
 
                     lines.each_with_index do |line, index|
                       details = Details.new(PathInfo.new(path, index + 1))
-
                       # Use case-insensitive regex for HTTP method detection
                       # Matches patterns like: .GET(, .Get(, .get(, .POST(, .Post(, .post(, etc.
                       # Exclude parameter extraction patterns like Header.Get(, Query().Get(, etc.

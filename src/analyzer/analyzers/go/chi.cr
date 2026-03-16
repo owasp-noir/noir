@@ -298,16 +298,18 @@ module Analyzer::Go
     # Extracts endpoints from a router function definition, searching across
     # all .go files in the same directory (Go package) if not found in the given file.
     def analyze_router_function(file_path : String, func_name : String,
-                                package_files : Hash(String, Array(String)) = Hash(String, Array(String)).new,
-                                file_lines_cache : Hash(String, Array(String)) = Hash(String, Array(String)).new) : Array(Endpoint)
+                                package_files : Hash(String, Array(String))? = nil,
+                                file_lines_cache : Hash(String, Array(String))? = nil) : Array(Endpoint)
       endpoints = [] of Endpoint
 
       # Build search list: given file first, then other files in the same directory
       dir = File.dirname(file_path)
       search_files = [file_path]
-      if package_files.has_key?(dir)
-        package_files[dir].each do |other_path|
-          search_files << other_path unless other_path == file_path
+      if package_files
+        if package_files.has_key?(dir)
+          package_files[dir].each do |other_path|
+            search_files << other_path unless other_path == file_path
+          end
         end
       end
 
@@ -317,7 +319,7 @@ module Analyzer::Go
 
       search_files.each do |search_path|
         begin
-          candidate_lines = file_lines_cache.fetch(search_path, nil) || File.read_lines(search_path, encoding: "utf-8", invalid: :skip)
+          candidate_lines = (file_lines_cache.try &.fetch(search_path, nil)) || File.read_lines(search_path, encoding: "utf-8", invalid: :skip)
           candidate_lines.each_with_index do |line, i|
             if line.includes?("func #{func_name}(")
               actual_file = search_path

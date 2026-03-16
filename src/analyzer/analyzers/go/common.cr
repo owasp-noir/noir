@@ -124,6 +124,8 @@ module Analyzer::Go
           paths.each do |path|
             next unless file_lines_cache.has_key?(path)
             file_lines_cache[path].each do |line|
+              # GolangLexer is stateful (buffer/quote state leaks between calls),
+              # so a fresh instance is required per line.
               lexer = GolangLexer.new
               analyze_group(line, lexer, groups)
             end
@@ -134,6 +136,15 @@ module Analyzer::Go
       end
 
       {package_groups, file_lines_cache}
+    end
+
+    # Returns a deep copy of pre-collected groups for the given directory.
+    def groups_for_directory(package_groups : Hash(String, Array(Hash(String, String))), dir : String) : Array(Hash(String, String))
+      groups = [] of Hash(String, String)
+      if package_groups.has_key?(dir)
+        package_groups[dir].each { |g| groups << g.dup }
+      end
+      groups
     end
 
     def resolve_public_dirs(public_dirs : Array(Hash(String, String)))
