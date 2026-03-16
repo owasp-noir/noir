@@ -30,7 +30,7 @@ module Analyzer::Go
 
         if group_name.size > 0 && group_path.size > 0
           # Skip if a group with this name is already registered
-          unless groups.any? { |g| g.has_key?(group_name) }
+          unless groups.any?(&.has_key?(group_name))
             groups << {
               group_name => group_path,
             }
@@ -105,7 +105,7 @@ module Analyzer::Go
 
       # Cache file contents to avoid re-reading
       file_lines_cache = Hash(String, Array(String)).new
-      files_by_dir.each do |dir, paths|
+      files_by_dir.each do |_dir, paths|
         paths.each do |path|
           begin
             file_lines_cache[path] = File.read_lines(path, encoding: "utf-8", invalid: :skip)
