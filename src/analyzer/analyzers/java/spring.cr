@@ -88,6 +88,7 @@ module Analyzer::Java
                   Dir.glob("#{escape_glob_path(import_directory.to_s)}/*.java") do |_path|
                     next if path == _path
                     if !parser_map.has_key?(_path)
+                      # Java Spring only resolves one level of imports, so depth is always 0.
                       next unless ParserLimit.allow_depth?(0)
                       _parser = create_parser(Path.new(_path))
                       parser_map[_path] = _parser
@@ -104,6 +105,7 @@ module Analyzer::Java
                 source_path = root_source_directory.join(import_path + ".java")
                 next if source_path.dirname == package_directory || !File.exists?(source_path)
                 if !parser_map.has_key?(source_path.to_s)
+                  # Java Spring only resolves one level of imports, so depth is always 0.
                   next unless ParserLimit.allow_depth?(0)
                   _parser = create_parser(source_path)
                   parser_map[source_path.to_s] = _parser
@@ -126,6 +128,7 @@ module Analyzer::Java
               Dir.glob("#{escape_glob_path(package_directory)}/*.java") do |_path|
                 next if path == _path
                 if !parser_map.has_key?(_path)
+                  # Java Spring only resolves one level of imports, so depth is always 0.
                   next unless ParserLimit.allow_depth?(0)
                   _parser = create_parser(Path.new(_path))
                   parser_map[_path] = _parser

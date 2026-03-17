@@ -39,4 +39,13 @@ module ParserLimit
       depth < max
     end
   end
+
+  # Reset cached state so the environment variable is re-read on next access.
+  # Intended for testing only.
+  def reset
+    @@mutex.synchronize do
+      @@max_depth = nil
+      @@initialized = false
+    end
+  end
 end

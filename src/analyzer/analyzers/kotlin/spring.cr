@@ -193,6 +193,7 @@ module Analyzer::Kotlin
       # TODO: Be aware that the import file location might differ from the actual file system path.
       Dir.glob("#{escape_glob_path(import_directory.to_s)}/*.#{KOTLIN_EXTENSION}") do |path|
         next if path == current_path
+        # Kotlin Spring only resolves one level of imports, so depth is always 0.
         next unless ParserLimit.allow_depth?(0)
         parser = parser_map[path]? || create_parser(Path.new(path))
         parser_map[path] ||= parser
@@ -204,6 +205,7 @@ module Analyzer::Kotlin
     private def process_single_import(root_source_directory : Path, import_path : String, package_directory : Path, parser_map : Hash(String, KotlinParser), import_map : Hash(String, KotlinParser::ClassModel))
       source_path = root_source_directory.join("#{import_path}.#{KOTLIN_EXTENSION}")
       return if source_path.dirname == package_directory || !File.exists?(source_path)
+      # Kotlin Spring only resolves one level of imports, so depth is always 0.
       return unless ParserLimit.allow_depth?(0)
       # TODO: Be aware that the import file location might differ from the actual file system path.
       parser = parser_map[source_path.to_s]? || create_parser(source_path)
@@ -216,6 +218,7 @@ module Analyzer::Kotlin
       package_class_map = Hash(String, KotlinParser::ClassModel).new
       Dir.glob("#{escape_glob_path(package_directory.to_s)}/*.#{KOTLIN_EXTENSION}") do |path|
         next if path == current_path
+        # Kotlin Spring only resolves one level of imports, so depth is always 0.
         next unless ParserLimit.allow_depth?(0)
         parser = parser_map[path]? || create_parser(Path.new(path))
         parser_map[path] ||= parser
