@@ -1,6 +1,7 @@
 require "../../../models/analyzer"
 require "../../../minilexers/kotlin"
 require "../../../miniparsers/kotlin"
+require "../../../utils/parser_limit"
 require "../../../utils/utils.cr"
 
 module Analyzer::Kotlin
@@ -192,6 +193,7 @@ module Analyzer::Kotlin
       # TODO: Be aware that the import file location might differ from the actual file system path.
       Dir.glob("#{escape_glob_path(import_directory.to_s)}/*.#{KOTLIN_EXTENSION}") do |path|
         next if path == current_path
+        next unless ParserLimit.allow_depth?(0)
         parser = parser_map[path]? || create_parser(Path.new(path))
         parser_map[path] ||= parser
         parser.classes.each { |package_class| import_map[package_class.name] = package_class }
@@ -202,6 +204,7 @@ module Analyzer::Kotlin
     private def process_single_import(root_source_directory : Path, import_path : String, package_directory : Path, parser_map : Hash(String, KotlinParser), import_map : Hash(String, KotlinParser::ClassModel))
       source_path = root_source_directory.join("#{import_path}.#{KOTLIN_EXTENSION}")
       return if source_path.dirname == package_directory || !File.exists?(source_path)
+      return unless ParserLimit.allow_depth?(0)
       # TODO: Be aware that the import file location might differ from the actual file system path.
       parser = parser_map[source_path.to_s]? || create_parser(source_path)
       parser_map[source_path.to_s] ||= parser
@@ -213,6 +216,7 @@ module Analyzer::Kotlin
       package_class_map = Hash(String, KotlinParser::ClassModel).new
       Dir.glob("#{escape_glob_path(package_directory.to_s)}/*.#{KOTLIN_EXTENSION}") do |path|
         next if path == current_path
+        next unless ParserLimit.allow_depth?(0)
         parser = parser_map[path]? || create_parser(Path.new(path))
         parser_map[path] ||= parser
         parser.classes.each { |package_class| package_class_map[package_class.name] = package_class }

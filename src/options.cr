@@ -95,9 +95,10 @@ private def full_examples_and_env : String
         $ noir -b . -t rails --exclude-techs php
 
     #{"ENVIRONMENT VARIABLES:".colorize(:green)}
-      NOIR_HOME          Path to directory containing config file
-      NOIR_AI_KEY        API key for AI providers (OpenAI, xAI, etc.)
-      NOIR_MAX_FILE_SIZE Maximum file size for analysis (e.g. 5MB or 1048576)
+      NOIR_HOME                    Path to directory containing config file
+      NOIR_AI_KEY                  API key for AI providers (OpenAI, xAI, etc.)
+      NOIR_MAX_FILE_SIZE           Maximum file size for analysis (e.g. 5MB or 1048576)
+      NOIR_PARSER_MAX_DEPTH        Max import depth for parsers (0=entry only; 1=+direct imports; unset=no limit)
     EXTRA
 end
 
