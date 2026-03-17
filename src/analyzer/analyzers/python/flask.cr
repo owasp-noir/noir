@@ -558,7 +558,7 @@ module Analyzer::Python
       @logger.debug "Tokenizing #{path}"
       tokens = lexer.tokenize(content)
       @logger.debug "Parsing #{path}"
-      parser = PythonParser.new(path, tokens, @parsers)
+      parser = PythonParser.new(path, tokens, @parsers, depth: 0)
       @logger.debug "Parsed #{path}"
       parser
     end

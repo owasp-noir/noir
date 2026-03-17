@@ -1,11 +1,13 @@
 require "../minilexers/python"
 require "../models/minilexer/token"
+require "../utils/parser_limit"
 
 class PythonParser
   property tokens : Array(Token)
   property path : String
 
-  def initialize(@path : String, @tokens : Array(Token), @parsers : Hash(String, PythonParser), @visited : Array(String) = Array(String).new)
+  # depth: import depth (0 = entry file). Used with NOIR_PARSER_MAX_DEPTH to cap how deep we follow imports.
+  def initialize(@path : String, @tokens : Array(Token), @parsers : Hash(String, PythonParser), @visited : Array(String) = Array(String).new, depth : Int32 = 0)
     @import_statements = Hash(String, ImportModel).new
     @global_variables = Hash(String, GlobalVariables).new
     @basedir = File.dirname(@path)
@@ -15,6 +17,7 @@ class PythonParser
     end
 
     @debug = false
+    @depth = depth
     @visited << path
     parse
   end
@@ -32,7 +35,7 @@ class PythonParser
 
     lexer = PythonLexer.new
     tokens = lexer.tokenize(content)
-    parser = PythonParser.new(path.to_s, tokens, @parsers, @visited.dup)
+    parser = PythonParser.new(path.to_s, tokens, @parsers, @visited.dup, depth: @depth + 1)
     parser
   end
 
@@ -185,6 +188,7 @@ class PythonParser
         if @visited.includes?(pypath)
           next
         end
+        next unless ParserLimit.allow_depth?(@depth)
         if name == "*"
           parser = get_parser(Path.new(pypath))
           @global_variables.merge!(parser.@global_variables)
