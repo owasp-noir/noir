@@ -24,15 +24,7 @@ module Analyzer::Javascript
                 details = Details.new(PathInfo.new(path, 1))
                 endpoint.details = details
 
-                if endpoint.url.includes?(":")
-                  endpoint.url.scan(/:(\w+)/) do |m|
-                    if m.size > 0
-                      param = Param.new(m[1], "", "path")
-                      endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
-                    end
-                  end
-                end
-
+                extract_path_params(endpoint)
                 result << endpoint
               end
 
@@ -95,18 +87,12 @@ module Analyzer::Javascript
               ((index + 1)...lines.size).each do |i|
                 handler_line = lines[i]
                 break if handler_line =~ /^\s*\}\s*\)\s*$/
-                param = line_to_param(handler_line)
-                endpoint.push_param(param) if param.name != ""
-              end
-
-              if url.includes?(":")
-                url.scan(/:(\w+)/) do |m|
-                  if m.size > 0
-                    param = Param.new(m[1], "", "path")
-                    endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
-                  end
+                line_to_params(handler_line).each do |param|
+                  endpoint.push_param(param)
                 end
               end
+
+              extract_path_params(endpoint)
 
               result << endpoint
             end
@@ -129,8 +115,7 @@ module Analyzer::Javascript
             last_endpoint = endpoint
           end
 
-          param = line_to_param(line)
-          if param.name != ""
+          line_to_params(line).each do |param|
             if last_endpoint.method != ""
               last_endpoint.push_param(param)
             end
@@ -139,49 +124,54 @@ module Analyzer::Javascript
       end
     end
 
-    def line_to_param(line : String) : Param
+    private def extract_path_params(endpoint : Endpoint)
+      if endpoint.url.includes?(":")
+        endpoint.url.scan(/:(\w+)/) do |m|
+          if m.size > 0
+            param = Param.new(m[1], "", "path")
+            endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
+          end
+        end
+      end
+    end
+
+    def line_to_params(line : String) : Array(Param)
       # c.req.query('param') - any variable name (c, ctx, context, etc.)
       if line =~ /\w+\.req\.query\s*\(\s*['"]([^'"]+)['"]\s*\)/
-        return Param.new($1, "", "query")
+        return [Param.new($1, "", "query")]
       end
 
       # c.req.queries('param') - returns array
       if line =~ /\w+\.req\.queries\s*\(\s*['"]([^'"]+)['"]\s*\)/
-        return Param.new($1, "", "query")
+        return [Param.new($1, "", "query")]
       end
 
       # c.req.param('id')
       if line =~ /\w+\.req\.param\s*\(\s*['"]([^'"]+)['"]\s*\)/
-        return Param.new($1, "", "path")
+        return [Param.new($1, "", "path")]
       end
 
       # c.req.header('X-Custom')
       if line =~ /\w+\.req\.header\s*\(\s*['"]([^'"]+)['"]\s*\)/
-        return Param.new($1, "", "header")
+        return [Param.new($1, "", "header")]
       end
 
       # await c.req.json() destructuring: const { name, email } = await c.req.json()
       if line =~ /(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*await\s+\w+\.req\.json\s*\(/
-        param_list = $1.split(",").map(&.strip)
-        if !param_list.empty?
-          return Param.new(param_list.first, "", "json")
-        end
+        return $1.split(",").map(&.strip).reject(&.empty?).map { |name| Param.new(name, "", "json") }
       end
 
       # c.req.parseBody() destructuring
       if line =~ /(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*await\s+\w+\.req\.parseBody\s*\(/
-        param_list = $1.split(",").map(&.strip)
-        if !param_list.empty?
-          return Param.new(param_list.first, "", "form")
-        end
+        return $1.split(",").map(&.strip).reject(&.empty?).map { |name| Param.new(name, "", "form") }
       end
 
       # Cookie: getCookie(c, 'name') from hono/cookie
       if line =~ /getCookie\s*\(\s*\w+\s*,\s*['"]([^'"]+)['"]\s*\)/
-        return Param.new($1, "", "cookie")
+        return [Param.new($1, "", "cookie")]
       end
 
-      Param.new("", "", "")
+      [] of Param
     end
 
     def line_to_endpoints(line : String) : Array(Endpoint)

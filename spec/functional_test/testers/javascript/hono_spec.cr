@@ -9,6 +9,8 @@ expected_endpoints = [
   # POST route with JSON body
   Endpoint.new("/register", "POST", [
     Param.new("username", "", "json"),
+    Param.new("email", "", "json"),
+    Param.new("password", "", "json"),
     Param.new("client-id", "", "header"),
   ]),
   # Route with path parameter
@@ -24,6 +26,8 @@ expected_endpoints = [
   # POST products
   Endpoint.new("/products", "POST", [
     Param.new("name", "", "json"),
+    Param.new("price", "", "json"),
+    Param.new("category", "", "json"),
     Param.new("store-id", "", "header"),
   ]),
   # Dashboard with cookie
@@ -34,6 +38,7 @@ expected_endpoints = [
   # PUT settings
   Endpoint.new("/settings", "PUT", [
     Param.new("theme", "", "json"),
+    Param.new("notifications", "", "json"),
     Param.new("authorization", "", "header"),
   ]),
   # DELETE with path param
@@ -49,6 +54,7 @@ expected_endpoints = [
   # Form body with parseBody
   Endpoint.new("/upload", "POST", [
     Param.new("file", "", "form"),
+    Param.new("description", "", "form"),
     Param.new("x-upload-token", "", "header"),
   ]),
   # app.on() with specific method
