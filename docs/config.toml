@@ -116,3 +116,85 @@ enabled = false
 [markdown]
 safe = false
 lazy_loading = true
+
+# =============================================================================
+# PWA (Progressive Web App) (Optional)
+# =============================================================================
+# Generate manifest.json and service worker for offline access
+
+[pwa]
+enabled = true
+name = "OWASP Noir"
+short_name = "Noir"
+theme_color = "#1a1a2e"
+background_color = "#1a1a2e"
+display = "standalone"
+start_url = "/"
+
+# =============================================================================
+# AMP (Accelerated Mobile Pages) (Optional)
+# =============================================================================
+# Generate AMP-compliant versions of content pages
+
+# [amp]
+# enabled = true
+# path_prefix = "amp"
+# sections = ["posts"]
+
+# =============================================================================
+# Series (Optional)
+# =============================================================================
+# Group posts into ordered series
+
+# [series]
+# enabled = true
+
+# =============================================================================
+# Related Posts (Optional)
+# =============================================================================
+# Recommend related content based on shared taxonomy terms
+
+# [related]
+# enabled = true
+# limit = 5
+# taxonomies = ["tags"]
+
+# =============================================================================
+# Asset Pipeline (Optional)
+# =============================================================================
+
+[assets]
+enabled = true
+minify = true
+fingerprint = true
+
+# =============================================================================
+# Deployment (Optional)
+# =============================================================================
+
+# [deployment]
+# target = "prod"
+# source_dir = "public"
+#
+# [[deployment.targets]]
+# name = "prod"
+# url = "file://./out"
+
+# =============================================================================
+# Auto OG Images (Optional)
+# =============================================================================
+# Auto-generate Open Graph preview images for social sharing
+
+[og.auto_image]
+enabled = true
+background = "#1a1a2e"
+text_color = "#ffffff"
+accent_color = "#7E8690"
+font_size = 48
+logo = "static/images/logo-s.png"
+output_dir = "og-images"
+show_title = true
+style = "diagonal"
+pattern_opacity = 0.15
+pattern_scale = 1.0
+format = "png"
