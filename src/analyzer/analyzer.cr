@@ -43,6 +43,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"java_vertx", Java::Vertx},
     {"js_express", Javascript::Express},
     {"js_fastify", Javascript::Fastify},
+    {"js_hono", Javascript::Hono},
     {"js_koa", Javascript::Koa},
     {"js_nestjs", Javascript::Nestjs},
     {"js_nuxtjs", Javascript::Nuxtjs},
