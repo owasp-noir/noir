@@ -34,6 +34,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"go_gozero", Go::GoZero},
     {"go_goyave", Go::Goyave},
     {"go_mux", Go::Mux},
+    {"go_httprouter", Go::Httprouter},
     {"go_gf", Go::Gf},
     {"grpc", Specification::Grpc},
     {"har", Specification::Har},

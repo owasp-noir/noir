@@ -342,6 +342,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :go_httprouter => {
+      :framework => "httprouter",
+      :language  => "Go",
+      :similar   => ["httprouter", "go-httprouter", "go_httprouter", "julienschmidt-httprouter"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :har => {
       :format    => ["JSON"],
       :similar   => ["har"],
