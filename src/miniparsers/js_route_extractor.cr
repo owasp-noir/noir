@@ -335,6 +335,7 @@ module Noir
       extract_query_params(handler_body, endpoint)
       extract_header_params(handler_body, endpoint)
       extract_cookie_params(handler_body, endpoint)
+      extract_path_params(handler_body, endpoint)
     end
 
     # Delegate to JSLiteralScanner for literal-aware brace matching
@@ -373,6 +374,28 @@ module Noir
           endpoint.push_param(Param.new(match[1], "", "json"))
         end
       end
+
+      # Hono-style: const { X } = await c.req.json()
+      handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*await\s+\w+\.req\.json\s*\(/) do |match|
+        if match.size > 0
+          params = match[1].split(",").map(&.strip)
+          params.each do |param|
+            clean_param = param.split("=").first.strip
+            endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
+          end
+        end
+      end
+
+      # Hono-style: const { X } = await c.req.parseBody()
+      handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*await\s+\w+\.req\.parseBody\s*\(/) do |match|
+        if match.size > 0
+          params = match[1].split(",").map(&.strip)
+          params.each do |param|
+            clean_param = param.split("=").first.strip
+            endpoint.push_param(Param.new(clean_param, "", "form")) unless clean_param.empty?
+          end
+        end
+      end
     end
 
     def self.extract_query_params(handler_body : String, endpoint : Endpoint)
@@ -389,6 +412,20 @@ module Noir
 
       # Look for req.query.X
       handler_body.scan(/(?:req|request)\.query\.(\w+)/) do |match|
+        if match.size > 0
+          endpoint.push_param(Param.new(match[1], "", "query"))
+        end
+      end
+
+      # Hono-style: c.req.query('param')
+      handler_body.scan(/\w+\.req\.query\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
+        if match.size > 0
+          endpoint.push_param(Param.new(match[1], "", "query"))
+        end
+      end
+
+      # Hono-style: c.req.queries('param')
+      handler_body.scan(/\w+\.req\.queries\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
         if match.size > 0
           endpoint.push_param(Param.new(match[1], "", "query"))
         end
@@ -433,6 +470,13 @@ module Noir
           endpoint.push_param(Param.new(match[1], "", "header"))
         end
       end
+
+      # Hono-style: c.req.header('X-Custom')
+      handler_body.scan(/\w+\.req\.header\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
+        if match.size > 0
+          endpoint.push_param(Param.new(match[1], "", "header"))
+        end
+      end
     end
 
     def self.extract_cookie_params(handler_body : String, endpoint : Endpoint)
@@ -447,6 +491,43 @@ module Noir
       handler_body.scan(/ctx\.cookies\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
         if match.size > 0
           endpoint.push_param(Param.new(match[1], "", "cookie"))
+        end
+      end
+
+      # Hono-style: getCookie(c, 'name')
+      handler_body.scan(/getCookie\s*\(\s*\w+\s*,\s*['"]([^'"]+)['"]\s*\)/) do |match|
+        if match.size > 0
+          endpoint.push_param(Param.new(match[1], "", "cookie"))
+        end
+      end
+    end
+
+    def self.extract_path_params(handler_body : String, endpoint : Endpoint)
+      # Express/Fastify-style: req.params.X
+      handler_body.scan(/(?:req|request)\.params\.(\w+)/) do |match|
+        if match.size > 0
+          endpoint.push_param(Param.new(match[1], "", "path")) unless endpoint.params.any? { |p| p.name == match[1] && p.param_type == "path" }
+        end
+      end
+
+      # Express/Fastify-style: req.params['X']
+      handler_body.scan(/(?:req|request)\.params\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match|
+        if match.size > 0
+          endpoint.push_param(Param.new(match[1], "", "path")) unless endpoint.params.any? { |p| p.name == match[1] && p.param_type == "path" }
+        end
+      end
+
+      # Hono-style: c.req.param('id')
+      handler_body.scan(/\w+\.req\.param\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
+        if match.size > 0
+          endpoint.push_param(Param.new(match[1], "", "path")) unless endpoint.params.any? { |p| p.name == match[1] && p.param_type == "path" }
+        end
+      end
+
+      # Koa-style: ctx.params.X
+      handler_body.scan(/ctx\.params\.(\w+)/) do |match|
+        if match.size > 0
+          endpoint.push_param(Param.new(match[1], "", "path")) unless endpoint.params.any? { |p| p.name == match[1] && p.param_type == "path" }
         end
       end
     end

@@ -483,6 +483,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :js_hono => {
+      :framework => "Hono",
+      :language  => "JavaScript",
+      :similar   => ["hono", "js-hono"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => true,
+        :websocket   => false,
+      },
+    },
     :js_koa => {
       :framework => "Koa",
       :language  => "JavaScript",
