@@ -13,3 +13,4 @@ ameba.sh
 
 # Nix
 # /flake.lock
+node_modules/
