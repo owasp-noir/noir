@@ -3,6 +3,14 @@ require "../../../minilexers/golang"
 
 module Analyzer::Go
   class Httprouter < Analyzer
+    PARAM_PATTERNS = [
+      {"ByName(", /ByName\s*\(\s*[\"']([^\"']+)[\"']\s*\)/, "path"},
+      {"Query().Get(", /Query\(\)\s*\.\s*Get\s*\(\s*[\"']([^\"']+)[\"']\s*\)/, "query"},
+      {"PostFormValue(", /PostFormValue\s*\(\s*[\"']([^\"']+)[\"']\s*\)/, "form"},
+      {"Header.Get(", /Header\s*\.\s*Get\s*\(\s*[\"']([^\"']+)[\"']\s*\)/, "header"},
+      {"Cookie(", /Cookie\s*\(\s*[\"']([^\"']+)[\"']\s*\)/, "cookie"},
+    ]
+
     def analyze
       # Source Analysis
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
@@ -39,84 +47,26 @@ module Analyzer::Go
                           end
                         end
 
-                        if route_path.size > 0
-                          new_endpoint = Endpoint.new(route_path, method, details)
-                          result << new_endpoint
-                          last_endpoint = new_endpoint
-                        end
+                        last_endpoint = add_endpoint(route_path, method, details)
                       elsif match = line.match(/\.(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\s*\(/)
                         # Multi-line: method on this line, path on next line
                         method = match[1].upcase
                         if index + 1 < lines.size
                           next_line = lines[index + 1]
                           if path_match = next_line.match(/"(\/[^"]*)"/)
-                            route_path = path_match[1]
-                            if route_path.size > 0
-                              new_endpoint = Endpoint.new(route_path, method, details)
-                              result << new_endpoint
-                              last_endpoint = new_endpoint
-                            end
+                            last_endpoint = add_endpoint(path_match[1], method, details)
                           end
                         end
                       end
 
-                      # Parameter extraction: ps.ByName("param")
-                      if line.includes?("ByName(")
-                        if param_match = line.match(/ByName\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
-                          param_name = param_match[1]
-                          if param_name.size > 0 && last_endpoint.url != ""
-                            last_endpoint.params << Param.new(param_name, "", "path")
-                          end
-                        end
-                      end
-
-                      # Query parameter: r.URL.Query().Get("name")
-                      if line.includes?("Query().Get(")
-                        if param_match = line.match(/Query\(\)\s*\.\s*Get\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
-                          param_name = param_match[1]
-                          if param_name.size > 0 && last_endpoint.url != ""
-                            last_endpoint.params << Param.new(param_name, "", "query")
-                          end
-                        end
-                      end
-
-                      # Form parameter: r.PostFormValue("name")
-                      if line.includes?("PostFormValue(")
-                        if param_match = line.match(/PostFormValue\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
-                          param_name = param_match[1]
-                          if param_name.size > 0 && last_endpoint.url != ""
-                            last_endpoint.params << Param.new(param_name, "", "form")
-                          end
-                        end
-                      end
-
-                      # Form/query parameter: r.FormValue("name")
+                      # FormValue must be checked separately to avoid matching PostFormValue
                       if line.includes?("FormValue(") && !line.includes?("PostFormValue(")
-                        if param_match = line.match(/FormValue\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
-                          param_name = param_match[1]
-                          if param_name.size > 0 && last_endpoint.url != ""
-                            last_endpoint.params << Param.new(param_name, "", "query")
-                          end
-                        end
+                        extract_param(line, /(?<!Post)FormValue\s*\(\s*[\"']([^\"']+)[\"']\s*\)/, "query", last_endpoint)
                       end
 
-                      # Header parameter: r.Header.Get("name")
-                      if line.includes?("Header.Get(")
-                        if param_match = line.match(/Header\s*\.\s*Get\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
-                          param_name = param_match[1]
-                          if param_name.size > 0 && last_endpoint.url != ""
-                            last_endpoint.params << Param.new(param_name, "", "header")
-                          end
-                        end
-                      end
-
-                      # Cookie parameter: r.Cookie("name")
-                      if line.includes?("Cookie(")
-                        if param_match = line.match(/Cookie\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
-                          param_name = param_match[1]
-                          if param_name.size > 0 && last_endpoint.url != ""
-                            last_endpoint.params << Param.new(param_name, "", "cookie")
-                          end
+                      PARAM_PATTERNS.each do |includes_check, regex, param_type|
+                        if line.includes?(includes_check)
+                          extract_param(line, regex, param_type, last_endpoint)
                         end
                       end
                     end
@@ -133,6 +83,25 @@ module Analyzer::Go
       end
 
       result
+    end
+
+    private def add_endpoint(route_path : String, method : String, details : Details) : Endpoint
+      if route_path.size > 0
+        new_endpoint = Endpoint.new(route_path, method, details)
+        result << new_endpoint
+        new_endpoint
+      else
+        Endpoint.new("", "")
+      end
+    end
+
+    private def extract_param(line : String, regex : Regex, param_type : String, endpoint : Endpoint)
+      if param_match = line.match(regex)
+        param_name = param_match[1]
+        if param_name.size > 0 && endpoint.url != ""
+          endpoint.params << Param.new(param_name, "", param_type)
+        end
+      end
     end
   end
 end
