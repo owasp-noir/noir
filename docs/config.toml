@@ -122,14 +122,14 @@ lazy_loading = true
 # =============================================================================
 # Generate manifest.json and service worker for offline access
 
-# [pwa]
-# enabled = true
-# name = "My Site"
-# short_name = "Site"
-# theme_color = "#ffffff"
-# background_color = "#ffffff"
-# display = "standalone"
-# icons = ["static/icon-192.png", "static/icon-512.png"]
+[pwa]
+enabled = true
+name = "OWASP Noir"
+short_name = "Noir"
+theme_color = "#1a1a2e"
+background_color = "#1a1a2e"
+display = "standalone"
+start_url = "/"
 
 # =============================================================================
 # AMP (Accelerated Mobile Pages) (Optional)
@@ -163,10 +163,10 @@ lazy_loading = true
 # Asset Pipeline (Optional)
 # =============================================================================
 
-# [assets]
-# enabled = true
-# minify = true
-# fingerprint = true
+[assets]
+enabled = true
+minify = true
+fingerprint = true
 
 # =============================================================================
 # Deployment (Optional)
@@ -185,11 +185,11 @@ lazy_loading = true
 # =============================================================================
 # Auto-generate Open Graph preview images for social sharing
 
-# [og.auto_image]
-# enabled = true
-# background = "#1a1a2e"
-# text_color = "#ffffff"
-# accent_color = "#e94560"
-# font_size = 48
-# logo = "static/logo.png"
-# output_dir = "og-images"
+[og.auto_image]
+enabled = true
+background = "#1a1a2e"
+text_color = "#ffffff"
+accent_color = "#e94560"
+font_size = 48
+logo = "static/images/logo-s.png"
+output_dir = "og-images"
