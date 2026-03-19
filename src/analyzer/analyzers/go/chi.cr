@@ -195,46 +195,27 @@ module Analyzer::Go
     end
 
     private def extract_params(line : String, state : ChiRouteState, last_endpoint : Endpoint)
-      if line.includes?("chi.URLParam(")
-        if state.in_inline_handler?
-          get_param(line, "URLParam").tap do |param|
-            if param.name.size > 0 && last_endpoint.url != ""
-              last_endpoint.params << param
-            end
-          end
-        end
-      elsif state.in_inline_handler?
-        if line.includes?("Query().Get(")
-          get_param(line, "Query").tap do |param|
-            if param.name.size > 0 && last_endpoint.url != ""
-              last_endpoint.params << param
-            end
-          end
-        elsif line.includes?("PostFormValue(")
-          get_param(line, "PostFormValue").tap do |param|
-            if param.name.size > 0 && last_endpoint.url != ""
-              last_endpoint.params << param
-            end
-          end
-        elsif line.includes?("FormValue(")
-          get_param(line, "FormValue").tap do |param|
-            if param.name.size > 0 && last_endpoint.url != ""
-              last_endpoint.params << param
-            end
-          end
-        elsif line.includes?("Header.Get(")
-          get_param(line, "Header").tap do |param|
-            if param.name.size > 0 && last_endpoint.url != ""
-              last_endpoint.params << param
-            end
-          end
-        elsif line.includes?("Cookie(")
-          get_param(line, "Cookie").tap do |param|
-            if param.name.size > 0 && last_endpoint.url != ""
-              last_endpoint.params << param
-            end
-          end
-        end
+      return if last_endpoint.url.empty?
+      return unless state.in_inline_handler?
+
+      # Parameter extraction patterns (order matters - check more specific patterns first)
+      pattern = if line.includes?("chi.URLParam(")
+                  "URLParam"
+                elsif line.includes?("Query().Get(")
+                  "Query"
+                elsif line.includes?("PostFormValue(")
+                  "PostFormValue"
+                elsif line.includes?("FormValue(")
+                  "FormValue"
+                elsif line.includes?("Header.Get(")
+                  "Header"
+                elsif line.includes?("Cookie(")
+                  "Cookie"
+                end
+
+      if pattern
+        param = get_param(line, pattern)
+        last_endpoint.params << param unless param.name.empty?
       end
     end
 
