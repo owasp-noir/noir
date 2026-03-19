@@ -537,6 +537,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :js_nitro => {
+      :framework => "Nitro",
+      :language  => "JavaScript",
+      :similar   => ["nitro", "nitrojs", "nitropack", "js-nitro", "js_nitro"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :js_nuxtjs => {
       :framework => "NuxtJS",
       :language  => "JavaScript",

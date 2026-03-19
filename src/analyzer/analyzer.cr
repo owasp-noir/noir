@@ -46,6 +46,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"js_hono", Javascript::Hono},
     {"js_koa", Javascript::Koa},
     {"js_nestjs", Javascript::Nestjs},
+    {"js_nitro", Javascript::Nitro},
     {"js_nuxtjs", Javascript::Nuxtjs},
     {"js_restify", Javascript::Restify},
     {"kotlin_spring", Kotlin::Spring},
