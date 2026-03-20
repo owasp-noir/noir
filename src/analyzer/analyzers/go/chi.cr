@@ -112,51 +112,7 @@ module Analyzer::Go
                       last_endpoint = endpoint
                     end
 
-                    # Parameter extraction patterns (order matters - check more specific patterns first)
-                    # Extract chi.URLParam only in inline handler or in ArticleCtx-like middleware
-                    # Other parameters only in inline handler context
-                    if line.includes?("chi.URLParam(")
-                      # Only extract URLParam if in inline handler, or it's part of a middleware function
-                      if state.in_inline_handler?
-                        get_param(line, "URLParam").tap do |param|
-                          if param.name.size > 0 && last_endpoint.url != ""
-                            last_endpoint.params << param
-                          end
-                        end
-                      end
-                    elsif state.in_inline_handler?
-                      if line.includes?("Query().Get(")
-                        get_param(line, "Query").tap do |param|
-                          if param.name.size > 0 && last_endpoint.url != ""
-                            last_endpoint.params << param
-                          end
-                        end
-                      elsif line.includes?("PostFormValue(")
-                        get_param(line, "PostFormValue").tap do |param|
-                          if param.name.size > 0 && last_endpoint.url != ""
-                            last_endpoint.params << param
-                          end
-                        end
-                      elsif line.includes?("FormValue(")
-                        get_param(line, "FormValue").tap do |param|
-                          if param.name.size > 0 && last_endpoint.url != ""
-                            last_endpoint.params << param
-                          end
-                        end
-                      elsif line.includes?("Header.Get(")
-                        get_param(line, "Header").tap do |param|
-                          if param.name.size > 0 && last_endpoint.url != ""
-                            last_endpoint.params << param
-                          end
-                        end
-                      elsif line.includes?("Cookie(")
-                        get_param(line, "Cookie").tap do |param|
-                          if param.name.size > 0 && last_endpoint.url != ""
-                            last_endpoint.params << param
-                          end
-                        end
-                      end
-                    end
+                    extract_params(line, state, last_endpoint)
                   end
                 end
               rescue File::NotFoundError
@@ -236,6 +192,31 @@ module Analyzer::Go
       end
 
       {endpoint, handled}
+    end
+
+    private def extract_params(line : String, state : ChiRouteState, last_endpoint : Endpoint)
+      return if last_endpoint.url.empty?
+      return unless state.in_inline_handler?
+
+      # Parameter extraction patterns (order matters - check more specific patterns first)
+      pattern = if line.includes?("chi.URLParam(")
+                  "URLParam"
+                elsif line.includes?("Query().Get(")
+                  "Query"
+                elsif line.includes?("PostFormValue(")
+                  "PostFormValue"
+                elsif line.includes?("FormValue(")
+                  "FormValue"
+                elsif line.includes?("Header.Get(")
+                  "Header"
+                elsif line.includes?("Cookie(")
+                  "Cookie"
+                end
+
+      if pattern
+        param = get_param(line, pattern)
+        last_endpoint.params << param unless param.name.empty?
+      end
     end
 
     def get_param(line : String, pattern : String) : Param
@@ -336,6 +317,7 @@ module Analyzer::Go
       brace_count = 0
       state = ChiRouteState.new
       started = false
+      last_endpoint = Endpoint.new("", "")
 
       (func_start...lines.size).each do |index|
         line = lines[index]
@@ -351,8 +333,14 @@ module Analyzer::Go
 
         next_line = index + 1 < lines.size ? lines[index + 1] : nil
         details = Details.new(PathInfo.new(actual_file))
-        endpoint, _ = process_route_line(line, next_line, state, details)
-        endpoints << endpoint if endpoint
+        endpoint, handled = process_route_line(line, next_line, state, details)
+
+        if endpoint
+          endpoints << endpoint
+          last_endpoint = endpoint
+        end
+
+        extract_params(line, state, last_endpoint) unless handled
 
         break if brace_count <= 0
       end
