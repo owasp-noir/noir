@@ -23,6 +23,7 @@
   <a href="https://owasp-noir.github.io/noir/get_started/installation/">Installation</a> •
   <a href="#usage">Usage</a> •
   <a href="#contributing">Contributing</a>
+  <a href="./CHANGELOG.md">Changelog</a>
 </p>
 
 Noir bridges the gap between SAST and DAST by analyzing source code to generate accurate, authenticated endpoint inventories. It detects what others miss: shadow APIs, deprecated endpoints, and hidden routes.
