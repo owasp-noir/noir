@@ -27,7 +27,8 @@ module Analyzer::Rust
             end
           end
         end
-      rescue
+      rescue e
+        logger.debug "Error during Salvo analysis: #{e.message}"
       end
 
       result
@@ -88,29 +89,26 @@ module Analyzer::Rust
       lines.each_with_index do |line, index|
         # Match #[endpoint(method = Get, path = "/path")]
         if line.strip.starts_with?("#[endpoint(")
-          ep_match = line.match(/#\[endpoint\s*\(/)
-          if ep_match
-            method = "GET"
-            route_path = "/"
+          method = "GET"
+          route_path = "/"
 
-            method_match = line.match(/method\s*=\s*(\w+)/)
-            if method_match
-              method = method_match[1].upcase
-            end
-
-            path_match = line.match(/path\s*=\s*"([^"]+)"/)
-            if path_match
-              route_path = path_match[1]
-            end
-
-            details = Details.new(PathInfo.new(path, index + 1))
-            endpoint = Endpoint.new("#{route_path}", method, details)
-
-            extract_path_params(route_path, endpoint)
-            extract_function_params(lines, index + 1, endpoint)
-
-            result << endpoint
+          method_match = line.match(/method\s*=\s*(\w+)/)
+          if method_match
+            method = method_match[1].upcase
           end
+
+          path_match = line.match(/path\s*=\s*"([^"]+)"/)
+          if path_match
+            route_path = path_match[1]
+          end
+
+          details = Details.new(PathInfo.new(path, index + 1))
+          endpoint = Endpoint.new("#{route_path}", method, details)
+
+          extract_path_params(route_path, endpoint)
+          extract_function_params(lines, index + 1, endpoint)
+
+          result << endpoint
         end
       end
     end
