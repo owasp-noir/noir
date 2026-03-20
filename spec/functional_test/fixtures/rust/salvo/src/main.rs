@@ -31,6 +31,13 @@ async fn update_item(req: &mut Request) -> &'static str {
     "Updated"
 }
 
+#[endpoint(method = Post, path = "/api/submit/<id>")]
+async fn submit_form(req: &mut Request) -> &'static str {
+    let form: FormBody<serde_json::Value> = req.extract().await.unwrap();
+    let auth = req.header("Authorization").unwrap_or_default();
+    "Submitted"
+}
+
 #[tokio::main]
 async fn main() {
     let router = Router::new()
