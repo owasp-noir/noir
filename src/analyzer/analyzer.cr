@@ -77,6 +77,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"rust_tide", Rust::Tide},
     {"rust_warp", Rust::Warp},
     {"rust_gotham", Rust::Gotham},
+    {"rust_salvo", Rust::Salvo},
     {"scala_akka", Scala::Akka},
     {"scala_scalatra", Scala::Scalatra},
     {"scala_play", Scala::Play},

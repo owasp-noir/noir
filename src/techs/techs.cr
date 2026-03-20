@@ -1113,6 +1113,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :rust_salvo => {
+      :framework => "Salvo",
+      :language  => "Rust",
+      :similar   => ["salvo", "salvo-rs", "rust-salvo", "rust_salvo"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :scala_akka => {
       :framework => "Akka HTTP",
       :language  => "Scala",
