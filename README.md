@@ -22,7 +22,7 @@
   <a href="https://owasp-noir.github.io/noir/">Documentation</a> •
   <a href="https://owasp-noir.github.io/noir/get_started/installation/">Installation</a> •
   <a href="#usage">Usage</a> •
-  <a href="#contributing">Contributing</a>
+  <a href="#contributing">Contributing</a> •
   <a href="./CHANGELOG.md">Changelog</a>
 </p>
 
