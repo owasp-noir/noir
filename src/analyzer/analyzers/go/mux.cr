@@ -1,8 +1,7 @@
-require "../../../models/analyzer"
-require "../../../minilexers/golang"
+require "./common"
 
 module Analyzer::Go
-  class Mux < Analyzer
+  class Mux < Common
     def analyze
       # Source Analysis
       public_dirs = [] of (Hash(String, String))
@@ -87,50 +86,22 @@ module Analyzer::Go
 
                       # Handle parameter extraction patterns in Go (order matters - check more specific patterns first)
                       if line.includes?("Vars(")
-                        get_param(line, "Vars").tap do |param|
-                          if param.name.size > 0 && last_endpoint.url != ""
-                            last_endpoint.params << param
-                          end
-                        end
+                        add_param_to_endpoint(get_param(line, "Vars"), last_endpoint)
                       elsif line.includes?("Query().Get(")
-                        get_param(line, "Query").tap do |param|
-                          if param.name.size > 0 && last_endpoint.url != ""
-                            last_endpoint.params << param
-                          end
-                        end
+                        add_param_to_endpoint(get_param(line, "Query"), last_endpoint)
                       elsif line.includes?("PostFormValue(")
-                        get_param(line, "PostFormValue").tap do |param|
-                          if param.name.size > 0 && last_endpoint.url != ""
-                            last_endpoint.params << param
-                          end
-                        end
+                        add_param_to_endpoint(get_param(line, "PostFormValue"), last_endpoint)
                       elsif line.includes?("FormValue(")
-                        get_param(line, "FormValue").tap do |param|
-                          if param.name.size > 0 && last_endpoint.url != ""
-                            last_endpoint.params << param
-                          end
-                        end
+                        add_param_to_endpoint(get_param(line, "FormValue"), last_endpoint)
                       elsif line.includes?("Header.Get(")
-                        get_param(line, "Header").tap do |param|
-                          if param.name.size > 0 && last_endpoint.url != ""
-                            last_endpoint.params << param
-                          end
-                        end
+                        add_param_to_endpoint(get_param(line, "Header"), last_endpoint)
                       elsif line.includes?("Cookie(")
-                        get_param(line, "Cookie").tap do |param|
-                          if param.name.size > 0 && last_endpoint.url != ""
-                            last_endpoint.params << param
-                          end
-                        end
+                        add_param_to_endpoint(get_param(line, "Cookie"), last_endpoint)
                       end
 
                       # Handle static file serving (e.g., r.PathPrefix("/static/").Handler(...))
                       if line.includes?(".PathPrefix(") && line.includes?(".Handler(") && !line.includes?(".Subrouter(")
-                        get_static_path(line).tap do |static_path|
-                          if static_path["static_path"].size > 0 && static_path["file_path"].size > 0
-                            public_dirs << static_path
-                          end
-                        end
+                        add_static_path_if_valid(get_static_path(line), public_dirs)
                       end
                     end
                   end
@@ -168,32 +139,6 @@ module Analyzer::Go
       end
 
       result
-    end
-
-    def get_route_path(line : String, subrouters : Array(Hash(String, String))) : String
-      lexer = GolangLexer.new
-      map = lexer.tokenize(line)
-      before = Token.new(:unknown, "", 0)
-      map.each do |token|
-        if token.type == :string
-          final_path = token.value.to_s
-          # Route path must start with "/" to be a valid HTTP endpoint
-          next unless final_path.starts_with?("/")
-          subrouters.each do |sub|
-            sub.each do |key, value|
-              if before.value.to_s.includes? key
-                final_path = value + final_path
-              end
-            end
-          end
-
-          return final_path
-        end
-
-        before = token
-      end
-
-      ""
     end
 
     def get_method_from_line(line : String) : String

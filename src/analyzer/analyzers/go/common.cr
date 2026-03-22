@@ -145,6 +145,46 @@ module Analyzer::Go
       groups
     end
 
+    def add_param_to_endpoint(param : Param, endpoint : Endpoint)
+      if param.name.size > 0 && endpoint.method != "" && endpoint.url != ""
+        endpoint.params << param
+      end
+    end
+
+    def add_static_path_if_valid(static_path : Hash(String, String), public_dirs : Array(Hash(String, String)))
+      if static_path["static_path"].size > 0 && static_path["file_path"].size > 0
+        public_dirs << static_path
+      end
+    end
+
+    def resolve_public_dirs_with_glob(public_dirs : Array(Hash(String, String)))
+      public_dirs.each do |p_dir|
+        next if p_dir["file_path"].size == 0
+        raw_full_path = (base_path + "/" + p_dir["file_path"]).gsub_repeatedly("//", "/")
+        normalized_full_path = Path[raw_full_path].normalize.to_s
+
+        if base_path.starts_with?("./") && !normalized_full_path.starts_with?("./") && !normalized_full_path.starts_with?("/")
+          full_path = "./#{normalized_full_path}"
+        else
+          full_path = normalized_full_path
+        end
+
+        next unless File.directory?(full_path)
+        Dir.glob("#{escape_glob_path(full_path)}/**/*") do |path|
+          next if File.directory?(path)
+          if File.exists?(path)
+            static_url = p_dir["static_path"]
+            if static_url.ends_with?("/")
+              static_url = static_url[0..-2]
+            end
+
+            details = Details.new(PathInfo.new(path))
+            result << Endpoint.new("#{static_url}#{path.gsub(full_path, "")}", "GET", details)
+          end
+        end
+      end
+    end
+
     def resolve_public_dirs(public_dirs : Array(Hash(String, String)))
       public_dirs.each do |p_dir|
         # Join path manually first to handle concatenation

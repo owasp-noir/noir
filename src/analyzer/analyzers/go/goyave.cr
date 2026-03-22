@@ -1,8 +1,7 @@
-require "../../../models/analyzer"
-require "../../../minilexers/golang"
+require "./common"
 
 module Analyzer::Go
-  class Goyave < Analyzer
+  class Goyave < Common
     def analyze
       # Source Analysis
       public_dirs = [] of (Hash(String, String))
@@ -103,10 +102,9 @@ module Analyzer::Go
 
                       # Static
                       if line.includes?(".Static(")
-                        get_static_path(line).tap do |static_path|
-                          if static_path["static_path"].size > 0
-                            public_dirs << static_path
-                          end
+                        static_path = get_static_path(line)
+                        if static_path["static_path"].size > 0
+                          public_dirs << static_path
                         end
                       end
                     end
@@ -122,22 +120,7 @@ module Analyzer::Go
         logger.debug e
       end
 
-      public_dirs.each do |p_dir|
-        if p_dir["file_path"].size > 0
-          full_path = (base_path + "/" + p_dir["file_path"]).gsub_repeatedly("//", "/")
-          Dir.glob("#{escape_glob_path(full_path)}/**/*") do |path|
-            next if File.directory?(path)
-            if File.exists?(path)
-              if p_dir["static_path"].ends_with?("/")
-                p_dir["static_path"] = p_dir["static_path"][0..-2]
-              end
-
-              details = Details.new(PathInfo.new(path))
-              result << Endpoint.new("#{p_dir["static_path"]}#{path.gsub(full_path, "")}", "GET", details)
-            end
-          end
-        end
-      end
+      resolve_public_dirs_with_glob(public_dirs)
 
       result
     end
