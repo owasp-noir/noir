@@ -50,20 +50,12 @@ module Analyzer::Go
 
                       ["Query", "PostForm", "GetHeader"].each do |pattern|
                         if line.includes?("#{pattern}(")
-                          get_param(line).tap do |param|
-                            if param.name.size > 0 && last_endpoint.method != ""
-                              last_endpoint.params << param
-                            end
-                          end
+                          add_param_to_endpoint(get_param(line), last_endpoint)
                         end
                       end
 
                       if line.includes?("Static(")
-                        get_static_path(line).tap do |static_path|
-                          if static_path["static_path"].size > 0 && static_path["file_path"].size > 0
-                            public_dirs << static_path
-                          end
-                        end
+                        add_static_path_if_valid(get_static_path(line), public_dirs)
                       end
 
                       if line.includes?("Cookie(")

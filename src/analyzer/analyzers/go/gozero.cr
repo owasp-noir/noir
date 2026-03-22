@@ -1,8 +1,7 @@
-require "../../../models/analyzer"
-require "../../../minilexers/golang"
+require "./common"
 
 module Analyzer::Go
-  class GoZero < Analyzer
+  class GoZero < Common
     def analyze
       # Source Analysis
       public_dirs = [] of (Hash(String, String))
@@ -47,36 +46,7 @@ module Analyzer::Go
                           lexer = GolangLexer.new
 
                           # Handle group routing (similar to Gin)
-                          if line.includes?(".Group(")
-                            map = lexer.tokenize(line)
-                            before = Token.new(:unknown, "", 0)
-                            group_name = ""
-                            group_path = ""
-                            map.each do |token|
-                              if token.type == :assign
-                                group_name = before.value.to_s.gsub(":", "").gsub(/\s/, "")
-                              end
-
-                              if token.type == :string
-                                group_path = token.value.to_s
-                                groups.each do |group|
-                                  group.each do |key, value|
-                                    if before.value.to_s.includes? key
-                                      group_path = value + group_path
-                                    end
-                                  end
-                                end
-                              end
-
-                              before = token
-                            end
-
-                            if group_name.size > 0 && group_path.size > 0
-                              groups << {
-                                group_name => group_path,
-                              }
-                            end
-                          end
+                          analyze_group(line, lexer, groups)
 
                           # Handle HTTP method routing
                           # go-zero typically uses patterns like: server.Get("/path", handler)
@@ -102,21 +72,13 @@ module Analyzer::Go
                           # Handle parameter extraction patterns common in go-zero
                           ["Query", "PostForm", "GetHeader", "PathParam", "FormValue"].each do |pattern|
                             if line.includes?("#{pattern}(")
-                              get_param(line).tap do |param|
-                                if param.name.size > 0 && last_endpoint.method != ""
-                                  last_endpoint.params << param
-                                end
-                              end
+                              add_param_to_endpoint(get_param(line), last_endpoint)
                             end
                           end
 
                           # Handle static file serving
                           if line.includes?("Static(")
-                            get_static_path(line).tap do |p_dir|
-                              if p_dir["static_path"].size > 0 && p_dir["file_path"].size > 0
-                                public_dirs << p_dir
-                              end
-                            end
+                            add_static_path_if_valid(get_static_path(line), public_dirs)
                           end
                         end
                       end
@@ -141,44 +103,19 @@ module Analyzer::Go
           Dir.glob("#{escape_glob_path(full_path)}/**/*") do |path|
             next if File.directory?(path)
             if File.exists?(path)
-              if p_dir["static_path"].ends_with?("/")
-                p_dir["static_path"] = p_dir["static_path"][0..-2]
+              static_url = p_dir["static_path"]
+              if static_url.ends_with?("/")
+                static_url = static_url[0..-2]
               end
 
               details = Details.new(PathInfo.new(path))
-              result << Endpoint.new("#{p_dir["static_path"]}#{path.gsub(full_path, "")}", "GET", details)
+              result << Endpoint.new("#{static_url}#{path.gsub(full_path, "")}", "GET", details)
             end
           end
         end
       end
 
       result
-    end
-
-    def get_route_path(line : String, groups : Array(Hash(String, String))) : String
-      lexer = GolangLexer.new
-      map = lexer.tokenize(line)
-      before = Token.new(:unknown, "", 0)
-      map.each do |token|
-        if token.type == :string
-          final_path = token.value.to_s
-          # Route path must start with "/" to be a valid HTTP endpoint
-          next unless final_path.starts_with?("/")
-          groups.each do |group|
-            group.each do |key, value|
-              if before.value.to_s.includes? key
-                final_path = value + final_path
-              end
-            end
-          end
-
-          return final_path
-        end
-
-        before = token
-      end
-
-      ""
     end
 
     def get_param(line : String) : Param
