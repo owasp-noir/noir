@@ -160,7 +160,15 @@ module Analyzer::Go
     def resolve_public_dirs_with_glob(public_dirs : Array(Hash(String, String)))
       public_dirs.each do |p_dir|
         next if p_dir["file_path"].size == 0
-        full_path = File.expand_path(p_dir["file_path"], base_path)
+        raw_full_path = (base_path + "/" + p_dir["file_path"]).gsub_repeatedly("//", "/")
+        normalized_full_path = Path[raw_full_path].normalize.to_s
+
+        if base_path.starts_with?("./") && !normalized_full_path.starts_with?("./") && !normalized_full_path.starts_with?("/")
+          full_path = "./#{normalized_full_path}"
+        else
+          full_path = normalized_full_path
+        end
+
         next unless File.directory?(full_path)
         Dir.glob("#{escape_glob_path(full_path)}/**/*") do |path|
           next if File.directory?(path)
