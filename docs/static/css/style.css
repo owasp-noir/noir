@@ -1014,42 +1014,45 @@ p:has(> .member-card) {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 6rem 2rem 4rem;
     overflow: hidden;
+    border-bottom: 1px solid var(--border);
 }
-.hero-grid-bg {
-    position: absolute;
-    inset: 0;
-    background-image:
-        linear-gradient(rgba(129, 140, 248, 0.03) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(129, 140, 248, 0.03) 1px, transparent 1px);
-    background-size: 80px 80px;
-    mask-image: radial-gradient(ellipse 60% 50% at 50% 40%, black, transparent);
-    -webkit-mask-image: radial-gradient(
-        ellipse 60% 50% at 50% 40%,
-        black,
-        transparent
-    );
-}
-.hero-inner {
-    position: relative;
-    max-width: 720px;
+.hero-split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+    width: 100%;
+    max-width: 1200px;
     margin: 0 auto;
-    z-index: 1;
+    min-height: calc(100vh - var(--header-h));
+}
+.hero-text {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 4rem 3rem 4rem 4rem;
+    border-right: 1px solid var(--border);
+}
+.hero-visual {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4rem 4rem 4rem 3rem;
+    background: var(--bg-sidebar);
 }
 .hero-eyebrow {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    margin-bottom: 2rem;
+    margin-bottom: 1.5rem;
 }
 .hero-badge {
     display: inline-block;
-    padding: 0.2rem 0.65rem;
+    padding: 0.2rem 0.6rem;
     background: var(--bg-surface);
     color: var(--text-secondary);
-    border-radius: 4px;
-    font-size: 0.72rem;
+    border-radius: 3px;
+    font-size: 0.7rem;
     font-weight: 600;
     border: 1px solid var(--border-light);
     font-family: var(--font-mono);
@@ -1061,18 +1064,25 @@ p:has(> .member-card) {
     border-color: var(--border);
 }
 .hero-title {
-    margin-bottom: 2.5rem;
+    margin-bottom: 1.75rem;
 }
 .hero-title-line {
     display: block;
-    font-size: 3.2rem;
-    font-weight: 800;
-    letter-spacing: -0.035em;
-    line-height: 1.1;
+    font-size: clamp(2.2rem, 4vw, 3.8rem);
+    font-weight: 900;
+    letter-spacing: -0.04em;
+    line-height: 1.0;
     color: var(--text-primary);
 }
 .hero-title-accent {
     color: var(--accent);
+}
+.hero-desc {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    line-height: 1.65;
+    margin-bottom: 2rem;
+    max-width: 380px;
 }
 
 /* Terminal in hero */
@@ -1081,8 +1091,9 @@ p:has(> .member-card) {
     border: 1px solid var(--border-light);
     border-radius: 8px;
     overflow: hidden;
-    margin-bottom: 2.5rem;
     text-align: left;
+    width: 100%;
+    max-width: 480px;
 }
 .hero-terminal-bar {
     display: flex;
@@ -1589,7 +1600,7 @@ p:has(> .member-card) {
 }
 .cta-inner {
     position: relative;
-    max-width: 600px;
+    max-width: 900px;
     margin: 0 auto;
     text-align: center;
     z-index: 1;
@@ -1757,6 +1768,28 @@ p:has(> .member-card) {
     }
 }
 
+@media (max-width: 960px) {
+    /* Hero stacks vertically on smaller screens */
+    .hero-split {
+        grid-template-columns: 1fr;
+        min-height: auto;
+    }
+    .hero-text {
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+        padding: 4rem 2rem 3rem;
+    }
+    .hero-visual {
+        padding: 3rem 2rem;
+    }
+    .hero-terminal {
+        max-width: 100%;
+    }
+    .hero-title-line {
+        font-size: clamp(2rem, 6vw, 3rem);
+    }
+}
+
 @media (max-width: 768px) {
     .docs-sidebar {
         transform: translateX(-100%);
@@ -1781,15 +1814,11 @@ p:has(> .member-card) {
     }
 
     /* Landing: Hero */
-    .hero {
-        padding: 4rem 1.25rem 2rem;
+    .hero-text {
+        padding: 3rem 1.25rem 2rem;
     }
-    .hero-title-line {
-        font-size: 2rem;
-    }
-    .hero-terminal {
-        max-width: 100%;
-        font-size: 0.8rem;
+    .hero-visual {
+        padding: 2rem 1.25rem;
     }
     .hero-actions {
         flex-direction: column;
@@ -1892,11 +1921,17 @@ p:has(> .member-card) {
 }
 
 @media (max-width: 480px) {
-    .hero {
-        padding: 3rem 1rem 1.5rem;
+    .hero-text {
+        padding: 2.5rem 1rem 1.5rem;
+    }
+    .hero-visual {
+        padding: 1.5rem 1rem;
     }
     .hero-title-line {
-        font-size: 1.6rem;
+        font-size: 1.8rem;
+    }
+    .hero-desc {
+        font-size: 0.84rem;
     }
     .hero-eyebrow {
         flex-direction: column;
