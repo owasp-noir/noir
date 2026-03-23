@@ -63,7 +63,7 @@ template = "landing"
     </div>
     <div class="stat-sep"></div>
     <div class="stat-item">
-      <span class="stat-value">8</span>
+      <span class="stat-value">20+</span>
       <span class="stat-label">Output Formats</span>
     </div>
     <div class="stat-sep"></div>
@@ -113,7 +113,7 @@ template = "landing"
         <div class="feature-number">06</div>
         <h3>Flexible Output</h3>
         <div class="feature-formats">
-          <code>JSON</code><code>YAML</code><code>OpenAPI</code><code>SARIF</code><code>cURL</code><code>HTML</code><code>Mermaid</code><code>OAS</code>
+          <code>JSON</code><code>JSONL</code><code>YAML</code><code>TOML</code><code>OpenAPI 2.0</code><code>OpenAPI 3.0</code><code>SARIF</code><code>HTML</code><code>Markdown</code><code>cURL</code><code>HTTPie</code><code>PowerShell</code><code>Postman</code><code>Mermaid</code><code>Only-URL</code><code>Only-Param</code><code>Only-Header</code><code>Only-Cookie</code><code>Only-Tag</code>
         </div>
       </div>
     </div>
