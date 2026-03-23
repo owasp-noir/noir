@@ -1580,9 +1580,8 @@ p:has(> .member-card) {
     margin-top: 1.5rem;
 }
 .trust-logo {
-    height: 80px;
+    height: 100px;
     width: auto;
-    opacity: 0.5;
     transition: opacity 0.2s;
     filter: grayscale(1);
 }
