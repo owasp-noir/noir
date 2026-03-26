@@ -15,7 +15,7 @@ end
 # Unprotected API route (far from any auth patterns)
 class HealthController
   def index
-    get "/api/health" do |env|
+    get "/api/health" do |_env|
       {status: "ok"}.to_json
     end
   end

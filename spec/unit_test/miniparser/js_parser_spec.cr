@@ -27,10 +27,10 @@ describe Noir::JSParser do
   describe "parse_routes" do
     it "parses basic Express GET route" do
       code = <<-JS
-      const express = require('express');
-      const app = express();
-      app.get('/users', (req, res) => {});
-      JS
+        const express = require('express');
+        const app = express();
+        app.get('/users', (req, res) => {});
+        JS
       parser = Noir::JSParser.new(code)
       routes = parser.parse_routes
 
@@ -39,10 +39,10 @@ describe Noir::JSParser do
 
     it "parses basic Express POST route" do
       code = <<-JS
-      const express = require('express');
-      const app = express();
-      app.post('/users', (req, res) => {});
-      JS
+        const express = require('express');
+        const app = express();
+        app.post('/users', (req, res) => {});
+        JS
       parser = Noir::JSParser.new(code)
       routes = parser.parse_routes
 
@@ -51,13 +51,13 @@ describe Noir::JSParser do
 
     it "parses multiple HTTP methods" do
       code = <<-JS
-      const express = require('express');
-      const app = express();
-      app.get('/items', handler);
-      app.post('/items', handler);
-      app.put('/items/:id', handler);
-      app.delete('/items/:id', handler);
-      JS
+        const express = require('express');
+        const app = express();
+        app.get('/items', handler);
+        app.post('/items', handler);
+        app.put('/items/:id', handler);
+        app.delete('/items/:id', handler);
+        JS
       parser = Noir::JSParser.new(code)
       routes = parser.parse_routes
 
@@ -69,10 +69,10 @@ describe Noir::JSParser do
 
     it "extracts path parameters" do
       code = <<-JS
-      const express = require('express');
-      const app = express();
-      app.get('/users/:id/posts/:postId', handler);
-      JS
+        const express = require('express');
+        const app = express();
+        app.get('/users/:id/posts/:postId', handler);
+        JS
       parser = Noir::JSParser.new(code)
       routes = parser.parse_routes
 
@@ -87,12 +87,12 @@ describe Noir::JSParser do
 
     it "handles router with prefix mounting" do
       code = <<-JS
-      const express = require('express');
-      const app = express();
-      const router = express.Router();
-      router.get('/items', handler);
-      app.use('/api', router);
-      JS
+        const express = require('express');
+        const app = express();
+        const router = express.Router();
+        router.get('/items', handler);
+        app.use('/api', router);
+        JS
       parser = Noir::JSParser.new(code)
       routes = parser.parse_routes
 
@@ -101,12 +101,12 @@ describe Noir::JSParser do
 
     it "parses route chaining with app.route()" do
       code = <<-JS
-      const express = require('express');
-      const app = express();
-      app.route('/books')
-        .get(handler)
-        .post(handler);
-      JS
+        const express = require('express');
+        const app = express();
+        app.route('/books')
+          .get(handler)
+          .post(handler);
+        JS
       parser = Noir::JSParser.new(code)
       routes = parser.parse_routes
 
@@ -116,10 +116,10 @@ describe Noir::JSParser do
 
     it "parses Fastify routes" do
       code = <<-JS
-      const fastify = require('fastify')();
-      fastify.get('/health', async (req, reply) => {});
-      fastify.post('/data', async (req, reply) => {});
-      JS
+        const fastify = require('fastify')();
+        fastify.get('/health', async (req, reply) => {});
+        fastify.post('/data', async (req, reply) => {});
+        JS
       parser = Noir::JSParser.new(code)
       routes = parser.parse_routes
 
@@ -129,11 +129,11 @@ describe Noir::JSParser do
 
     it "parses Restify routes" do
       code = <<-JS
-      const restify = require('restify');
-      const server = restify.createServer();
-      server.get('/items', handler);
-      server.post('/items', handler);
-      JS
+        const restify = require('restify');
+        const server = restify.createServer();
+        server.get('/items', handler);
+        server.post('/items', handler);
+        JS
       parser = Noir::JSParser.new(code)
       routes = parser.parse_routes
 
@@ -143,11 +143,11 @@ describe Noir::JSParser do
 
     it "resolves constants in route paths" do
       code = <<-JS
-      const express = require('express');
-      const app = express();
-      const API_PREFIX = '/api/v1';
-      app.get(API_PREFIX + '/users', handler);
-      JS
+        const express = require('express');
+        const app = express();
+        const API_PREFIX = '/api/v1';
+        app.get(API_PREFIX + '/users', handler);
+        JS
       parser = Noir::JSParser.new(code)
       routes = parser.parse_routes
 
@@ -156,11 +156,11 @@ describe Noir::JSParser do
 
     it "handles template literal paths" do
       code = <<-JS
-      const express = require('express');
-      const app = express();
-      const version = 'v2';
-      app.get(`/api/${version}/items`, handler);
-      JS
+        const express = require('express');
+        const app = express();
+        const version = 'v2';
+        app.get(`/api/${version}/items`, handler);
+        JS
       parser = Noir::JSParser.new(code)
       routes = parser.parse_routes
 
@@ -169,10 +169,10 @@ describe Noir::JSParser do
 
     it "deduplicates routes" do
       code = <<-JS
-      const express = require('express');
-      const app = express();
-      app.get('/users', handler);
-      JS
+        const express = require('express');
+        const app = express();
+        app.get('/users', handler);
+        JS
       parser = Noir::JSParser.new(code)
       routes = parser.parse_routes
 
@@ -182,10 +182,10 @@ describe Noir::JSParser do
 
     it "filters invalid paths" do
       code = <<-JS
-      const express = require('express');
-      const app = express();
-      app.get('/valid/path', handler);
-      JS
+        const express = require('express');
+        const app = express();
+        app.get('/valid/path', handler);
+        JS
       parser = Noir::JSParser.new(code)
       routes = parser.parse_routes
 
@@ -196,10 +196,10 @@ describe Noir::JSParser do
 
     it "does not exceed max iterations" do
       code = <<-JS
-      const express = require('express');
-      const app = express();
-      app.get('/test', handler);
-      JS
+        const express = require('express');
+        const app = express();
+        app.get('/test', handler);
+        JS
       parser = Noir::JSParser.new(code)
       parser.parse_routes
 
