@@ -2,11 +2,11 @@ version: 2.0
 shards:
   acp:
     git: https://github.com/hahwul/acp.cr.git
-    version: 0.1.0+git.commit.6390a9675f681c2619eae36d1aa661be4ec39336
+    version: 0.1.0
 
   ameba:
     git: https://github.com/crystal-ameba/ameba.git
-    version: 1.7.0-dev+git.commit.95277396e615f0c216f2cbb7993d968d250d3071
+    version: 1.7.0-dev+git.commit.ae09e383a062d50cec1dd7cc93382ca6ad2363ce
 
   crest:
     git: https://github.com/mamantoha/crest.git
@@ -14,7 +14,7 @@ shards:
 
   cyclonedx-cr:
     git: https://github.com/hahwul/cyclonedx-cr.git
-    version: 1.0.2+git.commit.fd05e45befef300b5f1f92df4dfe5ed097822968
+    version: 1.1.0+git.commit.a6003fc99b69a5c354361710fca785a7c11ebc0c
 
   har:
     git: https://github.com/neuralegion/har.git
@@ -30,7 +30,7 @@ shards:
 
   sarif:
     git: https://github.com/hahwul/sarif.cr.git
-    version: 0.1.0+git.commit.5d248bb0e7c6527f8ee7aed1aa1a1add5424acbc
+    version: 0.2.0
 
   toml:
     git: https://github.com/crystal-community/toml.cr.git
