@@ -76,9 +76,9 @@ describe Noir::JSParser do
       parser = Noir::JSParser.new(code)
       routes = parser.parse_routes
 
-      route = routes.find { |r| r.path == "/users/:id/posts/:postId" }
-      route.should_not be_nil
-      route = route.not_nil!
+      found = routes.find { |r| r.path == "/users/:id/posts/:postId" }
+      found.should_not be_nil
+      route = found.as(Noir::JSRoutePattern)
       param_names = route.params.map(&.name)
       param_names.should contain("id")
       param_names.should contain("postId")
