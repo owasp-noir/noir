@@ -78,11 +78,10 @@ describe Noir::JSParser do
 
       route = routes.find { |r| r.path == "/users/:id/posts/:postId" }
       route.should_not be_nil
-      if route
-        param_names = route.params.map(&.name)
-        param_names.should contain("id")
-        param_names.should contain("postId")
-      end
+      route = route.not_nil!
+      param_names = route.params.map(&.name)
+      param_names.should contain("id")
+      param_names.should contain("postId")
     end
 
     it "handles router with prefix mounting" do
