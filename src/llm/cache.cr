@@ -13,6 +13,7 @@ require "digest/sha256"
 require "file_utils"
 require "time"
 require "../utils/home"
+require "log"
 
 module LLM
   module Cache
