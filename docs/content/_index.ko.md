@@ -167,10 +167,14 @@ template = "landing"
     <p class="cta-label">Open Source</p>
     <h2 class="cta-title">커뮤니티에 참여하세요</h2>
     <p class="section-desc">OWASP Noir는 커뮤니티가 만듭니다. 기여하고, 이슈를 보고하고, 스타를 눌러주세요.</p>
+    <div class="cta-mascot">
+        <img src="../images/hak-2.webp" alt="OWASP Noir Mascot - Hak" width="320" height="auto">
+    </div>
     <div class="cta-buttons">
       <a href="https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md" class="cta-btn" target="_blank" rel="noopener noreferrer">기여 가이드</a>
       <a href="https://github.com/owasp-noir/noir" class="cta-btn cta-btn-ghost" target="_blank" rel="noopener noreferrer">GitHub에서 스타</a>
     </div>
+    <p class="contributors-label">Thanks to our contributors</p>
     <div class="cta-image">
       <img src="https://github.com/owasp-noir/noir/raw/main/docs/static/CONTRIBUTORS.svg" alt="Contributors" loading="lazy">
     </div>

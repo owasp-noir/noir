@@ -1071,7 +1071,7 @@ p:has(> .member-card) {
     font-size: clamp(2.2rem, 4vw, 3.8rem);
     font-weight: 900;
     letter-spacing: -0.04em;
-    line-height: 1.0;
+    line-height: 1;
     color: var(--text-primary);
 }
 .hero-title-accent {
@@ -1593,7 +1593,7 @@ p:has(> .member-card) {
 /* ---- CTA ---- */
 .cta-section {
     position: relative;
-    padding: 6rem 2rem;
+    padding: 5rem 2rem 4rem;
     border-top: 1px solid var(--border);
     overflow: hidden;
 }
@@ -1617,14 +1617,30 @@ p:has(> .member-card) {
     font-size: 2rem;
     font-weight: 800;
     letter-spacing: -0.025em;
-    margin-bottom: 0.75rem;
+    margin-bottom: 0.5rem;
     color: var(--text-primary);
+}
+.cta-inner > .section-desc {
+    margin-bottom: 1.75rem;
+}
+.cta-mascot {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 2rem;
+}
+.cta-mascot img {
+    max-width: 380px;
+    width: 100%;
+    height: auto;
+    border-radius: 12px;
+    filter: drop-shadow(0 4px 24px rgba(0, 0, 0, 0.15));
 }
 .cta-buttons {
     display: flex;
     justify-content: center;
     gap: 0.75rem;
     flex-wrap: wrap;
+    margin-bottom: 2.5rem;
 }
 .cta-btn {
     display: inline-flex;
@@ -1652,8 +1668,17 @@ p:has(> .member-card) {
     border-color: var(--text-muted);
     color: var(--text-primary);
 }
+.contributors-label {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--text-muted);
+    margin-bottom: 1rem;
+}
 .cta-image {
-    margin-top: 2.5rem;
+    margin-top: 0;
 }
 .cta-image img {
     max-width: 100%;
@@ -1902,10 +1927,16 @@ p:has(> .member-card) {
 
     /* Landing: CTA */
     .cta-section {
-        padding: 3rem 1.25rem;
+        padding: 3rem 1.25rem 2.5rem;
     }
     .cta-title {
         font-size: 1.5rem;
+    }
+    .cta-mascot img {
+        max-width: 220px;
+    }
+    .cta-buttons {
+        margin-bottom: 2rem;
     }
 
     /* Footer */
@@ -1977,6 +2008,12 @@ p:has(> .member-card) {
     }
     .cta-title {
         font-size: 1.25rem;
+    }
+    .cta-mascot img {
+        max-width: 180px;
+    }
+    .cta-buttons {
+        margin-bottom: 1.5rem;
     }
     .section-desc {
         font-size: 0.85rem;
