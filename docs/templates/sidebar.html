@@ -39,18 +39,15 @@
             </button>
             <ul class="sidebar-links">
                 <li>
-                    <a href="{{ base_url }}/get_started/overview/">Overview</a>
+                    <a href="{{ base_url }}/get_started/overview/">What is Noir?</a>
                 </li>
                 <li>
                     <a href="{{ base_url }}/get_started/installation/"
-                        >Installation</a
+                        >Install Noir</a
                     >
                 </li>
                 <li>
-                    <a href="{{ base_url }}/get_started/running/">Running</a>
-                </li>
-                <li>
-                    <a href="{{ base_url }}/get_started/ai_power/">AI Power</a>
+                    <a href="{{ base_url }}/get_started/running/">Your First Scan</a>
                 </li>
             </ul>
         </div>
@@ -124,6 +121,36 @@
                 </li>
                 <li class="sidebar-subsection">
                     <button class="sidebar-subheading">
+                        <span>Configurations</span>
+                        <svg
+                            class="sidebar-chevron"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                    </button>
+                    <ul class="sidebar-sublinks">
+                        <li>
+                            <a
+                                href="{{ base_url }}/usage/configurations/configuration_file/"
+                                >Configuration File</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="{{ base_url }}/usage/configurations/shell-completion/"
+                                >Shell Completion</a
+                            >
+                        </li>
+                    </ul>
+                </li>
+                <li class="sidebar-subsection">
+                    <button class="sidebar-subheading">
                         <span>Output Formats</span>
                         <svg
                             class="sidebar-chevron"
@@ -178,102 +205,6 @@
                         <li>
                             <a href="{{ base_url }}/usage/output_formats/more/"
                                 >More</a
-                            >
-                        </li>
-                    </ul>
-                </li>
-                <li class="sidebar-subsection">
-                    <button class="sidebar-subheading">
-                        <span>AI Providers</span>
-                        <svg
-                            class="sidebar-chevron"
-                            width="14"
-                            height="14"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="2"
-                        >
-                            <polyline points="6 9 12 15 18 9" />
-                        </svg>
-                    </button>
-                    <ul class="sidebar-sublinks">
-                        <li>
-                            <a href="{{ base_url }}/usage/ai_providers/openai/"
-                                >OpenAI</a
-                            >
-                        </li>
-                        <li>
-                            <a href="{{ base_url }}/usage/ai_providers/ollama/"
-                                >Ollama</a
-                            >
-                        </li>
-                        <li>
-                            <a
-                                href="{{ base_url }}/usage/ai_providers/lmstudio/"
-                                >LM Studio</a
-                            >
-                        </li>
-                        <li>
-                            <a href="{{ base_url }}/usage/ai_providers/azure/"
-                                >Azure</a
-                            >
-                        </li>
-                        <li>
-                            <a
-                                href="{{ base_url }}/usage/ai_providers/github_marketplace/"
-                                >GitHub Marketplace</a
-                            >
-                        </li>
-                        <li>
-                            <a
-                                href="{{ base_url }}/usage/ai_providers/openrouter/"
-                                >OpenRouter</a
-                            >
-                        </li>
-                        <li>
-                            <a href="{{ base_url }}/usage/ai_providers/vllm/"
-                                >vLLM</a
-                            >
-                        </li>
-                        <li>
-                            <a href="{{ base_url }}/usage/ai_providers/xai/"
-                                >xAI</a
-                            >
-                        </li>
-                        <li>
-                            <a href="{{ base_url }}/usage/ai_providers/acp/"
-                                >ACP</a
-                            >
-                        </li>
-                    </ul>
-                </li>
-                <li class="sidebar-subsection">
-                    <button class="sidebar-subheading">
-                        <span>Configurations</span>
-                        <svg
-                            class="sidebar-chevron"
-                            width="14"
-                            height="14"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="2"
-                        >
-                            <polyline points="6 9 12 15 18 9" />
-                        </svg>
-                    </button>
-                    <ul class="sidebar-sublinks">
-                        <li>
-                            <a
-                                href="{{ base_url }}/usage/configurations/configuration_file/"
-                                >Configuration File</a
-                            >
-                        </li>
-                        <li>
-                            <a
-                                href="{{ base_url }}/usage/configurations/shell-completion/"
-                                >Shell Completion</a
                             >
                         </li>
                     </ul>
@@ -356,6 +287,79 @@
                         <li>
                             <a href="{{ base_url }}/usage/more_features/tagger/"
                                 >Tagger</a
+                            >
+                        </li>
+                    </ul>
+                </li>
+                <li>
+                    <a
+                        href="{{ base_url }}/get_started/ai_power/"
+                        class="sidebar-direct-link"
+                        >AI Power</a
+                    >
+                </li>
+                <li class="sidebar-subsection">
+                    <button class="sidebar-subheading">
+                        <span>AI Providers</span>
+                        <svg
+                            class="sidebar-chevron"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                    </button>
+                    <ul class="sidebar-sublinks">
+                        <li>
+                            <a href="{{ base_url }}/usage/ai_providers/openai/"
+                                >OpenAI</a
+                            >
+                        </li>
+                        <li>
+                            <a href="{{ base_url }}/usage/ai_providers/ollama/"
+                                >Ollama</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="{{ base_url }}/usage/ai_providers/lmstudio/"
+                                >LM Studio</a
+                            >
+                        </li>
+                        <li>
+                            <a href="{{ base_url }}/usage/ai_providers/azure/"
+                                >Azure</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="{{ base_url }}/usage/ai_providers/github_marketplace/"
+                                >GitHub Marketplace</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="{{ base_url }}/usage/ai_providers/openrouter/"
+                                >OpenRouter</a
+                            >
+                        </li>
+                        <li>
+                            <a href="{{ base_url }}/usage/ai_providers/vllm/"
+                                >vLLM</a
+                            >
+                        </li>
+                        <li>
+                            <a href="{{ base_url }}/usage/ai_providers/xai/"
+                                >xAI</a
+                            >
+                        </li>
+                        <li>
+                            <a href="{{ base_url }}/usage/ai_providers/acp/"
+                                >ACP</a
                             >
                         </li>
                     </ul>
@@ -487,6 +491,7 @@
             </button>
             <ul class="sidebar-links">
                 <li><a href="{{ base_url }}/resources/faq/">FAQ</a></li>
+                <li><a href="{{ base_url }}/resources/troubleshooting/">Troubleshooting</a></li>
                 <li><a href="{{ base_url }}/resources/contact/">Contact</a></li>
                 <li><a href="{{ base_url }}/resources/artwork/">Artwork</a></li>
             </ul>

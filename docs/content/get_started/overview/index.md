@@ -1,35 +1,40 @@
 +++
-title = "Overview"
+title = "What is Noir?"
 description = "OWASP Noir is an attack surface detector that identifies endpoints by static analysis."
 weight = 1
 sort_by = "weight"
 
 +++
 
-Noir is an attack surface detector that analyzes source code to discover API endpoints, including shadow APIs and undocumented routes. It bridges SAST and DAST by feeding discovered endpoints directly into dynamic testing tools.
+{% mascot(mood="hi") %}
+Hi! I'm Hak, the Noir mascot. Let me show you what Noir can do for you.
+{% end %}
 
-## Key Capabilities
+Noir is an open-source attack surface detector. It reads your source code and discovers all API endpoints — including shadow APIs and undocumented routes that may not appear in your documentation.
 
-- **Attack Surface Discovery** — Uncovers hidden endpoints, shadow APIs, and undocumented routes from source code
-- **Multi-Language** — Supports 50+ languages and frameworks with a single tool
-- **AI-Powered** — Uses LLMs to detect endpoints even in unsupported frameworks
-- **SAST-to-DAST Bridge** — Feeds results into ZAP, Burp Suite, Caido, and other DAST tools
-- **Flexible Output** — Exports as JSON, YAML, OpenAPI, SARIF, cURL, and more
-
-[GitHub](https://github.com/owasp-noir/noir) | [OWASP Project Page](https://owasp.org/www-project-noir)
+Security teams use Noir to find what attackers would look for: forgotten endpoints, exposed parameters, and hidden routes that slip through code reviews. Developers use it to keep API documentation accurate and feed endpoint data into testing pipelines.
 
 ![noir-usage](./noir-usage.jpg)
 
-## How It Works
+## What Can Noir Do?
 
-Noir is built with [Crystal](https://crystal-lang.org) and processes code through these stages:
+**Find what's hidden.** Noir statically analyzes source code to extract every endpoint, parameter, header, and cookie — even the ones nobody documented.
 
-1. **Detectors** identify technologies in the codebase
-2. **Analyzers** parse code to extract endpoints and parameters
-3. **LLM Analyzer** discovers endpoints using AI for unsupported frameworks
-4. **Passive Scanner & Tagger** identify vulnerabilities and add contextual tags
-5. **Deliver** sends results to external tools (ZAP, Burp, etc.)
-6. **Output Builder** generates reports in the desired format
+**Work with any stack.** A single binary supports 50+ frameworks across Crystal, Go, Java, JavaScript, Kotlin, PHP, Python, Ruby, Rust, Swift, and more. No plugins or per-language setup needed.
+
+**Bring AI to the table.** For frameworks Noir doesn't natively support, connect an LLM (OpenAI, Ollama, etc.) and let AI analyze the code for you.
+
+**Bridge SAST and DAST.** Noir discovers endpoints from source code (SAST side), then feeds them directly into ZAP, Burp Suite, or Caido for dynamic testing (DAST side). This closes the gap where DAST tools miss endpoints they don't know about.
+
+**Export in any format.** Results come out as JSON, YAML, OpenAPI specs, SARIF for CI/CD, cURL commands, HTML reports, or Postman collections — whatever your workflow needs.
+
+## How Does It Work?
+
+Point Noir at your source code and it automatically:
+
+1. **Detects** which languages and frameworks your project uses
+2. **Analyzes** the code to extract endpoints, parameters, and headers
+3. **Reports** results in your preferred format
 
 {% mermaid() %}
 flowchart LR
@@ -76,3 +81,7 @@ Noir is open-source and welcomes contributions. See the [Contributing Guide](htt
 ### Contributors
 
 ![](https://raw.githubusercontent.com/owasp-noir/noir/refs/heads/main/docs/static/CONTRIBUTORS.svg)
+
+---
+
+**Next**: [Install Noir](@/get_started/installation/index.md)

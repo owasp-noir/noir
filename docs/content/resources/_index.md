@@ -9,6 +9,7 @@ sort_by = "weight"
 This section provides additional resources to help you get the most out of OWASP Noir.
 
 *   **[FAQ](faq/)**: Find answers to frequently asked questions.
+*   **[Troubleshooting](troubleshooting/)**: Solutions for common issues when using Noir.
 *   **[Artwork](artwork/)**: Access official logos, mascots, and visual resources.
 *   **[Contact](contact/)**: Learn how to get in touch with the Noir team.
 

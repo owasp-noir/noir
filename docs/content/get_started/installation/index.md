@@ -1,10 +1,14 @@
 +++
-title = "Installation"
+title = "Install Noir"
 description = "Install OWASP Noir via Homebrew, Snapcraft, Docker, Nix, binary download, or from source."
 weight = 2
 sort_by = "weight"
 
 +++
+
+{% mascot(mood="think") %}
+Noir is a single binary with no runtime dependencies. Homebrew is the quickest way for most users, but pick whatever fits your system.
+{% end %}
 
 ## Homebrew (macOS and Linux)
 
@@ -26,6 +30,12 @@ sudo snap install noir
 
 ```bash
 docker pull ghcr.io/owasp-noir/noir:latest
+```
+
+Run a scan on the current directory:
+
+```bash
+docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest -b /tmp
 ```
 
 All available tags are on the [GitHub Packages page](https://github.com/owasp-noir/noir/pkgs/container/noir).
@@ -130,7 +140,21 @@ Requires Crystal programming language installed.
 3.  **Build:**
 
     ```bash
-    shards build --release --no-debug
+    shards build --release
     ```
 
     The compiled binary is at `./bin/noir`.
+
+## Verify Your Installation
+
+Whichever method you chose, confirm Noir is installed:
+
+```bash
+noir --version
+```
+
+If you see a version number, you're ready.
+
+---
+
+**Next**: [Your First Scan](@/get_started/running/index.md)

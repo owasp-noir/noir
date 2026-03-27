@@ -1,10 +1,14 @@
 +++
-title = "설치"
+title = "Noir 설치"
 description = "Homebrew, Snapcraft, Docker, Nix, 바이너리 다운로드 또는 소스 빌드를 통해 OWASP Noir를 설치합니다."
 weight = 2
 sort_by = "weight"
 
 +++
+
+{% mascot(mood="think") %}
+Noir는 런타임 의존성 없이 단일 바이너리로 배포돼. 대부분의 사용자에게 Homebrew가 가장 빠르지만, 시스템에 맞는 걸 선택해.
+{% end %}
 
 ## Homebrew (macOS 및 Linux)
 
@@ -25,8 +29,16 @@ sudo snap install noir
 ## Docker
 
 ```bash
+docker pull ghcr.io/owasp-noir/noir:latest
+```
+
+현재 디렉토리에서 스캔 실행:
+
+```bash
 docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest -b /tmp
 ```
+
+사용 가능한 모든 태그는 [GitHub Packages 페이지](https://github.com/owasp-noir/noir/pkgs/container/noir)에서 확인할 수 있습니다.
 
 ## Nix
 
@@ -138,3 +150,17 @@ Crystal 프로그래밍 언어가 설치되어 있어야 합니다.
     ```
 
     빌드된 바이너리는 `./bin/noir`에 위치합니다.
+
+## 설치 확인
+
+어떤 방법을 선택했든, Noir가 설치되었는지 확인하세요:
+
+```bash
+noir --version
+```
+
+버전 번호가 표시되면 준비 완료입니다.
+
+---
+
+**다음**: [첫 번째 스캔](@/get_started/running/index.md)

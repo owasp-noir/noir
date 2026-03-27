@@ -1,35 +1,78 @@
 +++
-title = "개요"
+title = "Noir란?"
 description = "OWASP Noir는 정적 분석으로 엔드포인트를 식별하는 공격 표면 탐지 도구입니다."
 weight = 1
 sort_by = "weight"
 
 +++
 
-Noir는 소스 코드를 분석하여 Shadow API와 문서화되지 않은 경로를 포함한 API 엔드포인트를 발견하는 공격 표면 탐지 도구입니다. 발견된 엔드포인트를 동적 테스트 도구에 직접 전달하여 SAST와 DAST를 연결합니다.
+{% mascot(mood="hi") %}
+안녕! 나는 Noir의 마스코트 학이야. Noir가 어떤 도구인지 소개할게.
+{% end %}
 
-## 주요 기능
+Noir는 오픈 소스 공격 표면 탐지 도구입니다. 소스 코드를 읽고 Shadow API와 문서화되지 않은 경로를 포함한 모든 API 엔드포인트를 발견합니다.
 
-- **공격 표면 발견** — 소스 코드에서 숨겨진 엔드포인트, Shadow API, 문서화되지 않은 경로를 탐지
-- **다중 언어** — 하나의 도구로 50개 이상의 언어와 프레임워크를 지원
-- **AI 기반** — LLM을 활용하여 미지원 프레임워크에서도 엔드포인트를 탐지
-- **SAST-DAST 연결** — ZAP, Burp Suite, Caido 등 DAST 도구에 결과를 직접 전달
-- **유연한 출력** — JSON, YAML, OpenAPI, SARIF, cURL 등 다양한 형식으로 내보내기
-
-[GitHub](https://github.com/owasp-noir/noir) | [OWASP 프로젝트 페이지](https://owasp.org/www-project-noir)
+보안 팀은 Noir를 통해 공격자가 찾을 만한 것들 — 잊혀진 엔드포인트, 노출된 파라미터, 코드 리뷰에서 놓친 숨겨진 경로 — 을 미리 찾습니다. 개발자는 API 문서를 정확하게 유지하고 테스트 파이프라인에 엔드포인트 데이터를 공급하는 데 활용합니다.
 
 ![noir-usage](./noir-usage.jpg)
 
-## 작동 방식
+## Noir로 무엇을 할 수 있나요?
 
-Noir는 [Crystal](https://crystal-lang.org)로 작성되었으며 다음 단계로 코드를 처리합니다:
+**숨겨진 것을 찾습니다.** 소스 코드를 정적 분석하여 모든 엔드포인트, 파라미터, 헤더, 쿠키를 추출합니다 — 아무도 문서화하지 않은 것까지 포함해서.
 
-1. **탐지기**가 코드베이스의 기술 스택을 식별
-2. **분석기**가 코드를 파싱하여 엔드포인트와 파라미터를 추출
-3. **LLM 분석기**가 AI를 사용하여 미지원 프레임워크의 엔드포인트를 발견
-4. **패시브 스캐너 & 태거**가 취약점을 식별하고 컨텍스트 태그를 추가
-5. **전달**이 결과를 외부 도구(ZAP, Burp 등)로 전송
-6. **출력 빌더**가 원하는 형식의 보고서를 생성
+**어떤 스택이든 지원합니다.** 단일 바이너리로 Crystal, Go, Java, JavaScript, Kotlin, PHP, Python, Ruby, Rust, Swift 등 50개 이상의 프레임워크를 지원합니다. 플러그인이나 언어별 설정이 필요 없습니다.
+
+**AI를 활용합니다.** Noir가 네이티브로 지원하지 않는 프레임워크의 경우, LLM(OpenAI, Ollama 등)을 연결하면 AI가 코드를 분석해줍니다.
+
+**SAST와 DAST를 연결합니다.** 소스 코드에서 엔드포인트를 발견(SAST)한 후 ZAP, Burp Suite, Caido에 직접 전달하여 동적 테스트(DAST)를 수행합니다. DAST 도구가 알지 못하는 엔드포인트를 놓치는 문제를 해결합니다.
+
+**어떤 형식으로든 내보냅니다.** JSON, YAML, OpenAPI 명세, CI/CD용 SARIF, cURL 명령, HTML 보고서, Postman 컬렉션 등 워크플로에 필요한 형식으로 결과를 출력합니다.
+
+## 어떻게 작동하나요?
+
+Noir를 소스 코드에 실행하면 자동으로:
+
+1. 프로젝트가 사용하는 언어와 프레임워크를 **탐지**
+2. 코드를 **분석**하여 엔드포인트, 파라미터, 헤더를 추출
+3. 원하는 형식으로 결과를 **보고**
+
+{% mermaid() %}
+flowchart LR
+    SourceCode:::highlight --> Detectors
+
+    subgraph Detectors
+        direction LR
+        Detector1 & Detector2 & Detector3 --> |Condition| PassiveScan
+    end
+
+    PassiveScan --> |Results| BaseOptimizer
+
+    Detectors --> |Techs| Analyzers
+
+    subgraph Analyzers
+        direction LR
+        CodeAnalyzers & FileAnalyzer & LLMAnalyzer
+        CodeAnalyzers --> |Condition| Minilexer
+        CodeAnalyzers --> |Condition| Miniparser
+    end
+   subgraph Optimizer
+       direction LR
+       BaseOptimizer[Optimizer] --> LLMOptimizer[LLM Optimizer]
+       LLMOptimizer[LLM Optimizer] --> OptimizedResult
+       OptimizedResult[Result]
+   end
+
+    Analyzers --> |Condition| Deliver
+    Analyzers --> |Condition| Tagger
+    Deliver --> 3rdParty
+    BaseOptimizer --> OptimizedResult
+    OptimizedResult --> OutputBuilder
+    Tagger --> |Tags| BaseOptimizer
+    Analyzers --> |Endpoints| BaseOptimizer
+    OutputBuilder --> Report:::highlight
+
+    classDef highlight fill:#000,stroke:#333,stroke-width:4px;
+{% end %}
 
 ## 기여하기
 
@@ -38,3 +81,7 @@ Noir는 오픈 소스이며 모든 기여를 환영합니다. [기여 가이드]
 ### 기여자
 
 ![](https://raw.githubusercontent.com/owasp-noir/noir/refs/heads/main/docs/static/CONTRIBUTORS.svg)
+
+---
+
+**다음**: [Noir 설치](@/get_started/installation/index.md)
