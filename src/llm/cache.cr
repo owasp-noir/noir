@@ -13,6 +13,7 @@ require "digest/sha256"
 require "file_utils"
 require "time"
 require "../utils/home"
+require "log"
 
 module LLM
   module Cache
@@ -73,7 +74,8 @@ module LLM
       path = path_for(key)
       return unless File.exists?(path)
       File.read(path)
-    rescue
+    rescue e
+      Log.debug { "Cache fetch failed for #{key}: #{e.message}" }
       nil
     end
 
@@ -82,7 +84,8 @@ module LLM
       ensure_dir
       File.write(path_for(key), content)
       true
-    rescue
+    rescue e
+      Log.debug { "Cache store failed for #{key}: #{e.message}" }
       false
     end
 
@@ -91,7 +94,8 @@ module LLM
       return false unless File.exists?(path)
       File.delete(path)
       true
-    rescue
+    rescue e
+      Log.debug { "Cache delete failed for #{key}: #{e.message}" }
       false
     end
 
@@ -104,7 +108,8 @@ module LLM
         begin
           File.delete(fp)
           count += 1
-        rescue
+        rescue e
+          Log.debug { "Cache clear: failed to delete #{fp}: #{e.message}" }
         end
       end
       count
@@ -123,7 +128,8 @@ module LLM
             File.delete(fp)
             count += 1
           end
-        rescue
+        rescue e
+          Log.debug { "Cache purge: failed to process #{fp}: #{e.message}" }
         end
       end
       count
@@ -139,7 +145,8 @@ module LLM
           begin
             entries += 1
             bytes += File.size(fp)
-          rescue
+          rescue e
+            Log.debug { "Cache stats: failed to read #{fp}: #{e.message}" }
           end
         end
       end
