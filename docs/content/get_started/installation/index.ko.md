@@ -1,10 +1,12 @@
 +++
-title = "설치"
+title = "Step 2: Noir 설치"
 description = "Homebrew, Snapcraft, Docker, Nix, 바이너리 다운로드 또는 소스 빌드를 통해 OWASP Noir를 설치합니다."
 weight = 2
 sort_by = "weight"
 
 +++
+
+> **목표**: Noir를 설치하고 정상 동작을 확인합니다. 시스템에 맞는 방법을 선택하세요.
 
 ## Homebrew (macOS 및 Linux)
 
@@ -146,3 +148,17 @@ Crystal 프로그래밍 언어가 설치되어 있어야 합니다.
     ```
 
     빌드된 바이너리는 `./bin/noir`에 위치합니다.
+
+## 설치 확인
+
+어떤 방법을 선택했든, Noir가 설치되었는지 확인하세요:
+
+```bash
+noir --version
+```
+
+버전 번호가 표시되면 준비 완료입니다.
+
+---
+
+**다음 단계**: [Step 3: 첫 번째 스캔](@/get_started/running/index.md)

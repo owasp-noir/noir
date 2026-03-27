@@ -1,117 +1,116 @@
 +++
-title = "Running Noir"
-description = "Basic commands for scanning codebases and configuring output with Noir."
+title = "Step 3: Your First Scan"
+description = "Run your first scan with Noir and explore the results."
 weight = 3
 sort_by = "weight"
 
 +++
 
-## Basic Scan
+> **Goal**: Scan a codebase and understand the output.
 
-Scan current directory:
+## 1. Run a Scan
+
+Point Noir at your project directory:
+
+```bash
+noir -b /path/to/your/app
+```
+
+Or scan the current directory:
 
 ```bash
 noir -b .
 ```
 
-Scan subdirectory:
-
-```bash
-noir -b ./my_app
-```
-
 ![](./running.png)
 
-## Viewing Help Information
+Noir automatically detects the technologies used and extracts endpoints.
 
-```bash
-noir --help
-```
+## 2. Check What Was Detected
 
-## Checking Supported Technologies
-
-```bash
-noir --list-techs
-```
-
-## Output Formats
-
-Default output is table format. Other formats:
-
-### JSON Output
-
-```bash
-noir -b . -f json
-```
-
-### YAML Output
-
-```bash
-noir -b . -f yaml
-```
-
-### OpenAPI Specification
-
-```bash
-noir -b . -f oas3
-```
-
-For a complete list of formats, see the [Output Formats](@/usage/output_formats/_index.md) section.
-
-## Saving Results to a File
-
-```bash
-noir -b . -f json -o results.json
-```
-
-## Filtering by Technology
-
-Scan only specific frameworks:
-
-```bash
-noir -b . --techs rails,django
-```
-
-Exclude specific frameworks:
-
-```bash
-noir -b . --exclude-techs express
-```
-
-## Suppressing Logs
-
-```bash
-noir -b . --no-log
-```
-
-## Verbose Output
-
-```bash
-noir -b . --verbose
-```
-
-## Output Customization
-
-### Include File Paths
-
-```bash
-noir -b . --include-path
-```
-
-### Include Technology Information
+See which technologies Noir found in your project:
 
 ```bash
 noir -b . --include-techs
 ```
 
-Combine both:
+Want to see the full list of supported technologies?
 
 ```bash
-noir -b . --include-path --include-techs
+noir --list-techs
 ```
 
-## Next Steps
+## 3. Try Different Output Formats
 
-- **[Configurations](@/usage/configurations/configuration_file/index.md)**: Set up a config file for default options
-- **[Output Formats](@/usage/output_formats/_index.md)**: Explore all available output formats
-- **[Passive Scan](@/usage/passive_scan/_index.md)**: Enable passive security scanning
+The default output is a table. Try switching formats:
+
+```bash
+# JSON for scripting and automation
+noir -b . -f json
+
+# YAML for human-readable review
+noir -b . -f yaml
+
+# OpenAPI spec for API documentation
+noir -b . -f oas3
+
+# cURL commands to test endpoints immediately
+noir -b . -f curl -u https://your-target.com
+```
+
+## 4. Save Results to a File
+
+```bash
+noir -b . -f json -o results.json
+```
+
+## 5. Customize Your Output
+
+Include source file paths to trace where endpoints were found:
+
+```bash
+noir -b . --include-path
+```
+
+Combine options:
+
+```bash
+noir -b . --include-path --include-techs -f json -o results.json
+```
+
+## 6. Filter Technologies
+
+If your project has many frameworks, you can focus the scan:
+
+```bash
+# Scan only specific frameworks
+noir -b . --techs rails,django
+
+# Skip frameworks you don't care about
+noir -b . --exclude-techs express
+```
+
+## Useful Flags
+
+| Flag | Description |
+|---|---|
+| `-b <path>` | Base directory to scan |
+| `-f <format>` | Output format (json, yaml, oas3, curl, etc.) |
+| `-o <file>` | Save output to a file |
+| `-u <url>` | Set base URL for cURL/HTTPie output |
+| `--include-path` | Show source file paths |
+| `--include-techs` | Show detected technologies |
+| `--techs` | Scan only these technologies |
+| `--exclude-techs` | Skip these technologies |
+| `--verbose` | Show detailed log output |
+| `--no-log` | Suppress all log messages |
+| `--help` | Show full help |
+
+---
+
+You've completed the Getting Started guide! Here's what to explore next:
+
+- **[Configurations](@/usage/configurations/configuration_file/index.md)** — Set up a config file so you don't have to repeat flags
+- **[Output Formats](@/usage/output_formats/_index.md)** — Explore all available output formats
+- **[Passive Scan](@/usage/passive_scan/_index.md)** — Enable passive security scanning to find vulnerabilities
+- **[AI Power](@/get_started/ai_power/index.md)** — Use AI to detect endpoints in unsupported frameworks

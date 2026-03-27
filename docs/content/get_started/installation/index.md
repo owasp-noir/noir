@@ -1,10 +1,12 @@
 +++
-title = "Installation"
+title = "Step 2: Install Noir"
 description = "Install OWASP Noir via Homebrew, Snapcraft, Docker, Nix, binary download, or from source."
 weight = 2
 sort_by = "weight"
 
 +++
+
+> **Goal**: Install Noir and verify it works. Pick the method that fits your system.
 
 ## Homebrew (macOS and Linux)
 
@@ -140,3 +142,17 @@ Requires Crystal programming language installed.
     ```
 
     The compiled binary is at `./bin/noir`.
+
+## Verify Your Installation
+
+Whichever method you chose, confirm Noir is installed:
+
+```bash
+noir --version
+```
+
+If you see a version number, you're ready.
+
+---
+
+**Next step**: [Step 3: Your First Scan](@/get_started/running/index.md)

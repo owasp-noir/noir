@@ -6,8 +6,12 @@ sort_by = "weight"
 
 +++
 
-Welcome to OWASP Noir! This section will guide you through the process of installing Noir and running your first scan. Whether you are a developer looking to integrate Noir into your workflow or a security professional using it for white-box testing, these guides will help you get up and running quickly.
+Get up and running with Noir in three steps. By the end, you'll have scanned your first codebase and discovered its API endpoints.
 
-*   **[Overview](overview/)**: Get a high-level introduction to what Noir is and how it works.
-*   **[Installation](installation/)**: Find detailed instructions on how to install Noir on your system.
-*   **[Running Noir](running/)**: Learn the basic commands for running a scan.
+| Step | Page | What You'll Do |
+|------|------|----------------|
+| 1 | **[What is Noir?](overview/)** | Understand what Noir does and why you need it |
+| 2 | **[Install Noir](installation/)** | Install Noir on your system |
+| 3 | **[Your First Scan](running/)** | Run a scan and explore the results |
+
+Ready? Start with **[Step 1: What is Noir?](overview/)**
