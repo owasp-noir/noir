@@ -191,7 +191,7 @@ module Analyzer::Kotlin
       return unless Dir.exists?(import_directory)
 
       # TODO: Be aware that the import file location might differ from the actual file system path.
-      Dir.glob("#{escape_glob_path(import_directory.to_s)}/*.#{KOTLIN_EXTENSION}") do |path|
+      Dir.glob("#{escape_glob_path(import_directory.to_s)}/*.#{KOTLIN_EXTENSION}").sort.each do |path|
         next if path == current_path
         # Kotlin Spring only resolves one level of imports, so depth is always 0.
         next unless ParserLimit.allow_depth?(0)
@@ -216,7 +216,7 @@ module Analyzer::Kotlin
     # Process all classes in the same package directory
     private def process_package_classes(package_directory : Path, current_path : String, parser_map : Hash(String, KotlinParser)) : Hash(String, KotlinParser::ClassModel)
       package_class_map = Hash(String, KotlinParser::ClassModel).new
-      Dir.glob("#{escape_glob_path(package_directory.to_s)}/*.#{KOTLIN_EXTENSION}") do |path|
+      Dir.glob("#{escape_glob_path(package_directory.to_s)}/*.#{KOTLIN_EXTENSION}").sort.each do |path|
         next if path == current_path
         # Kotlin Spring only resolves one level of imports, so depth is always 0.
         next unless ParserLimit.allow_depth?(0)
