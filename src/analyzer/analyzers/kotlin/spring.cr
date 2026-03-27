@@ -217,7 +217,6 @@ module Analyzer::Kotlin
     private def process_package_classes(package_directory : Path, current_path : String, parser_map : Hash(String, KotlinParser)) : Hash(String, KotlinParser::ClassModel)
       package_class_map = Hash(String, KotlinParser::ClassModel).new
       Dir.glob("#{escape_glob_path(package_directory.to_s)}/*.#{KOTLIN_EXTENSION}").sort.each do |path|
-        next if path == current_path
         # Kotlin Spring only resolves one level of imports, so depth is always 0.
         next unless ParserLimit.allow_depth?(0)
         parser = parser_map[path]? || create_parser(Path.new(path))
