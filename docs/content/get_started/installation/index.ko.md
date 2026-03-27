@@ -47,11 +47,12 @@ nix profile add github:owasp-noir/noir
 ```
 
 {% alert_info() %}
-**팁:** Docker 또는 제한된 환경에서는 실험적 기능을 활성화해야 할 수 있습니다:
+**팁:** Docker 또는 제한된 환경에서는 실험적 기능을 활성화해야 할 수 있습니다. 아래 명령어를 사용하세요.
+{% end %}
+
 ```bash
 nix --extra-experimental-features "nix-command flakes" profile add github:owasp-noir/noir
 ```
-{% end %}
 
 설치 없이 직접 실행:
 
