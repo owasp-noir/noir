@@ -6,7 +6,9 @@ sort_by = "weight"
 
 +++
 
-Now that Noir is installed, let's scan a real project. You'll point Noir at a codebase, see what it finds, and learn how to shape the output.
+{% mascot(mood="walk") %}
+Noir is installed — let's take it for a spin! Point it at a project, see what it finds, and learn how to shape the output.
+{% end %}
 
 ## Run a Scan
 

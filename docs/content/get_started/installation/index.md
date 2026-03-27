@@ -6,7 +6,9 @@ sort_by = "weight"
 
 +++
 
-Noir is distributed as a single binary with no runtime dependencies. Pick the method that fits your system — Homebrew is the quickest for most users.
+{% mascot(mood="think") %}
+Noir is a single binary with no runtime dependencies. Homebrew is the quickest way for most users, but pick whatever fits your system.
+{% end %}
 
 ## Homebrew (macOS and Linux)
 

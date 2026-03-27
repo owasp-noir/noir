@@ -6,7 +6,9 @@ sort_by = "weight"
 
 +++
 
-Noir는 런타임 의존성 없이 단일 바이너리로 배포됩니다. 시스템에 맞는 방법을 선택하세요 — 대부분의 사용자에게 Homebrew가 가장 빠릅니다.
+{% mascot(mood="think") %}
+Noir는 런타임 의존성 없이 단일 바이너리로 배포돼. 대부분의 사용자에게 Homebrew가 가장 빠르지만, 시스템에 맞는 걸 선택해.
+{% end %}
 
 ## Homebrew (macOS 및 Linux)
 

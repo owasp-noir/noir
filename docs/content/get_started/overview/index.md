@@ -6,6 +6,10 @@ sort_by = "weight"
 
 +++
 
+{% mascot(mood="hi") %}
+Hi! I'm **Hak**, the Noir mascot. Let me show you what Noir can do for you.
+{% end %}
+
 Noir is an open-source attack surface detector. It reads your source code and discovers all API endpoints — including shadow APIs and undocumented routes that may not appear in your documentation.
 
 Security teams use Noir to find what attackers would look for: forgotten endpoints, exposed parameters, and hidden routes that slip through code reviews. Developers use it to keep API documentation accurate and feed endpoint data into testing pipelines.
