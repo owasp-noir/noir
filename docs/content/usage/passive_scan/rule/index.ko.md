@@ -1,6 +1,6 @@
 +++
 title = "패시브 스캔 규칙"
-description = ""
+description = "YAML을 사용하여 코드베이스의 보안 문제를 탐지하는 커스텀 패시브 스캔 규칙을 만듭니다."
 weight = 1
 sort_by = "weight"
 

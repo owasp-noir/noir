@@ -28,6 +28,12 @@ sudo snap install noir
 docker pull ghcr.io/owasp-noir/noir:latest
 ```
 
+Run a scan on the current directory:
+
+```bash
+docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest -b /tmp
+```
+
 All available tags are on the [GitHub Packages page](https://github.com/owasp-noir/noir/pkgs/container/noir).
 
 ## Nix
@@ -130,7 +136,7 @@ Requires Crystal programming language installed.
 3.  **Build:**
 
     ```bash
-    shards build --release --no-debug
+    shards build --release
     ```
 
     The compiled binary is at `./bin/noir`.

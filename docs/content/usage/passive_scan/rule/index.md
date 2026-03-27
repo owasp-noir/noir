@@ -1,6 +1,6 @@
 +++
 title = "Passive Scan Rule"
-description = ""
+description = "Create custom passive scan rules using YAML to detect security issues in your codebase."
 weight = 1
 sort_by = "weight"
 

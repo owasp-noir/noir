@@ -56,6 +56,28 @@ noir -b . -f yaml
 noir -b . -f oas3
 ```
 
+전체 형식 목록은 [출력 형식](@/usage/output_formats/_index.md) 섹션을 참조하세요.
+
+## 결과를 파일로 저장
+
+```bash
+noir -b . -f json -o results.json
+```
+
+## 기술별 필터링
+
+특정 프레임워크만 스캔:
+
+```bash
+noir -b . --techs rails,django
+```
+
+특정 프레임워크 제외:
+
+```bash
+noir -b . --exclude-techs express
+```
+
 ## 로그 억제
 
 ```bash
@@ -87,3 +109,9 @@ noir -b . --include-techs
 ```bash
 noir -b . --include-path --include-techs
 ```
+
+## 다음 단계
+
+- **[설정](@/usage/configurations/configuration_file/index.md)**: 기본 옵션을 위한 설정 파일 구성
+- **[출력 형식](@/usage/output_formats/_index.md)**: 사용 가능한 모든 출력 형식 살펴보기
+- **[패시브 스캔](@/usage/passive_scan/_index.md)**: 패시브 보안 스캔 활성화

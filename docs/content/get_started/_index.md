@@ -11,4 +11,3 @@ Welcome to OWASP Noir! This section will guide you through the process of instal
 *   **[Overview](overview/)**: Get a high-level introduction to what Noir is and how it works.
 *   **[Installation](installation/)**: Find detailed instructions on how to install Noir on your system.
 *   **[Running Noir](running/)**: Learn the basic commands for running a scan.
-*   **[AI-Powered Analysis](ai_power/)**: Discover how to use Noir's AI integration to get even deeper insights into your code.

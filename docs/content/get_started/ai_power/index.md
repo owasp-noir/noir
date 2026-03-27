@@ -10,6 +10,26 @@ Connect Noir to Large Language Models (cloud-based, local, or ACP agent-based) f
 
 ![](./ai_integration.jpeg)
 
+## Quick Examples
+
+Scan with OpenAI:
+
+```bash
+noir -b . --ai-provider openai --ai-model gpt-4o --ai-key $OPENAI_API_KEY
+```
+
+Scan with local Ollama (no API key needed):
+
+```bash
+noir -b . --ai-provider ollama --ai-model phi-3
+```
+
+Scan with ACP agent (no model/key needed):
+
+```bash
+noir -b . --ai-provider acp:codex
+```
+
 ## Usage
 
 Specify an AI provider, model, and API key:

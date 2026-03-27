@@ -25,8 +25,16 @@ sudo snap install noir
 ## Docker
 
 ```bash
+docker pull ghcr.io/owasp-noir/noir:latest
+```
+
+현재 디렉토리에서 스캔 실행:
+
+```bash
 docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest -b /tmp
 ```
+
+사용 가능한 모든 태그는 [GitHub Packages 페이지](https://github.com/owasp-noir/noir/pkgs/container/noir)에서 확인할 수 있습니다.
 
 ## Nix
 

@@ -25,7 +25,7 @@ noir -b ./my_app
 ## Viewing Help Information
 
 ```bash
-noir -h
+noir --help
 ```
 
 ## Checking Supported Technologies
@@ -54,6 +54,28 @@ noir -b . -f yaml
 
 ```bash
 noir -b . -f oas3
+```
+
+For a complete list of formats, see the [Output Formats](@/usage/output_formats/_index.md) section.
+
+## Saving Results to a File
+
+```bash
+noir -b . -f json -o results.json
+```
+
+## Filtering by Technology
+
+Scan only specific frameworks:
+
+```bash
+noir -b . --techs rails,django
+```
+
+Exclude specific frameworks:
+
+```bash
+noir -b . --exclude-techs express
 ```
 
 ## Suppressing Logs
@@ -87,3 +109,9 @@ Combine both:
 ```bash
 noir -b . --include-path --include-techs
 ```
+
+## Next Steps
+
+- **[Configurations](@/usage/configurations/configuration_file/index.md)**: Set up a config file for default options
+- **[Output Formats](@/usage/output_formats/_index.md)**: Explore all available output formats
+- **[Passive Scan](@/usage/passive_scan/_index.md)**: Enable passive security scanning
