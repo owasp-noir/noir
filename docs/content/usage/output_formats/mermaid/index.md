@@ -6,17 +6,17 @@ sort_by = "weight"
 
 +++
 
-Visualize API endpoints as an interactive [Mermaid mindmap](https://mermaid-js.github.io/mermaid/#/mindmap) for understanding API structure.
+Visualize API endpoints as a [Mermaid mindmap](https://mermaid-js.github.io/mermaid/#/mindmap) to get a bird's-eye view of your API structure.
 
 ## Usage
-
-Generate mindmap:
 
 ```bash
 noir -b . -f mermaid
 ```
 
 ## Example Output
+
+The mindmap is a tree: the root node represents the API, branches are URL path segments, and leaves show HTTP methods with their parameters (grouped by type: `body`, `headers`, `cookies`).
 
 <details>
     <summary>Mermaid Output</summary>
@@ -112,7 +112,7 @@ mindmap
 
 </details>
 
-Paste the output into the [Mermaid live editor](https://mermaid.live/) or embed it in documentation.
+Paste the raw output into the [Mermaid live editor](https://mermaid.live/) to render it interactively, or embed it directly in Markdown files — GitHub, GitLab, and Notion all render Mermaid natively.
 
 {% mermaid() %}
 mindmap

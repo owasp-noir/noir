@@ -6,21 +6,21 @@ sort_by = "weight"
 
 +++
 
-Automatically add descriptive tags to endpoints and parameters to identify functionality and potential security risks (e.g., SQL injection, authentication endpoints).
+Automatically add descriptive tags to endpoints and parameters to flag functionality and potential security risks (e.g., SQL injection, authentication endpoints).
 
 ![](./tagger.png)
 
 ## Usage
 
-Tagger is disabled by default. Enable it:
+Tagger is disabled by default.
 
-**Enable all taggers**:
+**Enable all taggers**
 
 ```bash
 noir -b <BASE_PATH> -T
 ```
 
-**Enable specific taggers** (list available with `noir --list-taggers`):
+**Enable specific taggers** (list available ones with `noir --list-taggers`)
 
 ```bash
 noir -b <BASE_PATH> --use-taggers hunt,oauth
@@ -28,7 +28,7 @@ noir -b <BASE_PATH> --use-taggers hunt,oauth
 
 ## Output
 
-Tags are added to the `tags` array for each endpoint and parameter:
+Tags appear in the `tags` array at both the endpoint level and the parameter level. Each tag has a `name` (short identifier like `sqli` or `oauth`), a human-readable `description`, and the `tagger` that produced it (e.g., `Hunt` for vulnerability patterns, `Oauth` for authentication flows).
 
 ```json
 {

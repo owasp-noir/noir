@@ -6,17 +6,17 @@ sort_by = "weight"
 
 +++
 
-Enable shell auto-completion for commands and flags.
+Press `Tab` to auto-complete Noir's commands, flags, and options. Noir can generate completion scripts for the three most popular shells.
 
 ## Zsh
 
-Generate completion script:
+Preview the generated completion script:
 
 ```bash
 noir --generate-completion zsh
 ```
 
-Save to completions directory:
+To load it automatically, save the script to a completions directory that Zsh picks up on startup:
 
 ```bash
 mkdir -p ~/.zsh/completion
@@ -25,13 +25,13 @@ noir --generate-completion zsh > ~/.zsh/completion/_noir
 
 ## Bash
 
-Generate script:
+Preview the generated completion script:
 
 ```bash
 noir --generate-completion bash
 ```
 
-Save to completions directory:
+Save it to the standard `bash-completion` directory so new sessions load it automatically:
 
 ```bash
 mkdir -p ~/.local/share/bash-completion/completions
@@ -40,13 +40,13 @@ noir --generate-completion bash > ~/.local/share/bash-completion/completions/noi
 
 ## Fish
 
-Generate script:
+Preview the generated completion script:
 
 ```bash
 noir --generate-completion fish
 ```
 
-Save to completions directory:
+Save it to Fish's completions directory for automatic loading:
 
 ```bash
 mkdir -p ~/.config/fish/completions
@@ -55,4 +55,4 @@ noir --generate-completion fish > ~/.config/fish/completions/noir.fish
 
 ## Homebrew Users
 
-Shell completions are automatically installed with Homebrew.
+If you installed Noir via Homebrew, completions are already set up — nothing to do here.

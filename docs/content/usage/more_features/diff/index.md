@@ -8,8 +8,6 @@ sort_by = "weight"
 
 Compare two versions of a codebase to identify endpoint changes. Useful for code reviews, security assessments, and understanding feature impacts.
 
-Usage:
-
 ```bash
 noir -b <NEW_VERSION_PATH> --diff-path <OLD_VERSION_PATH>
 ```
@@ -17,6 +15,8 @@ noir -b <NEW_VERSION_PATH> --diff-path <OLD_VERSION_PATH>
 ## Output
 
 ### Plain Output
+
+The default output marks each change as **Added** (new endpoints), **Removed** (deleted ones), or **Changed** (endpoints whose parameters or methods were modified).
 
 ```
 [*] ============== DIFF ==============
@@ -28,7 +28,7 @@ noir -b <NEW_VERSION_PATH> --diff-path <OLD_VERSION_PATH>
 
 ### JSON and YAML Output
 
-Use `-f json` or `-f yaml` for structured output:
+Use `-f json` or `-f yaml` for structured output. Results are grouped into three categories.
 
 ```json
 {
@@ -38,4 +38,4 @@ Use `-f json` or `-f yaml` for structured output:
 }
 ```
 
-Use diff mode in CI/CD to configure DAST tools to scan only modified endpoints.
+Especially useful in CI/CD — feed only the `added` and `changed` endpoints into a DAST scanner to focus on modified attack surface.
