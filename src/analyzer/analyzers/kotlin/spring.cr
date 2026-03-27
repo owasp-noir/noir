@@ -146,7 +146,7 @@ module Analyzer::Kotlin
       package_directory = Path.new(path).parent
 
       import_map = process_imports(parser, root_source_directory, package_directory, path, parser_map)
-      package_class_map = package_map[package_directory.to_s]? || process_package_classes(package_directory, path, parser_map)
+      package_class_map = package_map[package_directory.to_s]? || process_package_classes(package_directory, parser_map)
       package_map[package_directory.to_s] ||= package_class_map
 
       class_map = package_class_map.merge(import_map)
@@ -214,10 +214,9 @@ module Analyzer::Kotlin
     end
 
     # Process all classes in the same package directory
-    private def process_package_classes(package_directory : Path, current_path : String, parser_map : Hash(String, KotlinParser)) : Hash(String, KotlinParser::ClassModel)
+    private def process_package_classes(package_directory : Path, parser_map : Hash(String, KotlinParser)) : Hash(String, KotlinParser::ClassModel)
       package_class_map = Hash(String, KotlinParser::ClassModel).new
       Dir.glob("#{escape_glob_path(package_directory.to_s)}/*.#{KOTLIN_EXTENSION}").sort.each do |path|
-        next if path == current_path
         # Kotlin Spring only resolves one level of imports, so depth is always 0.
         next unless ParserLimit.allow_depth?(0)
         parser = parser_map[path]? || create_parser(Path.new(path))
