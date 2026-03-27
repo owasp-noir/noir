@@ -114,7 +114,7 @@ mindmap
 
 Paste the output into the [Mermaid live editor](https://mermaid.live/) or embed it in documentation.
 
-{% mermaid() %}
+{{ mermaid() }}
 mindmap
   root((API))
     GET
@@ -201,7 +201,7 @@ mindmap
     zz
       GET
       DELETE
-{% end %}
+{{ end }}
 
 ## Tips
 

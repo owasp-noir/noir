@@ -15,5 +15,5 @@ sort_by = "weight"
 
 ## 프로젝트 리더
 
-{% member(name="HAHWUL", role="공동 리더, 창시자", image="./hahwul.jpeg", links="𝕏|https://x.com/hahwul, GitHub|https://github.com/hahwul") %}{% end %}
-{% member(name="KSG", role="공동 리더", image="./ksg.jpeg", links="GitHub|https://github.com/ksg97031") %}{% end %}
+{{ member(name="HAHWUL", role="공동 리더, 창시자", image="./hahwul.jpeg", links="𝕏|https://x.com/hahwul, GitHub|https://github.com/hahwul") %}{{ end }}
+{{ member(name="KSG", role="공동 리더", image="./ksg.jpeg", links="GitHub|https://github.com/ksg97031") %}{{ end }}

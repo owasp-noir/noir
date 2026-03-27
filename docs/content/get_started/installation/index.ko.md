@@ -12,9 +12,9 @@ sort_by = "weight"
 brew install noir
 ```
 
-{% alert_info() %}
+{{ alert_info() }}
 Zsh, Bash, Fish용 셸 완성 기능이 자동으로 설치됩니다.
-{% end %}
+{{ end }}
 
 ## Snapcraft (Linux)
 
@@ -42,12 +42,12 @@ docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest -b /tmp
 nix profile add github:owasp-noir/noir
 ```
 
-{% alert_info() %}
+{{ alert_info() }}
 **팁:** Docker 또는 제한된 환경에서는 실험적 기능을 활성화해야 할 수 있습니다:
 ```bash
 nix --extra-experimental-features "nix-command flakes" profile add github:owasp-noir/noir
 ```
-{% end %}
+{{ end }}
 
 설치 없이 직접 실행:
 
@@ -122,9 +122,9 @@ yay -S noir
 
 ## 소스에서 빌드
 
-{% alert_warning() %}
+{{ alert_warning() }}
 Crystal 프로그래밍 언어가 설치되어 있어야 합니다.
-{% end %}
+{{ end }}
 
 1.  **저장소 클론:**
 

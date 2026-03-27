@@ -114,7 +114,7 @@ mindmap
 
 [Mermaid 라이브 에디터](https://mermaid.live/)에 붙여넣거나 문서에 포함하여 시각화할 수 있습니다.
 
-{% mermaid() %}
+{{ mermaid() }}
 mindmap
   root((API))
     GET
@@ -201,7 +201,7 @@ mindmap
     zz
       GET
       DELETE
-{% end %}
+{{ end }}
 
 ## 팁
 
