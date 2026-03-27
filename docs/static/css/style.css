@@ -2038,14 +2038,15 @@ p:has(> .member-card) {
 .mascot-bubble {
     display: flex;
     align-items: flex-start;
-    gap: 0.75rem;
+    gap: 1rem;
     margin: 1.5rem 0;
+    max-width: 520px;
 }
 
 .mascot-avatar {
     flex-shrink: 0;
-    width: 52px;
-    height: 52px;
+    width: 80px;
+    height: 80px;
 }
 
 .mascot-avatar img {
@@ -2057,14 +2058,13 @@ p:has(> .member-card) {
 
 .mascot-speech {
     position: relative;
-    flex: 1;
     min-width: 0;
 }
 
 .mascot-speech-arrow {
     position: absolute;
     left: -6px;
-    top: 14px;
+    top: 18px;
     width: 0;
     height: 0;
     border-top: 6px solid transparent;
@@ -2106,9 +2106,12 @@ p:has(> .member-card) {
 }
 
 @media (max-width: 480px) {
+    .mascot-bubble {
+        max-width: 100%;
+    }
     .mascot-avatar {
-        width: 40px;
-        height: 40px;
+        width: 60px;
+        height: 60px;
     }
     .mascot-speech-content {
         font-size: 0.8125rem;
