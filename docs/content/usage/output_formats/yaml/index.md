@@ -6,17 +6,17 @@ sort_by = "weight"
 
 +++
 
-Output scan results in human-readable YAML format for manual inspection or automated processing.
+Output scan results as YAML. It carries the same data as JSON but the indentation-based format makes it easier to skim.
 
 ## Usage
-
-Generate YAML output:
 
 ```bash
 noir -b . -f yaml --no-log
 ```
 
 ## Example Output
+
+The structure mirrors the JSON format: an `endpoints` list with URL, HTTP method, parameters, source code paths, and tags for each entry.
 
 ```yaml
 endpoints:

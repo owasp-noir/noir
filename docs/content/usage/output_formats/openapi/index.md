@@ -6,13 +6,11 @@ sort_by = "weight"
 
 +++
 
-Generate OpenAPI Specification (OAS) documents from your codebase for API documentation, testing, and tool integration.
+Convert scan results into an [OpenAPI Specification](https://www.openapis.org/) document. The generated spec can be imported into Swagger UI, Postman, Insomnia, and similar tools for API documentation, testing, or mock generation.
 
 Noir supports both OAS 2.0 (Swagger) and OAS 3.0.
 
 ## Usage
-
-Generate OAS document:
 
 **OAS 3.0 (recommended)**:
 
@@ -27,6 +25,8 @@ noir -b . -f oas2
 ```
 
 ## Example Output
+
+Follows the standard OpenAPI structure: `info` holds metadata, and `paths` maps each URL to its HTTP methods with parameters and responses. Paste the output into the [Swagger Editor](https://editor.swagger.io/) to visualize it right away.
 
 ```json
 {

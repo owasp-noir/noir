@@ -6,20 +6,20 @@ sort_by = "weight"
 
 +++
 
-Noir supports JSON and JSONL output formats:
+Noir supports two JSON-flavored output modes:
 
 *   **JSON**: Single JSON object containing all results
-*   **JSONL**: Each line is a separate JSON object, useful for streaming large datasets
+*   **JSONL**: One JSON object per line — good for streaming and large datasets
 
 ## JSON Output
 
-Generate JSON output:
+Use `-f json` to get JSON. Adding `--no-log` suppresses log messages so only the JSON hits stdout, which keeps things clean when piping into other tools.
 
 ```bash
 noir -b . -f json --no-log
 ```
 
-Output structure:
+The result is an object with an `endpoints` array. Each endpoint has the URL, HTTP method, parameters (typed as `cookie`, `form`, `header`, `json`, etc.), source code location in `details.code_paths`, and any security tags from taggers.
 
 ```json
 {
@@ -64,13 +64,13 @@ Output structure:
 
 ## JSONL Output
 
-Generate JSONL output:
+[JSON Lines](https://jsonlines.org/) prints one JSON object per line. Ideal for `jq` pipelines or processing large result sets line-by-line without loading everything into memory.
 
 ```bash
 noir -b . -f jsonl --no-log
 ```
 
-Output format (one JSON object per line):
+Each line is a self-contained endpoint object:
 
 ```json
 {"url":"/","method":"GET","params":[...],"details":{...},"protocol":"http","tags":[]}

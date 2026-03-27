@@ -10,18 +10,18 @@ Send discovered endpoints directly to security tools like Burp Suite, ZAP, or El
 
 ## Usage
 
-Command-line flags:
+Relevant flags:
 
-*   `--send-req`: Send as web request
-*   `--send-proxy http://proxy...`: Send through HTTP proxy
-*   `--send-es http://es...`: Send to Elasticsearch
-*   `--with-headers X-Header:Value`: Add custom headers
-*   `--use-matchers string`: Only send matching endpoints (URL, method, or method:URL)
-*   `--use-filters string`: Exclude matching endpoints (URL, method, or method:URL)
+*   `--send-req` — Send as web request
+*   `--send-proxy http://proxy...` — Send through HTTP proxy
+*   `--send-es http://es...` — Send to Elasticsearch
+*   `--with-headers X-Header:Value` — Add custom headers
+*   `--use-matchers string` — Only send matching endpoints (URL, method, or method:URL)
+*   `--use-filters string` — Exclude matching endpoints (URL, method, or method:URL)
 
 ### Sending to a Proxy
 
-Send all endpoints to proxy (e.g., Burp Suite, ZAP):
+Send all endpoints to a proxy like Burp Suite or ZAP.
 
 ```bash
 noir -b ./source --send-proxy http://localhost:8080
@@ -31,7 +31,7 @@ noir -b ./source --send-proxy http://localhost:8080
 
 ### Adding Custom Headers
 
-Add custom headers (e.g., authentication tokens):
+Attach custom headers such as authentication tokens.
 
 ```bash
 noir -b ./source --send-proxy http://localhost:8080 --with-headers "Authorization: Bearer your-token"
@@ -41,36 +41,36 @@ noir -b ./source --send-proxy http://localhost:8080 --with-headers "Authorizatio
 
 ### Filtering and Matching
 
-Send specific endpoints using matchers and filters:
+Use matchers and filters to send only specific endpoints.
 
 #### URL-based Filtering
-Send endpoints containing "api":
+Send endpoints containing "api".
 
 ```bash
 noir -b ./source --send-proxy http://localhost:8080 --use-matchers "api"
 ```
 
 #### Method-based Filtering
-Send only GET requests:
+Send only GET requests.
 
 ```bash
 noir -b ./source --send-proxy http://localhost:8080 --use-matchers "GET"
 ```
 
-Exclude POST requests:
+Exclude POST requests.
 
 ```bash
 noir -b ./source --send-proxy http://localhost:8080 --use-filters "POST"
 ```
 
 #### Method and URL Combination
-Send POST requests to API endpoints:
+Send POST requests to API endpoints.
 
 ```bash
 noir -b ./source --send-proxy http://localhost:8080 --use-matchers "POST:/api"
 ```
 
-Exclude GET requests to admin pages:
+Exclude GET requests to admin pages.
 
 ```bash
 noir -b ./source --send-proxy http://localhost:8080 --use-filters "GET:/admin"
@@ -80,7 +80,8 @@ noir -b ./source --send-proxy http://localhost:8080 --use-filters "GET:/admin"
 GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, TRACE, CONNECT (case insensitive)
 
 #### Multiple Patterns
-Use multiple matchers or filters:
+
+Combine multiple matchers or filters.
 
 ```bash
 noir -b ./source --send-proxy http://localhost:8080 --use-matchers "GET" --use-matchers "POST:/api"

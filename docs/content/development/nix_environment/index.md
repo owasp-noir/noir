@@ -10,6 +10,8 @@ Nix provides a reproducible development environment with consistent dependencies
 
 ## Installing Nix
 
+The multi-user (daemon) install is recommended — it supports concurrent builds and better isolation. The single-user option is simpler but skips the background daemon.
+
 ```sh
 # Multi-user installation (recommended for Linux/macOS)
 sh <(curl -L https://nixos.org/nix/install) --daemon
@@ -24,7 +26,7 @@ See the [official Nix installation guide](https://nixos.org/download.html) for d
 
 ### Enable Flakes
 
-Add to `~/.config/nix/nix.conf` (or `/etc/nix/nix.conf`):
+[Flakes](https://nixos.wiki/wiki/Flakes) are Nix's modern approach to reproducible project definitions. Enable them by adding this line to `~/.config/nix/nix.conf` (or `/etc/nix/nix.conf`).
 
 ```
 experimental-features = nix-command flakes
@@ -41,11 +43,13 @@ This sets up Crystal, shards, and all dependencies automatically.
 
 ## Alternative: Using Docker with Nix
 
+If you'd rather not install Nix on your host, use the official Nix Docker image. This mounts your local repo into the container.
+
 ```sh
 docker run -it --rm -v $(pwd):/workspace -w /workspace nixos/nix bash
 ```
 
-Inside the container:
+Inside the container, enter the dev shell.
 
 ```sh
 nix develop
@@ -53,7 +57,7 @@ nix develop
 
 ## Updating Dependencies
 
-After modifying `shard.yml`, regenerate `shards.nix` to keep Nix in sync:
+After modifying `shard.yml`, regenerate `shards.nix` to keep Nix in sync.
 
 ```sh
 nix-shell -p crystal2nix --run crystal2nix

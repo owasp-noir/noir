@@ -6,11 +6,11 @@ sort_by = "weight"
 
 +++
 
-Generate SARIF v2.1.0 (Static Analysis Results Interchange Format) output for CI/CD integration.
+Output results as SARIF v2.1.0 (Static Analysis Results Interchange Format). This is the standard format that GitHub Code Scanning, GitLab, and Azure DevOps can ingest natively.
 
 ## Why SARIF?
 
-*   OASIS standard supported across security tooling ecosystem
+*   OASIS standard supported across the security tooling ecosystem
 *   Native support in GitHub Code Scanning, GitLab, Azure DevOps
 *   Rich metadata with severity levels and file locations
 *   Enables automated security gates in pipelines
@@ -30,6 +30,8 @@ noir -b . -f sarif -o results.sarif --no-log
 ```
 
 ## Example Output
+
+A SARIF file has a `runs` array. Each run describes the tool (`driver` with name and version), the analysis rules, and the `results` — one entry per discovered endpoint with its source file location and line number.
 
 ```json
 {
@@ -118,19 +120,19 @@ Each discovered endpoint is reported as a SARIF result with:
 
 ### Passive Scan Integration
 
-When using Noir's passive scan feature (`-P` or `--passive-scan`), security findings are automatically included in the SARIF output with proper severity mapping:
+When using passive scan (`-P` or `--passive-scan`), security findings are included in the SARIF output with severity mapping:
 
 *   **Critical/High severity** → `error` level
 *   **Medium severity** → `warning` level
 *   **Low severity** → `note` level
 
-Each passive scan rule is included in the `rules` array with complete metadata including descriptions, references, and author information.
+Each passive scan rule is added to the `rules` array with descriptions, references, and author info.
 
 ## Integration Examples
 
 ### GitHub Code Scanning
 
-Upload your SARIF results to GitHub Code Scanning:
+Upload SARIF results to [GitHub Code Scanning](https://docs.github.com/en/code-security/code-scanning) so findings show up in your repo's Security tab:
 
 ```bash
 # Generate SARIF output
@@ -145,7 +147,7 @@ gh api /repos/:owner/:repo/code-scanning/sarifs \
 
 ### GitLab Security Dashboard
 
-Include Noir's SARIF output in your GitLab CI/CD pipeline:
+Add this job to `.gitlab-ci.yml` to surface findings in GitLab's Security Dashboard:
 
 ```yaml
 noir_scan:
@@ -158,7 +160,7 @@ noir_scan:
 
 ### Azure DevOps
 
-Publish SARIF results in Azure Pipelines:
+Publish the SARIF file as a build artifact in Azure Pipelines. The SARIF SAST Scans Tab extension picks it up automatically:
 
 ```yaml
 - script: noir -b . -f sarif -o noir.sarif --no-log
@@ -176,4 +178,3 @@ Publish SARIF results in Azure Pipelines:
 *   [GitHub Code Scanning Documentation](https://docs.github.com/en/code-security/code-scanning)
 *   [GitLab SAST Documentation](https://docs.gitlab.com/ee/user/application_security/sast/)
 *   [SARIF Tutorials](https://github.com/microsoft/sarif-tutorials)
-

@@ -12,6 +12,8 @@ Noir is a single binary with no runtime dependencies. Homebrew is the quickest w
 
 ## Homebrew (macOS and Linux)
 
+The easiest option. Noir has an official [Homebrew formula](https://formulae.brew.sh/formula/noir), so `brew upgrade` keeps it up to date too.
+
 ```bash
 brew install noir
 ```
@@ -22,17 +24,21 @@ Shell completions for Zsh, Bash, and Fish are automatically installed.
 
 ## Snapcraft (Linux)
 
+[Snap](https://snapcraft.io) packages work across most Linux distros and auto-update in the background.
+
 ```bash
 sudo snap install noir
 ```
 
 ## Docker
 
+Handy when you don't want to install anything on the host, or need Noir inside a CI/CD pipeline.
+
 ```bash
 docker pull ghcr.io/owasp-noir/noir:latest
 ```
 
-Run a scan on the current directory:
+Scan the current directory:
 
 ```bash
 docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest -b /tmp
@@ -41,6 +47,8 @@ docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest -b /tmp
 All available tags are on the [GitHub Packages page](https://github.com/owasp-noir/noir/pkgs/container/noir).
 
 ## Nix
+
+If you use [Nix](https://nixos.org), install via Flakes:
 
 ```bash
 nix profile add github:owasp-noir/noir
@@ -54,7 +62,7 @@ nix profile add github:owasp-noir/noir
 nix --extra-experimental-features "nix-command flakes" profile add github:owasp-noir/noir
 ```
 
-Or run directly without installing:
+Or run once without installing:
 
 ```bash
 nix run github:owasp-noir/noir -- -h
@@ -62,7 +70,7 @@ nix run github:owasp-noir/noir -- -h
 
 ## Direct Binary Download
 
-Download prebuilt binaries from the [GitHub Releases page](https://github.com/owasp-noir/noir/releases/latest).
+No package manager? Grab a prebuilt binary from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). Linux and macOS builds are provided.
 
 1. Download the archive for your platform (e.g., `noir-linux-x86_64.tar.gz` or `noir-macos-universal.tar.gz`).
 2. Extract:
@@ -85,7 +93,7 @@ Download prebuilt binaries from the [GitHub Releases page](https://github.com/ow
 
 ## Debian Package (.deb)
 
-For Debian/Ubuntu and derivatives, use the `.deb` package from the [GitHub Releases page](https://github.com/owasp-noir/noir/releases/latest).
+Debian/Ubuntu users can use the `.deb` package from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). It integrates with `dpkg`/`apt` like any other system package.
 
 1. Download the `.deb` package:
 
@@ -115,14 +123,18 @@ For Debian/Ubuntu and derivatives, use the `.deb` package from the [GitHub Relea
 
 ### Arch AUR
 
+Noir is in the [AUR](https://aur.archlinux.org). Use your preferred helper:
+
 ```bash
 yay -S noir
 ```
 
 ## Build from Source
 
+For custom builds or contributing back to the project.
+
 {% alert_warning() %}
-Requires Crystal programming language installed.
+Requires [Crystal](https://crystal-lang.org/install/) programming language installed.
 {% end %}
 
 1.  **Clone the repository:**

@@ -6,11 +6,11 @@ sort_by = "weight"
 
 +++
 
-Generate executable commands for command-line HTTP clients to test discovered endpoints.
+Turn discovered endpoints into ready-to-run commands for popular HTTP clients. Use `-u` to set the base URL that gets prepended to each path.
 
 ## cURL
 
-Generate cURL commands:
+[cURL](https://curl.se/) is the most widely used command-line HTTP client. The generated commands include `-i` (show response headers), `-X` (HTTP method), `-d` (request body), `-H` (headers), and `--cookie` as appropriate.
 
 ```bash
 noir -b . -f curl -u https://www.example.com
@@ -25,7 +25,7 @@ curl -i -X GET https://www.example.com/token -d "client_id=&redirect_url=&grant_
 
 ## HTTPie
 
-Generate [HTTPie](https://httpie.io/) commands:
+[HTTPie](https://httpie.io/) has a more intuitive syntax than cURL, with colorized output and built-in JSON support.
 
 ```bash
 noir -b . -f httpie -u https://www.example.com
@@ -40,7 +40,7 @@ http GET https://www.example.com/token "client_id=&redirect_url=&grant_type="
 
 ## PowerShell
 
-Generate PowerShell [Invoke-WebRequest](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/invoke-webrequest) commands:
+For Windows environments — generates [Invoke-WebRequest](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/invoke-webrequest) commands that work natively without extra tools.
 
 ```bash
 noir -b . -f powershell -u https://www.example.com

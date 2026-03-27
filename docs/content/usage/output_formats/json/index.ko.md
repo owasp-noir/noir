@@ -6,20 +6,20 @@ sort_by = "weight"
 
 +++
 
-Noir는 JSON과 JSONL 출력 형식을 지원합니다:
+Noir는 두 가지 JSON 계열 출력을 지원합니다.
 
-*   **JSON**: 모든 결과를 포함하는 단일 JSON 객체
-*   **JSONL**: 각 줄이 별도의 JSON 객체로, 대용량 데이터 스트리밍에 유용
+*   **JSON**: 전체 결과를 하나의 JSON 객체로 출력
+*   **JSONL**: 줄마다 하나의 JSON 객체를 출력하여 스트리밍이나 대용량 처리에 적합
 
 ## JSON 출력
 
-JSON 출력 생성:
+`-f json`으로 JSON을 출력합니다. `--no-log`를 함께 쓰면 로그 메시지 없이 JSON만 출력되므로, 다른 도구로 파이핑할 때 깔끔합니다.
 
 ```bash
 noir -b . -f json --no-log
 ```
 
-출력 구조:
+결과는 `endpoints` 배열을 포함하는 객체입니다. 각 엔드포인트에는 URL, HTTP 메서드, 파라미터(타입: `cookie`, `form`, `header`, `json` 등), 소스 코드 위치(`details.code_paths`), 그리고 Tagger가 붙인 보안 태그가 들어갑니다.
 
 ```json
 {
@@ -52,13 +52,13 @@ noir -b . -f json --no-log
 
 ## JSONL 출력
 
-JSONL 출력 생성:
+[JSON Lines](https://jsonlines.org/) 형식은 줄마다 독립된 JSON 객체를 출력합니다. `jq`로 파이핑하거나, 대량의 결과를 메모리에 다 올리지 않고 한 줄씩 처리할 때 유용합니다.
 
 ```bash
 noir -b . -f jsonl --no-log
 ```
 
-출력 형식 (줄당 하나의 JSON 객체):
+아래와 같이 각 줄은 하나의 엔드포인트입니다.
 
 ```jsonl
 {"url":"/","method":"GET","params":[{"name":"x-api-key","value":"","param_type":"header","tags":[]}],"details":{"code_paths":[{"path":"./spec/functional_test/fixtures/crystal_kemal/src/testapp.cr","line":3}]},"protocol":"http","tags":[]}

@@ -6,17 +6,17 @@ sort_by = "weight"
 
 +++
 
-API 엔드포인트를 대화형 [Mermaid 마인드맵](https://mermaid-js.github.io/mermaid/#/mindmap)으로 시각화하여 API 구조를 파악합니다.
+API 엔드포인트를 [Mermaid 마인드맵](https://mermaid-js.github.io/mermaid/#/mindmap)으로 시각화하여 전체 API 구조를 한눈에 파악할 수 있습니다.
 
 ## 사용법
-
-마인드맵 생성:
 
 ```bash
 noir -b . -f mermaid
 ```
 
 ## 출력 예제
+
+마인드맵은 트리 구조로 구성됩니다. 루트 노드가 API 전체를 나타내고, 가지가 URL 경로 세그먼트, 잎이 HTTP 메서드와 파라미터(타입별로 `body`, `headers`, `cookies`로 분류)입니다.
 
 <details>
     <summary>Mermaid 출력</summary>
@@ -112,7 +112,7 @@ mindmap
 
 </details>
 
-[Mermaid 라이브 에디터](https://mermaid.live/)에 붙여넣거나 문서에 포함하여 시각화할 수 있습니다.
+출력 결과를 [Mermaid 라이브 에디터](https://mermaid.live/)에 붙여넣으면 바로 렌더링됩니다. Markdown 파일에 직접 삽입해도 GitHub, GitLab, Notion 등에서 네이티브로 렌더링해줍니다.
 
 {% mermaid() %}
 mindmap
@@ -206,5 +206,5 @@ mindmap
 ## 팁
 
 - 루트 노드는 항상 `API`로 표시됩니다.
-- HTTP 메서드, 엔드포인트 경로 및 매개변수가 모두 마인드맵에 표현됩니다.
-- 큰 API의 경우 Mermaid 호환 뷰어에서 브랜치를 축소하거나 확장할 수 있습니다.
+- HTTP 메서드, 엔드포인트 경로, 파라미터가 모두 마인드맵에 표현됩니다.
+- API 규모가 크다면 Mermaid 호환 뷰어에서 가지를 접거나 펼칠 수 있습니다.

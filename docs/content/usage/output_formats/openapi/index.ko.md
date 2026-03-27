@@ -6,25 +6,27 @@ sort_by = "weight"
 
 +++
 
-코드베이스에서 API 문서화, 테스트 및 도구 통합을 위한 OpenAPI 명세(OAS) 문서를 생성합니다.
+스캔 결과를 [OpenAPI Specification](https://www.openapis.org/) 문서로 변환합니다. 생성된 스펙은 Swagger UI, Postman, Insomnia 등에 바로 임포트하여 API 문서화, 테스트, 목 서버 생성 등에 활용할 수 있습니다.
 
-Noir는 OAS 2.0 (Swagger)과 OAS 3.0을 모두 지원합니다.
+Noir는 OAS 2.0(Swagger)과 OAS 3.0을 모두 지원합니다.
 
 ## 사용법
 
-**OAS 3.0 (권장)**:
+**OAS 3.0 (권장)**
 
 ```bash
 noir -b . -f oas3
 ```
 
-**OAS 2.0**:
+**OAS 2.0**
 
 ```bash
 noir -b . -f oas2
 ```
 
 ## 출력 예제
+
+표준 OpenAPI 구조를 따릅니다. `info`에 메타데이터가, `paths` 아래에 각 URL 경로별 HTTP 메서드와 파라미터 정보가 들어갑니다. 이 결과를 [Swagger Editor](https://editor.swagger.io/)에 붙여넣으면 바로 시각화됩니다.
 
 ```json
 {

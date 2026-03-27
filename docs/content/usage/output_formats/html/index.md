@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Generate a self-contained, interactive HTML file that visualizes scan results. Suitable for sharing with stakeholders or reviewing the application's attack surface.
+Generate a self-contained, interactive HTML file that visualizes scan results. Handy for sharing with stakeholders or reviewing the application's attack surface.
 
 ## Basic Usage
 
@@ -51,6 +51,8 @@ Templates use placeholders that Noir replaces with generated content:
 
 ### Example Template
 
+A minimal custom template that adds a company header while reusing Noir's built-in styles and content sections via `<%= %>` placeholders.
+
 ```html
 <!DOCTYPE html>
 <html lang="en">
@@ -76,7 +78,7 @@ Templates use placeholders that Noir replaces with generated content:
         <%= noir_summary %>
 
         <h2>Detailed Findings</h2>
-        
+
         <!-- Endpoints List -->
         <%= noir_endpoints %>
 
