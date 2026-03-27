@@ -82,7 +82,7 @@ Noir는 다음 AI 제공업체 프리셋을 지원합니다:
 
 ## 작동 방식
 
-{{ mermaid() }}
+{% mermaid() %}
 flowchart TB
     Start([AI 분석 시작]) --> InitAdapter[LLM 어댑터 초기화]
     InitAdapter --> ProviderCheck{제공자 타입?}
@@ -163,7 +163,7 @@ flowchart TB
     style UseCached1 fill:#e1ffe1
     style UseCached2 fill:#e1ffe1
     style UseCached3 fill:#e1ffe1
-{{ end }}
+{% end %}
 
 ### 주요 구성 요소
 

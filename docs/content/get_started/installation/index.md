@@ -12,9 +12,9 @@ sort_by = "weight"
 brew install noir
 ```
 
-{{ alert_info() }}
+{% alert_info() %}
 Shell completions for Zsh, Bash, and Fish are automatically installed.
-{{ end }}
+{% end %}
 
 ## Snapcraft (Linux)
 
@@ -42,12 +42,12 @@ All available tags are on the [GitHub Packages page](https://github.com/owasp-no
 nix profile add github:owasp-noir/noir
 ```
 
-{{ alert_info() }}
+{% alert_info() %}
 **Tip:** In Docker or restricted environments, you may need to enable experimental features:
 ```bash
 nix --extra-experimental-features "nix-command flakes" profile add github:owasp-noir/noir
 ```
-{{ end }}
+{% end %}
 
 Or run directly without installing:
 
@@ -116,9 +116,9 @@ yay -S noir
 
 ## Build from Source
 
-{{ alert_warning() }}
+{% alert_warning() %}
 Requires Crystal programming language installed.
-{{ end }}
+{% end %}
 
 1.  **Clone the repository:**
 

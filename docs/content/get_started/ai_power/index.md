@@ -82,7 +82,7 @@ For raw ACP and agent stderr logs, set `NOIR_ACP_RAW_LOG=1`.
 
 ## How AI-Powered Analysis Works
 
-{{ mermaid() }}
+{% mermaid() %}
 flowchart TB
     Start([Start AI Analysis]) --> InitAdapter[Initialize LLM Adapter]
     InitAdapter --> ProviderCheck{Provider Type?}
@@ -163,7 +163,7 @@ flowchart TB
     style UseCached1 fill:#e1ffe1
     style UseCached2 fill:#e1ffe1
     style UseCached3 fill:#e1ffe1
-{{ end }}
+{% end %}
 
 ### Key Components
 

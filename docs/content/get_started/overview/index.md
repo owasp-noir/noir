@@ -31,7 +31,7 @@ Noir is built with [Crystal](https://crystal-lang.org) and processes code throug
 5. **Deliver** sends results to external tools (ZAP, Burp, etc.)
 6. **Output Builder** generates reports in the desired format
 
-{{ mermaid() }}
+{% mermaid() %}
 flowchart LR
     SourceCode:::highlight --> Detectors
 
@@ -67,7 +67,7 @@ flowchart LR
     OutputBuilder --> Report:::highlight
 
     classDef highlight fill:#000,stroke:#333,stroke-width:4px;
-{{ end }}
+{% end %}
 
 ## Contributing
 
