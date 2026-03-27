@@ -2045,8 +2045,8 @@ p:has(> .member-card) {
 
 .mascot-avatar {
     flex-shrink: 0;
-    width: 80px;
-    height: 80px;
+    width: 150px;
+    height: 150px;
 }
 
 .mascot-avatar img {
@@ -2064,7 +2064,7 @@ p:has(> .member-card) {
 .mascot-speech-arrow {
     position: absolute;
     left: -6px;
-    top: 18px;
+    top: 28px;
     width: 0;
     height: 0;
     border-top: 6px solid transparent;
@@ -2076,10 +2076,10 @@ p:has(> .member-card) {
     background: var(--bg-surface);
     border: 1px solid var(--border-light);
     border-radius: 8px;
-    padding: 0.625rem 0.875rem;
+    padding: 0.75rem 1rem;
     color: var(--text-secondary);
-    font-size: 0.875rem;
-    line-height: 1.5;
+    font-size: 1rem;
+    line-height: 1.6;
 }
 
 .mascot-speech-content p {
@@ -2110,10 +2110,10 @@ p:has(> .member-card) {
         max-width: 100%;
     }
     .mascot-avatar {
-        width: 60px;
-        height: 60px;
+        width: 100px;
+        height: 100px;
     }
     .mascot-speech-content {
-        font-size: 0.8125rem;
+        font-size: 0.875rem;
     }
 }
