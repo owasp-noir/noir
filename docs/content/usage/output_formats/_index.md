@@ -17,6 +17,7 @@ Noir is built to be a versatile tool that can fit into any workflow. A key part 
 | API documentation generation | [OpenAPI](openapi/) | `-f oas3` |
 | Quick endpoint testing | [cURL](curl/) / HTTPie / PowerShell | `-f curl` |
 | Human-readable review | [YAML](yaml/) | `-f yaml` |
+| Configuration-style output | [More](more/) (TOML) | `-f toml` |
 | Import into Postman | [More](more/) (Postman Collection) | `-f postman` |
 | Visual report sharing | [HTML](html/) | `-f html` |
 | API structure visualization | [Mermaid](mermaid/) | `-f mermaid` |
@@ -31,6 +32,6 @@ Noir is built to be a versatile tool that can fit into any workflow. A key part 
 *   **[SARIF](sarif/)**: Industry-standard format for security tool output with native CI/CD platform integration.
 *   **[HTML Report](html/)**: Generate a comprehensive, visual HTML report of your scan results.
 *   **[Mermaid Chart](mermaid/)**: Generate diagrams for visualizing your API structure.
-*   **[Additional Formats](more/)**: Discover additional formats including JSONL, Postman collections, Markdown tables, and specialized filters.
+*   **[Additional Formats](more/)**: Discover additional formats including TOML, JSONL, Postman collections, Markdown tables, and specialized filters.
 
 By choosing the right output format, you can streamline your development process and make it easier to act on the insights provided by Noir.
