@@ -7,7 +7,7 @@ sort_by = "weight"
 +++
 
 {% mascot(mood="hi") %}
-안녕! 나는 Noir의 마스코트 **Hak**이야. Noir가 어떤 도구인지 소개할게.
+안녕! 나는 Noir의 마스코트 Hak이야. Noir가 어떤 도구인지 소개할게.
 {% end %}
 
 Noir는 오픈 소스 공격 표면 탐지 도구입니다. 소스 코드를 읽고 Shadow API와 문서화되지 않은 경로를 포함한 모든 API 엔드포인트를 발견합니다.
