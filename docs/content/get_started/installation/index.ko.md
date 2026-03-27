@@ -1,12 +1,12 @@
 +++
-title = "Step 2: Noir 설치"
+title = "Noir 설치"
 description = "Homebrew, Snapcraft, Docker, Nix, 바이너리 다운로드 또는 소스 빌드를 통해 OWASP Noir를 설치합니다."
 weight = 2
 sort_by = "weight"
 
 +++
 
-> **목표**: Noir를 설치하고 정상 동작을 확인합니다. 시스템에 맞는 방법을 선택하세요.
+Noir는 런타임 의존성 없이 단일 바이너리로 배포됩니다. 시스템에 맞는 방법을 선택하세요 — 대부분의 사용자에게 Homebrew가 가장 빠릅니다.
 
 ## Homebrew (macOS 및 Linux)
 
@@ -161,4 +161,4 @@ noir --version
 
 ---
 
-**다음 단계**: [Step 3: 첫 번째 스캔](@/get_started/running/index.md)
+**다음**: [첫 번째 스캔](@/get_started/running/index.md)

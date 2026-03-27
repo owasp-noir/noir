@@ -1,24 +1,28 @@
 +++
-title = "Step 1: What is Noir?"
+title = "What is Noir?"
 description = "OWASP Noir is an attack surface detector that identifies endpoints by static analysis."
 weight = 1
 sort_by = "weight"
 
 +++
 
-> **Goal**: Understand what Noir does before installing it.
+Noir is an open-source attack surface detector. It reads your source code and discovers all API endpoints — including shadow APIs and undocumented routes that may not appear in your documentation.
 
-Noir is an attack surface detector that analyzes source code to discover API endpoints, including shadow APIs and undocumented routes. It bridges SAST and DAST by feeding discovered endpoints directly into dynamic testing tools.
+Security teams use Noir to find what attackers would look for: forgotten endpoints, exposed parameters, and hidden routes that slip through code reviews. Developers use it to keep API documentation accurate and feed endpoint data into testing pipelines.
 
 ![noir-usage](./noir-usage.jpg)
 
 ## What Can Noir Do?
 
-- **Find hidden endpoints** — Discovers shadow APIs, undocumented routes, and forgotten endpoints from source code
-- **Support 50+ frameworks** — One tool for Rails, Django, Spring, Express, FastAPI, and many more
-- **Use AI for unknown code** — LLMs detect endpoints even in unsupported frameworks
-- **Feed into DAST tools** — Sends results directly to ZAP, Burp Suite, Caido
-- **Export anywhere** — JSON, YAML, OpenAPI, SARIF, cURL, HTML reports, and more
+**Find what's hidden.** Noir statically analyzes source code to extract every endpoint, parameter, header, and cookie — even the ones nobody documented.
+
+**Work with any stack.** A single binary supports 50+ frameworks across Crystal, Go, Java, JavaScript, Kotlin, PHP, Python, Ruby, Rust, Swift, and more. No plugins or per-language setup needed.
+
+**Bring AI to the table.** For frameworks Noir doesn't natively support, connect an LLM (OpenAI, Ollama, etc.) and let AI analyze the code for you.
+
+**Bridge SAST and DAST.** Noir discovers endpoints from source code (SAST side), then feeds them directly into ZAP, Burp Suite, or Caido for dynamic testing (DAST side). This closes the gap where DAST tools miss endpoints they don't know about.
+
+**Export in any format.** Results come out as JSON, YAML, OpenAPI specs, SARIF for CI/CD, cURL commands, HTML reports, or Postman collections — whatever your workflow needs.
 
 ## How Does It Work?
 
@@ -76,4 +80,4 @@ Noir is open-source and welcomes contributions. See the [Contributing Guide](htt
 
 ---
 
-**Next step**: [Step 2: Install Noir](@/get_started/installation/index.md)
+**Next**: [Install Noir](@/get_started/installation/index.md)

@@ -1,12 +1,12 @@
 +++
-title = "Step 2: Install Noir"
+title = "Install Noir"
 description = "Install OWASP Noir via Homebrew, Snapcraft, Docker, Nix, binary download, or from source."
 weight = 2
 sort_by = "weight"
 
 +++
 
-> **Goal**: Install Noir and verify it works. Pick the method that fits your system.
+Noir is distributed as a single binary with no runtime dependencies. Pick the method that fits your system — Homebrew is the quickest for most users.
 
 ## Homebrew (macOS and Linux)
 
@@ -155,4 +155,4 @@ If you see a version number, you're ready.
 
 ---
 
-**Next step**: [Step 3: Your First Scan](@/get_started/running/index.md)
+**Next**: [Your First Scan](@/get_started/running/index.md)

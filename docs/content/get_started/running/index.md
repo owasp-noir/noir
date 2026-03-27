@@ -1,22 +1,22 @@
 +++
-title = "Step 3: Your First Scan"
+title = "Your First Scan"
 description = "Run your first scan with Noir and explore the results."
 weight = 3
 sort_by = "weight"
 
 +++
 
-> **Goal**: Scan a codebase and understand the output.
+Now that Noir is installed, let's scan a real project. You'll point Noir at a codebase, see what it finds, and learn how to shape the output.
 
-## 1. Run a Scan
+## Run a Scan
 
-Point Noir at your project directory:
+Pick a project directory and scan it:
 
 ```bash
 noir -b /path/to/your/app
 ```
 
-Or scan the current directory:
+Or if you're already inside the project:
 
 ```bash
 noir -b .
@@ -24,93 +24,101 @@ noir -b .
 
 ![](./running.png)
 
-Noir automatically detects the technologies used and extracts endpoints.
+Noir reads the source files, detects which frameworks are in use, and prints every endpoint it finds — methods, paths, parameters, headers, and cookies.
 
-## 2. Check What Was Detected
+## Check What Was Detected
 
-See which technologies Noir found in your project:
+Curious which technologies Noir picked up? Add `--include-techs` to see them alongside the results:
 
 ```bash
 noir -b . --include-techs
 ```
 
-Want to see the full list of supported technologies?
+To see every technology Noir knows how to analyze:
 
 ```bash
 noir --list-techs
 ```
 
-## 3. Try Different Output Formats
+If your framework isn't listed, you can still use [AI-powered analysis](@/get_started/ai_power/index.md) to detect endpoints.
 
-The default output is a table. Try switching formats:
+## Try Different Output Formats
+
+The default output is a human-readable table. Depending on your workflow, you might want something else:
 
 ```bash
-# JSON for scripting and automation
+# Machine-readable JSON for scripting and pipelines
 noir -b . -f json
 
-# YAML for human-readable review
+# YAML for easy reading and config-friendly workflows
 noir -b . -f yaml
 
-# OpenAPI spec for API documentation
+# OpenAPI spec — useful for generating API docs or feeding into tools
 noir -b . -f oas3
 
-# cURL commands to test endpoints immediately
+# cURL commands you can run immediately against a live target
 noir -b . -f curl -u https://your-target.com
 ```
 
-## 4. Save Results to a File
+See all available formats in the [Output Formats](@/usage/output_formats/_index.md) section.
+
+## Save Results to a File
+
+Instead of printing to the terminal, write the output to a file with `-o`:
 
 ```bash
 noir -b . -f json -o results.json
 ```
 
-## 5. Customize Your Output
+This is useful for diffing results between scans, feeding into CI pipelines, or sharing with your team.
 
-Include source file paths to trace where endpoints were found:
+## Trace Endpoints Back to Source
+
+Want to know exactly where an endpoint was defined? Add `--include-path` to show source file locations:
 
 ```bash
 noir -b . --include-path
 ```
 
-Combine options:
+Combine it with other options for a complete picture:
 
 ```bash
 noir -b . --include-path --include-techs -f json -o results.json
 ```
 
-## 6. Filter Technologies
+## Focus Your Scan
 
-If your project has many frameworks, you can focus the scan:
+Large monorepos may contain many frameworks. You can narrow the scan to what matters:
 
 ```bash
-# Scan only specific frameworks
+# Only scan for Rails and Django endpoints
 noir -b . --techs rails,django
 
-# Skip frameworks you don't care about
+# Scan everything except Express
 noir -b . --exclude-techs express
 ```
 
-## Useful Flags
+## Quick Reference
 
-| Flag | Description |
+| Flag | What it does |
 |---|---|
-| `-b <path>` | Base directory to scan |
+| `-b <path>` | Directory to scan |
 | `-f <format>` | Output format (json, yaml, oas3, curl, etc.) |
-| `-o <file>` | Save output to a file |
-| `-u <url>` | Set base URL for cURL/HTTPie output |
-| `--include-path` | Show source file paths |
+| `-o <file>` | Write output to a file |
+| `-u <url>` | Base URL for cURL/HTTPie output |
+| `--include-path` | Show source file locations |
 | `--include-techs` | Show detected technologies |
-| `--techs` | Scan only these technologies |
-| `--exclude-techs` | Skip these technologies |
-| `--verbose` | Show detailed log output |
-| `--no-log` | Suppress all log messages |
-| `--help` | Show full help |
+| `--techs` | Only scan these frameworks |
+| `--exclude-techs` | Skip these frameworks |
+| `--verbose` | Detailed logging |
+| `--no-log` | Suppress all logs |
+| `--help` | Full help |
 
 ---
 
 You've completed the Getting Started guide! Here's what to explore next:
 
-- **[Configurations](@/usage/configurations/configuration_file/index.md)** — Set up a config file so you don't have to repeat flags
-- **[Output Formats](@/usage/output_formats/_index.md)** — Explore all available output formats
-- **[Passive Scan](@/usage/passive_scan/_index.md)** — Enable passive security scanning to find vulnerabilities
+- **[Configurations](@/usage/configurations/configuration_file/index.md)** — Set default options so you don't repeat flags every time
+- **[Output Formats](@/usage/output_formats/_index.md)** — Dive deeper into all output formats
+- **[Passive Scan](@/usage/passive_scan/_index.md)** — Scan for security issues like hardcoded secrets and misconfigurations
 - **[AI Power](@/get_started/ai_power/index.md)** — Use AI to detect endpoints in unsupported frameworks

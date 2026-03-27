@@ -1,24 +1,28 @@
 +++
-title = "Step 1: Noir란?"
+title = "Noir란?"
 description = "OWASP Noir는 정적 분석으로 엔드포인트를 식별하는 공격 표면 탐지 도구입니다."
 weight = 1
 sort_by = "weight"
 
 +++
 
-> **목표**: 설치 전에 Noir가 무엇을 하는지 이해합니다.
+Noir는 오픈 소스 공격 표면 탐지 도구입니다. 소스 코드를 읽고 Shadow API와 문서화되지 않은 경로를 포함한 모든 API 엔드포인트를 발견합니다.
 
-Noir는 소스 코드를 분석하여 Shadow API와 문서화되지 않은 경로를 포함한 API 엔드포인트를 발견하는 공격 표면 탐지 도구입니다. 발견된 엔드포인트를 동적 테스트 도구에 직접 전달하여 SAST와 DAST를 연결합니다.
+보안 팀은 Noir를 통해 공격자가 찾을 만한 것들 — 잊혀진 엔드포인트, 노출된 파라미터, 코드 리뷰에서 놓친 숨겨진 경로 — 을 미리 찾습니다. 개발자는 API 문서를 정확하게 유지하고 테스트 파이프라인에 엔드포인트 데이터를 공급하는 데 활용합니다.
 
 ![noir-usage](./noir-usage.jpg)
 
 ## Noir로 무엇을 할 수 있나요?
 
-- **숨겨진 엔드포인트 발견** — 소스 코드에서 Shadow API, 문서화되지 않은 경로, 잊혀진 엔드포인트를 탐지
-- **50개 이상의 프레임워크 지원** — Rails, Django, Spring, Express, FastAPI 등 하나의 도구로 분석
-- **AI로 미지원 코드도 분석** — LLM을 활용하여 미지원 프레임워크에서도 엔드포인트를 탐지
-- **DAST 도구에 전달** — ZAP, Burp Suite, Caido에 결과를 직접 전달
-- **다양한 형식으로 내보내기** — JSON, YAML, OpenAPI, SARIF, cURL, HTML 보고서 등
+**숨겨진 것을 찾습니다.** 소스 코드를 정적 분석하여 모든 엔드포인트, 파라미터, 헤더, 쿠키를 추출합니다 — 아무도 문서화하지 않은 것까지 포함해서.
+
+**어떤 스택이든 지원합니다.** 단일 바이너리로 Crystal, Go, Java, JavaScript, Kotlin, PHP, Python, Ruby, Rust, Swift 등 50개 이상의 프레임워크를 지원합니다. 플러그인이나 언어별 설정이 필요 없습니다.
+
+**AI를 활용합니다.** Noir가 네이티브로 지원하지 않는 프레임워크의 경우, LLM(OpenAI, Ollama 등)을 연결하면 AI가 코드를 분석해줍니다.
+
+**SAST와 DAST를 연결합니다.** 소스 코드에서 엔드포인트를 발견(SAST)한 후 ZAP, Burp Suite, Caido에 직접 전달하여 동적 테스트(DAST)를 수행합니다. DAST 도구가 알지 못하는 엔드포인트를 놓치는 문제를 해결합니다.
+
+**어떤 형식으로든 내보냅니다.** JSON, YAML, OpenAPI 명세, CI/CD용 SARIF, cURL 명령, HTML 보고서, Postman 컬렉션 등 워크플로에 필요한 형식으로 결과를 출력합니다.
 
 ## 어떻게 작동하나요?
 
@@ -76,4 +80,4 @@ Noir는 오픈 소스이며 모든 기여를 환영합니다. [기여 가이드]
 
 ---
 
-**다음 단계**: [Step 2: Noir 설치](@/get_started/installation/index.md)
+**다음**: [Noir 설치](@/get_started/installation/index.md)

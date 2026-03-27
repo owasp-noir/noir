@@ -14,4 +14,4 @@ Get up and running with Noir in three steps. By the end, you'll have scanned you
 | 2 | **[Install Noir](installation/)** | Install Noir on your system |
 | 3 | **[Your First Scan](running/)** | Run a scan and explore the results |
 
-Ready? Start with **[Step 1: What is Noir?](overview/)**
+Ready? Start with **[What is Noir?](overview/)**
