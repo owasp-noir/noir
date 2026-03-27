@@ -81,5 +81,5 @@ If you would like to contribute, please check [CONTRIBUTING.md](./CONTRIBUTING.m
 
 ## Mascot
 
-| ![](docs/static/images/mascot/hak.png "Hak") | Our mascot is Hak (학), a crane symbolizing elegance and precision in spotting hidden flaws. In Korean, "학" means "crane," representing a sharp ally who dives deep to uncover vulnerabilities and attack surfaces in your code. <br><br> For more artwork and resources related to Hak, check out [noir-artwork repository](https://github.com/owasp-noir/noir-artwork).|
+| ![](docs/static/images/mascot/hak-hi.webp "Hak") | Our mascot is Hak (학), a crane symbolizing elegance and precision in spotting hidden flaws. In Korean, "학" means "crane," representing a sharp ally who dives deep to uncover vulnerabilities and attack surfaces in your code. <br><br> For more artwork and resources related to Hak, check out [noir-artwork repository](https://github.com/owasp-noir/noir-artwork).|
 | -------------- | -------------- |
