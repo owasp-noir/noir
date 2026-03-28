@@ -2,6 +2,7 @@ alias b := build
 alias ds := docs-serve
 alias dsup := docs-supported
 alias vc := version-check
+alias vu := version-update
 
 # List available tasks.
 default:
@@ -78,3 +79,8 @@ test-uncovered:
 [group('development')]
 version-check:
     crystal run scripts/check_version_consistency.cr
+
+# Update version across all files (uses shard.yml version, or specify new version).
+[group('development')]
+version-update VERSION="":
+    @if [ -z "{{VERSION}}" ]; then crystal run scripts/version_update.cr; else crystal run scripts/version_update.cr -- {{VERSION}}; fi

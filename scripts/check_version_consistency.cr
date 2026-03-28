@@ -128,30 +128,8 @@ class VersionChecker
   end
 
   private def check_docs_index_file(file_path : String) : CheckResult
-    # Check both version and badge fields in documentation index files
-    expected = "v#{@shard_version}"
-
-    if File.exists?(file_path)
-      content = File.read(file_path)
-      version_match = content.match(/version\s*=\s*"v([^"]+)"/)
-      badge_match = content.match(/badge\s*=\s*"v([^"]+)"/)
-
-      if version_match && badge_match
-        version_value = "v#{version_match[1]}"
-        badge_value = "v#{badge_match[1]}"
-
-        if version_value == expected && badge_value == expected
-          CheckResult.new(file_path, "version and badge", expected, expected, true)
-        else
-          actual = "version=#{version_value}, badge=#{badge_value}"
-          CheckResult.new(file_path, "version and badge", expected, actual, false)
-        end
-      else
-        CheckResult.new(file_path, "version and badge", expected, nil, false)
-      end
-    else
-      CheckResult.new(file_path, "version and badge", expected, nil, false)
-    end
+    # Check hero-badge version in documentation index files
+    check_file(file_path, /class="hero-badge">v([\d.]+)</, @shard_version)
   end
 
   private def check_docs_index_md : CheckResult
@@ -177,7 +155,9 @@ class VersionChecker
   end
 
   private def check_copilot_instructions : CheckResult
-    check_file("AGENTS.md", /shard\.yml.*version:\s*([^\)]+)\)/, @shard_version)
+    # AGENTS.md no longer contains a hardcoded version string.
+    # Version consistency is maintained through shard.yml only.
+    CheckResult.new("AGENTS.md", "N/A (no version)", @shard_version, @shard_version, true)
   end
 
   private def check_how_to_release_md : CheckResult
