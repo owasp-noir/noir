@@ -2,6 +2,38 @@
 
 All notable changes to [Noir](https://github.com/owasp-noir/noir) will be documented in this file.
 
+## v0.29.0
+
+### Added
+- Salvo (Rust) framework support
+- Hono (Node.js) framework support
+- Nitro.js framework support
+- httprouter (Go) framework support
+- GoFrame (Go) framework support
+- gRPC specification analyzer and detector
+- Cross-file route analysis for Go analyzers
+- Kemal namespace and mount routing support
+- `NOIR_PARSER_MAX_DEPTH` environment variable to cap import-following depth
+- Framework auth taggers
+- Framework taggers
+
+### Changed
+- Improved scan performance with buffered channels, optimized file handling, and parallel taggers
+- Refactored Go framework analyzers for clarity, consistency, and reduced duplication
+- Improved detector coverage and reduced false positives
+- Tightened Symfony detector heuristics
+- Refined JSP XML detection
+- Used `sarif.cr` library for SARIF output
+- Upgraded snapcraft base to core24
+
+### Fixed
+- Fixed `--only-techs` to accept canonical tech keys
+- Fixed floating point exception when `ai_max_token` is 0
+- Fixed JS parser false-positive routes from HTTP client calls and nested expressions
+- Fixed Kotlin Spring flaky test caused by non-deterministic `Dir.glob` ordering
+- Fixed cross-file group resolution bugs in Go analyzers
+- Fixed Chi mounted router parameter extraction
+
 ## v0.28.0
 
 ### Added
