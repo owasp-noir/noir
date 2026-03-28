@@ -7,7 +7,7 @@ template = "landing"
   <div class="hero-split">
     <div class="hero-text">
       <div class="hero-eyebrow">
-        <span class="hero-badge">v0.28.0</span>
+        <span class="hero-badge">v0.29.0</span>
         <span class="hero-badge hero-badge-owasp">OWASP Project</span>
       </div>
       <h1 class="hero-title">
