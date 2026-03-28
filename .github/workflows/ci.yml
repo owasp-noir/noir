@@ -100,14 +100,8 @@ jobs:
       - name: Check out Git repository
         uses: actions/checkout@v6
       - name: Build snapcraft package
-        uses: diddlesnaps/snapcraft-multiarch-action@v1
-        with:
-          architecture: ${{ matrix.platform }}
+        uses: canonical/action-build@v1
         id: build
-      - name: Review snapcraft package
-        uses: diddlesnaps/snapcraft-review-action@v1
-        with:
-          snap: ${{ steps.build.outputs.snap }}
   build-nix-flake:
     if: false  # TODO: FlakeHub 인증 문제 해결 후 제거
     runs-on: ubuntu-latest
