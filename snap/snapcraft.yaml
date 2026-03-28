@@ -1,5 +1,5 @@
 name: noir
-base: core22
+base: core24
 version: 0.28.0
 summary: OWASP Noir
 description: Hunt every Endpoint in your code, expose Shadow APIs, map the Attack Surface.
@@ -40,4 +40,4 @@ parts:
     stage-packages:
       - libssl3
       - libxml2
-      - libevent-2.1-7
+      - libevent-2.1-7t64
