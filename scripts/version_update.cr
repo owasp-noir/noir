@@ -31,17 +31,17 @@ class VersionUpdater
     ),
     Target.new(
       "src/noir.cr",
-      /(VERSION\s*=\s*")[\d.]+(")/ ,
+      /(VERSION\s*=\s*")[\d.]+(")/,
       "\\1%{version}\\2"
     ),
     Target.new(
       "flake.nix",
-      /(version\s*=\s*")[\d.]+(")/ ,
+      /(version\s*=\s*")[\d.]+(")/,
       "\\1%{version}\\2"
     ),
     Target.new(
       "Dockerfile",
-      /(org\.opencontainers\.image\.version=")[\d.]+(")/ ,
+      /(org\.opencontainers\.image\.version=")[\d.]+(")/,
       "\\1%{version}\\2"
     ),
     Target.new(
@@ -166,7 +166,7 @@ if show_help
   exit 0
 end
 
-args = ARGV.reject { |a| a.starts_with?("-") }
+args = ARGV.reject(&.starts_with?("-"))
 if args.size > 0
   new_version = args[0]
   unless new_version.matches?(/^\d+\.\d+\.\d+$/)
