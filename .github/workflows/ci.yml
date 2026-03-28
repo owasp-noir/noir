@@ -88,7 +88,7 @@ jobs:
       - name: Run functional tests
         run: crystal spec spec/functional_test
   build-snapcraft:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: read
