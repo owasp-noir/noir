@@ -154,6 +154,14 @@ module Noir
           # Normalize HTTP method (e.g., DEL -> DELETE)
           normalized_method = normalize_http_method(pattern.method)
 
+          # Convert byte offset to line number
+          line_number = if pattern.start_pos >= 0
+                          content.to_slice[0, pattern.start_pos].count('\n'.ord.to_u8) + 1
+                        else
+                          1
+                        end
+          route_details = Details.new(PathInfo.new(file_path, line_number))
+
           # Handle router.all by expanding to all HTTP methods
           prefixes.each do |prefix|
             path_with_prefix = prefix.empty? ? pattern.path : URLPath.join(prefix, pattern.path)
@@ -161,7 +169,7 @@ module Noir
             if normalized_method == "ALL"
               all_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
               all_methods.each do |method|
-                endpoint = Endpoint.new(path_with_prefix, method)
+                endpoint = Endpoint.new(path_with_prefix, method, route_details)
 
                 # Add path parameters detected in the URL
                 pattern.params.each do |param|
@@ -174,7 +182,7 @@ module Noir
                 endpoints << endpoint
               end
             else
-              endpoint = Endpoint.new(path_with_prefix, normalized_method)
+              endpoint = Endpoint.new(path_with_prefix, normalized_method, route_details)
 
               # Add path parameters detected in the URL
               pattern.params.each do |param|
