@@ -13,6 +13,7 @@ Beyond source code analysis, Noir can parse API and data specification formats s
 | Specification | Format | endpoint | method | query | path | body | header | cookie | static_path | websocket |
 |---|---|---|---|---|---|---|---|---|---|---|
 | GraphQL | GRAPHQL | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ✗ |
+| Grpc | PROTOBUF | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ |
 | HAR | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ✗ |
 | OpenAPI 2.0 (Swagger) | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ✗ |
 | OpenAPI 2.0 (Swagger) | YAML | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ✗ |
