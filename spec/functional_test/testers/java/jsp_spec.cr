@@ -6,6 +6,9 @@ expected_endpoints = [
     Param.new("password", "", "query"),
   ]),
   Endpoint.new("/el.jsp", "GET", [Param.new("username", "", "query")]),
+  Endpoint.new("/attribute.jsp", "GET", [Param.new("userId", "", "query")]),
+  Endpoint.new("/header.jsp", "GET", [Param.new("X-API-Key", "", "header")]),
+  Endpoint.new("/cookie.jsp", "GET", [Param.new("", "", "cookie")]),
 ]
 
 FunctionalTester.new("fixtures/java/jsp/", {
