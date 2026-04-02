@@ -13,6 +13,7 @@ module Analyzer::Java
       parser_map = Hash(String, JavaParser).new
       package_map = Hash(String, Hash(String, ClassModel)).new
       webflux_base_path_map = Hash(String, String).new
+      depth = 0
 
       file_list = all_files()
       file_list.each do |path|
@@ -78,74 +79,12 @@ module Analyzer::Java
             root_source_directory : Path = parser.get_root_source_directory(path, package_name)
             package_directory = Path.new(path).dirname
 
-            # Import packages
-            import_map = Hash(String, ClassModel).new
-            parser.import_statements.each do |import_statement|
-              import_path = import_statement.gsub(".", "/")
-              if import_path.ends_with?("/*")
-                import_directory = root_source_directory.join(import_path[..-3])
-                if Dir.exists?(import_directory)
-                  Dir.glob("#{escape_glob_path(import_directory.to_s)}/*.java") do |_path|
-                    next if path == _path
-                    if !parser_map.has_key?(_path)
-                      # Java Spring only resolves one level of imports, so depth is always 0.
-                      next unless ParserLimit.allow_depth?(0)
-                      _parser = create_parser(Path.new(_path))
-                      parser_map[_path] = _parser
-                    else
-                      _parser = parser_map[_path]
-                    end
+            import_map = process_imports(parser, root_source_directory, package_directory, path, parser_map, depth)
 
-                    _parser.classes.each do |package_class|
-                      import_map[package_class.name] = package_class
-                    end
-                  end
-                end
-              else
-                source_path = root_source_directory.join(import_path + ".java")
-                next if source_path.dirname == package_directory || !File.exists?(source_path)
-                if !parser_map.has_key?(source_path.to_s)
-                  # Java Spring only resolves one level of imports, so depth is always 0.
-                  next unless ParserLimit.allow_depth?(0)
-                  _parser = create_parser(source_path)
-                  parser_map[source_path.to_s] = _parser
-                  _parser.classes.each do |package_class|
-                    import_map[package_class.name] = package_class
-                  end
-                else
-                  _parser = parser_map[source_path.to_s]
-                  _parser.classes.each do |package_class|
-                    import_map[package_class.name] = package_class
-                  end
-                end
-              end
-            end
-
-            # Import packages from the same directory
             package_class_map = package_map[package_directory]?
             if package_class_map.nil?
-              package_class_map = Hash(String, ClassModel).new
-              Dir.glob("#{escape_glob_path(package_directory)}/*.java") do |_path|
-                next if path == _path
-                if !parser_map.has_key?(_path)
-                  # Java Spring only resolves one level of imports, so depth is always 0.
-                  next unless ParserLimit.allow_depth?(0)
-                  _parser = create_parser(Path.new(_path))
-                  parser_map[_path] = _parser
-                else
-                  _parser = parser_map[_path]
-                end
-
-                _parser.classes.each do |package_class|
-                  package_class_map[package_class.name] = package_class
-                end
-
-                parser.classes.each do |package_class|
-                  package_class_map[package_class.name] = package_class
-                end
-
-                package_map[package_directory] = package_class_map
-              end
+              package_class_map = process_package_classes(parser, package_directory, path, parser_map, depth)
+              package_map[package_directory] = package_class_map
             end
 
             # Extract URL mappings and methods from Spring MVC annotated classes
@@ -293,6 +232,74 @@ module Analyzer::Java
       Fiber.yield
 
       @result
+    end
+
+    private def process_imports(parser : JavaParser, root_source_directory : Path, package_directory : String, current_path : String, parser_map : Hash(String, JavaParser), depth : Int32) : Hash(String, ClassModel)
+      import_map = Hash(String, ClassModel).new
+      parser.import_statements.each do |import_statement|
+        import_path = import_statement.gsub(".", "/")
+        if import_path.ends_with?("/*")
+          import_directory = root_source_directory.join(import_path[..-3])
+          if Dir.exists?(import_directory)
+            Dir.glob("#{escape_glob_path(import_directory.to_s)}/*.java") do |_path|
+              next if current_path == _path
+              if !parser_map.has_key?(_path)
+                next unless ParserLimit.allow_depth?(depth)
+                _parser = create_parser(Path.new(_path))
+                parser_map[_path] = _parser
+              else
+                _parser = parser_map[_path]
+              end
+
+              _parser.classes.each do |package_class|
+                import_map[package_class.name] = package_class
+              end
+            end
+          end
+        else
+          source_path = root_source_directory.join(import_path + ".java")
+          next if source_path.dirname == package_directory || !File.exists?(source_path)
+          if !parser_map.has_key?(source_path.to_s)
+            next unless ParserLimit.allow_depth?(depth)
+            _parser = create_parser(source_path)
+            parser_map[source_path.to_s] = _parser
+            _parser.classes.each do |package_class|
+              import_map[package_class.name] = package_class
+            end
+          else
+            _parser = parser_map[source_path.to_s]
+            _parser.classes.each do |package_class|
+              import_map[package_class.name] = package_class
+            end
+          end
+        end
+      end
+
+      import_map
+    end
+
+    private def process_package_classes(parser : JavaParser, package_directory : String, current_path : String, parser_map : Hash(String, JavaParser), depth : Int32) : Hash(String, ClassModel)
+      package_class_map = Hash(String, ClassModel).new
+      Dir.glob("#{escape_glob_path(package_directory)}/*.java") do |_path|
+        next if current_path == _path
+        if !parser_map.has_key?(_path)
+          next unless ParserLimit.allow_depth?(depth)
+          _parser = create_parser(Path.new(_path))
+          parser_map[_path] = _parser
+        else
+          _parser = parser_map[_path]
+        end
+
+        _parser.classes.each do |package_class|
+          package_class_map[package_class.name] = package_class
+        end
+      end
+
+      parser.classes.each do |package_class|
+        package_class_map[package_class.name] = package_class
+      end
+
+      package_class_map
     end
 
     def create_parser(path : Path, content : String = "")

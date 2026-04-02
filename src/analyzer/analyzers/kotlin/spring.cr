@@ -16,6 +16,7 @@ module Analyzer::Kotlin
       parser_map = Hash(String, KotlinParser).new
       package_map = Hash(String, Hash(String, KotlinParser::ClassModel)).new
       webflux_base_path_map = Hash(String, String).new
+      depth = 0
 
       file_list = all_files()
       file_list.each do |path|
@@ -24,7 +25,7 @@ module Analyzer::Kotlin
         if File.directory?(path)
           process_directory(path, webflux_base_path_map)
         elsif path.ends_with?(".#{KOTLIN_EXTENSION}")
-          process_kotlin_file(path, parser_map, package_map, webflux_base_path_map)
+          process_kotlin_file(path, parser_map, package_map, webflux_base_path_map, depth)
         end
       end
 
@@ -133,7 +134,7 @@ module Analyzer::Kotlin
     end
 
     # Process individual Kotlin files to analyze Spring WebFlux annotations
-    private def process_kotlin_file(path : String, parser_map : Hash(String, KotlinParser), package_map : Hash(String, Hash(String, KotlinParser::ClassModel)), webflux_base_path_map : Hash(String, String))
+    private def process_kotlin_file(path : String, parser_map : Hash(String, KotlinParser), package_map : Hash(String, Hash(String, KotlinParser::ClassModel)), webflux_base_path_map : Hash(String, String), depth : Int32)
       content = fetch_file_content(path)
       parser = parser_map[path]? || create_parser(Path.new(path), content)
       parser_map[path] ||= parser
@@ -145,8 +146,8 @@ module Analyzer::Kotlin
       root_source_directory = parser.get_root_source_directory(path, package_name)
       package_directory = Path.new(path).parent
 
-      import_map = process_imports(parser, root_source_directory, package_directory, path, parser_map)
-      package_class_map = package_map[package_directory.to_s]? || process_package_classes(package_directory, parser_map)
+      import_map = process_imports(parser, root_source_directory, package_directory, path, parser_map, depth)
+      package_class_map = package_map[package_directory.to_s]? || process_package_classes(package_directory, parser_map, depth)
       package_map[package_directory.to_s] ||= package_class_map
 
       class_map = package_class_map.merge(import_map)
@@ -171,14 +172,14 @@ module Analyzer::Kotlin
     end
 
     # Process imports in the Kotlin file to gather class models
-    private def process_imports(parser : KotlinParser, root_source_directory : Path, package_directory : Path, current_path : String, parser_map : Hash(String, KotlinParser)) : Hash(String, KotlinParser::ClassModel)
+    private def process_imports(parser : KotlinParser, root_source_directory : Path, package_directory : Path, current_path : String, parser_map : Hash(String, KotlinParser), depth : Int32) : Hash(String, KotlinParser::ClassModel)
       import_map = Hash(String, KotlinParser::ClassModel).new
       parser.import_statements.each do |import_statement|
         import_path = import_statement.gsub(".", "/")
         if import_path.ends_with?("/*")
-          process_wildcard_import(root_source_directory, import_path, current_path, parser_map, import_map)
+          process_wildcard_import(root_source_directory, import_path, current_path, parser_map, import_map, depth)
         else
-          process_single_import(root_source_directory, import_path, package_directory, parser_map, import_map)
+          process_single_import(root_source_directory, import_path, package_directory, parser_map, import_map, depth)
         end
       end
 
@@ -186,15 +187,14 @@ module Analyzer::Kotlin
     end
 
     # Handle wildcard imports
-    private def process_wildcard_import(root_source_directory : Path, import_path : String, current_path : String, parser_map : Hash(String, KotlinParser), import_map : Hash(String, KotlinParser::ClassModel))
+    private def process_wildcard_import(root_source_directory : Path, import_path : String, current_path : String, parser_map : Hash(String, KotlinParser), import_map : Hash(String, KotlinParser::ClassModel), depth : Int32)
       import_directory = root_source_directory.join(import_path[0..-3])
       return unless Dir.exists?(import_directory)
 
       # TODO: Be aware that the import file location might differ from the actual file system path.
       Dir.glob("#{escape_glob_path(import_directory.to_s)}/*.#{KOTLIN_EXTENSION}").sort.each do |path|
         next if path == current_path
-        # Kotlin Spring only resolves one level of imports, so depth is always 0.
-        next unless ParserLimit.allow_depth?(0)
+        next unless ParserLimit.allow_depth?(depth)
         parser = parser_map[path]? || create_parser(Path.new(path))
         parser_map[path] ||= parser
         parser.classes.each { |package_class| import_map[package_class.name] = package_class }
@@ -202,11 +202,10 @@ module Analyzer::Kotlin
     end
 
     # Handle single imports
-    private def process_single_import(root_source_directory : Path, import_path : String, package_directory : Path, parser_map : Hash(String, KotlinParser), import_map : Hash(String, KotlinParser::ClassModel))
+    private def process_single_import(root_source_directory : Path, import_path : String, package_directory : Path, parser_map : Hash(String, KotlinParser), import_map : Hash(String, KotlinParser::ClassModel), depth : Int32)
       source_path = root_source_directory.join("#{import_path}.#{KOTLIN_EXTENSION}")
       return if source_path.dirname == package_directory || !File.exists?(source_path)
-      # Kotlin Spring only resolves one level of imports, so depth is always 0.
-      return unless ParserLimit.allow_depth?(0)
+      return unless ParserLimit.allow_depth?(depth)
       # TODO: Be aware that the import file location might differ from the actual file system path.
       parser = parser_map[source_path.to_s]? || create_parser(source_path)
       parser_map[source_path.to_s] ||= parser
@@ -214,11 +213,10 @@ module Analyzer::Kotlin
     end
 
     # Process all classes in the same package directory
-    private def process_package_classes(package_directory : Path, parser_map : Hash(String, KotlinParser)) : Hash(String, KotlinParser::ClassModel)
+    private def process_package_classes(package_directory : Path, parser_map : Hash(String, KotlinParser), depth : Int32) : Hash(String, KotlinParser::ClassModel)
       package_class_map = Hash(String, KotlinParser::ClassModel).new
       Dir.glob("#{escape_glob_path(package_directory.to_s)}/*.#{KOTLIN_EXTENSION}").sort.each do |path|
-        # Kotlin Spring only resolves one level of imports, so depth is always 0.
-        next unless ParserLimit.allow_depth?(0)
+        next unless ParserLimit.allow_depth?(depth)
         parser = parser_map[path]? || create_parser(Path.new(path))
         parser_map[path] ||= parser
         parser.classes.each { |package_class| package_class_map[package_class.name] = package_class }
