@@ -293,10 +293,10 @@ module Analyzer::Java
         _parser.classes.each do |package_class|
           package_class_map[package_class.name] = package_class
         end
+      end
 
-        parser.classes.each do |package_class|
-          package_class_map[package_class.name] = package_class
-        end
+      parser.classes.each do |package_class|
+        package_class_map[package_class.name] = package_class
       end
 
       package_class_map
