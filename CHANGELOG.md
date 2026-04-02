@@ -2,6 +2,19 @@
 
 All notable changes to [Noir](https://github.com/owasp-noir/noir) will be documented in this file.
 
+## v0.29.1
+
+### Added
+- `getAttribute`, `getHeader`, `getCookies` extraction to JSP analyzer
+
+### Changed
+- Propagate import depth for `NOIR_PARSER_MAX_DEPTH` in Java/Kotlin Spring analyzers
+- Move `parser.classes` merge outside loop in `process_package_classes`
+
+### Fixed
+- Fixed PHP superglobals incorrectly used in JSP analyzer patterns
+- Fixed inaccurate line numbers in Express.js analyzer
+
 ## v0.29.0
 
 ### Added
