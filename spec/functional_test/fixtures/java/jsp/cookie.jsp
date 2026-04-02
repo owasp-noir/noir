@@ -1,0 +1,3 @@
+<%
+    Cookie[] cookies = request.getCookies();
+%>

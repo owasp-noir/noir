@@ -27,10 +27,33 @@ module Analyzer::Java
 
                       file.each_line do |line|
                         if line.includes? "request.getParameter"
-                          match = line.strip.match(/request.getParameter\("(.*?)"\)/)
+                          match = line.strip.match(/request\.getParameter\("(.*?)"\)/)
                           if match
                             param_name = match[1]
                             params_query << Param.new(param_name, "", "query")
+                          end
+                        end
+
+                        if line.includes? "request.getAttribute"
+                          match = line.strip.match(/request\.getAttribute\("(.*?)"\)/)
+                          if match
+                            param_name = match[1]
+                            params_query << Param.new(param_name, "", "query")
+                          end
+                        end
+
+                        if line.includes? "request.getHeader"
+                          match = line.strip.match(/request\.getHeader\("(.*?)"\)/)
+                          if match
+                            param_name = match[1]
+                            params_query << Param.new(param_name, "", "header")
+                          end
+                        end
+
+                        if line.includes? "request.getCookies"
+                          match = line.strip.match(/request\.getCookies/)
+                          if match
+                            params_query << Param.new("", "", "cookie")
                           end
                         end
 
