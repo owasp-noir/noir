@@ -64,7 +64,7 @@ module Analyzer::Java
     end
 
     def allow_patterns
-      ["$_GET", "$_POST", "$_REQUEST", "$_SERVER"]
+      ["request.getParameter", "request.getAttribute", "request.getHeader", "request.getCookies"]
     end
   end
 end
