@@ -1,7 +1,7 @@
 require "../../../models/analyzer"
 require "../../../models/endpoint"
 require "json"
-require "regex" # Explicitly require Regex
+require "log"
 
 # Define the regex as a top-level constant in this file
 OPERATION_REGEX = Regex.new("(query|mutation|subscription)\\s+([_A-Za-z][_0-9A-Za-z]*)")
@@ -62,7 +62,7 @@ FileAnalyzer.add_hook(->(path : String, _url : String) : Array(Endpoint) {
   begin
     file_content = File.read(path, encoding: "utf-8", invalid: :skip)
   rescue ex
-    STDERR.puts "GraphQL Analyzer: Error reading file #{path}: #{ex.message} (#{ex.class})"
+    Log.debug { "GraphQL Analyzer: Error reading file #{path}: #{ex.message} (#{ex.class})" }
     return [] of Endpoint # Return empty if read fails
   end
 
