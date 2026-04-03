@@ -127,9 +127,6 @@ struct Details
 
   # + New details types to be added in the future..
 
-  def initialize
-  end
-
   def initialize(code_path : PathInfo)
     @code_paths << code_path
   end
