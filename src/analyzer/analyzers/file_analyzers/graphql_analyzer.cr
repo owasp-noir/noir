@@ -1,7 +1,6 @@
 require "../../../models/analyzer"
 require "../../../models/endpoint"
 require "json"
-require "regex" # Explicitly require Regex
 
 # Define the regex as a top-level constant in this file
 OPERATION_REGEX = Regex.new("(query|mutation|subscription)\\s+([_A-Za-z][_0-9A-Za-z]*)")
