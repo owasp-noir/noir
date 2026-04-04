@@ -572,16 +572,16 @@ class JavaParser
   def print_tokens(tokens : Array(Token), id = "default", trace = false)
     STDERR.puts("\n================ #{id} ===================")
     tokens.each do |token|
-      STDERR.print(token.value)
+      STDERR.print("#{token.value} ")
       if id == "error"
-        STDERR.print("(#{token.type})")
+        STDERR.print("(#{token.type}) ")
       end
     end
 
     if trace
       STDERR.puts ""
       tokens.each do |token|
-        STDERR.print("#{token.value}(#{token.type})")
+        STDERR.print("#{token.value}(#{token.type}) ")
       end
     end
   end

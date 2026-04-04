@@ -323,7 +323,7 @@ class PythonParser
   def print_line(index)
     while index < @tokens.size
       break if @tokens[index].type == :NEWLINE
-      STDERR.print(@tokens[index].to_s, " ")
+      STDERR.print("#{@tokens[index].type} #{@tokens[index].value.inspect}", " ")
       index += 1
     end
     STDERR.puts ""
