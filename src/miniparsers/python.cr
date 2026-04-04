@@ -323,15 +323,15 @@ class PythonParser
   def print_line(index)
     while index < @tokens.size
       break if @tokens[index].type == :NEWLINE
-      print(@tokens[index].to_s, " ")
+      STDERR.print(@tokens[index].to_s, " ")
       index += 1
     end
-    puts ""
+    STDERR.puts ""
   end
 
   def debug_print(s)
     if @debug
-      puts s
+      STDERR.puts s
     end
   end
 

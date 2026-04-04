@@ -637,18 +637,18 @@ class KotlinParser
 
   # Print tokens for debugging purposes
   def print_tokens(tokens : Array(Token), id = "default", trace = false)
-    puts("\n================ #{id} ===================")
+    STDERR.puts("\n================ #{id} ===================")
     tokens.each do |token|
-      print("#{token.value} ")
+      STDERR.print("#{token.value} ")
       if id == "error"
-        print("(#{token.type})")
+        STDERR.print("(#{token.type})")
       end
     end
 
     if trace
-      puts ""
+      STDERR.puts ""
       tokens.each do |token|
-        print("#{token.value}(#{token.type})")
+        STDERR.print("#{token.value}(#{token.type})")
       end
     end
   end
@@ -661,10 +661,10 @@ class KotlinParser
         print_tokens annotation_model.tokens, "#{_class.name} annotation"
       end
 
-      puts("\n================ class #{_class.name} ==================")
+      STDERR.puts("\n================ class #{_class.name} ==================")
       _class.fields.each_key do |field_name|
         field = _class.fields[field_name]
-        puts("[Field] #{field.access_modifier} #{field.val_or_var} #{field.name}: #{field.type} = #{field.init_value}")
+        STDERR.puts("[Field] #{field.access_modifier} #{field.val_or_var} #{field.name}: #{field.type} = #{field.init_value}")
       end
 
       _class.methods.each_key do |method_name|
