@@ -6,12 +6,10 @@ struct Endpoint
   include YAML::Serializable
   property url, method, params, protocol, details, tags, internal
 
-  def initialize(@url : String, @method : String)
-    @params = [] of Param
-    @details = Details.new
+  def initialize(@url : String, @method : String, @params : Array(Param) = [] of Param,
+                 @details : Details = Details.new, @internal : Bool = false)
     @protocol = "http"
     @tags = [] of Tag
-    @internal = false
   end
 
   def initialize(@url : String, @method : String, @details : Details)
@@ -19,24 +17,6 @@ struct Endpoint
     @protocol = "http"
     @tags = [] of Tag
     @internal = false
-  end
-
-  def initialize(@url : String, @method : String, @params : Array(Param))
-    @details = Details.new
-    @protocol = "http"
-    @tags = [] of Tag
-    @internal = false
-  end
-
-  def initialize(@url : String, @method : String, @params : Array(Param), @details : Details)
-    @protocol = "http"
-    @tags = [] of Tag
-    @internal = false
-  end
-
-  def initialize(@url : String, @method : String, @params : Array(Param), @details : Details, @internal : Bool)
-    @protocol = "http"
-    @tags = [] of Tag
   end
 
   def details=(details : Details)
