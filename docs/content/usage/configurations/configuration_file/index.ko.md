@@ -49,12 +49,12 @@ all_taggers: true
 
 # 기본 AI 제공자 및 모델
 ai_provider: "openai"
-ai_model: "gpt-4o"
+ai_model: "gpt-5.4"
 ```
 
 위 설정은 다음 명령과 동일합니다:
 
 ```bash
-noir -b /path/to/my/project -f json --exclude-codes "404,500" -T --ai-provider openai --ai-model gpt-4o
+noir -b /path/to/my/project -f json --exclude-codes "404,500" -T --ai-provider openai --ai-model gpt-5.4
 ```
 

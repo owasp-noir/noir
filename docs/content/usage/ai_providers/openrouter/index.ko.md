@@ -18,7 +18,7 @@ sort_by = "weight"
 ```bash
 noir -b ./myapp \
      --ai-provider=openrouter \
-     --ai-model=anthropic/claude-3.5-sonnet \
+     --ai-model=anthropic/claude-sonnet-4-6 \
      --ai-key=sk-or-...
 ```
 
@@ -26,7 +26,7 @@ noir -b ./myapp \
 
 ```bash
 export NOIR_AI_KEY=sk-or-...
-noir -b ./myapp --ai-provider=openrouter --ai-model=openai/gpt-4o
+noir -b ./myapp --ai-provider=openrouter --ai-model=openai/gpt-5.4
 ```
 
 OpenRouter의 주요 이점:

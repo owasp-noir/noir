@@ -20,7 +20,7 @@ sort_by = "weight"
 ```bash
 noir -b ./spec/functional_test/fixtures/hahwul \
      --ai-provider=github \
-     --ai-model=gpt-4o \
+     --ai-model=gpt-5.4 \
      --ai-key=github_pat_...
 ```
 
@@ -29,6 +29,6 @@ noir -b ./spec/functional_test/fixtures/hahwul \
 ```bash
 noir -b ./spec/functional_test/fixtures/hahwul \
      --ai-provider=azure \
-     --ai-model=gpt-4o \
+     --ai-model=gpt-5.4 \
      --ai-key=github_pat_...
 ```

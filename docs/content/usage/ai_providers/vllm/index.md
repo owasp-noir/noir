@@ -14,7 +14,7 @@ Use [vLLM](https://docs.vllm.ai), a high-throughput inference engine for LLMs, t
 2.  **Serve a Model**:
 
     ```bash
-    vllm serve microsoft/phi-3
+    vllm serve google/gemma-4-31B-it
     ```
 
     This starts a local server with an OpenAI-compatible API endpoint.
@@ -24,5 +24,5 @@ Use [vLLM](https://docs.vllm.ai), a high-throughput inference engine for LLMs, t
 ```bash
 noir -b ./spec/functional_test/fixtures/hahwul \
      --ai-provider=vllm \
-     --ai-model=microsoft/phi-3
+     --ai-model=google/gemma-4-31B-it
 ```

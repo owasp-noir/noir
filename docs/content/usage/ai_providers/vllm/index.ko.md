@@ -14,7 +14,7 @@ sort_by = "weight"
 2.  **모델 서빙**:
 
     ```bash
-    vllm serve microsoft/phi-3
+    vllm serve google/gemma-4-31B-it
     ```
 
     OpenAI 호환 API 엔드포인트를 제공하는 로컬 서버가 시작됩니다.
@@ -24,5 +24,5 @@ sort_by = "weight"
 ```bash
 noir -b ./spec/functional_test/fixtures/hahwul \
      --ai-provider=vllm \
-     --ai-model=microsoft/phi-3
+     --ai-model=google/gemma-4-31B-it
 ```
