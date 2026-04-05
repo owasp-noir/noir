@@ -169,8 +169,32 @@ describe LLM do
         ollama["llama3.2"].should eq(128000)
       end
 
+      it "includes llama4 with 512000 tokens" do
+        ollama["llama4"].should eq(512000)
+      end
+
+      it "includes llama4-maverick with 256000 tokens" do
+        ollama["llama4-maverick"].should eq(256000)
+      end
+
       it "includes phi3 with 128000 tokens" do
         ollama["phi3"].should eq(128000)
+      end
+
+      it "includes phi4 with 16384 tokens" do
+        ollama["phi4"].should eq(16384)
+      end
+
+      it "includes phi4-mini with 128000 tokens" do
+        ollama["phi4-mini"].should eq(128000)
+      end
+
+      it "includes gemma3 with 128000 tokens" do
+        ollama["gemma3"].should eq(128000)
+      end
+
+      it "includes gemma4 with 128000 tokens" do
+        ollama["gemma4"].should eq(128000)
       end
 
       it "includes mistral with 32768 tokens" do
