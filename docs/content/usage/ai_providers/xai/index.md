@@ -11,7 +11,7 @@ Use [xAI](https://x.ai) Grok models for advanced code analysis and endpoint disc
 ## Setup
 
 1.  **API Key**: Get from [xAI website](https://x.ai/api)
-2.  **Model**: Choose model (e.g., `grok-2-1212`)
+2.  **Model**: Choose model (e.g., `grok-4.20`)
 
 ## Usage
 
@@ -20,7 +20,7 @@ Run Noir with xAI:
 ```bash
 noir -b ./spec/functional_test/fixtures/hahwul \
      --ai-provider=xai \
-     --ai-model=grok-2-1212 \
+     --ai-model=grok-4.20 \
      --ai-key=xai-...
 ```
 

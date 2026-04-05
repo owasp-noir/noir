@@ -15,13 +15,13 @@ Connect Noir to Large Language Models (cloud-based, local, or ACP agent-based) f
 Scan with OpenAI:
 
 ```bash
-noir -b . --ai-provider openai --ai-model gpt-4o --ai-key $OPENAI_API_KEY
+noir -b . --ai-provider openai --ai-model gpt-5.4 --ai-key $OPENAI_API_KEY
 ```
 
 Scan with local Ollama (no API key needed):
 
 ```bash
-noir -b . --ai-provider ollama --ai-model phi-3
+noir -b . --ai-provider ollama --ai-model gemma4
 ```
 
 Scan with ACP agent (no model/key needed):
@@ -49,7 +49,7 @@ noir -b . --ai-provider acp:codex
 | Flag | Description |
 |---|---|
 | `--ai-provider` | Provider prefix (e.g., `openai`, `ollama`, `acp:codex`) or custom API URL |
-| `--ai-model` | Model name (e.g., `gpt-4o`), optional for `acp:*` |
+| `--ai-model` | Model name (e.g., `gpt-5.4`), optional for `acp:*` |
 | `--ai-key` | API key (or use `NOIR_AI_KEY` env var) |
 | `--ai-agent` | Enable agentic AI workflow (iterative tool-calling loop) |
 | `--ai-agent-max-steps` | Max steps for AI agent loop (default: `20`) |
