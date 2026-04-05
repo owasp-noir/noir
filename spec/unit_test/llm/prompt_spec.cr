@@ -247,4 +247,23 @@ describe LLM do
       end
     end
   end
+
+  describe ".get_max_tokens" do
+    it "returns correct tokens for known model" do
+      LLM.get_max_tokens("openai", "gpt-4o").should eq(128000)
+    end
+
+    it "falls back to provider default for unknown model" do
+      result = LLM.get_max_tokens("ollama", "unknown-model-xyz")
+      result.should eq(4000)
+    end
+
+    it "falls back to global default for unknown provider" do
+      LLM.get_max_tokens("unknown-provider", "some-model").should eq(4000)
+    end
+
+    it "returns correct tokens with case-insensitive provider" do
+      LLM.get_max_tokens("OpenAI", "gpt-4o").should eq(128000)
+    end
+  end
 end

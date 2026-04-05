@@ -493,7 +493,9 @@ module LLM
       if provider_limits.as(Hash).has_key?(model)
         provider_limits.as(Hash)[model].as(Int32)
       else
-        provider_limits.as(Hash)["default"].as(Int32)
+        default_tokens = provider_limits.as(Hash)["default"].as(Int32)
+        STDERR.puts "WARNING: Unknown model '#{model}' for provider '#{provider}'. Using default max_tokens (#{default_tokens}). You can specify --ai-max-token to override."
+        default_tokens
       end
     else
       provider_limits.as(Int32)
