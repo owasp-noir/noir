@@ -254,17 +254,21 @@ describe LLM do
 
     it "each provider has a default key for unknown model fallback" do
       limits = LLM::MODEL_TOKEN_LIMITS
-      %w[openai xai anthropic azure github ollama google cohere].each do |provider|
-        provider_limits = limits[provider].as(Hash(String, Int32))
-        provider_limits.has_key?("default").should be_true
+      limits.each do |key, value|
+        next if key == "default"
+        if value.is_a?(Hash)
+          value.as(Hash(String, Int32)).has_key?("default").should be_true
+        end
       end
     end
 
     it "provider defaults are positive integers" do
       limits = LLM::MODEL_TOKEN_LIMITS
-      %w[openai xai anthropic azure github ollama google cohere].each do |provider|
-        provider_limits = limits[provider].as(Hash(String, Int32))
-        (provider_limits["default"] > 0).should be_true
+      limits.each do |key, value|
+        next if key == "default"
+        if value.is_a?(Hash)
+          (value.as(Hash(String, Int32))["default"] > 0).should be_true
+        end
       end
     end
 

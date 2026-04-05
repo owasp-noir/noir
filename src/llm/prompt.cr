@@ -498,6 +498,7 @@ module LLM
         default_tokens
       end
     else
+      STDERR.puts "WARNING: Unknown provider '#{provider}'. Using global default max_tokens (#{provider_limits}). You can specify --ai-max-token to override."
       provider_limits.as(Int32)
     end
   end
