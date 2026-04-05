@@ -1,5 +1,5 @@
 ---
-name: Build and Release .deb Package
+name: Build and Release .rpm Package
 on:
   workflow_dispatch:
     inputs:
@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       upload_to_release:
-        description: "Upload .deb to GitHub Release (requires existing tag)"
+        description: "Upload .rpm to GitHub Release (requires existing tag)"
         required: false
         type: boolean
         default: false
@@ -18,7 +18,7 @@ on:
 permissions:
   contents: write
 jobs:
-  build-deb:
+  build-rpm:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' &&
@@ -26,13 +26,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: [amd64, arm64]
+        include:
+          - arch: x86_64
+            binary_arch: x86_64
+          - arch: aarch64
+            binary_arch: arm64
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source code
         uses: actions/checkout@v6
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', github.event.inputs.version) || github.event.workflow_run.head_branch }}
+
       - name: Get Version
         id: get_version
         run: |
@@ -44,47 +49,59 @@ jobs:
           VERSION="${RAW_VERSION#v}"
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "Resolved version: $VERSION"
+
       - name: Download prebuilt binary
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          ARCH_NAME=${{ matrix.arch == 'amd64' && 'x86_64' || 'arm64' }}
           gh release download "v${{ env.VERSION }}" \
-            --pattern "noir-v${{ env.VERSION }}-linux-${ARCH_NAME}" \
+            --pattern "noir-v${{ env.VERSION }}-linux-${{ matrix.binary_arch }}" \
             --output noir
           chmod +x noir
-      - name: Create Debian Package Structure
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+
+      - name: Install nfpm
         run: |
-          mkdir -p noir_${{ env.VERSION }}_${{ matrix.arch }}/DEBIAN
-          mkdir -p noir_${{ env.VERSION }}_${{ matrix.arch }}/usr/bin
-          mkdir -p noir_${{ env.VERSION }}_${{ matrix.arch }}/usr/share/doc/noir
-          cp noir noir_${{ env.VERSION }}_${{ matrix.arch }}/usr/bin/
-          cp README.md noir_${{ env.VERSION }}_${{ matrix.arch }}/usr/share/doc/noir/
-          cp LICENSE noir_${{ env.VERSION }}_${{ matrix.arch }}/usr/share/doc/noir/
-      - name: Create DEBIAN/control file
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+
+      - name: Create nfpm config and build .rpm
         run: |
-          cat > noir_${{ env.VERSION }}_${{ matrix.arch }}/DEBIAN/control << EOF
-          Package: noir
-          Version: ${{ env.VERSION }}
-          Architecture: ${{ matrix.arch }}
-          Maintainer: HAHWUL <hahwul@gmail.com>, KSG <ksg97031@gmail.com>
-          Description: Hunt every Endpoint in your code, expose Shadow APIs, map the Attack Surface.
-          Depends: libc6 (>= 2.17)
+          cat > nfpm.yaml <<EOF
+          name: noir
+          arch: ${{ matrix.arch }}
+          version: ${{ env.VERSION }}
+          maintainer: HAHWUL <hahwul@gmail.com>
+          description: "Hunt every Endpoint in your code, expose Shadow APIs, map the Attack Surface."
+          license: MIT
+          depends:
+            - glibc >= 2.17
+          contents:
+            - src: noir
+              dst: /usr/bin/noir
+              file_info:
+                mode: 0755
+            - src: LICENSE
+              dst: /usr/share/licenses/noir/LICENSE
+              file_info:
+                mode: 0644
           EOF
-      - name: Build .deb Package
-        run: |
-          dpkg-deb --build noir_${{ env.VERSION }}_${{ matrix.arch }}
+          sed -i 's/^          //' nfpm.yaml
+          nfpm package --packager rpm --target noir-${{ env.VERSION }}.${{ matrix.arch }}.rpm
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: noir_${{ env.VERSION }}_${{ matrix.arch }}.deb
-          path: noir_${{ env.VERSION }}_${{ matrix.arch }}.deb
-      - name: Upload .deb to Release
+          name: noir-${{ env.VERSION }}.${{ matrix.arch }}.rpm
+          path: noir-${{ env.VERSION }}.${{ matrix.arch }}.rpm
+
+      - name: Upload .rpm to Release
         if: github.event_name == 'workflow_run' || (github.event_name == 'workflow_dispatch' && inputs.upload_to_release)
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ env.VERSION }}
-          files: |
-            noir_${{ env.VERSION }}_${{ matrix.arch }}.deb
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "v${{ env.VERSION }}" \
+            "noir-${{ env.VERSION }}.${{ matrix.arch }}.rpm" --clobber

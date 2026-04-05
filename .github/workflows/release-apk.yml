@@ -1,0 +1,129 @@
+---
+name: Build and Release .apk Package
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (e.g., 1.0.0)"
+        required: true
+        type: string
+      upload_to_release:
+        description: "Upload .apk to GitHub Release (requires existing tag)"
+        required: false
+        type: boolean
+        default: false
+  workflow_run:
+    workflows: ["Build and Release Binaries"]
+    types: [completed]
+permissions:
+  contents: write
+jobs:
+  build-apk:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'release')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            binary_arch: x86_64
+          - arch: aarch64
+            binary_arch: arm64
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+    steps:
+      - name: Install build tools
+        run: |
+          apk add --no-cache alpine-sdk sudo github-cli git
+
+      - name: Fix git safe directory
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Checkout source code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', github.event.inputs.version) || github.event.workflow_run.head_branch }}
+
+      - name: Get Version
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RAW_VERSION="${{ github.event.inputs.version }}"
+          else
+            RAW_VERSION="${{ github.event.workflow_run.head_branch }}"
+          fi
+          VERSION="${RAW_VERSION#v}"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Resolved version: $VERSION"
+
+      - name: Download prebuilt binary
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download "v${{ env.VERSION }}" \
+            --pattern "noir-v${{ env.VERSION }}-linux-${{ matrix.binary_arch }}" \
+            --output noir
+          chmod +x noir
+
+      - name: Setup abuild environment
+        run: |
+          adduser -D builder
+          addgroup builder abuild
+          echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+          sudo -u builder abuild-keygen -ain
+
+      - name: Create APKBUILD
+        run: |
+          mkdir -p /home/builder/noir
+          cp noir /home/builder/noir/
+          cp LICENSE /home/builder/noir/
+          cat > /home/builder/noir/APKBUILD <<APKEOF
+          # Maintainer: HAHWUL <hahwul@gmail.com>
+          pkgname=noir
+          pkgver=${{ env.VERSION }}
+          pkgrel=0
+          pkgdesc="Hunt every Endpoint in your code, expose Shadow APIs, map the Attack Surface."
+          url="https://github.com/owasp-noir/noir"
+          arch="${{ matrix.arch }}"
+          license="MIT"
+          source=""
+          options="!check"
+
+          package() {
+          	install -Dm755 "\$srcdir/../noir" "\$pkgdir/usr/bin/noir"
+          	install -Dm644 "\$srcdir/../LICENSE" "\$pkgdir/usr/share/licenses/\$pkgname/LICENSE"
+          }
+          APKEOF
+          sed -i 's/^          //' /home/builder/noir/APKBUILD
+          chown -R builder:builder /home/builder/noir
+
+      - name: Build .apk package
+        run: |
+          cd /home/builder/noir
+          sudo -u builder abuild -F checksum
+          sudo -u builder abuild -Fr
+
+      - name: Copy artifacts
+        run: |
+          mkdir -p output
+          find /home/builder/packages -name "*.apk" ! -name "APKINDEX*" -exec cp {} output/ \;
+          ls -la output/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: noir-${{ env.VERSION }}-${{ matrix.arch }}.apk
+          path: output/*.apk
+
+      - name: Upload .apk to Release
+        if: github.event_name == 'workflow_run' || (github.event_name == 'workflow_dispatch' && inputs.upload_to_release)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for f in output/*.apk; do
+            gh release upload "v${{ env.VERSION }}" "$f" --clobber
+          done
