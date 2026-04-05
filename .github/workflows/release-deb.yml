@@ -4,15 +4,25 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to build (e.g., 1.0.0)'
+        description: "Version to build (e.g., 1.0.0)"
         required: true
         type: string
-  release:
-    types: [published]
+      upload_to_release:
+        description: "Upload .deb to GitHub Release (requires existing tag)"
+        required: false
+        type: boolean
+        default: false
+  workflow_run:
+    workflows: ["Build and Release Binaries"]
+    types: [completed]
 permissions:
   contents: write
 jobs:
   build-deb:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'release')
     strategy:
       fail-fast: false
       matrix:
@@ -23,26 +33,30 @@ jobs:
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
-      - name: Install Crystal
-        uses: crystal-lang/install-crystal@v1
       - name: Checkout source code
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', github.event.inputs.version) || github.event.workflow_run.head_branch }}
       - name: Get Version
         id: get_version
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
+            RAW_VERSION="${{ github.event.inputs.version }}"
           else
-            VERSION="${GITHUB_REF#refs/tags/v}"
+            RAW_VERSION="${{ github.event.workflow_run.head_branch }}"
           fi
+          VERSION="${RAW_VERSION#v}"
           echo "VERSION=$VERSION" >> $GITHUB_ENV
-      - name: Build noir Binary
+          echo "Resolved version: $VERSION"
+      - name: Download prebuilt binary
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          docker run --rm -v $(pwd):/noir -w /noir --entrypoint="" 84codes/crystal:latest-debian-12 sh -c "
-            apt-get update && apt-get install -y libyaml-dev ca-certificates git curl &&
-            shards install --production &&
-            /usr/bin/crystal build src/noir.cr -o noir --release --no-debug --static
-          "
+          ARCH_NAME=${{ matrix.arch == 'amd64' && 'x86_64' || 'arm64' }}
+          gh release download "v${{ env.VERSION }}" \
+            --pattern "noir-v${{ env.VERSION }}-linux-${ARCH_NAME}" \
+            --output noir
+          chmod +x noir
       - name: Create Debian Package Structure
         run: |
           mkdir -p noir_${{ env.VERSION }}_${{ matrix.arch }}/DEBIAN
@@ -68,10 +82,12 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: noir_${{ env.VERSION }}_${{ matrix.arch }}.deb
-          path: ./
+          path: noir_${{ env.VERSION }}_${{ matrix.arch }}.deb
       - name: Upload .deb to Release
+        if: github.event_name == 'workflow_run' || (github.event_name == 'workflow_dispatch' && inputs.upload_to_release)
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ env.VERSION }}
           files: |
             noir_${{ env.VERSION }}_${{ matrix.arch }}.deb
         env:
