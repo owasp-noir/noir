@@ -17,10 +17,10 @@ sort_by = "weight"
     ollama pull gemma4
     ```
 
-3.  **모델 서빙**:
+3.  **서버 시작**:
 
     ```bash
-    ollama serve gemma4
+    ollama serve
     ```
 
 ## 사용 방법

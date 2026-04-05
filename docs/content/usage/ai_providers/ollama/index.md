@@ -17,10 +17,10 @@ Run large language models locally using [Ollama](https://ollama.com) for code an
     ollama pull gemma4
     ```
 
-3.  **Serve the Model**:
+3.  **Start the Server**:
 
     ```bash
-    ollama serve gemma4
+    ollama serve
     ```
 
 ## Usage
