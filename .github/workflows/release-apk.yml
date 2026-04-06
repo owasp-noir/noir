@@ -91,7 +91,7 @@ jobs:
           arch="${{ matrix.arch }}"
           license="MIT"
           source=""
-          options="!check"
+          options="!check !strip !tracedeps"
 
           package() {
           	install -Dm755 "\$srcdir/../noir" "\$pkgdir/usr/bin/noir"
@@ -104,8 +104,8 @@ jobs:
       - name: Build .apk package
         run: |
           cd /home/builder/noir
-          sudo -u builder abuild -F checksum
-          sudo -u builder abuild -Fr
+          sudo -u builder -H CARCH=${{ matrix.arch }} abuild -F checksum
+          sudo -u builder -H CARCH=${{ matrix.arch }} abuild -Fr
 
       - name: Copy artifacts
         run: |
