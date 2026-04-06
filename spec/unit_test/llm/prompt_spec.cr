@@ -247,4 +247,33 @@ describe LLM do
       end
     end
   end
+
+  describe "MODEL_TOKEN_LIMITS fallback behavior" do
+    # Note: get_max_tokens is monkeypatched by llm_analyzers specs,
+    # so we test fallback logic through the constant structure directly.
+
+    it "each provider has a default key for unknown model fallback" do
+      limits = LLM::MODEL_TOKEN_LIMITS
+      limits.each do |key, value|
+        next if key == "default"
+        if value.is_a?(Hash)
+          value.as(Hash(String, Int32)).has_key?("default").should be_true
+        end
+      end
+    end
+
+    it "provider defaults are positive integers" do
+      limits = LLM::MODEL_TOKEN_LIMITS
+      limits.each do |key, value|
+        next if key == "default"
+        if value.is_a?(Hash)
+          (value.as(Hash(String, Int32))["default"] > 0).should be_true
+        end
+      end
+    end
+
+    it "has a top-level default for unknown provider fallback" do
+      LLM::MODEL_TOKEN_LIMITS["default"].as(Int32).should eq(4000)
+    end
+  end
 end
