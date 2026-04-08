@@ -74,13 +74,13 @@ crystal spec -v
 Noir uses [Ameba](https://github.com/crystal-ameba/ameba), a static analysis tool for Crystal.
 
 ```sh
-bin/ameba.cr
+lib/ameba/bin/ameba.cr
 ```
 
 Auto-fix issues.
 
 ```sh
-bin/ameba.cr --fix
+lib/ameba/bin/ameba.cr --fix
 ```
 
 Or use `just`.
