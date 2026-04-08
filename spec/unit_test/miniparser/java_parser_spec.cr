@@ -41,11 +41,11 @@ describe JavaParser do
   describe "parse_import_statements" do
     it "parses simple import statements" do
       code = <<-JAVA
-      package com.example;
-      import java.util.List;
-      import java.util.Map;
-      public class Foo {}
-      JAVA
+        package com.example;
+        import java.util.List;
+        import java.util.Map;
+        public class Foo {}
+        JAVA
 
       lexer = JavaLexer.new
       tokens = lexer.tokenize(code)
@@ -56,9 +56,9 @@ describe JavaParser do
 
     it "parses wildcard import" do
       code = <<-JAVA
-      import java.util.*;
-      public class Foo {}
-      JAVA
+        import java.util.*;
+        public class Foo {}
+        JAVA
 
       lexer = JavaLexer.new
       tokens = lexer.tokenize(code)
@@ -68,9 +68,9 @@ describe JavaParser do
 
     it "parses static import" do
       code = <<-JAVA
-      import static java.lang.Math.PI;
-      public class Foo {}
-      JAVA
+        import static java.lang.Math.PI;
+        public class Foo {}
+        JAVA
 
       lexer = JavaLexer.new
       tokens = lexer.tokenize(code)
@@ -82,10 +82,10 @@ describe JavaParser do
   describe "parse_classes" do
     it "parses a single class" do
       code = <<-JAVA
-      public class MyClass {
-        public void hello() {}
-      }
-      JAVA
+        public class MyClass {
+          public void hello() {}
+        }
+        JAVA
 
       lexer = JavaLexer.new
       tokens = lexer.tokenize(code)
@@ -96,10 +96,10 @@ describe JavaParser do
 
     it "parses interface" do
       code = <<-JAVA
-      public interface MyInterface {
-        void hello();
-      }
-      JAVA
+        public interface MyInterface {
+          void hello();
+        }
+        JAVA
 
       lexer = JavaLexer.new
       tokens = lexer.tokenize(code)
@@ -112,15 +112,15 @@ describe JavaParser do
   describe "parse_methods" do
     it "extracts methods from class" do
       code = <<-JAVA
-      public class Foo {
-        public void doSomething() {
-          int x = 1;
+        public class Foo {
+          public void doSomething() {
+            int x = 1;
+          }
+          public String getName() {
+            return "foo";
+          }
         }
-        public String getName() {
-          return "foo";
-        }
-      }
-      JAVA
+        JAVA
 
       lexer = JavaLexer.new
       tokens = lexer.tokenize(code)
@@ -133,12 +133,12 @@ describe JavaParser do
 
     it "parses method with throws clause" do
       code = <<-JAVA
-      public class Foo {
-        public void riskyMethod() throws Exception {
-          throw new Exception();
+        public class Foo {
+          public void riskyMethod() throws Exception {
+            throw new Exception();
+          }
         }
-      }
-      JAVA
+        JAVA
 
       lexer = JavaLexer.new
       tokens = lexer.tokenize(code)
@@ -148,11 +148,11 @@ describe JavaParser do
 
     it "parses interface method declarations" do
       code = <<-JAVA
-      public interface Foo {
-        void hello();
-        String getName();
-      }
-      JAVA
+        public interface Foo {
+          void hello();
+          String getName();
+        }
+        JAVA
 
       lexer = JavaLexer.new
       tokens = lexer.tokenize(code)
@@ -165,11 +165,11 @@ describe JavaParser do
   describe "parse_fields" do
     it "extracts fields from class" do
       code = <<-JAVA
-      public class Foo {
-        private String name;
-        public int age;
-      }
-      JAVA
+        public class Foo {
+          private String name;
+          public int age;
+        }
+        JAVA
 
       lexer = JavaLexer.new
       tokens = lexer.tokenize(code)
@@ -185,10 +185,10 @@ describe JavaParser do
 
     it "extracts static and final modifiers" do
       code = <<-JAVA
-      public class Foo {
-        private static final String CONSTANT = "value";
-      }
-      JAVA
+        public class Foo {
+          private static final String CONSTANT = "value";
+        }
+        JAVA
 
       lexer = JavaLexer.new
       tokens = lexer.tokenize(code)
@@ -202,16 +202,16 @@ describe JavaParser do
 
     it "detects getter and setter methods" do
       code = <<-JAVA
-      public class Foo {
-        private String name;
-        public String getName() {
-          return name;
+        public class Foo {
+          private String name;
+          public String getName() {
+            return name;
+          }
+          public void setName(String name) {
+            this.name = name;
+          }
         }
-        public void setName(String name) {
-          this.name = name;
-        }
-      }
-      JAVA
+        JAVA
 
       lexer = JavaLexer.new
       tokens = lexer.tokenize(code)
@@ -225,10 +225,10 @@ describe JavaParser do
   describe "parse_annotations_backwards" do
     it "parses simple annotation" do
       code = <<-JAVA
-      @Deprecated
-      public class Foo {
-      }
-      JAVA
+        @Deprecated
+        public class Foo {
+        }
+        JAVA
 
       lexer = JavaLexer.new
       tokens = lexer.tokenize(code)

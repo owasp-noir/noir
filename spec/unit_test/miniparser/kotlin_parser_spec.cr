@@ -33,11 +33,11 @@ describe KotlinParser do
   describe "parse_import_statements" do
     it "parses simple import statements" do
       code = <<-KOTLIN
-      package com.example
-      import kotlin.collections.List
-      import kotlin.collections.Map
-      class Foo {}
-      KOTLIN
+        package com.example
+        import kotlin.collections.List
+        import kotlin.collections.Map
+        class Foo {}
+        KOTLIN
 
       lexer = KotlinLexer.new
       tokens = lexer.tokenize(code)
@@ -48,9 +48,9 @@ describe KotlinParser do
 
     it "parses wildcard import" do
       code = <<-KOTLIN
-      import kotlin.collections.*
-      class Foo {}
-      KOTLIN
+        import kotlin.collections.*
+        class Foo {}
+        KOTLIN
 
       lexer = KotlinLexer.new
       tokens = lexer.tokenize(code)
@@ -143,16 +143,13 @@ describe KotlinParser do
       tokens = lexer.tokenize(code)
       parser = KotlinParser.new("/Foo.kt", tokens)
 
-      # Find the first LCURL
       lcurl_index = parser.tokens.index { |t| t.type == :LCURL }
       lcurl_index.should_not be_nil
-      if lcurl_index
-        partner = parser.find_bracket_partner(lcurl_index)
-        partner.should_not be_nil
-        if partner
-          parser.tokens[partner].type.should eq(:RCURL)
-        end
-      end
+      lcurl_index = lcurl_index.as(Int32)
+      partner = parser.find_bracket_partner(lcurl_index)
+      partner.should_not be_nil
+      partner = partner.as(Int32)
+      parser.tokens[partner].type.should eq(:RCURL)
     end
 
     it "returns nil for non-bracket token" do
@@ -162,12 +159,11 @@ describe KotlinParser do
       tokens = lexer.tokenize(code)
       parser = KotlinParser.new("/Foo.kt", tokens)
 
-      # IDENTIFIER token should return nil
       id_index = parser.tokens.index { |t| t.type == :IDENTIFIER }
-      if id_index
-        partner = parser.find_bracket_partner(id_index)
-        partner.should be_nil
-      end
+      id_index.should_not be_nil
+      id_index = id_index.as(Int32)
+      partner = parser.find_bracket_partner(id_index)
+      partner.should be_nil
     end
   end
 
@@ -178,11 +174,9 @@ describe KotlinParser do
       tokens = lexer.tokenize(code)
       parser = KotlinParser.new("/Foo.kt", tokens)
 
-      # NEWLINE is treated as a modifier (returns true)
       newline_token = Token.new(:NEWLINE, "\n", 0)
       parser.modifier?(newline_token).should be_true
 
-      # Known modifier keyword
       open_token = Token.new(:IDENTIFIER, "open", 0)
       parser.modifier?(open_token).should be_true
 

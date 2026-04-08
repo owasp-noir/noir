@@ -5,8 +5,8 @@ describe PythonParser do
   describe "parse_global_variables" do
     it "extracts typed global variable" do
       code = <<-PYTHON
-      BASE_URL: str = "http://localhost"
-      PYTHON
+        BASE_URL: str = "http://localhost"
+        PYTHON
 
       lexer = PythonLexer.new
       tokens = lexer.tokenize(code)
@@ -18,8 +18,8 @@ describe PythonParser do
 
     it "extracts untyped string variable" do
       code = <<-PYTHON
-      name = "hello"
-      PYTHON
+        name = "hello"
+        PYTHON
 
       lexer = PythonLexer.new
       tokens = lexer.tokenize(code)
@@ -32,9 +32,9 @@ describe PythonParser do
 
     it "extracts multiple global variables" do
       code = <<-PYTHON
-      host = "localhost"
-      port = 8080
-      PYTHON
+        host = "localhost"
+        port = 8080
+        PYTHON
 
       lexer = PythonLexer.new
       tokens = lexer.tokenize(code)
@@ -48,47 +48,45 @@ describe PythonParser do
   describe "normalize" do
     it "normalizes a simple string token" do
       code = <<-PYTHON
-      x = "hello world"
-      PYTHON
+        x = "hello world"
+        PYTHON
 
       lexer = PythonLexer.new
       tokens = lexer.tokenize(code)
       parsers = Hash(String, PythonParser).new
       parser = PythonParser.new("/app.py", tokens, parsers)
 
-      # Find the STRING token
       string_idx = tokens.index { |t| t.type == :STRING }
-      if string_idx
-        result = parser.normalize(string_idx)
-        result.should eq("hello world")
-      end
+      string_idx.should_not be_nil
+      string_idx = string_idx.as(Int32)
+      result = parser.normalize(string_idx)
+      result.should eq("hello world")
     end
   end
 
   describe "extract_assign_data" do
     it "extracts string assignment" do
       code = <<-PYTHON
-      x = "test_value"
-      PYTHON
+        x = "test_value"
+        PYTHON
 
       lexer = PythonLexer.new
       tokens = lexer.tokenize(code)
       parsers = Hash(String, PythonParser).new
       parser = PythonParser.new("/app.py", tokens, parsers)
 
-      # Find the ASSIGN token, the value is the next token
       assign_idx = tokens.index { |t| t.type == :ASSIGN }
-      if assign_idx
-        result = parser.extract_assign_data(assign_idx + 1)
-        result[0].should eq("str")
-        result[1].should eq("test_value")
-      end
+      assign_idx.should_not be_nil
+      assign_idx = assign_idx.as(Int32)
+      result = parser.extract_assign_data(assign_idx + 1)
+      result[0].should eq("str")
+      result[1].should eq("test_value")
     end
 
     it "extracts numeric assignment as raw data" do
       code = <<-PYTHON
-      count = 42
-      PYTHON
+        count = 42
+        PYTHON
 
       lexer = PythonLexer.new
       tokens = lexer.tokenize(code)
@@ -96,10 +94,10 @@ describe PythonParser do
       parser = PythonParser.new("/app.py", tokens, parsers)
 
       assign_idx = tokens.index { |t| t.type == :ASSIGN }
-      if assign_idx
-        result = parser.extract_assign_data(assign_idx + 1)
-        result[1].should eq("42")
-      end
+      assign_idx.should_not be_nil
+      assign_idx = assign_idx.as(Int32)
+      result = parser.extract_assign_data(assign_idx + 1)
+      result[1].should eq("42")
     end
   end
 
