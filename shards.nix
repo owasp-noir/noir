@@ -1,18 +1,18 @@
 {
+  "acp" = {
+    url = "https://github.com/hahwul/acp.cr.git";
+    rev = "v0.1.0";
+    sha256 = "19pliij35m5i8bg8w92gib6k3mygdcp30bilqq1cj017zs4gapi6";
+  };
   "ameba" = {
     url = "https://github.com/crystal-ameba/ameba.git";
-    rev = "920630c58f5aa91a1db10be35a62d21b69d54905";
-    sha256 = "015wjdbj8p1xmxv41zzlk0nnyvyvz7gz3rsj0mi3jaw29ql4vr7i";
+    rev = "ae09e383a062d50cec1dd7cc93382ca6ad2363ce";
+    sha256 = "04bp58212rx9vr1hqk6p6rmnw69vvhc71x8gfw9rhvl7qz5vh6sg";
   };
   "crest" = {
     url = "https://github.com/mamantoha/crest.git";
     rev = "v1.4.1";
     sha256 = "1dh6bk8zwkg3d7jvz10r0yydznbxhynjyja010bis42qwryx42rl";
-  };
-  "cyclonedx-cr" = {
-    url = "https://github.com/hahwul/cyclonedx-cr.git";
-    rev = "d38333bc3d2bcf0e4ecd12ee94700112c80ce6b7";
-    sha256 = "1va2ivkrkri9mrvna2vpynl19ln48j7cblmal5h2sg3xrvssq8ql";
   };
   "har" = {
     url = "https://github.com/neuralegion/har.git";
@@ -26,8 +26,13 @@
   };
   "http_proxy" = {
     url = "https://github.com/mamantoha/http_proxy.git";
-    rev = "v0.13.1";
-    sha256 = "0ah895a9hpmflf1hpqfk43kai0qgd51bpws44hb3wihya65n1qya";
+    rev = "v0.14.0";
+    sha256 = "1sbbf6rm1g7yn6n4v0f9q1a1j2gmrgdw583m9pr3d9kc10kfcn6n";
+  };
+  "sarif" = {
+    url = "https://github.com/hahwul/sarif.cr.git";
+    rev = "v0.2.0";
+    sha256 = "0rd3yw20djr4sc3lnimj9hiv9aqn6vxf3cz48wpkgr7dmwqlfn6g";
   };
   "toml" = {
     url = "https://github.com/crystal-community/toml.cr.git";
