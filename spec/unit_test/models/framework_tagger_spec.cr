@@ -15,7 +15,7 @@ describe FrameworkTagger do
   describe "initialization" do
     it "creates framework tagger with options" do
       options = create_test_options
-      options["base"] = YAML::Any.new("/tmp/test")
+      options["base"] = YAML::Any.new([YAML::Any.new("/tmp/test")])
       tagger = FrameworkTagger.new(options)
       tagger.should_not be_nil
     end
@@ -30,7 +30,7 @@ describe FrameworkTagger do
 
       begin
         options = create_test_options
-        options["base"] = YAML::Any.new("/tmp")
+        options["base"] = YAML::Any.new([YAML::Any.new("/tmp")])
         tagger = FrameworkTagger.new(options)
         content = tagger.read_file(tmp_path.path)
         content.should eq("test content")
@@ -41,7 +41,7 @@ describe FrameworkTagger do
 
     it "returns nil for non-existent file" do
       options = create_test_options
-      options["base"] = YAML::Any.new("/tmp")
+      options["base"] = YAML::Any.new([YAML::Any.new("/tmp")])
       tagger = FrameworkTagger.new(options)
       content = tagger.read_file("/nonexistent/file.txt")
       content.should be_nil
@@ -54,13 +54,16 @@ describe FrameworkTagger do
 
       begin
         options = create_test_options
-        options["base"] = YAML::Any.new("/tmp")
+        options["base"] = YAML::Any.new([YAML::Any.new("/tmp")])
         tagger = FrameworkTagger.new(options)
 
-        # Read twice - second should come from cache
+        # Read once to populate the cache
         content1 = tagger.read_file(tmp_path.path)
-        content2 = tagger.read_file(tmp_path.path)
         content1.should eq("cached content")
+
+        # Modify file on disk, then read again - should return cached value
+        File.write(tmp_path.path, "updated content")
+        content2 = tagger.read_file(tmp_path.path)
         content2.should eq("cached content")
       ensure
         tmp_path.delete
@@ -76,7 +79,7 @@ describe FrameworkTagger do
 
       begin
         options = create_test_options
-        options["base"] = YAML::Any.new("/tmp")
+        options["base"] = YAML::Any.new([YAML::Any.new("/tmp")])
         tagger = FrameworkTagger.new(options)
 
         details = Details.new(PathInfo.new(tmp_path.path, 1))
@@ -94,7 +97,7 @@ describe FrameworkTagger do
 
     it "returns empty array for endpoint with non-existent code path" do
       options = create_test_options
-      options["base"] = YAML::Any.new("/tmp")
+      options["base"] = YAML::Any.new([YAML::Any.new("/tmp")])
       tagger = FrameworkTagger.new(options)
 
       details = Details.new(PathInfo.new("/nonexistent/file.cr", 1))
@@ -106,7 +109,7 @@ describe FrameworkTagger do
 
     it "returns empty array for endpoint with no code paths" do
       options = create_test_options
-      options["base"] = YAML::Any.new("/tmp")
+      options["base"] = YAML::Any.new([YAML::Any.new("/tmp")])
       tagger = FrameworkTagger.new(options)
 
       endpoint = Endpoint.new("/api/test", "GET")
