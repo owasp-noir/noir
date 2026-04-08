@@ -103,7 +103,7 @@ jobs:
         uses: canonical/action-build@v1
         id: build
   build-nix-flake:
-    if: false  # TODO: FlakeHub 인증 문제 해결 후 제거
+    if: true
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
