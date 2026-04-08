@@ -74,13 +74,13 @@ crystal spec -v
 Noir는 Crystal용 정적 분석 도구인 [Ameba](https://github.com/crystal-ameba/ameba)로 코드 스타일을 검사합니다.
 
 ```sh
-bin/ameba.cr
+lib/ameba/bin/ameba.cr
 ```
 
 자동 수정도 가능합니다.
 
 ```sh
-bin/ameba.cr --fix
+lib/ameba/bin/ameba.cr --fix
 ```
 
 또는 `just`를 사용합니다.

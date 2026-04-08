@@ -46,13 +46,13 @@ docs-dependencies:
 [group('development')]
 fix:
     crystal tool format
-    bin/ameba.cr --fix
+    lib/ameba/bin/ameba.cr --fix
 
 # Check code format and lint without changes.
 [group('development')]
 check:
     crystal tool format --check
-    bin/ameba.cr
+    lib/ameba/bin/ameba.cr
 
 # Run all tests.
 [group('development')]
