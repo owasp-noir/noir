@@ -1,3 +1,5 @@
+require "../../../models/analyzer"
+
 module Analyzer::Javascript
   # Constants for Express router prefix tracking in CodeLocator
   module ExpressConstants
