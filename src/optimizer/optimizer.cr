@@ -47,7 +47,7 @@ class EndpointOptimizer
       end
 
       # Remove space in param name
-      unless endpoint.params.empty?
+      if endpoint.params.present?
         tiny_tmp.params = [] of Param
         endpoint.params.each do |param|
           if !param.name.includes? " "

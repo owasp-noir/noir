@@ -80,15 +80,15 @@ class LLMEndpointOptimizer < EndpointOptimizer
     # Look for unusual parameter patterns, complex paths, or non-standard naming
     return true if url.includes?("*")                         # Wildcard patterns
     return true if url.includes?("...")                       # Spread/rest patterns
-    return true unless url.scan(/\{[^}]*\|[^}]*\}/).empty?     # Union types in parameters
-    return true unless url.scan(/[A-Z]{2,}/).empty?            # Unusual uppercase segments
-    return true unless url.scan(/\d{3,}/).empty?               # Long numeric segments
+    return true if url.matches?(/\{[^}]*\|[^}]*\}/)     # Union types in parameters
+    return true if url.matches?(/[A-Z]{2,}/)            # Unusual uppercase segments
+    return true if url.matches?(/\d{3,}/)               # Long numeric segments
     return true if url.includes?("__") || url.includes?("--") # Double separators
 
     # Check for complex parameter patterns
     params_text = endpoint.params.map(&.name).join(" ")
     return true if params_text.includes?("_id_")          # Complex ID patterns
-    return true unless params_text.scan(/[A-Z]{2,}/).empty? # Unusual naming patterns
+    return true if params_text.matches?(/[A-Z]{2,}/) # Unusual naming patterns
 
     false
   end
@@ -161,7 +161,7 @@ class LLMEndpointOptimizer < EndpointOptimizer
         optimized_params << Param.new(name, value, param_type)
       end
 
-      unless optimized_params.empty?
+      if optimized_params.present?
         @logger.debug_sub "  - Parameters optimized: #{endpoint.params.size} → #{optimized_params.size}"
         optimized_endpoint.params = optimized_params
       end
