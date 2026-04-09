@@ -80,15 +80,15 @@ class LLMEndpointOptimizer < EndpointOptimizer
     # Look for unusual parameter patterns, complex paths, or non-standard naming
     return true if url.includes?("*")                         # Wildcard patterns
     return true if url.includes?("...")                       # Spread/rest patterns
-    return true if url.scan(/\{[^}]*\|[^}]*\}/).size > 0      # Union types in parameters
-    return true if url.scan(/[A-Z]{2,}/).size > 0             # Unusual uppercase segments
-    return true if url.scan(/\d{3,}/).size > 0                # Long numeric segments
+    return true unless url.scan(/\{[^}]*\|[^}]*\}/).empty?     # Union types in parameters
+    return true unless url.scan(/[A-Z]{2,}/).empty?            # Unusual uppercase segments
+    return true unless url.scan(/\d{3,}/).empty?               # Long numeric segments
     return true if url.includes?("__") || url.includes?("--") # Double separators
 
     # Check for complex parameter patterns
     params_text = endpoint.params.map(&.name).join(" ")
     return true if params_text.includes?("_id_")          # Complex ID patterns
-    return true if params_text.scan(/[A-Z]{2,}/).size > 0 # Unusual naming patterns
+    return true unless params_text.scan(/[A-Z]{2,}/).empty? # Unusual naming patterns
 
     false
   end
@@ -143,7 +143,7 @@ class LLMEndpointOptimizer < EndpointOptimizer
     # Apply URL optimizations if suggested
     if optimization_data.has_key?("optimized_url")
       new_url = optimization_data["optimized_url"].as_s
-      if new_url != endpoint.url && new_url.size > 0 && new_url.starts_with?("/")
+      if new_url != endpoint.url && !new_url.empty? && new_url.starts_with?("/")
         @logger.debug_sub "  - URL optimized: #{endpoint.url} → #{new_url}"
         optimized_endpoint.url = new_url
       end
@@ -161,7 +161,7 @@ class LLMEndpointOptimizer < EndpointOptimizer
         optimized_params << Param.new(name, value, param_type)
       end
 
-      if optimized_params.size > 0
+      unless optimized_params.empty?
         @logger.debug_sub "  - Parameters optimized: #{endpoint.params.size} → #{optimized_params.size}"
         optimized_endpoint.params = optimized_params
       end
