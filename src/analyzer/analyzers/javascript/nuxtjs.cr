@@ -5,6 +5,7 @@ module Analyzer::Javascript
     def analyze
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       result = [] of Endpoint
+      mutex = Mutex.new
 
       begin
         populate_channel_with_files(channel)
@@ -16,7 +17,7 @@ module Analyzer::Javascript
           # Focus on server/api and server/routes directories for Nuxt 3
           if path.includes?("/server/api/") || path.includes?("/server/routes/")
             if File.exists?(path)
-              analyze_nuxt_file(path, result)
+              analyze_nuxt_file(path, result, mutex)
             end
           end
         end
@@ -27,7 +28,7 @@ module Analyzer::Javascript
       result
     end
 
-    private def analyze_nuxt_file(path : String, result : Array(Endpoint))
+    private def analyze_nuxt_file(path : String, result : Array(Endpoint), mutex : Mutex)
       # Extract endpoint from file path
       # server/api/hello.ts -> /api/hello
       # server/api/users/[id].ts -> /api/users/:id
@@ -148,14 +149,16 @@ module Analyzer::Javascript
             endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == cookie_name && p.param_type == "cookie" }
           end
 
-          existing_idx = result.index { |e| e.url == url && e.method == method }
-          if existing_idx
-            # Method-specific files take precedence over generic handlers
-            if specific_method
-              result[existing_idx] = endpoint
+          mutex.synchronize do
+            existing_idx = result.index { |e| e.url == url && e.method == method }
+            if existing_idx
+              # Method-specific files take precedence over generic handlers
+              if specific_method
+                result[existing_idx] = endpoint
+              end
+            else
+              result << endpoint
             end
-          else
-            result << endpoint
           end
         end
       rescue e : Exception
