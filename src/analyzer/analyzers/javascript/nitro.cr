@@ -133,7 +133,15 @@ module Analyzer::Javascript
             endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == cookie_name && p.param_type == "cookie" }
           end
 
-          result << endpoint unless result.any? { |e| e.url == url && e.method == method }
+          existing_idx = result.index { |e| e.url == url && e.method == method }
+          if existing_idx
+            # Method-specific files take precedence over generic handlers
+            if specific_method
+              result[existing_idx] = endpoint
+            end
+          else
+            result << endpoint
+          end
         end
       rescue e : Exception
         logger.debug "Error reading file #{path}: #{e.message}"
