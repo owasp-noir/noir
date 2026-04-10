@@ -86,9 +86,9 @@ class LLMEndpointOptimizer < EndpointOptimizer
     return true if url.includes?("__") || url.includes?("--") # Double separators
 
     # Check for complex parameter patterns
-    params_text = endpoint.params.map(&.name).join(" ")
-    return true if params_text.includes?("_id_") # Complex ID patterns
-    return true if params_text.matches?(/[A-Z]{2,}/) # Unusual naming patterns
+    return true if endpoint.params.any? do |p|
+      p.name.includes?("_id_") || p.name.matches?(/[A-Z]{2,}/)
+    end
 
     false
   end
