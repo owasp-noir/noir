@@ -80,15 +80,15 @@ class LLMEndpointOptimizer < EndpointOptimizer
     # Look for unusual parameter patterns, complex paths, or non-standard naming
     return true if url.includes?("*")                         # Wildcard patterns
     return true if url.includes?("...")                       # Spread/rest patterns
-    return true if url.matches?(/\{[^}]*\|[^}]*\}/)            # Union types in parameters
+    return true if url.matches?(/\{[^}]*\|[^}]*\}/)           # Union types in parameters
     return true if url.matches?(/[A-Z]{2,}/)                  # Unusual uppercase segments
     return true if url.matches?(/\d{3,}/)                     # Long numeric segments
     return true if url.includes?("__") || url.includes?("--") # Double separators
 
     # Check for complex parameter patterns
     return true if endpoint.params.any? do |p|
-      p.name.includes?("_id_") || p.name.matches?(/[A-Z]{2,}/)
-    end
+                     p.name.includes?("_id_") || p.name.matches?(/[A-Z]{2,}/)
+                   end
 
     false
   end
