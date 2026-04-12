@@ -36,7 +36,7 @@ module Analyzer::Specification
                         param = Param.new(param_name, "", "query")
                         params << param
                       elsif param_obj["in"] == "form"
-                        param = Param.new(param_name, "", "json")
+                        param = Param.new(param_name, "", "form")
                         params << param
                       elsif param_obj["in"] == "formData"
                         param = Param.new(param_name, "", "form")
@@ -95,7 +95,7 @@ module Analyzer::Specification
                         param = Param.new(param_name, "", "query")
                         params << param
                       elsif param_obj["in"] == "form"
-                        param = Param.new(param_name, "", "json")
+                        param = Param.new(param_name, "", "form")
                         params << param
                       elsif param_obj["in"] == "formData"
                         param = Param.new(param_name, "", "form")

@@ -32,6 +32,42 @@ paths:
       responses:
         201:
           description: Pet added successfully
+  /pets/search:
+    get:
+      summary: Search pets by query parameters
+      parameters:
+        - name: name
+          in: query
+          type: string
+        - name: X-Request-Id
+          in: header
+          type: string
+      responses:
+        200:
+          description: Search results
+  /pets/upload:
+    post:
+      summary: Upload pet data using formData
+      parameters:
+        - name: file
+          in: formData
+          type: file
+        - name: description
+          in: formData
+          type: string
+      responses:
+        201:
+          description: Upload successful
+  /pets/submit:
+    post:
+      summary: Submit pet data using form (non-standard)
+      parameters:
+        - name: pet_name
+          in: form
+          type: string
+      responses:
+        201:
+          description: Submit successful
   /pets/{petId}:
     get:
       summary: Get information about a specific pet
