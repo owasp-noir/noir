@@ -9,6 +9,10 @@ module LLM
     @@tools_cache_mutex = Mutex.new
     MAX_ERROR_SNIPPET_SIZE = 1024
 
+    private def truncate_error_snippet(body : String)
+      body.size > MAX_ERROR_SNIPPET_SIZE ? "#{body[0, MAX_ERROR_SNIPPET_SIZE]}..." : body
+    end
+
     def initialize(url : String, model : String, api_key : String?)
       @url = url
       @api = if url.includes?("://")
@@ -78,7 +82,7 @@ module LLM
 
       response = HTTP::Client.post(@api, headers: headers, body: body)
       unless response.success?
-        snippet = response.body.size > MAX_ERROR_SNIPPET_SIZE ? "#{response.body[0, MAX_ERROR_SNIPPET_SIZE]}..." : response.body
+        snippet = truncate_error_snippet(response.body)
         STDERR.puts "WARNING: AI API error (HTTP #{response.status_code}): #{snippet}"
         return ""
       end
@@ -109,7 +113,7 @@ module LLM
 
       response = HTTP::Client.post(@api, headers: headers, body: body)
       unless response.success?
-        snippet = response.body.size > MAX_ERROR_SNIPPET_SIZE ? "#{response.body[0, MAX_ERROR_SNIPPET_SIZE]}..." : response.body
+        snippet = truncate_error_snippet(response.body)
         STDERR.puts "WARNING: AI API error (HTTP #{response.status_code}): #{snippet}"
         return ""
       end
