@@ -7,6 +7,7 @@ module LLM
   class General
     @@tools_cache = {} of String => JSON::Any
     @@tools_cache_mutex = Mutex.new
+    MAX_ERROR_SNIPPET_SIZE = 1024
 
     def initialize(url : String, model : String, api_key : String?)
       @url = url
@@ -77,7 +78,7 @@ module LLM
 
       response = HTTP::Client.post(@api, headers: headers, body: body)
       unless response.success?
-        snippet = response.body.size > 1024 ? "#{response.body[0, 1024]}..." : response.body
+        snippet = response.body.size > MAX_ERROR_SNIPPET_SIZE ? "#{response.body[0, MAX_ERROR_SNIPPET_SIZE]}..." : response.body
         STDERR.puts "WARNING: AI API error (HTTP #{response.status_code}): #{snippet}"
         return ""
       end
@@ -108,7 +109,7 @@ module LLM
 
       response = HTTP::Client.post(@api, headers: headers, body: body)
       unless response.success?
-        snippet = response.body.size > 1024 ? "#{response.body[0, 1024]}..." : response.body
+        snippet = response.body.size > MAX_ERROR_SNIPPET_SIZE ? "#{response.body[0, MAX_ERROR_SNIPPET_SIZE]}..." : response.body
         STDERR.puts "WARNING: AI API error (HTTP #{response.status_code}): #{snippet}"
         return ""
       end
