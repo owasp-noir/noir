@@ -37,7 +37,7 @@ jobs:
         run: |
           mkdir -p build
           # Use Crystal container to build static binary
-          docker run --rm -v $(pwd):/noir -w /noir --entrypoint="" crystallang/crystal:1.19.0-alpine sh -c "
+          docker run --rm -v $(pwd):/noir -w /noir --entrypoint="" crystallang/crystal:1.20.0-alpine sh -c "
             apk add --no-cache yaml-dev zstd-dev git curl &&
             shards install --production &&
             mkdir -p build &&
