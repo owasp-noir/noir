@@ -37,11 +37,11 @@ jobs:
         run: |
           mkdir -p build
           # Use Crystal container to build static binary
-          docker run --rm -v $(pwd):/noir -w /noir --entrypoint="" 84codes/crystal:latest-debian-12 sh -c "
-            apt-get update && apt-get install -y libyaml-dev ca-certificates git curl &&
+          docker run --rm -v $(pwd):/noir -w /noir --entrypoint="" crystallang/crystal:1.19.0-alpine sh -c "
+            apk add --no-cache yaml-dev zstd-dev git curl &&
             shards install --production &&
             mkdir -p build &&
-            /usr/bin/crystal build src/noir.cr -o build/noir-${GITHUB_REF_SLUG}-linux-${ARCH} --release --no-debug --static
+            crystal build src/noir.cr -o build/noir-${GITHUB_REF_SLUG}-linux-${ARCH} --release --no-debug --static
           "
       - if: startsWith(matrix.os, 'macos')
         name: Build binary (macOS)
