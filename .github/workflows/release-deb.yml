@@ -85,7 +85,7 @@ jobs:
           path: noir_${{ env.VERSION }}_${{ matrix.arch }}.deb
       - name: Upload .deb to Release
         if: github.event_name == 'workflow_run' || (github.event_name == 'workflow_dispatch' && inputs.upload_to_release)
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ env.VERSION }}
           files: |
