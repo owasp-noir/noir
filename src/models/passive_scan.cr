@@ -39,14 +39,14 @@ struct PassiveScan
           begin
             @compiled_regex = Regex.union(@patterns.map { |p| Regex.new(p.to_s) })
           rescue ex
-            Log.debug { "Passive scan matcher regex compilation (or-union) failed: #{ex.message} (#{ex.class}); patterns=#{@patterns.inspect}" }
+            Log.warn { "Passive scan matcher regex compilation (or-union) failed: #{ex.message} (#{ex.class}); patterns=#{@patterns.map(&.to_s).inspect}" }
             @compiled_regex = nil
           end
         elsif @condition == "and"
           begin
             @compiled_regexes = @patterns.map { |p| Regex.new(p.to_s) }
           rescue ex
-            Log.debug { "Passive scan matcher regex compilation (and-case) failed: #{ex.message} (#{ex.class}); patterns=#{@patterns.inspect}" }
+            Log.warn { "Passive scan matcher regex compilation (and-case) failed: #{ex.message} (#{ex.class}); patterns=#{@patterns.map(&.to_s).inspect}" }
             @compiled_regexes = nil
           end
         end
