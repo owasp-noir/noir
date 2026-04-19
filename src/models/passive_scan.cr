@@ -1,6 +1,7 @@
 require "./logger"
 require "yaml"
 require "json"
+require "log"
 
 struct PassiveScan
   struct Info
@@ -37,13 +38,15 @@ struct PassiveScan
         if @condition == "or"
           begin
             @compiled_regex = Regex.union(@patterns.map { |p| Regex.new(p.to_s) })
-          rescue
+          rescue ex
+            Log.debug { "Passive scan matcher regex compilation (or-union) failed: #{ex.message} (#{ex.class}); patterns=#{@patterns.inspect}" }
             @compiled_regex = nil
           end
         elsif @condition == "and"
           begin
             @compiled_regexes = @patterns.map { |p| Regex.new(p.to_s) }
-          rescue
+          rescue ex
+            Log.debug { "Passive scan matcher regex compilation (and-case) failed: #{ex.message} (#{ex.class}); patterns=#{@patterns.inspect}" }
             @compiled_regexes = nil
           end
         end
