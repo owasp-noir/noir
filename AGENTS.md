@@ -79,7 +79,7 @@ spec/
 
 An analyzer is composed of three layers. Keep them separate — a framework adapter should not open files or re-implement parsing.
 
-1. **Language Engine** — shared per-language base in `src/analyzer/engines/{lang}_engine.cr`. Owns file walking, concurrency, worker pool, file-content caching. Go and Python still use legacy `src/analyzer/analyzers/{lang}/common.cr` bases (engine and route-extraction mixed); they will migrate alongside the later engine-vs-extractor split.
+1. **Language Engine** — shared per-language base in `src/analyzer/engines/{lang}_engine.cr`. Owns file walking, concurrency, worker pool, file-content caching.
 2. **Route Extractor** — shared per-language parser layer (`src/miniparsers/{lang}_route_extractor.cr`). Takes source content, yields route declarations (method, path, location). No file I/O, no framework-specific rules.
 3. **Framework Adapter** — thin per-framework class (`src/analyzer/analyzers/{lang}/{framework}.cr`). Consumes routes from the extractor and applies framework-specific param mappings, filters, and special cases.
 
@@ -88,8 +88,8 @@ An analyzer is composed of three layers. Keep them separate — a framework adap
 **Reference implementation**: `src/analyzer/analyzers/javascript/hono.cr` on top of `src/miniparsers/js_route_extractor.cr`. Hono is ~205 lines because it follows this split; contrast with analyzers that inline all three responsibilities and grow to 500–800 lines.
 
 **Current coverage**:
-- Language engines: PHP, Ruby, Rust, Elixir, Swift, Crystal, Scala (Akka + Scalatra), JavaScript/TypeScript. Go and Python still use legacy `analyzers/{lang}/common.cr` bases pending the engine-vs-extractor split. CSharp and Scala Play stay on the `Analyzer` base because their analyze flows orchestrate multiple phases rather than a per-file scan.
-- Route extractors: JavaScript only (`js_route_extractor.cr`, used by Hono, Express, Fastify, Koa, NestJS, Restify, and TypeScript NestJS). Python/Kotlin/Java have parsers but no dedicated route extractor yet.
+- Language engines: PHP, Ruby, Rust, Elixir, Swift, Crystal, Scala (Akka + Scalatra), JavaScript/TypeScript, Python, Go. CSharp, Scala Play, Chi/Httprouter/Fasthttp (Go) stay on the `Analyzer` base because their flows orchestrate multiple phases or carry self-contained extraction that doesn't share with other analyzers.
+- Route extractors: JavaScript (`js_route_extractor.cr`, used by Hono, Express, Fastify, Koa, NestJS, Restify, and TypeScript NestJS) and Go (`go_route_extractor.cr`, wrapped by `GoEngine` and delegated to from eight analyzers). Python/Kotlin/Java have parsers but no dedicated route extractor yet.
 
 When adding a new framework in a language that already has an extractor, extend the extractor rather than re-parsing inline.
 
