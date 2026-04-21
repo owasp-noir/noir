@@ -3,7 +3,31 @@ require "../../utils/utils.cr"
 
 module Analyzer::Php
   abstract class PhpEngine < Analyzer
+    # Engine ships two shapes; analyzers pick one:
+    #
+    # - Override `analyze_file(path) -> Array(Endpoint)` for pure per-file
+    #   extraction. `analyze` below drives the worker loop and concats the
+    #   returned endpoints. This is the simpler, default path.
+    #
+    # - Override `analyze` and call `parallel_file_scan(&block)` directly
+    #   when the analyzer needs closure state, pre-phase work, or
+    #   post-processing after the file walk.
+
     def analyze
+      parallel_file_scan do |path|
+        result.concat(analyze_file(path))
+      end
+      Fiber.yield
+      result
+    end
+
+    abstract def analyze_file(path : String) : Array(Endpoint)
+
+    # Walk the project tree concurrently and invoke the block for each
+    # readable, non-directory file. PHP analyzers apply their own
+    # extension/pathname filters inside the block because Symfony matches
+    # `.php` *and* YAML route files, Laravel checks `routes/*.php`, etc.
+    protected def parallel_file_scan(&block : String -> Nil) : Nil
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
       begin
@@ -14,7 +38,7 @@ module Analyzer::Php
           next unless File.exists?(path)
 
           begin
-            result.concat(analyze_file(path))
+            block.call(path)
           rescue e
             logger.debug "Error analyzing #{path}: #{e}"
           end
@@ -22,12 +46,7 @@ module Analyzer::Php
       rescue e
         logger.debug e
       end
-
-      Fiber.yield
-      result
     end
-
-    abstract def analyze_file(path : String) : Array(Endpoint)
 
     # Route composition helper. Will migrate to a PHP route extractor when that
     # layer is introduced; kept here for now so Laravel/CakePHP/Symfony stop

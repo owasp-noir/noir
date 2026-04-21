@@ -20,7 +20,7 @@ module Analyzer::Javascript
       # Phase 1: Pre-scan to build router mount map
       scan_for_router_mounts
 
-      parallel_js_scan do |path|
+      parallel_file_scan do |path|
         begin
           content = File.read(path, encoding: "utf-8", invalid: :skip)
           parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug)

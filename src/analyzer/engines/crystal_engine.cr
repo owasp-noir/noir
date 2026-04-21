@@ -3,6 +3,19 @@ require "../../models/analyzer"
 module Analyzer::Crystal
   abstract class CrystalEngine < Analyzer
     def analyze
+      parallel_file_scan do |path|
+        result.concat(analyze_file(path))
+      end
+      result
+    end
+
+    abstract def analyze_file(path : String) : Array(Endpoint)
+
+    # `.cr` extension filter plus `lib/` exclusion baked in (shards puts
+    # dependencies under `lib/` and we don't want to analyze them).
+    # Subclasses that need a custom scan shape can override `analyze`
+    # (e.g. Amber/Kemal run a public-dir post-pass after the file walk).
+    protected def parallel_file_scan(&block : String -> Nil) : Nil
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
       begin
@@ -14,7 +27,7 @@ module Analyzer::Crystal
           next if path.includes?("lib")
 
           begin
-            result.concat(analyze_file(path))
+            block.call(path)
           rescue e
             logger.debug "Error analyzing #{path}: #{e}"
           end
@@ -22,10 +35,6 @@ module Analyzer::Crystal
       rescue e
         logger.debug e
       end
-
-      result
     end
-
-    abstract def analyze_file(path : String) : Array(Endpoint)
   end
 end

@@ -93,6 +93,11 @@ An analyzer is composed of three layers. Keep them separate — a framework adap
 
 When adding a new framework in a language that already has an extractor, extend the extractor rather than re-parsing inline.
 
+**Two engine shapes** — every engine exposes `parallel_file_scan(&block)` as a protected helper. Subclasses pick one of:
+
+- **Simple per-file**: override `abstract def analyze_file(path) : Array(Endpoint)`. The engine's default `analyze` drives the walk and concats the returned endpoints. Used by Php/Rust/Swift/Crystal/Elixir/Scala analyzers.
+- **Custom `analyze`**: override `analyze` directly and call `parallel_file_scan` when you need closure state, a pre-phase (e.g., Express's `scan_for_router_mounts`), or post-processing (e.g., Hono's `process_static_dirs`, Amber/Kemal's public-dir pass). Used by Ruby/JavaScript/TypeScript analyzers and by the handful of Crystal/Elixir analyzers that override.
+
 ## Adding New Components
 
 ### Analyzers

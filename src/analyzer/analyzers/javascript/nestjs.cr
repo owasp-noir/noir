@@ -7,7 +7,7 @@ module Analyzer::Javascript
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
 
-      parallel_js_scan([".js", ".jsx"]) do |path|
+      parallel_file_scan([".js", ".jsx"]) do |path|
         analyze_nestjs_file(path, result, static_dirs)
       end
 

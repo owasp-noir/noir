@@ -3,6 +3,19 @@ require "../../models/analyzer"
 module Analyzer::Rust
   abstract class RustEngine < Analyzer
     def analyze
+      parallel_file_scan do |path|
+        result.concat(analyze_file(path))
+      end
+      result
+    end
+
+    abstract def analyze_file(path : String) : Array(Endpoint)
+
+    # `.rs` extension filter baked in. Subclasses that want a different scan
+    # shape (e.g. a post-pass after the file walk) can override `analyze`
+    # and call this helper directly; the default `analyze` above is the
+    # simpler path.
+    protected def parallel_file_scan(&block : String -> Nil) : Nil
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
       begin
@@ -13,7 +26,7 @@ module Analyzer::Rust
           next unless File.exists?(path) && File.extname(path) == ".rs"
 
           begin
-            result.concat(analyze_file(path))
+            block.call(path)
           rescue e
             logger.debug "Error analyzing #{path}: #{e}"
           end
@@ -21,10 +34,6 @@ module Analyzer::Rust
       rescue e
         logger.debug e
       end
-
-      result
     end
-
-    abstract def analyze_file(path : String) : Array(Endpoint)
   end
 end

@@ -81,6 +81,14 @@ just fix
   - models: Contains everything related to models, such as classes and structures.
 - noir.cr: Main file and command-line parser.
 
+### Adding a new detector or analyzer
+
+Noir's analyzer stack is a three-layer design (language engine → route extractor → framework adapter). Before adding a new detector/analyzer, read:
+
+**📖 [Analyzer Architecture](https://owasp-noir.github.io/noir/development/analyzer_architecture/)**
+
+The doc covers how the layers fit together, which engines and extractors already exist, the two supported engine shapes, and a step-by-step walkthrough of adding a new framework (Hertz as the worked example).
+
 Feel free to reach out to us if you have any questions or need further assistance!
 
 ## Document Contributing

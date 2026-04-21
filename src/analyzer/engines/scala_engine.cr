@@ -3,6 +3,18 @@ require "../../models/analyzer"
 module Analyzer::Scala
   abstract class ScalaEngine < Analyzer
     def analyze
+      parallel_file_scan do |path|
+        result.concat(analyze_file(path))
+      end
+      Fiber.yield
+      result
+    end
+
+    abstract def analyze_file(path : String) : Array(Endpoint)
+
+    # `.scala` extension filter baked in. Subclasses that need a custom
+    # scan shape can override `analyze` and call this helper directly.
+    protected def parallel_file_scan(&block : String -> Nil) : Nil
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
       begin
@@ -13,7 +25,7 @@ module Analyzer::Scala
           next unless File.exists?(path) && File.extname(path) == ".scala"
 
           begin
-            result.concat(analyze_file(path))
+            block.call(path)
           rescue e
             logger.debug "Error analyzing #{path}: #{e}"
           end
@@ -21,11 +33,6 @@ module Analyzer::Scala
       rescue e
         logger.debug e
       end
-
-      Fiber.yield
-      result
     end
-
-    abstract def analyze_file(path : String) : Array(Endpoint)
   end
 end

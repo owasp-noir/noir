@@ -7,7 +7,7 @@ module Analyzer::Javascript
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
 
-      parallel_js_scan do |path|
+      parallel_file_scan do |path|
         begin
           content = File.read(path, encoding: "utf-8", invalid: :skip)
           parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug)
