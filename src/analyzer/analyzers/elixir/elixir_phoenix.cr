@@ -1,7 +1,7 @@
-require "../../../models/analyzer"
+require "../../engines/elixir_engine"
 
 module Analyzer::Elixir
-  class Phoenix < Analyzer
+  class Phoenix < ElixirEngine
     # Store mapping of route -> controller/action for parameter extraction
     @route_map : Hash(String, ControllerAction) = Hash(String, ControllerAction).new
 
@@ -14,49 +14,29 @@ module Analyzer::Elixir
     end
 
     def analyze
-      # Source Analysis - First pass: collect routes
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
-
-      begin
-        populate_channel_with_files(channel)
-
-        WaitGroup.wait do |wg|
-          @options["concurrency"].to_s.to_i.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if File.directory?(path)
-                  if File.exists?(path) && File.extname(path) == ".ex"
-                    File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-                      file.each_line.with_index do |line, index|
-                        endpoints = line_to_endpoint(line, path)
-                        endpoints.each do |endpoint|
-                          if endpoint.method != ""
-                            details = Details.new(PathInfo.new(path, index + 1))
-                            endpoint.details = details
-                            @result << endpoint
-                          end
-                        end
-                      end
-                    end
-                  end
-                rescue File::NotFoundError
-                  logger.debug "File not found: #{path}"
-                end
-              end
-            end
-          end
-        end
-      rescue e
-        logger.debug e
-      end
+      # First pass: collect routes via the engine's parallel file scan.
+      super
 
       # Second pass: extract parameters from controller files
       extract_controller_params
 
       @result
+    end
+
+    def analyze_file(path : String) : Array(Endpoint)
+      return [] of Endpoint unless File.extname(path) == ".ex"
+
+      endpoints = [] of Endpoint
+      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
+        file.each_line.with_index do |line, index|
+          line_to_endpoint(line, path).each do |endpoint|
+            next if endpoint.method == ""
+            endpoint.details = Details.new(PathInfo.new(path, index + 1))
+            endpoints << endpoint
+          end
+        end
+      end
+      endpoints
     end
 
     def extract_controller_params
