@@ -1,7 +1,7 @@
-require "../../../models/analyzer"
+require "../../engines/ruby_engine"
 
 module Analyzer::Ruby
-  class Hanami < Analyzer
+  class Hanami < RubyEngine
     def analyze
       # Config Analysis
       path = "#{@base_path}/config/routes.rb"
@@ -139,52 +139,6 @@ module Analyzer::Ruby
           end
         end
       end
-    end
-
-    def line_to_endpoint(content : String, details : Details) : Endpoint
-      content.scan(/get\s+['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new("#{match[1]}", "GET", details)
-        end
-      end
-
-      content.scan(/post\s+['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new("#{match[1]}", "POST", details)
-        end
-      end
-
-      content.scan(/put\s+['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new("#{match[1]}", "PUT", details)
-        end
-      end
-
-      content.scan(/delete\s+['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new("#{match[1]}", "DELETE", details)
-        end
-      end
-
-      content.scan(/patch\s+['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new("#{match[1]}", "PATCH", details)
-        end
-      end
-
-      content.scan(/head\s+['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new("#{match[1]}", "HEAD", details)
-        end
-      end
-
-      content.scan(/options\s+['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new("#{match[1]}", "OPTIONS", details)
-        end
-      end
-
-      Endpoint.new("", "")
     end
   end
 end
