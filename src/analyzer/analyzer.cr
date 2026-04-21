@@ -64,6 +64,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"php_symfony", Php::Symfony},
     {"python_django", Python::Django},
     {"python_fastapi", Python::FastAPI},
+    {"python_bottle", Python::Bottle},
     {"python_flask", Python::Flask},
     {"python_sanic", Python::Sanic},
     {"python_tornado", Python::Tornado},
