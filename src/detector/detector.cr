@@ -157,8 +157,12 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
       # User-supplied --exclude-path patterns (comma-separated globs).
       # Patterns containing "/" are matched against the relative path;
       # patterns without "/" are matched against the basename.
-      exclude_path_patterns = options["exclude_path"]?.to_s
+      # Partition once up front so the per-file loop only walks the two
+      # already-classified lists — no substring check per file.
+      exclude_path_raw = options["exclude_path"]?.to_s
         .split(",").map(&.strip).reject(&.empty?)
+      path_patterns, basename_patterns = exclude_path_raw.partition(&.includes?('/'))
+      exclude_path_active = !exclude_path_raw.empty?
       skipped_exclude_path = 0
 
       base_paths.each do |base_path|
@@ -182,13 +186,10 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
             next
           end
 
-          if !exclude_path_patterns.empty?
-            rel_no_slash = relative_path.lchop('/')
+          if exclude_path_active
             basename = File.basename(file)
-            matched = exclude_path_patterns.any? do |pat|
-              target = pat.includes?('/') ? rel_no_slash : basename
-              File.match?(pat, target)
-            end
+            matched = basename_patterns.any? { |pat| File.match?(pat, basename) } ||
+                      path_patterns.any? { |pat| File.match?(pat, relative_path.lchop('/')) }
             if matched
               skipped_exclude_path += 1
               next
