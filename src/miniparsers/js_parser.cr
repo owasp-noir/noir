@@ -185,15 +185,19 @@ module Noir
         @hit_max_iterations = true
       end
 
+      # Filter out paths that are not valid HTTP route paths.
+      # This is a single checkpoint that catches routes created by any code path
+      # (fast_scan, parse_generic_route, parse_express_route, etc.).
+      # Filter BEFORE the leading-slash normalization below — otherwise bare
+      # identifiers like "Object" (leaked via `resolve_dynamic_path` from
+      # `Promise.all(Object.values(...).map(...))`) get rewritten to
+      # "/Object" and sneak past `valid_route_path?`'s "/" check.
+      routes.select! { |r| valid_route_path?(r.path) }
+
       # Ensure all routes have leading slash for consistency
       routes.each do |route_item|
         route_item.path = "/#{route_item.path}" unless route_item.path.starts_with?("/")
       end
-
-      # Filter out paths that are not valid HTTP route paths.
-      # This is a single checkpoint that catches routes created by any code path
-      # (fast_scan, parse_generic_route, parse_express_route, etc.).
-      routes.select! { |r| valid_route_path?(r.path) }
 
       # Dedupe by method + path
       seen = Set(String).new
@@ -1141,6 +1145,12 @@ module Noir
       return false if path.empty?
       return false if path.includes?("://")
       return false if path.each_char.any?(&.whitespace?)
+      # Express routes virtually always contain "/". Requiring it filters
+      # bare identifiers that leak in via `resolve_dynamic_path` when an
+      # unresolved variable name is used as a `.get`/`.all` argument —
+      # e.g. `Promise.all(Object.values(...).map(...))` would otherwise
+      # produce a route named `Object`.
+      return false unless path.includes?("/")
       true
     end
 
