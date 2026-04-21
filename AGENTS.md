@@ -75,10 +75,28 @@ spec/
 - `.ameba.yml` - Linting configuration
 - `.github/workflows/ci.yml` - CI configuration
 
+## Analyzer Layering
+
+An analyzer is composed of three layers. Keep them separate — a framework adapter should not open files or re-implement parsing.
+
+1. **Language Engine** — shared per-language base (`src/analyzer/analyzers/{lang}/common.cr` or equivalent). Owns file walking, concurrency, worker pool, file-content caching. One per language.
+2. **Route Extractor** — shared per-language parser layer (`src/miniparsers/{lang}_route_extractor.cr`). Takes source content, yields route declarations (method, path, location). No file I/O, no framework-specific rules.
+3. **Framework Adapter** — thin per-framework class (`src/analyzer/analyzers/{lang}/{framework}.cr`). Consumes routes from the extractor and applies framework-specific param mappings, filters, and special cases.
+
+**Rule**: the framework adapter receives routes; it does not walk the filesystem or parse tokens itself.
+
+**Reference implementation**: `src/analyzer/analyzers/javascript/hono.cr` on top of `src/miniparsers/js_route_extractor.cr`. Hono is ~205 lines because it follows this split; contrast with analyzers that inline all three responsibilities and grow to 500–800 lines.
+
+**Current coverage**:
+- Language engines: Go, Python. Missing for PHP, Ruby, Rust (tracked as separate work).
+- Route extractors: JavaScript only. Python/Kotlin/Java have parsers but not dedicated extractors.
+
+When adding a new framework in a language that already has an extractor, extend the extractor rather than re-parsing inline.
+
 ## Adding New Components
 
 ### Analyzers
-1. Create `src/analyzer/analyzers/{language}/{framework}.cr`
+1. Create `src/analyzer/analyzers/{language}/{framework}.cr` — framework adapter only. Delegate parsing to the language's route extractor (see **Analyzer Layering** above).
 2. Add functional test: `spec/functional_test/testers/{language}/{framework}_spec.cr`
 3. Add fixtures: `spec/functional_test/fixtures/{language}/{framework}/`
 4. Register in `src/analyzer/analyzer.cr` if needed
