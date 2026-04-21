@@ -1,45 +1,8 @@
-require "../../../models/analyzer"
-require "../../../utils/utils.cr"
+require "../../engines/php_engine"
 
 module Analyzer::Php
-  class Laravel < Analyzer
-    def analyze
-      result = [] of Endpoint
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
-
-      begin
-        populate_channel_with_files(channel)
-
-        WaitGroup.wait do |wg|
-          @options["concurrency"].to_s.to_i.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if File.directory?(path)
-
-                  if File.exists?(path)
-                    result.concat(analyze_file(path))
-                  end
-                rescue File::NotFoundError
-                  logger.debug "File not found: #{path}"
-                rescue e
-                  logger.debug "Error analyzing #{path}: #{e}"
-                end
-              end
-            end
-          end
-        end
-      rescue e
-        logger.debug e
-      end
-
-      Fiber.yield
-      result
-    end
-
-    private def analyze_file(path : String) : Array(Endpoint)
+  class Laravel < PhpEngine
+    def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
 
       # Analyze Laravel routes files
@@ -84,7 +47,7 @@ module Analyzer::Php
           next unless path_match
 
           route_path = path_match[1]
-          params = extract_route_params(route_path)
+          params = extract_brace_path_params(route_path)
           details = Details.new(PathInfo.new(path))
 
           methods = [] of String
@@ -144,7 +107,7 @@ module Analyzer::Php
             full_path = build_full_path(prefix, route_path)
           end
 
-          params = extract_route_params(full_path)
+          params = extract_brace_path_params(full_path)
           methods.each do |http_method|
             endpoints << Endpoint.new(full_path, http_method, params, details.dup)
           end
@@ -200,16 +163,6 @@ module Analyzer::Php
       endpoints
     end
 
-    private def build_full_path(prefix : String, path : String) : String
-      return prefix if path == "/" && !prefix.empty?
-      return path if prefix.empty?
-
-      full_path = "/#{prefix.strip('/')}/#{path.strip('/')}"
-      full_path = full_path.gsub(/\/+/, "/")
-      full_path = full_path.chomp('/') if full_path.size > 1
-      full_path
-    end
-
     private def create_resource_endpoints(resource : String, file_path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       details = Details.new(PathInfo.new(file_path))
@@ -228,7 +181,7 @@ module Analyzer::Php
 
       resource_routes.each do |route_info|
         path, method = route_info
-        params = extract_route_params(path)
+        params = extract_brace_path_params(path)
         endpoints << Endpoint.new(path, method, params, details)
       end
 
@@ -251,7 +204,7 @@ module Analyzer::Php
 
       api_resource_routes.each do |route_info|
         path, method = route_info
-        params = extract_route_params(path)
+        params = extract_brace_path_params(path)
         endpoints << Endpoint.new(path, method, params, details)
       end
 
@@ -265,26 +218,6 @@ module Analyzer::Php
         methods << match[1].upcase
       end
       methods
-    end
-
-    private def extract_route_params(route_path : String) : Array(Param)
-      params = [] of Param
-
-      # Extract Laravel route parameters like {id}, {slug}, etc.
-      param_matches = route_path.scan(/\{(\w+)\}/)
-      param_matches.each do |match|
-        param_name = match[1]
-        params << Param.new(param_name, "", "path")
-      end
-
-      # Extract optional parameters like {id?}
-      optional_matches = route_path.scan(/\{(\w+)\?\}/)
-      optional_matches.each do |match|
-        param_name = match[1]
-        params << Param.new(param_name, "", "path")
-      end
-
-      params
     end
   end
 end

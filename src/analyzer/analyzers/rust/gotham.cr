@@ -1,82 +1,58 @@
-require "../../../models/analyzer"
+require "../../engines/rust_engine"
 
 module Analyzer::Rust
-  class Gotham < Analyzer
+  class Gotham < RustEngine
     # Maximum lines to look ahead for handler name
     MAX_HANDLER_LOOKUP_LINES = 5
 
-    def analyze
-      # Source Analysis for Gotham web framework
-      # Gotham uses builder pattern: Router::builder().get("/path").to(handler)
-      # Route paths must start with /
-      pattern = /\.(get|post|put|delete|patch|head|options)\s*\(\s*"(\/[^"]*)"\s*\)/
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
+    # Gotham uses builder pattern: Router::builder().get("/path").to(handler)
+    # Route paths must start with /
+    ROUTE_PATTERN = /\.(get|post|put|delete|patch|head|options)\s*\(\s*"(\/[^"]*)"\s*\)/
 
-      begin
-        populate_channel_with_files(channel)
+    def analyze_file(path : String) : Array(Endpoint)
+      endpoints = [] of Endpoint
+      lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
 
-        WaitGroup.wait do |wg|
-          @options["concurrency"].to_s.to_i.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if File.directory?(path)
+      lines.each_with_index do |line, index|
+        # Look for Gotham routing patterns like .get("/path")
+        next unless line.includes?(".") && (line.includes?("get") || line.includes?("post") ||
+                    line.includes?("put") || line.includes?("delete") ||
+                    line.includes?("patch") || line.includes?("head") ||
+                    line.includes?("options"))
+        match = line.match(ROUTE_PATTERN)
+        next unless match
 
-                  if File.exists?(path) && File.extname(path) == ".rs"
-                    lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
-                    lines.each_with_index do |line, index|
-                      # Look for Gotham routing patterns like .get("/path")
-                      if line.includes?(".") && (line.includes?("get") || line.includes?("post") ||
-                         line.includes?("put") || line.includes?("delete") ||
-                         line.includes?("patch") || line.includes?("head") ||
-                         line.includes?("options"))
-                        match = line.match(pattern)
-                        if match
-                          begin
-                            method = match[1]
-                            route_path = match[2]
+        begin
+          method = match[1]
+          route_path = match[2]
 
-                            # Parse path parameters (Gotham uses :param syntax)
-                            params = [] of Param
-                            final_path = route_path.gsub(/:(\w+)/) do |param_match|
-                              param_name = param_match[1..-1] # Remove the ':'
-                              params << Param.new(param_name, "", "path")
-                              ":#{param_name}"
-                            end
-
-                            details = Details.new(PathInfo.new(path, index + 1))
-                            endpoint = Endpoint.new(final_path, method.upcase, details)
-                            params.each do |param|
-                              endpoint.push_param(param)
-                            end
-
-                            # Try to find the handler function and extract cookies/headers
-                            # Look for .to(handler_name) in nearby lines
-                            handler_name = find_handler_name(lines, index)
-                            if handler_name
-                              extract_handler_params(lines, handler_name, endpoint)
-                            end
-
-                            result << endpoint
-                          rescue
-                          end
-                        end
-                      end
-                    end
-                  end
-                rescue File::NotFoundError
-                  logger.debug "File not found: #{path}"
-                end
-              end
-            end
+          # Parse path parameters (Gotham uses :param syntax)
+          params = [] of Param
+          final_path = route_path.gsub(/:(\w+)/) do |param_match|
+            param_name = param_match[1..-1] # Remove the ':'
+            params << Param.new(param_name, "", "path")
+            ":#{param_name}"
           end
+
+          details = Details.new(PathInfo.new(path, index + 1))
+          endpoint = Endpoint.new(final_path, method.upcase, details)
+          params.each do |param|
+            endpoint.push_param(param)
+          end
+
+          # Try to find the handler function and extract cookies/headers
+          # Look for .to(handler_name) in nearby lines
+          handler_name = find_handler_name(lines, index)
+          if handler_name
+            extract_handler_params(lines, handler_name, endpoint)
+          end
+
+          endpoints << endpoint
+        rescue
         end
-      rescue
       end
 
-      result
+      endpoints
     end
 
     # Find the handler function name from .to(handler) pattern

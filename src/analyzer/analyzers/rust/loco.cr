@@ -1,74 +1,46 @@
-require "../../../models/analyzer"
+require "../../engines/rust_engine"
 
 module Analyzer::Rust
-  class Loco < Analyzer
-    def analyze
-      # Source Analysis for Loco framework routes
-      # Loco follows Rails conventions with controllers and actions
-      # Loco uses Axum under the hood, so we extract parameters using Axum patterns
+  class Loco < RustEngine
+    # Loco follows Rails conventions with controllers and actions.
+    # Loco uses Axum under the hood, so parameters are extracted using Axum patterns.
 
-      # Simple pattern to match function definitions
-      pattern = /pub\s+async\s+fn\s+(\w+)/
+    # Simple pattern to match function definitions
+    FN_PATTERN = /pub\s+async\s+fn\s+(\w+)/
 
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
+    def analyze_file(path : String) : Array(Endpoint)
+      endpoints = [] of Endpoint
+      lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
 
-      begin
-        populate_channel_with_files(channel)
+      lines.each_with_index do |line, index|
+        next unless line.to_s.includes? "pub async fn"
+        match = line.match(FN_PATTERN)
+        next unless match
 
-        WaitGroup.wait do |wg|
-          @options["concurrency"].to_s.to_i.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if File.directory?(path)
+        begin
+          method_name = match[1]
+          # Convert Rails-style action names to route paths
+          endpoint_path = action_to_path(method_name, path)
+          details = Details.new(PathInfo.new(path, index + 1))
+          # Infer HTTP method from action name and context
+          http_method = infer_http_method(method_name, line)
 
-                  if File.exists?(path) && File.extname(path) == ".rs"
-                    lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
-                    lines.each_with_index do |line, index|
-                      if line.to_s.includes? "pub async fn"
-                        match = line.match(pattern)
-                        if match
-                          begin
-                            method_name = match[1]
-                            # Convert Rails-style action names to route paths
-                            endpoint_path = action_to_path(method_name, path)
-                            details = Details.new(PathInfo.new(path, index + 1))
-                            # Infer HTTP method from action name and context
-                            http_method = infer_http_method(method_name, line)
+          endpoint = Endpoint.new(endpoint_path, http_method, details)
 
-                            endpoint = Endpoint.new(endpoint_path, http_method, details)
+          # Extract path parameters from the endpoint path
+          extract_path_params(endpoint_path, endpoint)
 
-                            # Extract path parameters from the endpoint path
-                            extract_path_params(endpoint_path, endpoint)
+          # Extract parameters from function signature and body
+          extract_function_params(lines, index, endpoint)
 
-                            # Extract parameters from function signature and body
-                            extract_function_params(lines, index, endpoint)
-
-                            result << endpoint
-                          rescue e
-                            # Log the exception for debugging
-                            logger.debug "Error parsing Loco endpoint: #{e.message}"
-                          end
-                        end
-                      end
-                    end
-                  end
-                rescue File::NotFoundError
-                  logger.debug "File not found: #{path}"
-                rescue e
-                  logger.debug "Error in Loco analyzer: #{e.message}"
-                end
-              end
-            end
-          end
+          endpoints << endpoint
+        rescue e
+          # Log the exception for debugging
+          logger.debug "Error parsing Loco endpoint: #{e.message}"
         end
-      rescue e
-        logger.debug "Error in Loco analyzer setup: #{e.message}"
       end
 
-      result
+      endpoints
     end
 
     private def action_to_path(action_name : String, file_path : String) : String

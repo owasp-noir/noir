@@ -1,7 +1,7 @@
-require "../../../models/analyzer"
+require "../../engines/ruby_engine"
 
 module Analyzer::Ruby
-  class Rails < Analyzer
+  class Rails < RubyEngine
     def analyze
       # Public Dir Analysis
       begin

@@ -1,45 +1,8 @@
-require "../../../models/analyzer"
-require "../../../utils/utils.cr"
+require "../../engines/php_engine"
 
 module Analyzer::Php
-  class Symfony < Analyzer
-    def analyze
-      result = [] of Endpoint
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
-
-      begin
-        populate_channel_with_files(channel)
-
-        WaitGroup.wait do |wg|
-          @options["concurrency"].to_s.to_i.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if File.directory?(path)
-
-                  if File.exists?(path)
-                    result.concat(analyze_file(path))
-                  end
-                rescue File::NotFoundError
-                  logger.debug "File not found: #{path}"
-                rescue e
-                  logger.debug "Error analyzing #{path}: #{e}"
-                end
-              end
-            end
-          end
-        end
-      rescue e
-        logger.debug e
-      end
-
-      Fiber.yield
-      result
-    end
-
-    private def analyze_file(path : String) : Array(Endpoint)
+  class Symfony < PhpEngine
+    def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
 
       # Analyze PHP controller files
@@ -83,7 +46,7 @@ module Analyzer::Php
             context_end = [route_start + 1000, content.size].min
             method_context = content[route_start..context_end]
 
-            params = extract_route_params(route_path)
+            params = extract_brace_path_params(route_path)
             # Extract additional parameters from method body
             params.concat(extract_method_params(method_context))
 
@@ -115,7 +78,7 @@ module Analyzer::Php
             context_end = [route_start + 1000, content.size].min
             method_context = content[route_start..context_end]
 
-            params = extract_route_params(route_path)
+            params = extract_brace_path_params(route_path)
             # Extract additional parameters from method body
             params.concat(extract_method_params(method_context))
 
@@ -185,7 +148,7 @@ module Analyzer::Php
               methods = ["GET"]
             end
 
-            params = extract_route_params(route_path)
+            params = extract_brace_path_params(route_path)
             details = Details.new(PathInfo.new(path))
 
             methods.each do |method|
@@ -198,19 +161,6 @@ module Analyzer::Php
       end
 
       endpoints
-    end
-
-    private def extract_route_params(route_path : String) : Array(Param)
-      params = [] of Param
-
-      # Extract path parameters like {id}, {slug}, etc.
-      param_matches = route_path.scan(/\{(\w+)\}/)
-      param_matches.each do |match|
-        param_name = match[1]
-        params << Param.new(param_name, "", "path")
-      end
-
-      params
     end
 
     private def extract_method_params(context : String) : Array(Param)

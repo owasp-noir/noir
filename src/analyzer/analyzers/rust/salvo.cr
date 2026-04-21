@@ -1,53 +1,24 @@
-require "../../../models/analyzer"
+require "../../engines/rust_engine"
 
 module Analyzer::Rust
-  class Salvo < Analyzer
-    def analyze
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
-
-      begin
-        populate_channel_with_files(channel)
-
-        WaitGroup.wait do |wg|
-          @options["concurrency"].to_s.to_i.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if File.directory?(path)
-
-                  if File.exists?(path) && File.extname(path) == ".rs"
-                    analyze_file(path)
-                  end
-                rescue File::NotFoundError
-                  logger.debug "File not found: #{path}"
-                end
-              end
-            end
-          end
-        end
-      rescue e
-        logger.debug "Error during Salvo analysis: #{e.message}"
-      end
-
-      result
-    end
-
-    def analyze_file(path : String)
+  class Salvo < RustEngine
+    def analyze_file(path : String) : Array(Endpoint)
+      endpoints = [] of Endpoint
       lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
 
       # Strategy 1: Parse Router chain patterns
       # e.g., Router::with_path("users/<id>").get(get_user)
       # e.g., Router::new().push(Router::with_path("items").get(list_items))
-      parse_router_chains(lines, path)
+      parse_router_chains(lines, path, endpoints)
 
       # Strategy 2: Parse #[endpoint] macro patterns
       # e.g., #[endpoint(method = Get, path = "/api/users")]
-      parse_endpoint_macros(lines, path)
+      parse_endpoint_macros(lines, path, endpoints)
+
+      endpoints
     end
 
-    def parse_router_chains(lines : Array(String), path : String)
+    def parse_router_chains(lines : Array(String), path : String, endpoints : Array(Endpoint))
       lines.each_with_index do |line, index|
         # Match Router::with_path("...").method(handler) or .path("...").method(handler)
         # Pattern: with_path("path") followed by .method(handler)
@@ -76,7 +47,7 @@ module Analyzer::Rust
                   extract_handler_params(lines, handler_name, endpoint)
                 end
 
-                result << endpoint
+                endpoints << endpoint
                 break
               end
             end
@@ -85,7 +56,7 @@ module Analyzer::Rust
       end
     end
 
-    def parse_endpoint_macros(lines : Array(String), path : String)
+    def parse_endpoint_macros(lines : Array(String), path : String, endpoints : Array(Endpoint))
       lines.each_with_index do |line, index|
         # Match #[endpoint(method = Get, path = "/path")]
         if line.strip.starts_with?("#[endpoint(")
@@ -103,12 +74,12 @@ module Analyzer::Rust
           end
 
           details = Details.new(PathInfo.new(path, index + 1))
-          endpoint = Endpoint.new("#{route_path}", method, details)
+          endpoint = Endpoint.new(route_path, method, details)
 
           extract_path_params(route_path, endpoint)
           extract_function_params(lines, index + 1, endpoint)
 
-          result << endpoint
+          endpoints << endpoint
         end
       end
     end

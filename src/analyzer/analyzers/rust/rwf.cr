@@ -1,74 +1,50 @@
-require "../../../models/analyzer"
+require "../../engines/rust_engine"
 
 module Analyzer::Rust
-  class Rwf < Analyzer
-    def analyze
-      # Source Analysis
-      # Look for route! macro calls and Controller implementations
-      route_pattern = /route!\("([^"]+)"\s*=>\s*(\w+)\)/
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
+  class Rwf < RustEngine
+    # Look for route! macro calls and Controller implementations
+    ROUTE_PATTERN = /route!\("([^"]+)"\s*=>\s*(\w+)\)/
 
-      begin
-        populate_channel_with_files(channel)
+    def analyze_file(path : String) : Array(Endpoint)
+      endpoints = [] of Endpoint
+      lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
 
-        WaitGroup.wait do |wg|
-          @options["concurrency"].to_s.to_i.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if File.directory?(path)
+      lines.each_with_index do |line, index|
+        # Look for route! macro definitions
+        next unless line.includes? "route!("
+        match = line.match(ROUTE_PATTERN)
+        next unless match
 
-                  if File.exists?(path) && File.extname(path) == ".rs"
-                    lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
-                    lines.each_with_index do |line, index|
-                      # Look for route! macro definitions
-                      if line.includes? "route!("
-                        match = line.match(route_pattern)
-                        if match
-                          begin
-                            route_path = match[1]
-                            controller_name = match[2]
-                            details = Details.new(PathInfo.new(path, index + 1))
+        begin
+          route_path = match[1]
+          controller_name = match[2]
+          details = Details.new(PathInfo.new(path, index + 1))
 
-                            # Extract HTTP methods supported by the controller
-                            methods = extract_controller_methods(lines, controller_name)
+          # Extract HTTP methods supported by the controller
+          methods = extract_controller_methods(lines, controller_name)
 
-                            # If no specific methods found, default to GET
-                            if methods.empty?
-                              methods = ["GET"]
-                            end
-
-                            # Create an endpoint for each HTTP method
-                            methods.each do |http_method|
-                              endpoint = Endpoint.new(route_path, http_method, details)
-
-                              # Extract path parameters from route pattern (e.g., /users/:id)
-                              extract_path_params(route_path, endpoint)
-
-                              # Look for controller implementation to extract more parameters
-                              extract_controller_params(lines, controller_name, endpoint)
-
-                              result << endpoint
-                            end
-                          rescue
-                          end
-                        end
-                      end
-                    end
-                  end
-                rescue File::NotFoundError
-                  logger.debug "File not found: #{path}"
-                end
-              end
-            end
+          # If no specific methods found, default to GET
+          if methods.empty?
+            methods = ["GET"]
           end
+
+          # Create an endpoint for each HTTP method
+          methods.each do |http_method|
+            endpoint = Endpoint.new(route_path, http_method, details)
+
+            # Extract path parameters from route pattern (e.g., /users/:id)
+            extract_path_params(route_path, endpoint)
+
+            # Look for controller implementation to extract more parameters
+            extract_controller_params(lines, controller_name, endpoint)
+
+            endpoints << endpoint
+          end
+        rescue
         end
-      rescue
       end
 
-      result
+      endpoints
     end
 
     # Extract path parameters from the route pattern like /users/:id
