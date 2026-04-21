@@ -6,7 +6,6 @@ module Analyzer::Scala
       parallel_file_scan do |path|
         result.concat(analyze_file(path))
       end
-      Fiber.yield
       result
     end
 

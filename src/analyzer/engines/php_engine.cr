@@ -3,21 +3,14 @@ require "../../utils/utils.cr"
 
 module Analyzer::Php
   abstract class PhpEngine < Analyzer
-    # Engine ships two shapes; analyzers pick one:
-    #
-    # - Override `analyze_file(path) -> Array(Endpoint)` for pure per-file
-    #   extraction. `analyze` below drives the worker loop and concats the
-    #   returned endpoints. This is the simpler, default path.
-    #
-    # - Override `analyze` and call `parallel_file_scan(&block)` directly
-    #   when the analyzer needs closure state, pre-phase work, or
-    #   post-processing after the file walk.
+    # See AGENTS.md §"Two engine shapes" (and
+    # docs/content/development/analyzer_architecture/) for when to override
+    # `analyze_file` vs. `analyze` + `parallel_file_scan`.
 
     def analyze
       parallel_file_scan do |path|
         result.concat(analyze_file(path))
       end
-      Fiber.yield
       result
     end
 

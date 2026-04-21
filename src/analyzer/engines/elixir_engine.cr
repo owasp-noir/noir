@@ -4,9 +4,9 @@ module Analyzer::Elixir
   abstract class ElixirEngine < Analyzer
     def analyze
       parallel_file_scan do |path|
-        @result.concat(analyze_file(path))
+        result.concat(analyze_file(path))
       end
-      @result
+      result
     end
 
     abstract def analyze_file(path : String) : Array(Endpoint)
