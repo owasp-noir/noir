@@ -1,10 +1,9 @@
-require "../../../models/analyzer"
 require "../../../minilexers/python"
 require "../../../miniparsers/python"
-require "./python"
+require "../../engines/python_engine"
 
 module Analyzer::Python
-  class Tornado < Python
+  class Tornado < PythonEngine
     # Reference: https://tornadoweb.org/en/stable/web.html
     # Reference: https://tornadoweb.org/en/stable/httputil.html#tornado.httputil.HTTPServerRequest
     REQUEST_PARAM_FIELDS = {

@@ -1,9 +1,8 @@
-require "../../../models/analyzer"
-require "./python"
+require "../../engines/python_engine"
 require "json"
 
 module Analyzer::Python
-  class Django < Python
+  class Django < PythonEngine
     # Base path for the Django project
     @django_base_path : ::String = ""
     @visited_url_paths = Hash(String, Bool).new

@@ -1,10 +1,9 @@
-require "../../../models/analyzer"
 require "../../../minilexers/python"
 require "../../../miniparsers/python"
-require "./python"
+require "../../engines/python_engine"
 
 module Analyzer::Python
-  class Flask < Python
+  class Flask < PythonEngine
     # Reference: https://stackoverflow.com/a/16664376
     # Reference: https://tedboy.github.io/flask/generated/generated/flask.Request.html
     REQUEST_PARAM_FIELDS = {
