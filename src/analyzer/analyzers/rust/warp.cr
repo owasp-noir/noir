@@ -1,51 +1,26 @@
-require "../../../models/analyzer"
+require "../../engines/rust_engine"
 
 module Analyzer::Rust
-  class Warp < Analyzer
-    def analyze
-      # Pattern for GET endpoints with warp::get()
+  class Warp < RustEngine
+    def analyze_file(path : String) : Array(Endpoint)
+      endpoints = [] of Endpoint
 
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
+      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
+        content = file.gets_to_end
 
-      begin
-        populate_channel_with_files(channel)
-
-        WaitGroup.wait do |wg|
-          @options["concurrency"].to_s.to_i.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if File.directory?(path)
-
-                  if File.exists?(path) && File.extname(path) == ".rs"
-                    File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-                      content = file.gets_to_end
-
-                      # Simple approach: split by let statements and analyze each
-                      statements = content.split(/(?=let\s+\w+\s*=)/)
-                      statements.each do |statement|
-                        if statement.includes?("warp::") && (statement.includes?("get()") || statement.includes?("post()") || statement.includes?("put()") || statement.includes?("delete()"))
-                          endpoint = parse_warp_statement(statement, path)
-                          if endpoint
-                            result << endpoint
-                          end
-                        end
-                      end
-                    end
-                  end
-                rescue File::NotFoundError
-                  logger.debug "File not found: #{path}"
-                end
-              end
+        # Simple approach: split by let statements and analyze each
+        statements = content.split(/(?=let\s+\w+\s*=)/)
+        statements.each do |statement|
+          if statement.includes?("warp::") && (statement.includes?("get()") || statement.includes?("post()") || statement.includes?("put()") || statement.includes?("delete()"))
+            endpoint = parse_warp_statement(statement, path)
+            if endpoint
+              endpoints << endpoint
             end
           end
         end
-      rescue
       end
 
-      result
+      endpoints
     end
 
     private def parse_warp_statement(statement : String, file_path : String) : Endpoint?

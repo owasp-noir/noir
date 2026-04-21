@@ -1,61 +1,34 @@
-require "../../../models/analyzer"
+require "../../engines/rust_engine"
 
 module Analyzer::Rust
-  class ActixWeb < Analyzer
-    def analyze
-      # Source Analysis
-      pattern = /#\[(get|post|put|delete|patch)\("([^"]+)"\)\]/
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
+  class ActixWeb < RustEngine
+    ROUTE_PATTERN = /#\[(get|post|put|delete|patch)\("([^"]+)"\)\]/
 
-      begin
-        populate_channel_with_files(channel)
+    def analyze_file(path : String) : Array(Endpoint)
+      endpoints = [] of Endpoint
+      lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
 
-        WaitGroup.wait do |wg|
-          @options["concurrency"].to_s.to_i.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if File.directory?(path)
+      lines.each_with_index do |line, index|
+        next unless line.to_s.includes? "#["
+        match = line.match(ROUTE_PATTERN)
+        next unless match
 
-                  if File.exists?(path) && File.extname(path) == ".rs"
-                    lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
-                    lines.each_with_index do |line, index|
-                      if line.to_s.includes? "#["
-                        match = line.match(pattern)
-                        if match
-                          begin
-                            route_argument = match[2]
-                            callback_argument = match[1]
-                            details = Details.new(PathInfo.new(path, index + 1))
-                            endpoint = Endpoint.new("#{route_argument}", callback_to_method(callback_argument), details)
+        begin
+          route_argument = match[2]
+          callback_argument = match[1]
+          details = Details.new(PathInfo.new(path, index + 1))
+          endpoint = Endpoint.new(route_argument, callback_to_method(callback_argument), details)
 
-                            # Extract path parameters from route pattern
-                            extract_path_params(route_argument, endpoint)
+          extract_path_params(route_argument, endpoint)
+          extract_function_params(lines, index + 1, endpoint)
 
-                            # Look ahead to extract parameters from function signature and body
-                            extract_function_params(lines, index + 1, endpoint)
-
-                            result << endpoint
-                          rescue e
-                            logger.debug "Error processing endpoint: #{e.message}"
-                          end
-                        end
-                      end
-                    end
-                  end
-                rescue File::NotFoundError
-                  logger.debug "File not found: #{path}"
-                end
-              end
-            end
-          end
+          endpoints << endpoint
+        rescue e
+          logger.debug "Error processing endpoint: #{e.message}"
         end
-      rescue
       end
 
-      result
+      endpoints
     end
 
     def callback_to_method(str)

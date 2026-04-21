@@ -1,44 +1,16 @@
-require "../../../models/analyzer"
+require "../../engines/rust_engine"
 
 module Analyzer::Rust
-  class Tide < Analyzer
-    def analyze
-      # Tide routing patterns: app.at("/path").get(handler), app.at("/path").post(handler), etc.
+  class Tide < RustEngine
+    def analyze_file(path : String) : Array(Endpoint)
+      endpoints = [] of Endpoint
 
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
-
-      begin
-        populate_channel_with_files(channel)
-
-        WaitGroup.wait do |wg|
-          @options["concurrency"].to_s.to_i.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if File.directory?(path)
-
-                  if File.exists?(path) && File.extname(path) == ".rs"
-                    File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-                      content = file.gets_to_end
-                      endpoints = parse_tide_routes(content, path)
-                      endpoints.each do |endpoint|
-                        result << endpoint
-                      end
-                    end
-                  end
-                rescue File::NotFoundError
-                  logger.debug "File not found: #{path}"
-                end
-              end
-            end
-          end
-        end
-      rescue
+      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
+        content = file.gets_to_end
+        endpoints = parse_tide_routes(content, path)
       end
 
-      result
+      endpoints
     end
 
     private def parse_tide_routes(content : String, file_path : String) : Array(Endpoint)

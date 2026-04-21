@@ -1,66 +1,42 @@
-require "../../../models/analyzer"
+require "../../engines/rust_engine"
 
 module Analyzer::Rust
-  class Rocket < Analyzer
+  class Rocket < RustEngine
     # Maximum lines to scan ahead for function body analysis
     MAX_FUNCTION_SCAN_LINES = 30
 
-    def analyze
-      # Source Analysis
-      # Enhanced pattern to capture path, query parameters, and data parameters
-      pattern = /#\[(get|post|delete|put|patch)\("([^"]+)"(?:, data = "<([^>]+)>")?\)\]/
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
+    # Enhanced pattern to capture path, query parameters, and data parameters
+    ROUTE_PATTERN = /#\[(get|post|delete|put|patch)\("([^"]+)"(?:, data = "<([^>]+)>")?\)\]/
 
-      begin
-        populate_channel_with_files(channel)
+    def analyze_file(path : String) : Array(Endpoint)
+      endpoints = [] of Endpoint
+      lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
 
-        WaitGroup.wait do |wg|
-          @options["concurrency"].to_s.to_i.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if File.directory?(path)
+      lines.each_with_index do |line, index|
+        next unless line.includes?("#[") && line.includes?(")]")
+        match = line.match(ROUTE_PATTERN)
+        next unless match
 
-                  if File.exists?(path) && File.extname(path) == ".rs"
-                    lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
-                    lines.each_with_index do |line, index|
-                      if line.includes?("#[") && line.includes?(")]")
-                        match = line.match(pattern)
-                        if match
-                          begin
-                            callback_argument = match[1]
-                            route_argument = match[2]
-                            data_argument = match[3]?
+        begin
+          callback_argument = match[1]
+          route_argument = match[2]
+          data_argument = match[3]?
 
-                            # Extract parameters from the route
-                            params = extract_params(route_argument, data_argument)
+          # Extract parameters from the route
+          params = extract_params(route_argument, data_argument)
 
-                            details = Details.new(PathInfo.new(path, index + 1))
-                            endpoint = Endpoint.new("#{route_argument}", callback_to_method(callback_argument), params, details)
+          details = Details.new(PathInfo.new(path, index + 1))
+          endpoint = Endpoint.new(route_argument, callback_to_method(callback_argument), params, details)
 
-                            # Look ahead to extract cookies and headers from function signature/body
-                            extract_function_params(lines, index + 1, endpoint)
+          # Look ahead to extract cookies and headers from function signature/body
+          extract_function_params(lines, index + 1, endpoint)
 
-                            result << endpoint
-                          rescue
-                          end
-                        end
-                      end
-                    end
-                  end
-                rescue File::NotFoundError
-                  logger.debug "File not found: #{path}"
-                end
-              end
-            end
-          end
+          endpoints << endpoint
+        rescue
         end
-      rescue
       end
 
-      result
+      endpoints
     end
 
     def callback_to_method(str)
