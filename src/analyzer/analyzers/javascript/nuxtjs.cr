@@ -6,7 +6,7 @@ module Analyzer::Javascript
       result = [] of Endpoint
       mutex = Mutex.new
 
-      parallel_js_scan([".js", ".ts", ".mjs", ".mts"]) do |path|
+      parallel_file_scan([".js", ".ts", ".mjs", ".mts"]) do |path|
         # Focus on server/api and server/routes directories for Nuxt 3
         next unless path.includes?("/server/api/") || path.includes?("/server/routes/")
         analyze_nuxt_file(path, result, mutex)

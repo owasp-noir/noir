@@ -7,7 +7,7 @@ module Analyzer::Typescript
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
 
-      parallel_js_scan([".ts", ".tsx"]) do |path|
+      parallel_file_scan([".ts", ".tsx"]) do |path|
         analyze_nestjs_file(path, result, static_dirs)
       end
 

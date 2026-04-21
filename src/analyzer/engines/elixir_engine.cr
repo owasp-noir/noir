@@ -3,6 +3,17 @@ require "../../models/analyzer"
 module Analyzer::Elixir
   abstract class ElixirEngine < Analyzer
     def analyze
+      parallel_file_scan do |path|
+        result.concat(analyze_file(path))
+      end
+      result
+    end
+
+    abstract def analyze_file(path : String) : Array(Endpoint)
+
+    # No extension filter: Phoenix uses `.ex` only, Plug also accepts
+    # `.exs`, so each analyzer filters inside `analyze_file`.
+    protected def parallel_file_scan(&block : String -> Nil) : Nil
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
       begin
@@ -13,7 +24,7 @@ module Analyzer::Elixir
           next unless File.exists?(path)
 
           begin
-            @result.concat(analyze_file(path))
+            block.call(path)
           rescue e
             logger.debug "Error analyzing #{path}: #{e}"
           end
@@ -21,10 +32,6 @@ module Analyzer::Elixir
       rescue e
         logger.debug e
       end
-
-      @result
     end
-
-    abstract def analyze_file(path : String) : Array(Endpoint)
   end
 end

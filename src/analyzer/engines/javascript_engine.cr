@@ -4,14 +4,16 @@ module Analyzer::Javascript
   abstract class JavascriptEngine < Analyzer
     # Default extension set for JavaScript/TypeScript source files.
     # Analyzers with a different filter (e.g. Nitro adds `.mts`, NestJS JS
-    # only uses `.js`/`.jsx`) pass their own list to `parallel_js_scan`.
+    # only uses `.js`/`.jsx`) pass their own list to `parallel_file_scan`.
     DEFAULT_EXTENSIONS = [".js", ".ts", ".jsx", ".tsx"]
 
     # Walk the project tree concurrently, invoking the block for each
     # readable source file whose extension matches. JS/TS analyzers vary
     # in the exact filter (plain JS vs TS vs .mjs vs .tsx), so the filter
     # is an argument with a sensible default.
-    protected def parallel_js_scan(extensions : Array(String) = DEFAULT_EXTENSIONS, &block : String -> Nil) : Nil
+    #
+    # Name-consistent with the other engines' `parallel_file_scan` helpers.
+    protected def parallel_file_scan(extensions : Array(String) = DEFAULT_EXTENSIONS, &block : String -> Nil) : Nil
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
       begin

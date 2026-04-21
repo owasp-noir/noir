@@ -25,7 +25,9 @@ module Analyzer::Ruby
     # Walk the project file tree in parallel, invoking the block for each
     # readable non-directory file. Used by analyzers that scan the whole
     # tree (Sinatra); Rails/Hanami target specific config files directly.
-    def parallel_file_scan(&block : String -> Nil) : Nil
+    #
+    # Name-consistent with the other engines' `parallel_file_scan` helpers.
+    protected def parallel_file_scan(&block : String -> Nil) : Nil
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
       begin

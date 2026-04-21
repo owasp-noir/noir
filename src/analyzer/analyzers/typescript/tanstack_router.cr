@@ -5,7 +5,7 @@ module Analyzer::Typescript
     def analyze
       result = [] of Endpoint
 
-      parallel_js_scan([".ts", ".tsx"]) do |path|
+      parallel_file_scan([".ts", ".tsx"]) do |path|
         analyze_tanstack_file(path, result)
       end
 
