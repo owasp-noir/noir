@@ -1,91 +1,28 @@
-require "../../../models/analyzer"
-require "../../../minilexers/golang"
+require "../../models/analyzer"
+require "../../minilexers/golang"
+require "../../miniparsers/go_route_extractor"
 
 module Analyzer::Go
-  class Common < Analyzer
+  class GoEngine < Analyzer
+    # --- Route-extractor delegations -------------------------------------
+    #
+    # Kept as instance methods so per-framework analyzers (Mux, Goyave,
+    # GoZero) can override them. The default implementations live in
+    # `Noir::GoRouteExtractor` as pure functions.
+
     def analyze_group(line : String, lexer : GolangLexer, groups : Array(Hash(String, String)))
-      if line.includes?(".Group(")
-        map = lexer.tokenize(line)
-        before = Token.new(:unknown, "", 0)
-        group_name = ""
-        group_path = ""
-        map.each do |token|
-          if token.type == :assign
-            group_name = before.value.to_s.gsub(":", "").gsub(/\s/, "")
-          end
-
-          if token.type == :string
-            group_path = token.value.to_s
-            groups.each do |group|
-              group.each do |key, value|
-                if before.value.to_s.includes? key
-                  group_path = value + group_path
-                end
-              end
-            end
-          end
-
-          before = token
-        end
-
-        if group_name.size > 0 && group_path.size > 0
-          # Skip if a group with this name is already registered
-          unless groups.any?(&.has_key?(group_name))
-            groups << {
-              group_name => group_path,
-            }
-          end
-        end
-      end
+      Noir::GoRouteExtractor.scan_group(line, lexer, groups)
     end
 
     def get_route_path(line : String, groups : Array(Hash(String, String))) : String
-      lexer = GolangLexer.new
-      map = lexer.tokenize(line)
-      before = Token.new(:unknown, "", 0)
-      map.each do |token|
-        if token.type == :string
-          final_path = token.value.to_s
-          # Route path must start with "/" to be a valid HTTP endpoint
-          next unless final_path.starts_with?("/")
-          groups.each do |group|
-            group.each do |key, value|
-              if before.value.to_s.includes? key
-                final_path = value + final_path
-              end
-            end
-          end
-
-          return final_path
-        end
-
-        before = token
-      end
-
-      ""
+      Noir::GoRouteExtractor.extract_route_path(line, groups)
     end
 
     def get_static_path(line : String) : Hash(String, String)
-      first = line.strip.split("(")
-      if first.size > 1
-        second = first[1].split(",")
-        if second.size > 1
-          static_path = second[0].gsub("\"", "")
-          file_path = second[1].gsub("\"", "").gsub(" ", "").gsub(")", "").gsub_repeatedly("//", "/")
-          rtn = {
-            "static_path" => static_path,
-            "file_path"   => file_path,
-          }
-
-          return rtn
-        end
-      end
-
-      {
-        "static_path" => "",
-        "file_path"   => "",
-      }
+      Noir::GoRouteExtractor.extract_static_path(line)
     end
+
+    # --- Engine layer ----------------------------------------------------
 
     # Pre-collect all group definitions across Go files grouped by directory (package).
     # This enables cross-file group resolution since all .go files in the same
@@ -144,6 +81,8 @@ module Analyzer::Go
       end
       groups
     end
+
+    # --- Adapter helpers (shared across Go framework adapters) ----------
 
     def add_param_to_endpoint(param : Param, endpoint : Endpoint)
       if param.name.size > 0 && endpoint.method != "" && endpoint.url != ""
