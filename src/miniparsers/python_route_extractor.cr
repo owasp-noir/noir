@@ -55,7 +55,10 @@ module Noir
         router_name = match[1]
         path = match[2]
         if original_line
-          if source_match = source.match(/@#{router_name}\.route\(\s*[rf]?['"]([^'"]*)['"]/)
+          # Python permits spaces around the dot and before the paren
+          # (e.g. `@app . route ("/path")`); match those too when
+          # recovering the unstripped path.
+          if source_match = source.match(/@#{router_name}\s*\.\s*route\s*\(\s*[rf]?['"]([^'"]*)['"]/)
             path = source_match[1]
           end
         end
@@ -68,7 +71,7 @@ module Noir
           router_name = match[1]
           path = match[2]
           if original_line
-            if source_match = source.match(/@#{router_name}\.#{method}\(\s*[rf]?['"]([^'"]*)['"]/)
+            if source_match = source.match(/@#{router_name}\s*\.\s*#{method}\s*\(\s*[rf]?['"]([^'"]*)['"]/)
               path = source_match[1]
             end
           end
@@ -124,7 +127,9 @@ module Noir
           if stripped.starts_with?("def ") || stripped.starts_with?("async def ") || stripped.starts_with?("class ")
             return i
           end
-          if stripped.starts_with?("@") || stripped.empty?
+          # A comment between the decorator and the def is legal Python;
+          # skip it along with blank lines and chained decorators.
+          if stripped.starts_with?("@") || stripped.starts_with?("#") || stripped.empty?
             i += 1
             next
           end
