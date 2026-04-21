@@ -48,6 +48,10 @@ module MediaFilter
     ".ttf", ".otf", ".woff", ".woff2", ".eot",
   ]
 
+  # O(1) lookup set materialized from MEDIA_EXTENSIONS. Used on the hot
+  # path — every file in the project is checked once.
+  MEDIA_EXTENSION_SET = MEDIA_EXTENSIONS.to_set
+
   # Cache for parsed size strings
   @@size_cache : Hash(String, Int32) = Hash(String, Int32).new
 
@@ -83,7 +87,7 @@ module MediaFilter
   # Check if a file should be skipped based on extension
   def self.media_file?(file_path : String) : Bool
     extension = File.extname(file_path).downcase
-    MEDIA_EXTENSIONS.includes?(extension)
+    MEDIA_EXTENSION_SET.includes?(extension)
   end
 
   # Check if a file is too large to process
@@ -99,23 +103,47 @@ module MediaFilter
     end
   end
 
-  # Combined check - returns true if file should be skipped
-  def self.should_skip_file?(file_path : String, max_size : Int32 = MAX_FILE_SIZE) : Bool
-    media_file?(file_path) || file_too_large?(file_path, max_size)
+  # Decide whether a file should be skipped and, if so, return the human
+  # readable reason in a single pass — avoids re-stat'ing the file just
+  # to compose the log message. Returns `nil` when the file should be
+  # processed.
+  #
+  # When the caller has already obtained a `File::Info` (e.g. the
+  # detector walker stats each entry with `follow_symlinks: false`), it
+  # can be passed as `info` to skip the size stat entirely.
+  def self.skip_check(file_path : String, max_size : Int32 = MAX_FILE_SIZE, info : File::Info? = nil) : String?
+    extension = File.extname(file_path).downcase
+    return "media file (#{extension})" if MEDIA_EXTENSION_SET.includes?(extension)
+
+    size = if info
+             info.size
+           else
+             begin
+               File.size(file_path)
+             rescue
+               nil
+             end
+           end
+
+    if size && size > max_size
+      size_mb = (size / (1024.0 * 1024.0)).round(2)
+      max_mb = (max_size / (1024.0 * 1024.0)).round(2)
+      return "file too large (#{size_mb}MB > #{max_mb}MB)"
+    end
+
+    nil
   end
 
-  # Get a human-readable reason why a file was skipped
-  def self.skip_reason(file_path : String, max_size : Int32 = MAX_FILE_SIZE) : String?
-    return unless should_skip_file?(file_path, max_size)
+  # Combined check - returns true if file should be skipped. Prefer
+  # {skip_check} on hot paths: it returns the reason in the same call
+  # so the caller does not re-stat to log.
+  def self.should_skip_file?(file_path : String, max_size : Int32 = MAX_FILE_SIZE, info : File::Info? = nil) : Bool
+    !skip_check(file_path, max_size, info).nil?
+  end
 
-    if media_file?(file_path)
-      "media file (#{File.extname(file_path).downcase})"
-    elsif file_too_large?(file_path, max_size)
-      size_mb = (File.size(file_path) / (1024.0 * 1024.0)).round(2)
-      max_mb = (max_size / (1024.0 * 1024.0)).round(2)
-      "file too large (#{size_mb}MB > #{max_mb}MB)"
-    else
-      "unknown reason"
-    end
+  # Get a human-readable reason why a file was skipped. Kept for
+  # backwards compatibility; new callers should use {skip_check}.
+  def self.skip_reason(file_path : String, max_size : Int32 = MAX_FILE_SIZE, info : File::Info? = nil) : String?
+    skip_check(file_path, max_size, info)
   end
 end
