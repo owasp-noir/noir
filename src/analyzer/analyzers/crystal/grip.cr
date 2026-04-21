@@ -1,80 +1,56 @@
-require "../../../models/analyzer"
+require "../../engines/crystal_engine"
 
 module Analyzer::Crystal
-  class Grip < Analyzer
-    def analyze
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
+  class Grip < CrystalEngine
+    def analyze_file(path : String) : Array(Endpoint)
+      endpoints = [] of Endpoint
 
-      # Source Analysis
-      begin
-        populate_channel_with_files(channel)
+      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
+        last_endpoint = Endpoint.new("", "")
+        current_scopes = [] of String
 
-        WaitGroup.wait do |wg|
-          @options["concurrency"].to_s.to_i.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if File.directory?(path)
-                  if File.exists?(path) && File.extname(path) == ".cr" && !path.includes?("lib")
-                    File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-                      last_endpoint = Endpoint.new("", "")
-                      current_scopes = [] of String
+        file.each_line.with_index do |line, index|
+          details = Details.new(PathInfo.new(path, index + 1))
 
-                      file.each_line.with_index do |line, index|
-                        details = Details.new(PathInfo.new(path, index + 1))
-
-                        # Handle scope statements
-                        if line.includes?("scope ") && line.includes?(" do")
-                          scope_match = line.match(/scope\s+['"](.+?)['"]/)
-                          if scope_match && scope_match[1]?
-                            current_scopes << scope_match[1]
-                          end
-                        end
-
-                        # Handle end statements (basic detection)
-                        if line.strip == "end" && current_scopes.size > 0
-                          current_scopes.pop
-                        end
-
-                        # Parse HTTP method calls
-                        endpoint = line_to_endpoint(line, current_scopes)
-                        if endpoint.method != ""
-                          endpoint.details = details
-                          result << endpoint
-                          last_endpoint = endpoint
-                        end
-
-                        # Parse parameters
-                        param = line_to_param(line)
-                        if param.name != ""
-                          if last_endpoint.method != ""
-                            last_endpoint.push_param(param)
-                          end
-                        end
-
-                        # Parse WebSocket routes
-                        ws_endpoint = line_to_websocket(line, current_scopes)
-                        if ws_endpoint.url != ""
-                          ws_endpoint.details = details
-                          result << ws_endpoint
-                        end
-                      end
-                    end
-                  end
-                rescue File::NotFoundError
-                  logger.debug "File not found: #{path}"
-                end
-              end
+          # Handle scope statements
+          if line.includes?("scope ") && line.includes?(" do")
+            scope_match = line.match(/scope\s+['"](.+?)['"]/)
+            if scope_match && scope_match[1]?
+              current_scopes << scope_match[1]
             end
           end
+
+          # Handle end statements (basic detection)
+          if line.strip == "end" && current_scopes.size > 0
+            current_scopes.pop
+          end
+
+          # Parse HTTP method calls
+          endpoint = line_to_endpoint(line, current_scopes)
+          if endpoint.method != ""
+            endpoint.details = details
+            endpoints << endpoint
+            last_endpoint = endpoint
+          end
+
+          # Parse parameters
+          param = line_to_param(line)
+          if param.name != ""
+            if last_endpoint.method != ""
+              last_endpoint.push_param(param)
+            end
+          end
+
+          # Parse WebSocket routes
+          ws_endpoint = line_to_websocket(line, current_scopes)
+          if ws_endpoint.url != ""
+            ws_endpoint.details = details
+            endpoints << ws_endpoint
+          end
         end
-      rescue e
-        logger.debug e
       end
 
-      result
+      endpoints
     end
 
     def line_to_param(content : String) : Param

@@ -1,69 +1,50 @@
-require "../../../models/analyzer"
+require "../../engines/crystal_engine"
 
 module Analyzer::Crystal
-  class Marten < Analyzer
+  class Marten < CrystalEngine
     def analyze
-      # Public Dir Analysis - static files
-      begin
-        get_public_files(@base_path).each do |file|
-          # Extract the path after "/public/" regardless of depth
-          if file =~ /\/public\/(.*)/
-            relative_path = $1
-            @result << Endpoint.new("/#{relative_path}", "GET")
+      collect_public_dir_endpoints
+      super
+    end
+
+    def analyze_file(path : String) : Array(Endpoint)
+      endpoints = [] of Endpoint
+
+      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
+        last_endpoint = Endpoint.new("", "")
+        file.each_line.with_index do |line, index|
+          # Parse route definitions
+          endpoint = line_to_endpoint(line)
+          if endpoint.method != ""
+            details = Details.new(PathInfo.new(path, index + 1))
+            endpoint.details = details
+            endpoints << endpoint
+            last_endpoint = endpoint
           end
-        end
-      rescue e
-        logger.debug e
-      end
 
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
-      populate_channel_with_files(channel)
-
-      # Source Analysis
-      begin
-        WaitGroup.wait do |wg|
-          @options["concurrency"].to_s.to_i.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if File.directory?(path)
-                  if File.exists?(path) && File.extname(path) == ".cr" && !path.includes?("lib")
-                    File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-                      last_endpoint = Endpoint.new("", "")
-                      file.each_line.with_index do |line, index|
-                        # Parse route definitions
-                        endpoint = line_to_endpoint(line)
-                        if endpoint.method != ""
-                          details = Details.new(PathInfo.new(path, index + 1))
-                          endpoint.details = details
-                          result << endpoint
-                          last_endpoint = endpoint
-                        end
-
-                        # Parse parameter usage
-                        param = line_to_param(line)
-                        if param.name != ""
-                          if last_endpoint.method != ""
-                            last_endpoint.push_param(param)
-                          end
-                        end
-                      end
-                    end
-                  end
-                rescue File::NotFoundError
-                  logger.debug "File not found: #{path}"
-                end
-              end
+          # Parse parameter usage
+          param = line_to_param(line)
+          if param.name != ""
+            if last_endpoint.method != ""
+              last_endpoint.push_param(param)
             end
           end
         end
-      rescue e
-        logger.debug e
       end
 
-      result
+      endpoints
+    end
+
+    private def collect_public_dir_endpoints
+      get_public_files(@base_path).each do |file|
+        # Extract the path after "/public/" regardless of depth
+        if file =~ /\/public\/(.*)/
+          relative_path = $1
+          @result << Endpoint.new("/#{relative_path}", "GET")
+        end
+      end
+    rescue e
+      logger.debug e
     end
 
     def line_to_param(content : String) : Param

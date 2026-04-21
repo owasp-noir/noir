@@ -1,113 +1,19 @@
-require "../../../models/analyzer"
+require "../../engines/crystal_engine"
 require "../../../utils/url_path"
 
 module Analyzer::Crystal
-  class Kemal < Analyzer
+  class Kemal < CrystalEngine
     NAMESPACE_PATTERN = /^(\s*)(?:(\w+)\.)?namespace\s+["'](.+?)["']/
     MOUNT_PATTERN     = /^\s*mount\s+["'](.+?)["']\s*,\s*(\w+)/
     ROUTER_PATTERN    = /^\s*(\w+)\s*=\s*Kemal::Router\.new/
 
+    @is_public : Bool = true
+    @public_folders : Array(String) = [] of String
+
     def analyze
-      # Variables
-      is_public = true
-      public_folders = [] of String
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
-
-      # Source Analysis
-      begin
-        populate_channel_with_files(channel)
-
-        WaitGroup.wait do |wg|
-          @options["concurrency"].to_s.to_i.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if File.directory?(path)
-                  if File.exists?(path) && File.extname(path) == ".cr" && !path.includes?("lib")
-                    analyze_file(path).each do |endpoint|
-                      result << endpoint
-                    end
-
-                    # Extract public folder and serve_static info
-                    File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-                      file.each_line do |line|
-                        if line.includes?("serve_static false") || line.includes?("serve_static(false)")
-                          is_public = false
-                        end
-
-                        if line.includes?("public_folder")
-                          begin
-                            split = line.split("public_folder")
-
-                            if split.size > 1
-                              match_data = split[1].match(/[=\(]\s*['"]?(.*?)['"]?\s*[\),]/)
-                              public_folder = if match_data && match_data[1]?
-                                                match_data[1].strip
-                                              else
-                                                split[1].gsub("(", "").gsub(")", "").gsub(" ", "").gsub("\"", "").gsub("'", "")
-                                              end
-
-                              if public_folder != ""
-                                public_folders << public_folder
-                              end
-                            end
-                          rescue
-                          end
-                        end
-                      end
-                    end
-                  end
-                rescue File::NotFoundError
-                  logger.debug "File not found: #{path}"
-                end
-              end
-            end
-          end
-        end
-      rescue e
-        logger.debug e
-      end
-
-      # Public Dir Analysis
-      if is_public
-        begin
-          get_public_files(@base_path).each do |file|
-            if file =~ /\/public\/(.*)/
-              relative_path = $1
-              @result << Endpoint.new("/#{relative_path}", "GET")
-            end
-          end
-
-          public_folders.each do |folder|
-            get_public_dir_files(@base_path, folder).each do |file|
-              if folder.includes?("/")
-                folder_path = folder.ends_with?("/") ? folder : "#{folder}/"
-                if file.starts_with?(folder_path)
-                  relative_path = file.sub(folder_path, "")
-                  @result << Endpoint.new("/#{relative_path}", "GET")
-                else
-                  folder_name = folder.split("/").last
-                  if file =~ /\/#{folder_name}\/(.*)/
-                    relative_path = $1
-                    @result << Endpoint.new("/#{relative_path}", "GET")
-                  end
-                end
-              else
-                if file =~ /\/#{folder}\/(.*)/
-                  relative_path = $1
-                  @result << Endpoint.new("/#{relative_path}", "GET")
-                end
-              end
-            end
-          end
-        rescue e
-          logger.debug e
-        end
-      end
-
-      result
+      super
+      collect_public_dir_endpoints
+      @result
     end
 
     def analyze_file(path : String) : Array(Endpoint)
@@ -132,6 +38,31 @@ module Analyzer::Crystal
       last_endpoint : Endpoint? = nil
 
       lines.each_with_index do |line, index|
+        # Collect public folder / serve_static info (used by post-pass)
+        if line.includes?("serve_static false") || line.includes?("serve_static(false)")
+          @is_public = false
+        end
+
+        if line.includes?("public_folder")
+          begin
+            split = line.split("public_folder")
+
+            if split.size > 1
+              match_data = split[1].match(/[=\(]\s*['"]?(.*?)['"]?\s*[\),]/)
+              public_folder = if match_data && match_data[1]?
+                                match_data[1].strip
+                              else
+                                split[1].gsub("(", "").gsub(")", "").gsub(" ", "").gsub("\"", "").gsub("'", "")
+                              end
+
+              if public_folder != ""
+                @public_folders << public_folder
+              end
+            end
+          rescue
+          end
+        end
+
         # Check for namespace open
         if match = line.match(NAMESPACE_PATTERN)
           indent = match[1].size
@@ -193,6 +124,43 @@ module Analyzer::Crystal
       end
 
       endpoints
+    end
+
+    private def collect_public_dir_endpoints
+      return unless @is_public
+      begin
+        get_public_files(@base_path).each do |file|
+          if file =~ /\/public\/(.*)/
+            relative_path = $1
+            @result << Endpoint.new("/#{relative_path}", "GET")
+          end
+        end
+
+        @public_folders.each do |folder|
+          get_public_dir_files(@base_path, folder).each do |file|
+            if folder.includes?("/")
+              folder_path = folder.ends_with?("/") ? folder : "#{folder}/"
+              if file.starts_with?(folder_path)
+                relative_path = file.sub(folder_path, "")
+                @result << Endpoint.new("/#{relative_path}", "GET")
+              else
+                folder_name = folder.split("/").last
+                if file =~ /\/#{folder_name}\/(.*)/
+                  relative_path = $1
+                  @result << Endpoint.new("/#{relative_path}", "GET")
+                end
+              end
+            else
+              if file =~ /\/#{folder}\/(.*)/
+                relative_path = $1
+                @result << Endpoint.new("/#{relative_path}", "GET")
+              end
+            end
+          end
+        end
+      rescue e
+        logger.debug e
+      end
     end
 
     def line_to_param(content : String) : Param
