@@ -64,7 +64,7 @@ Looking ahead, our ambition is for our tool to evolve into a crucial bridge, sea
 
 ## News & Updates
 
-* August 2025: Presented at the OWASP Seoul Meetup.
+* August 2025: Presented at the OWASP Seoul Meetup. ([Open Source Gardening](https://owasp-noir.github.io/noir/community/media/#featured-owasp-seoul-aug-2025-open-source-gardening))
 * November 2024: Published a guest blog post ["Powering Up DAST with ZAP and Noir"](https://www.zaproxy.org/blog/2024-11-11-powering-up-dast-with-zap-and-noir/) on the ZAP blog.
 * June 2024: Joined OWASP as OWASP Noir
   * Renamed the GitHub organization from noir-cr to owasp-noir
