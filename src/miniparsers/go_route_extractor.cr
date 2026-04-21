@@ -51,6 +51,17 @@ module Noir
 
     # Parse one line, return the route path with group prefix applied.
     # Returns "" if no route string is found.
+    #
+    # Accepts a string literal as a route path when *either*:
+    #   - it starts with "/" (the common Gin/Echo idiom), or
+    #   - a known group prefix applies (i.e., the identifier preceding the
+    #     literal matches a registered group name, like
+    #     `authorized.POST("admin", …)` under `authorized := r.Group("/")`).
+    #
+    # The second case fixes the gin-gonic/examples pattern where route
+    # paths under a Group lack a leading "/". Other string literals in the
+    # line (e.g. `c.Cookie.Get("abcd_token")`, `r.Get("password")`) still
+    # get filtered because their preceding identifier isn't a group name.
     def extract_route_path(line : String, groups : Array(Hash(String, String))) : String
       lexer = GolangLexer.new
       map = lexer.tokenize(line)
@@ -58,16 +69,19 @@ module Noir
       map.each do |token|
         if token.type == :string
           final_path = token.value.to_s
-          # Route path must start with "/" to be a valid HTTP endpoint
-          next unless final_path.starts_with?("/")
+          next if final_path.empty?
+
+          group_prefix_applied = false
           groups.each do |group|
             group.each do |key, value|
               if before.value.to_s.includes? key
                 final_path = value + final_path
+                group_prefix_applied = true
               end
             end
           end
 
+          next unless final_path.starts_with?("/") || group_prefix_applied
           return final_path
         end
 

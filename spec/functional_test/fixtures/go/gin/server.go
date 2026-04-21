@@ -37,6 +37,14 @@ func main() {
 		c.JSON(http.StatusOK, "users")
 	})
 
+	// Gin accepts route paths without a leading "/" — the group prefix
+	// supplies the separator. Real-world fixture: gin-gonic/examples/basic
+	// uses `authorized.POST("admin", …)` under a `r.Group("/", …)`.
+	authorized := r.Group("/")
+	authorized.POST("admin", func(c *gin.Context) {
+		c.JSON(http.StatusOK, "admin")
+	})
+
 	// Test various coding styles
 	// Mixed case methods (Go convention)
 	r.Get("/mixed-get", func(c *gin.Context) {
