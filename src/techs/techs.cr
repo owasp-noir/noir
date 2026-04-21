@@ -847,6 +847,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :python_bottle => {
+      :framework => "Bottle",
+      :language  => "Python",
+      :similar   => ["bottle", "bottlepy", "python-bottle", "python_bottle"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :python_flask => {
       :framework => "Flask",
       :language  => "Python",
