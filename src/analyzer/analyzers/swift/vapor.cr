@@ -1,82 +1,48 @@
-require "../../../models/analyzer"
+require "../../engines/swift_engine"
 
 module Analyzer::Swift
-  class Vapor < Analyzer
+  class Vapor < SwiftEngine
     # Maximum number of lines to look ahead for function parameters
     LOOKAHEAD_LIMIT = 20
 
-    def analyze
-      # Source Analysis
-      # Patterns for route definitions in Vapor:
-      # app.get("path") { ... }
-      # app.post("path", "segment") { ... }
-      # routes.get("path", ":param") { ... }
-      # Route pattern should have app. or routes. or any grouped route before the method
-      pattern = /(\w+)\.(get|post|put|delete|patch)\(([^)]+)\)/
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
+    # Patterns for route definitions in Vapor:
+    # app.get("path") { ... }
+    # app.post("path", "segment") { ... }
+    # routes.get("path", ":param") { ... }
+    ROUTE_PATTERN = /(\w+)\.(get|post|put|delete|patch)\(([^)]+)\)/
 
-      begin
-        populate_channel_with_files(channel)
+    def analyze_file(path : String) : Array(Endpoint)
+      endpoints = [] of Endpoint
+      lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
 
-        WaitGroup.wait do |wg|
-          @options["concurrency"].to_s.to_i.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if File.directory?(path)
+      lines.each_with_index do |line, index|
+        # Check if this is a route definition (has app. or identifier. before the method)
+        # and not a parameter access (req.parameters, req.query)
+        next unless (line.includes?(".get(") || line.includes?(".post(") ||
+                    line.includes?(".put(") || line.includes?(".delete(") ||
+                    line.includes?(".patch(")) && !line.includes?("req.parameters") &&
+                    !line.includes?("req.query")
+        match = line.match(ROUTE_PATTERN)
+        next unless match
 
-                  if File.exists?(path) && File.extname(path) == ".swift"
-                    lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
-                    lines.each_with_index do |line, index|
-                      # Look for route definitions
-                      # Check if this is a route definition (has app. or identifier. before the method)
-                      # and not a parameter access (req.parameters, req.query)
-                      if (line.includes?(".get(") || line.includes?(".post(") ||
-                         line.includes?(".put(") || line.includes?(".delete(") ||
-                         line.includes?(".patch(")) && !line.includes?("req.parameters") &&
-                         !line.includes?("req.query")
-                        match = line.match(pattern)
-                        if match
-                          begin
-                            # Extract HTTP method
-                            method = match[2].upcase
+        begin
+          method = match[2].upcase
+          route_args = match[3]
+          route_path = parse_route_path(route_args)
 
-                            # Extract route arguments (can be multiple path segments)
-                            route_args = match[3]
+          details = Details.new(PathInfo.new(path, index + 1))
+          endpoint = Endpoint.new(route_path, method, details)
 
-                            # Parse route path from arguments
-                            route_path = parse_route_path(route_args)
+          extract_path_params(route_path, endpoint)
+          extract_function_params(lines, index + 1, endpoint)
 
-                            details = Details.new(PathInfo.new(path, index + 1))
-                            endpoint = Endpoint.new(route_path, method, details)
-
-                            # Extract path parameters from route pattern (e.g., ":id", ":userID")
-                            extract_path_params(route_path, endpoint)
-
-                            # Look ahead to extract parameters from function body
-                            extract_function_params(lines, index + 1, endpoint)
-
-                            result << endpoint
-                          rescue e
-                            logger.debug "Error processing endpoint: #{e.message}"
-                          end
-                        end
-                      end
-                    end
-                  end
-                rescue File::NotFoundError
-                  logger.debug "File not found: #{path}"
-                end
-              end
-            end
-          end
+          endpoints << endpoint
+        rescue e
+          logger.debug "Error processing endpoint: #{e.message}"
         end
-      rescue
       end
 
-      result
+      endpoints
     end
 
     # Parse route path from route arguments
@@ -116,12 +82,10 @@ module Analyzer::Swift
 
     # Extract parameters from function body
     def extract_function_params(lines : Array(String), start_index : Int32, endpoint : Endpoint)
-      # Look ahead for the function body
       in_function = false
       brace_count = 0
       seen_opening_brace = false
 
-      # Track already-added path parameters to avoid duplicates
       existing_path_params = Set(String).new
       endpoint.params.each do |p|
         existing_path_params.add(p.name) if p.param_type == "path"
@@ -130,12 +94,10 @@ module Analyzer::Swift
       (start_index...[start_index + LOOKAHEAD_LIMIT, lines.size].min).each do |i|
         line = lines[i]
 
-        # Track if we're inside the function
         if line.includes?(" in ")
           in_function = true
         end
 
-        # Track braces to know when function ends
         brace_count += line.count('{')
         if brace_count > 0
           seen_opening_brace = true
@@ -180,7 +142,6 @@ module Analyzer::Swift
           match = line.match(/req\.parameters\.get\(["']([^"']+)["']\)/)
           if match
             param_name = match[1]
-            # Only add if not already added from path pattern
             if !existing_path_params.includes?(param_name)
               endpoint.push_param(Param.new(param_name, "", "path"))
               existing_path_params.add(param_name)
@@ -188,12 +149,10 @@ module Analyzer::Swift
           end
         end
 
-        # Stop if we've moved past the function (brace count is back to 0 after we've seen an opening brace)
         if in_function && seen_opening_brace && brace_count == 0 && i > start_index
           break
         end
 
-        # Also stop if we hit another route definition
         if i > start_index && (line.includes?(".get(") || line.includes?(".post(") ||
            line.includes?(".put(") || line.includes?(".delete(") || line.includes?(".patch("))
           break
