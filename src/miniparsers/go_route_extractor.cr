@@ -71,14 +71,27 @@ module Noir
           final_path = token.value.to_s
           next if final_path.empty?
 
+          # Walk groups in reverse so the most recently registered (i.e.
+          # most specific) match wins and the loop stops after the first
+          # hit. `includes?` does substring matching — without the break,
+          # group names that share a prefix would stack prefixes (e.g.
+          # registering both `v1` and `v12` and then scanning
+          # `v12.POST(…)` would otherwise produce `/v1/v12/…`).
+          #
+          # The join uses `rstrip('/')` + `/` + `lstrip('/')` so there's
+          # exactly one separator regardless of whether the group value
+          # ended in `/` or the path began with one — otherwise
+          # `Group("/api")` + `admin` would concatenate to `/apiadmin`.
           group_prefix_applied = false
-          groups.each do |group|
+          groups.reverse_each do |group|
             group.each do |key, value|
               if before.value.to_s.includes? key
-                final_path = value + final_path
+                final_path = "#{value.rstrip('/')}/#{final_path.lstrip('/')}"
                 group_prefix_applied = true
+                break
               end
             end
+            break if group_prefix_applied
           end
 
           next unless final_path.starts_with?("/") || group_prefix_applied
