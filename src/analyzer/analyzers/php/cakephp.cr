@@ -1,45 +1,8 @@
-require "../../../models/analyzer"
-require "../../../utils/utils.cr"
+require "../../engines/php_engine"
 
 module Analyzer::Php
-  class CakePHP < Analyzer
-    def analyze
-      result = [] of Endpoint
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
-
-      begin
-        populate_channel_with_files(channel)
-
-        WaitGroup.wait do |wg|
-          @options["concurrency"].to_s.to_i.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if File.directory?(path)
-
-                  if File.exists?(path)
-                    result.concat(analyze_file(path))
-                  end
-                rescue File::NotFoundError
-                  logger.debug "File not found: #{path}"
-                rescue e
-                  logger.debug "Error analyzing #{path}: #{e}"
-                end
-              end
-            end
-          end
-        end
-      rescue e
-        logger.debug e
-      end
-
-      Fiber.yield
-      result
-    end
-
-    private def analyze_file(path : String) : Array(Endpoint)
+  class CakePHP < PhpEngine
+    def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
 
       # Analyze CakePHP routes file
@@ -136,29 +99,13 @@ module Analyzer::Php
       endpoints
     end
 
-    private def build_full_path(prefix : String, path : String) : String
-      return prefix if path == "/" && !prefix.empty?
-      return path if prefix.empty?
-
-      full_path = "/#{prefix.strip('/')}/#{path.strip('/')}"
-      full_path = full_path.gsub(/\/+/, "/")
-      full_path = full_path.chomp('/') if full_path.size > 1
-      full_path
-    end
-
+    # CakePHP supports both `{id}` and `:id` route params; the latter is not
+    # covered by the engine helper.
     private def extract_route_params(route_path : String) : Array(Param)
-      params = [] of Param
-
-      # {id}
-      route_path.scan(/\{(\w+)\}/).each do |match|
-        params << Param.new(match[1], "", "path")
-      end
-
-      # :id
+      params = extract_brace_path_params(route_path)
       route_path.scan(/:(\w+)/).each do |match|
         params << Param.new(match[1], "", "path")
       end
-
       params
     end
 
