@@ -1,58 +1,44 @@
-require "../../../models/analyzer"
+require "../../engines/javascript_engine"
 require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Javascript
-  class Restify < Analyzer
+  class Restify < JavascriptEngine
     def analyze
-      # Source Analysis
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
 
-      begin
-        populate_channel_with_files(channel)
+      parallel_js_scan do |path|
+        begin
+          content = File.read(path, encoding: "utf-8", invalid: :skip)
+          parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug)
+          parser_endpoints.each do |endpoint|
+            # Add file location details
+            details = Details.new(PathInfo.new(path, 1)) # Line number is approximate
+            endpoint.details = details
 
-        parallel_analyze(channel) do |path|
-          next if File.directory?(path)
-          next unless [".js", ".ts", ".jsx", ".tsx"].any? { |ext| path.ends_with?(ext) }
-
-          if File.exists?(path)
-            # First try to use the JS parser for more robust analysis
-            begin
-              content = File.read(path, encoding: "utf-8", invalid: :skip)
-              parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug)
-              parser_endpoints.each do |endpoint|
-                # Add file location details
-                details = Details.new(PathInfo.new(path, 1)) # Line number is approximate
-                endpoint.details = details
-
-                # Parse path parameters from the URL path itself
-                if endpoint.url.includes?(":")
-                  endpoint.url.scan(/:(\w+)/) do |m|
-                    if m.size > 0
-                      param = Param.new(m[1], "", "path")
-                      endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
-                    end
-                  end
+            # Parse path parameters from the URL path itself
+            if endpoint.url.includes?(":")
+              endpoint.url.scan(/:(\w+)/) do |m|
+                if m.size > 0
+                  param = Param.new(m[1], "", "path")
+                  endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
                 end
-
-                result << endpoint
               end
-
-              # Extract static path declarations
-              Noir::JSRouteExtractor.extract_static_paths(content).each do |static_path|
-                static_dirs << static_path unless static_dirs.any? { |s| s["static_path"] == static_path["static_path"] && s["file_path"] == static_path["file_path"] }
-              end
-            rescue e
-              logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
-
-              # Fallback to the original regex-based approach if parser fails
-              analyze_with_regex(path, result, static_dirs)
             end
+
+            result << endpoint
           end
+
+          # Extract static path declarations
+          Noir::JSRouteExtractor.extract_static_paths(content).each do |static_path|
+            static_dirs << static_path unless static_dirs.any? { |s| s["static_path"] == static_path["static_path"] && s["file_path"] == static_path["file_path"] }
+          end
+        rescue e
+          logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
+
+          # Fallback to the original regex-based approach if parser fails
+          analyze_with_regex(path, result, static_dirs)
         end
-      rescue e
-        logger.debug "Error in Restify analyzer: #{e.message}"
       end
 
       # Process static directories to create endpoints for static files
