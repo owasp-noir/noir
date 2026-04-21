@@ -154,6 +154,13 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
         "/tmp/", "/.next/", "/out/", "/vendor/",
       ]
 
+      # User-supplied --exclude-path patterns (comma-separated globs).
+      # Patterns containing "/" are matched against the relative path;
+      # patterns without "/" are matched against the basename.
+      exclude_path_patterns = options["exclude_path"]?.to_s
+        .split(",").map(&.strip).reject(&.empty?)
+      skipped_exclude_path = 0
+
       base_paths.each do |base_path|
         # Pre-compute base path prefix for fast relative path calculation
         base_prefix = base_path.ends_with?("/") ? base_path : base_path + "/"
@@ -175,6 +182,19 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
             next
           end
 
+          if !exclude_path_patterns.empty?
+            rel_no_slash = relative_path.lchop('/')
+            basename = File.basename(file)
+            matched = exclude_path_patterns.any? do |pat|
+              target = pat.includes?('/') ? rel_no_slash : basename
+              File.match?(pat, target)
+            end
+            if matched
+              skipped_exclude_path += 1
+              next
+            end
+          end
+
           # Check if file should be skipped due to media type or size
           if MediaFilter.should_skip_file?(file)
             reason = MediaFilter.skip_reason(file)
@@ -194,6 +214,9 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
       end
       if skipped_ignored_dirs > 0
         logger.debug "Skipped #{skipped_ignored_dirs} files in ignored directories"
+      end
+      if skipped_exclude_path > 0
+        logger.info "Skipped #{skipped_exclude_path} files matching --exclude-path patterns"
       end
     ensure
       channel.close

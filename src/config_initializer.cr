@@ -83,6 +83,7 @@ class ConfigInitializer
       "debug"                        => YAML::Any.new(false),
       "verbose"                      => YAML::Any.new(false),
       "exclude_codes"                => YAML::Any.new(""),
+      "exclude_path"                 => YAML::Any.new(""),
       "exclude_techs"                => YAML::Any.new(""),
       "only_techs"                   => YAML::Any.new(""),
       "format"                       => YAML::Any.new("plain"),
@@ -165,6 +166,9 @@ class ConfigInitializer
 
       # Technologies to exclude
       exclude_techs: "#{options["exclude_techs"]}"
+
+      # File paths to exclude (comma-separated glob patterns, e.g. "*.test.js,*_test.go")
+      exclude_path: "#{options["exclude_path"]}"
 
       # The format to use for the output
       format: "#{options["format"]}"
