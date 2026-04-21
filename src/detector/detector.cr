@@ -201,7 +201,16 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
                 next
               end
 
-              # Skip symlinks (cycle guard; matches Dir.glob's default).
+              # `info` was obtained with follow_symlinks: false, so symlinks
+              # land here as type=symlink and `info.file?` is false — they
+              # are skipped entirely. This is a minor behavior change from
+              # the previous `Dir.glob` implementation, which would have
+              # yielded symlinked regular files for scanning. Skipping them
+              # trades coverage of unusual monorepo layouts for a simpler
+              # cycle guard; revisit if a real project needs the old
+              # behavior. Non-regular files (FIFOs, sockets, devices) are
+              # also dropped here — previously they would reach `File.read`
+              # and either hang or error out.
               next unless info.file?
 
               total_files += 1
