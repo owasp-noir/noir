@@ -1,7 +1,7 @@
-require "./common"
+require "../../engines/go_engine"
 
 module Analyzer::Go
-  class Gin < Common
+  class Gin < GoEngine
     def analyze
       # Source Analysis
       public_dirs = [] of (Hash(String, String))
