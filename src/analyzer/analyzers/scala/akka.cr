@@ -1,32 +1,17 @@
-require "../../../models/analyzer"
+require "../../engines/scala_engine"
 
 module Analyzer::Scala
-  class Akka < Analyzer
-    SCALA_EXTENSION = "scala"
-    HTTP_METHODS    = %w[get post put delete patch head options]
+  class Akka < ScalaEngine
+    HTTP_METHODS = %w[get post put delete patch head options]
 
-    def analyze
-      file_list = all_files()
-      file_list.each do |path|
-        next unless File.exists?(path)
-
-        if path.ends_with?(".#{SCALA_EXTENSION}")
-          process_scala_file(path)
-        end
-      end
-
-      Fiber.yield
-      @result
-    end
-
-    # Process individual Scala files to analyze Akka HTTP routing
-    private def process_scala_file(path : String)
+    def analyze_file(path : String) : Array(Endpoint)
       content = File.read(path)
       extract_routes_from_content(path, content)
     end
 
     # Extract routes from Akka HTTP DSL
-    private def extract_routes_from_content(path : String, content : String)
+    private def extract_routes_from_content(path : String, content : String) : Array(Endpoint)
+      endpoints = [] of Endpoint
       lines = content.split('\n')
       prefix_stack = [] of String
       brace_depth = 0
@@ -80,7 +65,7 @@ module Analyzer::Scala
               # Extract additional parameters from the block
               extract_params_from_block(endpoint, block_content)
 
-              @result << endpoint
+              endpoints << endpoint
             end
           end
         end
@@ -98,6 +83,8 @@ module Analyzer::Scala
           prefix_depths.pop
         end
       end
+
+      endpoints
     end
 
     # Extract block content starting from a given index
