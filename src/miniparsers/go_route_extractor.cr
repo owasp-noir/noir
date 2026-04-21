@@ -51,6 +51,17 @@ module Noir
 
     # Parse one line, return the route path with group prefix applied.
     # Returns "" if no route string is found.
+    #
+    # Accepts a string literal as a route path when *either*:
+    #   - it starts with "/" (the common Gin/Echo idiom), or
+    #   - a known group prefix applies (i.e., the identifier preceding the
+    #     literal matches a registered group name, like
+    #     `authorized.POST("admin", …)` under `authorized := r.Group("/")`).
+    #
+    # The second case fixes the gin-gonic/examples pattern where route
+    # paths under a Group lack a leading "/". Other string literals in the
+    # line (e.g. `c.Cookie.Get("abcd_token")`, `r.Get("password")`) still
+    # get filtered because their preceding identifier isn't a group name.
     def extract_route_path(line : String, groups : Array(Hash(String, String))) : String
       lexer = GolangLexer.new
       map = lexer.tokenize(line)
@@ -58,16 +69,32 @@ module Noir
       map.each do |token|
         if token.type == :string
           final_path = token.value.to_s
-          # Route path must start with "/" to be a valid HTTP endpoint
-          next unless final_path.starts_with?("/")
-          groups.each do |group|
+          next if final_path.empty?
+
+          # Walk groups in reverse so the most recently registered (i.e.
+          # most specific) match wins and the loop stops after the first
+          # hit. `includes?` does substring matching — without the break,
+          # group names that share a prefix would stack prefixes (e.g.
+          # registering both `v1` and `v12` and then scanning
+          # `v12.POST(…)` would otherwise produce `/v1/v12/…`).
+          #
+          # The join uses `rstrip('/')` + `/` + `lstrip('/')` so there's
+          # exactly one separator regardless of whether the group value
+          # ended in `/` or the path began with one — otherwise
+          # `Group("/api")` + `admin` would concatenate to `/apiadmin`.
+          group_prefix_applied = false
+          groups.reverse_each do |group|
             group.each do |key, value|
               if before.value.to_s.includes? key
-                final_path = value + final_path
+                final_path = "#{value.rstrip('/')}/#{final_path.lstrip('/')}"
+                group_prefix_applied = true
+                break
               end
             end
+            break if group_prefix_applied
           end
 
+          next unless final_path.starts_with?("/") || group_prefix_applied
           return final_path
         end
 

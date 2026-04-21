@@ -16,6 +16,9 @@ expected_endpoints = [
   Endpoint.new("/public/secret.html", "GET"),
   Endpoint.new("/group/users", "GET"),
   Endpoint.new("/group/v1/migration", "GET"),
+  # Route path without leading "/" under a Group("/"). Regression guard
+  # for the gin-gonic/examples/basic pattern.
+  Endpoint.new("/admin", "POST"),
   Endpoint.new("/mixed-get", "GET"),
   Endpoint.new("/mixed-post", "POST", [
     Param.new("field1", "", "form"),
