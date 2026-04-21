@@ -7,7 +7,6 @@ module Analyzer::Ruby
       path = "#{@base_path}/config/routes.rb"
       if File.exists?(path)
         File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-          last_endpoint = Endpoint.new("", "")
           file.each_line.with_index do |line, index|
             details = Details.new(PathInfo.new(path, index + 1))
             endpoint = line_to_endpoint(line, details)
@@ -20,8 +19,6 @@ module Analyzer::Ruby
               end
 
               @result << endpoint
-              last_endpoint = endpoint
-              _ = last_endpoint
             end
           end
         end

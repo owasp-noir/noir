@@ -1,7 +1,7 @@
 require "../../models/analyzer"
 
 module Analyzer::Ruby
-  class RubyEngine < Analyzer
+  abstract class RubyEngine < Analyzer
     HTTP_VERBS = ["get", "post", "put", "delete", "patch", "head", "options"]
 
     # Match the `<verb> "<path>"` idiom on a single line and return the first
