@@ -1,32 +1,17 @@
-require "../../../models/analyzer"
+require "../../engines/scala_engine"
 
 module Analyzer::Scala
-  class Scalatra < Analyzer
-    SCALA_EXTENSION = "scala"
-    HTTP_METHODS    = %w[get post put delete patch head options]
+  class Scalatra < ScalaEngine
+    HTTP_METHODS = %w[get post put delete patch head options]
 
-    def analyze
-      file_list = all_files()
-      file_list.each do |path|
-        next unless File.exists?(path)
-
-        if path.ends_with?(".#{SCALA_EXTENSION}")
-          process_scala_file(path)
-        end
-      end
-
-      Fiber.yield
-      @result
-    end
-
-    # Process individual Scala files to analyze Scalatra routing
-    private def process_scala_file(path : String)
+    def analyze_file(path : String) : Array(Endpoint)
       content = File.read(path)
       extract_routes_from_content(path, content)
     end
 
     # Extract routes from Scalatra DSL
-    private def extract_routes_from_content(path : String, content : String)
+    private def extract_routes_from_content(path : String, content : String) : Array(Endpoint)
+      endpoints = [] of Endpoint
       lines = content.split('\n')
 
       lines.each_with_index do |line, index|
@@ -50,10 +35,12 @@ module Analyzer::Scala
             block_content = extract_block_from_index(lines, index)
             extract_params_from_block(endpoint, block_content)
 
-            @result << endpoint
+            endpoints << endpoint
           end
         end
       end
+
+      endpoints
     end
 
     # Extract path parameters from the route pattern
