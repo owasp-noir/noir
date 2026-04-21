@@ -90,6 +90,18 @@ module Analyzer::Javascript
           require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
       end
 
+      # Scan for route-config-array + forEach iteration:
+      #   const defaultRoutes = [
+      #     { path: '/auth', route: authRoute },
+      #     { path: '/users', route: userRoute },
+      #   ];
+      #   defaultRoutes.forEach((r) => router.use(r.path, r.route));
+      #
+      # Each array entry acts like a literal `router.use('/path', routeVar)`
+      # call, so feed them through the same store_*_mount machinery.
+      scan_config_array_mounts(content, main_file, locator,
+        require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
+
       # Store file context for second pass
       file_contexts[main_file] = {
         require_map:     require_map,
@@ -140,6 +152,100 @@ module Analyzer::Javascript
           global_deferred_mounts << {main_file, caller, prefix, deferred_key} unless deferred_key.empty?
         end
       end
+    end
+
+    # Detect mounts synthesized from a config array iterated via forEach/map,
+    # e.g.
+    #   const defaultRoutes = [
+    #     { path: '/auth', route: authRoute },
+    #     { path: '/users', route: userRoute },
+    #   ];
+    #   defaultRoutes.forEach((r) => router.use(r.path, r.route));
+    #
+    # Resolves the array declaration locally (same file), then yields each
+    # entry into the same store_top_level_mount / store_nested_mount path
+    # the explicit scans use.
+    private def scan_config_array_mounts(
+      content : String,
+      main_file : String,
+      locator : CodeLocator,
+      require_map : Hash(String, String),
+      function_map : Hash(String, String),
+      var_to_function : Hash(String, String),
+      var_prefix : Hash(String, Array(String)),
+      global_deferred_mounts : Array(Tuple(String, String, String, String)),
+    )
+      # ARRAY.forEach(...=> CALLER.use(<param>.path, <param>.route) ...)
+      # Also matches `.map(...)` for the rare case someone uses it for side effects.
+      pattern = /(\w+)\s*\.\s*(?:forEach|map)\s*\(\s*(?:async\s+)?(?:\(\s*\w+(?:\s*,\s*\w+)?\s*\)|\w+)\s*=>\s*\{?\s*(\w+)\s*\.\s*use\s*\(\s*\w+\s*\.\s*path\s*,\s*\w+\s*\.\s*route\s*\)/
+
+      content.scan(pattern) do |m|
+        next unless m.size >= 3
+        array_name = m[1]
+        caller = m[2]
+
+        extract_route_config_array(content, array_name).each do |entry|
+          prefix, router_identifier = entry
+          next if prefix.empty? || router_identifier.empty?
+
+          # Identifiers can arrive via three different import/assignment
+          # shapes; match the lookup set `extract_router_reference` uses
+          # for literal `.use(…)` calls so destructured imports
+          # (`const { foo } = require('./bar')`) and factory-returned
+          # routers (`const router = makeRouter()`) also resolve.
+          router_var : String? = nil
+          if require_map.has_key?(router_identifier) ||
+             function_map.has_key?(router_identifier) ||
+             var_to_function.has_key?(router_identifier)
+            router_var = router_identifier
+          end
+          router_file_direct : String? = nil
+          next unless router_var || router_file_direct
+
+          if caller == "app"
+            store_top_level_mount(locator, router_var, router_file_direct, prefix, main_file,
+              require_map, function_map, var_to_function, var_prefix)
+          else
+            processed = store_nested_mount(locator, router_var, router_file_direct, prefix, caller, main_file,
+              require_map, function_map, var_to_function, var_prefix)
+            unless processed
+              deferred_key = router_file_direct || router_var || ""
+              global_deferred_mounts << {main_file, caller, prefix, deferred_key} unless deferred_key.empty?
+            end
+          end
+        end
+      end
+    end
+
+    # Extract `{ path: '…', route: <identifier>, … }` entries from an
+    # array literal bound to `array_name`. Non-conforming entries are
+    # skipped. The property order inside each entry doesn't matter
+    # (`{ path: '/a', route: x }` and `{ route: x, path: '/a' }` both
+    # work), and extra keys beyond `path`/`route` are tolerated.
+    #
+    # The inner-object regex requires flat objects — a nested option bag
+    # like `{ path: '/a', route: x, options: { strict: true } }` would
+    # not match. In practice Express route configs are flat; if a real
+    # project needs nested options, we'll revisit with a brace-balanced
+    # scan.
+    private def extract_route_config_array(content : String, array_name : String) : Array(Tuple(String, String))
+      entries = [] of Tuple(String, String)
+
+      array_re = /(?:const|let|var)\s+#{Regex.escape(array_name)}\s*=\s*\[([\s\S]*?)\]/
+      match = content.match(array_re)
+      return entries unless match
+
+      body = match[1]
+      body.scan(/\{([^{}]+)\}/) do |obj_match|
+        obj_body = obj_match[1]
+        path_match = obj_body.match(/\bpath\s*:\s*['"]([^'"]+)['"]/)
+        route_match = obj_body.match(/\broute\s*:\s*(\w+)/)
+        if path_match && route_match
+          entries << {path_match[1], route_match[1]}
+        end
+      end
+
+      entries
     end
 
     # Collect all JavaScript/TypeScript files to scan
@@ -805,8 +911,16 @@ module Analyzer::Javascript
       # Case 1: The resolved path is a file that exists
       return resolved if File.file?(resolved)
 
-      # Case 2: The path has no extension, try adding common JS/TS extensions
-      if File.extname(require_path).empty?
+      # Case 2: Try adding common JS/TS extensions.
+      # Using `File.extname(require_path).empty?` is wrong because files
+      # like `./auth.route` have `File.extname` = `.route`, which is not
+      # empty but also not a runnable JS extension. That incorrectly
+      # short-circuits the extension search and leaves common Express
+      # naming idioms (`foo.route`, `bar.controller`, `baz.service`)
+      # unresolvable. Instead, skip the extension search only when the
+      # path already ends with a recognized JS/TS extension.
+      known_js_exts = [".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs", ".mts", ".cts"]
+      unless known_js_exts.any? { |ext| require_path.ends_with?(ext) }
         [".js", ".ts", ".jsx", ".tsx"].each do |ext|
           with_ext = "#{resolved}#{ext}"
           return with_ext if File.file?(with_ext)
