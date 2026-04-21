@@ -147,12 +147,20 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
       total_files = 0
       skipped_ignored_dirs = 0
 
-      # Common heavy/irrelevant directories to skip early
-      ignored_dir_patterns = [
-        "/node_modules/", "/.git/", "/dist/", "/build/", "/target/",
-        "/__pycache__/", "/.venv/", "/venv/", "/.idea/", "/.vscode/",
-        "/tmp/", "/.next/", "/out/", "/vendor/",
-      ]
+      # Directory names that are pruned at the walker level: once the
+      # walker meets a subdirectory with one of these names, that whole
+      # subtree is skipped without being enumerated.
+      #
+      # Critical invariant for issue #912: the base path itself is never
+      # matched against this set — we *start* the walk at the base, so a
+      # user pointing `-b` at e.g. `/projects/node_modules/my-app` will
+      # still have their project scanned. Only descendants of the base
+      # are subject to pruning.
+      ignored_dir_names = Set{
+        "node_modules", ".git", "dist", "build", "target",
+        "__pycache__", ".venv", "venv", ".idea", ".vscode",
+        "tmp", ".next", "out", "vendor",
+      }
 
       # User-supplied --exclude-path patterns (comma-separated globs).
       # Patterns containing "/" are matched against the relative path;
@@ -169,44 +177,63 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
         # Pre-compute base path prefix for fast relative path calculation
         base_prefix = base_path.ends_with?("/") ? base_path : base_path + "/"
 
-        Dir.glob("#{escape_glob_path(base_path)}/**/**") do |file|
-          next if File.directory?(file)
-          total_files += 1
+        # Iterative DFS. Avoids `Dir.glob("**/**")`, which enumerates every
+        # file under ignored subtrees before any filter runs; on a Node
+        # monorepo with a 100k-entry node_modules this was the dominant
+        # cost of the detect phase.
+        stack = [base_path]
+        until stack.empty?
+          dir = stack.pop
+          begin
+            Dir.each_child(dir) do |entry|
+              full_path = File.join(dir, entry)
+              info = File.info?(full_path, follow_symlinks: false)
+              next if info.nil?
 
-          # Skip files in ignored directories early
-          # Use simple string slicing instead of Path objects
-          relative_path = if file.starts_with?(base_prefix)
-                            "/" + file[base_prefix.size..]
-                          else
-                            "/" + file
-                          end
+              if info.directory?
+                # Subtree prune happens here. Entry name (not full path)
+                # so the base-as-node_modules case from #912 is safe.
+                skipped_ignored_dirs += 1 if ignored_dir_names.includes?(entry)
+                next if ignored_dir_names.includes?(entry)
+                stack << full_path
+                next
+              end
 
-          if ignored_dir_patterns.any? { |pat| relative_path.includes?(pat) }
-            skipped_ignored_dirs += 1
-            next
-          end
+              # Skip symlinks (cycle guard; matches Dir.glob's default).
+              next unless info.file?
 
-          if exclude_path_active
-            basename = File.basename(file)
-            matched = basename_patterns.any? { |pat| File.match?(pat, basename) } ||
-                      path_patterns.any? { |pat| File.match?(pat, relative_path.lchop('/')) }
-            if matched
-              skipped_exclude_path += 1
-              next
+              total_files += 1
+
+              relative_path = if full_path.starts_with?(base_prefix)
+                                "/" + full_path[base_prefix.size..]
+                              else
+                                "/" + full_path
+                              end
+
+              if exclude_path_active
+                basename = entry
+                matched = basename_patterns.any? { |pat| File.match?(pat, basename) } ||
+                          path_patterns.any? { |pat| File.match?(pat, relative_path.lchop('/')) }
+                if matched
+                  skipped_exclude_path += 1
+                  next
+                end
+              end
+
+              if skip_reason = MediaFilter.skip_check(full_path)
+                logger.debug "Skipping #{full_path}: #{skip_reason}"
+                skipped_files += 1
+                next
+              end
+
+              content = File.read(full_path, encoding: "utf-8", invalid: :skip)
+              channel.send({full_path, content})
+              locator.push "file_map", full_path
             end
+          rescue File::NotFoundError | File::AccessDeniedError
+            # Directory vanished or we can't read it — treat the subtree
+            # as empty and move on.
           end
-
-          # Check if file should be skipped due to media type or size
-          if MediaFilter.should_skip_file?(file)
-            reason = MediaFilter.skip_reason(file)
-            logger.debug "Skipping #{file}: #{reason}"
-            skipped_files += 1
-            next
-          end
-
-          content = File.read(file, encoding: "utf-8", invalid: :skip)
-          channel.send({file, content})
-          locator.push "file_map", file
         end
       end
 
@@ -214,7 +241,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
         logger.info "Skipped #{skipped_files} media/large files out of #{total_files} total files"
       end
       if skipped_ignored_dirs > 0
-        logger.debug "Skipped #{skipped_ignored_dirs} files in ignored directories"
+        logger.debug "Pruned #{skipped_ignored_dirs} ignored directory tree(s)"
       end
       if skipped_exclude_path > 0
         logger.info "Skipped #{skipped_exclude_path} files matching --exclude-path patterns"
