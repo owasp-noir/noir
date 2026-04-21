@@ -51,7 +51,13 @@ expected_endpoints = [
   Endpoint.new("/api/stats-nested", "GET"),
 ]
 
+# `app.all('*', …)` is a legitimate Express catch-all (404 handler). "*"
+# contains no "/" but must still survive valid_route_path? — and `.all`
+# expands to seven HTTP methods.
+wildcard_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
+expected_endpoints.concat(wildcard_methods.map { |m| Endpoint.new("/*", m) })
+
 FunctionalTester.new("fixtures/javascript/express_false_positives/", {
   :techs     => 1,
-  :endpoints => 6,
+  :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests

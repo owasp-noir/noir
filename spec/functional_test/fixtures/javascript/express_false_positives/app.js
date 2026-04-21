@@ -60,4 +60,9 @@ app.get('/api/stats-nested', async (req, res) => {
   res.json(counts);
 });
 
+// Wildcard catch-all (e.g., 404 handler). `*` contains no "/" but is a
+// valid Express route — valid_route_path? must accept it even after
+// filtering out bare identifiers like "Object".
+app.all('*', (req, res) => res.status(404).send('not found'));
+
 module.exports = app;

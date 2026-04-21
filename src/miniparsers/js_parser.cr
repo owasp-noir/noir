@@ -1145,12 +1145,16 @@ module Noir
       return false if path.empty?
       return false if path.includes?("://")
       return false if path.each_char.any?(&.whitespace?)
-      # Express routes virtually always contain "/". Requiring it filters
-      # bare identifiers that leak in via `resolve_dynamic_path` when an
-      # unresolved variable name is used as a `.get`/`.all` argument —
-      # e.g. `Promise.all(Object.values(...).map(...))` would otherwise
-      # produce a route named `Object`.
-      return false unless path.includes?("/")
+      # Filter bare identifiers that leak in via `resolve_dynamic_path`
+      # when an unresolved variable name is used as a `.get`/`.all`
+      # argument — e.g. `Promise.all(Object.values(...).map(...))` would
+      # otherwise produce a route named `Object`.
+      #
+      # A legitimate Express path either:
+      #   - contains "/", or
+      #   - is the wildcard literal "*" (catch-all / 404 handlers), or
+      #   - starts with ":" (bare param routes like `app.get(":id", …)`).
+      return false unless path.includes?("/") || path == "*" || path.starts_with?(":")
       true
     end
 
