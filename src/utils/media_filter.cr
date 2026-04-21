@@ -107,15 +107,23 @@ module MediaFilter
   # readable reason in a single pass — avoids re-stat'ing the file just
   # to compose the log message. Returns `nil` when the file should be
   # processed.
-  def self.skip_check(file_path : String, max_size : Int32 = MAX_FILE_SIZE) : String?
+  #
+  # When the caller has already obtained a `File::Info` (e.g. the
+  # detector walker stats each entry with `follow_symlinks: false`), it
+  # can be passed as `info` to skip the size stat entirely.
+  def self.skip_check(file_path : String, max_size : Int32 = MAX_FILE_SIZE, info : File::Info? = nil) : String?
     extension = File.extname(file_path).downcase
     return "media file (#{extension})" if MEDIA_EXTENSION_SET.includes?(extension)
 
-    size = begin
-      File.size(file_path)
-    rescue
-      nil
-    end
+    size = if info
+             info.size
+           else
+             begin
+               File.size(file_path)
+             rescue
+               nil
+             end
+           end
 
     if size && size > max_size
       size_mb = (size / (1024.0 * 1024.0)).round(2)
@@ -129,13 +137,13 @@ module MediaFilter
   # Combined check - returns true if file should be skipped. Prefer
   # {skip_check} on hot paths: it returns the reason in the same call
   # so the caller does not re-stat to log.
-  def self.should_skip_file?(file_path : String, max_size : Int32 = MAX_FILE_SIZE) : Bool
-    !skip_check(file_path, max_size).nil?
+  def self.should_skip_file?(file_path : String, max_size : Int32 = MAX_FILE_SIZE, info : File::Info? = nil) : Bool
+    !skip_check(file_path, max_size, info).nil?
   end
 
   # Get a human-readable reason why a file was skipped. Kept for
   # backwards compatibility; new callers should use {skip_check}.
-  def self.skip_reason(file_path : String, max_size : Int32 = MAX_FILE_SIZE) : String?
-    skip_check(file_path, max_size)
+  def self.skip_reason(file_path : String, max_size : Int32 = MAX_FILE_SIZE, info : File::Info? = nil) : String?
+    skip_check(file_path, max_size, info)
   end
 end

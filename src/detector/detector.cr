@@ -193,8 +193,10 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
               if info.directory?
                 # Subtree prune happens here. Entry name (not full path)
                 # so the base-as-node_modules case from #912 is safe.
-                skipped_ignored_dirs += 1 if ignored_dir_names.includes?(entry)
-                next if ignored_dir_names.includes?(entry)
+                if ignored_dir_names.includes?(entry)
+                  skipped_ignored_dirs += 1
+                  next
+                end
                 stack << full_path
                 next
               end
@@ -204,23 +206,21 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
 
               total_files += 1
 
-              relative_path = if full_path.starts_with?(base_prefix)
-                                "/" + full_path[base_prefix.size..]
-                              else
-                                "/" + full_path
-                              end
-
               if exclude_path_active
-                basename = entry
-                matched = basename_patterns.any? { |pat| File.match?(pat, basename) } ||
-                          path_patterns.any? { |pat| File.match?(pat, relative_path.lchop('/')) }
-                if matched
+                if basename_patterns.any? { |pat| File.match?(pat, entry) }
                   skipped_exclude_path += 1
                   next
                 end
+                if !path_patterns.empty?
+                  rel_path = full_path.starts_with?(base_prefix) ? full_path[base_prefix.size..] : full_path
+                  if path_patterns.any? { |pat| File.match?(pat, rel_path) }
+                    skipped_exclude_path += 1
+                    next
+                  end
+                end
               end
 
-              if skip_reason = MediaFilter.skip_check(full_path)
+              if skip_reason = MediaFilter.skip_check(full_path, info: info)
                 logger.debug "Skipping #{full_path}: #{skip_reason}"
                 skipped_files += 1
                 next
