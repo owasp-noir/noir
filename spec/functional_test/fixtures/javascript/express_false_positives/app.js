@@ -48,4 +48,21 @@ app.post('/trigger', async (req, res) => {
   res.json({ triggered: true });
 });
 
+// Promise.all with a nested Object.values(...).map(...) expression - `all`
+// still matches the HTTP-method regex, and the first identifier inside the
+// parens is `Object`. Previously this produced /Object as a route via all
+// seven HTTP methods. valid_route_path? now requires a "/" so bare
+// identifier names can't become route paths.
+app.get('/api/stats-nested', async (req, res) => {
+  const counts = await Promise.all(
+    Object.values(tables).map(async (table) => table.count())
+  );
+  res.json(counts);
+});
+
+// Wildcard catch-all (e.g., 404 handler). `*` contains no "/" but is a
+// valid Express route — valid_route_path? must accept it even after
+// filtering out bare identifiers like "Object".
+app.all('*', (req, res) => res.status(404).send('not found'));
+
 module.exports = app;

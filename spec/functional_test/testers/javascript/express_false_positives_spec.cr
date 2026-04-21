@@ -2,7 +2,7 @@ require "../../func_spec.cr"
 
 # Regression tests for false positives in the Express/JS route extractor.
 #
-# Three patterns previously produced spurious routes:
+# Four patterns previously produced spurious routes:
 #
 # 1. Promise.all([pool.query(SQL), ...])
 #    `all` is an HTTP-method token, so fast_scan matched Promise.all([...]).
@@ -18,7 +18,13 @@ require "../../func_spec.cr"
 # 3. axios.post(`http://.../${var}/...`)
 #    Same pattern with a template-literal external URL.
 #
-# The fixture exercises all three patterns. Only the five real routes should appear.
+# 4. Promise.all(Object.values(...).map(...))
+#    `all` matches, the first argument is `Object` (a bare identifier, not a
+#    string). resolve_dynamic_path returned the identifier name as-is,
+#    producing a /Object route across all seven HTTP methods.
+#    Surfaced while running noir on hagopj13/node-express-boilerplate.
+#
+# The fixture exercises all four patterns. Only the six real routes should appear.
 
 expected_endpoints = [
   Endpoint.new("/health", "GET"),
@@ -39,9 +45,19 @@ expected_endpoints = [
   Endpoint.new("/trigger", "POST", [
     Param.new("dag_id", "", "json"),
   ]),
+
+  # Promise.all(Object.values(...).map(...))
+  # Must NOT produce /Object (or any other bare identifier) as a route
+  Endpoint.new("/api/stats-nested", "GET"),
 ]
+
+# `app.all('*', …)` is a legitimate Express catch-all (404 handler). "*"
+# contains no "/" but must still survive valid_route_path? — and `.all`
+# expands to seven HTTP methods.
+wildcard_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
+expected_endpoints.concat(wildcard_methods.map { |m| Endpoint.new("/*", m) })
 
 FunctionalTester.new("fixtures/javascript/express_false_positives/", {
   :techs     => 1,
-  :endpoints => 5,
+  :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests
