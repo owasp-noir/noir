@@ -30,6 +30,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"go_fasthttp", Go::Fasthttp},
     {"go_fiber", Go::Fiber},
     {"go_gin", Go::Gin},
+    {"go_hertz", Go::Hertz},
     {"go_chi", Go::Chi},
     {"go_gozero", Go::GoZero},
     {"go_goyave", Go::Goyave},

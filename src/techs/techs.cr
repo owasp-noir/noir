@@ -270,6 +270,22 @@ module NoirTechs
         },
       },
     },
+    :go_hertz => {
+      :framework => "Hertz",
+      :language  => "Go",
+      :similar   => ["hertz", "go-hertz", "go_hertz", "cloudwego"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+      },
+    },
     :go_chi => {
       :framework => "Chi",
       :language  => "Go",
