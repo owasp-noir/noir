@@ -16,12 +16,7 @@ module Analyzer::Swift
       lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
 
       lines.each_with_index do |line, index|
-        # Check if this is a route definition (has app. or identifier. before the method)
-        # and not a parameter access (req.parameters, req.query)
-        next unless (line.includes?(".get(") || line.includes?(".post(") ||
-                    line.includes?(".put(") || line.includes?(".delete(") ||
-                    line.includes?(".patch(")) && !line.includes?("req.parameters") &&
-                    !line.includes?("req.query")
+        next unless route_definition_line?(line)
         match = line.match(ROUTE_PATTERN)
         next unless match
 
@@ -153,11 +148,24 @@ module Analyzer::Swift
           break
         end
 
-        if i > start_index && (line.includes?(".get(") || line.includes?(".post(") ||
-           line.includes?(".put(") || line.includes?(".delete(") || line.includes?(".patch("))
+        if i > start_index && route_definition?(line)
           break
         end
       end
+    end
+
+    # Check if a line contains a route definition
+    private def route_definition?(line : String) : Bool
+      line.includes?(".get(") || line.includes?(".post(") ||
+        line.includes?(".put(") || line.includes?(".delete(") ||
+        line.includes?(".patch(")
+    end
+
+    # Check if a line is a route definition but not a parameter access
+    private def route_definition_line?(line : String) : Bool
+      route_definition?(line) &&
+        !line.includes?("req.parameters") &&
+        !line.includes?("req.query")
     end
   end
 end
