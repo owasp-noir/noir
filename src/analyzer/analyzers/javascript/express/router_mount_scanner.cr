@@ -188,7 +188,17 @@ module Analyzer::Javascript
           prefix, router_identifier = entry
           next if prefix.empty? || router_identifier.empty?
 
-          router_var : String? = require_map.has_key?(router_identifier) ? router_identifier : nil
+          # Identifiers can arrive via three different import/assignment
+          # shapes; match the lookup set `extract_router_reference` uses
+          # for literal `.use(…)` calls so destructured imports
+          # (`const { foo } = require('./bar')`) and factory-returned
+          # routers (`const router = makeRouter()`) also resolve.
+          router_var : String? = nil
+          if require_map.has_key?(router_identifier) ||
+             function_map.has_key?(router_identifier) ||
+             var_to_function.has_key?(router_identifier)
+            router_var = router_identifier
+          end
           router_file_direct : String? = nil
           next unless router_var || router_file_direct
 
@@ -207,8 +217,17 @@ module Analyzer::Javascript
       end
     end
 
-    # Extract `{ path: '…', route: <identifier> }` entries from an array
-    # literal bound to `array_name`. Non-conforming entries are skipped.
+    # Extract `{ path: '…', route: <identifier>, … }` entries from an
+    # array literal bound to `array_name`. Non-conforming entries are
+    # skipped. The property order inside each entry doesn't matter
+    # (`{ path: '/a', route: x }` and `{ route: x, path: '/a' }` both
+    # work), and extra keys beyond `path`/`route` are tolerated.
+    #
+    # The inner-object regex requires flat objects — a nested option bag
+    # like `{ path: '/a', route: x, options: { strict: true } }` would
+    # not match. In practice Express route configs are flat; if a real
+    # project needs nested options, we'll revisit with a brace-balanced
+    # scan.
     private def extract_route_config_array(content : String, array_name : String) : Array(Tuple(String, String))
       entries = [] of Tuple(String, String)
 
@@ -217,8 +236,13 @@ module Analyzer::Javascript
       return entries unless match
 
       body = match[1]
-      body.scan(/\{\s*path\s*:\s*['"]([^'"]+)['"]\s*,\s*route\s*:\s*(\w+)/) do |entry_match|
-        entries << {entry_match[1], entry_match[2]}
+      body.scan(/\{([^{}]+)\}/) do |obj_match|
+        obj_body = obj_match[1]
+        path_match = obj_body.match(/\bpath\s*:\s*['"]([^'"]+)['"]/)
+        route_match = obj_body.match(/\broute\s*:\s*(\w+)/)
+        if path_match && route_match
+          entries << {path_match[1], route_match[1]}
+        end
       end
 
       entries

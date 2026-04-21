@@ -10,7 +10,8 @@ const router = express.Router();
 // resolve the entries to recover the real mount paths.
 const defaultRoutes = [
   { path: '/auth', route: authRoute },
-  { path: '/users', route: userRoute },
+  // Reversed property order — the extractor must still match.
+  { route: userRoute, path: '/users' },
 ];
 
 defaultRoutes.forEach((r) => {
