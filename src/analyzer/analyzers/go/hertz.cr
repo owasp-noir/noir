@@ -36,8 +36,11 @@ module Analyzer::Go
                       details = Details.new(PathInfo.new(path, index + 1))
 
                       # Route definitions — skip parameter accessors (Header.Get, Cookie.Get).
+                      # Hertz routing methods are always uppercase (Go-style exported identifiers),
+                      # so the regex is case-sensitive to avoid matching lowercase accessor calls
+                      # like `someMap.get("x")` or `cookies.get("x")`.
                       if !line.includes?("Header.Get") && !line.includes?("Cookie.Get")
-                        if match = line.match(/\.(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\s*\(/i)
+                        if match = line.match(/\.(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\s*\(/)
                           method = match[1].upcase
                           route_path = get_route_path(line, groups)
                           if route_path.size == 0 && index + 1 < lines.size
@@ -66,7 +69,7 @@ module Analyzer::Go
                         end
                       end
 
-                      ["Query", "PostForm", "GetHeader"].each do |pattern|
+                      ["Query", "PostForm", "GetHeader", "Param", "FormValue"].each do |pattern|
                         if line.includes?("#{pattern}(")
                           add_param_to_endpoint(get_param(line), last_endpoint)
                         end
@@ -76,9 +79,11 @@ module Analyzer::Go
                         add_static_path_if_valid(get_static_path(line), public_dirs)
                       end
 
+                      # Read cookies via `ctx.Cookie("name")`. The leading `\.` avoids matching
+                      # `SetCookie(...)` (which is for *writing* cookies, not extracting params).
                       if line.includes?("Cookie(")
-                        if cookie_match = line.match(/Cookie\(\"(.*)\"\)/)
-                          last_endpoint.params << Param.new(cookie_match[1], "", "cookie")
+                        if cookie_match = line.match(/\.Cookie\s*\(\s*"([^"]+)"/)
+                          add_param_to_endpoint(Param.new(cookie_match[1], "", "cookie"), last_endpoint)
                         end
                       end
                     end
@@ -99,23 +104,20 @@ module Analyzer::Go
       result
     end
 
+    # Regex-based extraction so nested calls (e.g. `fmt.Println(ctx.Query("x"))`)
+    # and whitespace variants still yield the right param name, and so the
+    # param-type derivation stays in one place.
+    PARAM_ACCESSOR_RE = /(?:DefaultQuery|DefaultPostForm|Query|PostForm|GetHeader|Param|FormValue)\s*\(\s*"?([^",\s\)]+)"?/
+
     def get_param(line : String) : Param
       param_type = "json"
       param_type = "query" if line.includes?("Query(")
-      param_type = "form" if line.includes?("PostForm(")
+      param_type = "form" if line.includes?("PostForm(") || line.includes?("FormValue(")
       param_type = "header" if line.includes?("GetHeader(")
+      param_type = "path" if line.includes?("Param(")
 
-      first = line.strip.split("(")
-      if first.size > 1
-        second = first[1].split(")")
-        if second.size > 1
-          if line.includes?("DefaultQuery") || line.includes?("DefaultPostForm")
-            param_name = second[0].split(",")[0].gsub("\"", "")
-          else
-            param_name = second[0].gsub("\"", "")
-          end
-          return Param.new(param_name, "", param_type)
-        end
+      if match = line.match(PARAM_ACCESSOR_RE)
+        return Param.new(match[1], "", param_type)
       end
 
       Param.new("", "", "")

@@ -42,6 +42,12 @@ func main() {
 		ctx.JSON(200, "v1 migration")
 	})
 
+	// Path parameter via ctx.Param("id"), form value via FormValue.
+	h.PUT("/users/:id", func(c context.Context, ctx *app.RequestContext) {
+		_ = ctx.Param("id")
+		_ = ctx.FormValue("name")
+	})
+
 	h.Static("/public", "./public")
 
 	h.Spin()

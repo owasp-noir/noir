@@ -19,6 +19,10 @@ expected_endpoints = [
   ]),
   Endpoint.new("/group/users", "GET"),
   Endpoint.new("/group/v1/migration", "GET"),
+  Endpoint.new("/users/:id", "PUT", [
+    Param.new("id", "", "path"),
+    Param.new("name", "", "form"),
+  ]),
   Endpoint.new("/public/index.html", "GET"),
 ] + any_endpoints
 
