@@ -1,45 +1,19 @@
-require "../../../models/analyzer"
+require "../../engines/elixir_engine"
 
 module Analyzer::Elixir
-  class Plug < Analyzer
-    def analyze
-      # Source Analysis
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
+  class Plug < ElixirEngine
+    def analyze_file(path : String) : Array(Endpoint)
+      ext = File.extname(path)
+      return [] of Endpoint unless ext == ".ex" || ext == ".exs"
 
-      begin
-        populate_channel_with_files(channel)
-
-        WaitGroup.wait do |wg|
-          @options["concurrency"].to_s.to_i.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if File.directory?(path)
-                  if File.exists?(path) && (File.extname(path) == ".ex" || File.extname(path) == ".exs")
-                    File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-                      content = file.gets_to_end
-                      endpoints = analyze_content(content, path)
-                      endpoints.each do |endpoint|
-                        if endpoint.method != ""
-                          @result << endpoint
-                        end
-                      end
-                    end
-                  end
-                rescue File::NotFoundError
-                  logger.debug "File not found: #{path}"
-                end
-              end
-            end
-          end
+      endpoints = [] of Endpoint
+      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
+        content = file.gets_to_end
+        analyze_content(content, path).each do |endpoint|
+          endpoints << endpoint if endpoint.method != ""
         end
-      rescue e
-        logger.debug e
       end
-
-      @result
+      endpoints
     end
 
     def analyze_content(content : String, file_path : String) : Array(Endpoint)
