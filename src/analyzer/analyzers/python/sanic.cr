@@ -1,5 +1,6 @@
 require "../../../minilexers/python"
 require "../../../miniparsers/python"
+require "../../../miniparsers/python_route_extractor"
 require "../../engines/python_engine"
 
 module Analyzer::Python
@@ -57,44 +58,17 @@ module Analyzer::Python
               end
 
               # Identify Blueprint instance assignments
-              blueprint_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:sanic\.)?Blueprint\(/
-              if blueprint_match
-                prefix = ""
-                blueprint_instance_name = blueprint_match[1]
-                param_codes = line.split("Blueprint", 2)[1]
-                prefix_match = param_codes.match /url_prefix=[rf]?['"]([^'"]*)['"]/
-                if !prefix_match.nil? && prefix_match.size == 2
-                  prefix = prefix_match[1]
-                end
-
+              if bp = Noir::PythonRouteExtractor.scan_blueprint(line, ["sanic"])
+                blueprint_instance_name, prefix = bp
                 blueprint_prefixes[blueprint_instance_name] ||= prefix
                 api_instances[blueprint_instance_name] ||= prefix
               end
 
-              # Identify Sanic route decorators
-              line.scan(/@(#{PYTHON_VAR_NAME_REGEX})\.route\([rf]?['"]([^'"]*)['"](.*)/) do |_match|
-                if _match.size > 0
-                  router_name = _match[1]
-                  route_path = _match[2]
-                  extra_params = _match[3]
-                  router_info = Tuple(Int32, ::String, ::String, ::String).new(line_index, path, route_path, extra_params)
-                  @routes[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String)
-                  @routes[router_name] << router_info
-                end
-              end
-
-              # Also detect method-specific decorators like @app.get, @app.post, etc.
-              HTTP_METHODS.each do |method|
-                line.scan(/@(#{PYTHON_VAR_NAME_REGEX})\.#{method.downcase}\([rf]?['"]([^'"]*)['"](.*)/) do |_match|
-                  if _match.size > 0
-                    router_name = _match[1]
-                    route_path = _match[2]
-                    extra_params = "methods=['#{method.upcase}']"
-                    router_info = Tuple(Int32, ::String, ::String, ::String).new(line_index, path, route_path, extra_params)
-                    @routes[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String)
-                    @routes[router_name] << router_info
-                  end
-                end
+              # Identify Sanic route decorators (both @app.route and @app.<method>)
+              Noir::PythonRouteExtractor.scan_decorators(line).each do |decoration|
+                router_info = Tuple(Int32, ::String, ::String, ::String).new(line_index, path, decoration.path, decoration.extra_params)
+                @routes[decoration.router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String)
+                @routes[decoration.router_name] << router_info
               end
             end
           end
@@ -190,39 +164,9 @@ module Analyzer::Python
     end
 
     private def extract_params_from_decorator(path : ::String, lines : Array(::String), line_index : Int32, direction : Symbol = :down) : Tuple(Array(Param), Int32)
-      params = [] of Param
-      found_def_index = line_index
-
-      # Find the function definition based on direction
-      if direction == :down
-        i = line_index + 1
-        while i < lines.size
-          line_content = lines[i]
-          # Skip additional decorators and empty lines
-          if line_content.strip.starts_with?("@") || line_content.strip.empty?
-            i += 1
-            next
-          end
-          # Found function or class definition
-          if line_content.lstrip.starts_with?("def ") || line_content.lstrip.starts_with?("async def ") || line_content.lstrip.starts_with?("class ")
-            found_def_index = i
-            break
-          end
-          # If we hit something else (not a decorator or function), stop
-          break
-        end
-      else
-        i = line_index - 1
-        while i >= 0
-          if lines[i].lstrip.starts_with?("def ") || lines[i].lstrip.starts_with?("async def ") || lines[i].lstrip.starts_with?("class ")
-            found_def_index = i
-            break
-          end
-          i -= 1
-        end
-      end
-
-      {params, found_def_index}
+      # params stays empty for Sanic (unlike Flask which does decorator-level
+      # param extraction). The adapter pulls params from the function body later.
+      {[] of Param, Noir::PythonRouteExtractor.find_def_line(lines, line_index, direction)}
     end
 
     private def get_endpoints(method : String, route_path : String, extra_params : String, codeblock_lines : Array(String), prefix : String = "")

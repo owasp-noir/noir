@@ -1,5 +1,6 @@
 require "../../../minilexers/python"
 require "../../../miniparsers/python"
+require "../../../miniparsers/python_route_extractor"
 require "../../engines/python_engine"
 
 module Analyzer::Python
@@ -64,16 +65,8 @@ module Analyzer::Python
               end
 
               # Identify Blueprint instance assignments
-              blueprint_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:flask\.)?Blueprint\(/
-              if blueprint_match
-                prefix = ""
-                blueprint_instance_name = blueprint_match[1]
-                param_codes = original_line.split("Blueprint", 2)[1]
-                prefix_match = param_codes.match /url_prefix\s*=\s*[rf]?['"]([^'"]*)['"]/
-                if !prefix_match.nil? && prefix_match.size == 2
-                  prefix = prefix_match[1]
-                end
-
+              if bp = Noir::PythonRouteExtractor.scan_blueprint(line, ["flask"], original_line)
+                blueprint_instance_name, prefix = bp
                 blueprint_prefixes[blueprint_instance_name] ||= prefix
                 api_instances[blueprint_instance_name] ||= prefix
               end
@@ -172,34 +165,12 @@ module Analyzer::Python
                 end
               end
 
-              # Identify Flask route decorators
-              line.scan(/@(#{PYTHON_VAR_NAME_REGEX})\.route\([rf]?['"]([^'"]*)['"](.*)/) do |_match|
-                if _match.size > 0
-                  router_name = _match[1]
-                  extra_params = _match[3]
-                  # Extract route path from original line to preserve spaces in paths
-                  original_route_match = original_line.match /@#{_match[1]}\.route\(\s*[rf]?['"]([^'"]*)['"]/
-                  route_path = original_route_match ? original_route_match[1] : _match[2]
-                  router_info = Tuple(Int32, ::String, ::String, ::String).new(line_index, path, route_path, extra_params)
-                  @routes[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String)
-                  @routes[router_name] << router_info
-                end
-              end
-
-              # Also detect method-specific decorators like @app.get, @app.post, etc.
-              HTTP_METHODS.each do |method|
-                line.scan(/@(#{PYTHON_VAR_NAME_REGEX})\.#{method.downcase}\([rf]?['"]([^'"]*)['"](.*)/) do |_match|
-                  if _match.size > 0
-                    router_name = _match[1]
-                    extra_params = "methods=['#{method.upcase}']"
-                    # Extract route path from original line to preserve spaces in paths
-                    original_route_match = original_line.match /@#{_match[1]}\.#{method.downcase}\(\s*[rf]?['"]([^'"]*)['"]/
-                    route_path = original_route_match ? original_route_match[1] : _match[2]
-                    router_info = Tuple(Int32, ::String, ::String, ::String).new(line_index, path, route_path, extra_params)
-                    @routes[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String)
-                    @routes[router_name] << router_info
-                  end
-                end
+              # Identify Flask route decorators (both @app.route and @app.<method>).
+              # Pass original_line so paths with spaces survive the earlier gsub.
+              Noir::PythonRouteExtractor.scan_decorators(line, original_line).each do |decoration|
+                router_info = Tuple(Int32, ::String, ::String, ::String).new(line_index, path, decoration.path, decoration.extra_params)
+                @routes[decoration.router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String)
+                @routes[decoration.router_name] << router_info
               end
 
               # Identify view assignments: view_var = ClassName.as_view('name')
