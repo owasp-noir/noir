@@ -179,6 +179,9 @@ def run_options_parser
     parser.on "--exclude-codes 404,500", "Exclude HTTP codes (comma-separated)" do |v|
       noir_options["exclude_codes"] = YAML::Any.new(v)
     end
+    parser.on "--exclude-path PATTERN", "Exclude files by glob (e.g. *.test.js,*_test.go)" do |v|
+      noir_options["exclude_path"] = YAML::Any.new(v)
+    end
     parser.on "--include-path", "Include file path in plain output" do
       noir_options["include_path"] = YAML::Any.new(true)
     end

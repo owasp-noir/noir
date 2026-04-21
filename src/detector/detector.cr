@@ -154,6 +154,17 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
         "/tmp/", "/.next/", "/out/", "/vendor/",
       ]
 
+      # User-supplied --exclude-path patterns (comma-separated globs).
+      # Patterns containing "/" are matched against the relative path;
+      # patterns without "/" are matched against the basename.
+      # Partition once up front so the per-file loop only walks the two
+      # already-classified lists — no substring check per file.
+      exclude_path_raw = options["exclude_path"]?.to_s
+        .split(",").map(&.strip).reject(&.empty?)
+      path_patterns, basename_patterns = exclude_path_raw.partition(&.includes?('/'))
+      exclude_path_active = !exclude_path_raw.empty?
+      skipped_exclude_path = 0
+
       base_paths.each do |base_path|
         # Pre-compute base path prefix for fast relative path calculation
         base_prefix = base_path.ends_with?("/") ? base_path : base_path + "/"
@@ -175,6 +186,16 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
             next
           end
 
+          if exclude_path_active
+            basename = File.basename(file)
+            matched = basename_patterns.any? { |pat| File.match?(pat, basename) } ||
+                      path_patterns.any? { |pat| File.match?(pat, relative_path.lchop('/')) }
+            if matched
+              skipped_exclude_path += 1
+              next
+            end
+          end
+
           # Check if file should be skipped due to media type or size
           if MediaFilter.should_skip_file?(file)
             reason = MediaFilter.skip_reason(file)
@@ -194,6 +215,9 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
       end
       if skipped_ignored_dirs > 0
         logger.debug "Skipped #{skipped_ignored_dirs} files in ignored directories"
+      end
+      if skipped_exclude_path > 0
+        logger.info "Skipped #{skipped_exclude_path} files matching --exclude-path patterns"
       end
     ensure
       channel.close

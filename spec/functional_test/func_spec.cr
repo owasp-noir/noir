@@ -18,11 +18,12 @@ class FunctionalTester
   @app : NoirRunner
   @path : String
 
-  def initialize(@path, expected_count, expected_endpoints)
+  def initialize(@path, expected_count, expected_endpoints, option_overrides : Hash(String, YAML::Any)? = nil)
     config_init = ConfigInitializer.new
     noir_options = config_init.default_options
     noir_options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/#{@path}")])
     noir_options["nolog"] = YAML::Any.new(true)
+    option_overrides.try &.each { |k, v| noir_options[k] = v }
 
     if !expected_count.nil?
       @expected_count = expected_count
