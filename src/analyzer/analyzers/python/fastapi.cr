@@ -1,8 +1,7 @@
-require "../../../models/analyzer"
-require "./python"
+require "../../engines/python_engine"
 
 module Analyzer::Python
-  class FastAPI < Python
+  class FastAPI < PythonEngine
     @fastapi_base_path : ::String = ""
 
     def analyze

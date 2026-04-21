@@ -1,10 +1,9 @@
-require "../../../models/analyzer"
 require "../../../minilexers/python"
 require "../../../miniparsers/python"
-require "./python"
+require "../../engines/python_engine"
 
 module Analyzer::Python
-  class Sanic < Python
+  class Sanic < PythonEngine
     # Reference: https://sanic.readthedocs.io/en/stable/sanic/request.html
     REQUEST_PARAM_FIELDS = {
       "args"    => {["GET"], "query"},

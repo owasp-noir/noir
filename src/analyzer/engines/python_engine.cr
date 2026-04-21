@@ -1,8 +1,8 @@
-require "../../../models/analyzer"
+require "../../models/analyzer"
 require "json"
 
 module Analyzer::Python
-  class Python < Analyzer
+  class PythonEngine < Analyzer
     # HTTP method names commonly used in REST APIs
     HTTP_METHODS = ["get", "post", "put", "patch", "delete", "head", "options", "trace"]
     # Indentation size in spaces; different sizes can cause analysis issues
