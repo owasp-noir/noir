@@ -1,28 +1,15 @@
-require "../../../models/analyzer"
+require "../../engines/javascript_engine"
 
 module Analyzer::Javascript
-  class Nitro < Analyzer
+  class Nitro < JavascriptEngine
     def analyze
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       result = [] of Endpoint
       mutex = Mutex.new
 
-      begin
-        populate_channel_with_files(channel)
-
-        parallel_analyze(channel) do |path|
-          next if File.directory?(path)
-          next unless [".js", ".ts", ".mjs", ".mts"].any? { |ext| path.ends_with?(ext) }
-
-          # Focus on routes/ directory for Nitro
-          if path.includes?("/routes/")
-            if File.exists?(path)
-              analyze_nitro_file(path, result, mutex)
-            end
-          end
-        end
-      rescue e : Exception
-        logger.debug "Channel or wait group error: #{e.message}"
+      parallel_js_scan([".js", ".ts", ".mjs", ".mts"]) do |path|
+        # Focus on routes/ directory for Nitro
+        next unless path.includes?("/routes/")
+        analyze_nitro_file(path, result, mutex)
       end
 
       result

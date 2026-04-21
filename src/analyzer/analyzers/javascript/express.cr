@@ -1,4 +1,4 @@
-require "../../../models/analyzer"
+require "../../engines/javascript_engine"
 require "../../../miniparsers/js_route_extractor"
 require "../../../utils/url_path"
 require "../../../utils/js_literal_scanner"
@@ -6,7 +6,7 @@ require "./express_constants"
 require "./express/router_mount_scanner"
 
 module Analyzer::Javascript
-  class Express < Analyzer
+  class Express < JavascriptEngine
     include ExpressConstants
 
     # Constants for method chaining detection
@@ -14,60 +14,45 @@ module Analyzer::Javascript
     MAX_CHAIN_SEARCH_DISTANCE = 5000
 
     def analyze
-      # Source Analysis
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
 
-      begin
-        # Phase 1: Pre-scan to build router mount map
-        scan_for_router_mounts
+      # Phase 1: Pre-scan to build router mount map
+      scan_for_router_mounts
 
-        populate_channel_with_files(channel)
-
-        parallel_analyze(channel) do |path|
-          next if File.directory?(path)
-          # Use any? with an array of extensions
-          next unless [".js", ".ts", ".jsx", ".tsx"].any? { |ext| path.ends_with?(ext) }
-
-          if File.exists?(path)
-            # First try to use the JS parser for more robust analysis
-            begin
-              content = File.read(path, encoding: "utf-8", invalid: :skip)
-              parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug)
-              parser_endpoints.each do |endpoint|
-                # Use the line number already set by the extractor; fall back to path-only if missing
-                if endpoint.details.code_paths.empty?
-                  endpoint.details = Details.new(PathInfo.new(path))
-                end
-
-                # Parse path parameters from the URL path itself
-                if endpoint.url.includes?(":")
-                  endpoint.url.scan(/:(\w+)/) do |m|
-                    if m.size > 0
-                      param = Param.new(m[1], "", "path")
-                      endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
-                    end
-                  end
-                end
-
-                result << endpoint
-              end
-
-              # Extract static path declarations
-              Noir::JSRouteExtractor.extract_static_paths(content).each do |static_path|
-                static_dirs << static_path unless static_dirs.any? { |s| s["static_path"] == static_path["static_path"] && s["file_path"] == static_path["file_path"] }
-              end
-            rescue e
-              logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
-
-              # Fallback to the original regex-based approach if parser fails
-              analyze_with_regex(path, result, static_dirs)
+      parallel_js_scan do |path|
+        begin
+          content = File.read(path, encoding: "utf-8", invalid: :skip)
+          parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug)
+          parser_endpoints.each do |endpoint|
+            # Use the line number already set by the extractor; fall back to path-only if missing
+            if endpoint.details.code_paths.empty?
+              endpoint.details = Details.new(PathInfo.new(path))
             end
+
+            # Parse path parameters from the URL path itself
+            if endpoint.url.includes?(":")
+              endpoint.url.scan(/:(\w+)/) do |m|
+                if m.size > 0
+                  param = Param.new(m[1], "", "path")
+                  endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
+                end
+              end
+            end
+
+            result << endpoint
           end
+
+          # Extract static path declarations
+          Noir::JSRouteExtractor.extract_static_paths(content).each do |static_path|
+            static_dirs << static_path unless static_dirs.any? { |s| s["static_path"] == static_path["static_path"] && s["file_path"] == static_path["file_path"] }
+          end
+        rescue e
+          logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
+
+          # Fallback to the original regex-based approach if parser fails
+          analyze_with_regex(path, result, static_dirs)
         end
-      rescue e
-        logger.debug "Error in Express analyzer: #{e.message}"
       end
 
       # Process static directories to create endpoints for static files

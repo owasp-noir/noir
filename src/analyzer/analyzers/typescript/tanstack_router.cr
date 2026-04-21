@@ -1,24 +1,12 @@
-require "../../../models/analyzer"
+require "../../engines/javascript_engine"
 
 module Analyzer::Typescript
-  class TanstackRouter < Analyzer
+  class TanstackRouter < Analyzer::Javascript::JavascriptEngine
     def analyze
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       result = [] of Endpoint
 
-      begin
-        populate_channel_with_files(channel)
-
-        parallel_analyze(channel) do |path|
-          next if File.directory?(path)
-          next unless [".ts", ".tsx"].any? { |ext| path.ends_with?(ext) }
-
-          if File.exists?(path)
-            analyze_tanstack_file(path, result)
-          end
-        end
-      rescue e : Exception
-        logger.debug "Channel or wait group error: #{e.message}"
+      parallel_js_scan([".ts", ".tsx"]) do |path|
+        analyze_tanstack_file(path, result)
       end
 
       result

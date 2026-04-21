@@ -1,26 +1,14 @@
-require "../../../models/analyzer"
+require "../../engines/javascript_engine"
 require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Javascript
-  class Nestjs < Analyzer
+  class Nestjs < JavascriptEngine
     def analyze
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
 
-      begin
-        populate_channel_with_files(channel)
-
-        parallel_analyze(channel) do |path|
-          next if File.directory?(path)
-          next unless [".js", ".jsx"].any? { |ext| path.ends_with?(ext) }
-
-          if File.exists?(path)
-            analyze_nestjs_file(path, result, static_dirs)
-          end
-        end
-      rescue e : Exception
-        logger.debug "Channel or wait group error: #{e.message}"
+      parallel_js_scan([".js", ".jsx"]) do |path|
+        analyze_nestjs_file(path, result, static_dirs)
       end
 
       # Process static directories to create endpoints for static files
