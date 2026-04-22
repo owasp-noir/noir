@@ -50,8 +50,7 @@ module Analyzer::Python
           next if path.includes?("/site-packages/")
           @logger.debug "Analyzing #{path}"
 
-          content = read_file_content(path)
-          lines = content.lines
+          lines = fetch_file_content(path).lines
           if lines.any?(&.includes?("flask"))
             api_instances = Hash(::String, ::String).new
             path_api_instances[path] = api_instances
@@ -521,9 +520,14 @@ module Analyzer::Python
       result
     end
 
-    # Fetch content of a file and cache it
+    # Fetch file content, preferring the detector-populated global
+    # cache. The per-analyzer `@file_content_cache` is kept on top to
+    # keep Flask's internal lookups (called 2–3× per file across the
+    # class/blueprint passes) cheap even when the global cache is
+    # disabled — otherwise the fallback would do that many fresh
+    # `File.read` calls per file.
     private def fetch_file_content(path : ::String) : ::String
-      @file_content_cache[path] ||= File.read(path, encoding: "utf-8", invalid: :skip)
+      @file_content_cache[path] ||= read_file_content(path)
     end
 
     # Create a Python parser for a given path and content

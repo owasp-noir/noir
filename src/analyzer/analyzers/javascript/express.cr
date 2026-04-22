@@ -91,124 +91,119 @@ module Analyzer::Javascript
       router_detected = false
       nested_routers = {} of String => String
 
-      # Preserve the `File.open do ... end` block shape below — the
-      # body expects `file_content` and friends in scope, nothing else
-      # actually uses the File handle.
-      begin
-        # First, handle the specific v1Router pattern directly
-        handle_v1_router_pattern(file_content, result, path)
+      # First, handle the specific v1Router pattern directly
+      handle_v1_router_pattern(file_content, result, path)
 
-        # Handle app.route('/path').method1().method2() patterns
-        handle_app_route_chaining(file_content, result, path)
+      # Handle app.route('/path').method1().method2() patterns
+      handle_app_route_chaining(file_content, result, path)
 
-        # Extract static paths
-        Noir::JSRouteExtractor.extract_static_paths(file_content).each do |static_path|
-          static_dirs << static_path unless static_dirs.any? { |s| s["static_path"] == static_path["static_path"] && s["file_path"] == static_path["file_path"] }
+      # Extract static paths
+      Noir::JSRouteExtractor.extract_static_paths(file_content).each do |static_path|
+        static_dirs << static_path unless static_dirs.any? { |s| s["static_path"] == static_path["static_path"] && s["file_path"] == static_path["file_path"] }
+      end
+
+      # First analyze file for router imports and declarations
+      file_content.each_line do |line|
+        # Detect Express router imports and initialization
+        if line.includes?("require('express')") || line.includes?("require(\"express\")") ||
+           line.includes?("from 'express'") || line.includes?("from \"express\"")
+          router_detected = true
         end
 
-        # First analyze file for router imports and declarations
-        file_content.each_line do |line|
-          # Detect Express router imports and initialization
-          if line.includes?("require('express')") || line.includes?("require(\"express\")") ||
-             line.includes?("from 'express'") || line.includes?("from \"express\"")
-            router_detected = true
-          end
-
-          # Detect router initialization - looking for Router() or express.Router() patterns
-          if line =~ /(?:const|let|var)\s+(\w+)\s*=\s*(?:express\.Router\(\)|Router\(\))/
-            router_detected = true
-            nested_routers[$1] = ""
-          end
-
-          # Detect router nesting with use - capture both parent and child routers
-          if line =~ /(\w+)\.use\s*\(\s*['"]([^'"]+)['"]\s*,\s*(\w+)/
-            # parent_router = $1
-            base_path = $2
-            child_router = $3
-            if nested_routers.has_key?(child_router)
-              nested_routers[child_router] = base_path
-            end
-          end
+        # Detect router initialization - looking for Router() or express.Router() patterns
+        if line =~ /(?:const|let|var)\s+(\w+)\s*=\s*(?:express\.Router\(\)|Router\(\))/
+          router_detected = true
+          nested_routers[$1] = ""
         end
 
-        # Read all lines for multi-line pattern support
-        lines = file_content.split('\n')
-
-        # Now process the file line by line for endpoints
-        current_router = ""
-        lines.each_with_index do |line, index|
-          # Detect current router - support case variations of HTTP methods
-          if line =~ /(\w+)\.(get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|Del|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)/
-            current_router = $1
+        # Detect router nesting with use - capture both parent and child routers
+        if line =~ /(\w+)\.use\s*\(\s*['"]([^'"]+)['"]\s*,\s*(\w+)/
+          # parent_router = $1
+          base_path = $2
+          child_router = $3
+          if nested_routers.has_key?(child_router)
+            nested_routers[child_router] = base_path
           end
+        end
+      end
 
-          # Detect router base path
-          if line =~ /\.use\s*\(\s*['"]([^'"]+)['"]/
-            current_router_base = $1
-          end
+      # Read all lines for multi-line pattern support
+      lines = file_content.split('\n')
 
-          # Get endpoint from line - with multi-line support
-          endpoint = line_to_endpoint(line, router_detected)
+      # Now process the file line by line for endpoints
+      current_router = ""
+      lines.each_with_index do |line, index|
+        # Detect current router - support case variations of HTTP methods
+        if line =~ /(\w+)\.(get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|Del|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)/
+          current_router = $1
+        end
 
-          # Handle multi-line routes - check next line if route path is empty
-          if endpoint.method != "" && endpoint.url.empty? && index + 1 < lines.size
-            next_line = lines[index + 1]
-            endpoint = line_to_endpoint_multiline(line, next_line, router_detected)
-          end
+        # Detect router base path
+        if line =~ /\.use\s*\(\s*['"]([^'"]+)['"]/
+          current_router_base = $1
+        end
 
-          if endpoint.method != ""
-            # Handle router.all by expanding to all HTTP methods
-            if endpoint.method == "ALL"
-              all_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
-              all_methods.each do |method|
-                expanded_endpoint = Endpoint.new(endpoint.url, method)
+        # Get endpoint from line - with multi-line support
+        endpoint = line_to_endpoint(line, router_detected)
 
-                # Apply nested router prefix if applicable
-                if !current_router.empty? && nested_routers.has_key?(current_router) && !nested_routers[current_router].empty?
-                  router_prefix = nested_routers[current_router]
-                  expanded_endpoint.url = Noir::URLPath.join(router_prefix, expanded_endpoint.url)
-                  # If we have a router base path and the endpoint doesn't already include it
-                elsif !current_router_base.empty? && !expanded_endpoint.url.starts_with?("/")
-                  expanded_endpoint.url = "#{current_router_base}/#{expanded_endpoint.url}"
-                elsif !current_router_base.empty? && expanded_endpoint.url != "/" && !expanded_endpoint.url.starts_with?(current_router_base)
-                  expanded_endpoint.url = "#{current_router_base}#{expanded_endpoint.url}"
-                end
+        # Handle multi-line routes - check next line if route path is empty
+        if endpoint.method != "" && endpoint.url.empty? && index + 1 < lines.size
+          next_line = lines[index + 1]
+          endpoint = line_to_endpoint_multiline(line, next_line, router_detected)
+        end
 
-                details = Details.new(PathInfo.new(path, index + 1))
-                expanded_endpoint.details = details
-                result << expanded_endpoint
-              end
-            else
+        if endpoint.method != ""
+          # Handle router.all by expanding to all HTTP methods
+          if endpoint.method == "ALL"
+            all_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
+            all_methods.each do |method|
+              expanded_endpoint = Endpoint.new(endpoint.url, method)
+
               # Apply nested router prefix if applicable
               if !current_router.empty? && nested_routers.has_key?(current_router) && !nested_routers[current_router].empty?
                 router_prefix = nested_routers[current_router]
-                endpoint.url = Noir::URLPath.join(router_prefix, endpoint.url)
+                expanded_endpoint.url = Noir::URLPath.join(router_prefix, expanded_endpoint.url)
                 # If we have a router base path and the endpoint doesn't already include it
-              elsif !current_router_base.empty? && !endpoint.url.starts_with?("/")
-                endpoint.url = "#{current_router_base}/#{endpoint.url}"
-              elsif !current_router_base.empty? && endpoint.url != "/" && !endpoint.url.starts_with?(current_router_base)
-                endpoint.url = "#{current_router_base}#{endpoint.url}"
+              elsif !current_router_base.empty? && !expanded_endpoint.url.starts_with?("/")
+                expanded_endpoint.url = "#{current_router_base}/#{expanded_endpoint.url}"
+              elsif !current_router_base.empty? && expanded_endpoint.url != "/" && !expanded_endpoint.url.starts_with?(current_router_base)
+                expanded_endpoint.url = "#{current_router_base}#{expanded_endpoint.url}"
               end
 
               details = Details.new(PathInfo.new(path, index + 1))
-              endpoint.details = details
-              result << endpoint
-              last_endpoint = endpoint
+              expanded_endpoint.details = details
+              result << expanded_endpoint
             end
-          end
+          else
+            # Apply nested router prefix if applicable
+            if !current_router.empty? && nested_routers.has_key?(current_router) && !nested_routers[current_router].empty?
+              router_prefix = nested_routers[current_router]
+              endpoint.url = Noir::URLPath.join(router_prefix, endpoint.url)
+              # If we have a router base path and the endpoint doesn't already include it
+            elsif !current_router_base.empty? && !endpoint.url.starts_with?("/")
+              endpoint.url = "#{current_router_base}/#{endpoint.url}"
+            elsif !current_router_base.empty? && endpoint.url != "/" && !endpoint.url.starts_with?(current_router_base)
+              endpoint.url = "#{current_router_base}#{endpoint.url}"
+            end
 
-          # Get parameters from line
-          param = line_to_param(line)
-          if param.name != ""
-            if last_endpoint.method != ""
-              last_endpoint.push_param(param)
-            end
+            details = Details.new(PathInfo.new(path, index + 1))
+            endpoint.details = details
+            result << endpoint
+            last_endpoint = endpoint
           end
         end
 
-        # After processing all lines, look for any nested router patterns we might have missed
-        scan_for_nested_router_endpoints(file_content, result, path)
+        # Get parameters from line
+        param = line_to_param(line)
+        if param.name != ""
+          if last_endpoint.method != ""
+            last_endpoint.push_param(param)
+          end
+        end
       end
+
+      # After processing all lines, look for any nested router patterns we might have missed
+      scan_for_nested_router_endpoints(file_content, result, path)
     end
 
     # Enhanced method to detect nested router patterns that might be missed in the regular line-by-line analysis

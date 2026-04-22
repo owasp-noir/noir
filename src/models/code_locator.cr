@@ -44,7 +44,7 @@ class CodeLocator
   end
 
   private def resolve_content_cache_budget : Int64
-    return 0_i64 if ENV["NOIR_CONTENT_CACHE_DISABLE"]?.to_s.downcase.in?({"true", "1", "yes"})
+    return 0_i64 if any_to_bool(ENV["NOIR_CONTENT_CACHE_DISABLE"]?)
     if raw = ENV["NOIR_CONTENT_CACHE_MAX_MB"]?
       parsed = raw.to_i64?
       return parsed * 1024 * 1024 if parsed && parsed >= 0
