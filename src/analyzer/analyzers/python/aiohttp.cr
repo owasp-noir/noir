@@ -52,11 +52,11 @@ module Analyzer::Python
               # Style B: @routes.route("GET", "/path") — first arg is the method, second is the path.
               # aiohttp's .route() signature differs from Flask/Sanic, so handle it explicitly
               # and skip the generic extractor for this decorator shape.
-              aiohttp_route_deco = stripped.match(/@(#{PYTHON_VAR_NAME_REGEX})\.route\([rf]?['"]([A-Za-z]+)['"]\s*,\s*[rf]?['"]([^'"]*)['"]/)
+              aiohttp_route_deco = stripped.match(/@(#{PYTHON_VAR_NAME_REGEX})\.route\([rf]?['"]([A-Za-z*]+)['"]\s*,\s*[rf]?['"]([^'"]*)['"]/)
               if aiohttp_route_deco
                 method = aiohttp_route_deco[2].upcase
                 route_path = aiohttp_route_deco[3]
-                if orig_match = line.match(/@#{aiohttp_route_deco[1]}\s*\.\s*route\s*\(\s*[rf]?['"][A-Za-z]+['"]\s*,\s*[rf]?['"]([^'"]*)['"]/)
+                if orig_match = line.match(/@#{aiohttp_route_deco[1]}\s*\.\s*route\s*\(\s*[rf]?['"][A-Za-z*]+['"]\s*,\s*[rf]?['"]([^'"]*)['"]/)
                   route_path = orig_match[1]
                 end
                 process_decorator_route(path, lines, line_index, route_path, method)
@@ -72,11 +72,11 @@ module Analyzer::Python
               end
 
               # Style A: app.router.add_<method>("/path", handler)
-              HTTP_METHOD_NAMES.each do |method_name|
-                add_match = stripped.match(/\.add_#{method_name}\([rf]?['"]([^'"]*)['"]\s*,\s*(#{PYTHON_VAR_NAME_REGEX})/)
-                next unless add_match
-                route_path = add_match[1]
-                handler_name = add_match[2]
+              methods_re = HTTP_METHOD_NAMES.join("|")
+              if add_match = stripped.match(/\.add_(#{methods_re})\([rf]?['"]([^'"]*)['"]\s*,\s*(?:handler\s*=\s*)?(#{DOT_NATION})/)
+                method_name = add_match[1]
+                route_path = add_match[2]
+                handler_name = add_match[3]
                 if orig_match = line.match(/\.add_#{method_name}\s*\(\s*[rf]?['"]([^'"]*)['"]/)
                   route_path = orig_match[1]
                 end
@@ -84,12 +84,12 @@ module Analyzer::Python
               end
 
               # Style A: app.router.add_route("METHOD", "/path", handler)
-              add_route_match = stripped.match(/\.add_route\([rf]?['"]([A-Za-z]+)['"]\s*,\s*[rf]?['"]([^'"]*)['"]\s*,\s*(#{PYTHON_VAR_NAME_REGEX})/)
+              add_route_match = stripped.match(/\.add_route\([rf]?['"]([A-Za-z*]+)['"]\s*,\s*[rf]?['"]([^'"]*)['"]\s*,\s*(?:handler\s*=\s*)?(#{DOT_NATION})/)
               if add_route_match
                 method = add_route_match[1].upcase
                 route_path = add_route_match[2]
                 handler_name = add_route_match[3]
-                if orig_match = line.match(/\.add_route\s*\(\s*[rf]?['"][A-Za-z]+['"]\s*,\s*[rf]?['"]([^'"]*)['"]/)
+                if orig_match = line.match(/\.add_route\s*\(\s*[rf]?['"][A-Za-z*]+['"]\s*,\s*[rf]?['"]([^'"]*)['"]/)
                   route_path = orig_match[1]
                 end
                 handler_routes[path] << {route_path, method, line_index, handler_name}
@@ -145,6 +145,7 @@ module Analyzer::Python
     end
 
     private def find_handler_def(lines : Array(::String), handler_name : ::String) : Int32?
+      handler_name = handler_name.split(".").last
       lines.each_with_index do |line, idx|
         if line.match(/^\s*(async\s+)?def\s+#{handler_name}\s*\(/)
           return idx
@@ -231,12 +232,12 @@ module Analyzer::Python
 
       # JSON body: await request.json() and subsequent dict access on the returned var.
       json_vars = [] of ::String
-      body.scan(/([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*await\s+request\.json\s*\(\s*\)/) do |m|
+      body.scan(/([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*await\s+request\.json\s*\(/) do |m|
         json_vars << m[1]
       end
 
       # If request.json() is awaited at all, flag the body with a generic entry.
-      if body.match(/await\s+request\.json\s*\(\s*\)/)
+      if body.match(/await\s+request\.json\s*\(/)
         record.call("body", "json") if json_vars.empty?
       end
 
@@ -251,11 +252,11 @@ module Analyzer::Python
 
       # Form body: await request.post()
       form_vars = [] of ::String
-      body.scan(/([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*await\s+request\.post\s*\(\s*\)/) do |m|
+      body.scan(/([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*await\s+request\.post\s*\(/) do |m|
         form_vars << m[1]
       end
 
-      if body.match(/await\s+request\.post\s*\(\s*\)/)
+      if body.match(/await\s+request\.post\s*\(/)
         record.call("body", "form") if form_vars.empty?
       end
 
