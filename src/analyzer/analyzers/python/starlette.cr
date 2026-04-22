@@ -14,7 +14,7 @@ module Analyzer::Python
     MOUNT_REGEX = /Mount\s*\(\s*[rf]?['"]([^'"]*)['"]/
     # Path param in a route pattern: {name} or {name:type}. Starlette uses
     # the :type suffix as a converter hint (int, str, float, uuid, path);
-    # it is stripped before the param is exposed as a query param.
+    # it is stripped before the param is exposed as a path param.
     PATH_PARAM_REGEX       = /\{([a-zA-Z_][a-zA-Z0-9_]*)(?::[a-zA-Z_][a-zA-Z0-9_]*)?\}/
     TYPED_PATH_PARAM_REGEX = /\{([a-zA-Z_][a-zA-Z0-9_]*):[a-zA-Z_][a-zA-Z0-9_]*\}/
 
@@ -39,6 +39,7 @@ module Analyzer::Python
 
     private def analyze_file(path : ::String, source : ::String)
       lines = source.split("\n")
+      function_index = build_function_index(lines)
       # Stack of active Mount prefixes. Each entry stores the paren depth
       # at which the Mount was opened; when the running depth drops below
       # that value the mount has closed and its prefix must be popped.
@@ -67,15 +68,20 @@ module Analyzer::Python
 
           prefix = mount_stack.map(&.[0]).join
           full_url = "#{prefix}#{route_path}"
-          full_url = "/#{full_url}" unless full_url.starts_with?("/")
+          full_url = "/#{full_url}".gsub(/\/+/, "/")
           full_url = full_url.gsub(TYPED_PATH_PARAM_REGEX) { |_| "{#{$~[1]}}" }
 
           path_params = extract_path_params(route_path)
 
           handler_params = [] of Param
-          handler_match = tail.match(/,\s*([a-zA-Z_][a-zA-Z0-9_]*)/)
-          if handler_match
-            handler_params = extract_handler_params(lines, handler_match[1])
+          handler_name = nil
+          if endpoint_keyword_match = tail.match(/endpoint\s*=\s*([a-zA-Z_][a-zA-Z0-9_]*)/)
+            handler_name = endpoint_keyword_match[1]
+          elsif positional_match = tail.match(/,\s*([a-zA-Z_][a-zA-Z0-9_]*)/)
+            handler_name = positional_match[1]
+          end
+          if handler_name
+            handler_params = extract_handler_params(lines, function_index, handler_name)
           end
 
           methods.uniq.each do |method|
@@ -104,35 +110,44 @@ module Analyzer::Python
       route_path.scan(PATH_PARAM_REGEX) do |match|
         name = match[1]
         next if params.any? { |p| p.name == name }
-        params << Param.new(name, "", "query")
+        params << Param.new(name, "", "path")
       end
       params
     end
 
-    private def extract_handler_params(lines : Array(::String), handler_name : ::String) : Array(Param)
+    private def build_function_index(lines : Array(::String)) : Hash(::String, Tuple(Int32, ::String))
+      index = {} of ::String => Tuple(Int32, ::String)
+      lines.each_with_index do |line, idx|
+        def_match = line.match(/def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(\s*([a-zA-Z_][a-zA-Z0-9_]*)/)
+        next unless def_match
+        name = def_match[1]
+        next if index.has_key?(name)
+        index[name] = {idx, def_match[2]}
+      end
+      index
+    end
+
+    private def extract_handler_params(lines : Array(::String), function_index : Hash(::String, Tuple(Int32, ::String)), handler_name : ::String) : Array(Param)
       params = [] of Param
 
-      lines.each_with_index do |line, idx|
-        def_match = line.match(/def\s+#{Regex.escape(handler_name)}\s*\(\s*([a-zA-Z_][a-zA-Z0-9_]*)/)
-        next unless def_match
-        request_name = def_match[1]
+      entry = function_index[handler_name]?
+      return params unless entry
+      idx, request_name = entry
 
-        codeblock = parse_code_block(lines[idx..])
-        break if codeblock.nil?
-        codeblock.split("\n").each do |cl|
-          collect_request_attr_params(cl, request_name, "path_params", "query", params)
-          collect_request_attr_params(cl, request_name, "query_params", "query", params)
-          collect_request_attr_params(cl, request_name, "headers", "header", params)
-          collect_request_attr_params(cl, request_name, "cookies", "cookie", params)
+      codeblock = parse_code_block(lines[idx..])
+      return params if codeblock.nil?
+      codeblock.split("\n").each do |cl|
+        collect_request_attr_params(cl, request_name, "path_params", "path", params)
+        collect_request_attr_params(cl, request_name, "query_params", "query", params)
+        collect_request_attr_params(cl, request_name, "headers", "header", params)
+        collect_request_attr_params(cl, request_name, "cookies", "cookie", params)
 
-          if cl.matches?(/await\s+#{Regex.escape(request_name)}\.json\s*\(/)
-            add_unique(params, Param.new("body", "", "json"))
-          end
-          if cl.matches?(/await\s+#{Regex.escape(request_name)}\.form\s*\(/)
-            add_unique(params, Param.new("body", "", "form"))
-          end
+        if cl.matches?(/await\s+#{Regex.escape(request_name)}\.json\s*\(/)
+          add_unique(params, Param.new("body", "", "json"))
         end
-        break
+        if cl.matches?(/await\s+#{Regex.escape(request_name)}\.form\s*\(/)
+          add_unique(params, Param.new("body", "", "form"))
+        end
       end
 
       params
