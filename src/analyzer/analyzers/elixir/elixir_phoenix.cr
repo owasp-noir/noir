@@ -40,8 +40,14 @@ module Analyzer::Elixir
     end
 
     def extract_controller_params
-      # Find all controller files and extract parameters
-      controller_files = Dir.glob(File.join(escape_glob_path(@base_path), "**", "*_controller.ex"))
+      # Find all controller files and extract parameters. Pulls from the
+      # detector-built file_map so subtree pruning and --exclude-path
+      # apply to this pass too.
+      base_dir_prefix = @base_path.ends_with?("/") ? @base_path : "#{@base_path}/"
+      controller_files = get_files_by_extension(".ex").select do |path|
+        (path.starts_with?(base_dir_prefix) || path == @base_path) &&
+          File.basename(path).ends_with?("_controller.ex")
+      end
 
       controller_files.each do |controller_path|
         next unless File.exists?(controller_path)
