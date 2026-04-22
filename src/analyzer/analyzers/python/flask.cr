@@ -38,10 +38,15 @@ module Analyzer::Python
       path_api_instances = Hash(::String, Hash(::String, ::String)).new
       register_blueprint = Hash(::String, Hash(::String, ::String)).new
 
-      # Iterate through all Python files in all base paths
+      # Iterate through all Python files in all base paths. Pulls from
+      # the detector-built file_map so subtree pruning and --exclude-path
+      # apply; current_base_path is still needed further down for import
+      # resolution, so keep the outer loop and filter by prefix.
+      python_files = get_files_by_extension(".py")
       base_paths.each do |current_base_path|
-        Dir.glob("#{escape_glob_path(current_base_path)}/**/*.py") do |path|
-          next if File.directory?(path)
+        base_dir_prefix = current_base_path.ends_with?("/") ? current_base_path : "#{current_base_path}/"
+        python_files.each do |path|
+          next unless path.starts_with?(base_dir_prefix) || path == current_base_path
           next if path.includes?("/site-packages/")
           @logger.debug "Analyzing #{path}"
 
