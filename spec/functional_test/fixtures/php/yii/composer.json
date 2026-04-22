@@ -1,0 +1,16 @@
+{
+    "name": "acme/yii-sample",
+    "type": "project",
+    "license": "BSD-3-Clause",
+    "require": {
+        "php": ">=7.4",
+        "yiisoft/yii2": "~2.0.45",
+        "yiisoft/yii2-bootstrap5": "~2.0",
+        "yiisoft/yii2-symfonymailer": "~2.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "app\\": "."
+        }
+    }
+}
