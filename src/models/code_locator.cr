@@ -1,6 +1,13 @@
 class CodeLocator
   @@instance : CodeLocator? = nil
 
+  # Default content cache budget (bytes). Override via
+  # `NOIR_CONTENT_CACHE_MAX_MB` (value in megabytes). Set to 0 or the
+  # env `NOIR_CONTENT_CACHE_DISABLE=true` to disable caching entirely,
+  # in which case `content_for` always returns nil and analyzers fall
+  # through to `File.read`.
+  DEFAULT_CONTENT_CACHE_BUDGET = 512_i64 * 1024 * 1024
+
   @logger : NoirLogger
   @is_debug : Bool
   @is_verbose : Bool
@@ -11,6 +18,10 @@ class CodeLocator
   @file_usage_stats : Hash(String, Int32) # Track number of file reads
   @extension_index : Hash(String, Array(String))
   @extension_index_built : Bool
+  @file_contents : Hash(String, String)
+  @content_cache_budget : Int64
+  @content_cache_used : Int64
+  @content_cache_skipped : Int32
 
   def initialize
     options = {"debug" => "false", "verbose" => "false", "color" => "true", "nolog" => "false"}
@@ -25,6 +36,20 @@ class CodeLocator
     @file_usage_stats = Hash(String, Int32).new
     @extension_index = Hash(String, Array(String)).new
     @extension_index_built = false
+
+    @file_contents = Hash(String, String).new
+    @content_cache_budget = resolve_content_cache_budget
+    @content_cache_used = 0_i64
+    @content_cache_skipped = 0
+  end
+
+  private def resolve_content_cache_budget : Int64
+    return 0_i64 if any_to_bool(ENV["NOIR_CONTENT_CACHE_DISABLE"]?)
+    if raw = ENV["NOIR_CONTENT_CACHE_MAX_MB"]?
+      parsed = raw.to_i64?
+      return parsed * 1024 * 1024 if parsed && parsed >= 0
+    end
+    DEFAULT_CONTENT_CACHE_BUDGET
   end
 
   def self.instance : CodeLocator
@@ -49,6 +74,36 @@ class CodeLocator
     if key == "file_map"
       increment_file_usage(value)
     end
+  end
+
+  # One-shot used by the detector's file reader: push the path into
+  # `file_map` and (budget permitting) cache the content so analyzers
+  # can skip the second `File.read`. Files whose content exceeds the
+  # remaining budget are still registered in `file_map` but not cached,
+  # and `content_for(path)` returns `nil` for them — callers must keep
+  # a `File.read` fallback.
+  def register_file(path : String, content : String)
+    push("file_map", path)
+
+    return if @content_cache_budget <= 0
+    size = content.bytesize.to_i64
+    if @content_cache_used + size > @content_cache_budget
+      @content_cache_skipped += 1
+      return
+    end
+    @file_contents[path] = content
+    @content_cache_used += size
+  end
+
+  # Returns cached file content or `nil` if the file was not cached
+  # (budget exhausted, caching disabled, or read after cache was
+  # cleared). Callers should fall back to `File.read` on `nil`.
+  def content_for(path : String) : String?
+    @file_contents[path]?
+  end
+
+  def content_cache_stats : NamedTuple(bytes: Int64, files: Int32, skipped: Int32, budget: Int64)
+    {bytes: @content_cache_used, files: @file_contents.size, skipped: @content_cache_skipped, budget: @content_cache_budget}
   end
 
   def all(key : String) : Array(String)
@@ -83,6 +138,9 @@ class CodeLocator
     if key == "file_map"
       @extension_index.clear
       @extension_index_built = false
+      @file_contents.clear
+      @content_cache_used = 0_i64
+      @content_cache_skipped = 0
     end
   end
 
@@ -92,6 +150,9 @@ class CodeLocator
     @file_usage_stats.clear
     @extension_index.clear
     @extension_index_built = false
+    @file_contents.clear
+    @content_cache_used = 0_i64
+    @content_cache_skipped = 0
   end
 
   def show_table

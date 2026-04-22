@@ -43,6 +43,19 @@ class Analyzer
     # After inheriting the class, write an action code here.
   end
 
+  # Prefer the detector-populated cache over a fresh disk read. On
+  # cache miss (budget exhausted, cache cleared between runs, path
+  # not registered via register_file) falls back to `File.read`.
+  #
+  # Analyzers migrating from direct `File.read(path, ...)` calls
+  # should use this helper so the second read of files the detector
+  # already loaded is free.
+  def read_file_content(path : String) : String
+    cached = CodeLocator.instance.content_for(path)
+    return cached if cached
+    File.read(path, encoding: "utf-8", invalid: :skip)
+  end
+
   def parallel_analyze(channel : Channel(String), &block : String -> Nil)
     WaitGroup.wait do |wg|
       worker_count = @options["concurrency"].to_s.to_i

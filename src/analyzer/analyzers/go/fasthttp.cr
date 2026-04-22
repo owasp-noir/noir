@@ -14,26 +14,25 @@ module Analyzer::Go
           go_files.each do |path|
             next unless path.starts_with?(base_dir_prefix) || path == current_base_path
             if File.exists?(path)
-              File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-                last_endpoint = Endpoint.new("", "")
-                file.each_line.with_index do |line, index|
-                  details = Details.new(PathInfo.new(path, index + 1))
+              content = read_file_content(path)
+              last_endpoint = Endpoint.new("", "")
+              content.each_line.with_index do |line, index|
+                details = Details.new(PathInfo.new(path, index + 1))
 
-                  # Detect fasthttp route patterns
-                  endpoint = analyze_route_line(line, details)
-                  if endpoint.method != ""
-                    result << endpoint
-                    last_endpoint = endpoint
-                  end
+                # Detect fasthttp route patterns
+                endpoint = analyze_route_line(line, details)
+                if endpoint.method != ""
+                  result << endpoint
+                  last_endpoint = endpoint
+                end
 
-                  # Detect parameter usage in current context
-                  params = analyze_param_line(line)
-                  params.each do |param|
-                    if param.name.size > 0 && last_endpoint.method != ""
-                      # Check for duplicates before adding
-                      unless last_endpoint.params.any? { |p| p.name == param.name && p.param_type == param.param_type }
-                        last_endpoint.params << param
-                      end
+                # Detect parameter usage in current context
+                params = analyze_param_line(line)
+                params.each do |param|
+                  if param.name.size > 0 && last_endpoint.method != ""
+                    # Check for duplicates before adding
+                    unless last_endpoint.params.any? { |p| p.name == param.name && p.param_type == param.param_type }
+                      last_endpoint.params << param
                     end
                   end
                 end

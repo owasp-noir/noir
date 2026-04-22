@@ -237,7 +237,9 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
 
               content = File.read(full_path, encoding: "utf-8", invalid: :skip)
               channel.send({full_path, content})
-              locator.push "file_map", full_path
+              # Register the path in file_map and (budget permitting)
+              # cache the content so analyzers can skip the re-read.
+              locator.register_file(full_path, content)
             end
           rescue File::NotFoundError | File::AccessDeniedError
             # Directory vanished or we can't read it — treat the subtree
@@ -254,6 +256,13 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
       end
       if skipped_exclude_path > 0
         logger.info "Skipped #{skipped_exclude_path} files matching --exclude-path patterns"
+      end
+
+      stats = locator.content_cache_stats
+      if stats[:budget] > 0
+        cached_mb = (stats[:bytes] / (1024.0 * 1024.0)).round(1)
+        budget_mb = (stats[:budget] / (1024.0 * 1024.0)).round(1)
+        logger.debug "Content cache: #{stats[:files]} files / #{cached_mb} MB (budget #{budget_mb} MB, #{stats[:skipped]} skipped)"
       end
     ensure
       channel.close
