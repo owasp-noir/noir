@@ -203,13 +203,17 @@ module Analyzer::AI
     end
 
     private def get_all_source_files : Array(String)
-      files = [] of String
-      base_paths.each do |current_base_path|
-        files.concat(Dir.glob("#{escape_glob_path(current_base_path)}/**/*").reject do |p|
-          File.directory?(p) || ignore_extensions.includes?(File.extname(p))
-        end)
+      # Pull from the detector-built file_map so subtree pruning and
+      # --exclude-path apply here too. The map only contains regular
+      # files, so no File.directory? check is needed. Delegate the
+      # base-path check to `path_within_base?`, which already handles
+      # path expansion — a hand-rolled prefix compare breaks on
+      # relative base paths like `.` where the map stores unexpanded
+      # paths.
+      all_files.select do |path|
+        next false if ignore_extensions.includes?(File.extname(path))
+        path_within_base?(path)
       end
-      files
     end
 
     private def analyze_file(path : String, adapter : LLM::Adapter)
