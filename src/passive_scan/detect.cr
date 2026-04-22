@@ -33,7 +33,19 @@ module NoirPassiveScan
           end
         end
       else
-        matchers.each do |matcher|
+        # Per-matcher early-out. Since any `match_content?(line, m)`
+        # is a strict subset of `match_content?(file_content, m)`,
+        # drop the matchers that cannot possibly fire on any line
+        # before entering the per-line loop. This is the "or"
+        # counterpart to the whole-content pre-check the "and" branch
+        # above uses — except for "or" we can prune individual
+        # matchers independently rather than requiring all of them to
+        # match the file. If nothing survives the prune, there is no
+        # work to do for this rule.
+        active_matchers = matchers.select { |matcher| match_content?(file_content, matcher) }
+        next if active_matchers.empty?
+
+        active_matchers.each do |matcher|
           index = 0
           file_content.each_line do |line|
             if match_content?(line, matcher)
