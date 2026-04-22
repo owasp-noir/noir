@@ -33,6 +33,14 @@ module NoirPassiveScan
           end
         end
       else
+        # Symmetric early-out with the "and" branch above: if no
+        # matcher fires against the full file content, the per-line
+        # scan cannot possibly produce a hit, so skip straight to the
+        # next rule. For rules whose matchers fail most of the time
+        # (the common case), this replaces a full line-by-line scan
+        # per matcher with a single whole-content check.
+        next unless matchers.any? { |matcher| match_content?(file_content, matcher) }
+
         matchers.each do |matcher|
           index = 0
           file_content.each_line do |line|

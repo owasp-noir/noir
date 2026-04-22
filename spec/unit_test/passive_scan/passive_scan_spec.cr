@@ -106,6 +106,76 @@ describe NoirPassiveScan do
     results[0].line_number.should eq(1)
   end
 
+  # Regression tests for the matchers-condition: or early-out. Prior to
+  # the perf fix, this branch iterated every line of every file for each
+  # matcher regardless of whether the matcher could possibly fire — the
+  # early-out skips the line scan when no matcher matches the whole
+  # file, so both of these cases must still behave identically.
+  describe "matchers-condition: or" do
+    it "returns results when at least one matcher fires" do
+      logger = NoirLogger.new(false, false, false, true)
+      rules = [
+        PassiveScan.new(YAML.parse(<<-YAML)),
+          id: or-branch-hit
+          info:
+            name: or branch hit
+            author: [test]
+            severity: critical
+            description: ...
+            reference: [https://example.com]
+          matchers-condition: or
+          matchers:
+            - type: word
+              patterns:
+                - needle-one
+              condition: or
+            - type: word
+              patterns:
+                - needle-two
+              condition: or
+          category: security
+          techs: ['*']
+          YAML
+      ]
+      file_content = "line one has nothing\nline two has needle-one here\nline three has needle-two too"
+      results = NoirPassiveScan.detect("test.txt", file_content, rules, logger)
+
+      results.size.should eq(2)
+      results.map(&.line_number).should eq([2, 3])
+    end
+
+    it "returns no results and takes the early-out when no matcher fires" do
+      logger = NoirLogger.new(false, false, false, true)
+      rules = [
+        PassiveScan.new(YAML.parse(<<-YAML)),
+          id: or-branch-miss
+          info:
+            name: or branch miss
+            author: [test]
+            severity: critical
+            description: ...
+            reference: [https://example.com]
+          matchers-condition: or
+          matchers:
+            - type: word
+              patterns:
+                - absent-one
+              condition: or
+            - type: word
+              patterns:
+                - absent-two
+              condition: or
+          category: security
+          techs: ['*']
+          YAML
+      ]
+      file_content = "nothing to match here\non any line at all\nreally, nothing"
+      results = NoirPassiveScan.detect("test.txt", file_content, rules, logger)
+
+      results.size.should eq(0)
+    end
+  end
+
   describe "severity filtering" do
     it "filters by critical severity only" do
       logger = NoirLogger.new(false, false, false, true)
