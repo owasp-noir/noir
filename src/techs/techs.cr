@@ -1183,6 +1183,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :rust_poem => {
+      :framework => "Poem",
+      :language  => "Rust",
+      :similar   => ["poem", "poem-openapi", "rust-poem", "rust_poem"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :scala_akka => {
       :framework => "Akka HTTP",
       :language  => "Scala",
