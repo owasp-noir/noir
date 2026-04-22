@@ -70,6 +70,7 @@ module Analyzer::Go
                       # ctx.Request().Header.Get, ctx.GetHeader, ctx.GetCookie.
                       if !line.includes?("Header.Get") && !line.includes?("GetHeader") &&
                          !line.includes?("GetCookie") && !line.includes?(".Party(") &&
+                         !line.includes?("ctx.Get(") && !line.includes?("c.Get(") &&
                          (match = line.match(/\.(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD|ANY)\s*\(/i))
                         method = match[1].upcase
                         get_route_path(line, groups).tap do |route_path|
@@ -116,6 +117,7 @@ module Analyzer::Go
           end
         end
       rescue e
+        logger.error "Iris analyzer failed: #{e.message}"
         logger.debug e
       end
 
