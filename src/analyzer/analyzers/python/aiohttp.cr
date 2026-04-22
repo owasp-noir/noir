@@ -65,8 +65,8 @@ module Analyzer::Python
                 Noir::PythonRouteExtractor.scan_decorators(stripped, line).each do |deco|
                   methods = extract_methods(deco.extra_params)
                   methods << "GET" if methods.empty?
-                  methods.uniq.each do |method|
-                    process_decorator_route(path, lines, line_index, deco.path, method)
+                  methods.uniq.each do |deco_method|
+                    process_decorator_route(path, lines, line_index, deco.path, deco_method)
                   end
                 end
               end
