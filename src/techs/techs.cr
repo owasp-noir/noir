@@ -286,6 +286,22 @@ module NoirTechs
         },
       },
     },
+    :go_iris => {
+      :framework => "Iris",
+      :language  => "Go",
+      :similar   => ["iris", "go-iris", "go_iris", "kataras"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+      },
+    },
     :go_chi => {
       :framework => "Chi",
       :language  => "Go",
