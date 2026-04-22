@@ -28,7 +28,7 @@ module Analyzer::Rust
         remainder = path_match[2]
 
         methods_and_handlers = [] of Tuple(String, String)
-        remainder.scan(/\b(get|post|put|delete|patch|head|options)\s*\(\s*(\w+)/) do |m|
+        remainder.scan(/\b(get|post|put|delete|patch|head|options)\s*\(\s*([\w:]+)/) do |m|
           methods_and_handlers << {m[1].upcase, m[2]}
         end
 
@@ -127,15 +127,15 @@ module Analyzer::Rust
     end
 
     def extract_signature_params(line : String, endpoint : Endpoint)
-      if line.match(/Query\s*\(\s*\w+\s*\)/) || line.includes?(": Query<")
+      if line.match(/Query\s*\(\s*[^)]+\s*\)/) || line.includes?(": Query<")
         endpoint.push_param(Param.new("query", "", "query"))
       end
 
-      if line.match(/Json\s*\(\s*\w+\s*\)/) || line.includes?(": Json<")
+      if line.match(/Json\s*\(\s*[^)]+\s*\)/) || line.includes?(": Json<")
         endpoint.push_param(Param.new("body", "", "json"))
       end
 
-      if line.match(/Form\s*\(\s*\w+\s*\)/) || line.includes?(": Form<")
+      if line.match(/Form\s*\(\s*[^)]+\s*\)/) || line.includes?(": Form<")
         endpoint.push_param(Param.new("form", "", "form"))
       end
     end
