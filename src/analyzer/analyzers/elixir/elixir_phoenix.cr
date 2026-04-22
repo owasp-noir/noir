@@ -43,10 +43,10 @@ module Analyzer::Elixir
       # Find all controller files and extract parameters. Pulls from the
       # detector-built file_map so subtree pruning and --exclude-path
       # apply to this pass too.
-      base_dir_prefix = @base_path.ends_with?("/") ? @base_path : "#{@base_path}/"
+      base_dir_prefixes = base_paths.map { |bp| bp.ends_with?("/") ? bp : "#{bp}/" }
       controller_files = get_files_by_extension(".ex").select do |path|
-        (path.starts_with?(base_dir_prefix) || path == @base_path) &&
-          File.basename(path).ends_with?("_controller.ex")
+        next false unless path.ends_with?("_controller.ex")
+        base_paths.includes?(path) || base_dir_prefixes.any? { |p| path.starts_with?(p) }
       end
 
       controller_files.each do |controller_path|
