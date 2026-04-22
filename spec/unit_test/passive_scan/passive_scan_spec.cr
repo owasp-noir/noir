@@ -144,6 +144,38 @@ describe NoirPassiveScan do
       results.map(&.line_number).should eq([2, 3])
     end
 
+    it "still returns results for the matching matcher when another in the same rule doesn't fire" do
+      logger = NoirLogger.new(false, false, false, true)
+      rules = [
+        PassiveScan.new(YAML.parse(<<-YAML)),
+          id: or-branch-mixed
+          info:
+            name: or branch mixed
+            author: [test]
+            severity: critical
+            description: ...
+            reference: [https://example.com]
+          matchers-condition: or
+          matchers:
+            - type: word
+              patterns:
+                - present-needle
+              condition: or
+            - type: word
+              patterns:
+                - absent-needle
+              condition: or
+          category: security
+          techs: ['*']
+          YAML
+      ]
+      file_content = "first line\nsecond line has present-needle\nthird line"
+      results = NoirPassiveScan.detect("test.txt", file_content, rules, logger)
+
+      results.size.should eq(1)
+      results[0].line_number.should eq(2)
+    end
+
     it "returns no results and takes the early-out when no matcher fires" do
       logger = NoirLogger.new(false, false, false, true)
       rules = [
