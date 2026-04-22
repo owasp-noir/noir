@@ -57,28 +57,41 @@ module Analyzer::Php
       endpoints
     end
 
+    # Note: brace counting may be inaccurate if braces appear inside strings or comments.
+    # A full PHP parser is out of scope; this is a best-effort implementation.
     private def extract_rules_section(content : String) : String?
-      idx = content.index(/["']rules["']\s*=>\s*\[/)
-      return nil unless idx
+      idx = content.index(/["']rules["']\s*=>\s*(?:\[|array\()/)
+      return unless idx
 
-      start = content.index('[', idx)
-      return nil unless start
+      open_char, close_char = detect_rules_brackets(content, idx)
+      start = content.index(open_char, idx)
+      return unless start
 
       depth = 1
       pos = start + 1
       while pos < content.size && depth > 0
         case content[pos]
-        when '['
+        when open_char
           depth += 1
-        when ']'
+        when close_char
           depth -= 1
           break if depth == 0
         end
         pos += 1
       end
 
-      return nil if depth != 0
+      return if depth != 0
       content[(start + 1)...pos]
+    end
+
+    private def detect_rules_brackets(content : String, idx : Int32) : Tuple(Char, Char)
+      bracket_idx = content.index('[', idx)
+      paren_idx = content.index("array(", idx)
+      if paren_idx && (!bracket_idx || paren_idx < bracket_idx)
+        {'(', ')'}
+      else
+        {'[', ']'}
+      end
     end
 
     private def split_rule_key(key : String) : Tuple(String, String)
@@ -120,7 +133,7 @@ module Analyzer::Php
 
       # Scan action*() methods — the standard Yii2 controller action pattern.
       offset = 0
-      content.scan(/public\s+function\s+action([A-Z]\w*)\s*\(([^)]*)\)\s*\{/) do |match|
+      content.scan(/(?:^|[\s;{}])(?:public\s+)?function\s+action([A-Z]\w*)\s*\(([^)]*)\)\s*\{/) do |match|
         action_name = match[1]
         param_sig = match[2]
         full_match = match[0]
@@ -185,6 +198,8 @@ module Analyzer::Php
 
     # Brace-count from an opening `{` to isolate the matching method body;
     # prevents param/method leakage across adjacent action methods.
+    # Note: brace counting may be inaccurate if braces appear inside strings or comments.
+    # A full PHP parser is out of scope; this is a best-effort implementation.
     private def extract_method_body(content : String, brace_start : Int32) : String
       return "" unless brace_start < content.size && content[brace_start] == '{'
 
