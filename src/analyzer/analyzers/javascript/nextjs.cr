@@ -122,19 +122,62 @@ module Analyzer::Javascript
       # File must declare "use server" directive at the top
       return unless has_use_server_directive?(content)
 
-      # Extract exported async functions
+      seen = Set(String).new
+
+      # export async function NAME(args) { ... }
       content.scan(/export\s+async\s+function\s+(\w+)\s*\(([^)]*)\)/) do |match|
         action_name = match[1]
-        args = match[2]
-
-        url = "/" + action_name
-        endpoint = Endpoint.new(url, "POST")
-        endpoint.details = Details.new(PathInfo.new(path, 1))
-
-        extract_server_action_params(args, content, action_name, endpoint)
-
-        mutex.synchronize { result << endpoint }
+        next if seen.includes?(action_name)
+        seen << action_name
+        register_server_action(path, action_name, match[2], content, match, result, mutex)
       end
+
+      # export const NAME = async (args) => { ... }
+      content.scan(/export\s+const\s+(\w+)\s*=\s*async\s*\(([^)]*)\)/) do |match|
+        action_name = match[1]
+        next if seen.includes?(action_name)
+        seen << action_name
+        register_server_action(path, action_name, match[2], content, match, result, mutex)
+      end
+
+      # Note: `export default` actions are unaddressable by name, and
+      # `export { foo, bar }` re-exports are out of scope (too complex to parse safely).
+    end
+
+    private def register_server_action(path : String, action_name : String, args : String,
+                                       content : String, match : Regex::MatchData,
+                                       result : Array(Endpoint), mutex : Mutex)
+      body = extract_action_body(content, match)
+
+      url = "/" + action_name
+      endpoint = Endpoint.new(url, "POST")
+      endpoint.details = Details.new(PathInfo.new(path, 1))
+
+      extract_server_action_params(args, body, endpoint)
+
+      mutex.synchronize { result << endpoint }
+    end
+
+    # Return the text inside the function body that starts after the match's args list.
+    # Falls back to an empty string if the body cannot be located.
+    private def extract_action_body(content : String, match : Regex::MatchData) : String
+      match_end = match.end(0)
+      return "" if match_end.nil?
+      open_pos = content.index('{', match_end)
+      return "" if open_pos.nil?
+      depth = 1
+      i = open_pos + 1
+      while i < content.size && depth > 0
+        case content[i]
+        when '{'
+          depth += 1
+        when '}'
+          depth -= 1
+          break if depth == 0
+        end
+        i += 1
+      end
+      content[(open_pos + 1)...i]
     end
 
     private def detect_pages_router_methods(content : String) : Array(String)
@@ -185,9 +228,8 @@ module Analyzer::Javascript
 
       # Destructured query: const { foo, bar } = req.query
       content.scan(/(?:const|let|var)\s*\{\s*([^}]+?)\s*\}\s*=\s*req\.query/) do |m|
-        m[1].split(",").each do |raw|
-          name = raw.strip.split(/[:=\s]/).first
-          add_param(endpoint, name, "query") unless name.empty?
+        extract_simple_destructure_params(m[1]).each do |name|
+          add_param(endpoint, name, "query")
         end
       end
 
@@ -201,9 +243,8 @@ module Analyzer::Javascript
 
       # Destructured body: const { foo, bar } = req.body
       content.scan(/(?:const|let|var)\s*\{\s*([^}]+?)\s*\}\s*=\s*req\.body/) do |m|
-        m[1].split(",").each do |raw|
-          name = raw.strip.split(/[:=\s]/).first
-          add_param(endpoint, name, "body") unless name.empty?
+        extract_simple_destructure_params(m[1]).each do |name|
+          add_param(endpoint, name, "body")
         end
       end
 
@@ -232,10 +273,22 @@ module Analyzer::Javascript
 
       # await request.json() — body present; try to extract field access patterns
       if content.includes?("request.json()") || content.includes?(".json()")
+        # Destructured: const { foo, bar } = await request.json()
         content.scan(/(?:const|let|var)\s*\{\s*([^}]+?)\s*\}\s*=\s*await\s+(?:request|req)\.json\s*\(\s*\)/) do |m|
-          m[1].split(",").each do |raw|
-            name = raw.strip.split(/[:=\s]/).first
-            add_param(endpoint, name, "json") unless name.empty?
+          extract_simple_destructure_params(m[1]).each do |name|
+            add_param(endpoint, name, "json")
+          end
+        end
+
+        # Aliased: const body = await request.json(); then body.X or body["X"]
+        content.scan(/(?:const|let|var)\s+(\w+)\s*=\s*await\s+(?:request|req)\.json\s*\(\s*\)/) do |m|
+          varname = m[1]
+          escaped = Regex.escape(varname)
+          content.scan(/\b#{escaped}\.(\w+)/) do |mm|
+            add_param(endpoint, mm[1], "json")
+          end
+          content.scan(/\b#{escaped}\[['"]([^'"]+)['"]\]/) do |mm|
+            add_param(endpoint, mm[1], "json")
           end
         end
       end
@@ -258,33 +311,64 @@ module Analyzer::Javascript
       end
     end
 
-    private def extract_server_action_params(args : String, content : String, action_name : String, endpoint : Endpoint)
-      # Detect FormData args: (formData: FormData) → look up formData.get("x") calls
-      if args.match(/formData\s*:\s*FormData/) || args.match(/\bformData\b/i)
-        content.scan(/formData\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
-          add_param(endpoint, m[1], "form")
-        end
+    private def extract_server_action_params(args : String, body : String, endpoint : Endpoint)
+      # Scan the action body for .get("X") calls (formData.get / data.get, etc.) → form param
+      body.scan(/\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
+        add_param(endpoint, m[1], "form")
       end
 
-      # Plain positional arguments become body params
-      args.split(",").each do |arg|
+      # Extract only simple top-level identifier args (skip anything with {, <, =, ()
+      split_top_level_commas(args).each do |arg|
         arg = arg.strip
         next if arg.empty?
-        # Strip type annotations and default values
-        name = arg.split(":").first.strip.split("=").first.strip
-        next if name.empty?
-        next if name == "formData"
-        # Handle destructuring: { email, name }: SomeType
-        if name.starts_with?("{") && name.ends_with?("}")
-          inner = name[1..-2]
-          inner.split(",").each do |piece|
-            pname = piece.strip.split(/[:=\s]/).first
-            add_param(endpoint, pname, "body") unless pname.empty?
+        # Strip type annotation (everything after `:`)
+        name_part = arg.split(":").first.strip
+        # Skip destructures, generics, default values, nested calls
+        next if name_part.includes?("{") || name_part.includes?("(") ||
+                name_part.includes?("<") || name_part.includes?("=")
+        next unless name_part.match(/^\w+$/)
+        next if name_part == "formData"
+        add_param(endpoint, name_part, "body")
+      end
+    end
+
+    # Split a comma-separated string at top-level commas only (ignoring those inside
+    # braces, brackets, parens, or angle brackets).
+    private def split_top_level_commas(s : String) : Array(String)
+      parts = [] of String
+      depth = 0
+      buffer = String::Builder.new
+      s.each_char do |c|
+        case c
+        when '{', '[', '(', '<'
+          depth += 1
+          buffer << c
+        when '}', ']', ')', '>'
+          depth -= 1 if depth > 0
+          buffer << c
+        when ','
+          if depth == 0
+            parts << buffer.to_s
+            buffer = String::Builder.new
+          else
+            buffer << c
           end
         else
-          add_param(endpoint, name, "body")
+          buffer << c
         end
       end
+      parts << buffer.to_s
+      parts
+    end
+
+    # Extract only simple top-level identifiers from a flat destructure body.
+    # Returns [] if the destructure contains nested structures, type annotations,
+    # or default values (too complex to parse safely).
+    private def extract_simple_destructure_params(destructure : String) : Array(String)
+      return [] of String if destructure.includes?("{") || destructure.includes?("(") ||
+                             destructure.includes?("<") || destructure.includes?("=") ||
+                             destructure.includes?(":")
+      destructure.split(",").map(&.strip).select(&.match(/^\w+$/))
     end
 
     private def extract_path_params(url : String, endpoint : Endpoint)
@@ -341,8 +425,7 @@ module Analyzer::Javascript
           stripped = stripped[(close + 2)..].lstrip
         end
       end
-      stripped.starts_with?(%("use server")) || stripped.starts_with?(%('use server')) ||
-        stripped.starts_with?("`use server`")
+      stripped.starts_with?(%("use server")) || stripped.starts_with?(%('use server'))
     end
 
     private def normalize_url(url : String) : String
