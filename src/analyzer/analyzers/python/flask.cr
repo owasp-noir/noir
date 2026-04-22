@@ -50,9 +50,9 @@ module Analyzer::Python
           next if path.includes?("/site-packages/")
           @logger.debug "Analyzing #{path}"
 
-          File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-            lines = file.each_line.to_a
-            next unless lines.any?(&.includes?("flask"))
+          content = read_file_content(path)
+          lines = content.lines
+          if lines.any?(&.includes?("flask"))
             api_instances = Hash(::String, ::String).new
             path_api_instances[path] = api_instances
             view_assignments = Hash(::String, ::String).new # Maps view_var -> ClassName (per-file scope)

@@ -22,7 +22,7 @@ module Analyzer::Javascript
 
       parallel_file_scan do |path|
         begin
-          content = File.read(path, encoding: "utf-8", invalid: :skip)
+          content = read_file_content(path)
           parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug)
           parser_endpoints.each do |endpoint|
             # Use the line number already set by the extractor; fall back to path-only if missing
@@ -85,13 +85,16 @@ module Analyzer::Javascript
 
     private def analyze_with_regex(path : String, result : Array(Endpoint), static_dirs : Array(Hash(String, String)) = [] of Hash(String, String))
       # Original regex-based analysis as a fallback
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        last_endpoint = Endpoint.new("", "")
-        current_router_base = ""
-        router_detected = false
-        nested_routers = {} of String => String
-        file_content = file.gets_to_end
+      file_content = read_file_content(path)
+      last_endpoint = Endpoint.new("", "")
+      current_router_base = ""
+      router_detected = false
+      nested_routers = {} of String => String
 
+      # Preserve the `File.open do ... end` block shape below — the
+      # body expects `file_content` and friends in scope, nothing else
+      # actually uses the File handle.
+      begin
         # First, handle the specific v1Router pattern directly
         handle_v1_router_pattern(file_content, result, path)
 
