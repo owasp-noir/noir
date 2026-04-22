@@ -571,6 +571,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :js_nextjs => {
+      :framework => "Next.js",
+      :language  => "JavaScript",
+      :similar   => ["nextjs", "next.js", "next", "js-nextjs", "js_nextjs"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :js_nitro => {
       :framework => "Nitro",
       :language  => "JavaScript",
