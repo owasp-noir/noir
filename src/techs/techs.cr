@@ -883,6 +883,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :python_aiohttp => {
+      :framework => "aiohttp",
+      :language  => "Python",
+      :similar   => ["aiohttp", "python-aiohttp", "python_aiohttp"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => true,
+      },
+    },
     :python_bottle => {
       :framework => "Bottle",
       :language  => "Python",
