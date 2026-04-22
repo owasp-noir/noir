@@ -205,13 +205,14 @@ module Analyzer::AI
     private def get_all_source_files : Array(String)
       # Pull from the detector-built file_map so subtree pruning and
       # --exclude-path apply here too. The map only contains regular
-      # files, so no File.directory? check is needed. Base-path filter
-      # is a no-op for typical single-base scans but guards the
-      # multi-base case.
-      base_dir_prefixes = base_paths.map { |bp| bp.ends_with?("/") ? bp : "#{bp}/" }
+      # files, so no File.directory? check is needed. Delegate the
+      # base-path check to `path_within_base?`, which already handles
+      # path expansion — a hand-rolled prefix compare breaks on
+      # relative base paths like `.` where the map stores unexpanded
+      # paths.
       all_files.select do |path|
         next false if ignore_extensions.includes?(File.extname(path))
-        base_paths.includes?(path) || base_dir_prefixes.any? { |p| path.starts_with?(p) }
+        path_within_base?(path)
       end
     end
 
