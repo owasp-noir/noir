@@ -27,12 +27,6 @@ module Analyzer::Python
       "on_options" => "OPTIONS",
     }
 
-    # Parse key per-file state:
-    #   routes[path] = list of {line_index, route_path, class_name, suffix}
-    #   classes[path] = { class_name => class_def_line_index }
-    @routes = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String))).new
-    @classes = Hash(::String, Hash(::String, Int32)).new
-
     def analyze
       python_files = get_files_by_extension(".py")
       base_paths.each do |current_base_path|
@@ -42,49 +36,50 @@ module Analyzer::Python
           next if path.includes?("/site-packages/")
           @logger.debug "Analyzing #{path}"
 
-          File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-            lines = file.each_line.to_a
-            next unless lines.any?(&.includes?("falcon"))
-
-            @routes[path] ||= [] of Tuple(Int32, ::String, ::String, ::String)
-            @classes[path] ||= Hash(::String, Int32).new
-
-            lines.each_with_index do |line, line_index|
-              # Record class definitions for later responder lookup.
-              if class_match = line.match(/^\s*class\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*[\(:]/)
-                @classes[path][class_match[1]] = line_index
-              end
-
-              # `xxx.add_route('/path', ResourceClass(), suffix='item')`
-              # Path argument preserves original spacing (we match the raw line).
-              if route_match = line.match(/\.add_route\s*\(\s*[rf]?['"]([^'"]*)['"]\s*,\s*([a-zA-Z_][a-zA-Z0-9_]*)/)
-                route_path = route_match[1]
-                class_name = route_match[2]
-                suffix = ""
-                if suffix_match = line.match(/suffix\s*=\s*['"]([^'"]*)['"]/)
-                  suffix = suffix_match[1]
-                end
-                @routes[path] << {line_index, route_path, class_name, suffix}
-              end
-            end
-          end
-        end
-      end
-
-      @routes.each do |path, route_list|
-        lines = read_file_lines(path)
-        classes_in_file = @classes[path]? || Hash(::String, Int32).new
-        route_list.each do |route_info|
-          line_index, route_path, class_name, suffix = route_info
-          class_line = classes_in_file[class_name]?
-          next if class_line.nil?
-
-          responder_name = suffix.empty? ? nil : suffix
-          emit_endpoints_for_class(path, lines, class_line, route_path, line_index, responder_name)
+          analyze_file(path)
         end
       end
 
       result
+    end
+
+    private def analyze_file(path : ::String)
+      lines = [] of ::String
+      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
+        lines = file.each_line.to_a
+      end
+      return unless lines.any?(&.includes?("falcon"))
+
+      routes = [] of Tuple(Int32, ::String, ::String, ::String)
+      classes = Hash(::String, Int32).new
+
+      lines.each_with_index do |line, line_index|
+        # Record class definitions for later responder lookup.
+        if class_match = line.match(/^\s*class\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*[\(:]/)
+          classes[class_match[1]] = line_index
+        end
+
+        # `xxx.add_route('/path', ResourceClass(), suffix='item')`
+        # Path argument preserves original spacing (we match the raw line).
+        if route_match = line.match(/\.add_route\s*\(\s*[rf]?['"]([^'"]*)['"]\s*,\s*([a-zA-Z_][a-zA-Z0-9_]*)/)
+          route_path = route_match[1]
+          class_name = route_match[2]
+          suffix = ""
+          if suffix_match = line.match(/suffix\s*=\s*['"]([^'"]*)['"]/)
+            suffix = suffix_match[1]
+          end
+          routes << {line_index, route_path, class_name, suffix}
+        end
+      end
+
+      routes.each do |route_info|
+        line_index, route_path, class_name, suffix = route_info
+        class_line = classes[class_name]?
+        next if class_line.nil?
+
+        responder_name = suffix.empty? ? nil : suffix
+        emit_endpoints_for_class(path, lines, class_line, route_path, line_index, responder_name)
+      end
     end
 
     private def emit_endpoints_for_class(path : ::String, lines : Array(::String), class_line : Int32,
@@ -96,29 +91,24 @@ module Analyzer::Python
         line = lines[i]
         stripped = line.lstrip
 
-        unless stripped.empty?
-          # Stop at the next class at same or lesser indentation.
-          if stripped.starts_with?("class ") && indent_level(line) <= class_indent
-            break
-          end
+        unless stripped.empty? || stripped.starts_with?("#")
+          # Stop at any line that is not more indented than the class definition
+          # (next class, top-level def, module-level statement, etc.).
+          break if indent_level(line) <= class_indent
 
-          if def_match = line.match(/^(\s*)(?:async\s+)?def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/)
-            method_indent = def_match[1].size
-            # Must be a method of this class, not an outer def.
-            if method_indent > class_indent
-              method_name = def_match[2]
-              http_method = resolve_responder(method_name, suffix)
-              if http_method
-                codeblock = parse_code_block(lines[i..])
-                body_lines = codeblock ? codeblock.split("\n") : [] of ::String
-                params = extract_request_params(body_lines, http_method)
-                path_params_from_url(route_path).each { |p| params << p }
+          if def_match = line.match(/^\s*(?:async\s+)?def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/)
+            method_name = def_match[1]
+            http_method = resolve_responder(method_name, suffix)
+            if http_method
+              codeblock = parse_code_block(lines[i..])
+              body_lines = codeblock ? codeblock.split("\n") : [] of ::String
+              params = extract_request_params(body_lines, http_method)
+              path_params_from_url(route_path).each { |p| params << p }
 
-                details = Details.new(PathInfo.new(path, route_line + 1))
-                endpoint = Endpoint.new(normalize_path(route_path), http_method, params)
-                endpoint.details = details
-                result << endpoint
-              end
+              details = Details.new(PathInfo.new(path, route_line + 1))
+              endpoint = Endpoint.new(normalize_path(route_path), http_method, params)
+              endpoint.details = details
+              result << endpoint
             end
           end
         end
@@ -215,14 +205,6 @@ module Analyzer::Python
       end
 
       params
-    end
-
-    private def read_file_lines(path : ::String) : Array(::String)
-      content = File.read(path, encoding: "utf-8", invalid: :skip)
-      content.split("\n")
-    rescue e : IO::Error
-      @logger.debug "Failed to read #{path}: #{e.message}"
-      [] of ::String
     end
 
     private def indent_level(line : ::String) : Int32
