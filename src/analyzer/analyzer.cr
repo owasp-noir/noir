@@ -76,6 +76,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"python_tornado", Python::Tornado},
     {"ruby_hanami", Ruby::Hanami},
     {"ruby_rails", Ruby::Rails},
+    {"ruby_roda", Ruby::Roda},
     {"ruby_sinatra", Ruby::Sinatra},
     {"rust_axum", Rust::Axum},
     {"rust_rocket", Rust::Rocket},

@@ -1091,6 +1091,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :ruby_roda => {
+      :framework => "Roda",
+      :language  => "Ruby",
+      :similar   => ["roda", "ruby-roda", "ruby_roda"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => false,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :ruby_sinatra => {
       :framework => "Sinatra",
       :language  => "Ruby",
