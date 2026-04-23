@@ -971,6 +971,24 @@ module NoirTechs
         :websocket   => true,
       },
     },
+    :python_starlette => {
+      :framework => "Starlette",
+      :language  => "Python",
+      :similar   => ["starlette", "python-starlette", "python_starlette"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :python_tornado => {
       :framework => "Tornado",
       :language  => "Python",
