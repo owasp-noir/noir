@@ -69,6 +69,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"python_django", Python::Django},
     {"python_fastapi", Python::FastAPI},
     {"python_bottle", Python::Bottle},
+    {"python_falcon", Python::Falcon},
     {"python_flask", Python::Flask},
     {"python_sanic", Python::Sanic},
     {"python_starlette", Python::Starlette},
