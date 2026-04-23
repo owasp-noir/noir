@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="{{ page.lang | default("en") }}">
+<html lang="{{ page.language | default("en") }}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -30,9 +30,9 @@
         </a>
       </div>
       <nav class="header-nav">
-        <a href="{{ base_url }}/get_started/overview/">Get Started</a>
-        <a href="{{ base_url }}/usage/supported/language_and_frameworks/">Usage</a>
-        <a href="{{ base_url }}/development/how_to_build/">Development</a>
+        <a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/get_started/overview/">{% if page.language == "ko" %}시작하기{% else %}Get Started{% endif %}</a>
+        <a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/supported/language_and_frameworks/">{% if page.language == "ko" %}사용 가이드{% else %}Usage{% endif %}</a>
+        <a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/development/how_to_build/">{% if page.language == "ko" %}개발{% else %}Development{% endif %}</a>
         <a href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer">GitHub</a>
       </nav>
       <div class="header-right">
