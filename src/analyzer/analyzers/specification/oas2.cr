@@ -32,18 +32,13 @@ module Analyzer::Specification
                   if method_obj.as_h.has_key?("parameters")
                     method_obj["parameters"].as_a.each do |param_obj|
                       param_name = param_obj["name"].to_s
-                      if param_obj["in"] == "query"
-                        param = Param.new(param_name, "", "query")
-                        params << param
-                      elsif param_obj["in"] == "form"
-                        param = Param.new(param_name, "", "form")
-                        params << param
-                      elsif param_obj["in"] == "formData"
-                        param = Param.new(param_name, "", "form")
-                        params << param
-                      elsif param_obj["in"] == "header"
-                        param = Param.new(param_name, "", "header")
-                        params << param
+                      case param_obj["in"].to_s
+                      when "query"
+                        params << Param.new(param_name, "", "query")
+                      when "form", "formData"
+                        params << Param.new(param_name, "", "form")
+                      when "header"
+                        params << Param.new(param_name, "", "header")
                       end
                     end
                     @result << Endpoint.new(base_path + path, method.upcase, params, details)
@@ -91,18 +86,13 @@ module Analyzer::Specification
                   if method_obj.as_h.has_key?("parameters")
                     method_obj["parameters"].as_a.each do |param_obj|
                       param_name = param_obj["name"].to_s
-                      if param_obj["in"] == "query"
-                        param = Param.new(param_name, "", "query")
-                        params << param
-                      elsif param_obj["in"] == "form"
-                        param = Param.new(param_name, "", "form")
-                        params << param
-                      elsif param_obj["in"] == "formData"
-                        param = Param.new(param_name, "", "form")
-                        params << param
-                      elsif param_obj["in"] == "header"
-                        param = Param.new(param_name, "", "header")
-                        params << param
+                      case param_obj["in"].to_s
+                      when "query"
+                        params << Param.new(param_name, "", "query")
+                      when "form", "formData"
+                        params << Param.new(param_name, "", "form")
+                      when "header"
+                        params << Param.new(param_name, "", "header")
                       end
                     end
                     @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params, details)
