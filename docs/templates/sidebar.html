@@ -23,7 +23,7 @@
                         <path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0" />
                         <path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5" />
                     </svg>
-                    Get Started</span
+                    {% if page.language == "ko" %}시작하기{% else %}Get Started{% endif %}</span
                 >
                 <svg
                     class="sidebar-chevron"
@@ -39,15 +39,15 @@
             </button>
             <ul class="sidebar-links">
                 <li>
-                    <a href="{{ base_url }}/get_started/overview/">What is Noir?</a>
+                    <a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/get_started/overview/">{% if page.language == "ko" %}Noir란?{% else %}What is Noir?{% endif %}</a>
                 </li>
                 <li>
-                    <a href="{{ base_url }}/get_started/installation/"
-                        >Install Noir</a
+                    <a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/get_started/installation/"
+                        >{% if page.language == "ko" %}Noir 설치{% else %}Install Noir{% endif %}</a
                     >
                 </li>
                 <li>
-                    <a href="{{ base_url }}/get_started/running/">Your First Scan</a>
+                    <a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/get_started/running/">{% if page.language == "ko" %}첫 번째 스캔{% else %}Your First Scan{% endif %}</a>
                 </li>
             </ul>
         </div>
@@ -68,7 +68,7 @@
                         <polyline points="4 17 10 11 4 5" />
                         <line x1="12" x2="20" y1="19" y2="19" />
                     </svg>
-                    Usage</span
+                    {% if page.language == "ko" %}사용 가이드{% else %}Usage{% endif %}</span
                 >
                 <svg
                     class="sidebar-chevron"
@@ -85,7 +85,7 @@
             <ul class="sidebar-links">
                 <li class="sidebar-subsection">
                     <button class="sidebar-subheading">
-                        <span>Supported</span>
+                        <span>{% if page.language == "ko" %}지원되는 기술{% else %}Supported{% endif %}</span>
                         <svg
                             class="sidebar-chevron"
                             width="14"
@@ -101,27 +101,27 @@
                     <ul class="sidebar-sublinks">
                         <li>
                             <a
-                                href="{{ base_url }}/usage/supported/language_and_frameworks/"
-                                >Languages & Frameworks</a
+                                href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/supported/language_and_frameworks/"
+                                >{% if page.language == "ko" %}언어 및 프레임워크{% else %}Languages & Frameworks{% endif %}</a
                             >
                         </li>
                         <li>
                             <a
-                                href="{{ base_url }}/usage/supported/specification/"
-                                >Specification</a
+                                href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/supported/specification/"
+                                >{% if page.language == "ko" %}명세{% else %}Specification{% endif %}</a
                             >
                         </li>
                         <li>
                             <a
-                                href="{{ base_url }}/usage/supported/tech-commands/"
-                                >Tech Commands</a
+                                href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/supported/tech-commands/"
+                                >{% if page.language == "ko" %}기술 명령어{% else %}Tech Commands{% endif %}</a
                             >
                         </li>
                     </ul>
                 </li>
                 <li class="sidebar-subsection">
                     <button class="sidebar-subheading">
-                        <span>Configurations</span>
+                        <span>{% if page.language == "ko" %}구성{% else %}Configurations{% endif %}</span>
                         <svg
                             class="sidebar-chevron"
                             width="14"
@@ -137,21 +137,21 @@
                     <ul class="sidebar-sublinks">
                         <li>
                             <a
-                                href="{{ base_url }}/usage/configurations/configuration_file/"
-                                >Configuration File</a
+                                href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/configurations/configuration_file/"
+                                >{% if page.language == "ko" %}구성 파일{% else %}Configuration File{% endif %}</a
                             >
                         </li>
                         <li>
                             <a
-                                href="{{ base_url }}/usage/configurations/shell-completion/"
-                                >Shell Completion</a
+                                href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/configurations/shell-completion/"
+                                >{% if page.language == "ko" %}셸 자동완성{% else %}Shell Completion{% endif %}</a
                             >
                         </li>
                     </ul>
                 </li>
                 <li class="sidebar-subsection">
                     <button class="sidebar-subheading">
-                        <span>Output Formats</span>
+                        <span>{% if page.language == "ko" %}출력 형식{% else %}Output Formats{% endif %}</span>
                         <svg
                             class="sidebar-chevron"
                             width="14"
@@ -166,52 +166,52 @@
                     </button>
                     <ul class="sidebar-sublinks">
                         <li>
-                            <a href="{{ base_url }}/usage/output_formats/json/"
+                            <a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/output_formats/json/"
                                 >JSON</a
                             >
                         </li>
                         <li>
-                            <a href="{{ base_url }}/usage/output_formats/yaml/"
+                            <a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/output_formats/yaml/"
                                 >YAML</a
                             >
                         </li>
                         <li>
-                            <a href="{{ base_url }}/usage/output_formats/curl/"
+                            <a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/output_formats/curl/"
                                 >cURL</a
                             >
                         </li>
                         <li>
                             <a
-                                href="{{ base_url }}/usage/output_formats/openapi/"
+                                href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/output_formats/openapi/"
                                 >OpenAPI</a
                             >
                         </li>
                         <li>
-                            <a href="{{ base_url }}/usage/output_formats/sarif/"
+                            <a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/output_formats/sarif/"
                                 >SARIF</a
                             >
                         </li>
                         <li>
-                            <a href="{{ base_url }}/usage/output_formats/html/"
+                            <a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/output_formats/html/"
                                 >HTML</a
                             >
                         </li>
                         <li>
                             <a
-                                href="{{ base_url }}/usage/output_formats/mermaid/"
+                                href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/output_formats/mermaid/"
                                 >Mermaid</a
                             >
                         </li>
                         <li>
-                            <a href="{{ base_url }}/usage/output_formats/more/"
-                                >More</a
+                            <a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/output_formats/more/"
+                                >{% if page.language == "ko" %}추가 출력 형식{% else %}More{% endif %}</a
                             >
                         </li>
                     </ul>
                 </li>
                 <li class="sidebar-subsection">
                     <button class="sidebar-subheading">
-                        <span>Passive Scan</span>
+                        <span>{% if page.language == "ko" %}패시브 스캔{% else %}Passive Scan{% endif %}</span>
                         <svg
                             class="sidebar-chevron"
                             width="14"
@@ -226,34 +226,34 @@
                     </button>
                     <ul class="sidebar-sublinks">
                         <li>
-                            <a href="{{ base_url }}/usage/passive_scan/rule/"
-                                >Rule</a
+                            <a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/passive_scan/rule/"
+                                >{% if page.language == "ko" %}규칙{% else %}Rule{% endif %}</a
                             >
                         </li>
                         <li>
                             <a
-                                href="{{ base_url }}/usage/passive_scan/default_rules/"
-                                >Default Rules</a
+                                href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/passive_scan/default_rules/"
+                                >{% if page.language == "ko" %}기본 규칙{% else %}Default Rules{% endif %}</a
                             >
                         </li>
                         <li>
                             <a
-                                href="{{ base_url }}/usage/passive_scan/community_rules/"
-                                >Community Rules</a
+                                href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/passive_scan/community_rules/"
+                                >{% if page.language == "ko" %}커뮤니티 규칙{% else %}Community Rules{% endif %}</a
                             >
                         </li>
                     </ul>
                 </li>
                 <li>
                     <a
-                        href="{{ base_url }}/usage/github_action/"
+                        href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/github_action/"
                         class="sidebar-direct-link"
                         >GitHub Action</a
                     >
                 </li>
                 <li class="sidebar-subsection">
                     <button class="sidebar-subheading">
-                        <span>More Features</span>
+                        <span>{% if page.language == "ko" %}추가 기능{% else %}More Features{% endif %}</span>
                         <svg
                             class="sidebar-chevron"
                             width="14"
@@ -269,23 +269,23 @@
                     <ul class="sidebar-sublinks">
                         <li>
                             <a
-                                href="{{ base_url }}/usage/more_features/deliver/"
-                                >Deliver</a
+                                href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/more_features/deliver/"
+                                >{% if page.language == "ko" %}Deliver{% else %}Deliver{% endif %}</a
                             >
                         </li>
                         <li>
-                            <a href="{{ base_url }}/usage/more_features/diff/"
+                            <a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/more_features/diff/"
                                 >Diff</a
                             >
                         </li>
                         <li>
                             <a
-                                href="{{ base_url }}/usage/more_features/pipeline-for-dast/"
-                                >Pipeline for DAST</a
+                                href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/more_features/pipeline-for-dast/"
+                                >{% if page.language == "ko" %}DAST 파이프라인{% else %}Pipeline for DAST{% endif %}</a
                             >
                         </li>
                         <li>
-                            <a href="{{ base_url }}/usage/more_features/tagger/"
+                            <a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/more_features/tagger/"
                                 >Tagger</a
                             >
                         </li>
@@ -293,14 +293,14 @@
                 </li>
                 <li>
                     <a
-                        href="{{ base_url }}/get_started/ai_power/"
+                        href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/get_started/ai_power/"
                         class="sidebar-direct-link"
-                        >AI Power</a
+                        >{% if page.language == "ko" %}AI 기반 분석{% else %}AI Power{% endif %}</a
                     >
                 </li>
                 <li class="sidebar-subsection">
                     <button class="sidebar-subheading">
-                        <span>AI Providers</span>
+                        <span>{% if page.language == "ko" %}AI 제공업체{% else %}AI Providers{% endif %}</span>
                         <svg
                             class="sidebar-chevron"
                             width="14"
@@ -315,50 +315,50 @@
                     </button>
                     <ul class="sidebar-sublinks">
                         <li>
-                            <a href="{{ base_url }}/usage/ai_providers/openai/"
+                            <a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/ai_providers/openai/"
                                 >OpenAI</a
                             >
                         </li>
                         <li>
-                            <a href="{{ base_url }}/usage/ai_providers/ollama/"
+                            <a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/ai_providers/ollama/"
                                 >Ollama</a
                             >
                         </li>
                         <li>
                             <a
-                                href="{{ base_url }}/usage/ai_providers/lmstudio/"
+                                href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/ai_providers/lmstudio/"
                                 >LM Studio</a
                             >
                         </li>
                         <li>
-                            <a href="{{ base_url }}/usage/ai_providers/azure/"
+                            <a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/ai_providers/azure/"
                                 >Azure</a
                             >
                         </li>
                         <li>
                             <a
-                                href="{{ base_url }}/usage/ai_providers/github_marketplace/"
+                                href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/ai_providers/github_marketplace/"
                                 >GitHub Marketplace</a
                             >
                         </li>
                         <li>
                             <a
-                                href="{{ base_url }}/usage/ai_providers/openrouter/"
+                                href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/ai_providers/openrouter/"
                                 >OpenRouter</a
                             >
                         </li>
                         <li>
-                            <a href="{{ base_url }}/usage/ai_providers/vllm/"
+                            <a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/ai_providers/vllm/"
                                 >vLLM</a
                             >
                         </li>
                         <li>
-                            <a href="{{ base_url }}/usage/ai_providers/xai/"
+                            <a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/ai_providers/xai/"
                                 >xAI</a
                             >
                         </li>
                         <li>
-                            <a href="{{ base_url }}/usage/ai_providers/acp/"
+                            <a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/ai_providers/acp/"
                                 >ACP</a
                             >
                         </li>
@@ -383,7 +383,7 @@
                         <polyline points="16 18 22 12 16 6" />
                         <polyline points="8 6 2 12 8 18" />
                     </svg>
-                    Development</span
+                    {% if page.language == "ko" %}개발{% else %}Development{% endif %}</span
                 >
                 <svg
                     class="sidebar-chevron"
@@ -399,28 +399,28 @@
             </button>
             <ul class="sidebar-links">
                 <li>
-                    <a href="{{ base_url }}/development/how_to_build/"
-                        >How to Build</a
+                    <a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/development/how_to_build/"
+                        >{% if page.language == "ko" %}빌드 방법{% else %}How to Build{% endif %}</a
                     >
                 </li>
                 <li>
-                    <a href="{{ base_url }}/development/analyzer_architecture/"
-                        >Analyzer Architecture</a
+                    <a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/development/analyzer_architecture/"
+                        >{% if page.language == "ko" %}분석기 아키텍처{% else %}Analyzer Architecture{% endif %}</a
                     >
                 </li>
                 <li>
-                    <a href="{{ base_url }}/development/how_to_release/"
-                        >How to Release</a
+                    <a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/development/how_to_release/"
+                        >{% if page.language == "ko" %}릴리스 방법{% else %}How to Release{% endif %}</a
                     >
                 </li>
                 <li>
-                    <a href="{{ base_url }}/development/debug_flags/"
-                        >Debug Flags</a
+                    <a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/development/debug_flags/"
+                        >{% if page.language == "ko" %}디버그 플래그{% else %}Debug Flags{% endif %}</a
                     >
                 </li>
                 <li>
-                    <a href="{{ base_url }}/development/nix_environment/"
-                        >Nix Environment</a
+                    <a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/development/nix_environment/"
+                        >{% if page.language == "ko" %}Nix 환경{% else %}Nix Environment{% endif %}</a
                     >
                 </li>
             </ul>
@@ -444,7 +444,7 @@
                         <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
                         <path d="M16 3.13a4 4 0 0 1 0 7.75" />
                     </svg>
-                    Community</span
+                    {% if page.language == "ko" %}커뮤니티{% else %}Community{% endif %}</span
                 >
                 <svg
                     class="sidebar-chevron"
@@ -459,7 +459,7 @@
                 </svg>
             </button>
             <ul class="sidebar-links">
-                <li><a href="{{ base_url }}/community/media/">Media</a></li>
+                <li><a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/community/media/">{% if page.language == "ko" %}미디어{% else %}Media{% endif %}</a></li>
             </ul>
         </div>
         <div class="sidebar-section" data-section="resources">
@@ -480,7 +480,7 @@
                             d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"
                         />
                     </svg>
-                    Resources</span
+                    {% if page.language == "ko" %}리소스{% else %}Resources{% endif %}</span
                 >
                 <svg
                     class="sidebar-chevron"
@@ -495,10 +495,10 @@
                 </svg>
             </button>
             <ul class="sidebar-links">
-                <li><a href="{{ base_url }}/resources/faq/">FAQ</a></li>
-                <li><a href="{{ base_url }}/resources/troubleshooting/">Troubleshooting</a></li>
-                <li><a href="{{ base_url }}/resources/contact/">Contact</a></li>
-                <li><a href="{{ base_url }}/resources/artwork/">Artwork</a></li>
+                <li><a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/resources/faq/">FAQ</a></li>
+                <li><a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/resources/troubleshooting/">{% if page.language == "ko" %}문제 해결{% else %}Troubleshooting{% endif %}</a></li>
+                <li><a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/resources/contact/">{% if page.language == "ko" %}연락처{% else %}Contact{% endif %}</a></li>
+                <li><a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/resources/artwork/">{% if page.language == "ko" %}아트워크{% else %}Artwork{% endif %}</a></li>
             </ul>
         </div>
     </nav>
