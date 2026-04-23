@@ -65,6 +65,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"php_laravel", Php::Laravel},
     {"php_symfony", Php::Symfony},
     {"php_yii", Php::Yii},
+    {"python_aiohttp", Python::Aiohttp},
     {"python_django", Python::Django},
     {"python_fastapi", Python::FastAPI},
     {"python_bottle", Python::Bottle},
