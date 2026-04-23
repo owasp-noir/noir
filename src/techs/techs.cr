@@ -1055,6 +1055,24 @@ module NoirTechs
         },
       },
     },
+    :ruby_grape => {
+      :framework => "Grape",
+      :language  => "Ruby",
+      :similar   => ["grape", "ruby-grape", "ruby_grape"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :ruby_hanami => {
       :framework => "Hanami",
       :language  => "Ruby",
