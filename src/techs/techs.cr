@@ -971,6 +971,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :python_pyramid => {
+      :framework => "Pyramid",
+      :language  => "Python",
+      :similar   => ["pyramid", "python-pyramid", "python_pyramid"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :python_sanic => {
       :framework => "Sanic",
       :language  => "Python",

@@ -71,6 +71,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"python_bottle", Python::Bottle},
     {"python_falcon", Python::Falcon},
     {"python_flask", Python::Flask},
+    {"python_pyramid", Python::Pyramid},
     {"python_sanic", Python::Sanic},
     {"python_starlette", Python::Starlette},
     {"python_tornado", Python::Tornado},
