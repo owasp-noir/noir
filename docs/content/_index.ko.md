@@ -156,8 +156,9 @@ template = "landing"
   <div class="trust-inner">
     <h2 class="section-title">Built With</h2>
     <div class="trust-logos">
-      <img src="../images/owasp.png" alt="OWASP" class="trust-logo">
-      <img src="../images/crystal.png" alt="Crystal" class="trust-logo">
+        <img src="./images/owasp.webp" alt="OWASP" class="trust-logo">
+        <img src="./images/crystal.webp" alt="Crystal" class="trust-logo">
+        <img src="./images/hwaro-wide.webp" alt="Hwaro" class="trust-logo">
     </div>
   </div>
 </section>
