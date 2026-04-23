@@ -142,11 +142,11 @@ describe "FileHelper" do
       helper = TestHelper.new
       locator = CodeLocator.instance
 
-      locator.push("file_map", "/app/static/images/logo.png")
+      locator.push("file_map", "/app/static/images/logo.webp")
 
       files = helper.get_public_dir_files("/app", "static/images")
       files.size.should eq(1)
-      files.should contain("/app/static/images/logo.png")
+      files.should contain("/app/static/images/logo.webp")
     end
 
     it "handles absolute paths" do
