@@ -74,7 +74,7 @@ class ConfigInitializer
 
       final_options = default_options.merge(symbolized_hash) { |_, _, new_val| new_val }
       final_options
-    rescue e : Exception
+    rescue e
       # Falling back silently made malformed-YAML bugs hard to track down.
       # Log the cause at debug level and keep the existing default-options
       # fallback so behavior is unchanged.
