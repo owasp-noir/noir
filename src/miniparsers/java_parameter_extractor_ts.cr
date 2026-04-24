@@ -38,6 +38,17 @@ module Noir
       "X-Frame-Options"  => "X-Frame-Options",
     }
 
+    # A Java `import` declaration. `wildcard` is true for star imports
+    # (`import com.foo.*;`) which fan out to every `.java` in the
+    # resolved directory.
+    struct ImportDecl
+      getter path : String
+      getter? wildcard : Bool
+
+      def initialize(@path, @wildcard)
+      end
+    end
+
     struct FieldInfo
       getter name : String
       getter access_modifier : String # "public", "private", "protected", ""
@@ -120,6 +131,54 @@ module Noir
         end
       end
       result
+    end
+
+    # Return the file's `package com.foo.bar;` declaration as a
+    # dotted name, or `""` when no package declaration is present.
+    def extract_package_name(source : String) : String
+      result = ""
+      Noir::TreeSitter.parse_java(source) do |root|
+        Noir::TreeSitter.each_named_child(root) do |node|
+          next unless Noir::TreeSitter.node_type(node) == "package_declaration"
+          Noir::TreeSitter.each_named_child(node) do |child|
+            ty = Noir::TreeSitter.node_type(child)
+            if ty == "scoped_identifier" || ty == "identifier"
+              result = Noir::TreeSitter.node_text(child, source)
+              break
+            end
+          end
+          break
+        end
+      end
+      result
+    end
+
+    # Return every `import` in the source as `ImportDecl`. Static imports
+    # (`import static ...`) are skipped since they don't contribute DTO
+    # classes.
+    def extract_imports(source : String) : Array(ImportDecl)
+      results = [] of ImportDecl
+      Noir::TreeSitter.parse_java(source) do |root|
+        Noir::TreeSitter.each_named_child(root) do |node|
+          next unless Noir::TreeSitter.node_type(node) == "import_declaration"
+          # Static imports emit `(static)` as a child; skip them.
+          text = Noir::TreeSitter.node_text(node, source)
+          next if text.starts_with?("import static")
+
+          path = ""
+          wildcard = false
+          Noir::TreeSitter.each_named_child(node) do |child|
+            case Noir::TreeSitter.node_type(child)
+            when "scoped_identifier", "identifier"
+              path = Noir::TreeSitter.node_text(child, source) if path.empty?
+            when "asterisk"
+              wildcard = true
+            end
+          end
+          results << ImportDecl.new(path, wildcard) unless path.empty?
+        end
+      end
+      results
     end
 
     # Return the set of class/interface simple names annotated with
@@ -487,6 +546,102 @@ module Noir
         end
       end
       buf
+    end
+  end
+
+  # Builds the DTO field index for a given source file by combining:
+  #
+  #   1. in-file class/interface declarations,
+  #   2. every `.java` in the same directory (same Java package), and
+  #   3. files reachable through the `import` statements, resolved
+  #      against a source root inferred from the current file's
+  #      `package ...;` declaration.
+  #
+  # Each file's extraction is memoised so the per-file loop in
+  # `spring.cr` doesn't re-read and re-parse DTOs over and over when
+  # many controllers share the same package.
+  class TreeSitterJavaDtoIndex
+    alias Index = Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo))
+
+    def initialize
+      @file_cache = Hash(String, Index).new
+    end
+
+    # Build the DTO index visible to the Spring controller at `path`.
+    # Callers pass `content` (already read once) to avoid a redundant
+    # disk read for the current file.
+    def build_for(path : String, content : String) : Index
+      result = Index.new
+      merge!(result, classes_in_current(path, content))
+
+      package_dir = File.dirname(path)
+      safe_glob("#{package_dir}/*.java") do |sibling|
+        next if sibling == path
+        merge!(result, classes_in(sibling))
+      end
+
+      package_name = TreeSitterJavaParameterExtractor.extract_package_name(content)
+      source_root = source_root_for(path, package_name) unless package_name.empty?
+      return result unless source_root
+
+      TreeSitterJavaParameterExtractor.extract_imports(content).each do |imp|
+        relative = imp.path.gsub(".", "/")
+        if imp.wildcard?
+          dir = File.join(source_root, relative)
+          next unless Dir.exists?(dir)
+          safe_glob("#{dir}/*.java") do |match|
+            merge!(result, classes_in(match))
+          end
+        else
+          file = File.join(source_root, "#{relative}.java")
+          next unless File.exists?(file)
+          merge!(result, classes_in(file))
+        end
+      end
+
+      result
+    end
+
+    private def classes_in_current(path : String, content : String) : Index
+      @file_cache[path] ||= TreeSitterJavaParameterExtractor.extract_class_fields(content)
+    end
+
+    private def classes_in(path : String) : Index
+      @file_cache[path] ||= begin
+        TreeSitterJavaParameterExtractor.extract_class_fields(File.read(path, encoding: "utf-8", invalid: :skip))
+      rescue File::NotFoundError
+        Index.new
+      end
+    end
+
+    # Infer the source root by stripping the package path from the
+    # file's directory. `src/main/java/com/foo/Bar.java` with package
+    # `com.foo` gives `src/main/java`. Returns nil when the package
+    # path doesn't actually trail the file's directory (which means
+    # the source tree is laid out differently and we can't safely
+    # resolve imports).
+    private def source_root_for(file_path : String, package_name : String) : String?
+      package_segments = package_name.split('.')
+      dir = File.dirname(file_path)
+      dir_segments = dir.split('/')
+      return if dir_segments.size < package_segments.size
+      tail = dir_segments[(dir_segments.size - package_segments.size)..]
+      return unless tail == package_segments
+      root = dir_segments[0, dir_segments.size - package_segments.size].join('/')
+      root.empty? ? "." : root
+    end
+
+    # `Dir.glob` raises on unreadable entries in some edge cases;
+    # swallow those so one bad sibling doesn't sink the whole index.
+    private def safe_glob(pattern : String, &)
+      Dir.glob(pattern) { |p| yield p }
+    rescue
+    end
+
+    private def merge!(into : Index, src : Index)
+      src.each do |name, fields|
+        into[name] ||= fields
+      end
     end
   end
 end
