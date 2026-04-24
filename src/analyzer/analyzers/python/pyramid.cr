@@ -28,9 +28,13 @@ module Analyzer::Python
     #   request.headers["X-Foo"]                   → header
     #   request.cookies["foo"]                     → cookie
 
-    QUERY_ACCESSORS = %w[GET params]
-    FORM_ACCESSORS  = %w[POST]
-    JSON_ACCESSORS  = %w[json_body json]
+    ACCESSOR_MAP = {
+      "query"  => ["params", "GET"],
+      "form"   => ["POST"],
+      "json"   => ["json_body", "json"],
+      "header" => ["headers"],
+      "cookie" => ["cookies"],
+    }
 
     def analyze
       route_map = Hash(String, Tuple(String, String)).new # name => {path, decl_file}
@@ -45,11 +49,10 @@ module Analyzer::Python
           content = read_file_content(path)
           next unless content.includes?("pyramid")
 
-          content.each_line do |line|
-            # config.add_route("name", "/path") — keyword variants accepted
-            if m = line.match(/\.add_route\s*\(\s*[rf]?['"]([^'"]+)['"]\s*,\s*[rf]?['"]([^'"]*)['"]/)
-              route_map[m[1]] = {m[2], path}
-            end
+          # config.add_route("name", "/path") — supports multi-line calls and
+          # keyword argument variants like `name="x", pattern="/y"`.
+          content.scan(/\.add_route\s*\(\s*(?:name\s*=\s*)?[rf]?['"]([^'"]+)['"]\s*,\s*(?:pattern\s*=\s*)?[rf]?['"]([^'"]*)['"]/) do |m|
+            route_map[m[1]] = {m[2], path}
           end
         end
       end
@@ -112,7 +115,9 @@ module Analyzer::Python
     # Returns {route_name, methods} or nil.
     private def match_view_config(lines : Array(String), line_index : Int32) : Tuple(String, Array(String))?
       stripped = lines[line_index].lstrip
-      return unless stripped.starts_with?("@view_config") || stripped.starts_with?("@pyramid.view.view_config")
+      return unless stripped.starts_with?("@view_config") ||
+                    stripped.starts_with?("@pyramid.view.view_config") ||
+                    stripped.starts_with?("@pyramid.view_config")
 
       decorator = stripped
       idx = line_index
@@ -242,10 +247,10 @@ module Analyzer::Python
     private def extract_path_params(route_path : String) : Array(Param)
       params = [] of Param
       seen = Set(String).new
-      # Pyramid path params: `{name}` or `{name:regex}`
-      route_path.scan(/\{([A-Za-z_][A-Za-z0-9_]*)(?::[^}]+)?\}/) do |m|
-        name = m[1]
-        next if seen.includes?(name)
+      # Pyramid path params: `{name}`, `{name:regex}`, or `*remainder` glob.
+      route_path.scan(/\{([A-Za-z_][A-Za-z0-9_]*)(?::[^}]+)?\}|\*([A-Za-z_][A-Za-z0-9_]*)/) do |m|
+        name = m[1]? || m[2]?
+        next if name.nil? || seen.includes?(name)
         seen << name
         params << Param.new(name, "", "path")
       end
@@ -264,33 +269,15 @@ module Analyzer::Python
         end
       end
 
-      scan_accessors = ->(accessors : Array(String), param_type : String) do
+      ACCESSOR_MAP.each do |param_type, accessors|
         accessors.each do |accessor|
           body.scan(/request\.#{accessor}\s*\[\s*[rf]?['"]([^'"]+)['"]\s*\]/) do |m|
             record.call(m[1], param_type)
           end
-          body.scan(/request\.#{accessor}\.get\s*\(\s*[rf]?['"]([^'"]+)['"]/) do |m|
+          body.scan(/request\.#{accessor}\.get(?:all|one)?\s*\(\s*[rf]?['"]([^'"]+)['"]/) do |m|
             record.call(m[1], param_type)
           end
         end
-      end
-
-      scan_accessors.call(QUERY_ACCESSORS, "query")
-      scan_accessors.call(FORM_ACCESSORS, "form")
-      scan_accessors.call(JSON_ACCESSORS, "json")
-
-      body.scan(/request\.headers\s*\[\s*[rf]?['"]([^'"]+)['"]\s*\]/) do |m|
-        record.call(m[1], "header")
-      end
-      body.scan(/request\.headers\.get\s*\(\s*[rf]?['"]([^'"]+)['"]/) do |m|
-        record.call(m[1], "header")
-      end
-
-      body.scan(/request\.cookies\s*\[\s*[rf]?['"]([^'"]+)['"]\s*\]/) do |m|
-        record.call(m[1], "cookie")
-      end
-      body.scan(/request\.cookies\.get\s*\(\s*[rf]?['"]([^'"]+)['"]/) do |m|
-        record.call(m[1], "cookie")
       end
 
       params
