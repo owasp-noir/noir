@@ -33,13 +33,17 @@ describe Noir::TreeSitterPythonRouteExtractor do
 
       bare_bp = Blueprint("bare", __name__, url_prefix="/bare")
       prefixed = flask.Blueprint("pref", __name__, url_prefix="/api/v1")
+      dotted = my_pkg.flask.Blueprint("d", __name__, url_prefix="/dot")
       ignored = other.Blueprint("x", __name__, url_prefix="/nope")
       PY
 
-    bps = Noir::TreeSitterPythonRouteExtractor.extract_blueprints(source, ["flask"])
+    # `my_pkg.flask` is accepted because the full dotted text is in
+    # the allowlist, preserving the legacy procedural behaviour.
+    bps = Noir::TreeSitterPythonRouteExtractor.extract_blueprints(source, ["flask", "my_pkg.flask"])
     bps.map { |b| {b.name, b.prefix} }.should eq([
       {"bare_bp", "/bare"},
       {"prefixed", "/api/v1"},
+      {"dotted", "/dot"},
     ])
   end
 

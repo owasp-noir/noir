@@ -107,6 +107,11 @@ module Noir
       if q = @@blueprint_query
         return q
       end
+      # `object: (_) @module` (not `(identifier)`) so dotted prefixes
+      # like `my_pkg.flask.Blueprint(...)` still match — tree-sitter
+      # represents `my_pkg.flask` as an `attribute`, not an identifier,
+      # and the legacy procedural decoder accepted any node by reading
+      # its full text. We keep that parity.
       q = Noir::TreeSitter::Query.new(
         LibTreeSitter.tree_sitter_python,
         <<-SCM
@@ -117,12 +122,12 @@ module Noir
               function: (identifier) @func) @call
             (#eq? @func "Blueprint"))
 
-          ; Pattern 1: qualified `name = module.Blueprint(...)`
+          ; Pattern 1: qualified `name = <module>.Blueprint(...)`
           (assignment
             left: (identifier) @name
             right: (call
               function: (attribute
-                object: (identifier) @module
+                object: (_) @module
                 attribute: (identifier) @attr)) @call
             (#eq? @attr "Blueprint"))
           SCM
