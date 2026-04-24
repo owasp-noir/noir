@@ -104,6 +104,7 @@ lib LibTreeSitter
   # ----- Grammars (linked from vendored parser.o) -----
   fun tree_sitter_python : TSLanguage
   fun tree_sitter_go : TSLanguage
+  fun tree_sitter_java : TSLanguage
 end
 
 # Thin high-level facade. Keeps tree lifetime tied to an object so callers
@@ -139,6 +140,11 @@ module Noir::TreeSitter
   # Parses `source` with the Go grammar and yields the root node.
   def self.parse_go(source : String, &)
     parse(source, LibTreeSitter.tree_sitter_go) { |root| yield root }
+  end
+
+  # Parses `source` with the Java grammar and yields the root node.
+  def self.parse_java(source : String, &)
+    parse(source, LibTreeSitter.tree_sitter_java) { |root| yield root }
   end
 
   # Convenience: returns the root-node s-expression for `source`.
