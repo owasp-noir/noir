@@ -145,7 +145,7 @@ module Analyzer::Php
       end
       return {nil, pos} unless scan_pos < content.size
 
-      closure_regex = /\A(?:static\s+)?(?:function|fn)\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{=]+)?\{/i
+      closure_regex = /\A(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{=]+)?\{/i
       m = content[scan_pos..].match(closure_regex)
       return {nil, pos} unless m
 
@@ -159,15 +159,27 @@ module Analyzer::Php
     private def find_matching_close_brace(content : String, open_pos : Int32) : Int32?
       return unless open_pos < content.size && content[open_pos] == '{'
 
-      depth = 1
-      pos = open_pos + 1
+      depth = 0
+      in_string = false
+      quote_char = '\0'
+      pos = open_pos
       while pos < content.size
-        case content[pos]
-        when '{'
-          depth += 1
-        when '}'
-          depth -= 1
-          return pos if depth == 0
+        char = content[pos]
+        if !in_string
+          case char
+          when '{'
+            depth += 1
+          when '}'
+            depth -= 1
+            return pos if depth == 0
+          when '"', '\''
+            in_string = true
+            quote_char = char
+          end
+        elsif char == '\\'
+          pos += 1
+        elsif char == quote_char
+          in_string = false
         end
         pos += 1
       end
