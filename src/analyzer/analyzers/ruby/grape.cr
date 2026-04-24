@@ -63,13 +63,13 @@ module Analyzer::Ruby
             details = Details.new(PathInfo.new(path, index + 1))
             endpoint = Endpoint.new(ep_path, verb.upcase, details)
 
-            extract_path_params(raw_path).each do |pn|
-              endpoint.push_param(Param.new(pn, "", "path"))
+            extract_path_params(raw_path).each do |param_name|
+              endpoint.push_param(Param.new(param_name, "", "path"))
             end
 
-            pending_params.each do |pn|
-              next if raw_path.includes?(":#{pn}")
-              endpoint.push_param(Param.new(pn, "", "json"))
+            pending_params.each do |param_name|
+              next if raw_path.includes?(":#{param_name}")
+              endpoint.push_param(Param.new(param_name, "", "json"))
             end
             pending_params.clear
 
@@ -85,8 +85,8 @@ module Analyzer::Ruby
             details = Details.new(PathInfo.new(path, index + 1))
             endpoint = Endpoint.new(ep_path, verb.upcase, details)
 
-            pending_params.each do |pn|
-              endpoint.push_param(Param.new(pn, "", "json"))
+            pending_params.each do |param_name|
+              endpoint.push_param(Param.new(param_name, "", "json"))
             end
             pending_params.clear
 
