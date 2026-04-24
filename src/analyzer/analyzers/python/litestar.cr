@@ -10,9 +10,9 @@ module Analyzer::Python
     # path and an explicit `path=` keyword argument.
     DECORATOR_PATH_REGEX    = /^\s*[rf]?['"]([^'"]*)['"]/
     DECORATOR_PATH_KW_REGEX = /path\s*=\s*[rf]?['"]([^'"]*)['"]/
-    HTTP_METHOD_KW_REGEX    = /http_method\s*=\s*\[([^\]]*)\]/
+    HTTP_METHOD_KW_REGEX    = /http_method\s*=\s*(?:\[([^\]]*)\]|['"]([^'"]+)['"])/
     # Router(path="/prefix", route_handlers=[...])
-    ROUTER_REGEX = /(#{PYTHON_VAR_NAME_REGEX})\s*=\s*Router\s*\(([^)]*)/
+    ROUTER_REGEX = /(#{PYTHON_VAR_NAME_REGEX})\s*=\s*Router\s*\(([^)]*)\)/m
     # Path param: {name} or {name:type}. Litestar uses the :type suffix
     # as a converter (int, str, uuid, path, float); strip it when
     # exposing the param.
@@ -40,8 +40,8 @@ module Analyzer::Python
 
     private def analyze_file(path : ::String, source : ::String)
       lines = source.split("\n")
-      router_prefixes = collect_router_prefixes(lines)
-      handler_routers = collect_handler_to_router(lines, router_prefixes)
+      router_prefixes = collect_router_prefixes(source)
+      handler_routers = collect_handler_to_router(source, router_prefixes)
 
       lines.each_with_index do |line, line_index|
         line.scan(DECORATOR_REGEX) do |match|
@@ -57,8 +57,10 @@ module Analyzer::Python
           if decorator == "route"
             http_match = body.match(HTTP_METHOD_KW_REGEX)
             if http_match
-              http_match[1].scan(/['"]([A-Za-z]+)['"]/) do |m|
-                methods << m[1].upcase
+              if list_content = http_match[1]?
+                list_content.scan(/['"]([A-Za-z]+)['"]/) { |m| methods << m[1].upcase }
+              elsif single_method = http_match[2]?
+                methods << single_method.upcase
               end
             end
             methods << "GET" if methods.empty?
@@ -112,17 +114,15 @@ module Analyzer::Python
 
     # Collect Router(path="/prefix") assignments. The key is the router
     # variable name; the value is the prefix.
-    private def collect_router_prefixes(lines : Array(::String)) : Hash(::String, ::String)
+    private def collect_router_prefixes(source : ::String) : Hash(::String, ::String)
       prefixes = Hash(::String, ::String).new
-      lines.each do |line|
-        line.scan(ROUTER_REGEX) do |match|
-          next if match.size < 3
-          name = match[1]
-          body = match[2]
-          prefix_match = body.match(/path\s*=\s*[rf]?['"]([^'"]*)['"]/)
-          prefix_match ||= body.match(/^\s*[rf]?['"]([^'"]*)['"]/)
-          prefixes[name] = prefix_match ? prefix_match[1] : ""
-        end
+      source.scan(ROUTER_REGEX) do |match|
+        next if match.size < 3
+        name = match[1]
+        body = match[2]
+        prefix_match = body.match(/path\s*=\s*[rf]?['"]([^'"]*)['"]/)
+        prefix_match ||= body.match(/^\s*[rf]?['"]([^'"]*)['"]/)
+        prefixes[name] = prefix_match ? prefix_match[1] : ""
       end
       prefixes
     end
@@ -130,10 +130,9 @@ module Analyzer::Python
     # Walk each Router(...) block and map handler-function names in
     # route_handlers to the router's prefix, so handler endpoints inherit
     # the prefix when the route is registered on a Router.
-    private def collect_handler_to_router(lines : Array(::String), router_prefixes : Hash(::String, ::String)) : Hash(::String, ::String)
+    private def collect_handler_to_router(source : ::String, router_prefixes : Hash(::String, ::String)) : Hash(::String, ::String)
       mapping = Hash(::String, ::String).new
-      source = lines.join("\n")
-      source.scan(/(#{PYTHON_VAR_NAME_REGEX})\s*=\s*Router\s*\(([^)]*)\)/m) do |match|
+      source.scan(ROUTER_REGEX) do |match|
         next if match.size < 3
         router_name = match[1]
         body = match[2]
@@ -218,7 +217,7 @@ module Analyzer::Python
       return "header" if stripped.includes?("Header")
       return "form" if stripped.includes?("UploadFile") || stripped.includes?("File(")
       return "json" if stripped.includes?("Body")
-      return "query" if stripped.includes?("Parameter")
+      return "query" if stripped.includes?("Parameter") || stripped.includes?("Query")
 
       primitive_types = ["str", "int", "float", "bool", "bytes", "UUID", "date", "datetime"]
       primitive_types.each do |t|
