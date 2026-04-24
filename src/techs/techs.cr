@@ -110,6 +110,24 @@ module NoirTechs
         :websocket   => true,
       },
     },
+    :cpp_crow => {
+      :framework => "Crow",
+      :language  => "C++",
+      :similar   => ["crow", "crowcpp", "crow-cpp", "cpp-crow", "cpp_crow", "c++-crow", "c++_crow"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => true,
+      },
+    },
     :cs_aspnet_mvc => {
       :framework => "ASP.NET MVC",
       :language  => "C#",
