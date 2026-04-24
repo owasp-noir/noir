@@ -1,6 +1,7 @@
 require "../../../models/analyzer"
 require "../../../minilexers/java"
 require "../../../miniparsers/java"
+require "../../../miniparsers/java_route_extractor_ts"
 require "../../../utils/parser_limit"
 
 module Analyzer::Java
@@ -87,132 +88,64 @@ module Analyzer::Java
               package_map[package_directory] = package_class_map
             end
 
-            # Extract URL mappings and methods from Spring MVC annotated classes
+            # Extract URL mappings from Spring MVC annotated classes.
+            #
+            # Hybrid approach: tree-sitter (`TreeSitterJavaRouteExtractor`)
+            # handles the pure routing layer — verb, path, class prefix
+            # composition, `@FeignClient` interfaces, method/path arrays
+            # in `@RequestMapping`. The legacy `JavaParser` is still used
+            # for *parameter extraction* (DTO field introspection,
+            # `@RequestParam` / `@RequestBody` / `HttpServletRequest`
+            # body scanning) because that logic is deeply tied to
+            # `MethodModel` and moving it is a separate porting step.
             class_map = package_class_map.merge(import_map)
-            parser.classes.each do |class_model|
-              url = "" # Reset URL for each class
 
-              # Check for @RequestMapping on controllers
-              class_annotation = class_model.annotations["RequestMapping"]?
-              if !class_annotation.nil?
-                next if class_annotation.params.size == 0
-                if class_annotation.params[0].size > 0
-                  class_path_token = class_annotation.params[0][-1]
-                  if class_path_token.type == :STRING_LITERAL
-                    url = class_path_token.value[1..-2]
-                    if url.ends_with? "*"
-                      url = url[0..-2]
-                    end
-                  end
-                end
+            class_models_by_name = Hash(String, ClassModel).new
+            parser.classes.each { |cm| class_models_by_name[cm.name] = cm }
+
+            Noir::TreeSitterJavaRouteExtractor.extract_routes(content).each do |route|
+              class_model = class_models_by_name[route.class_name]?
+              next if class_model.nil?
+
+              is_feign_client = !class_model.annotations["FeignClient"]?.nil?
+              method_model = class_model.methods[route.method_name]?
+              next if method_model.nil?
+
+              # Pick the @*Mapping annotation on this method so we can
+              # still read `consumes = ...` for parameter_format. Method
+              # name collisions across overloads collapse onto the same
+              # MethodModel (pre-existing limitation), which matches
+              # legacy behaviour.
+              mapping_annotation = method_model.annotations.values.find do |a|
+                a.name.ends_with?("Mapping")
+              end
+              parameter_format = consumes_parameter_format(mapping_annotation)
+              if parameter_format.nil? && route.verb == "POST"
+                parameter_format = "form"
               end
 
-              # Check for @FeignClient interface
-              feign_client_annotation = class_model.annotations["FeignClient"]?
-              is_feign_client = !feign_client_annotation.nil?
+              parameters = get_endpoint_parameters(
+                parser, route.verb, method_model, parameter_format, class_map
+              )
 
-              class_model.methods.values.each do |method|
-                method.annotations.values.each do |method_annotation|
-                  url_paths = Array(String).new
-
-                  # Spring MVC method mappings
-                  request_methods = Array(String).new
-                  if method_annotation.name.ends_with? "Mapping"
-                    parameter_format = nil
-                    annotation_parameters = method_annotation.params
-                    annotation_parameters.each do |annotation_parameter_tokens|
-                      if annotation_parameter_tokens.size > 2
-                        annotation_parameter_key = annotation_parameter_tokens[0].value
-                        annotation_parameter_value = annotation_parameter_tokens[-1].value
-                        if annotation_parameter_key == "method"
-                          if annotation_parameter_value.in?("}", "]")
-                            # Handle methods declared with multiple HTTP verbs
-                            annotation_parameter_tokens.reverse_each do |token|
-                              break if token.value == "method"
-                              next if token.type.in?(:LBRACE, :RBRACE, :LBRACK, :RBRACK, :COMMA, :DOT)
-                              http_methods = ["GET", "POST", "PUT", "DELETE", "PATCH"]
-                              if http_methods.includes?(token.value)
-                                request_methods.push(token.value)
-                              end
-                            end
-                          else
-                            request_methods.push(annotation_parameter_value)
-                          end
-                        elsif annotation_parameter_key == "consumes"
-                          # Set parameter format based on the 'consumes' attribute of the annotation.
-                          if annotation_parameter_value.ends_with? "APPLICATION_FORM_URLENCODED_VALUE"
-                            parameter_format = "form"
-                          elsif annotation_parameter_value.ends_with? "APPLICATION_JSON_VALUE"
-                            parameter_format = "json"
-                          end
-                        end
-                      end
-                    end
-
-                    if webflux_base_path.ends_with?("/") && url.starts_with?("/")
-                      webflux_base_path = webflux_base_path[..-2]
-                    end
-
-                    # Parse and construct endpoints for methods annotated with 'RequestMapping' or specific HTTP methods
-                    if method_annotation.name == "RequestMapping"
-                      url_paths = [""]
-                      if method_annotation.params.size > 0
-                        url_paths = get_mapping_path(parser, tokens, method_annotation.params)
-                        url_paths = ["/"] if url_paths.empty?
-                      end
-
-                      line = method_annotation.tokens[0].line
-                      details = Details.new(PathInfo.new(path, line))
-
-                      if request_methods.empty?
-                        # Handle default HTTP methods if no specific method is annotated
-                        ["GET", "POST", "PUT", "DELETE", "PATCH"].each do |_request_method|
-                          parameters = get_endpoint_parameters(parser, _request_method, method, parameter_format, class_map)
-                          url_paths.each do |url_path|
-                            endpoint = Endpoint.new(join_paths(webflux_base_path, url, url_path), _request_method, parameters, details, is_feign_client)
-                            @result << endpoint
-                          end
-                        end
-                      else
-                        # Create endpoints for annotated HTTP methods
-                        url_paths.each do |url_path|
-                          request_methods.each do |request_method|
-                            parameters = get_endpoint_parameters(parser, request_method, method, parameter_format, class_map)
-                            endpoint = Endpoint.new(join_paths(webflux_base_path, url, url_path), request_method, parameters, details, is_feign_client)
-                            @result << endpoint
-                          end
-                        end
-                      end
-                      break
-                    else
-                      # Handle other specific mapping annotations like 'GetMapping', 'PostMapping', etc
-                      mapping_annotations = ["GetMapping", "PostMapping", "PutMapping", "DeleteMapping", "PatchMapping"]
-                      mapping_index = mapping_annotations.index(method_annotation.name)
-                      if !mapping_index.nil?
-                        line = method_annotation.tokens[0].line
-                        request_method = mapping_annotations[mapping_index][0..-8].upcase
-                        if parameter_format.nil? && request_method == "POST"
-                          parameter_format = "form"
-                        end
-                        parameters = get_endpoint_parameters(parser, request_method, method, parameter_format, class_map)
-
-                        url_paths = [""]
-                        if method_annotation.params.size > 0
-                          url_paths = get_mapping_path(parser, tokens, method_annotation.params)
-                          url_paths = ["/"] if url_paths.empty?
-                        end
-
-                        details = Details.new(PathInfo.new(path, line))
-                        url_paths.each do |url_path|
-                          endpoint = Endpoint.new(join_paths(webflux_base_path, url, url_path), request_method, parameters, details, is_feign_client)
-                          @result << endpoint
-                        end
-                        break
-                      end
-                    end
-                  end
-                end
+              # webflux base-path normalisation — drop the trailing `/`
+              # when the route path already starts with one so the join
+              # doesn't produce `//`.
+              base_path = webflux_base_path
+              if base_path.ends_with?("/") && route.path.starts_with?("/")
+                base_path = base_path[..-2]
               end
+
+              # Prefer the MethodModel's annotation line (1-based,
+              # matches legacy) when available. Fall back to the
+              # tree-sitter row (0-based) + 1.
+              line = mapping_annotation ? mapping_annotation.tokens[0].line : route.line + 1
+              details = Details.new(PathInfo.new(path, line))
+
+              endpoint = Endpoint.new(
+                join_paths(base_path, route.path), route.verb, parameters, details, is_feign_client
+              )
+              @result << endpoint
             end
           else
             # Extract and construct endpoints from reactive route configurations
@@ -325,6 +258,22 @@ module Analyzer::Java
       end
 
       ""
+    end
+
+    # Return "form" / "json" when the `@*Mapping` annotation declares
+    # a `consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE` or
+    # `APPLICATION_JSON_VALUE`. nil otherwise (callers supply their
+    # own default — POST, for example, falls back to "form").
+    private def consumes_parameter_format(mapping_annotation) : String?
+      return if mapping_annotation.nil?
+      mapping_annotation.params.each do |param_tokens|
+        next unless param_tokens.size > 2
+        next unless param_tokens[0].value == "consumes"
+        value = param_tokens[-1].value
+        return "form" if value.ends_with?("APPLICATION_FORM_URLENCODED_VALUE")
+        return "json" if value.ends_with?("APPLICATION_JSON_VALUE")
+      end
+      nil
     end
 
     def get_mapping_path(parser : JavaParser, tokens : Array(Token), method_params : Array(Array(Token)))
