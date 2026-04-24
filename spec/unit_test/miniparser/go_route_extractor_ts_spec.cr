@@ -8,7 +8,7 @@ describe Noir::TreeSitterGoRouteExtractor do
 
     routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
 
-    triples = routes.map { |r| {r.verb, r.path} }.sort
+    triples = routes.map { |r| {r.verb, r.path} }.sort!
     # Covers: direct verb calls on `r`, nested group chains
     # (users := r.Group("/group") → v1 := users.Group("/v1")),
     # and the `authorized := r.Group("/")` + path-without-slash case.

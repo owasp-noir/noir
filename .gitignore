@@ -8,6 +8,9 @@ ameba.sh
 # Build artifacts
 /bin/
 
+# Claude Code local tooling state
+/.claude/
+
 # tree-sitter build artifacts (compiled on demand from vendored source)
 src/ext/tree_sitter/**/*.o
 

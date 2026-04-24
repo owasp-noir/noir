@@ -18,6 +18,14 @@ build:
 nix-update:
     nix-shell -p crystal2nix --run crystal2nix
 
+# Clean build artifacts (tree-sitter objects, bin/, lib/).
+[group('build')]
+clean:
+    rm -f src/ext/tree_sitter/runtime/*.o
+    rm -f src/ext/tree_sitter/grammars/*/*.o
+    rm -rf bin/
+    rm -rf lib/
+
 # Serve docs site locally.
 [group('documents')]
 docs-serve:

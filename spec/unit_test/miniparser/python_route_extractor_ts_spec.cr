@@ -12,7 +12,7 @@ describe Noir::TreeSitterPythonRouteExtractor do
 
     decos = Noir::TreeSitterPythonRouteExtractor.extract_decorations(source)
 
-    triples = decos.map { |d| {d.path, d.methods.sort, d.def_name} }.sort_by(&.[0])
+    triples = decos.map { |d| {d.path, d.methods.sort, d.def_name} }.sort_by!(&.[0])
     triples.should eq([
       {"/", ["GET"], "index"},
       {"/cookie", ["GET"], "cookie_test"},
@@ -23,7 +23,7 @@ describe Noir::TreeSitterPythonRouteExtractor do
       {"/sign", ["GET", "POST"], "sign_sample"},
     ])
 
-    decos.each { |d| d.router_name.should eq("app") }
+    decos.each(&.router_name.should eq("app"))
   end
 
   it "finds Blueprint declarations with their url_prefix" do
@@ -73,7 +73,7 @@ describe Noir::TreeSitterPythonRouteExtractor do
 
     ts_paths = Noir::TreeSitterPythonRouteExtractor
       .extract_decorations(source)
-      .map(&.path).sort
+      .map(&.path).sort!
 
     regex_paths = source.each_line.flat_map do |line|
       Noir::PythonRouteExtractor.scan_decorators(line.strip, line).map(&.path)
