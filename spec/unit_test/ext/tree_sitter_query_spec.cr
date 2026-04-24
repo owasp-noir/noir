@@ -129,6 +129,40 @@ describe Noir::TreeSitter::Query do
     end
   end
 
+  it "reuses the pre-compiled regex across many matches" do
+    # Large fixture so the match loop evaluates `#match?` many times.
+    # The query should compile its regex exactly once at construction
+    # and reuse it; this spec mostly guards against a future refactor
+    # accidentally routing back through `Regex.new` in the hot path.
+    builder = String.build do |io|
+      io << "package main\nfunc main() {\n  r := gin.Default()\n"
+      100.times { |i| io << "  r.GET(\"/p#{i}\", h)\n" }
+      io << "}\n"
+    end
+
+    query = Noir::TreeSitter::Query.new(
+      LibTreeSitter.tree_sitter_go,
+      <<-SCM
+        (call_expression
+          function: (selector_expression
+            field: (field_identifier) @verb)
+          arguments: (argument_list
+            (interpreted_string_literal
+              (interpreted_string_literal_content) @path))
+          (#match? @verb "^GET$"))
+      SCM
+    )
+    begin
+      count = 0
+      Noir::TreeSitter.parse_go(builder) do |root|
+        query.each_match(root, builder) { count += 1 }
+      end
+      count.should eq(100)
+    ensure
+      query.close
+    end
+  end
+
   it "raises CompileError when the query source is syntactically invalid" do
     expect_raises(Noir::TreeSitter::Query::CompileError, /failed to compile/) do
       Noir::TreeSitter::Query.new(

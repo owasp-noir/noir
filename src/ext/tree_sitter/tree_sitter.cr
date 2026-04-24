@@ -234,7 +234,11 @@ module Noir::TreeSitter
     # scopes a pattern: a match is only surfaced when every predicate
     # for its pattern evaluates true.
     private record Predicate, name : String, pattern_index : Int32, args : Array(PredicateArg)
-    private record PredicateArg, is_capture : Bool, value : String
+    # `regex` is a pre-compiled `Regex` when the argument is a literal
+    # pattern on a `#match?` / `#not-match?` predicate. Evaluating many
+    # matches against the same query would otherwise reparse the regex
+    # on every hit.
+    private record PredicateArg, is_capture : Bool, value : String, regex : Regex? = nil
 
     @predicates_by_pattern : Hash(Int32, Array(Predicate))
 
@@ -293,7 +297,19 @@ module Noir::TreeSitter
             if current_name.empty?
               current_name = text
             else
-              current_args << PredicateArg.new(false, text)
+              # Eagerly compile the regex when this is the pattern arg
+              # of a `#match?` / `#not-match?` predicate. Capture-valued
+              # patterns (dynamic) can't be pre-compiled and fall back
+              # at evaluation time.
+              regex =
+                if (current_name == "match?" || current_name == "not-match?") && current_args.size == 1
+                  begin
+                    Regex.new(text)
+                  rescue ArgumentError
+                    nil
+                  end
+                end
+              current_args << PredicateArg.new(false, text, regex)
             end
           when LibTreeSitter::TS_PREDICATE_STEP_CAPTURE
             current_args << PredicateArg.new(true, @capture_names[step.value_id.to_i]? || "")
@@ -344,15 +360,32 @@ module Noir::TreeSitter
         when "match?", "not-match?"
           next true if pred.args.size < 2
           text = resolve_arg(pred.args[0], match_captures, source_text)
-          pattern = resolve_arg(pred.args[1], match_captures, source_text)
-          next true if text.nil? || pattern.nil?
-          matched = !!(text =~ Regex.new(pattern))
+          next true if text.nil?
+          pattern_arg = pred.args[1]
+          # Prefer the eagerly-compiled regex cached on the predicate
+          # arg. Falls back to runtime compilation only when the pattern
+          # itself is a capture reference.
+          re = pattern_arg.regex
+          if re.nil?
+            pattern = resolve_arg(pattern_arg, match_captures, source_text)
+            next true if pattern.nil?
+            re =
+              begin
+                Regex.new(pattern)
+              rescue ArgumentError
+                nil
+              end
+            next true if re.nil?
+          end
+          matched = !!(text =~ re)
           pred.name == "match?" ? matched : !matched
         when "any-of?", "not-any-of?"
           text = resolve_arg(pred.args[0], match_captures, source_text)
           next true if text.nil?
-          found = pred.args[1..].any? do |arg|
-            resolve_arg(arg, match_captures, source_text) == text
+          # Index-range iteration avoids allocating a slice on every
+          # match the way `pred.args[1..].any?` would.
+          found = (1...pred.args.size).any? do |i|
+            resolve_arg(pred.args[i], match_captures, source_text) == text
           end
           pred.name == "any-of?" ? found : !found
         else
@@ -387,8 +420,8 @@ module Noir::TreeSitter
         LibTreeSitter.ts_query_cursor_exec(cursor, @handle, node)
         match = uninitialized LibTreeSitter::TSQueryMatch
         while LibTreeSitter.ts_query_cursor_next_match(cursor, pointerof(match))
-          captures = Hash(String, LibTreeSitter::TSNode).new
           count = match.capture_count.to_i
+          captures = Hash(String, LibTreeSitter::TSNode).new(initial_capacity: count)
           count.times do |i|
             cap = match.captures[i]
             name = @capture_names[cap.index.to_i]? || ""
@@ -415,7 +448,7 @@ module Noir::TreeSitter
         while LibTreeSitter.ts_query_cursor_next_match(cursor, pointerof(match))
           count = match.capture_count.to_i
           caps = Array(Tuple(String, LibTreeSitter::TSNode)).new(count)
-          captures = Hash(String, LibTreeSitter::TSNode).new
+          captures = Hash(String, LibTreeSitter::TSNode).new(initial_capacity: count)
           count.times do |i|
             cap = match.captures[i]
             name = @capture_names[cap.index.to_i]? || ""
