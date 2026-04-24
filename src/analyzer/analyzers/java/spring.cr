@@ -2,6 +2,7 @@ require "../../../models/analyzer"
 require "../../../minilexers/java"
 require "../../../miniparsers/java"
 require "../../../miniparsers/java_route_extractor_ts"
+require "../../../miniparsers/java_parameter_extractor_ts"
 require "../../../utils/parser_limit"
 
 module Analyzer::Java
@@ -88,44 +89,56 @@ module Analyzer::Java
               package_map[package_directory] = package_class_map
             end
 
-            # Extract URL mappings from Spring MVC annotated classes.
+            # Extract URL mappings + parameters from Spring MVC annotated classes.
             #
-            # Hybrid approach: tree-sitter (`TreeSitterJavaRouteExtractor`)
-            # handles the pure routing layer — verb, path, class prefix
-            # composition, `@FeignClient` interfaces, method/path arrays
-            # in `@RequestMapping`. The legacy `JavaParser` is still used
-            # for *parameter extraction* (DTO field introspection,
-            # `@RequestParam` / `@RequestBody` / `HttpServletRequest`
-            # body scanning) because that logic is deeply tied to
-            # `MethodModel` and moving it is a separate porting step.
+            # Fully tree-sitter-based: `TreeSitterJavaRouteExtractor`
+            # handles routing (verb, path, class prefix, `@FeignClient`,
+            # path/method arrays) and `TreeSitterJavaParameterExtractor`
+            # handles parameter extraction (@RequestParam / @RequestBody
+            # / @RequestHeader / @PathVariable, primitives, DTO field
+            # expansion, HttpServletRequest body scanning, `consumes = ...`).
+            #
+            # `JavaParser` is still invoked above (for import /
+            # same-package resolution) so that DTO classes imported
+            # from sibling files stay discoverable. The resulting
+            # `class_map` is rebuilt here as a TS-shaped FieldInfo
+            # index.
             class_map = package_class_map.merge(import_map)
 
-            class_models_by_name = Hash(String, ClassModel).new
-            parser.classes.each { |cm| class_models_by_name[cm.name] = cm }
+            # Build a TS-shaped DTO index from the JavaParser class_map
+            # plus an in-file TS sweep so same-file DTOs (the common
+            # case in fixtures) are picked up even when JavaParser's
+            # import/package resolution missed them.
+            dto_index = Hash(String, Array(Noir::TreeSitterJavaParameterExtractor::FieldInfo)).new
+            Noir::TreeSitterJavaParameterExtractor.extract_class_fields(content).each do |k, v|
+              dto_index[k] = v
+            end
+            class_map.each do |class_name, class_model|
+              next if dto_index.has_key?(class_name)
+              dto_index[class_name] = class_model.fields.values.map do |field|
+                Noir::TreeSitterJavaParameterExtractor::FieldInfo.new(
+                  field.name,
+                  field.access_modifier,
+                  field.has_setter?,
+                  field.init_value,
+                )
+              end
+            end
+
+            feign_clients = Noir::TreeSitterJavaParameterExtractor.extract_feign_client_classes(content)
 
             Noir::TreeSitterJavaRouteExtractor.extract_routes(content).each do |route|
-              class_model = class_models_by_name[route.class_name]?
-              next if class_model.nil?
+              is_feign_client = feign_clients.includes?(route.class_name)
 
-              is_feign_client = !class_model.annotations["FeignClient"]?.nil?
-              method_model = class_model.methods[route.method_name]?
-              next if method_model.nil?
-
-              # Pick the @*Mapping annotation on this method so we can
-              # still read `consumes = ...` for parameter_format. Method
-              # name collisions across overloads collapse onto the same
-              # MethodModel (pre-existing limitation), which matches
-              # legacy behaviour.
-              mapping_annotation = method_model.annotations.values.find do |a|
-                a.name.ends_with?("Mapping")
-              end
-              parameter_format = consumes_parameter_format(mapping_annotation)
+              parameter_format = Noir::TreeSitterJavaParameterExtractor.extract_consumes(
+                content, route.class_name, route.method_name
+              )
               if parameter_format.nil? && route.verb == "POST"
                 parameter_format = "form"
               end
 
-              parameters = get_endpoint_parameters(
-                parser, route.verb, method_model, parameter_format, class_map
+              parameters = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+                content, route.class_name, route.method_name, route.verb, parameter_format, dto_index
               )
 
               # webflux base-path normalisation — drop the trailing `/`
@@ -136,10 +149,7 @@ module Analyzer::Java
                 base_path = base_path[..-2]
               end
 
-              # Prefer the MethodModel's annotation line (1-based,
-              # matches legacy) when available. Fall back to the
-              # tree-sitter row (0-based) + 1.
-              line = mapping_annotation ? mapping_annotation.tokens[0].line : route.line + 1
+              line = route.line + 1
               details = Details.new(PathInfo.new(path, line))
 
               endpoint = Endpoint.new(
@@ -258,210 +268,6 @@ module Analyzer::Java
       end
 
       ""
-    end
-
-    # Return "form" / "json" when the `@*Mapping` annotation declares
-    # a `consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE` or
-    # `APPLICATION_JSON_VALUE`. nil otherwise (callers supply their
-    # own default — POST, for example, falls back to "form").
-    private def consumes_parameter_format(mapping_annotation) : String?
-      return if mapping_annotation.nil?
-      mapping_annotation.params.each do |param_tokens|
-        next unless param_tokens.size > 2
-        next unless param_tokens[0].value == "consumes"
-        value = param_tokens[-1].value
-        return "form" if value.ends_with?("APPLICATION_FORM_URLENCODED_VALUE")
-        return "json" if value.ends_with?("APPLICATION_JSON_VALUE")
-      end
-      nil
-    end
-
-    def get_mapping_path(parser : JavaParser, tokens : Array(Token), method_params : Array(Array(Token)))
-      # 1. Search for the value of the Mapping annotation.
-      # 2. If the value is a string literal, return the literal.
-      # 3. If the value is an array, return each element of the array.
-      # 4. In other cases, return an empty array.
-      url_paths = Array(String).new
-      if method_params[0].size != 0
-        path_argument_index = 0
-        method_params.each_with_index do |mapping_parameter, index|
-          next unless mapping_parameter
-          if mapping_parameter[0].type == :IDENTIFIER && mapping_parameter[0].value == "value"
-            path_argument_index = index
-          end
-        end
-
-        path_parameter_tokens = method_params[path_argument_index]
-        # Extract single and multiple mapping path
-        if path_parameter_tokens[-1].type == :STRING_LITERAL
-          url_paths << path_parameter_tokens[-1].value[1..-2]
-        elsif path_parameter_tokens[-1].type == :RBRACE
-          i = path_parameter_tokens.size - 2
-          while i > 0
-            parameter_token = path_parameter_tokens[i]
-            if parameter_token.type == :LBRACE
-              break
-            elsif parameter_token.type == :COMMA
-              i -= 1
-              next
-            elsif parameter_token.type == :STRING_LITERAL
-              url_paths << parameter_token.value[1..-2]
-            else
-              break
-            end
-
-            i -= 1
-          end
-        end
-      end
-
-      url_paths
-    end
-
-    def get_endpoint_parameters(parser : JavaParser, request_method : String, method : MethodModel, parameter_format : String?, package_class_map : Hash(String, ClassModel)) : Array(Param)
-      endpoint_parameters = Array(Param).new
-      method.params.each do |method_param_tokens|
-        next if method_param_tokens.size == 0
-        if method_param_tokens[-1].type == :IDENTIFIER
-          if method_param_tokens[0].type == :AT
-            if method_param_tokens[1].value == "PathVariable"
-              next
-            elsif method_param_tokens[1].value == "RequestBody"
-              if parameter_format.nil?
-                parameter_format = "json"
-              end
-            elsif method_param_tokens[1].value == "RequestParam"
-              parameter_format = "query"
-            elsif method_param_tokens[1].value == "RequestHeader"
-              parameter_format = "header"
-            end
-          end
-
-          if parameter_format.nil?
-            next
-          end
-
-          default_value = nil
-          # Extract parameter name directly if not an identifier
-          parameter_name = method_param_tokens[-1].value
-          if method_param_tokens.size > 2
-            if method_param_tokens[2].type == :LPAREN
-              request_parameters = parser.parse_formal_parameters(method_param_tokens, 2)
-              request_parameters.each do |request_parameter_tokens|
-                if request_parameter_tokens.size > 2
-                  request_param_name = request_parameter_tokens[0].value
-                  request_param_value = request_parameter_tokens[-1].value
-
-                  # Extract 'name' from @RequestParam(value/defaultValue/name = "name")
-                  if request_param_name == "value"
-                    parameter_name = request_param_value
-                  elsif request_param_name == "name"
-                    parameter_name = request_param_value
-                  elsif request_param_name == "defaultValue"
-                    default_value = request_param_value
-                  end
-
-                  unless parameter_name.nil?
-                    if parameter_name.starts_with?("\"") && parameter_name.ends_with?("\"")
-                      parameter_name = parameter_name[1..-2]
-                    else
-                      idx = 2
-                      while idx < request_parameter_tokens.size
-                        req_param_token = request_parameter_tokens[-idx]
-                        break unless req_param_token.type == :IDENTIFIER || req_param_token.type == :DOT
-                        parameter_name = req_param_token.value + parameter_name
-                        idx += 1
-                      end
-
-                      # https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/http/HttpHeaders.html
-                      if parameter_name.starts_with?("HttpHeaders.")
-                        header_key = parameter_name["HttpHeaders.".size..-1]
-                        parameter_name = header_key.split('_').map(&.capitalize).join('-')
-                        special_cases = {
-                          "Etag"             => "ETag",
-                          "Te"               => "TE",
-                          "Www-Authenticate" => "WWW-Authenticate",
-                          "X-Frame-Options"  => "X-Frame-Options",
-                        }
-                        if special_cases.has_key?(parameter_name)
-                          parameter_name = special_cases[parameter_name]
-                        end
-                      end
-                    end
-                  end
-
-                  unless default_value.nil?
-                    if default_value.starts_with?("\"") && default_value.ends_with?("\"")
-                      default_value = default_value[1..-2]
-                    end
-                  end
-                end
-              end
-              # Handle direct string literal as parameter name, e.g., @RequestParam("name")
-              if method_param_tokens[3].type == :STRING_LITERAL
-                parameter_name_token = method_param_tokens[3]
-                parameter_name = parameter_name_token.value[1..-2]
-              end
-            end
-          end
-
-          argument_name = method_param_tokens[-1].value
-          parameter_type = method_param_tokens[-2].value
-          if ["long", "int", "integer", "char", "boolean", "string", "multipartfile"].index(parameter_type.downcase)
-            param_default_value = default_value.nil? ? "" : default_value
-            endpoint_parameters << Param.new(parameter_name, param_default_value, parameter_format)
-          elsif parameter_type == "HttpServletRequest"
-            i = 0
-            while i < method.body.size - 6
-              if [:TAB, :NEWLINE].index(method.body[i].type)
-                i += 1
-                next
-              end
-
-              next if method.body[i].type == :NEWLINE
-
-              if method.body[i].type == :IDENTIFIER && method.body[i].value == argument_name
-                if method.body[i + 1].type == :DOT
-                  if method.body[i + 2].type == :IDENTIFIER && method.body[i + 3].type == :LPAREN
-                    servlet_request_method_name = method.body[i + 2].value
-                    if method.body[i + 4].type == :STRING_LITERAL
-                      parameter_name = method.body[i + 4].value[1..-2]
-                      if servlet_request_method_name == "getParameter"
-                        unless endpoint_parameters.any? { |param| param.name == parameter_name }
-                          endpoint_parameters << Param.new(parameter_name, "", parameter_format)
-                        end
-                        i += 6
-                        next
-                      elsif servlet_request_method_name == "getHeader"
-                        unless endpoint_parameters.any? { |param| param.name == parameter_name }
-                          endpoint_parameters << Param.new(parameter_name, "", "header")
-                        end
-                        i += 6
-                        next
-                      end
-                    end
-                  end
-                end
-              end
-
-              i += 1
-            end
-          else
-            # Map fields of user-defined class to parameters.
-            if package_class_map.has_key?(parameter_type)
-              package_class = package_class_map[parameter_type]
-              package_class.fields.values.each do |field|
-                if field.access_modifier == "public" || field.has_setter?
-                  param_default_value = default_value.nil? ? field.init_value : default_value
-                  endpoint_parameters << Param.new(field.name, param_default_value, parameter_format)
-                end
-              end
-            end
-          end
-        end
-      end
-
-      endpoint_parameters
     end
   end
 end
