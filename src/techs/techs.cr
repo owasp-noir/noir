@@ -2,6 +2,24 @@ require "json"
 
 module NoirTechs
   TECHS = {
+    :cpp_drogon => {
+      :framework => "Drogon",
+      :language  => "C++",
+      :similar   => ["drogon", "cpp-drogon", "cpp_drogon", "c++-drogon", "c++_drogon"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :crystal_amber => {
       :framework => "Amber",
       :language  => "Crystal",
