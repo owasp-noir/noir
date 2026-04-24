@@ -27,13 +27,13 @@ module Noir
     }
 
     struct Route
-      getter router_name : String             # variable the verb is called on
-      getter verb : String                    # upper-cased verb
-      getter path : String                    # route path with group prefix applied
-      getter raw_path : String                # path literal as written
-      getter handler : String                 # text of the handler argument (identifier or lambda snippet)
-      getter line : Int32                     # 0-based line number of the call expression
-      getter query_params : Array(String)     # query-param constraints extracted from e.g. mux's `.Queries(...)`
+      getter router_name : String         # variable the verb is called on
+      getter verb : String                # upper-cased verb
+      getter path : String                # route path with group prefix applied
+      getter raw_path : String            # path literal as written
+      getter handler : String             # text of the handler argument (identifier or lambda snippet)
+      getter line : Int32                 # 0-based line number of the call expression
+      getter query_params : Array(String) # query-param constraints extracted from e.g. mux's `.Queries(...)`
 
       def initialize(@router_name, @verb, @path, @raw_path, @handler, @line,
                      @query_params : Array(String) = [] of String)
@@ -82,8 +82,8 @@ module Noir
             # Mux's `.Methods(...)` can list several verbs at once
             # (`.Methods("GET", "POST")`), so the decoder returns an
             # array and we fan out into one Route per verb.
-            decode_handlefunc_methods_call(node, source, group_prefixes).each do |route|
-              routes << route
+            decode_handlefunc_methods_call(node, source, group_prefixes).each do |r|
+              routes << r
             end
           end
         end
@@ -126,7 +126,7 @@ module Noir
     struct ScopedConfig
       getter prefix_method : String
       getter middleware_method : String?
-      getter chain_prefix : Bool
+      getter? chain_prefix : Bool
       getter bind_methods : Array(String)
       getter bind_method_verb : String
 
@@ -297,7 +297,7 @@ module Noir
 
     private def extract_closure_first_param_name(closure : LibTreeSitter::TSNode, source : String) : String?
       params = Noir::TreeSitter.field(closure, "parameters")
-      return nil unless params
+      return unless params
       # `parameter_list` named children are `parameter_declaration`.
       Noir::TreeSitter.each_named_child(params) do |decl|
         next unless Noir::TreeSitter.node_type(decl) == "parameter_declaration"
@@ -370,13 +370,13 @@ module Noir
                                      local_groups : Hash(String, String),
                                      config : ScopedConfig) : Route?
       function = Noir::TreeSitter.field(call, "function")
-      return nil unless function
+      return unless function
       operand = Noir::TreeSitter.field(function, "operand")
-      return nil unless operand
-      return nil unless Noir::TreeSitter.node_type(operand) == "identifier"
+      return unless operand
+      return unless Noir::TreeSitter.node_type(operand) == "identifier"
 
       args = Noir::TreeSitter.field(call, "arguments")
-      return nil unless args
+      return unless args
       raw_path = nil
       handler_text = ""
       Noir::TreeSitter.each_named_child(args) do |arg|
@@ -387,7 +387,7 @@ module Noir
           handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty? && !raw_path.nil?
         end
       end
-      return nil unless raw_path
+      return unless raw_path
 
       router_name = Noir::TreeSitter.node_text(operand, source)
       base_prefix = local_groups[router_name]? || prefix_stack.join
@@ -411,17 +411,17 @@ module Noir
                                       source : String,
                                       expect_prefix : Bool) : Tuple(String, LibTreeSitter::TSNode, LibTreeSitter::TSNode)?
       prefix = expect_prefix ? chi_first_string_arg(call, source) : ""
-      return nil if expect_prefix && prefix.nil?
+      return if prefix.nil?
       closure = chi_closure_arg(call)
-      return nil unless closure
+      return unless closure
       body = Noir::TreeSitter.field(closure, "body")
-      return nil unless body
-      {prefix.not_nil!, body, closure}
+      return unless body
+      {prefix, body, closure}
     end
 
     private def chi_first_string_arg(call : LibTreeSitter::TSNode, source : String) : String?
       args = Noir::TreeSitter.field(call, "arguments")
-      return nil unless args
+      return unless args
       Noir::TreeSitter.each_named_child(args) do |arg|
         case Noir::TreeSitter.node_type(arg)
         when "interpreted_string_literal", "raw_string_literal"
@@ -433,7 +433,7 @@ module Noir
 
     private def chi_closure_arg(call : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
       args = Noir::TreeSitter.field(call, "arguments")
-      return nil unless args
+      return unless args
       Noir::TreeSitter.each_named_child(args) do |arg|
         return arg if Noir::TreeSitter.node_type(arg) == "func_literal"
       end
@@ -450,12 +450,12 @@ module Noir
                                      local_groups : Hash(String, String),
                                      config : ScopedConfig) : Route?
       function = Noir::TreeSitter.field(call, "function")
-      return nil unless function
-      return nil unless Noir::TreeSitter.node_type(function) == "selector_expression"
+      return unless function
+      return unless Noir::TreeSitter.node_type(function) == "selector_expression"
 
       verb_field = Noir::TreeSitter.field(function, "field")
       operand = Noir::TreeSitter.field(function, "operand")
-      return nil unless verb_field && operand
+      return unless verb_field && operand
       verb = Noir::TreeSitter.node_text(verb_field, source).upcase
 
       chain_prefix = ""
@@ -478,7 +478,7 @@ module Noir
           next
         end
 
-        if config.chain_prefix && inner_name == config.prefix_method
+        if config.chain_prefix? && inner_name == config.prefix_method
           # `.Group("/x")` in the chain must have a string arg and NO
           # func_literal (otherwise it'd already be handled as a Route
           # scope with its own closure body). Accumulate its prefix.
@@ -506,11 +506,11 @@ module Noir
         break
       end
 
-      return nil unless Noir::TreeSitter.node_type(operand) == "identifier"
+      return unless Noir::TreeSitter.node_type(operand) == "identifier"
       router_name = Noir::TreeSitter.node_text(operand, source)
 
       args = Noir::TreeSitter.field(call, "arguments")
-      return nil unless args
+      return unless args
       raw_path = nil
       handler_text = ""
       Noir::TreeSitter.each_named_child(args) do |arg|
@@ -521,7 +521,7 @@ module Noir
           handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty? && !raw_path.nil?
         end
       end
-      return nil unless raw_path
+      return unless raw_path
 
       # Prefer the local binding (closure param / `v1 := group.Group(...)`)
       # when it exists, since Go scope rules say the nearest binding wins.
@@ -661,19 +661,19 @@ module Noir
                                  groups : Hash(String, String),
                                  extra_verbs : Array(String) = [] of String) : Route?
       function = Noir::TreeSitter.field(call, "function")
-      return nil unless function
-      return nil unless Noir::TreeSitter.node_type(function) == "selector_expression"
+      return unless function
+      return unless Noir::TreeSitter.node_type(function) == "selector_expression"
 
       operand = Noir::TreeSitter.field(function, "operand")
       field = Noir::TreeSitter.field(function, "field")
-      return nil unless operand && field
-      return nil unless Noir::TreeSitter.node_type(operand) == "identifier"
+      return unless operand && field
+      return unless Noir::TreeSitter.node_type(operand) == "identifier"
 
       verb = Noir::TreeSitter.node_text(field, source)
-      return nil unless HTTP_VERB_METHODS.includes?(verb) || extra_verbs.includes?(verb)
+      return unless HTTP_VERB_METHODS.includes?(verb) || extra_verbs.includes?(verb)
 
       args = Noir::TreeSitter.field(call, "arguments")
-      return nil unless args
+      return unless args
 
       raw_path = nil
       handler_text = ""
@@ -692,7 +692,7 @@ module Noir
         index += 1
       end
 
-      return nil unless raw_path
+      return unless raw_path
 
       router_name = Noir::TreeSitter.node_text(operand, source)
       resolved = if prefix = groups[router_name]?
@@ -720,17 +720,17 @@ module Noir
                                    groups : Hash(String, String),
                                    handle_method : String) : Route?
       function = Noir::TreeSitter.field(call, "function")
-      return nil unless function
-      return nil unless Noir::TreeSitter.node_type(function) == "selector_expression"
+      return unless function
+      return unless Noir::TreeSitter.node_type(function) == "selector_expression"
 
       operand = Noir::TreeSitter.field(function, "operand")
       field = Noir::TreeSitter.field(function, "field")
-      return nil unless operand && field
-      return nil unless Noir::TreeSitter.node_type(operand) == "identifier"
-      return nil unless Noir::TreeSitter.node_text(field, source) == handle_method
+      return unless operand && field
+      return unless Noir::TreeSitter.node_type(operand) == "identifier"
+      return unless Noir::TreeSitter.node_text(field, source) == handle_method
 
       args = Noir::TreeSitter.field(call, "arguments")
-      return nil unless args
+      return unless args
 
       method_lit = nil
       path_lit = nil
@@ -748,8 +748,8 @@ module Noir
         end
       end
 
-      return nil unless method_lit && path_lit
-      return nil if method_lit.empty? || path_lit.empty?
+      return unless method_lit && path_lit
+      return if method_lit.empty? || path_lit.empty?
 
       router_name = Noir::TreeSitter.node_text(operand, source)
       resolved = if prefix = groups[router_name]?
@@ -883,7 +883,7 @@ module Noir
     # Return the first named child of `node`, or nil if there isn't one.
     private def first_named_child(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
       count = LibTreeSitter.ts_node_named_child_count(node)
-      return nil if count == 0
+      return if count == 0
       LibTreeSitter.ts_node_named_child(node, 0_u32)
     end
 

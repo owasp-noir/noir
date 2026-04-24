@@ -22,4 +22,7 @@ extend-exclude = [
   "spec/functional_test/fixtures/python/django/djangoblog/settings.py",
   # framework taggers contain regex patterns with intentional partial words
   "src/tagger/framework_taggers/**",
+  # vendored tree-sitter runtime + grammars (auto-generated, not ours to fix)
+  "src/ext/tree_sitter/runtime/**",
+  "src/ext/tree_sitter/grammars/**",
 ]

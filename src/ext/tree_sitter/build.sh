@@ -41,10 +41,14 @@ fi
 if [ "$runtime_stale" -eq 1 ]; then
   echo "[noir/tree-sitter] building runtime lib.o (vendored)" 1>&2
   # -O2 matches upstream defaults; -fvisibility=hidden keeps runtime
-  #   symbols out of noir's exported surface. No -DTREE_SITTER_FEATURE_WASM
-  #   so wasm_store.c collapses to an empty TU.
+  # symbols out of noir's exported surface. No -DTREE_SITTER_FEATURE_WASM
+  # so wasm_store.c collapses to an empty TU. -D_DEFAULT_SOURCE exposes
+  # glibc's le16toh/be16toh/fdopen — tree-sitter's portable/endian.h
+  # reaches for these on Linux and `-std=c11` alone hides them behind
+  # __STRICT_ANSI__.
   # shellcheck disable=SC2086
   $CC_BIN -c -O2 -fPIC -std=c11 -fvisibility=hidden \
+    -D_DEFAULT_SOURCE \
     $RUNTIME_INCLUDE \
     -o "$RUNTIME_OBJ" "$RUNTIME_SRC" 1>&2
 fi

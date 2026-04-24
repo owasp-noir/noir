@@ -6,7 +6,6 @@ module Analyzer::Go
     def analyze
       # Source Analysis
       public_dirs = [] of (Hash(String, String))
-      groups = [] of Hash(String, String)
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
       begin

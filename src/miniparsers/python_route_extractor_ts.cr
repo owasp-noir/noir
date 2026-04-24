@@ -140,33 +140,33 @@ module Noir
                                   source : String,
                                   router_names : Array(String)?) : Tuple(String, String, String, Array(String))?
       function = Noir::TreeSitter.field(call, "function")
-      return nil unless function
-      return nil unless Noir::TreeSitter.node_type(function) == "attribute"
+      return unless function
+      return unless Noir::TreeSitter.node_type(function) == "attribute"
 
       object = Noir::TreeSitter.field(function, "object")
       attribute = Noir::TreeSitter.field(function, "attribute")
-      return nil unless object && attribute
-      return nil unless Noir::TreeSitter.node_type(object) == "identifier"
-      return nil unless Noir::TreeSitter.node_type(attribute) == "identifier"
+      return unless object && attribute
+      return unless Noir::TreeSitter.node_type(object) == "identifier"
+      return unless Noir::TreeSitter.node_type(attribute) == "identifier"
 
       router_name = Noir::TreeSitter.node_text(object, source)
       attr_name = Noir::TreeSitter.node_text(attribute, source)
 
       if router_names && !router_names.includes?(router_name)
-        return nil
+        return
       end
 
-      method_from_attr : String? = nil
-      if attr_name == "route"
-        method_from_attr = nil
-      elsif HTTP_METHODS.includes?(attr_name)
-        method_from_attr = attr_name.upcase
-      else
-        return nil
-      end
+      method_from_attr =
+        if attr_name == "route"
+          nil
+        elsif HTTP_METHODS.includes?(attr_name)
+          attr_name.upcase
+        else
+          return
+        end
 
       args = Noir::TreeSitter.field(call, "arguments")
-      return nil unless args
+      return unless args
 
       path = ""
       methods = [] of String
@@ -189,10 +189,15 @@ module Noir
         end
       end
 
-      return nil if path.empty?
+      return if path.empty?
 
-      methods = [method_from_attr.not_nil!] if method_from_attr && methods.empty?
-      methods = ["GET"] if methods.empty? # Flask default when no methods= and generic .route
+      if methods.empty?
+        if fallback = method_from_attr
+          methods = [fallback]
+        else
+          methods = ["GET"] # Flask default for generic `.route` without methods=
+        end
+      end
       {router_name, attr_name, path, methods}
     end
 
@@ -232,33 +237,30 @@ module Noir
                                  allowed : Set(String)) : BlueprintDecl?
       left = Noir::TreeSitter.field(assign, "left")
       right = Noir::TreeSitter.field(assign, "right")
-      return nil unless left && right
-      return nil unless Noir::TreeSitter.node_type(right) == "call"
+      return unless left && right
+      return unless Noir::TreeSitter.node_type(right) == "call"
 
-      name : String? = nil
-      case Noir::TreeSitter.node_type(left)
-      when "identifier"
-        name = Noir::TreeSitter.node_text(left, source)
-      else
-        return nil
-      end
+      # The assignment must name a single identifier on the left — dotted
+      # or destructured left-hand sides aren't Blueprint declarations.
+      return unless Noir::TreeSitter.node_type(left) == "identifier"
+      name = Noir::TreeSitter.node_text(left, source)
 
       function = Noir::TreeSitter.field(right, "function")
-      return nil unless function
+      return unless function
 
       case Noir::TreeSitter.node_type(function)
       when "identifier"
-        return nil unless Noir::TreeSitter.node_text(function, source) == "Blueprint"
+        return unless Noir::TreeSitter.node_text(function, source) == "Blueprint"
       when "attribute"
         object = Noir::TreeSitter.field(function, "object")
         attr = Noir::TreeSitter.field(function, "attribute")
-        return nil unless object && attr
-        return nil unless Noir::TreeSitter.node_text(attr, source) == "Blueprint"
+        return unless object && attr
+        return unless Noir::TreeSitter.node_text(attr, source) == "Blueprint"
         # Module can be an identifier or a dotted name; take the full text.
         mod = Noir::TreeSitter.node_text(object, source)
-        return nil unless allowed.includes?(mod)
+        return unless allowed.includes?(mod)
       else
-        return nil
+        return
       end
 
       prefix = ""
@@ -275,7 +277,7 @@ module Noir
         end
       end
 
-      BlueprintDecl.new(name.not_nil!, prefix, Noir::TreeSitter.node_start_row(assign))
+      BlueprintDecl.new(name, prefix, Noir::TreeSitter.node_start_row(assign))
     end
   end
 end

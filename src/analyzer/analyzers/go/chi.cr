@@ -358,7 +358,7 @@ module Analyzer::Go
       index = min_line
       while index < lines.size
         line = lines[index]
-        if (ep = endpoints_by_line[index]?)
+        if ep = endpoints_by_line[index]?
           last_endpoint = ep
           if line.includes?("func(")
             state.in_inline_handler = true

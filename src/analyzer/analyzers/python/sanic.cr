@@ -69,7 +69,7 @@ module Analyzer::Python
               @routes[decoration.router_name] << router_info
             end
 
-            lines.each_with_index do |line, _|
+            lines.each do |line|
               line = line.gsub(" ", "") # remove spaces for easier regex matching
 
               # Identify Sanic instance assignments (tree-sitter extractor

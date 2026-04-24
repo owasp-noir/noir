@@ -38,8 +38,7 @@ module Analyzer::Go
                     # a single parse. httprouter has no groups, so we don't
                     # pass any cross-file group map.
                     ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(
-                      content, handle_method: "Handle",
-                    )
+                      content, handle_method: "Handle")
                     routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
                     ts_routes.each do |r|
                       routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route

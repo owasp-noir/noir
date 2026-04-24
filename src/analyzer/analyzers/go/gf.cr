@@ -6,7 +6,6 @@ module Analyzer::Go
     def analyze
       # Source Analysis
       public_dirs = [] of (Hash(String, String))
-      groups = [] of Hash(String, String)
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       begin
         populate_channel_with_filtered_files(channel, ".go")
@@ -27,7 +26,7 @@ module Analyzer::Go
                     # Tree-sitter pre-pass covers gf's three route shapes
                     # in one walk: closure groups `.Group("/x", func(){...})`,
                     # chained `s.Group("/multi").GET(...)`, and
-                    # `.BindHandler("/x", h)` catch-alls.
+                    # `.BindHandler("/x", h)` method-agnostic registrations.
                     ts_routes = Noir::TreeSitterGoRouteExtractor.extract_gf_routes(content)
                     routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
                     ts_routes.each do |r|
