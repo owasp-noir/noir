@@ -1,4 +1,5 @@
 require "file"
+require "log"
 require "yaml"
 require "./utils/home.cr"
 require "./llm/native_tool_calling"
@@ -26,7 +27,11 @@ class ConfigInitializer
 
     # Create the config file if it doesn't exist
     File.write(@config_file, generate_config_file) unless File.exists?(@config_file)
-  rescue
+  rescue e
+    # Silent failures here made permission/disk-full problems during startup
+    # hard to diagnose. Log at debug level so --debug surfaces the cause
+    # without noising up normal runs.
+    Log.debug { "ConfigInitializer.setup failed: #{e.message} (#{e.class})" }
   end
 
   def read_config
@@ -69,7 +74,11 @@ class ConfigInitializer
 
       final_options = default_options.merge(symbolized_hash) { |_, _, new_val| new_val }
       final_options
-    rescue Exception
+    rescue e
+      # Falling back silently made malformed-YAML bugs hard to track down.
+      # Log the cause at debug level and keep the existing default-options
+      # fallback so behavior is unchanged.
+      Log.debug { "ConfigInitializer.read_config failed, using defaults: #{e.message} (#{e.class})" }
       default_options
     end
   end
