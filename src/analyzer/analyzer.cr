@@ -63,6 +63,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"php_pure", Php::Php},
     {"php_cakephp", Php::CakePHP},
     {"php_laravel", Php::Laravel},
+    {"php_slim", Php::Slim},
     {"php_symfony", Php::Symfony},
     {"php_yii", Php::Yii},
     {"python_aiohttp", Python::Aiohttp},

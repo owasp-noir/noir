@@ -809,6 +809,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :php_slim => {
+      :framework => "Slim",
+      :language  => "PHP",
+      :similar   => ["slim", "slimframework", "slim-framework", "php-slim", "php_slim", "slim/slim"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :php_symfony => {
       :framework => "Symfony",
       :language  => "PHP",
