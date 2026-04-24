@@ -13,9 +13,9 @@ module Analyzer::Cpp
     # Path placeholder: <int>, <string>, <uint>, <double>, <path> — and the
     # non-standard but occasionally seen <type:name> form.
     PATH_PARAM_REGEX = /<([^<>:]+)(?::([^<>]+))?>/
-    URL_PARAM_GET    = /url_params\s*\.\s*get\s*\(\s*"([^"]+)"/
+    URL_PARAM_GET    = /url_params\s*\.\s*get(?:\s*<[^>]+>)?\s*\(\s*"([^"]+)"/
     HEADER_VALUE     = /get_header_value\s*\(\s*"([^"]+)"/
-    BODY_ACCESS      = /\breq\s*\.\s*body\b/
+    BODY_ACCESS      = /\b(req|request)\s*\.\s*body\b/
 
     def analyze
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
@@ -43,6 +43,7 @@ module Analyzer::Cpp
       last_endpoints = [] of Endpoint
 
       lines.each_with_index do |line, index|
+        next if line.lstrip.starts_with?("//")
         route_match = line.match(ROUTE_REGEX) || line.match(BP_ROUTE_REGEX)
         if route_match
           route_path = route_match[1]
