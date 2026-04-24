@@ -1,5 +1,4 @@
 require "../../../models/analyzer"
-require "../../../minilexers/golang"
 require "../../../miniparsers/go_route_extractor_ts"
 
 module Analyzer::Go

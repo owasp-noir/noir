@@ -9,7 +9,7 @@ module Analyzer::Go
       # `api := r.PathPrefix("/api/").Subrouter()`. The engine fixpoint
       # treats "Subrouter" as the grouping method and peeks through the
       # chain to read the PathPrefix argument.
-      package_groups, file_contents = collect_package_groups_ts_mux
+      package_groups, file_contents = collect_package_groups_ts("Subrouter")
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       begin
         populate_channel_with_filtered_files(channel, ".go")
@@ -37,6 +37,11 @@ module Analyzer::Go
                     ts_routes.each do |r|
                       routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
                       routes_by_line[r.line] << r
+                    end
+
+                    # Mux static-file: `r.PathPrefix("/x/").Handler(... http.Dir("./x/") ...)`
+                    Noir::TreeSitterGoRouteExtractor.extract_mux_statics(content).each do |sp|
+                      public_dirs << {"static_path" => sp.url_prefix, "file_path" => sp.disk_path}
                     end
 
                     lines.each_with_index do |line, index|
@@ -68,11 +73,6 @@ module Analyzer::Go
                         add_param_to_endpoint(get_param(line, "Header"), last_endpoint)
                       elsif line.includes?("Cookie(")
                         add_param_to_endpoint(get_param(line, "Cookie"), last_endpoint)
-                      end
-
-                      # Handle static file serving (e.g., r.PathPrefix("/static/").Handler(...))
-                      if line.includes?(".PathPrefix(") && line.includes?(".Handler(") && !line.includes?(".Subrouter(")
-                        add_static_path_if_valid(get_static_path(line), public_dirs)
                       end
                     end
                   end
@@ -110,47 +110,6 @@ module Analyzer::Go
       end
 
       result
-    end
-
-    # Mux-flavoured version of `GoEngine#collect_package_groups_ts`:
-    # the group marker is the Subrouter chain (`.PathPrefix(...).Subrouter()`).
-    private def collect_package_groups_ts_mux : Tuple(Hash(String, Hash(String, String)), Hash(String, String))
-      package_groups = Hash(String, Hash(String, String)).new
-      files_by_dir = Hash(String, Array(String)).new
-      file_contents = Hash(String, String).new
-
-      get_files_by_extension(".go").each do |p|
-        next if File.directory?(p)
-        dir = File.dirname(p)
-        files_by_dir[dir] ||= [] of String
-        files_by_dir[dir] << p
-      end
-
-      files_by_dir.each do |_dir, paths|
-        paths.each do |p|
-          begin
-            file_contents[p] = File.read(p, encoding: "utf-8", invalid: :skip)
-          rescue File::NotFoundError
-          end
-        end
-      end
-
-      files_by_dir.each do |dir, paths|
-        groups = Hash(String, String).new
-        loop do
-          prev_size = groups.size
-          paths.each do |p|
-            content = file_contents[p]?
-            next if content.nil?
-            found = Noir::TreeSitterGoRouteExtractor.extract_groups(content, groups, "Subrouter")
-            found.each { |k, v| groups[k] ||= v }
-          end
-          break if groups.size == prev_size
-        end
-        package_groups[dir] = groups unless groups.empty?
-      end
-
-      {package_groups, file_contents}
     end
 
     def get_method_from_line(line : String) : String
@@ -207,28 +166,6 @@ module Analyzer::Go
       end
 
       Param.new(param_name, "", param_type)
-    end
-
-    def get_static_path(line : String) : Hash(String, String)
-      static_path = ""
-      file_path = ""
-
-      # Handle r.PathPrefix("/static/").Handler(...) pattern
-      if match = line.match(/PathPrefix\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
-        static_path = match[1]
-      end
-
-      # Extract file path from http.Dir("./static/") pattern
-      if match = line.match(/http\.Dir\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
-        file_path = match[1]
-        # Remove leading ./ if present
-        file_path = file_path.gsub(/^\.\//, "")
-      end
-
-      {
-        "static_path" => static_path,
-        "file_path"   => file_path,
-      }
     end
   end
 end

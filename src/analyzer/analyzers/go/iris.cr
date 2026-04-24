@@ -7,7 +7,7 @@ module Analyzer::Go
     def analyze
       # Iris uses `.Party(...)` for route groups; pass that into both the
       # engine's fixpoint group collection and the per-file extractor.
-      package_groups, file_contents = collect_package_groups_ts_iris
+      package_groups, file_contents = collect_package_groups_ts("Party")
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
       begin
@@ -82,48 +82,6 @@ module Analyzer::Go
       end
 
       result
-    end
-
-    # Iris-flavoured version of `GoEngine#collect_package_groups_ts`:
-    # runs the cross-file fixpoint against `.Party(...)` instead of
-    # `.Group(...)`.
-    private def collect_package_groups_ts_iris : Tuple(Hash(String, Hash(String, String)), Hash(String, String))
-      package_groups = Hash(String, Hash(String, String)).new
-      files_by_dir = Hash(String, Array(String)).new
-      file_contents = Hash(String, String).new
-
-      get_files_by_extension(".go").each do |p|
-        next if File.directory?(p)
-        dir = File.dirname(p)
-        files_by_dir[dir] ||= [] of String
-        files_by_dir[dir] << p
-      end
-
-      files_by_dir.each do |_dir, paths|
-        paths.each do |p|
-          begin
-            file_contents[p] = File.read(p, encoding: "utf-8", invalid: :skip)
-          rescue File::NotFoundError
-          end
-        end
-      end
-
-      files_by_dir.each do |dir, paths|
-        groups = Hash(String, String).new
-        loop do
-          prev_size = groups.size
-          paths.each do |p|
-            content = file_contents[p]?
-            next if content.nil?
-            found = Noir::TreeSitterGoRouteExtractor.extract_groups(content, groups, "Party")
-            found.each { |k, v| groups[k] ||= v }
-          end
-          break if groups.size == prev_size
-        end
-        package_groups[dir] = groups unless groups.empty?
-      end
-
-      {package_groups, file_contents}
     end
 
     # Strip Iris type annotations from path params: `{id:uint64}` → `{id}`,

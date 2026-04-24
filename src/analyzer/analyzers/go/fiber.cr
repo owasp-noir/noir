@@ -36,6 +36,11 @@ module Analyzer::Go
                       routes_by_line[r.line] << r
                     end
 
+                    # `app.Static("/url", "./dir")`.
+                    Noir::TreeSitterGoRouteExtractor.extract_simple_statics(content).each do |sp|
+                      public_dirs << {"static_path" => sp.url_prefix, "file_path" => sp.disk_path}
+                    end
+
                     lines.each_with_index do |line, index|
                       details = Details.new(PathInfo.new(path, index + 1))
 
@@ -50,10 +55,6 @@ module Analyzer::Go
 
                       if line.includes?(".Query(") || line.includes?(".FormValue(")
                         add_param_to_endpoint(get_param(line), last_endpoint)
-                      end
-
-                      if line.includes?("Static(")
-                        add_static_path_if_valid(get_static_path(line), public_dirs)
                       end
 
                       if line.includes?("GetRespHeader(")

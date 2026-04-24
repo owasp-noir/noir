@@ -41,7 +41,14 @@ module Analyzer::Go
                       routes_by_line[r.line] << r
                     end
 
-                    lines.each_with_index do |line, index|
+                    # `router.Static(&fs, "/prefix", false)` — the first
+                    # `/`-prefixed string arg is both URL prefix and (with
+                    # leading slash stripped) disk path.
+                    Noir::TreeSitterGoRouteExtractor.extract_goyave_statics(content).each do |sp|
+                      public_dirs << {"static_path" => sp.url_prefix, "file_path" => sp.disk_path}
+                    end
+
+                    lines.each_index do |index|
                       details = Details.new(PathInfo.new(path, index + 1))
 
                       if ts_hits = routes_by_line[index]?
@@ -66,14 +73,6 @@ module Analyzer::Go
                           end
                         end
                       end
-
-                      # Static
-                      if line.includes?(".Static(")
-                        static_path = get_static_path(line)
-                        if static_path["static_path"].size > 0
-                          public_dirs << static_path
-                        end
-                      end
                     end
                   end
                 rescue File::NotFoundError
@@ -90,65 +89,6 @@ module Analyzer::Go
       resolve_public_dirs_with_glob(public_dirs)
 
       result
-    end
-
-    def get_static_path(line : String) : Hash(String, String)
-      lexer = GolangLexer.new
-      map = lexer.tokenize(line)
-
-      static_path = ""
-
-      map.each do |token|
-        if token.type == :string
-          val = token.value.to_s
-          if val.starts_with?("/")
-            static_path = val
-          end
-        end
-      end
-
-      if static_path != ""
-        file_path = static_path
-        if file_path.starts_with?("/")
-          file_path = file_path[1..-1]
-        end
-
-        return {
-          "static_path" => static_path,
-          "file_path"   => file_path,
-        }
-      end
-
-      {
-        "static_path" => "",
-        "file_path"   => "",
-      }
-    end
-
-    def get_route_path(line : String, groups : Array(Hash(String, String))) : String
-      lexer = GolangLexer.new
-      map = lexer.tokenize(line)
-      before = Token.new(:unknown, "", 0)
-      map.each do |token|
-        if token.type == :string
-          final_path = token.value.to_s
-
-          if final_path.starts_with?("/") || final_path == ""
-            groups.each do |group|
-              group.each do |key, value|
-                if before.value.to_s.includes? key
-                  final_path = value + final_path
-                end
-              end
-            end
-            return final_path
-          end
-        end
-
-        before = token
-      end
-
-      ""
     end
   end
 end

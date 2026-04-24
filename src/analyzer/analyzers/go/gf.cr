@@ -54,10 +54,6 @@ module Analyzer::Go
                         end
                       end
 
-                      if line.includes?("Static(")
-                        add_static_path_if_valid(get_static_path(line), public_dirs)
-                      end
-
                       if line.includes?("Cookie.Get(")
                         match = line.match(/Cookie\.Get\(\"(.*)\"\)/)
                         if match

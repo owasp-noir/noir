@@ -1,103 +1,25 @@
 require "../../models/analyzer"
-require "../../minilexers/golang"
-require "../../miniparsers/go_route_extractor"
 require "../../miniparsers/go_route_extractor_ts"
 
 module Analyzer::Go
   class GoEngine < Analyzer
-    # --- Route-extractor delegations -------------------------------------
-    #
-    # Kept as instance methods so per-framework analyzers (Mux, Goyave,
-    # GoZero) can override them. The default implementations live in
-    # `Noir::GoRouteExtractor` as pure functions.
-
-    def analyze_group(line : String, lexer : GolangLexer, groups : Array(Hash(String, String)))
-      Noir::GoRouteExtractor.scan_group(line, lexer, groups)
-    end
-
-    def get_route_path(line : String, groups : Array(Hash(String, String))) : String
-      Noir::GoRouteExtractor.extract_route_path(line, groups)
-    end
-
-    def get_static_path(line : String) : Hash(String, String)
-      Noir::GoRouteExtractor.extract_static_path(line)
-    end
-
-    # --- Engine layer ----------------------------------------------------
-
-    # Pre-collect all group definitions across Go files grouped by directory (package).
-    # This enables cross-file group resolution since all .go files in the same
-    # directory share the same Go package scope.
-    def collect_package_groups : Tuple(Hash(String, Array(Hash(String, String))), Hash(String, Array(String)))
-      package_groups = Hash(String, Array(Hash(String, String))).new
-      files_by_dir = Hash(String, Array(String)).new
-
-      get_files_by_extension(".go").each do |path|
-        next if File.directory?(path)
-        dir = File.dirname(path)
-        files_by_dir[dir] ||= [] of String
-        files_by_dir[dir] << path
-      end
-
-      # Cache file contents to avoid re-reading
-      file_lines_cache = Hash(String, Array(String)).new
-      files_by_dir.each do |_dir, paths|
-        paths.each do |path|
-          begin
-            file_lines_cache[path] = File.read_lines(path, encoding: "utf-8", invalid: :skip)
-          rescue File::NotFoundError
-            # skip
-          end
-        end
-      end
-
-      files_by_dir.each do |dir, paths|
-        groups = [] of Hash(String, String)
-        # Repeat until no new groups are discovered, handling cross-file nested groups
-        # where a group in file B depends on a group defined in file A.
-        loop do
-          prev_size = groups.size
-          paths.each do |path|
-            next unless file_lines_cache.has_key?(path)
-            file_lines_cache[path].each do |line|
-              # GolangLexer is stateful (buffer/quote state leaks between calls),
-              # so a fresh instance is required per line.
-              lexer = GolangLexer.new
-              analyze_group(line, lexer, groups)
-            end
-          end
-          break if groups.size == prev_size
-        end
-        package_groups[dir] = groups unless groups.empty?
-      end
-
-      {package_groups, file_lines_cache}
-    end
-
-    # Returns a deep copy of pre-collected groups for the given directory.
-    def groups_for_directory(package_groups : Hash(String, Array(Hash(String, String))), dir : String) : Array(Hash(String, String))
-      groups = [] of Hash(String, String)
-      if package_groups.has_key?(dir)
-        package_groups[dir].each { |g| groups << g.dup }
-      end
-      groups
-    end
-
     # --- Tree-sitter group/route pre-pass --------------------------------
     #
-    # Equivalent to `collect_package_groups` + later per-file `get_route_path`
-    # calls, but does all the parsing via tree-sitter. Returns:
+    # Does a cross-file fixpoint over every `.go` file in each package
+    # directory, extracting group declarations (`x := r.Group("/x")` and
+    # friends). Returns:
     #   * `package_groups` — per-directory `{group_name => resolved_prefix}`
-    #     after a fixpoint across every .go file in that directory
-    #   * `file_contents` — cached source strings, keyed by path, so the
+    #   * `file_contents` — cached source strings keyed by path, so the
     #     per-file second pass doesn't read files twice
     #
-    # The fixpoint mirrors the legacy implementation: in `routes.go` a group
-    # variable may be defined in a sibling `main.go`, so we loop until no
-    # new entries land. Groups found in-file strictly shadow entries from
-    # the shared map (so if someone redeclares a group name, the nearer
-    # declaration wins).
-    def collect_package_groups_ts : Tuple(Hash(String, Hash(String, String)), Hash(String, String))
+    # `group_method` is the method name used for grouping — `"Group"` for
+    # Gin/Echo/Fiber/Hertz (default), `"Party"` for Iris, `"Subrouter"`
+    # for Mux.
+    #
+    # The fixpoint handles the `routes.go` calling `v1.GET(...)` under a
+    # `v1 := r.Group("/v1")` declared in `main.go` case — iterate until
+    # no new entries land. In-file declarations win over external ones.
+    def collect_package_groups_ts(group_method : String = "Group") : Tuple(Hash(String, Hash(String, String)), Hash(String, String))
       package_groups = Hash(String, Hash(String, String)).new
       files_by_dir = Hash(String, Array(String)).new
       file_contents = Hash(String, String).new
@@ -126,7 +48,7 @@ module Analyzer::Go
           paths.each do |path|
             content = file_contents[path]?
             next if content.nil?
-            found = Noir::TreeSitterGoRouteExtractor.extract_groups(content, groups)
+            found = Noir::TreeSitterGoRouteExtractor.extract_groups(content, groups, group_method)
             found.each { |k, v| groups[k] ||= v }
           end
           break if groups.size == prev_size

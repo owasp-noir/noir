@@ -35,6 +35,9 @@ module Analyzer::Go
                         routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
                         routes_by_line[r.line] << r
                       end
+                      Noir::TreeSitterGoRouteExtractor.extract_simple_statics(content).each do |sp|
+                        public_dirs << {"static_path" => sp.url_prefix, "file_path" => sp.disk_path}
+                      end
                     end
 
                     lines.each_with_index do |line, index|
@@ -66,10 +69,6 @@ module Analyzer::Go
                             add_param_to_endpoint(get_param(line), last_endpoint)
                           end
                         end
-
-                        if line.includes?("Static(")
-                          add_static_path_if_valid(get_static_path(line), public_dirs)
-                        end
                       end
                     end
                   end
@@ -99,24 +98,6 @@ module Analyzer::Go
       end
 
       Param.new("", "", "")
-    end
-
-    def get_static_path(line : String) : Hash(String, String)
-      # Extract static path configuration from go-zero static serving
-      # e.g., router.Static("/static", "./public")
-      if match = line.match(/Static\s*\(\s*\"([^"]+)\"\s*,\s*\"([^"]+)\"/)
-        static_path = match[1]
-        file_path = match[2].gsub("\"", "").gsub(" ", "").gsub(")", "")
-        return {
-          "static_path" => static_path,
-          "file_path"   => file_path,
-        }
-      end
-
-      {
-        "static_path" => "",
-        "file_path"   => "",
-      }
     end
   end
 end

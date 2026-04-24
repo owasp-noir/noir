@@ -20,7 +20,6 @@ CC_BIN="${CC:-cc}"
 # --- Compile the tree-sitter runtime once --------------------------------
 RUNTIME_SRC="$D/runtime/src/lib.c"
 RUNTIME_OBJ="$D/runtime/lib.o"
-RUNTIME_INCLUDE="-I$D/runtime/include -I$D/runtime/src"
 
 # Detect whether any runtime source/header is newer than the object.
 runtime_stale=0
@@ -46,10 +45,12 @@ if [ "$runtime_stale" -eq 1 ]; then
   # glibc's le16toh/be16toh/fdopen — tree-sitter's portable/endian.h
   # reaches for these on Linux and `-std=c11` alone hides them behind
   # __STRICT_ANSI__.
-  # shellcheck disable=SC2086
+  # The -I flags are inlined (rather than expanded from a single
+  # $RUNTIME_INCLUDE variable) so project paths containing spaces
+  # don't word-split and break the compile.
   $CC_BIN -c -O2 -fPIC -std=c11 -fvisibility=hidden \
     -D_DEFAULT_SOURCE \
-    $RUNTIME_INCLUDE \
+    -I"$D/runtime/include" -I"$D/runtime/src" \
     -o "$RUNTIME_OBJ" "$RUNTIME_SRC" 1>&2
 fi
 
