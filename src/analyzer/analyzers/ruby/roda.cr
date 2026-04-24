@@ -30,7 +30,7 @@ module Analyzer::Ruby
         stripped_for_code = strip_comment(line)
 
         unless in_route
-          if stripped_for_code =~ /\broute\s+do\b/
+          if stripped_for_code =~ /\broute\s+(?:do\b|\{)/
             in_route = true
             depth = count_opens(stripped_for_code) - count_closes(stripped_for_code)
             prefix_stack.clear
@@ -66,7 +66,7 @@ module Analyzer::Ruby
     private def process_route_line(line : String, path : String, index : Int32,
                                    depth : Int32,
                                    prefix_stack : Array(PrefixEntry)) : Int32
-      if m = line.match(/\br\.on\s+(.+?)\s+do\b/)
+      if m = line.match(/\br\.on\s+(.+?)\s*(?:do\b|\{)/)
         segments, path_params = parse_on_args(m[1])
         unless segments.empty? && path_params.empty?
           prefix_stack << {depth: depth + 1, segments: segments, path_params: path_params}
@@ -92,7 +92,7 @@ module Analyzer::Ruby
           return @result.size - 1
         end
 
-        if line =~ /\br\.#{verb}\b\s*(do\b|$)/
+        if line =~ /\br\.#{verb}\b\s*(?:do\b|\{|\/|$)/
           url = build_url(collect_segments(prefix_stack), nil, nil)
           url = "/" if url.empty?
           ep = build_endpoint(url, verb.upcase, path, index)
@@ -190,11 +190,11 @@ module Analyzer::Ruby
     end
 
     private def count_opens(line : String) : Int32
-      line.scan(/\bdo\b/).size
+      line.scan(/\bdo\b|\{/).size
     end
 
     private def count_closes(line : String) : Int32
-      line.scan(/\bend\b/).size
+      line.scan(/\bend\b|\}/).size
     end
 
     private def build_endpoint(url : String, method : String, path : String, index : Int32) : Endpoint
