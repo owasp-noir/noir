@@ -23,6 +23,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
 
   # Define detectors
   define_detectors([
+    Cpp::Drogon,
     Cpp::Crow,
     CSharp::AspNetMvc,
     CSharp::AspNetCoreMvc,
