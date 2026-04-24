@@ -134,4 +134,119 @@ describe Noir::TreeSitterJavaRouteExtractor do
 
     Noir::TreeSitterJavaRouteExtractor.extract_routes(source).should be_empty
   end
+
+  it "fans out path arrays on @RequestMapping" do
+    # `@RequestMapping({"/a", "/b"})` and the keyword form both emit
+    # one endpoint per path literal.
+    source = <<-JAVA
+      public class A {
+          @GetMapping({"/a", "/b"})
+          public void x() {}
+
+          @RequestMapping(value = {"/c", "/d"}, method = RequestMethod.POST)
+          public void y() {}
+      }
+      JAVA
+
+    routes = Noir::TreeSitterJavaRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/a"},
+      {"GET", "/b"},
+      {"POST", "/c"},
+      {"POST", "/d"},
+    ])
+  end
+
+  it "fans out method arrays in @RequestMapping" do
+    # Matches fixtures/java/spring/src/ItemController.java: both the
+    # single-method and array-method forms.
+    source = <<-JAVA
+      @RequestMapping("items")
+      public class C {
+          @RequestMapping("/requestmap/put", method = RequestMethod.PUT)
+          public void a() {}
+
+          @RequestMapping("/requestmap/delete", method = {RequestMethod.DELETE})
+          public void b() {}
+
+          @RequestMapping("/multiple/methods", method = {RequestMethod.GET, RequestMethod.POST})
+          public void c() {}
+      }
+      JAVA
+
+    routes = Noir::TreeSitterJavaRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"PUT", "items/requestmap/put"},
+      {"DELETE", "items/requestmap/delete"},
+      {"GET", "items/multiple/methods"},
+      {"POST", "items/multiple/methods"},
+    ])
+  end
+
+  it "walks `interface_declaration` bodies for @FeignClient" do
+    # Spring Cloud Feign interfaces are routes too; tree-sitter
+    # emits `interface_declaration` for `public interface Foo { ... }`
+    # rather than `class_declaration`.
+    source = <<-JAVA
+      @FeignClient(name = "inventory-service", url = "...")
+      public interface InventoryClient {
+          @PatchMapping("/api/v2/items/{id}/stock")
+          void updateStock(@PathVariable Long id);
+
+          @GetMapping("/api/v2/items")
+          List<Item> list(@RequestParam String category);
+      }
+      JAVA
+
+    routes = Noir::TreeSitterJavaRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"PATCH", "/api/v2/items/{id}/stock"},
+      {"GET", "/api/v2/items"},
+    ])
+  end
+
+  it "reaches parity with the annotation-based portion of the Spring functional fixture" do
+    # Sanity sweep: run the extractor over every .java file in the
+    # bundled Spring fixture and confirm every annotation-based
+    # endpoint the functional tester expects shows up in the
+    # extracted set. Reactive `router().route()` endpoints are out of
+    # scope for this extractor and are excluded from the check.
+    fixture_dir = File.expand_path("../../../functional_test/fixtures/java/spring/src", __FILE__)
+
+    found = Set(Tuple(String, String)).new
+    Dir.glob("#{fixture_dir}/*.java") do |path|
+      content = File.read(path)
+      Noir::TreeSitterJavaRouteExtractor.extract_routes(content).each do |r|
+        found << {r.verb, r.path}
+      end
+    end
+
+    # Every annotation-based endpoint in `spring_spec.cr` should be
+    # present. Paths match the class prefix exactly as declared in
+    # each fixture — e.g. ItemController.java uses
+    # `@RequestMapping("/items")`, so its routes come out with a
+    # leading slash.
+    expected = [
+      # ItemController.java — class @RequestMapping("/items")
+      {"GET", "/items/{id}"},
+      {"PUT", "/items/update/{id}"},
+      {"DELETE", "/items/delete/{id}"},
+      {"PUT", "/items/requestmap/put"},
+      {"DELETE", "/items/requestmap/delete"},
+      {"GET", "/items/multiple/methods"},
+      {"POST", "/items/multiple/methods"},
+      # ItemController2.java — class @RequestMapping("items2")
+      {"GET", "items2/{id}"},
+      {"POST", "items2/create"},
+      {"PUT", "items2/edit/"},
+      {"GET", "items2/{id}/thePath"},
+      # InventoryClient.java — @FeignClient interface, no class prefix
+      {"PATCH", "/api/v2/items/{id}/stock"},
+      {"GET", "/api/v2/items"},
+      {"POST", "/api/v2/items"},
+      {"DELETE", "/api/v2/items/{id}"},
+    ]
+    missing = expected.reject { |e| found.includes?(e) }
+    missing.should be_empty
+  end
 end
