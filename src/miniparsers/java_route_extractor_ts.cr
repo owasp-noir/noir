@@ -253,6 +253,11 @@ module Noir
       keyword.empty? ? positional : keyword
     end
 
+    # Known HTTP-verb identifiers we consider valid `method = ...` values.
+    # Used when reconstructing verbs from ERROR nodes around the
+    # invalid `[...]` bracket syntax.
+    VERB_IDENTIFIERS = {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"}
+
     # Extract verbs from an annotation's `method = ...` argument.
     # Supports the single form (`method = RequestMethod.GET`) and the
     # array form (`method = {RequestMethod.GET, RequestMethod.POST}`).
@@ -263,12 +268,14 @@ module Noir
       return empty unless Noir::TreeSitter.node_type(args_node) == "annotation_argument_list"
 
       methods = [] of String
+      saw_method_pair = false
       Noir::TreeSitter.each_named_child(args_node) do |arg|
         next unless Noir::TreeSitter.node_type(arg) == "element_value_pair"
         key = Noir::TreeSitter.field(arg, "key")
         val = Noir::TreeSitter.field(arg, "value")
         next unless key && val
         next unless Noir::TreeSitter.node_text(key, source) == "method"
+        saw_method_pair = true
         case Noir::TreeSitter.node_type(val)
         when "field_access"
           if f = Noir::TreeSitter.field(val, "field")
@@ -289,7 +296,26 @@ module Noir
           end
         end
       end
-      methods
+
+      # Recover `method = [RequestMethod.GET, RequestMethod.POST]` — the
+      # `[...]` bracket form is invalid Java (only `{...}` is legal) and
+      # tree-sitter scatters the trailing entries into sibling ERROR
+      # nodes. The legacy analyzer tolerated this because its lenient
+      # lexer didn't care. Only run this recovery when we already
+      # confirmed a `method = ...` pair existed to minimise false
+      # positives from unrelated ERROR nodes.
+      if saw_method_pair
+        Noir::TreeSitter.each_named_child(args_node) do |arg|
+          next unless Noir::TreeSitter.node_type(arg) == "ERROR"
+          Noir::TreeSitter.each_named_child(arg) do |inner|
+            next unless Noir::TreeSitter.node_type(inner) == "identifier"
+            text = Noir::TreeSitter.node_text(inner, source).upcase
+            methods << text if VERB_IDENTIFIERS.includes?(text)
+          end
+        end
+      end
+
+      methods.uniq
     end
 
     private def decode_string_literal(node : LibTreeSitter::TSNode, source : String) : String
@@ -307,9 +333,14 @@ module Noir
     # handles the leading-slash ambiguity Spring is famously relaxed
     # about: `@RequestMapping("items")` + `@GetMapping("{id}")` maps to
     # `/items/{id}` even though neither segment has a leading slash.
+    #
+    # Empty method path (`@PostMapping` with no argument, or
+    # `@GetMapping("")`) emits `prefix/` — matches Spring's runtime
+    # behaviour and the legacy analyzer's `File.join("/prefix", "")`
+    # trailing-slash convention.
     private def join_paths(prefix : String, path : String) : String
       return path if prefix.empty?
-      return prefix if path.empty?
+      return "#{prefix.rstrip('/')}/" if path.empty?
       trimmed_prefix = prefix.rstrip('/')
       trimmed_path = path.lstrip('/')
       "#{trimmed_prefix}/#{trimmed_path}"
