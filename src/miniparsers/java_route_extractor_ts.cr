@@ -68,13 +68,16 @@ module Noir
 
     # ---- private helpers ----------------------------------------------
 
-    # Walk every class_declaration (including nested). `outer_prefix` is
-    # the path prefix accumulated from enclosing classes.
+    # Walk every class/interface declaration (including nested). Interfaces
+    # are relevant for Spring Cloud Feign (`@FeignClient` + method
+    # `@*Mapping` annotations). `outer_prefix` is the path prefix
+    # accumulated from enclosing scopes.
     private def walk_classes(node : LibTreeSitter::TSNode,
                              source : String,
                              outer_prefix : String,
                              routes : Array(Route))
-      if Noir::TreeSitter.node_type(node) == "class_declaration"
+      ty = Noir::TreeSitter.node_type(node)
+      if ty == "class_declaration" || ty == "interface_declaration"
         class_name = class_simple_name(node, source)
         class_prefix = class_mapping_prefix(node, source)
         prefix = join_paths(outer_prefix, class_prefix)
@@ -84,7 +87,7 @@ module Noir
             case Noir::TreeSitter.node_type(member)
             when "method_declaration"
               collect_method_routes(member, source, class_name, prefix, routes)
-            when "class_declaration"
+            when "class_declaration", "interface_declaration"
               walk_classes(member, source, prefix, routes)
             end
           end
@@ -105,13 +108,14 @@ module Noir
     end
 
     # Pull a class-level `@RequestMapping(...)` / `@GetMapping(...)`
-    # path contribution. Returns "" if no mapping annotation is on
-    # the class.
+    # path contribution. Returns the first path if the annotation lists
+    # multiple (`{"/a", "/b"}`) — Spring treats the class prefix as a
+    # single value, so picking one is fine. `""` when absent.
     private def class_mapping_prefix(class_decl : LibTreeSitter::TSNode, source : String) : String
       each_annotation(class_decl, source) do |name, args_node|
         next unless ANNOTATION_VERBS.has_key?(name)
-        path = annotation_path(args_node, source)
-        return path if path
+        paths = annotation_paths(args_node, source)
+        return paths.first if !paths.empty?
       end
       ""
     end
@@ -130,11 +134,26 @@ module Noir
         verb_default = ANNOTATION_VERBS[ann_name]?
         next unless ANNOTATION_VERBS.has_key?(ann_name)
 
-        path = annotation_path(args_node, source) || ""
-        verb = verb_default || annotation_method(args_node, source) || "GET"
+        paths = annotation_paths(args_node, source)
+        paths = [""] if paths.empty?
 
-        full = join_paths(class_prefix, path)
-        routes << Route.new(verb, full, class_name, method_name, ann_line)
+        verbs =
+          if verb_default
+            [verb_default]
+          else
+            methods = annotation_methods(args_node, source)
+            methods.empty? ? ["GET"] : methods
+          end
+
+        # Fan out into every (path × verb) combination. Spring's
+        # `@RequestMapping({"/a", "/b"}, method = {GET, POST})` emits
+        # four routes.
+        paths.each do |path|
+          full = join_paths(class_prefix, path)
+          verbs.each do |verb|
+            routes << Route.new(verb, full, class_name, method_name, ann_line)
+          end
+        end
       end
     end
 
@@ -176,45 +195,74 @@ module Noir
       end
     end
 
-    # Extract the route path from an annotation's argument list. Accepts
-    # a bare string literal or a `value = "..."` / `path = "..."`
-    # element-value pair. Returns nil when no path is present.
-    private def annotation_path(args_node : LibTreeSitter::TSNode?, source : String) : String?
-      return unless args_node
-      return unless Noir::TreeSitter.node_type(args_node) == "annotation_argument_list"
+    # Extract route paths from an annotation's argument list. Accepts
+    # any combination of:
+    #   - bare string literal `@GetMapping("/x")`
+    #   - bare array `@RequestMapping({"/a", "/b"})`
+    #   - `value = "..."` / `path = "..."` keyword forms of either
+    #
+    # Always returns an array. Empty when the annotation has no
+    # path-like argument. Callers fan out into one endpoint per path.
+    private def annotation_paths(args_node : LibTreeSitter::TSNode?, source : String) : Array(String)
+      empty = [] of String
+      return empty unless args_node
+      return empty unless Noir::TreeSitter.node_type(args_node) == "annotation_argument_list"
 
-      positional : String? = nil
-      keyword : String? = nil
+      positional = [] of String
+      keyword = [] of String
       Noir::TreeSitter.each_named_child(args_node) do |arg|
         case Noir::TreeSitter.node_type(arg)
         when "string_literal"
-          positional ||= decode_string_literal(arg, source)
+          positional << decode_string_literal(arg, source)
+        when "element_value_array_initializer"
+          Noir::TreeSitter.each_named_child(arg) do |elem|
+            if Noir::TreeSitter.node_type(elem) == "string_literal"
+              positional << decode_string_literal(elem, source)
+            end
+          end
         when "element_value_pair"
           key = Noir::TreeSitter.field(arg, "key")
           val = Noir::TreeSitter.field(arg, "value")
           next unless key && val
           k = Noir::TreeSitter.node_text(key, source)
           next unless k == "value" || k == "path"
-          if Noir::TreeSitter.node_type(val) == "string_literal"
-            keyword ||= decode_string_literal(val, source)
-          elsif Noir::TreeSitter.node_type(val) == "element_value_array_initializer"
+          case Noir::TreeSitter.node_type(val)
+          when "string_literal"
+            keyword << decode_string_literal(val, source)
+          when "element_value_array_initializer"
             Noir::TreeSitter.each_named_child(val) do |elem|
               if Noir::TreeSitter.node_type(elem) == "string_literal"
-                keyword ||= decode_string_literal(elem, source)
-                break
+                keyword << decode_string_literal(elem, source)
               end
+            end
+          end
+        when "ERROR"
+          # `@RequestMapping("/x", method = RequestMethod.GET)` is a
+          # positional+keyword mix that Java technically disallows, but
+          # the legacy analyzer (and idiomatic Spring code in the wild)
+          # tolerate it. tree-sitter flags it as an `ERROR` node; recover
+          # any string literal inside so we don't regress on fixtures
+          # using this shape.
+          Noir::TreeSitter.each_named_child(arg) do |elem|
+            if Noir::TreeSitter.node_type(elem) == "string_literal"
+              positional << decode_string_literal(elem, source)
             end
           end
         end
       end
-      keyword || positional
+      keyword.empty? ? positional : keyword
     end
 
-    # Return the verb from an annotation's `method = RequestMethod.X`
-    # argument, or nil.
-    private def annotation_method(args_node : LibTreeSitter::TSNode?, source : String) : String?
-      return unless args_node
-      return unless Noir::TreeSitter.node_type(args_node) == "annotation_argument_list"
+    # Extract verbs from an annotation's `method = ...` argument.
+    # Supports the single form (`method = RequestMethod.GET`) and the
+    # array form (`method = {RequestMethod.GET, RequestMethod.POST}`).
+    # Returns an empty array when `method` is absent.
+    private def annotation_methods(args_node : LibTreeSitter::TSNode?, source : String) : Array(String)
+      empty = [] of String
+      return empty unless args_node
+      return empty unless Noir::TreeSitter.node_type(args_node) == "annotation_argument_list"
+
+      methods = [] of String
       Noir::TreeSitter.each_named_child(args_node) do |arg|
         next unless Noir::TreeSitter.node_type(arg) == "element_value_pair"
         key = Noir::TreeSitter.field(arg, "key")
@@ -223,13 +271,25 @@ module Noir
         next unless Noir::TreeSitter.node_text(key, source) == "method"
         case Noir::TreeSitter.node_type(val)
         when "field_access"
-          field = Noir::TreeSitter.field(val, "field")
-          return Noir::TreeSitter.node_text(field, source).upcase if field
+          if f = Noir::TreeSitter.field(val, "field")
+            methods << Noir::TreeSitter.node_text(f, source).upcase
+          end
         when "identifier"
-          return Noir::TreeSitter.node_text(val, source).upcase
+          methods << Noir::TreeSitter.node_text(val, source).upcase
+        when "element_value_array_initializer"
+          Noir::TreeSitter.each_named_child(val) do |elem|
+            case Noir::TreeSitter.node_type(elem)
+            when "field_access"
+              if f = Noir::TreeSitter.field(elem, "field")
+                methods << Noir::TreeSitter.node_text(f, source).upcase
+              end
+            when "identifier"
+              methods << Noir::TreeSitter.node_text(elem, source).upcase
+            end
+          end
         end
       end
-      nil
+      methods
     end
 
     private def decode_string_literal(node : LibTreeSitter::TSNode, source : String) : String
