@@ -303,7 +303,7 @@ module Noir
       # nodes. The legacy analyzer tolerated this because its lenient
       # lexer didn't care. Only run this recovery when we already
       # confirmed a `method = ...` pair existed to minimise false
-      # positives from unrelated ERRORs.
+      # positives from unrelated ERROR nodes.
       if saw_method_pair
         Noir::TreeSitter.each_named_child(args_node) do |arg|
           next unless Noir::TreeSitter.node_type(arg) == "ERROR"
