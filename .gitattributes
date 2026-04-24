@@ -3,6 +3,3 @@
 # extension as usual.
 docs/** linguist-vendored
 spec/functional_test/fixtures/** linguist-vendored
-# Vendored tree-sitter runtime + grammars (auto-generated C we don't own).
-src/ext/tree_sitter/runtime/** linguist-vendored
-src/ext/tree_sitter/grammars/** linguist-vendored
