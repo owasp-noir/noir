@@ -1,6 +1,7 @@
 require "../../../minilexers/python"
 require "../../../miniparsers/python"
 require "../../../miniparsers/python_route_extractor"
+require "../../../miniparsers/python_route_extractor_ts"
 require "../../engines/python_engine"
 
 module Analyzer::Python
@@ -45,34 +46,39 @@ module Analyzer::Python
           @logger.debug "Analyzing #{path}"
 
           File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-            lines = file.each_line.to_a
+            file_content = file.gets_to_end
+            lines = file_content.lines
             next unless lines.any?(&.includes?("sanic"))
             api_instances = Hash(::String, ::String).new
             path_api_instances[path] = api_instances
 
-            lines.each_with_index do |line, line_index|
+            # Tree-sitter pre-pass: parse once and harvest every
+            # `@<router>.route(...)` / `@<router>.<method>(...)` decorator
+            # plus every `<name> = (sanic.)?Blueprint(url_prefix=...)`
+            # declaration. Replaces the per-line regex sweep in the loop
+            # below and handles multi-line decorators for free.
+            Noir::TreeSitterPythonRouteExtractor.extract_blueprints(file_content, ["sanic"]).each do |bp|
+              blueprint_prefixes[bp.name] ||= bp.prefix
+              api_instances[bp.name] ||= bp.prefix
+            end
+            Noir::TreeSitterPythonRouteExtractor.extract_decorations(file_content).each do |decoration|
+              methods_literal = decoration.methods.map { |m| "'#{m}'" }.join(",")
+              extra_params = "methods=[#{methods_literal}]"
+              router_info = Tuple(Int32, ::String, ::String, ::String).new(decoration.decorator_line, path, decoration.path, extra_params)
+              @routes[decoration.router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String)
+              @routes[decoration.router_name] << router_info
+            end
+
+            lines.each do |line|
               line = line.gsub(" ", "") # remove spaces for easier regex matching
 
-              # Identify Sanic instance assignments
+              # Identify Sanic instance assignments (tree-sitter extractor
+              # doesn't cover this shape yet).
               sanic_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:sanic\.)?Sanic\(/
               if sanic_match
                 sanic_instance_name = sanic_match[1]
                 api_instances[sanic_instance_name] ||= ""
                 sanic_instances[sanic_instance_name] ||= ""
-              end
-
-              # Identify Blueprint instance assignments
-              if bp = Noir::PythonRouteExtractor.scan_blueprint(line, ["sanic"])
-                blueprint_instance_name, prefix = bp
-                blueprint_prefixes[blueprint_instance_name] ||= prefix
-                api_instances[blueprint_instance_name] ||= prefix
-              end
-
-              # Identify Sanic route decorators (both @app.route and @app.<method>)
-              Noir::PythonRouteExtractor.scan_decorators(line).each do |decoration|
-                router_info = Tuple(Int32, ::String, ::String, ::String).new(line_index, path, decoration.path, decoration.extra_params)
-                @routes[decoration.router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String)
-                @routes[decoration.router_name] << router_info
               end
             end
           end

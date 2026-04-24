@@ -5,7 +5,7 @@ module Analyzer::Go
     def analyze
       # Source Analysis
       public_dirs = [] of (Hash(String, String))
-      package_groups, file_lines_cache = collect_package_groups
+      package_groups, file_contents = collect_package_groups_ts
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
       begin
@@ -20,42 +20,38 @@ module Analyzer::Go
                   break if path.nil?
                   next if File.directory?(path)
                   if File.exists?(path)
-                    # Use cached lines from pre-scan, or read if not cached
-                    lines = file_lines_cache[path]? || File.read_lines(path, encoding: "utf-8", invalid: :skip)
+                    content = file_contents[path]? || File.read(path, encoding: "utf-8", invalid: :skip)
+                    lines = content.lines
                     last_endpoint = Endpoint.new("", "")
 
-                    groups = groups_for_directory(package_groups, File.dirname(path))
+                    # Tree-sitter pre-pass: every Echo verb route
+                    # (`e.GET`, `g.POST`, …) with its group prefix applied.
+                    cross_file_groups = ts_groups_for_directory(package_groups, File.dirname(path))
+                    ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(content, cross_file_groups)
+                    routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
+                    ts_routes.each do |r|
+                      routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
+                      routes_by_line[r.line] << r
+                    end
+
+                    # `e.Static("/url", "./dir")` — same shape as Gin/Fiber/etc.
+                    Noir::TreeSitterGoRouteExtractor.extract_simple_statics(content).each do |sp|
+                      public_dirs << {"static_path" => sp.url_prefix, "file_path" => sp.disk_path}
+                    end
 
                     lines.each_with_index do |line, index|
                       details = Details.new(PathInfo.new(path, index + 1))
-                      # Use case-insensitive regex for HTTP method detection
-                      # Matches patterns like: .GET(, .Get(, .get(, .POST(, .Post(, .post(, etc.
-                      # Exclude parameter extraction patterns like Header.Get(, Query().Get(, etc.
-                      if !line.includes?("Header.Get") && !line.includes?("Query().Get") &&
-                         !line.includes?("Request().Header.Get") &&
-                         (match = line.match(/\.(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\s*\(/i))
-                        method = match[1].upcase
-                        get_route_path(line, groups).tap do |route_path|
-                          # Handle multi-line routes - check next lines if route is empty
-                          if route_path.size == 0 && index + 1 < lines.size
-                            next_line = lines[index + 1]
-                            route_path = get_route_path(next_line, groups)
-                          end
 
-                          if route_path.size > 0
-                            new_endpoint = Endpoint.new("#{route_path}", method, details)
-                            result << new_endpoint
-                            last_endpoint = new_endpoint
-                          end
+                      if ts_hits = routes_by_line[index]?
+                        ts_hits.each do |route|
+                          new_endpoint = Endpoint.new(route.path, route.verb, details)
+                          result << new_endpoint
+                          last_endpoint = new_endpoint
                         end
                       end
 
                       if line.includes?("Param(") || line.includes?("FormValue(")
                         add_param_to_endpoint(get_param(line), last_endpoint)
-                      end
-
-                      if line.includes?("Static(")
-                        add_static_path_if_valid(get_static_path(line), public_dirs)
                       end
 
                       if line.includes?("Request().Header.Get(")
@@ -66,7 +62,9 @@ module Analyzer::Go
                         end
                       end
 
-                      if line.includes?("Cookie(")
+                      if line.includes?("Cookie(") &&
+                         !line.includes?("Header.Get") && !line.includes?("Query().Get") &&
+                         !line.includes?("Request().Header.Get")
                         match = line.match(/Cookie\(\"(.*)\"\)/)
                         if match
                           cookie_name = match[1]

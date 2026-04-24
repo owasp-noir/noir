@@ -5,7 +5,11 @@ module Analyzer::Go
     def analyze
       # Source Analysis
       public_dirs = [] of (Hash(String, String))
-      subrouters = [] of Hash(String, String)
+      # Mux subrouters are created via the two-call chain
+      # `api := r.PathPrefix("/api/").Subrouter()`. The engine fixpoint
+      # treats "Subrouter" as the grouping method and peeks through the
+      # chain to read the PathPrefix argument.
+      package_groups, file_contents = collect_package_groups_ts("Subrouter")
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       begin
         populate_channel_with_filtered_files(channel, ".go")
@@ -19,66 +23,38 @@ module Analyzer::Go
                   break if path.nil?
                   next if File.directory?(path)
                   if File.exists?(path)
-                    # Read all lines for lookahead processing
-                    lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
+                    content = file_contents[path]? || File.read(path, encoding: "utf-8", invalid: :skip)
+                    lines = content.lines
                     last_endpoint = Endpoint.new("", "")
+
+                    cross_file_groups = ts_groups_for_directory(package_groups, File.dirname(path))
+                    ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(
+                      content, cross_file_groups,
+                      group_method: "Subrouter",
+                      handlefunc_methods: true,
+                    )
+                    routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
+                    ts_routes.each do |r|
+                      routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
+                      routes_by_line[r.line] << r
+                    end
+
+                    # Mux static-file: `r.PathPrefix("/x/").Handler(... http.Dir("./x/") ...)`
+                    Noir::TreeSitterGoRouteExtractor.extract_mux_statics(content).each do |sp|
+                      public_dirs << {"static_path" => sp.url_prefix, "file_path" => sp.disk_path}
+                    end
 
                     lines.each_with_index do |line, index|
                       details = Details.new(PathInfo.new(path, index + 1))
-                      lexer = GolangLexer.new
 
-                      # Handle subrouter creation (e.g., r.PathPrefix("/api/").Subrouter())
-                      if line.includes?(".PathPrefix(") && line.includes?(".Subrouter()")
-                        map = lexer.tokenize(line)
-                        before = Token.new(:unknown, "", 0)
-                        subrouter_name = ""
-                        subrouter_path = ""
-                        map.each do |token|
-                          if token.type == :assign
-                            subrouter_name = before.value.to_s.gsub(":", "").gsub(/\s/, "")
+                      if ts_hits = routes_by_line[index]?
+                        ts_hits.each do |route|
+                          new_endpoint = Endpoint.new(route.path, route.verb, details)
+                          # mux's `.Queries("type", "{type}", ...)` declares
+                          # required query params; bind them to the endpoint.
+                          route.query_params.each do |qp|
+                            new_endpoint.params << Param.new(qp, "", "query")
                           end
-
-                          if token.type == :string
-                            subrouter_path = token.value.to_s
-                            subrouters.each do |sub|
-                              sub.each do |key, value|
-                                if before.value.to_s.includes? key
-                                  subrouter_path = value + subrouter_path
-                                end
-                              end
-                            end
-                          end
-
-                          before = token
-                        end
-
-                        if subrouter_name.size > 0 && subrouter_path.size > 0
-                          subrouters << {subrouter_name => subrouter_path}
-                        end
-                      end
-
-                      # Handle route definitions (e.g., r.HandleFunc("/path", handler).Methods("GET"))
-                      if line.includes?(".HandleFunc(")
-                        route_path = get_route_path(line, subrouters)
-                        # Handle multi-line routes - check next line if route is empty
-                        if route_path.size == 0 && index + 1 < lines.size
-                          route_path = get_route_path(lines[index + 1], subrouters)
-                        end
-
-                        if route_path.size > 0
-                          # Check next 5 lines for .Methods() call
-                          method = "GET" # default
-                          (0..5).each do |lookahead|
-                            check_line_idx = index + lookahead
-                            break if check_line_idx >= lines.size
-                            check_line = lines[check_line_idx]
-                            if check_line.includes?(".Methods(")
-                              method = get_method_from_line(check_line)
-                              break
-                            end
-                          end
-
-                          new_endpoint = Endpoint.new("#{route_path}", method, details)
                           result << new_endpoint
                           last_endpoint = new_endpoint
                         end
@@ -97,11 +73,6 @@ module Analyzer::Go
                         add_param_to_endpoint(get_param(line, "Header"), last_endpoint)
                       elsif line.includes?("Cookie(")
                         add_param_to_endpoint(get_param(line, "Cookie"), last_endpoint)
-                      end
-
-                      # Handle static file serving (e.g., r.PathPrefix("/static/").Handler(...))
-                      if line.includes?(".PathPrefix(") && line.includes?(".Handler(") && !line.includes?(".Subrouter(")
-                        add_static_path_if_valid(get_static_path(line), public_dirs)
                       end
                     end
                   end
@@ -195,28 +166,6 @@ module Analyzer::Go
       end
 
       Param.new(param_name, "", param_type)
-    end
-
-    def get_static_path(line : String) : Hash(String, String)
-      static_path = ""
-      file_path = ""
-
-      # Handle r.PathPrefix("/static/").Handler(...) pattern
-      if match = line.match(/PathPrefix\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
-        static_path = match[1]
-      end
-
-      # Extract file path from http.Dir("./static/") pattern
-      if match = line.match(/http\.Dir\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
-        file_path = match[1]
-        # Remove leading ./ if present
-        file_path = file_path.gsub(/^\.\//, "")
-      end
-
-      {
-        "static_path" => static_path,
-        "file_path"   => file_path,
-      }
     end
   end
 end

@@ -1,4 +1,5 @@
 require "../../../miniparsers/python_route_extractor"
+require "../../../miniparsers/python_route_extractor_ts"
 require "../../engines/python_engine"
 
 module Analyzer::Python
@@ -41,17 +42,32 @@ module Analyzer::Python
           @logger.debug "Analyzing #{path}"
 
           File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-            lines = file.each_line.to_a
+            file_content = file.gets_to_end
+            lines = file_content.lines
             next unless lines.any?(&.includes?("aiohttp"))
 
             handler_routes[path] ||= [] of Tuple(::String, ::String, Int32, ::String)
 
+            # Tree-sitter pre-pass for Style B decorators. aiohttp's
+            # `@routes.route("METHOD", "/path")` has a method-first signature
+            # that the generic extractor would misread as path="METHOD", so
+            # we skip any decoration whose attribute is literally `route`
+            # and fall back to a dedicated regex below for that shape only.
+            Noir::TreeSitterPythonRouteExtractor.extract_decorations(file_content).each do |deco|
+              next if deco.attribute_name == "route"
+              deco.methods.uniq.each do |deco_method|
+                def_line = deco.def_line >= 0 ? deco.def_line : deco.decorator_line
+                next if def_line == deco.decorator_line
+                emit_endpoint(path, lines, def_line, deco.path, deco_method, deco.decorator_line)
+              end
+            end
+
             lines.each_with_index do |line, line_index|
               stripped = line.gsub(" ", "")
 
-              # Style B: @routes.route("GET", "/path") — first arg is the method, second is the path.
-              # aiohttp's .route() signature differs from Flask/Sanic, so handle it explicitly
-              # and skip the generic extractor for this decorator shape.
+              # Style B (continued): the method-first `@<router>.route("GET", "/path")`
+              # shape kept as regex because tree-sitter's generic route
+              # decoder assumes path-first.
               aiohttp_route_deco = stripped.match(/@(#{PYTHON_VAR_NAME_REGEX})\.route\([rf]?['"]([A-Za-z*]+)['"]\s*,\s*[rf]?['"]([^'"]*)['"]/)
               if aiohttp_route_deco
                 method = aiohttp_route_deco[2].upcase
@@ -60,15 +76,6 @@ module Analyzer::Python
                   route_path = orig_match[1]
                 end
                 process_decorator_route(path, lines, line_index, route_path, method)
-              else
-                # Style B: @routes.get("/path") / @routes.post("/path") etc.
-                Noir::PythonRouteExtractor.scan_decorators(stripped, line).each do |deco|
-                  methods = extract_methods(deco.extra_params)
-                  methods << "GET" if methods.empty?
-                  methods.uniq.each do |deco_method|
-                    process_decorator_route(path, lines, line_index, deco.path, deco_method)
-                  end
-                end
               end
 
               # Style A: app.router.add_<method>("/path", handler)

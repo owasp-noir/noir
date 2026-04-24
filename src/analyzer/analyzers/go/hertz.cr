@@ -13,7 +13,7 @@ module Analyzer::Go
 
     def analyze
       public_dirs = [] of (Hash(String, String))
-      package_groups, file_lines_cache = collect_package_groups
+      package_groups, file_contents = collect_package_groups_ts
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       begin
         populate_channel_with_filtered_files(channel, ".go")
@@ -27,44 +27,42 @@ module Analyzer::Go
                   break if path.nil?
                   next if File.directory?(path)
                   if File.exists?(path)
-                    lines = file_lines_cache[path]? || File.read_lines(path, encoding: "utf-8", invalid: :skip)
+                    content = file_contents[path]? || File.read(path, encoding: "utf-8", invalid: :skip)
+                    lines = content.lines
                     last_endpoint = Endpoint.new("", "")
 
-                    groups = groups_for_directory(package_groups, File.dirname(path))
+                    # Tree-sitter pre-pass. Hertz's `.Any("/path", ...)`
+                    # comes through as verb="ANY" and we fan it out to
+                    # every HTTP method below — matching the legacy
+                    # behaviour.
+                    cross_file_groups = ts_groups_for_directory(package_groups, File.dirname(path))
+                    ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(content, cross_file_groups)
+                    routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
+                    ts_routes.each do |r|
+                      routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
+                      routes_by_line[r.line] << r
+                    end
+
+                    # `h.Static("/url", "./dir")`.
+                    Noir::TreeSitterGoRouteExtractor.extract_simple_statics(content).each do |sp|
+                      public_dirs << {"static_path" => sp.url_prefix, "file_path" => sp.disk_path}
+                    end
 
                     lines.each_with_index do |line, index|
                       details = Details.new(PathInfo.new(path, index + 1))
 
-                      # Route definitions — skip parameter accessors (Header.Get, Cookie.Get).
-                      # Hertz routing methods are always uppercase (Go-style exported identifiers),
-                      # so the regex is case-sensitive to avoid matching lowercase accessor calls
-                      # like `someMap.get("x")` or `cookies.get("x")`.
-                      if !line.includes?("Header.Get") && !line.includes?("Cookie.Get")
-                        if match = line.match(/\.(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\s*\(/)
-                          method = match[1].upcase
-                          route_path = get_route_path(line, groups)
-                          if route_path.size == 0 && index + 1 < lines.size
-                            route_path = get_route_path(lines[index + 1], groups)
-                          end
-
-                          if route_path.size > 0
-                            new_endpoint = Endpoint.new(route_path, method, details)
-                            result << new_endpoint
-                            last_endpoint = new_endpoint
-                          end
-                        elsif line.match(/\.Any\s*\(/)
-                          # .Any("/path", ...) registers the handler for every HTTP method.
-                          route_path = get_route_path(line, groups)
-                          if route_path.size == 0 && index + 1 < lines.size
-                            route_path = get_route_path(lines[index + 1], groups)
-                          end
-
-                          if route_path.size > 0
+                      if ts_hits = routes_by_line[index]?
+                        ts_hits.each do |route|
+                          if route.verb == "ANY"
                             HTTP_METHODS_EXPANDED.each do |m|
-                              new_endpoint = Endpoint.new(route_path, m, details)
+                              new_endpoint = Endpoint.new(route.path, m, details)
                               result << new_endpoint
                               last_endpoint = new_endpoint
                             end
+                          else
+                            new_endpoint = Endpoint.new(route.path, route.verb, details)
+                            result << new_endpoint
+                            last_endpoint = new_endpoint
                           end
                         end
                       end
@@ -73,10 +71,6 @@ module Analyzer::Go
                         if line.includes?("#{pattern}(")
                           add_param_to_endpoint(get_param(line), last_endpoint)
                         end
-                      end
-
-                      if line.includes?("Static(")
-                        add_static_path_if_valid(get_static_path(line), public_dirs)
                       end
 
                       # Read cookies via `ctx.Cookie("name")`. The leading `\.` avoids matching

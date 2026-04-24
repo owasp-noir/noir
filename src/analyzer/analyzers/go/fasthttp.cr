@@ -1,5 +1,5 @@
 require "../../../models/analyzer"
-require "../../../minilexers/golang"
+require "../../../miniparsers/go_route_extractor_ts"
 
 module Analyzer::Go
   class Fasthttp < Analyzer
@@ -16,21 +16,36 @@ module Analyzer::Go
             if File.exists?(path)
               content = read_file_content(path)
               last_endpoint = Endpoint.new("", "")
+
+              # Tree-sitter pre-pass: fasthttp has no groups, so we just
+              # pull every `<router>.<VERB>("/path", ...)` the extractor
+              # finds. The extra string constraint (`"/..."`) the legacy
+              # regex enforced is already covered — `decode_verb_call`
+              # returns nil when the first string arg is empty.
+              ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(content)
+              routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
+              ts_routes.each do |r|
+                # Fasthttp accepts paths starting with `/`; drop anything
+                # else (the legacy regex had the same constraint).
+                next unless r.raw_path.starts_with?("/")
+                routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
+                routes_by_line[r.line] << r
+              end
+
               content.each_line.with_index do |line, index|
                 details = Details.new(PathInfo.new(path, index + 1))
 
-                # Detect fasthttp route patterns
-                endpoint = analyze_route_line(line, details)
-                if endpoint.method != ""
-                  result << endpoint
-                  last_endpoint = endpoint
+                if ts_hits = routes_by_line[index]?
+                  ts_hits.each do |route|
+                    endpoint = Endpoint.new(route.path, route.verb, details)
+                    result << endpoint
+                    last_endpoint = endpoint
+                  end
                 end
 
-                # Detect parameter usage in current context
                 params = analyze_param_line(line)
                 params.each do |param|
                   if param.name.size > 0 && last_endpoint.method != ""
-                    # Check for duplicates before adding
                     unless last_endpoint.params.any? { |p| p.name == param.name && p.param_type == param.param_type }
                       last_endpoint.params << param
                     end

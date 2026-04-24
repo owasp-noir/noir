@@ -4,46 +4,10 @@ module Analyzer::Go
   class Iris < GoEngine
     HTTP_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"]
 
-    # Iris uses `.Party(...)` for route grouping instead of Gin/Echo's `.Group(...)`.
-    # The group resolution logic is otherwise identical, so reuse the extractor
-    # shape and swap the detection marker.
-    def analyze_group(line : String, lexer : GolangLexer, groups : Array(Hash(String, String)))
-      return unless line.includes?(".Party(")
-
-      map = lexer.tokenize(line)
-      before = Token.new(:unknown, "", 0)
-      group_name = ""
-      group_path = ""
-      map.each do |token|
-        if token.type == :assign
-          group_name = before.value.to_s.gsub(":", "").gsub(/\s/, "")
-        end
-
-        if token.type == :string
-          group_path = token.value.to_s
-          groups.each do |group|
-            group.each do |key, value|
-              if before.value.to_s.includes? key
-                group_path = value + group_path
-              end
-            end
-          end
-        end
-
-        before = token
-      end
-
-      if group_name.size > 0 && group_path.size > 0
-        unless groups.any?(&.has_key?(group_name))
-          groups << {
-            group_name => group_path,
-          }
-        end
-      end
-    end
-
     def analyze
-      package_groups, file_lines_cache = collect_package_groups
+      # Iris uses `.Party(...)` for route groups; pass that into both the
+      # engine's fixpoint group collection and the per-file extractor.
+      package_groups, file_contents = collect_package_groups_ts("Party")
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
       begin
@@ -58,40 +22,36 @@ module Analyzer::Go
                   break if path.nil?
                   next if File.directory?(path)
                   if File.exists?(path)
-                    lines = file_lines_cache[path]? || File.read_lines(path, encoding: "utf-8", invalid: :skip)
+                    content = file_contents[path]? || File.read(path, encoding: "utf-8", invalid: :skip)
+                    lines = content.lines
                     last_endpoint = Endpoint.new("", "")
 
-                    groups = groups_for_directory(package_groups, File.dirname(path))
+                    cross_file_groups = ts_groups_for_directory(package_groups, File.dirname(path))
+                    ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(
+                      content, cross_file_groups, group_method: "Party"
+                    )
+                    routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
+                    ts_routes.each do |r|
+                      routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
+                      routes_by_line[r.line] << r
+                    end
 
                     lines.each_with_index do |line, index|
                       details = Details.new(PathInfo.new(path, index + 1))
 
-                      # Exclude helpers that collide with HTTP verb regex:
-                      # ctx.Request().Header.Get, ctx.GetHeader, ctx.GetCookie.
-                      if !line.includes?("Header.Get") && !line.includes?("GetHeader") &&
-                         !line.includes?("GetCookie") && !line.includes?(".Party(") &&
-                         !line.includes?("ctx.Get(") && !line.includes?("c.Get(") &&
-                         (match = line.match(/\.(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD|ANY)\s*\(/i))
-                        method = match[1].upcase
-                        get_route_path(line, groups).tap do |route_path|
-                          if route_path.size == 0 && index + 1 < lines.size
-                            next_line = lines[index + 1]
-                            route_path = get_route_path(next_line, groups)
-                          end
-
-                          if route_path.size > 0
-                            normalized = normalize_iris_path(route_path)
-                            if method == "ANY"
-                              HTTP_METHODS.each do |m|
-                                new_endpoint = Endpoint.new(normalized, m, details)
-                                result << new_endpoint
-                                last_endpoint = new_endpoint
-                              end
-                            else
-                              new_endpoint = Endpoint.new(normalized, method, details)
+                      if ts_hits = routes_by_line[index]?
+                        ts_hits.each do |route|
+                          normalized = normalize_iris_path(route.path)
+                          if route.verb == "ANY"
+                            HTTP_METHODS.each do |m|
+                              new_endpoint = Endpoint.new(normalized, m, details)
                               result << new_endpoint
                               last_endpoint = new_endpoint
                             end
+                          else
+                            new_endpoint = Endpoint.new(normalized, route.verb, details)
+                            result << new_endpoint
+                            last_endpoint = new_endpoint
                           end
                         end
                       end
