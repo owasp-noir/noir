@@ -1,6 +1,5 @@
 require "../../../models/analyzer"
-require "../../../minilexers/java"
-require "../../../miniparsers/java"
+require "../../../ext/tree_sitter/tree_sitter"
 
 module Analyzer::Java
   class Armeria < Analyzer
@@ -8,7 +7,10 @@ module Analyzer::Java
     REGEX_SERVICE_CODE      = /\.service(If|Under|)?\([^;]+?\)/
     REGEX_ROUTE_CODE        = /\.route\(\)\s*\.\s*(\w+)\s*\(([^\.]*)\)\./
 
-    # HTTP method annotations supported by Armeria
+    # HTTP method annotation names supported by Armeria's annotated
+    # service style. Simple names — fully-qualified forms like
+    # `@com.linecorp.armeria.server.annotation.Get` are normalised to
+    # the last segment before lookup.
     HTTP_METHOD_ANNOTATIONS = ["Get", "Post", "Put", "Delete", "Patch", "Head", "Options", "Trace"]
 
     def analyze
@@ -30,15 +32,15 @@ module Analyzer::Java
                   if File.exists?(path) && (path.ends_with?(".java") || path.ends_with?(".kt"))
                     content = File.read(path, encoding: "utf-8", invalid: :skip)
 
-                    # Check for Armeria annotation imports
-                    has_armeria_annotations = content.includes?("com.linecorp.armeria.server.annotation.")
-
-                    if has_armeria_annotations
-                      # Parse annotation-based services
+                    # Annotation-based services (`@Get("/x")` etc.) —
+                    # Kotlin files reach here too, but tree-sitter-java
+                    # doesn't parse Kotlin cleanly, so skip non-Java.
+                    if content.includes?("com.linecorp.armeria.server.annotation.") && path.ends_with?(".java")
                       analyze_annotated_service(path, content)
                     end
 
-                    # Parse Server.builder() style (existing logic)
+                    # Server.builder()-style routes (regex-scoped — the
+                    # builder chain isn't worth a dedicated TS walk yet).
                     details = Details.new(PathInfo.new(path))
                     content.scan(REGEX_SERVER_CODE_BLOCK) do |server_codeblock_match|
                       server_codeblock = server_codeblock_match[0]
@@ -51,34 +53,24 @@ module Analyzer::Java
                         end
 
                         service_code = service_code_match[0]
-                        parameter_code = service_code.split("(")[1]
-                        split_params = parameter_code.split(",")
-                        next if split_params.size <= endpoint_param_index
-                        endpoint = split_params[endpoint_param_index].strip
-
-                        endpoint = endpoint[1..-2]
-                        ep = Endpoint.new("#{endpoint}", "GET", details)
-                        extract_path_parameters(endpoint, ep)
-                        @result << ep
+                        args = service_code.split(",")
+                        if args.size > endpoint_param_index
+                          raw_endpoint = args[endpoint_param_index]
+                          endpoint = raw_endpoint.split("(")[-1].gsub("\"", "").strip
+                          if endpoint.starts_with?("/")
+                            @result << Endpoint.new(endpoint, "GET", details)
+                          end
+                        end
                       end
 
                       server_codeblock.scan(REGEX_ROUTE_CODE) do |route_code_match|
                         next if route_code_match.size != 3
-                        method = route_code_match[1].upcase
-                        if method == "PATH"
-                          method = "GET"
+                        http_method = route_code_match[1].upcase
+                        raw_endpoint = route_code_match[2]
+                        endpoint = raw_endpoint.split("\"")[-2] if raw_endpoint.includes?("\"")
+                        if endpoint && endpoint.starts_with?("/")
+                          @result << Endpoint.new(endpoint, http_method, details)
                         end
-
-                        next if !method.in?(%w[GET POST DELETE PUT PATCH HEAD OPTIONS])
-
-                        endpoint = route_code_match[2].split(")")[0].strip
-                        next if endpoint[0] != endpoint[-1]
-                        next if endpoint[0] != '"'
-
-                        endpoint = endpoint[1..-2]
-                        ep = Endpoint.new("#{endpoint}", method, details)
-                        extract_path_parameters(endpoint, ep)
-                        @result << ep
                       end
                     end
                   end
@@ -92,148 +84,184 @@ module Analyzer::Java
       rescue e
         logger.debug e
       end
-      Fiber.yield
 
       @result
     end
 
-    # Analyze annotation-based Armeria services
+    # ---- annotation-based service routes ------------------------------
+
     private def analyze_annotated_service(path : String, content : String)
-      lexer = JavaLexer.new
-      tokens = lexer.tokenize(content)
-      parser = JavaParser.new(path, tokens)
-
-      parser.classes.each do |class_model|
-        class_model.methods.values.each do |method|
-          method.annotations.values.each do |method_annotation|
-            # Check if it's an HTTP method annotation
-            http_method_index = HTTP_METHOD_ANNOTATIONS.index(method_annotation.name)
-            next if http_method_index.nil?
-
-            http_method = HTTP_METHOD_ANNOTATIONS[http_method_index].upcase
-            url_path = extract_url_from_annotation(method_annotation)
-            next if url_path.empty?
-
-            line = method_annotation.tokens[0].line
-            details = Details.new(PathInfo.new(path, line))
-            parameters = get_armeria_parameters(parser, method, url_path)
-
-            endpoint = Endpoint.new(url_path, http_method, parameters, details)
-            extract_path_parameters(url_path, endpoint)
-            @result << endpoint
+      Noir::TreeSitter.parse_java(content) do |root|
+        walk_class_containers(root) do |cls|
+          cls_body = Noir::TreeSitter.field(cls, "body")
+          next unless cls_body
+          Noir::TreeSitter.each_named_child(cls_body) do |member|
+            next unless Noir::TreeSitter.node_type(member) == "method_declaration"
+            handle_method(member, content, path)
           end
         end
       end
     end
 
-    # Extract URL path from annotation like @Get("/path") or @Get(value = "/path")
-    private def extract_url_from_annotation(method_annotation : AnnotationModel) : String
-      return "" if method_annotation.params.empty?
+    private def walk_class_containers(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
+      ty = Noir::TreeSitter.node_type(node)
+      if ty == "class_declaration" || ty == "interface_declaration"
+        block.call(node)
+      end
+      Noir::TreeSitter.each_named_child(node) do |child|
+        walk_class_containers(child, &block)
+      end
+    end
 
-      method_annotation.params.each do |param_tokens|
-        next if param_tokens.empty?
+    private def handle_method(method : LibTreeSitter::TSNode, content : String, path : String)
+      mods = find_modifiers(method)
+      return unless mods
 
-        # Handle @Get("/path") - single string literal
-        if param_tokens.size == 1 && param_tokens[0].type == :STRING_LITERAL
-          value = strip_quotes(param_tokens[0].value)
-          return value unless value.empty?
-        end
+      Noir::TreeSitter.each_named_child(mods) do |ann|
+        ty = Noir::TreeSitter.node_type(ann)
+        next unless ty == "annotation" || ty == "marker_annotation"
+        name_node = Noir::TreeSitter.field(ann, "name")
+        next unless name_node
+        ann_name = simple_annotation_name(Noir::TreeSitter.node_text(name_node, content))
+        next unless HTTP_METHOD_ANNOTATIONS.includes?(ann_name)
 
-        # Handle @Get(value = "/path") or named parameters
-        param_tokens.each do |token|
-          if token.type == :STRING_LITERAL
-            value = strip_quotes(token.value)
-            return value unless value.empty?
+        url_path = extract_url_from_annotation(ann, content)
+        next if url_path.empty?
+
+        http_method = ann_name.upcase
+        line = Noir::TreeSitter.node_start_row(ann) + 1
+        details = Details.new(PathInfo.new(path, line))
+
+        parameters = collect_method_params(method, content, url_path)
+        endpoint = Endpoint.new(url_path, http_method, parameters, details)
+        extract_path_parameters(url_path, endpoint)
+        @result << endpoint
+      end
+    end
+
+    private def find_modifiers(decl : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+      count = LibTreeSitter.ts_node_named_child_count(decl)
+      count.times do |i|
+        child = LibTreeSitter.ts_node_named_child(decl, i.to_u32)
+        return child if Noir::TreeSitter.node_type(child) == "modifiers"
+      end
+      nil
+    end
+
+    private def simple_annotation_name(full : String) : String
+      if idx = full.rindex('.')
+        full[(idx + 1)..]
+      else
+        full
+      end
+    end
+
+    # Extract the path from `@Get("/x")` or `@Get(value = "/x")`. Returns
+    # "" when the annotation has no string literal argument.
+    private def extract_url_from_annotation(ann : LibTreeSitter::TSNode, content : String) : String
+      args = Noir::TreeSitter.field(ann, "arguments")
+      return "" unless args
+      result = ""
+      Noir::TreeSitter.each_named_child(args) do |arg|
+        case Noir::TreeSitter.node_type(arg)
+        when "string_literal"
+          result = decode_string_literal(arg, content)
+          break unless result.empty?
+        when "element_value_pair"
+          val = Noir::TreeSitter.field(arg, "value")
+          if val && Noir::TreeSitter.node_type(val) == "string_literal"
+            result = decode_string_literal(val, content)
+            break unless result.empty?
           end
         end
       end
-
-      ""
+      result
     end
 
-    # Extract parameters from Armeria annotations (@Param, @Header, @RequestObject)
-    private def get_armeria_parameters(parser : JavaParser, method : MethodModel, url_path : String) : Array(Param)
-      endpoint_parameters = Array(Param).new
-      # Extract path parameter names from URL pattern
+    # Walk method formal_parameters, translating Armeria's annotation
+    # set into `Param`s:
+    #
+    #   - `@Param("name")` — query parameter (unless the name matches a
+    #     `{template}` variable in the URL, in which case it's a path
+    #     parameter and surfaces later through `extract_path_parameters`)
+    #   - `@Header("Name")` — header parameter
+    #   - `@RequestObject` — JSON body; parameter name taken from the
+    #     declared variable name
+    private def collect_method_params(method : LibTreeSitter::TSNode, content : String, url_path : String) : Array(Param)
+      params = [] of Param
+      fparams = Noir::TreeSitter.field(method, "parameters")
+      return params unless fparams
+
       path_param_names = Set(String).new
       url_path.scan(/\{(\w+)\}/) do |match|
         path_param_names << match[1] if match.size > 1
       end
 
-      method.params.each do |method_param_tokens|
-        next if method_param_tokens.empty?
-        next unless method_param_tokens[-1].type == :IDENTIFIER
+      Noir::TreeSitter.each_named_child(fparams) do |fp|
+        next unless Noir::TreeSitter.node_type(fp) == "formal_parameter"
+        name_node = Noir::TreeSitter.field(fp, "name")
+        next unless name_node
+        arg_name = Noir::TreeSitter.node_text(name_node, content)
 
-        # Check for annotation
-        if method_param_tokens[0].type == :AT && method_param_tokens.size > 1
-          annotation_name = method_param_tokens[1].value
+        param_mods = find_modifiers(fp)
+        next unless param_mods
 
-          case annotation_name
+        Noir::TreeSitter.each_named_child(param_mods) do |pa|
+          pa_ty = Noir::TreeSitter.node_type(pa)
+          next unless pa_ty == "annotation" || pa_ty == "marker_annotation"
+          name = Noir::TreeSitter.field(pa, "name")
+          next unless name
+          ann_name = simple_annotation_name(Noir::TreeSitter.node_text(name, content))
+
+          case ann_name
           when "Param"
-            param_name = extract_annotation_param_name(parser, method_param_tokens)
-            # In Armeria, @Param can be either path or query parameter
-            # If the param name matches a path template variable, it's a path param
-            # Otherwise, it's a query param
-            if path_param_names.includes?(param_name)
-              # Path parameters are handled separately by extract_path_parameters
-              # So we don't add them here to avoid duplicates
-              next
-            else
-              endpoint_parameters << Param.new(param_name, "", "query")
-            end
+            param_name = extract_annotation_string_arg(pa, content) || arg_name
+            # Path params are emitted later by `extract_path_parameters`;
+            # skip here to avoid duplicates.
+            next if path_param_names.includes?(param_name)
+            params << Param.new(param_name, "", "query")
           when "Header"
-            param_name = extract_annotation_param_name(parser, method_param_tokens)
-            endpoint_parameters << Param.new(param_name, "", "header")
+            param_name = extract_annotation_string_arg(pa, content) || arg_name
+            params << Param.new(param_name, "", "header")
           when "RequestObject"
-            # RequestObject typically represents JSON body - we mark it as json param type
-            # The actual variable name becomes the parameter name
-            param_name = method_param_tokens[-1].value
-            endpoint_parameters << Param.new(param_name, "", "json")
+            params << Param.new(arg_name, "", "json")
           end
         end
       end
 
-      endpoint_parameters
+      params
     end
 
-    # Extract parameter name from annotation like @Param("name") or @Param String name
-    private def extract_annotation_param_name(parser : JavaParser, method_param_tokens : Array(Token)) : String
-      # Default to variable name (last identifier)
-      default_name = method_param_tokens[-1].value
-
-      # Check if there's a parenthesis with parameter name
-      if method_param_tokens.size > 2 && method_param_tokens[2].type == :LPAREN
-        # Parse annotation parameters
-        annotation_params = parser.parse_formal_parameters(method_param_tokens, 2)
-        annotation_params.each do |param_tokens|
-          next if param_tokens.empty?
-
-          # Handle @Param("name") - single string literal
-          if param_tokens.size == 1 && param_tokens[0].type == :STRING_LITERAL
-            value = strip_quotes(param_tokens[0].value)
-            return value unless value.empty?
-          end
-
-          # Handle @Header(value = "name") or @Header(name = "name")
-          if param_tokens.size > 2
-            param_key = param_tokens[0].value
-            param_value = param_tokens[-1]
-            if (param_key == "value" || param_key == "name") && param_value.type == :STRING_LITERAL
-              value = strip_quotes(param_value.value)
-              return value unless value.empty?
-            end
+    private def extract_annotation_string_arg(ann : LibTreeSitter::TSNode, content : String) : String?
+      args = Noir::TreeSitter.field(ann, "arguments")
+      return unless args
+      Noir::TreeSitter.each_named_child(args) do |arg|
+        case Noir::TreeSitter.node_type(arg)
+        when "string_literal"
+          return decode_string_literal(arg, content)
+        when "element_value_pair"
+          key = Noir::TreeSitter.field(arg, "key")
+          val = Noir::TreeSitter.field(arg, "value")
+          next unless key && val
+          k = Noir::TreeSitter.node_text(key, content)
+          next unless k == "value" || k == "name"
+          if Noir::TreeSitter.node_type(val) == "string_literal"
+            return decode_string_literal(val, content)
           end
         end
       end
-
-      default_name
+      nil
     end
 
-    # Safely strip surrounding quotes from a string literal
-    # Handles edge cases like empty strings or malformed literals
-    private def strip_quotes(value : String) : String
-      return "" if value.size < 2
-      value[1..-2]
+    private def decode_string_literal(node : LibTreeSitter::TSNode, content : String) : String
+      buf = String.build do |io|
+        Noir::TreeSitter.each_named_child(node) do |child|
+          if Noir::TreeSitter.node_type(child) == "string_fragment"
+            io << Noir::TreeSitter.node_text(child, content)
+          end
+        end
+      end
+      buf
     end
 
     # Extract path parameters from URLs like /users/{userId} or /items/{itemId}/comments
