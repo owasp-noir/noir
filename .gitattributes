@@ -1,10 +1,7 @@
 # Exclude non-source trees from GitHub's language stats so the main repo
 # language reflects actual noir code. Everything else is detected by file
 # extension as usual.
-docs/** linguist-vendored
-spec/functional_test/fixtures/** linguist-vendored
-spec/spec/uncovered_test/fixtures/** linguist-vendored
-
-# Vendored tree-sitter runtime + grammars (auto-generated C we don't own).
-# src/ext/tree_sitter/runtime/** linguist-vendored
-src/ext/tree_sitter/grammars/** linguist-vendored
+* linguist-vendored
+*.cr linguist-vendored=false
+*.nix linguist-vendored=false
+justfile linguist-vendored=false
