@@ -66,18 +66,87 @@ module Noir
     # `module_names` is the list of module prefixes allowed before
     # `.Blueprint` (e.g. `["flask"]`). A bare `Blueprint` call is always
     # accepted, matching the regex extractor.
+    #
+    # Uses a tree-sitter query to find the two Blueprint assignment
+    # shapes (bare and module-qualified). The `url_prefix` keyword is
+    # still extracted procedurally because a Blueprint may be declared
+    # without one and the query language can't express "this keyword,
+    # if present" cleanly.
     def extract_blueprints(source : String, module_names : Array(String)) : Array(BlueprintDecl)
       results = [] of BlueprintDecl
       allowed = module_names.to_set
+      query = blueprint_query
       Noir::TreeSitter.parse_python(source) do |root|
-        walk(root) do |node|
-          next unless Noir::TreeSitter.node_type(node) == "assignment"
-          if bp = decode_blueprint(node, source, allowed)
-            results << bp
+        query.each_match_raw(root, source) do |pattern_index, caps|
+          captures = caps.to_h
+          name_node = captures["name"]?
+          call_node = captures["call"]?
+          next unless name_node && call_node
+
+          # Pattern 1 is the qualified form; enforce the module allowlist.
+          if pattern_index == 1
+            module_node = captures["module"]?
+            next unless module_node
+            next unless allowed.includes?(Noir::TreeSitter.node_text(module_node, source))
           end
+
+          name = Noir::TreeSitter.node_text(name_node, source)
+          prefix = extract_url_prefix(call_node, source)
+          results << BlueprintDecl.new(name, prefix, Noir::TreeSitter.node_start_row(name_node))
         end
       end
       results
+    end
+
+    # Lazily compiled, cached across all calls. Two patterns keep bare
+    # and qualified Blueprint shapes separate so the evaluator can tell
+    # them apart via `pattern_index`.
+    @@blueprint_query : Noir::TreeSitter::Query? = nil
+
+    private def blueprint_query : Noir::TreeSitter::Query
+      if q = @@blueprint_query
+        return q
+      end
+      q = Noir::TreeSitter::Query.new(
+        LibTreeSitter.tree_sitter_python,
+        <<-SCM
+          ; Pattern 0: bare `name = Blueprint(...)`
+          (assignment
+            left: (identifier) @name
+            right: (call
+              function: (identifier) @func) @call
+            (#eq? @func "Blueprint"))
+
+          ; Pattern 1: qualified `name = module.Blueprint(...)`
+          (assignment
+            left: (identifier) @name
+            right: (call
+              function: (attribute
+                object: (identifier) @module
+                attribute: (identifier) @attr)) @call
+            (#eq? @attr "Blueprint"))
+          SCM
+      )
+      @@blueprint_query = q
+      q
+    end
+
+    # Walk the `call` node's arguments and return the string value of
+    # the `url_prefix` keyword if present, `""` otherwise.
+    private def extract_url_prefix(call_node : LibTreeSitter::TSNode, source : String) : String
+      args = Noir::TreeSitter.field(call_node, "arguments")
+      return "" unless args
+      Noir::TreeSitter.each_named_child(args) do |arg|
+        next unless Noir::TreeSitter.node_type(arg) == "keyword_argument"
+        key = Noir::TreeSitter.field(arg, "name")
+        val = Noir::TreeSitter.field(arg, "value")
+        next unless key && val
+        next unless Noir::TreeSitter.node_text(key, source) == "url_prefix"
+        if Noir::TreeSitter.node_type(val) == "string"
+          return decode_string(val, source)
+        end
+      end
+      ""
     end
 
     # ---- private helpers --------------------------------------------------
@@ -230,54 +299,6 @@ module Noir
         methods << decode_string(value, source).upcase
       end
       methods
-    end
-
-    private def decode_blueprint(assign : LibTreeSitter::TSNode,
-                                 source : String,
-                                 allowed : Set(String)) : BlueprintDecl?
-      left = Noir::TreeSitter.field(assign, "left")
-      right = Noir::TreeSitter.field(assign, "right")
-      return unless left && right
-      return unless Noir::TreeSitter.node_type(right) == "call"
-
-      # The assignment must name a single identifier on the left — dotted
-      # or destructured left-hand sides aren't Blueprint declarations.
-      return unless Noir::TreeSitter.node_type(left) == "identifier"
-      name = Noir::TreeSitter.node_text(left, source)
-
-      function = Noir::TreeSitter.field(right, "function")
-      return unless function
-
-      case Noir::TreeSitter.node_type(function)
-      when "identifier"
-        return unless Noir::TreeSitter.node_text(function, source) == "Blueprint"
-      when "attribute"
-        object = Noir::TreeSitter.field(function, "object")
-        attr = Noir::TreeSitter.field(function, "attribute")
-        return unless object && attr
-        return unless Noir::TreeSitter.node_text(attr, source) == "Blueprint"
-        # Module can be an identifier or a dotted name; take the full text.
-        mod = Noir::TreeSitter.node_text(object, source)
-        return unless allowed.includes?(mod)
-      else
-        return
-      end
-
-      prefix = ""
-      if args = Noir::TreeSitter.field(right, "arguments")
-        Noir::TreeSitter.each_named_child(args) do |arg|
-          next unless Noir::TreeSitter.node_type(arg) == "keyword_argument"
-          key = Noir::TreeSitter.field(arg, "name")
-          val = Noir::TreeSitter.field(arg, "value")
-          next unless key && val
-          next unless Noir::TreeSitter.node_text(key, source) == "url_prefix"
-          if Noir::TreeSitter.node_type(val) == "string"
-            prefix = decode_string(val, source)
-          end
-        end
-      end
-
-      BlueprintDecl.new(name, prefix, Noir::TreeSitter.node_start_row(assign))
     end
   end
 end
