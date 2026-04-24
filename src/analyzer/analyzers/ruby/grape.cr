@@ -33,7 +33,7 @@ module Analyzer::Ruby
             in_params_block = false
             next
           end
-          stripped.scan(/(?:requires|optional)\s+:([\w]+)/) do |m|
+          stripped.scan(/(?:requires|optional)\s+[:\'"]([\w]+)[\'"]?/) do |m|
             pending_params << m[1] if m.size > 1
           end
           next
@@ -49,7 +49,7 @@ module Analyzer::Ruby
           next
         end
 
-        if m = stripped.match(/^(?:resource|resources|namespace|group|segment)\s+['":]([\w]+)['"]?\s+do\b/)
+        if m = stripped.match(/^(?:resource|resources|namespace|group|segment)\s+['":]([\w\/\-:]+)[\'""]?\s+do\b/)
           prefix_segments << m[1].to_s
           block_kinds << :prefix
           next
@@ -57,8 +57,8 @@ module Analyzer::Ruby
 
         verb_handled = false
         GRAPE_VERBS.each do |verb|
-          if m = stripped.match(/^#{verb}\b(?:\s+['"]([^'"]+)['"])?(?:\s*,[^#]*?)?\s*do\b/)
-            raw_path = (m[1]? || "").to_s
+          if m = stripped.match(/^#{verb}\b(?:\s+(['":][\w\/\-:]+[\'""]?))?(?:\s*,[^#]*?)?\s*do\b/)
+            raw_path = (m[1]? || "").to_s.gsub(/['"]/, "")
             ep_path = build_path(class_prefix, prefix_segments, raw_path)
             details = Details.new(PathInfo.new(path, index + 1))
             endpoint = Endpoint.new(ep_path, verb.upcase, details)
@@ -101,17 +101,12 @@ module Analyzer::Ruby
         next if verb_handled
 
         if le = last_endpoint
-          line.scan(/\bparams\[:([\w]+)\]/) do |match|
+          line.scan(/\bparams\[['"]?:?([\w-]+)['"]?\]/) do |match|
             if match.size > 1
               le.push_param(Param.new(match[1], "", "query"))
             end
           end
-          line.scan(/\bparams\[['"](\w+)['"]\]/) do |match|
-            if match.size > 1
-              le.push_param(Param.new(match[1], "", "query"))
-            end
-          end
-          line.scan(/\bheaders\[['"]([^'"]+)['"]\]/) do |match|
+          line.scan(/\bheaders\[['"]?:?([\w-]+)['"]?\]/) do |match|
             if match.size > 1
               le.push_param(Param.new(match[1], "", "header"))
             end
@@ -124,6 +119,14 @@ module Analyzer::Ruby
         end
 
         if stripped.matches?(/\bdo(\s*\|[^|]*\|)?\s*$/)
+          block_kinds << :other
+        elsif stripped.starts_with?("if ") || stripped == "if" ||
+              stripped.starts_with?("unless ") || stripped == "unless" ||
+              stripped.starts_with?("def ") || stripped == "def" ||
+              stripped.starts_with?("class ") || stripped == "class" ||
+              stripped.starts_with?("module ") || stripped == "module" ||
+              stripped.starts_with?("begin ") || stripped == "begin" ||
+              stripped.starts_with?("case ") || stripped == "case"
           block_kinds << :other
         end
 
