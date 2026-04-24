@@ -76,6 +76,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"python_sanic", Python::Sanic},
     {"python_starlette", Python::Starlette},
     {"python_tornado", Python::Tornado},
+    {"ruby_grape", Ruby::Grape},
     {"ruby_hanami", Ruby::Hanami},
     {"ruby_rails", Ruby::Rails},
     {"ruby_roda", Ruby::Roda},
