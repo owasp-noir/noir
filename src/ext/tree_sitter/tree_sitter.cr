@@ -105,6 +105,7 @@ lib LibTreeSitter
   fun tree_sitter_python : TSLanguage
   fun tree_sitter_go : TSLanguage
   fun tree_sitter_java : TSLanguage
+  fun tree_sitter_kotlin : TSLanguage
 end
 
 # Thin high-level facade. Keeps tree lifetime tied to an object so callers
@@ -145,6 +146,11 @@ module Noir::TreeSitter
   # Parses `source` with the Java grammar and yields the root node.
   def self.parse_java(source : String, &)
     parse(source, LibTreeSitter.tree_sitter_java) { |root| yield root }
+  end
+
+  # Parses `source` with the Kotlin grammar and yields the root node.
+  def self.parse_kotlin(source : String, &)
+    parse(source, LibTreeSitter.tree_sitter_kotlin) { |root| yield root }
   end
 
   # Convenience: returns the root-node s-expression for `source`.
