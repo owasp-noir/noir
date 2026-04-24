@@ -1,6 +1,7 @@
 require "../../../minilexers/python"
 require "../../../miniparsers/python"
 require "../../../miniparsers/python_route_extractor"
+require "../../../miniparsers/python_route_extractor_ts"
 require "../../engines/python_engine"
 
 module Analyzer::Python
@@ -50,12 +51,31 @@ module Analyzer::Python
           next if path.includes?("/site-packages/")
           @logger.debug "Analyzing #{path}"
 
-          lines = fetch_file_content(path).lines
+          file_content = fetch_file_content(path)
+          lines = file_content.lines
           if lines.any?(&.includes?("flask"))
             api_instances = Hash(::String, ::String).new
             path_api_instances[path] = api_instances
             view_assignments = Hash(::String, ::String).new # Maps view_var -> ClassName (per-file scope)
             import_map_cache : Hash(::String, Tuple(::String, Int32))? = nil
+
+            # Tree-sitter pre-pass: parse the file once and pull out every
+            # `@<router>.route(...)`/`@<router>.<method>(...)` decorator and
+            # every `<name> = (flask.)?Blueprint(url_prefix=...)` declaration.
+            # Both pieces used to be rediscovered with a fresh regex on every
+            # single line; the parse is linear in file size instead of
+            # (lines × patterns) and also handles multi-line decorators that
+            # the regex can't see.
+            ts_decorations = Noir::TreeSitterPythonRouteExtractor.extract_decorations(file_content)
+            decorations_by_line = Hash(Int32, Array(Noir::TreeSitterPythonRouteExtractor::Decoration)).new
+            ts_decorations.each do |d|
+              decorations_by_line[d.decorator_line] ||= [] of Noir::TreeSitterPythonRouteExtractor::Decoration
+              decorations_by_line[d.decorator_line] << d
+            end
+            Noir::TreeSitterPythonRouteExtractor.extract_blueprints(file_content, ["flask"]).each do |bp|
+              blueprint_prefixes[bp.name] ||= bp.prefix
+              api_instances[bp.name] ||= bp.prefix
+            end
 
             lines.each_with_index do |original_line, line_index|
               line = original_line.gsub(" ", "") # remove spaces for easier regex matching
@@ -67,13 +87,7 @@ module Analyzer::Python
                 api_instances[flask_instance_name] ||= ""
                 flask_instances[flask_instance_name] ||= ""
               end
-
-              # Identify Blueprint instance assignments
-              if bp = Noir::PythonRouteExtractor.scan_blueprint(line, ["flask"], original_line)
-                blueprint_instance_name, prefix = bp
-                blueprint_prefixes[blueprint_instance_name] ||= prefix
-                api_instances[blueprint_instance_name] ||= prefix
-              end
+              # (Blueprint discovery moved to the tree-sitter pre-pass above.)
 
               # Identify Api instance assignments
               init_app_match = line.match /(#{PYTHON_VAR_NAME_REGEX})\.init_app\((#{PYTHON_VAR_NAME_REGEX})/
@@ -169,12 +183,20 @@ module Analyzer::Python
                 end
               end
 
-              # Identify Flask route decorators (both @app.route and @app.<method>).
-              # Pass original_line so paths with spaces survive the earlier gsub.
-              Noir::PythonRouteExtractor.scan_decorators(line, original_line).each do |decoration|
-                router_info = Tuple(Int32, ::String, ::String, ::String).new(line_index, path, decoration.path, decoration.extra_params)
-                @routes[decoration.router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String)
-                @routes[decoration.router_name] << router_info
+              # Flask route decorators (`@<router>.route(...)`,
+              # `@<router>.<method>(...)`) are discovered in the tree-sitter
+              # pre-pass above. Look up this line in the resulting map;
+              # the downstream consumer still expects an `extra_params`
+              # string of the shape `methods=['GET','POST']`, so we
+              # synthesise it from the structured method list here.
+              if ts_hits = decorations_by_line[line_index]?
+                ts_hits.each do |decoration|
+                  methods_literal = decoration.methods.map { |m| "'#{m}'" }.join(",")
+                  extra_params = "methods=[#{methods_literal}]"
+                  router_info = Tuple(Int32, ::String, ::String, ::String).new(line_index, path, decoration.path, extra_params)
+                  @routes[decoration.router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String)
+                  @routes[decoration.router_name] << router_info
+                end
               end
 
               # Identify view assignments: view_var = ClassName.as_view('name')

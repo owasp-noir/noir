@@ -2,6 +2,11 @@ require "../../func_spec.cr"
 
 expected_endpoints = [
   Endpoint.new("/", "GET"),
+  # GET /articles/ and GET /articles/{month}-{day}-{year} come from
+  # `r.With(paginate).Get(...)` — the tree-sitter extractor walks the
+  # middleware chain so these no longer go missing.
+  Endpoint.new("/articles/", "GET"),
+  Endpoint.new("/articles/{month}-{day}-{year}", "GET"),
   Endpoint.new("/articles/", "POST"),
   Endpoint.new("/articles/search", "GET"),
   Endpoint.new("/articles/{articleSlug:[a-z-]+}", "GET", [Param.new("articleSlug", "", "path")]),

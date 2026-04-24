@@ -8,6 +8,9 @@ ameba.sh
 # Build artifacts
 /bin/
 
+# tree-sitter build artifacts (compiled on demand from vendored source)
+src/ext/tree_sitter/**/*.o
+
 # Ignore for Hwaro
 /docs/public/
 

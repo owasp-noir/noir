@@ -5,7 +5,7 @@ module Analyzer::Go
     def analyze
       # Source Analysis
       public_dirs = [] of (Hash(String, String))
-      groups = [] of Hash(String, String)
+      package_groups, file_contents = collect_package_groups_ts
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
       begin
@@ -20,37 +20,31 @@ module Analyzer::Go
                   break if path.nil?
                   next if File.directory?(path)
                   if File.exists?(path)
-                    # Read all lines for multi-line pattern support
-                    lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
+                    content = file_contents[path]? || File.read(path, encoding: "utf-8", invalid: :skip)
+                    lines = content.lines
                     last_endpoint = Endpoint.new("", "")
+
+                    # Tree-sitter pre-pass for Fiber's verb-method routes.
+                    # websocket.New(...) detection stays on the raw line text
+                    # because it's a sibling expression, not part of the route
+                    # argument list.
+                    cross_file_groups = ts_groups_for_directory(package_groups, File.dirname(path))
+                    ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(content, cross_file_groups)
+                    routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
+                    ts_routes.each do |r|
+                      routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
+                      routes_by_line[r.line] << r
+                    end
 
                     lines.each_with_index do |line, index|
                       details = Details.new(PathInfo.new(path, index + 1))
-                      lexer = GolangLexer.new
 
-                      analyze_group(line, lexer, groups)
-
-                      # Use case-insensitive regex for HTTP method detection
-                      # Matches patterns like: .GET(, .Get(, .get(, .POST(, .Post(, .post(, etc.
-                      # Exclude parameter extraction patterns
-                      if !line.includes?("Header.Get") && !line.includes?("Cookie.Get") &&
-                         (match = line.match(/\.(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\s*\(/i))
-                        method = match[1].upcase
-                        get_route_path(line, groups).tap do |route_path|
-                          # Handle multi-line routes - check next lines if route is empty
-                          if route_path.size == 0 && index + 1 < lines.size
-                            next_line = lines[index + 1]
-                            route_path = get_route_path(next_line, groups)
-                          end
-
-                          if route_path.size > 0
-                            new_endpoint = Endpoint.new("#{route_path}", method, details)
-                            if line.includes?("websocket.New(")
-                              new_endpoint.protocol = "ws"
-                            end
-                            result << new_endpoint
-                            last_endpoint = new_endpoint
-                          end
+                      if ts_hits = routes_by_line[index]?
+                        ts_hits.each do |route|
+                          new_endpoint = Endpoint.new(route.path, route.verb, details)
+                          new_endpoint.protocol = "ws" if route.handler.includes?("websocket.New(")
+                          result << new_endpoint
+                          last_endpoint = new_endpoint
                         end
                       end
 
@@ -78,7 +72,8 @@ module Analyzer::Go
                         end
                       end
 
-                      if line.includes?("Cookies(")
+                      if line.includes?("Cookies(") &&
+                         !line.includes?("Header.Get") && !line.includes?("Cookie.Get")
                         match = line.match(/Cookies\(\"(.*)\"\)/)
                         if match
                           cookie_name = match[1]

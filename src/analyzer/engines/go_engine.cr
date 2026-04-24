@@ -1,6 +1,7 @@
 require "../../models/analyzer"
 require "../../minilexers/golang"
 require "../../miniparsers/go_route_extractor"
+require "../../miniparsers/go_route_extractor_ts"
 
 module Analyzer::Go
   class GoEngine < Analyzer
@@ -80,6 +81,66 @@ module Analyzer::Go
         package_groups[dir].each { |g| groups << g.dup }
       end
       groups
+    end
+
+    # --- Tree-sitter group/route pre-pass --------------------------------
+    #
+    # Equivalent to `collect_package_groups` + later per-file `get_route_path`
+    # calls, but does all the parsing via tree-sitter. Returns:
+    #   * `package_groups` — per-directory `{group_name => resolved_prefix}`
+    #     after a fixpoint across every .go file in that directory
+    #   * `file_contents` — cached source strings, keyed by path, so the
+    #     per-file second pass doesn't read files twice
+    #
+    # The fixpoint mirrors the legacy implementation: in `routes.go` a group
+    # variable may be defined in a sibling `main.go`, so we loop until no
+    # new entries land. Groups found in-file strictly shadow entries from
+    # the shared map (so if someone redeclares a group name, the nearer
+    # declaration wins).
+    def collect_package_groups_ts : Tuple(Hash(String, Hash(String, String)), Hash(String, String))
+      package_groups = Hash(String, Hash(String, String)).new
+      files_by_dir = Hash(String, Array(String)).new
+      file_contents = Hash(String, String).new
+
+      get_files_by_extension(".go").each do |path|
+        next if File.directory?(path)
+        dir = File.dirname(path)
+        files_by_dir[dir] ||= [] of String
+        files_by_dir[dir] << path
+      end
+
+      files_by_dir.each do |_dir, paths|
+        paths.each do |path|
+          begin
+            file_contents[path] = File.read(path, encoding: "utf-8", invalid: :skip)
+          rescue File::NotFoundError
+            # skip
+          end
+        end
+      end
+
+      files_by_dir.each do |dir, paths|
+        groups = Hash(String, String).new
+        loop do
+          prev_size = groups.size
+          paths.each do |path|
+            content = file_contents[path]?
+            next if content.nil?
+            found = Noir::TreeSitterGoRouteExtractor.extract_groups(content, groups)
+            found.each { |k, v| groups[k] ||= v }
+          end
+          break if groups.size == prev_size
+        end
+        package_groups[dir] = groups unless groups.empty?
+      end
+
+      {package_groups, file_contents}
+    end
+
+    # Returns the cross-file group map for the given directory, or an
+    # empty map when the directory has no registered groups.
+    def ts_groups_for_directory(package_groups : Hash(String, Hash(String, String)), dir : String) : Hash(String, String)
+      package_groups[dir]? || Hash(String, String).new
     end
 
     # --- Adapter helpers (shared across Go framework adapters) ----------

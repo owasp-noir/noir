@@ -1,4 +1,5 @@
 require "../../../miniparsers/python_route_extractor"
+require "../../../miniparsers/python_route_extractor_ts"
 require "../../engines/python_engine"
 
 module Analyzer::Python
@@ -39,18 +40,23 @@ module Analyzer::Python
           @logger.debug "Analyzing #{path}"
 
           File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-            lines = file.each_line.to_a
+            file_content = file.gets_to_end
+            lines = file_content.lines
             next unless lines.any?(&.includes?("bottle"))
 
+            # Tree-sitter pre-pass for Form 1 (`@<var>.route(...)` /
+            # `@<var>.<method>(...)`). Replaces the per-line regex sweep.
+            Noir::TreeSitterPythonRouteExtractor.extract_decorations(file_content).each do |deco|
+              methods_literal = deco.methods.map { |m| "'#{m}'" }.join(",")
+              extra_params = "methods=[#{methods_literal}]"
+              process_route(path, lines, deco.decorator_line, deco.path, extra_params)
+            end
+
+            # Form 2 still needs per-line regex — bare `@route("/path")` has
+            # no router object, so the tree-sitter extractor (which gates
+            # on `<router>.<attr>`) doesn't match it.
             lines.each_with_index do |line, line_index|
               stripped = line.gsub(" ", "")
-
-              # Form 1: @<var>.route / @<var>.<method>
-              Noir::PythonRouteExtractor.scan_decorators(stripped, line).each do |deco|
-                process_route(path, lines, line_index, deco.path, deco.extra_params)
-              end
-
-              # Form 2: bare @route("/path") / @<method>("/path")
               BARE_DECORATORS.each do |deco_name|
                 # `@route("/foo", method="POST")` or `@get("/foo")` on the stripped line.
                 if bare_match = stripped.match(/^@#{deco_name}\([rf]?['"]([^'"]*)['"](.*)/)

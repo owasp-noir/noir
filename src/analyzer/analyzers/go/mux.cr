@@ -5,7 +5,11 @@ module Analyzer::Go
     def analyze
       # Source Analysis
       public_dirs = [] of (Hash(String, String))
-      subrouters = [] of Hash(String, String)
+      # Mux subrouters are created via the two-call chain
+      # `api := r.PathPrefix("/api/").Subrouter()`. The engine fixpoint
+      # treats "Subrouter" as the grouping method and peeks through the
+      # chain to read the PathPrefix argument.
+      package_groups, file_contents = collect_package_groups_ts_mux
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       begin
         populate_channel_with_filtered_files(channel, ".go")
@@ -19,66 +23,33 @@ module Analyzer::Go
                   break if path.nil?
                   next if File.directory?(path)
                   if File.exists?(path)
-                    # Read all lines for lookahead processing
-                    lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
+                    content = file_contents[path]? || File.read(path, encoding: "utf-8", invalid: :skip)
+                    lines = content.lines
                     last_endpoint = Endpoint.new("", "")
+
+                    cross_file_groups = ts_groups_for_directory(package_groups, File.dirname(path))
+                    ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(
+                      content, cross_file_groups,
+                      group_method: "Subrouter",
+                      handlefunc_methods: true,
+                    )
+                    routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
+                    ts_routes.each do |r|
+                      routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
+                      routes_by_line[r.line] << r
+                    end
 
                     lines.each_with_index do |line, index|
                       details = Details.new(PathInfo.new(path, index + 1))
-                      lexer = GolangLexer.new
 
-                      # Handle subrouter creation (e.g., r.PathPrefix("/api/").Subrouter())
-                      if line.includes?(".PathPrefix(") && line.includes?(".Subrouter()")
-                        map = lexer.tokenize(line)
-                        before = Token.new(:unknown, "", 0)
-                        subrouter_name = ""
-                        subrouter_path = ""
-                        map.each do |token|
-                          if token.type == :assign
-                            subrouter_name = before.value.to_s.gsub(":", "").gsub(/\s/, "")
+                      if ts_hits = routes_by_line[index]?
+                        ts_hits.each do |route|
+                          new_endpoint = Endpoint.new(route.path, route.verb, details)
+                          # mux's `.Queries("type", "{type}", ...)` declares
+                          # required query params; bind them to the endpoint.
+                          route.query_params.each do |qp|
+                            new_endpoint.params << Param.new(qp, "", "query")
                           end
-
-                          if token.type == :string
-                            subrouter_path = token.value.to_s
-                            subrouters.each do |sub|
-                              sub.each do |key, value|
-                                if before.value.to_s.includes? key
-                                  subrouter_path = value + subrouter_path
-                                end
-                              end
-                            end
-                          end
-
-                          before = token
-                        end
-
-                        if subrouter_name.size > 0 && subrouter_path.size > 0
-                          subrouters << {subrouter_name => subrouter_path}
-                        end
-                      end
-
-                      # Handle route definitions (e.g., r.HandleFunc("/path", handler).Methods("GET"))
-                      if line.includes?(".HandleFunc(")
-                        route_path = get_route_path(line, subrouters)
-                        # Handle multi-line routes - check next line if route is empty
-                        if route_path.size == 0 && index + 1 < lines.size
-                          route_path = get_route_path(lines[index + 1], subrouters)
-                        end
-
-                        if route_path.size > 0
-                          # Check next 5 lines for .Methods() call
-                          method = "GET" # default
-                          (0..5).each do |lookahead|
-                            check_line_idx = index + lookahead
-                            break if check_line_idx >= lines.size
-                            check_line = lines[check_line_idx]
-                            if check_line.includes?(".Methods(")
-                              method = get_method_from_line(check_line)
-                              break
-                            end
-                          end
-
-                          new_endpoint = Endpoint.new("#{route_path}", method, details)
                           result << new_endpoint
                           last_endpoint = new_endpoint
                         end
@@ -139,6 +110,47 @@ module Analyzer::Go
       end
 
       result
+    end
+
+    # Mux-flavoured version of `GoEngine#collect_package_groups_ts`:
+    # the group marker is the Subrouter chain (`.PathPrefix(...).Subrouter()`).
+    private def collect_package_groups_ts_mux : Tuple(Hash(String, Hash(String, String)), Hash(String, String))
+      package_groups = Hash(String, Hash(String, String)).new
+      files_by_dir = Hash(String, Array(String)).new
+      file_contents = Hash(String, String).new
+
+      get_files_by_extension(".go").each do |p|
+        next if File.directory?(p)
+        dir = File.dirname(p)
+        files_by_dir[dir] ||= [] of String
+        files_by_dir[dir] << p
+      end
+
+      files_by_dir.each do |_dir, paths|
+        paths.each do |p|
+          begin
+            file_contents[p] = File.read(p, encoding: "utf-8", invalid: :skip)
+          rescue File::NotFoundError
+          end
+        end
+      end
+
+      files_by_dir.each do |dir, paths|
+        groups = Hash(String, String).new
+        loop do
+          prev_size = groups.size
+          paths.each do |p|
+            content = file_contents[p]?
+            next if content.nil?
+            found = Noir::TreeSitterGoRouteExtractor.extract_groups(content, groups, "Subrouter")
+            found.each { |k, v| groups[k] ||= v }
+          end
+          break if groups.size == prev_size
+        end
+        package_groups[dir] = groups unless groups.empty?
+      end
+
+      {package_groups, file_contents}
     end
 
     def get_method_from_line(line : String) : String

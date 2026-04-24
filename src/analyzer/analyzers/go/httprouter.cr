@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "../../../minilexers/golang"
+require "../../../miniparsers/go_route_extractor_ts"
 
 module Analyzer::Go
   class Httprouter < Analyzer
@@ -26,36 +27,31 @@ module Analyzer::Go
                   break if path.nil?
                   next if File.directory?(path)
                   if File.exists?(path)
-                    lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
+                    content = File.read(path, encoding: "utf-8", invalid: :skip)
+                    lines = content.lines
                     last_endpoint = Endpoint.new("", "")
+
+                    # Tree-sitter pre-pass: httprouter exposes HTTP verbs as
+                    # methods on the router AND a `Handle("METHOD", "/path",
+                    # handler)` shape where the method is the first argument.
+                    # Pass `handle_method: "Handle"` so both shapes resolve in
+                    # a single parse. httprouter has no groups, so we don't
+                    # pass any cross-file group map.
+                    ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(
+                      content, handle_method: "Handle",
+                    )
+                    routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
+                    ts_routes.each do |r|
+                      routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
+                      routes_by_line[r.line] << r
+                    end
 
                     lines.each_with_index do |line, index|
                       details = Details.new(PathInfo.new(path, index + 1))
 
-                      # Detect route definitions: router.GET("/path", handler), router.POST("/path", handler), etc.
-                      if match = line.match(/\.(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD|Handle)\s*\(\s*"(\/[^"]*)"/)
-                        method = match[1].upcase
-                        route_path = match[2]
-
-                        if method == "HANDLE"
-                          # router.Handle("METHOD", "/path", handler) - extract method from first arg
-                          if handle_match = line.match(/\.Handle\s*\(\s*"([^"]+)"\s*,\s*"(\/[^"]*)"/)
-                            method = handle_match[1].upcase
-                            route_path = handle_match[2]
-                          else
-                            next
-                          end
-                        end
-
-                        last_endpoint = add_endpoint(route_path, method, details)
-                      elsif match = line.match(/\.(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\s*\(/)
-                        # Multi-line: method on this line, path on next line
-                        method = match[1].upcase
-                        if index + 1 < lines.size
-                          next_line = lines[index + 1]
-                          if path_match = next_line.match(/"(\/[^"]*)"/)
-                            last_endpoint = add_endpoint(path_match[1], method, details)
-                          end
+                      if ts_hits = routes_by_line[index]?
+                        ts_hits.each do |route|
+                          last_endpoint = add_endpoint(route.path, route.verb, details)
                         end
                       end
 
