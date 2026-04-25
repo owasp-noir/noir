@@ -70,26 +70,67 @@ module Noir
                              routes : Array(Route))
       ty = Noir::TreeSitter.node_type(node)
       if ty == "class_declaration" || ty == "object_declaration" || ty == "interface_declaration"
-        class_name = type_identifier_text(node, source)
-        class_prefix = class_mapping_prefix(node, source)
-        prefix = join_paths(outer_prefix, class_prefix)
-
-        if body = class_body(node)
-          Noir::TreeSitter.each_named_child(body) do |member|
-            case Noir::TreeSitter.node_type(member)
-            when "function_declaration"
-              collect_function_routes(member, source, class_name, prefix, routes)
-            when "class_declaration", "object_declaration", "interface_declaration"
-              walk_classes(member, source, prefix, routes)
-            end
-          end
-        end
+        process_class(node, source, outer_prefix, [] of LibTreeSitter::TSNode, routes)
         return
       end
 
-      Noir::TreeSitter.each_named_child(node) do |child|
-        walk_classes(child, source, outer_prefix, routes)
+      # Walk children in order so we can pair stray leading
+      # `prefix_expression` annotation chunks (a tree-sitter-kotlin
+      # quirk on top-level annotated classes) with the next class
+      # declaration. The grammar sometimes parses
+      # `@RestController @RequestMapping("/x") class Foo` as two
+      # siblings — a prefix_expression carrying the annotations, and
+      # a class_declaration without `modifiers`. Falling through
+      # `each_named_child` would lose the class-level mapping prefix.
+      pending = [] of LibTreeSitter::TSNode
+      count = LibTreeSitter.ts_node_named_child_count(node)
+      count.times do |i|
+        child = LibTreeSitter.ts_node_named_child(node, i.to_u32)
+        case Noir::TreeSitter.node_type(child)
+        when "class_declaration", "object_declaration", "interface_declaration"
+          process_class(child, source, outer_prefix, pending, routes)
+          pending = [] of LibTreeSitter::TSNode
+        when "prefix_expression"
+          pending << child if prefix_expression_has_annotation?(child)
+        else
+          pending = [] of LibTreeSitter::TSNode
+          walk_classes(child, source, outer_prefix, routes)
+        end
       end
+    end
+
+    private def process_class(node : LibTreeSitter::TSNode,
+                              source : String,
+                              outer_prefix : String,
+                              pending : Array(LibTreeSitter::TSNode),
+                              routes : Array(Route))
+      class_name = type_identifier_text(node, source)
+      class_prefix = class_mapping_prefix(node, source, pending)
+      prefix = join_paths(outer_prefix, class_prefix)
+
+      if body = class_body(node)
+        Noir::TreeSitter.each_named_child(body) do |member|
+          case Noir::TreeSitter.node_type(member)
+          when "function_declaration"
+            collect_function_routes(member, source, class_name, prefix, routes)
+          when "class_declaration", "object_declaration", "interface_declaration"
+            walk_classes(member, source, prefix, routes)
+          end
+        end
+      end
+    end
+
+    # Detect whether a `prefix_expression` node carries annotations
+    # — used to recognise the stray-annotation tree-sitter-kotlin
+    # quirk where top-level `@A @B class Foo` parses with the
+    # annotations as a sibling of `class_declaration`.
+    private def prefix_expression_has_annotation?(node : LibTreeSitter::TSNode) : Bool
+      Noir::TreeSitter.each_named_child(node) do |child|
+        ty = Noir::TreeSitter.node_type(child)
+        return true if ty == "annotation"
+        return true if ty == "prefix_expression" && prefix_expression_has_annotation?(child)
+      end
+      false
     end
 
     # Kotlin's `class_declaration` names its class via a child
@@ -117,13 +158,96 @@ module Noir
       nil
     end
 
-    private def class_mapping_prefix(class_decl : LibTreeSitter::TSNode, source : String) : String
+    private def class_mapping_prefix(class_decl : LibTreeSitter::TSNode,
+                                     source : String,
+                                     stray_annotation_nodes : Array(LibTreeSitter::TSNode) = [] of LibTreeSitter::TSNode) : String
       each_annotation(class_decl, source) do |name, args|
         next unless ANNOTATION_VERBS.has_key?(name)
         paths = annotation_paths(args, source)
         return paths.first unless paths.empty?
       end
+
+      # Fall back to stray-annotation chunks (top-level
+      # `@RequestMapping("/x")` siblings of the class declaration —
+      # tree-sitter-kotlin quirk on the first annotated class in a
+      # file). The argument node here is a `parenthesized_expression`
+      # rather than a `value_arguments`, so we collect string literals
+      # directly.
+      stray_annotation_nodes.each do |stray|
+        collect_stray_annotations(stray, source).each do |entry|
+          name, args = entry
+          next unless ANNOTATION_VERBS.has_key?(name)
+          next unless args
+          buf = [] of String
+          collect_string_values(args, source, buf)
+          return buf.first unless buf.empty?
+        end
+      end
       ""
+    end
+
+    # Walk annotations buried under nested `prefix_expression`
+    # chunks and return `{name, args_node_or_nil}` tuples. Returning
+    # an array (instead of yielding) sidesteps Crystal's restriction
+    # on recursive block expansion in private helpers.
+    private def collect_stray_annotations(node : LibTreeSitter::TSNode, source : String) : Array(Tuple(String, LibTreeSitter::TSNode?))
+      sink = [] of Tuple(String, LibTreeSitter::TSNode?)
+      walk_stray_annotations(node, source, sink)
+      sink
+    end
+
+    private def walk_stray_annotations(node : LibTreeSitter::TSNode,
+                                       source : String,
+                                       sink : Array(Tuple(String, LibTreeSitter::TSNode?)))
+      Noir::TreeSitter.each_named_child(node) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "annotation"
+          Noir::TreeSitter.each_named_child(child) do |sub|
+            case Noir::TreeSitter.node_type(sub)
+            when "user_type"
+              name = simple_annotation_name(Noir::TreeSitter.node_text(sub, source))
+              # Annotation arguments may live in a sibling
+              # `parenthesized_expression` (the
+              # `@RequestMapping("/x")` case).
+              args = parenthesized_args_following(node, child)
+              sink << {name, args}
+            when "constructor_invocation"
+              inner_name = ""
+              ctor_args : LibTreeSitter::TSNode? = nil
+              Noir::TreeSitter.each_named_child(sub) do |arg_child|
+                case Noir::TreeSitter.node_type(arg_child)
+                when "user_type"
+                  inner_name = simple_annotation_name(Noir::TreeSitter.node_text(arg_child, source))
+                when "value_arguments"
+                  ctor_args = arg_child
+                end
+              end
+              sink << {inner_name, ctor_args} unless inner_name.empty?
+            end
+          end
+        when "prefix_expression"
+          walk_stray_annotations(child, source, sink)
+        end
+      end
+    end
+
+    # When an annotation parses as `@Foo` followed by a separate
+    # `parenthesized_expression` (the stray-annotation quirk), grab
+    # the matching `parenthesized_expression` sibling so we can
+    # surface it as the annotation's argument node. Returns nil when
+    # no such sibling is present (the no-args annotation case).
+    private def parenthesized_args_following(parent : LibTreeSitter::TSNode,
+                                             ann_node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+      seen = false
+      result : LibTreeSitter::TSNode? = nil
+      Noir::TreeSitter.each_named_child(parent) do |sibling|
+        if seen
+          result = sibling if Noir::TreeSitter.node_type(sibling) == "parenthesized_expression"
+          break
+        end
+        seen = true if sibling == ann_node
+      end
+      result
     end
 
     private def collect_function_routes(func : LibTreeSitter::TSNode,
@@ -277,6 +401,14 @@ module Noir
         sink << text unless text.empty?
       when "collection_literal"
         # Kotlin's `[...]` array syntax inside annotations.
+        Noir::TreeSitter.each_named_child(node) do |elem|
+          collect_string_values(elem, source, sink)
+        end
+      when "parenthesized_expression"
+        # Stray-annotation case: `@RequestMapping("/x")` gets parsed
+        # as `annotation` + sibling `parenthesized_expression`
+        # carrying a bare `string_literal` (no `value_arguments`
+        # wrapper).
         Noir::TreeSitter.each_named_child(node) do |elem|
           collect_string_values(elem, source, sink)
         end

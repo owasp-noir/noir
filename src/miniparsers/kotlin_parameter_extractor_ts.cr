@@ -42,16 +42,16 @@ module Noir
       "multipartfile",
     }
 
+    # Verbs whose `params = [...]` constraint emits as query
+    # parameters. Anything else uses form data.
+    QUERY_VERB_PARAMS = Set{"GET", "HEAD", "OPTIONS"}
+
     HTTP_HEADER_SPECIAL_CASES = {
       "Etag"             => "ETag",
       "Te"               => "TE",
       "Www-Authenticate" => "WWW-Authenticate",
       "X-Frame-Options"  => "X-Frame-Options",
     }
-
-    # Verbs whose `params = [...]` constraint should be exposed as
-    # query parameters. Anything else routes to "form".
-    QUERY_VERB_PARAMS = Set{"GET", "HEAD", "OPTIONS"}
 
     struct ImportDecl
       getter path : String
@@ -664,10 +664,16 @@ module Noir
         next unless kind == :keyword && value
         case key
         when "params"
+          # Spring `params=` is a routing constraint. Use the verb's
+          # natural format (GET/HEAD/OPTIONS → query, otherwise form)
+          # — matches legacy single-verb behaviour. Multi-verb
+          # `@RequestMapping(method = [GET, POST])` callers should
+          # supply `verb` of the first method so all expansions share
+          # one format (mirrors the legacy `||=` quirk).
+          format = QUERY_VERB_PARAMS.includes?(verb.upcase) ? "query" : "form"
           string_values_in(value, source).each do |raw|
             name, default = split_constraint(raw)
             next if name.empty?
-            format = QUERY_VERB_PARAMS.includes?(verb.upcase) ? "query" : "form"
             sink << Param.new(name, default, format)
           end
         when "headers"
