@@ -46,6 +46,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"java_dropwizard", Java::Dropwizard},
     {"java_jaxrs", Java::JaxRs},
     {"java_jsp", Java::Jsp},
+    {"java_micronaut", Java::Micronaut},
     {"java_quarkus", Java::Quarkus},
     {"java_spring", Java::Spring},
     {"java_vertx", Java::Vertx},

@@ -515,6 +515,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :java_micronaut => {
+      :framework => "Micronaut",
+      :language  => "Java",
+      :similar   => ["micronaut", "java-micronaut", "java_micronaut"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :java_jsp => {
       :framework => "JSP",
       :language  => "Java",
