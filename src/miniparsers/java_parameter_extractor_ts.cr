@@ -1,5 +1,6 @@
 require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
+require "./import_graph"
 
 module Noir
   # Tree-sitter-backed parameter extractor for Java/Spring.
@@ -41,13 +42,10 @@ module Noir
     # A Java `import` declaration. `wildcard` is true for star imports
     # (`import com.foo.*;`) which fan out to every `.java` in the
     # resolved directory.
-    struct ImportDecl
-      getter path : String
-      getter? wildcard : Bool
-
-      def initialize(@path, @wildcard)
-      end
-    end
+    # Alias the shared import-graph type so existing call sites stay
+    # ergonomic while the cross-file traversal logic lives in
+    # `Noir::ImportGraph` (#1107).
+    alias ImportDecl = Noir::ImportGraph::ImportRef
 
     struct FieldInfo
       getter name : String
@@ -569,73 +567,28 @@ module Noir
 
     # Build the DTO index visible to the Spring controller at `path`.
     # Callers pass `content` (already read once) to avoid a redundant
-    # disk read for the current file.
+    # disk read for the current file. Cross-file traversal is
+    # delegated to `Noir::ImportGraph` so this stays a thin
+    # language-specific cache.
     def build_for(path : String, content : String) : Index
       result = Index.new
-      merge!(result, classes_in_current(path, content))
-
-      package_dir = File.dirname(path)
-      safe_glob("#{package_dir}/*.java") do |sibling|
-        next if sibling == path
-        merge!(result, classes_in(sibling))
-      end
-
       package_name = TreeSitterJavaParameterExtractor.extract_package_name(content)
-      source_root = source_root_for(path, package_name) unless package_name.empty?
-      return result unless source_root
+      imports = TreeSitterJavaParameterExtractor.extract_imports(content)
 
-      TreeSitterJavaParameterExtractor.extract_imports(content).each do |imp|
-        relative = imp.path.gsub(".", "/")
-        if imp.wildcard?
-          dir = File.join(source_root, relative)
-          next unless Dir.exists?(dir)
-          safe_glob("#{dir}/*.java") do |match|
-            merge!(result, classes_in(match))
-          end
-        else
-          file = File.join(source_root, "#{relative}.java")
-          next unless File.exists?(file)
-          merge!(result, classes_in(file))
-        end
+      Noir::ImportGraph.related_files(path, package_name, imports, "java") do |file|
+        merge!(result, classes_in(file, path, content))
       end
 
       result
     end
 
-    private def classes_in_current(path : String, content : String) : Index
-      @file_cache[path] ||= TreeSitterJavaParameterExtractor.extract_class_fields(content)
-    end
-
-    private def classes_in(path : String) : Index
-      @file_cache[path] ||= begin
-        TreeSitterJavaParameterExtractor.extract_class_fields(File.read(path, encoding: "utf-8", invalid: :skip))
+    private def classes_in(file : String, current_path : String, current_content : String) : Index
+      @file_cache[file] ||= begin
+        body = file == current_path ? current_content : File.read(file, encoding: "utf-8", invalid: :skip)
+        TreeSitterJavaParameterExtractor.extract_class_fields(body)
       rescue File::NotFoundError
         Index.new
       end
-    end
-
-    # Infer the source root by stripping the package path from the
-    # file's directory. `src/main/java/com/foo/Bar.java` with package
-    # `com.foo` gives `src/main/java`. Returns nil when the package
-    # path doesn't actually trail the file's directory (which means
-    # the source tree is laid out differently and we can't safely
-    # resolve imports).
-    private def source_root_for(file_path : String, package_name : String) : String?
-      package_segments = package_name.split('.')
-      dir = File.dirname(file_path)
-      dir_segments = dir.split('/')
-      return if dir_segments.size < package_segments.size
-      tail = dir_segments[(dir_segments.size - package_segments.size)..]
-      return unless tail == package_segments
-      root = dir_segments[0, dir_segments.size - package_segments.size].join('/')
-      root.empty? ? "." : root
-    end
-
-    # `Dir.glob` raises on unreadable entries in some edge cases;
-    # swallow those so one bad sibling doesn't sink the whole index.
-    private def safe_glob(pattern : String, &)
-      Dir.glob(pattern) { |p| yield p }
-    rescue
     end
 
     private def merge!(into : Index, src : Index)
