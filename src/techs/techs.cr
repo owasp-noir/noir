@@ -461,6 +461,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :java_jaxrs => {
+      :framework => "JAX-RS",
+      :language  => "Java",
+      :similar   => ["jaxrs", "jax-rs", "jakarta-rest", "java-jaxrs", "java_jaxrs"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :java_jsp => {
       :framework => "JSP",
       :language  => "Java",
