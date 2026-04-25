@@ -461,6 +461,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :java_dropwizard => {
+      :framework => "Dropwizard",
+      :language  => "Java",
+      :similar   => ["dropwizard", "java-dropwizard", "java_dropwizard"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :java_jaxrs => {
       :framework => "JAX-RS",
       :language  => "Java",
