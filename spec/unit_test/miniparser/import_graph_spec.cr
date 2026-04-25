@@ -117,4 +117,100 @@ describe Noir::ImportGraph do
       end
     end
   end
+
+  describe "#resolve_relative_import" do
+    it "resolves a sibling file by adding a candidate extension" do
+      with_tmpdir do |root|
+        Dir.mkdir_p(File.join(root, "src"))
+        from_file = File.join(root, "src", "index.ts")
+        target = File.join(root, "src", "users.ts")
+        File.write(from_file, "")
+        File.write(target, "")
+
+        Noir::ImportGraph.resolve_relative_import(from_file, "./users").should eq(target)
+      end
+    end
+
+    it "honours an explicit extension on the specifier" do
+      with_tmpdir do |root|
+        Dir.mkdir_p(File.join(root, "src"))
+        from_file = File.join(root, "src", "index.ts")
+        target = File.join(root, "src", "users.ts")
+        # A `.js` sibling exists but the specifier requests `.ts`.
+        File.write(from_file, "")
+        File.write(target, "")
+        File.write(File.join(root, "src", "users.js"), "")
+
+        Noir::ImportGraph.resolve_relative_import(from_file, "./users.ts").should eq(target)
+      end
+    end
+
+    it "falls back to <dir>/index.<ext> for directory specifiers" do
+      with_tmpdir do |root|
+        Dir.mkdir_p(File.join(root, "src", "routes"))
+        from_file = File.join(root, "src", "index.ts")
+        target = File.join(root, "src", "routes", "index.ts")
+        File.write(from_file, "")
+        File.write(target, "")
+
+        Noir::ImportGraph.resolve_relative_import(from_file, "./routes").should eq(target)
+      end
+    end
+
+    it "walks up parent directories with `..`" do
+      with_tmpdir do |root|
+        Dir.mkdir_p(File.join(root, "src", "deep"))
+        from_file = File.join(root, "src", "deep", "child.ts")
+        target = File.join(root, "src", "shared.ts")
+        File.write(from_file, "")
+        File.write(target, "")
+
+        Noir::ImportGraph.resolve_relative_import(from_file, "../shared").should eq(target)
+      end
+    end
+
+    it "tries extensions in priority order" do
+      with_tmpdir do |root|
+        Dir.mkdir_p(File.join(root, "src"))
+        from_file = File.join(root, "src", "index.ts")
+        ts_target = File.join(root, "src", "users.ts")
+        js_target = File.join(root, "src", "users.js")
+        File.write(from_file, "")
+        File.write(ts_target, "")
+        File.write(js_target, "")
+
+        # `.ts` precedes `.js` in `JS_RESOLVE_EXTENSIONS`, so the
+        # TypeScript file wins.
+        Noir::ImportGraph.resolve_relative_import(from_file, "./users").should eq(ts_target)
+      end
+    end
+
+    it "returns nil for bare specifiers (node_modules)" do
+      with_tmpdir do |root|
+        from_file = File.join(root, "index.ts")
+        File.write(from_file, "")
+        Noir::ImportGraph.resolve_relative_import(from_file, "lodash").should be_nil
+        Noir::ImportGraph.resolve_relative_import(from_file, "@hapi/hapi").should be_nil
+      end
+    end
+
+    it "returns nil when nothing on disk matches" do
+      with_tmpdir do |root|
+        from_file = File.join(root, "index.ts")
+        File.write(from_file, "")
+        Noir::ImportGraph.resolve_relative_import(from_file, "./missing").should be_nil
+      end
+    end
+
+    it "accepts a custom extension list" do
+      with_tmpdir do |root|
+        from_file = File.join(root, "index.rb")
+        target = File.join(root, "users.rb")
+        File.write(from_file, "")
+        File.write(target, "")
+
+        Noir::ImportGraph.resolve_relative_import(from_file, "./users", extensions: ["rb"]).should eq(target)
+      end
+    end
+  end
 end

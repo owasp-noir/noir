@@ -108,5 +108,79 @@ module Noir
       Dir.glob(pattern) { |p| block.call(p) }
     rescue
     end
+
+    # ----------------------------------------------------------------
+    # Relative-import resolution (JS / Ruby flavour).
+    #
+    # JS / Node / Ruby imports are filesystem-relative — neither the
+    # JVM-style package-trailing-the-directory inference nor a
+    # source-root model applies. The caller hands over the importing
+    # file and the import specifier (`./foo`, `../bar/baz`,
+    # `./users.js`) and we return the resolved absolute path or
+    # `nil` when nothing on disk matches.
+    #
+    # Intended for JS analyzers (Express / Hono / Hapi cross-file
+    # route discovery in particular) and any future Ruby / Lua / Lua
+    # analyzer that uses `require './foo'` style paths. Bare
+    # specifiers (`lodash`, `@hapi/hapi`) aren't filesystem-relative
+    # — those need a `node_modules` walk that's deliberately out of
+    # scope for noir today.
+    #
+    # Resolution order, mirroring Node's CJS algorithm:
+    #
+    #   1. If the specifier already carries a known extension, only
+    #      that exact file is tried.
+    #   2. Otherwise, `<base>/<specifier>.<ext>` for each candidate
+    #      extension in priority order.
+    #   3. Finally, `<base>/<specifier>/index.<ext>` for each
+    #      candidate extension — the directory-with-index form.
+
+    JS_RESOLVE_EXTENSIONS = ["ts", "tsx", "js", "jsx", "mjs", "cjs"]
+
+    def self.resolve_relative_import(from_file : String,
+                                     import_specifier : String,
+                                     extensions : Array(String) = JS_RESOLVE_EXTENSIONS) : String?
+      return unless import_specifier.starts_with?("./") || import_specifier.starts_with?("../")
+
+      base_dir = File.dirname(from_file)
+      combined = File.expand_path(File.join(base_dir, import_specifier))
+
+      # Specifier with an explicit extension — that exact path or
+      # nothing. Mirrors Node's behaviour for fully-qualified
+      # `./foo.ts` imports.
+      if extensions.any? { |ext| import_specifier.ends_with?(".#{ext}") }
+        return File.exists?(combined) ? combined : nil
+      end
+
+      extensions.each do |ext|
+        candidate = "#{combined}.#{ext}"
+        return candidate if File.exists?(candidate)
+      end
+
+      if Dir.exists?(combined)
+        extensions.each do |ext|
+          candidate = File.join(combined, "index.#{ext}")
+          return candidate if File.exists?(candidate)
+        end
+      end
+
+      nil
+    end
+
+    # ----------------------------------------------------------------
+    # Python flavour (placeholder).
+    #
+    # Python frameworks (Flask, FastAPI, Sanic, Tornado) currently
+    # use the regex-driven `find_imported_modules` helper inside
+    # `src/analyzer/engines/python_engine.cr`. It already handles
+    # the common shapes — `from foo.bar import baz`, relative `from
+    # . import x` and `from .. import x`, plus parenthesised
+    # multi-line imports.
+    #
+    # When we migrate Python analyzers off the legacy parser this
+    # logic should move into a `Noir::ImportGraph` Python helper so
+    # FastAPI / Sanic / Tornado cross-file route discovery can share
+    # it instead of each analyzer rolling its own. Tracking that
+    # under the same #1107 umbrella as the JS half above.
   end
 end
