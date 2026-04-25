@@ -43,6 +43,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"grpc", Specification::Grpc},
     {"har", Specification::Har},
     {"java_armeria", Java::Armeria},
+    {"java_jaxrs", Java::JaxRs},
     {"java_jsp", Java::Jsp},
     {"java_spring", Java::Spring},
     {"java_vertx", Java::Vertx},
