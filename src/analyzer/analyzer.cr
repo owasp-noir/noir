@@ -63,6 +63,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"js_nitro", Javascript::Nitro},
     {"js_nuxtjs", Javascript::Nuxtjs},
     {"js_restify", Javascript::Restify},
+    {"js_sveltekit", Javascript::Sveltekit},
     {"kotlin_http4k", Kotlin::Http4k},
     {"kotlin_spring", Kotlin::Spring},
     {"kotlin_ktor", Kotlin::Ktor},
