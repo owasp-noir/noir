@@ -55,6 +55,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"js_astro", Javascript::Astro},
     {"js_express", Javascript::Express},
     {"js_fastify", Javascript::Fastify},
+    {"js_fresh", Javascript::Fresh},
     {"js_hapi", Javascript::Hapi},
     {"js_hono", Javascript::Hono},
     {"js_koa", Javascript::Koa},
