@@ -28,15 +28,25 @@ describe "Detect JS Next.js" do
   end
 
   it "pages_api_ts" do
-    instance.detect("project/pages/api/users.ts", "export default function handler() {}").should be_true
+    content = "import type { NextApiRequest, NextApiResponse } from \"next\"\nexport default function handler() {}"
+    instance.detect("project/pages/api/users.ts", content).should be_true
   end
 
   it "pages_api_js" do
-    instance.detect("project/pages/api/users.js", "module.exports = {}").should be_true
+    content = "const next = require('next')\nmodule.exports = {}"
+    instance.detect("project/pages/api/users.js", content).should be_true
   end
 
   it "pages_api_dynamic" do
-    instance.detect("project/pages/api/users/[id].ts", "export default function() {}").should be_true
+    content = "import { NextRequest } from \"next/server\"\nexport default function() {}"
+    instance.detect("project/pages/api/users/[id].ts", content).should be_true
+  end
+
+  it "pages_api_without_next_signal" do
+    # Path looks like Next.js Pages Router but the file imports nothing
+    # Next.js-specific — this is the Astro / SvelteKit case where the
+    # filesystem layout overlaps. Should not match.
+    instance.detect("project/pages/api/users.ts", "export default function handler() {}").should be_false
   end
 
   it "app_route_ts" do

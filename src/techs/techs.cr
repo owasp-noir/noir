@@ -623,6 +623,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :js_astro => {
+      :framework => "Astro",
+      :language  => "JavaScript",
+      :similar   => ["astro", "js-astro", "js_astro"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => true,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :js_express => {
       :framework => "Express",
       :language  => "JavaScript",
