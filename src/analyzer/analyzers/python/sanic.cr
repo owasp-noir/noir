@@ -1,5 +1,3 @@
-require "../../../minilexers/python"
-require "../../../miniparsers/python"
 require "../../../miniparsers/python_route_extractor"
 require "../../../miniparsers/python_route_extractor_ts"
 require "../../engines/python_engine"
@@ -25,7 +23,6 @@ module Analyzer::Python
     }
 
     @file_content_cache = Hash(::String, ::String).new
-    @parsers = Hash(::String, PythonParser).new
     @routes = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String))).new
 
     def analyze

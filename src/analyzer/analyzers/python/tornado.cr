@@ -1,5 +1,3 @@
-require "../../../minilexers/python"
-require "../../../miniparsers/python"
 require "../../engines/python_engine"
 
 module Analyzer::Python
@@ -26,7 +24,6 @@ module Analyzer::Python
     CLASS_DEF_REGEX = /^class\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*[\(:]/
 
     @file_content_cache = Hash(::String, ::String).new
-    @parsers = Hash(::String, PythonParser).new
     @routes = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String))).new
     @import_modules_cache = Hash(::String, Hash(::String, Tuple(::String, Int32))).new
 
