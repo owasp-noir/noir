@@ -3,8 +3,15 @@ require "../../../miniparsers/jaxrs_extractor_ts"
 require "../../../miniparsers/import_graph"
 
 module Analyzer::Java
-  class JaxRs < Analyzer
-    JAVA_EXTENSION = "java"
+  # Quarkus is JAX-RS-flavoured, so this analyzer just drives the
+  # shared `TreeSitterJaxRsExtractor` against files that carry the
+  # `io.quarkus` marker. The extractor already understands Quarkus's
+  # `@RestPath` / `@RestQuery` / `@RestHeader` / `@RestForm` /
+  # `@RestCookie` shorthand annotations alongside the standard
+  # JAX-RS names, so no Quarkus-specific tree walking is needed.
+  class Quarkus < Analyzer
+    JAVA_EXTENSION  = "java"
+    QUARKUS_MARKERS = ["io.quarkus", "quarkus.io"]
 
     def analyze
       dto_builder = Noir::TreeSitterJavaDtoIndex.new
@@ -16,16 +23,7 @@ module Analyzer::Java
         next unless path.ends_with?(".#{JAVA_EXTENSION}")
 
         content = File.read(path, encoding: "utf-8", invalid: :skip)
-
-        # Cheap pre-filter: only files that mention JAX-RS bindings
-        # carry resource classes. Avoids parsing the entire source
-        # tree for unrelated `.java` files.
-        next unless content.includes?("jakarta.ws.rs") || content.includes?("javax.ws.rs")
-
-        # Skip files claimed by a derived framework (Quarkus,
-        # Dropwizard) so the same resource class doesn't surface as
-        # both `java_jaxrs` and `java_quarkus` endpoints.
-        next if claimed_by_derivative?(content)
+        next unless QUARKUS_MARKERS.any? { |marker| content.includes?(marker) }
 
         package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name(content)
         next if package_name.empty?
@@ -44,19 +42,6 @@ module Analyzer::Java
       @result
     end
 
-    # Frameworks that ride on JAX-RS but ship their own analyzer.
-    # Listing them here keeps the JAX-RS analyzer the fallback for
-    # vanilla Jersey / RESTEasy resources without double-counting.
-    DERIVATIVE_MARKERS = ["io.quarkus", "io.dropwizard"]
-
-    private def claimed_by_derivative?(content : String) : Bool
-      DERIVATIVE_MARKERS.any? { |marker| content.includes?(marker) }
-    end
-
-    # Build the cross-file `@BeanParam` index for `path`. Same
-    # traversal as the DTO index — current file + same-package
-    # siblings + imports — but each file's `extract_bean_fields`
-    # result is memoised in the analyzer's per-run cache.
     private def bean_index_for(path : String,
                                content : String,
                                package_name : String,
