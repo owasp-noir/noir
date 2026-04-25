@@ -677,6 +677,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :js_hapi => {
+      :framework => "Hapi",
+      :language  => "JavaScript",
+      :similar   => ["hapi", "js-hapi", "js_hapi", "@hapi/hapi"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :js_hono => {
       :framework => "Hono",
       :language  => "JavaScript",
