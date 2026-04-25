@@ -731,6 +731,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :js_fresh => {
+      :framework => "Fresh",
+      :language  => "JavaScript",
+      :similar   => ["fresh", "js-fresh", "js_fresh", "deno-fresh"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => true,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :js_hapi => {
       :framework => "Hapi",
       :language  => "JavaScript",
