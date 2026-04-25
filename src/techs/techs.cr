@@ -677,6 +677,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :js_sveltekit => {
+      :framework => "SvelteKit",
+      :language  => "JavaScript",
+      :similar   => ["sveltekit", "svelte-kit", "js-sveltekit", "js_sveltekit"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => true,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :js_fastify => {
       :framework => "Fastify",
       :language  => "JavaScript",
