@@ -58,7 +58,7 @@ fi
 # Each grammar ships `parser.c` (always, auto-generated). Most also ship
 # `scanner.c` (hand-written custom lexer for context-sensitive tokens) —
 # Go does not, so we compile scanner.c only when the file exists.
-GRAMMARS="python go java kotlin"
+GRAMMARS="python go java kotlin javascript"
 OBJS="$RUNTIME_OBJ"
 for g in $GRAMMARS; do
   GD="$D/grammars/$g"
