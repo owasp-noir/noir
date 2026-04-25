@@ -62,6 +62,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"js_nextjs", Javascript::Nextjs},
     {"js_nitro", Javascript::Nitro},
     {"js_nuxtjs", Javascript::Nuxtjs},
+    {"js_remix", Javascript::Remix},
     {"js_restify", Javascript::Restify},
     {"js_sveltekit", Javascript::Sveltekit},
     {"kotlin_http4k", Kotlin::Http4k},

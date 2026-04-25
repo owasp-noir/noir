@@ -677,6 +677,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :js_remix => {
+      :framework => "Remix",
+      :language  => "JavaScript",
+      :similar   => ["remix", "remix-run", "js-remix", "js_remix"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => true,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :js_sveltekit => {
       :framework => "SvelteKit",
       :language  => "JavaScript",
