@@ -515,6 +515,42 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :java_javalin => {
+      :framework => "Javalin",
+      :language  => "Java",
+      :similar   => ["javalin", "java-javalin", "java_javalin"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
+    :java_spark => {
+      :framework => "Spark Java",
+      :language  => "Java",
+      :similar   => ["spark", "spark-java", "java-spark", "java_spark"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :java_micronaut => {
       :framework => "Micronaut",
       :language  => "Java",
