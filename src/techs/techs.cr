@@ -641,6 +641,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :js_elysia => {
+      :framework => "Elysia",
+      :language  => "JavaScript",
+      :similar   => ["elysia", "js-elysia", "js_elysia", "bun-elysia"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :js_express => {
       :framework => "Express",
       :language  => "JavaScript",
