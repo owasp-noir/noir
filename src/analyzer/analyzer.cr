@@ -52,6 +52,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"java_spark", Java::Spark},
     {"java_spring", Java::Spring},
     {"java_vertx", Java::Vertx},
+    {"js_adonisjs", Javascript::Adonisjs},
     {"js_astro", Javascript::Astro},
     {"js_elysia", Javascript::Elysia},
     {"js_express", Javascript::Express},
