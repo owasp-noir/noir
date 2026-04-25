@@ -106,6 +106,7 @@ lib LibTreeSitter
   fun tree_sitter_go : TSLanguage
   fun tree_sitter_java : TSLanguage
   fun tree_sitter_kotlin : TSLanguage
+  fun tree_sitter_javascript : TSLanguage
 end
 
 # Thin high-level facade. Keeps tree lifetime tied to an object so callers
@@ -151,6 +152,14 @@ module Noir::TreeSitter
   # Parses `source` with the Kotlin grammar and yields the root node.
   def self.parse_kotlin(source : String, &)
     parse(source, LibTreeSitter.tree_sitter_kotlin) { |root| yield root }
+  end
+
+  # Parses `source` with the JavaScript grammar and yields the
+  # root node. Covers `.js` / `.mjs` / `.cjs` files; the JSX
+  # superset is recognised too — JSX-bearing TypeScript needs
+  # `parse_typescript` (not yet vendored).
+  def self.parse_javascript(source : String, &)
+    parse(source, LibTreeSitter.tree_sitter_javascript) { |root| yield root }
   end
 
   # Convenience: returns the root-node s-expression for `source`.
