@@ -51,7 +51,7 @@ module Analyzer::Javascript
     FALLBACK_HANDLER_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"]
 
     # Files that are framework plumbing rather than routes.
-    SKIPPED_LEAFS = ["_app", "_layout", "_404", "_500", "_middleware"]
+    SKIPPED_LEAVES = ["_app", "_layout", "_404", "_500", "_middleware"]
 
     def analyze
       result = [] of Endpoint
@@ -63,7 +63,7 @@ module Analyzer::Javascript
 
         relative = path[(idx + "/routes/".size)..-1]
         leaf = strip_extension(File.basename(relative))
-        next if SKIPPED_LEAFS.includes?(leaf)
+        next if SKIPPED_LEAVES.includes?(leaf)
         next if leaf.starts_with?("_") # other underscore-prefixed plumbing
 
         url = url_for(relative)
