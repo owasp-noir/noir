@@ -45,12 +45,24 @@ module Noir
       "OPTIONS" => "OPTIONS",
     }
 
+    # Both standard JAX-RS names and Quarkus's `@Rest*` aliases map
+    # to the same param formats. Listing both here keeps the
+    # Quarkus analyzer a thin detector layer on top of this extractor.
     PARAM_ANNOTATION_FORMAT = {
       "QueryParam"  => "query",
       "HeaderParam" => "header",
       "CookieParam" => "cookie",
       "FormParam"   => "form",
+      "RestQuery"   => "query",
+      "RestHeader"  => "header",
+      "RestCookie"  => "cookie",
+      "RestForm"    => "form",
     }
+
+    # `@PathParam` skip-list — Quarkus's `@RestPath` is a drop-in
+    # alias for the same role. Both are URL-carried and never emitted
+    # as request parameters.
+    PATH_PARAM_ANNOTATIONS = Set{"PathParam", "RestPath"}
 
     # Java primitive type names (lowercased). Anything else with no
     # parameter annotation gets treated as a request-body DTO.
@@ -339,23 +351,20 @@ module Noir
       default_value : String? = nil
 
       each_annotation(param, source) do |name, args, _|
-        case name
-        when "PathParam"
+        if PATH_PARAM_ANNOTATIONS.includes?(name)
           ann_kind = :path
           ann_arg = first_string_arg(args, source)
-        when "BeanParam"
+        elsif name == "BeanParam"
           ann_kind = :bean
-        when "Context"
+        elsif name == "Context"
           ann_kind = :context
-        when "DefaultValue"
+        elsif name == "DefaultValue"
           default_value = first_string_arg(args, source)
-        else
-          if format = PARAM_ANNOTATION_FORMAT[name]?
-            ann_kind = :param
-            ann_arg = first_string_arg(args, source)
-            ann_arg ||= ""
-            sink << Param.new(ann_arg.presence || param_name, default_value || "", format)
-          end
+        elsif format = PARAM_ANNOTATION_FORMAT[name]?
+          ann_kind = :param
+          ann_arg = first_string_arg(args, source)
+          ann_arg ||= ""
+          sink << Param.new(ann_arg.presence || param_name, default_value || "", format)
         end
       end
 
