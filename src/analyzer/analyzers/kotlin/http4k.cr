@@ -12,7 +12,7 @@ module Analyzer::Kotlin
         next unless File.exists?(path)
         next unless path.ends_with?(".#{KOTLIN_EXTENSION}")
 
-        content = File.read(path, encoding: "utf-8", invalid: :skip)
+        content = read_file_content(path)
         next unless content.includes?(HTTP4K_MARKER)
 
         Noir::TreeSitterHttp4kExtractor.extract_routes(content).each do |route|

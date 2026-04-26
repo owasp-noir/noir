@@ -15,7 +15,7 @@ module Analyzer::Javascript
         next unless File.exists?(path)
         next unless JS_EXTENSIONS.any? { |ext| path.ends_with?(ext) }
 
-        content = File.read(path, encoding: "utf-8", invalid: :skip)
+        content = read_file_content(path)
         next unless ADONIS_MARKERS.any? { |m| content.includes?(m) }
 
         Noir::TreeSitterAdonisJsExtractor.extract_routes(content).each do |route|

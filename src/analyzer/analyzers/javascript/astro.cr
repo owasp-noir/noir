@@ -78,7 +78,7 @@ module Analyzer::Javascript
       url = url_for(relative)
 
       content = begin
-        File.read(path, encoding: "utf-8", invalid: :skip)
+        read_file_content(path)
       rescue e
         logger.debug "Error reading #{path}: #{e.message}"
         return

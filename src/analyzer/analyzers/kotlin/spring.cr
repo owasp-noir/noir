@@ -132,7 +132,7 @@ module Analyzer::Kotlin
     # `consumes = ...`, and DTO cross-file resolution all run on the
     # vendored Kotlin grammar — no `KotlinParser` / `KotlinLexer`.
     private def process_kotlin_file(path : String, dto_builder : Noir::TreeSitterKotlinDtoIndex, webflux_base_path_map : Hash(String, String))
-      content = File.read(path, encoding: "utf-8", invalid: :skip)
+      content = read_file_content(path)
 
       # Skip files without a package declaration — legacy filter that
       # avoids scanning test stubs / throwaway snippets.

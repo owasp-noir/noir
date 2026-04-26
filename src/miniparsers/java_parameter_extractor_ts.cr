@@ -1,5 +1,6 @@
 require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
+require "../models/code_locator"
 require "./import_graph"
 
 module Noir
@@ -584,7 +585,17 @@ module Noir
 
     private def classes_in(file : String, current_path : String, current_content : String) : Index
       @file_cache[file] ||= begin
-        body = file == current_path ? current_content : File.read(file, encoding: "utf-8", invalid: :skip)
+        body =
+          if file == current_path
+            current_content
+          else
+            # Detector pre-warms a content cache for every scanned
+            # file (size-bounded). Sibling DTO files often live in
+            # that cache already — `nil` falls back to a fresh
+            # `File.read` for files outside the budget.
+            CodeLocator.instance.content_for(file) ||
+            File.read(file, encoding: "utf-8", invalid: :skip)
+          end
         TreeSitterJavaParameterExtractor.extract_class_fields(body)
       rescue File::NotFoundError
         Index.new

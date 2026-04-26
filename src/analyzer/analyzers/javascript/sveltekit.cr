@@ -85,7 +85,7 @@ module Analyzer::Javascript
     private def analyze_api_route(path : String, relative : String, result : Array(Endpoint), mutex : Mutex)
       url = url_for(relative)
       content = begin
-        File.read(path, encoding: "utf-8", invalid: :skip)
+        read_file_content(path)
       rescue e
         logger.debug "Error reading #{path}: #{e.message}"
         return

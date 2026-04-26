@@ -41,7 +41,7 @@ module Analyzer::Java
         next unless File.exists?(path)
         next unless path.ends_with?(".#{JAVA_EXTENSION}")
 
-        content = File.read(path, encoding: "utf-8", invalid: :skip)
+        content = read_file_content(path)
         next unless SPARK_MARKERS.any? { |m| content.includes?(m) }
 
         Noir::TreeSitterJvmLambdaDslExtractor.extract_routes(content, CONFIG).each do |route|
