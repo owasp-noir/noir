@@ -35,5 +35,11 @@ module Detector::Specification
     def set_name
       @name = "oas3"
     end
+
+    # Registers every OAS3 spec path in `CodeLocator` for the
+    # analyzer pass. Must keep running after first match.
+    def idempotent? : Bool
+      false
+    end
   end
 end

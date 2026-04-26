@@ -21,5 +21,13 @@ module Detector::CSharp
     def set_name
       @name = "cs_aspnet_mvc"
     end
+
+    # `check_routeconfig` records every `RouteConfig.cs` path it
+    # sees into `CodeLocator` for the analyzer to consume. Skipping
+    # this detector after its first match would lose the
+    # registration on subsequent files.
+    def idempotent? : Bool
+      false
+    end
   end
 end

@@ -18,5 +18,12 @@ module Detector::Specification
     def set_name
       @name = "grpc"
     end
+
+    # Records every matching `.proto` path in `CodeLocator` for the
+    # analyzer pass. Must keep running after the first match so all
+    # service files get registered.
+    def idempotent? : Bool
+      false
+    end
   end
 end

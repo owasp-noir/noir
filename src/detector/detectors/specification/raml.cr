@@ -26,5 +26,10 @@ module Detector::Specification
     def set_name
       @name = "raml"
     end
+
+    # Registers RAML spec paths in `CodeLocator`.
+    def idempotent? : Bool
+      false
+    end
   end
 end

@@ -36,5 +36,12 @@ module Detector::CSharp
     def set_name
       @name = "cs_aspnet_core_mvc"
     end
+
+    # Side effect: registers `Program.cs` / similar paths in
+    # `CodeLocator` for the analyzer. Must keep running after first
+    # match.
+    def idempotent? : Bool
+      false
+    end
   end
 end
