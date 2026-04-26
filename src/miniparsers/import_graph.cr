@@ -134,16 +134,35 @@ module Noir
     #      extension in priority order.
     #   3. Finally, `<base>/<specifier>/index.<ext>` for each
     #      candidate extension — the directory-with-index form.
+    #
+    # **Boundary enforcement.** Source files are untrusted input —
+    # an attacker-controlled repo can ship `import x from
+    # '../../../../etc/passwd'`, which would otherwise resolve into
+    # arbitrary paths on the scanner's disk and trigger
+    # `File.exists?` probes outside the scan root. Pass the project
+    # root (or a parent of `from_file` you want to constrain to)
+    # via `boundary:` so the helper rejects any specifier that
+    # resolves outside that subtree. Callers should always pass it
+    # in production; the parameter is optional only because the
+    # legacy spec helpers exercise the resolver against scratch
+    # tmpdirs that aren't worth boundary-wrapping.
 
     JS_RESOLVE_EXTENSIONS = ["ts", "tsx", "js", "jsx", "mjs", "cjs"]
 
     def self.resolve_relative_import(from_file : String,
                                      import_specifier : String,
-                                     extensions : Array(String) = JS_RESOLVE_EXTENSIONS) : String?
+                                     extensions : Array(String) = JS_RESOLVE_EXTENSIONS,
+                                     boundary : String? = nil) : String?
       return unless import_specifier.starts_with?("./") || import_specifier.starts_with?("../")
 
       base_dir = File.dirname(from_file)
       combined = File.expand_path(File.join(base_dir, import_specifier))
+
+      # Boundary check — drop the resolution before any disk I/O so
+      # we don't even fingerprint files outside the scan root.
+      if boundary
+        return unless under_boundary?(combined, boundary)
+      end
 
       # Specifier with an explicit extension — that exact path or
       # nothing. Mirrors Node's behaviour for fully-qualified
@@ -165,6 +184,23 @@ module Noir
       end
 
       nil
+    end
+
+    # `combined` is already an absolute, lexically-normalised path
+    # (post `File.expand_path`). Boundary likewise gets expanded so
+    # the comparison works even when callers hand over a relative
+    # `./project` form.
+    #
+    # The check is purely lexical — symlinks aren't followed. A
+    # `<boundary>/foo -> /etc` symlink could still leak; defense in
+    # depth on top of this would call `File.realpath` after a
+    # successful `File.exists?` and compare the realpath. Skipped
+    # for now because the symlink scenario requires both an
+    # attacker-controlled checkout and pre-existing symlinks on the
+    # scanner's disk pointing at sensitive paths.
+    private def self.under_boundary?(combined : String, boundary : String) : Bool
+      boundary_abs = File.expand_path(boundary)
+      combined == boundary_abs || combined.starts_with?(boundary_abs + File::SEPARATOR)
     end
 
     # ----------------------------------------------------------------

@@ -212,5 +212,73 @@ describe Noir::ImportGraph do
         Noir::ImportGraph.resolve_relative_import(from_file, "./users", extensions: ["rb"]).should eq(target)
       end
     end
+
+    describe "with boundary" do
+      it "allows specifiers that resolve inside the boundary" do
+        with_tmpdir do |root|
+          Dir.mkdir_p(File.join(root, "src", "sub"))
+          from_file = File.join(root, "src", "sub", "index.ts")
+          target = File.join(root, "src", "shared.ts")
+          File.write(from_file, "")
+          File.write(target, "")
+
+          Noir::ImportGraph.resolve_relative_import(
+            from_file, "../shared", boundary: root
+          ).should eq(target)
+        end
+      end
+
+      it "rejects specifiers that escape outside the boundary" do
+        with_tmpdir do |outside|
+          File.write(File.join(outside, "secret.ts"), "")
+          with_tmpdir do |project|
+            Dir.mkdir_p(File.join(project, "src"))
+            from_file = File.join(project, "src", "index.ts")
+            File.write(from_file, "")
+
+            # Compute the relative-traversal specifier from
+            # `from_file` (deep inside `project`) up to the
+            # `secret.ts` file sitting in a sibling tmpdir.
+            specifier = Path[outside, "secret"].relative_to(File.dirname(from_file)).to_s
+            Noir::ImportGraph.resolve_relative_import(
+              from_file, specifier, boundary: project
+            ).should be_nil
+          end
+        end
+      end
+
+      it "treats boundary as inclusive of itself" do
+        with_tmpdir do |root|
+          # `from_file` sits at the boundary root, importing a
+          # sibling that is also at the root — should resolve.
+          from_file = File.join(root, "index.ts")
+          target = File.join(root, "users.ts")
+          File.write(from_file, "")
+          File.write(target, "")
+
+          Noir::ImportGraph.resolve_relative_import(
+            from_file, "./users", boundary: root
+          ).should eq(target)
+        end
+      end
+
+      it "rejects when the from_file itself sits outside the boundary" do
+        # Defence-in-depth: even if the specifier is harmless,
+        # passing a `from_file` that's outside `boundary` shouldn't
+        # let the resolver leak files reachable relative to it.
+        with_tmpdir do |project|
+          with_tmpdir do |elsewhere|
+            from_file = File.join(elsewhere, "index.ts")
+            target = File.join(elsewhere, "neighbour.ts")
+            File.write(from_file, "")
+            File.write(target, "")
+
+            Noir::ImportGraph.resolve_relative_import(
+              from_file, "./neighbour", boundary: project
+            ).should be_nil
+          end
+        end
+      end
+    end
   end
 end
