@@ -738,8 +738,18 @@ module Noir
   class TreeSitterKotlinDtoIndex
     alias Index = Hash(String, Array(TreeSitterKotlinParameterExtractor::FieldInfo))
 
+    # Process-wide shared cache, mirroring `TreeSitterJavaDtoIndex`.
+    # See that class for the rationale; the same applies for
+    # Kotlin Spring + Ktor + http4k analyzers running concurrently
+    # on the same codebase.
+    @@shared_cache = Hash(String, Index).new
+    @@shared_cache_mutex = Mutex.new
+
+    def self.clear_cache!
+      @@shared_cache_mutex.synchronize { @@shared_cache.clear }
+    end
+
     def initialize
-      @file_cache = Hash(String, Index).new
     end
 
     def build_for(path : String, content : String) : Index
@@ -751,17 +761,21 @@ module Noir
 
     # Variant taking a pre-parsed root so the Kotlin Spring analyzer
     # can share the parse across the route + parameter walks.
-    # Sibling files still parse independently (each via the per-file
-    # cache).
+    # Sibling files still parse independently — but sibling parses
+    # go through the process-wide cache so concurrent analyzers
+    # don't double-up.
     def build_for_with_root(path : String, content : String, root : LibTreeSitter::TSNode) : Index
       result = Index.new
       package_name = TreeSitterKotlinParameterExtractor.extract_package_name_from(root, content)
       imports = TreeSitterKotlinParameterExtractor.extract_imports_from(root, content)
 
-      # Seed the per-file cache for the current file from the
-      # already-parsed root so the upcoming `related_files` loop
-      # doesn't re-parse it.
-      @file_cache[path] = TreeSitterKotlinParameterExtractor.extract_class_fields_from(root, content)
+      # Seed the shared cache for the current file from the
+      # already-parsed root so this and any concurrent analyzer's
+      # `related_files` loop reuses it.
+      current_fields = TreeSitterKotlinParameterExtractor.extract_class_fields_from(root, content)
+      @@shared_cache_mutex.synchronize do
+        @@shared_cache[path] ||= current_fields
+      end
 
       Noir::ImportGraph.related_files(path, package_name, imports, "kt") do |file|
         merge!(result, classes_in(file, path, content))
@@ -771,18 +785,28 @@ module Noir
     end
 
     private def classes_in(file : String, current_path : String, current_content : String) : Index
-      @file_cache[file] ||= begin
-        body =
-          if file == current_path
-            current_content
-          else
-            CodeLocator.instance.content_for(file) ||
-            File.read(file, encoding: "utf-8", invalid: :skip)
-          end
-        TreeSitterKotlinParameterExtractor.extract_class_fields(body)
-      rescue File::NotFoundError
-        Index.new
+      cached = @@shared_cache_mutex.synchronize { @@shared_cache[file]? }
+      return cached if cached
+
+      fields = parse_classes_for(file, current_path, current_content)
+
+      @@shared_cache_mutex.synchronize do
+        @@shared_cache[file] ||= fields
+        @@shared_cache[file]
       end
+    end
+
+    private def parse_classes_for(file : String, current_path : String, current_content : String) : Index
+      body =
+        if file == current_path
+          current_content
+        else
+          CodeLocator.instance.content_for(file) ||
+            File.read(file, encoding: "utf-8", invalid: :skip)
+        end
+      TreeSitterKotlinParameterExtractor.extract_class_fields(body)
+    rescue File::NotFoundError
+      Index.new
     end
 
     private def merge!(into : Index, src : Index)
