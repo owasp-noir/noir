@@ -85,12 +85,22 @@ module Noir
     def extract_class_fields(source : String) : Hash(String, Array(FieldInfo))
       results = Hash(String, Array(FieldInfo)).new
       Noir::TreeSitter.parse_kotlin(source) do |root|
-        walk_class_containers(root) do |decl|
-          name = type_identifier_text(decl, source)
-          next if name.empty?
-          fields = collect_class_fields(decl, source)
-          results[name] = fields unless fields.empty?
-        end
+        results = extract_class_fields_from(root, source)
+      end
+      results
+    end
+
+    # `_from(root, source, ...)` variants accept a pre-parsed root
+    # so the Kotlin Spring analyzer can amortise the tree-sitter
+    # parse across multiple extractions on the same file. Tree
+    # lifetime is the caller's responsibility.
+    def extract_class_fields_from(root : LibTreeSitter::TSNode, source : String) : Hash(String, Array(FieldInfo))
+      results = Hash(String, Array(FieldInfo)).new
+      walk_class_containers(root) do |decl|
+        name = type_identifier_text(decl, source)
+        next if name.empty?
+        fields = collect_class_fields(decl, source)
+        results[name] = fields unless fields.empty?
       end
       results
     end
@@ -108,11 +118,22 @@ module Noir
                                   class_fields : Hash(String, Array(FieldInfo))) : Array(Param)
       params = [] of Param
       Noir::TreeSitter.parse_kotlin(source) do |root|
-        method = find_function(root, source, class_name, method_name)
-        next unless method
-        params = collect_method_params(method, source, verb, parameter_format, class_fields)
-        append_constraint_params(method, source, verb, params)
+        params = extract_method_parameters_from(root, source, class_name, method_name, verb, parameter_format, class_fields)
       end
+      params
+    end
+
+    def extract_method_parameters_from(root : LibTreeSitter::TSNode,
+                                       source : String,
+                                       class_name : String,
+                                       method_name : String,
+                                       verb : String,
+                                       parameter_format : String?,
+                                       class_fields : Hash(String, Array(FieldInfo))) : Array(Param)
+      method = find_function(root, source, class_name, method_name)
+      return [] of Param unless method
+      params = collect_method_params(method, source, verb, parameter_format, class_fields)
+      append_constraint_params(method, source, verb, params)
       params
     end
 
@@ -121,27 +142,33 @@ module Noir
     def extract_consumes(source : String, class_name : String, method_name : String) : String?
       result : String? = nil
       Noir::TreeSitter.parse_kotlin(source) do |root|
-        method = find_function(root, source, class_name, method_name)
-        next unless method
-        ann = mapping_annotation_on(method, source)
-        next unless ann
-        args = annotation_args(ann)
-        next unless args
-        Noir::TreeSitter.each_named_child(args) do |arg|
-          next unless Noir::TreeSitter.node_type(arg) == "value_argument"
-          kind, key, value = classify_value_argument(arg, source)
-          next unless kind == :keyword && key == "consumes"
-          next unless value
-          # Use the raw text so we catch both string literals
-          # ("application/json") and constant references
-          # (MediaType.APPLICATION_JSON_VALUE) in one pass — same
-          # approach as the Java extractor.
-          text = Noir::TreeSitter.node_text(value, source)
-          if text.includes?("application/x-www-form-urlencoded") || text.includes?("APPLICATION_FORM_URLENCODED_VALUE")
-            result = "form"
-          elsif text.includes?("application/json") || text.includes?("APPLICATION_JSON_VALUE")
-            result = "json"
-          end
+        result = extract_consumes_from(root, source, class_name, method_name)
+      end
+      result
+    end
+
+    def extract_consumes_from(root : LibTreeSitter::TSNode, source : String, class_name : String, method_name : String) : String?
+      method = find_function(root, source, class_name, method_name)
+      return unless method
+      ann = mapping_annotation_on(method, source)
+      return unless ann
+      args = annotation_args(ann)
+      return unless args
+      result : String? = nil
+      Noir::TreeSitter.each_named_child(args) do |arg|
+        next unless Noir::TreeSitter.node_type(arg) == "value_argument"
+        kind, key, value = classify_value_argument(arg, source)
+        next unless kind == :keyword && key == "consumes"
+        next unless value
+        # Use the raw text so we catch both string literals
+        # ("application/json") and constant references
+        # (MediaType.APPLICATION_JSON_VALUE) in one pass — same
+        # approach as the Java extractor.
+        text = Noir::TreeSitter.node_text(value, source)
+        if text.includes?("application/x-www-form-urlencoded") || text.includes?("APPLICATION_FORM_URLENCODED_VALUE")
+          result = "form"
+        elsif text.includes?("application/json") || text.includes?("APPLICATION_JSON_VALUE")
+          result = "json"
         end
       end
       result
@@ -150,40 +177,49 @@ module Noir
     def extract_package_name(source : String) : String
       result = ""
       Noir::TreeSitter.parse_kotlin(source) do |root|
-        Noir::TreeSitter.each_named_child(root) do |node|
-          next unless Noir::TreeSitter.node_type(node) == "package_header"
-          Noir::TreeSitter.each_named_child(node) do |child|
-            ty = Noir::TreeSitter.node_type(child)
-            if ty == "identifier" || ty == "simple_identifier"
-              result = Noir::TreeSitter.node_text(child, source)
-              break
-            end
-          end
-          break
-        end
+        result = extract_package_name_from(root, source)
       end
       result
+    end
+
+    def extract_package_name_from(root : LibTreeSitter::TSNode, source : String) : String
+      Noir::TreeSitter.each_named_child(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "package_header"
+        Noir::TreeSitter.each_named_child(node) do |child|
+          ty = Noir::TreeSitter.node_type(child)
+          if ty == "identifier" || ty == "simple_identifier"
+            return Noir::TreeSitter.node_text(child, source)
+          end
+        end
+      end
+      ""
     end
 
     def extract_imports(source : String) : Array(ImportDecl)
       results = [] of ImportDecl
       Noir::TreeSitter.parse_kotlin(source) do |root|
-        Noir::TreeSitter.each_named_child(root) do |node|
-          next unless Noir::TreeSitter.node_type(node) == "import_list"
-          Noir::TreeSitter.each_named_child(node) do |header|
-            next unless Noir::TreeSitter.node_type(header) == "import_header"
-            path = ""
-            wildcard = false
-            Noir::TreeSitter.each_named_child(header) do |child|
-              case Noir::TreeSitter.node_type(child)
-              when "identifier", "simple_identifier"
-                path = Noir::TreeSitter.node_text(child, source) if path.empty?
-              when "wildcard_import"
-                wildcard = true
-              end
+        results = extract_imports_from(root, source)
+      end
+      results
+    end
+
+    def extract_imports_from(root : LibTreeSitter::TSNode, source : String) : Array(ImportDecl)
+      results = [] of ImportDecl
+      Noir::TreeSitter.each_named_child(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "import_list"
+        Noir::TreeSitter.each_named_child(node) do |header|
+          next unless Noir::TreeSitter.node_type(header) == "import_header"
+          path = ""
+          wildcard = false
+          Noir::TreeSitter.each_named_child(header) do |child|
+            case Noir::TreeSitter.node_type(child)
+            when "identifier", "simple_identifier"
+              path = Noir::TreeSitter.node_text(child, source) if path.empty?
+            when "wildcard_import"
+              wildcard = true
             end
-            results << ImportDecl.new(path, wildcard) unless path.empty?
           end
+          results << ImportDecl.new(path, wildcard) unless path.empty?
         end
       end
       results
@@ -707,9 +743,25 @@ module Noir
     end
 
     def build_for(path : String, content : String) : Index
+      Noir::TreeSitter.parse_kotlin(content) do |root|
+        return build_for_with_root(path, content, root)
+      end
+      Index.new
+    end
+
+    # Variant taking a pre-parsed root so the Kotlin Spring analyzer
+    # can share the parse across the route + parameter walks.
+    # Sibling files still parse independently (each via the per-file
+    # cache).
+    def build_for_with_root(path : String, content : String, root : LibTreeSitter::TSNode) : Index
       result = Index.new
-      package_name = TreeSitterKotlinParameterExtractor.extract_package_name(content)
-      imports = TreeSitterKotlinParameterExtractor.extract_imports(content)
+      package_name = TreeSitterKotlinParameterExtractor.extract_package_name_from(root, content)
+      imports = TreeSitterKotlinParameterExtractor.extract_imports_from(root, content)
+
+      # Seed the per-file cache for the current file from the
+      # already-parsed root so the upcoming `related_files` loop
+      # doesn't re-parse it.
+      @file_cache[path] = TreeSitterKotlinParameterExtractor.extract_class_fields_from(root, content)
 
       Noir::ImportGraph.related_files(path, package_name, imports, "kt") do |file|
         merge!(result, classes_in(file, path, content))

@@ -62,48 +62,51 @@ module Analyzer::Java
           has_feign_bindings = content.includes?(feign_client_package) || content.includes?("@FeignClient")
 
           if has_spring_bindings || has_feign_bindings
-            # Skip files without a package declaration — legacy filter
-            # that avoids scanning test stubs / throwaway snippets.
-            package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name(content)
-            next if package_name.empty?
+            # Single tree-sitter parse for the whole file — every
+            # extraction below pulls from the same root so a
+            # controller with N routes pays for 1 parse instead of
+            # the previous 4 + 2N. The DTO index, FeignClient
+            # detection, route discovery, consumes lookup, and
+            # parameter walks all consume `root`.
+            Noir::TreeSitter.parse_java(content) do |root|
+              # Skip files without a package declaration — legacy filter
+              # that avoids scanning test stubs / throwaway snippets.
+              package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name_from(root, content)
+              next if package_name.empty?
 
-            # End-to-end tree-sitter pipeline. Route discovery,
-            # parameter extraction, `@FeignClient` detection,
-            # `consumes = ...`, and DTO cross-file resolution all run
-            # on the vendored grammars — no `JavaParser` / `JavaLexer`
-            # involvement.
-            dto_index = dto_builder.build_for(path, content)
-            feign_clients = Noir::TreeSitterJavaParameterExtractor.extract_feign_client_classes(content)
+              dto_index = dto_builder.build_for_with_root(path, content, root)
+              feign_clients = Noir::TreeSitterJavaParameterExtractor.extract_feign_client_classes_from(root, content)
 
-            Noir::TreeSitterJavaRouteExtractor.extract_routes(content).each do |route|
-              is_feign_client = feign_clients.includes?(route.class_name)
+              Noir::TreeSitterJavaRouteExtractor.extract_routes_from(root, content).each do |route|
+                is_feign_client = feign_clients.includes?(route.class_name)
 
-              parameter_format = Noir::TreeSitterJavaParameterExtractor.extract_consumes(
-                content, route.class_name, route.method_name
-              )
-              if parameter_format.nil? && route.verb == "POST"
-                parameter_format = "form"
+                parameter_format = Noir::TreeSitterJavaParameterExtractor.extract_consumes_from(
+                  root, content, route.class_name, route.method_name
+                )
+                if parameter_format.nil? && route.verb == "POST"
+                  parameter_format = "form"
+                end
+
+                parameters = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters_from(
+                  root, content, route.class_name, route.method_name, route.verb, parameter_format, dto_index
+                )
+
+                # Drop the trailing `/` on webflux_base_path when the
+                # route path already starts with one, so the join
+                # doesn't produce `//`.
+                base_path = webflux_base_path
+                if base_path.ends_with?("/") && route.path.starts_with?("/")
+                  base_path = base_path[..-2]
+                end
+
+                line = route.line + 1
+                details = Details.new(PathInfo.new(path, line))
+
+                endpoint = Endpoint.new(
+                  join_paths(base_path, route.path), route.verb, parameters, details, is_feign_client
+                )
+                @result << endpoint
               end
-
-              parameters = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
-                content, route.class_name, route.method_name, route.verb, parameter_format, dto_index
-              )
-
-              # Drop the trailing `/` on webflux_base_path when the
-              # route path already starts with one, so the join
-              # doesn't produce `//`.
-              base_path = webflux_base_path
-              if base_path.ends_with?("/") && route.path.starts_with?("/")
-                base_path = base_path[..-2]
-              end
-
-              line = route.line + 1
-              details = Details.new(PathInfo.new(path, line))
-
-              endpoint = Endpoint.new(
-                join_paths(base_path, route.path), route.verb, parameters, details, is_feign_client
-              )
-              @result << endpoint
             end
           else
             # Reactive routes declared via `router().route(...).andRoute(...)`

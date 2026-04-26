@@ -61,8 +61,18 @@ module Noir
     def extract_routes(source : String) : Array(Route)
       routes = [] of Route
       Noir::TreeSitter.parse_java(source) do |root|
-        walk_classes(root, source, "", routes)
+        routes = extract_routes_from(root, source)
       end
+      routes
+    end
+
+    # `_from` variant — accept a pre-parsed `root` so the Spring
+    # analyzer can amortise tree-sitter parses across multiple
+    # extractions on the same file. Tree lifetime is the caller's
+    # responsibility.
+    def extract_routes_from(root : LibTreeSitter::TSNode, source : String) : Array(Route)
+      routes = [] of Route
+      walk_classes(root, source, "", routes)
       routes
     end
 
