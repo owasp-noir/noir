@@ -84,38 +84,40 @@ module Noir
     def extract_routes(source : String) : Array(Route)
       routes = [] of Route
       Noir::TreeSitter.parse_javascript(source) do |root|
-        walk(root, source, "", routes)
+        walk(root, source, "", routes, 0)
       end
       routes
     end
 
     # ---- traversal --------------------------------------------------
 
-    private def walk(node : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route))
+    private def walk(node : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32)
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+
       if Noir::TreeSitter.node_type(node) == "call_expression"
         method = chain_method_name(node, source)
         case
         when HTTP_VERB_METHODS.has_key?(method)
           emit_route(node, source, HTTP_VERB_METHODS[method], prefix, routes)
-          walk_chain_predecessor(node, source, prefix, routes)
+          walk_chain_predecessor(node, source, prefix, routes, depth)
           return
         when method == "all"
           ALL_VERBS.each { |verb| emit_route(node, source, verb, prefix, routes) }
-          walk_chain_predecessor(node, source, prefix, routes)
+          walk_chain_predecessor(node, source, prefix, routes, depth)
           return
         when GROUP_METHODS.includes?(method)
-          handle_group(node, source, prefix, routes)
-          walk_chain_predecessor(node, source, prefix, routes)
+          handle_group(node, source, prefix, routes, depth)
+          walk_chain_predecessor(node, source, prefix, routes, depth)
           return
         when TRANSPARENT_METHODS.includes?(method)
-          handle_transparent(node, source, prefix, routes)
-          walk_chain_predecessor(node, source, prefix, routes)
+          handle_transparent(node, source, prefix, routes, depth)
+          walk_chain_predecessor(node, source, prefix, routes, depth)
           return
         end
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, source, prefix, routes)
+        walk(child, source, prefix, routes, depth + 1)
       end
     end
 
@@ -136,16 +138,16 @@ module Noir
     # Continue down the chain into the prior link's call_expression
     # — `a.get(...).post(...)` outer has the inner `a.get(...)` as
     # the member_expression's first child.
-    private def walk_chain_predecessor(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route))
+    private def walk_chain_predecessor(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32)
       callee = first_named_child(call)
       return unless callee
       return unless Noir::TreeSitter.node_type(callee) == "member_expression"
       inner = first_named_child(callee)
       return unless inner
-      walk(inner, source, prefix, routes) if Noir::TreeSitter.node_type(inner) == "call_expression"
+      walk(inner, source, prefix, routes, depth + 1) if Noir::TreeSitter.node_type(inner) == "call_expression"
     end
 
-    private def handle_group(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route))
+    private def handle_group(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32)
       args = arguments_node(call)
       return unless args
 
@@ -162,16 +164,16 @@ module Noir
       return unless group_path && group_body
 
       new_prefix = join_paths(prefix, group_path)
-      walk(group_body, source, new_prefix, routes)
+      walk(group_body, source, new_prefix, routes, depth + 1)
     end
 
-    private def handle_transparent(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route))
+    private def handle_transparent(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32)
       args = arguments_node(call)
       return unless args
       Noir::TreeSitter.each_named_child(args) do |arg|
         next unless Noir::TreeSitter.node_type(arg) == "arrow_function"
         if body = arrow_body(arg)
-          walk(body, source, prefix, routes)
+          walk(body, source, prefix, routes, depth + 1)
         end
       end
     end
@@ -201,7 +203,7 @@ module Noir
       has_body = false
 
       if handler
-        scan_handler(handler, source) do |kind, value|
+        scan_handler(handler, source, 0) do |kind, value|
           case kind
           when :query  then query_params << value unless query_params.includes?(value)
           when :header then header_params << value unless header_params.includes?(value)
@@ -221,13 +223,14 @@ module Noir
     # signals. Both the destructuring pattern
     # (`({ body, query, headers, cookie })`) and member-expression
     # access (`query.foo`, `ctx.headers['x']`) contribute.
-    private def scan_handler(handler : LibTreeSitter::TSNode, source : String, &block : Symbol, String ->)
+    private def scan_handler(handler : LibTreeSitter::TSNode, source : String, depth : Int32, &block : Symbol, String ->)
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
       Noir::TreeSitter.each_named_child(handler) do |child|
         case Noir::TreeSitter.node_type(child)
         when "formal_parameters"
           scan_destructured_params(child, source, &block)
         else
-          scan_handler_body(child, source, &block)
+          scan_handler_body(child, source, depth + 1, &block)
         end
       end
     end
@@ -263,7 +266,8 @@ module Noir
       end
     end
 
-    private def scan_handler_body(node : LibTreeSitter::TSNode, source : String, &block : Symbol, String ->)
+    private def scan_handler_body(node : LibTreeSitter::TSNode, source : String, depth : Int32, &block : Symbol, String ->)
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
       ty = Noir::TreeSitter.node_type(node)
 
       case ty
@@ -305,7 +309,7 @@ module Noir
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        scan_handler_body(child, source, &block)
+        scan_handler_body(child, source, depth + 1, &block)
       end
     end
 

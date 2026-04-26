@@ -80,14 +80,16 @@ module Noir
     def extract_routes(source : String, config : Config) : Array(Route)
       routes = [] of Route
       Noir::TreeSitter.parse_java(source) do |root|
-        walk(root, source, "", config, routes)
+        walk(root, source, "", config, routes, 0)
       end
       routes
     end
 
     # ---- traversal ---------------------------------------------------
 
-    private def walk(node : LibTreeSitter::TSNode, source : String, prefix : String, config : Config, routes : Array(Route))
+    private def walk(node : LibTreeSitter::TSNode, source : String, prefix : String, config : Config, routes : Array(Route), depth : Int32)
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+
       ty = Noir::TreeSitter.node_type(node)
 
       if ty == "method_invocation"
@@ -100,19 +102,19 @@ module Noir
           path_arg = first_string_argument(node, source)
           new_prefix = path_arg ? join_paths(prefix, path_arg) : prefix
           if body = lambda_body_in_args(node)
-            walk(body, source, new_prefix, config, routes)
+            walk(body, source, new_prefix, config, routes, depth + 1)
           end
           return
         when config.transparent_methods.includes?(name)
           if body = lambda_body_in_args(node)
-            walk(body, source, prefix, config, routes)
+            walk(body, source, prefix, config, routes, depth + 1)
           end
           return
         end
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, source, prefix, config, routes)
+        walk(child, source, prefix, config, routes, depth + 1)
       end
     end
 
@@ -136,7 +138,7 @@ module Noir
       has_body = false
 
       if body = lambda_body_in_args(call)
-        scan_handler(body, source, config) do |kind, value|
+        scan_handler(body, source, config, 0) do |kind, value|
           case kind
           when :query  then query_params << value
           when :form   then form_params << value
@@ -154,7 +156,9 @@ module Noir
         query_params, form_params, header_params, cookie_params)
     end
 
-    private def scan_handler(node : LibTreeSitter::TSNode, source : String, config : Config, &block : Symbol, String ->)
+    private def scan_handler(node : LibTreeSitter::TSNode, source : String, config : Config, depth : Int32, &block : Symbol, String ->)
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+
       ty = Noir::TreeSitter.node_type(node)
 
       if ty == "method_invocation"
@@ -192,7 +196,7 @@ module Noir
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        scan_handler(child, source, config, &block)
+        scan_handler(child, source, config, depth + 1, &block)
       end
     end
 

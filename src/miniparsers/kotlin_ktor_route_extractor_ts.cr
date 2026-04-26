@@ -79,14 +79,16 @@ module Noir
     def extract_routes(source : String) : Array(Route)
       routes = [] of Route
       Noir::TreeSitter.parse_kotlin(source) do |root|
-        walk(root, source, "", routes)
+        walk(root, source, "", routes, 0)
       end
       routes
     end
 
     # ---- traversal ----------------------------------------------------
 
-    private def walk(node : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route))
+    private def walk(node : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32)
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+
       if Noir::TreeSitter.node_type(node) == "call_expression"
         name = call_name(node, source)
         case
@@ -97,19 +99,19 @@ module Noir
           path_arg = call_string_argument(node, source)
           new_prefix = path_arg ? prefix + path_arg : prefix
           if body = call_lambda_body(node)
-            walk(body, source, new_prefix, routes)
+            walk(body, source, new_prefix, routes, depth + 1)
           end
           return
         when PASSTHROUGH_NAMES.includes?(name)
           if body = call_lambda_body(node)
-            walk(body, source, prefix, routes)
+            walk(body, source, prefix, routes, depth + 1)
           end
           return
         end
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, source, prefix, routes)
+        walk(child, source, prefix, routes, depth + 1)
       end
     end
 
@@ -247,7 +249,7 @@ module Noir
                                   query_params : Array(String),
                                   header_params : Array(String)) : String?
       receive_type : String? = nil
-      walk_handler(node, source, query_params, header_params) do |type|
+      walk_handler(node, source, query_params, header_params, 0) do |type|
         receive_type ||= type
       end
       receive_type
@@ -257,7 +259,10 @@ module Noir
                              source : String,
                              query_params : Array(String),
                              header_params : Array(String),
+                             depth : Int32,
                              &block : String ->)
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+
       ty = Noir::TreeSitter.node_type(node)
 
       case ty
@@ -285,7 +290,7 @@ module Noir
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk_handler(child, source, query_params, header_params, &block)
+        walk_handler(child, source, query_params, header_params, depth + 1, &block)
       end
     end
 
@@ -314,13 +319,17 @@ module Noir
     end
 
     # Walk down a `type_projection` / `user_type` / `nullable_type`
-    # chain to its `type_identifier` leaf.
-    private def type_leaf(node : LibTreeSitter::TSNode, source : String) : String?
+    # chain to its `type_identifier` leaf. The depth bound here is
+    # defence-in-depth — Kotlin types nesting beyond a few dozen
+    # levels would already break the grammar, but the same recursion
+    # discipline as the route walker keeps the surface uniform.
+    private def type_leaf(node : LibTreeSitter::TSNode, source : String, depth : Int32 = 0) : String?
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
       ty = Noir::TreeSitter.node_type(node)
       return Noir::TreeSitter.node_text(node, source) if ty == "type_identifier"
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        if leaf = type_leaf(child, source)
+        if leaf = type_leaf(child, source, depth + 1)
           return leaf
         end
       end

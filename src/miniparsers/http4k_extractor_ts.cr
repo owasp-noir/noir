@@ -69,27 +69,29 @@ module Noir
     def extract_routes(source : String) : Array(Route)
       routes = [] of Route
       Noir::TreeSitter.parse_kotlin(source) do |root|
-        walk(root, source, "", routes)
+        walk(root, source, "", routes, 0)
       end
       routes
     end
 
     # ---- traversal --------------------------------------------------
 
-    private def walk(node : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route))
+    private def walk(node : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32)
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+
       ty = Noir::TreeSitter.node_type(node)
 
-      if ty == "infix_expression" && handle_bind(node, source, prefix, routes)
+      if ty == "infix_expression" && handle_bind(node, source, prefix, routes, depth)
         return
       end
 
       if ty == "call_expression" && call_function_name(node, source) == "routes"
-        walk_routes_args(node, source, prefix, routes)
+        walk_routes_args(node, source, prefix, routes, depth)
         return
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, source, prefix, routes)
+        walk(child, source, prefix, routes, depth + 1)
       end
     end
 
@@ -100,7 +102,7 @@ module Noir
     #
     # Returns true when consumed; false otherwise so the caller can
     # fall through to the generic descent.
-    private def handle_bind(node : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route)) : Bool
+    private def handle_bind(node : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32) : Bool
       lhs, op, rhs = infix_parts(node, source)
       return false unless lhs && rhs
 
@@ -122,7 +124,7 @@ module Noir
 
         query, header, form = [] of String, [] of String, [] of String
         has_body = false
-        scan_handler(rhs, source) do |kind, value|
+        scan_handler(rhs, source, 0) do |kind, value|
           case kind
           when :query  then query << value
           when :header then header << value
@@ -140,7 +142,7 @@ module Noir
 
         path_text = decode_string_literal(lhs, source)
         new_prefix = join_paths(prefix, path_text)
-        walk_routes_args(rhs, source, new_prefix, routes)
+        walk_routes_args(rhs, source, new_prefix, routes, depth + 1)
         true
       else
         false
@@ -151,13 +153,14 @@ module Noir
     # Each argument is a `value_argument` wrapping an
     # `infix_expression` (the binding) or another nested `routes(...)`
     # call.
-    private def walk_routes_args(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route))
+    private def walk_routes_args(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32)
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
       args = call_value_arguments(call)
       return unless args
       Noir::TreeSitter.each_named_child(args) do |arg|
         next unless Noir::TreeSitter.node_type(arg) == "value_argument"
         Noir::TreeSitter.each_named_child(arg) do |child|
-          walk(child, source, prefix, routes)
+          walk(child, source, prefix, routes, depth + 1)
         end
       end
     end
@@ -169,7 +172,8 @@ module Noir
     # about the receiver name — http4k handlers conventionally use
     # `req`, but lambdas with implicit `it` or other names should
     # still surface signals.
-    private def scan_handler(node : LibTreeSitter::TSNode, source : String, &block : Symbol, String ->)
+    private def scan_handler(node : LibTreeSitter::TSNode, source : String, depth : Int32, &block : Symbol, String ->)
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
       ty = Noir::TreeSitter.node_type(node)
 
       if ty == "call_expression"
@@ -196,7 +200,7 @@ module Noir
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        scan_handler(child, source, &block)
+        scan_handler(child, source, depth + 1, &block)
       end
     end
 

@@ -112,6 +112,16 @@ end
 # Thin high-level facade. Keeps tree lifetime tied to an object so callers
 # don't have to think about `ts_tree_delete`.
 module Noir::TreeSitter
+  # Recursion guard for AST walkers. Crystal's default fiber stack
+  # is generous (~8 MB) but a malicious source file with deeply
+  # nested syntax — `(((((((...)))))))` chains, deeply nested
+  # object literals, recursive template expressions — could
+  # cascade through a custom walker until the stack runs out. Real
+  # production code rarely nests beyond ~100 levels, so 1024 is
+  # comfortably above legitimate input and well below the stack
+  # ceiling.
+  MAX_AST_DEPTH = 1024
+
   # Parses `source` with the given `language` and yields the root
   # `LibTreeSitter::TSNode`. The parser and tree are freed when the
   # block returns.
