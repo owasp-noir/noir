@@ -65,15 +65,29 @@ module Noir
     def extract_class_fields(source : String) : Hash(String, Array(FieldInfo))
       results = Hash(String, Array(FieldInfo)).new
       Noir::TreeSitter.parse_java(source) do |root|
-        walk_class_containers(root) do |decl|
-          name_node = Noir::TreeSitter.field(decl, "name")
-          next unless name_node
-          class_name = Noir::TreeSitter.node_text(name_node, source)
-          body = Noir::TreeSitter.field(decl, "body")
-          next unless body
-          fields = collect_class_fields(body, source)
-          results[class_name] = fields unless fields.empty?
-        end
+        results = extract_class_fields_from(root, source)
+      end
+      results
+    end
+
+    # `_from(root, source)` variants accept a pre-parsed root node so
+    # callers (typically the Spring analyzer) can amortise the
+    # tree-sitter parse across multiple extractions on the same file
+    # — `extract_routes_from`, `extract_consumes_from`,
+    # `extract_method_parameters_from`, and the rest can all share a
+    # single `Noir::TreeSitter.parse_java` block. Tree lifetime is
+    # the caller's responsibility (it must keep `root` valid by
+    # staying inside the `parse_java` block while these are invoked).
+    def extract_class_fields_from(root : LibTreeSitter::TSNode, source : String) : Hash(String, Array(FieldInfo))
+      results = Hash(String, Array(FieldInfo)).new
+      walk_class_containers(root) do |decl|
+        name_node = Noir::TreeSitter.field(decl, "name")
+        next unless name_node
+        class_name = Noir::TreeSitter.node_text(name_node, source)
+        body = Noir::TreeSitter.field(decl, "body")
+        next unless body
+        fields = collect_class_fields(body, source)
+        results[class_name] = fields unless fields.empty?
       end
       results
     end
@@ -95,11 +109,21 @@ module Noir
                                   class_fields : Hash(String, Array(FieldInfo))) : Array(Param)
       params = [] of Param
       Noir::TreeSitter.parse_java(source) do |root|
-        method = find_method(root, source, class_name, method_name)
-        next unless method
-        params = collect_method_params(method, source, verb, parameter_format, class_fields)
+        params = extract_method_parameters_from(root, source, class_name, method_name, verb, parameter_format, class_fields)
       end
       params
+    end
+
+    def extract_method_parameters_from(root : LibTreeSitter::TSNode,
+                                       source : String,
+                                       class_name : String,
+                                       method_name : String,
+                                       verb : String,
+                                       parameter_format : String?,
+                                       class_fields : Hash(String, Array(FieldInfo))) : Array(Param)
+      method = find_method(root, source, class_name, method_name)
+      return [] of Param unless method
+      collect_method_params(method, source, verb, parameter_format, class_fields)
     end
 
     # Find `@*Mapping` annotation on (class_name, method_name) and
@@ -109,24 +133,30 @@ module Noir
     def extract_consumes(source : String, class_name : String, method_name : String) : String?
       result : String? = nil
       Noir::TreeSitter.parse_java(source) do |root|
-        method = find_method(root, source, class_name, method_name)
-        next unless method
-        ann = mapping_annotation_on(method, source)
-        next unless ann
-        args = Noir::TreeSitter.field(ann, "arguments")
-        next unless args
-        Noir::TreeSitter.each_named_child(args) do |arg|
-          next unless Noir::TreeSitter.node_type(arg) == "element_value_pair"
-          key = Noir::TreeSitter.field(arg, "key")
-          val = Noir::TreeSitter.field(arg, "value")
-          next unless key && val
-          next unless Noir::TreeSitter.node_text(key, source) == "consumes"
-          text = Noir::TreeSitter.node_text(val, source)
-          if text.ends_with?("APPLICATION_FORM_URLENCODED_VALUE")
-            result = "form"
-          elsif text.ends_with?("APPLICATION_JSON_VALUE")
-            result = "json"
-          end
+        result = extract_consumes_from(root, source, class_name, method_name)
+      end
+      result
+    end
+
+    def extract_consumes_from(root : LibTreeSitter::TSNode, source : String, class_name : String, method_name : String) : String?
+      method = find_method(root, source, class_name, method_name)
+      return unless method
+      ann = mapping_annotation_on(method, source)
+      return unless ann
+      args = Noir::TreeSitter.field(ann, "arguments")
+      return unless args
+      result : String? = nil
+      Noir::TreeSitter.each_named_child(args) do |arg|
+        next unless Noir::TreeSitter.node_type(arg) == "element_value_pair"
+        key = Noir::TreeSitter.field(arg, "key")
+        val = Noir::TreeSitter.field(arg, "value")
+        next unless key && val
+        next unless Noir::TreeSitter.node_text(key, source) == "consumes"
+        text = Noir::TreeSitter.node_text(val, source)
+        if text.ends_with?("APPLICATION_FORM_URLENCODED_VALUE")
+          result = "form"
+        elsif text.ends_with?("APPLICATION_JSON_VALUE")
+          result = "json"
         end
       end
       result
@@ -137,19 +167,22 @@ module Noir
     def extract_package_name(source : String) : String
       result = ""
       Noir::TreeSitter.parse_java(source) do |root|
-        Noir::TreeSitter.each_named_child(root) do |node|
-          next unless Noir::TreeSitter.node_type(node) == "package_declaration"
-          Noir::TreeSitter.each_named_child(node) do |child|
-            ty = Noir::TreeSitter.node_type(child)
-            if ty == "scoped_identifier" || ty == "identifier"
-              result = Noir::TreeSitter.node_text(child, source)
-              break
-            end
-          end
-          break
-        end
+        result = extract_package_name_from(root, source)
       end
       result
+    end
+
+    def extract_package_name_from(root : LibTreeSitter::TSNode, source : String) : String
+      Noir::TreeSitter.each_named_child(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "package_declaration"
+        Noir::TreeSitter.each_named_child(node) do |child|
+          ty = Noir::TreeSitter.node_type(child)
+          if ty == "scoped_identifier" || ty == "identifier"
+            return Noir::TreeSitter.node_text(child, source)
+          end
+        end
+      end
+      ""
     end
 
     # Return every `import` in the source as `ImportDecl`. Static imports
@@ -158,24 +191,30 @@ module Noir
     def extract_imports(source : String) : Array(ImportDecl)
       results = [] of ImportDecl
       Noir::TreeSitter.parse_java(source) do |root|
-        Noir::TreeSitter.each_named_child(root) do |node|
-          next unless Noir::TreeSitter.node_type(node) == "import_declaration"
-          # Static imports emit `(static)` as a child; skip them.
-          text = Noir::TreeSitter.node_text(node, source)
-          next if text.starts_with?("import static")
+        results = extract_imports_from(root, source)
+      end
+      results
+    end
 
-          path = ""
-          wildcard = false
-          Noir::TreeSitter.each_named_child(node) do |child|
-            case Noir::TreeSitter.node_type(child)
-            when "scoped_identifier", "identifier"
-              path = Noir::TreeSitter.node_text(child, source) if path.empty?
-            when "asterisk"
-              wildcard = true
-            end
+    def extract_imports_from(root : LibTreeSitter::TSNode, source : String) : Array(ImportDecl)
+      results = [] of ImportDecl
+      Noir::TreeSitter.each_named_child(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "import_declaration"
+        # Static imports emit `(static)` as a child; skip them.
+        text = Noir::TreeSitter.node_text(node, source)
+        next if text.starts_with?("import static")
+
+        path = ""
+        wildcard = false
+        Noir::TreeSitter.each_named_child(node) do |child|
+          case Noir::TreeSitter.node_type(child)
+          when "scoped_identifier", "identifier"
+            path = Noir::TreeSitter.node_text(child, source) if path.empty?
+          when "asterisk"
+            wildcard = true
           end
-          results << ImportDecl.new(path, wildcard) unless path.empty?
         end
+        results << ImportDecl.new(path, wildcard) unless path.empty?
       end
       results
     end
@@ -186,14 +225,20 @@ module Noir
     def extract_feign_client_classes(source : String) : Set(String)
       result = Set(String).new
       Noir::TreeSitter.parse_java(source) do |root|
-        walk_class_containers(root) do |decl|
-          name_node = Noir::TreeSitter.field(decl, "name")
-          next unless name_node
-          each_annotation_on(decl, source) do |ann_name|
-            if ann_name == "FeignClient"
-              result << Noir::TreeSitter.node_text(name_node, source)
-              break
-            end
+        result = extract_feign_client_classes_from(root, source)
+      end
+      result
+    end
+
+    def extract_feign_client_classes_from(root : LibTreeSitter::TSNode, source : String) : Set(String)
+      result = Set(String).new
+      walk_class_containers(root) do |decl|
+        name_node = Noir::TreeSitter.field(decl, "name")
+        next unless name_node
+        each_annotation_on(decl, source) do |ann_name|
+          if ann_name == "FeignClient"
+            result << Noir::TreeSitter.node_text(name_node, source)
+            break
           end
         end
       end
@@ -572,9 +617,26 @@ module Noir
     # delegated to `Noir::ImportGraph` so this stays a thin
     # language-specific cache.
     def build_for(path : String, content : String) : Index
+      Noir::TreeSitter.parse_java(content) do |root|
+        return build_for_with_root(path, content, root)
+      end
+      Index.new
+    end
+
+    # `build_for_with_root(path, content, root)` — same as
+    # `build_for` but uses a pre-parsed root for the current file's
+    # extractions (`extract_package_name`, `extract_imports`, the
+    # current file's `extract_class_fields`). Sibling files still
+    # parse independently (each via the per-file cache).
+    def build_for_with_root(path : String, content : String, root : LibTreeSitter::TSNode) : Index
       result = Index.new
-      package_name = TreeSitterJavaParameterExtractor.extract_package_name(content)
-      imports = TreeSitterJavaParameterExtractor.extract_imports(content)
+      package_name = TreeSitterJavaParameterExtractor.extract_package_name_from(root, content)
+      imports = TreeSitterJavaParameterExtractor.extract_imports_from(root, content)
+
+      # Seed the per-file cache for the current file from the
+      # already-parsed root so the upcoming `related_files` loop
+      # doesn't re-parse it.
+      @file_cache[path] = TreeSitterJavaParameterExtractor.extract_class_fields_from(root, content)
 
       Noir::ImportGraph.related_files(path, package_name, imports, "java") do |file|
         merge!(result, classes_in(file, path, content))

@@ -134,58 +134,65 @@ module Analyzer::Kotlin
     private def process_kotlin_file(path : String, dto_builder : Noir::TreeSitterKotlinDtoIndex, webflux_base_path_map : Hash(String, String))
       content = read_file_content(path)
 
-      # Skip files without a package declaration — legacy filter that
-      # avoids scanning test stubs / throwaway snippets.
-      package_name = Noir::TreeSitterKotlinParameterExtractor.extract_package_name(content)
-      return if package_name.empty?
+      # Single tree-sitter parse for the whole file — every
+      # extraction below pulls from the same root so a controller
+      # with N routes pays for 1 parse instead of the previous
+      # 4 + 2N. Same shape as the Java Spring analyzer's
+      # parse-once pipeline.
+      Noir::TreeSitter.parse_kotlin(content) do |root|
+        # Skip files without a package declaration — legacy filter that
+        # avoids scanning test stubs / throwaway snippets.
+        package_name = Noir::TreeSitterKotlinParameterExtractor.extract_package_name_from(root, content)
+        next if package_name.empty?
 
-      webflux_base_path = find_base_path(path, webflux_base_path_map)
-      dto_index = dto_builder.build_for(path, content)
+        webflux_base_path = find_base_path(path, webflux_base_path_map)
+        dto_index = dto_builder.build_for_with_root(path, content, root)
 
-      routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes(content)
+        routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes_from(root, content)
 
-      # Pin the parameter format to the FIRST verb seen for each
-      # (class, method) — for multi-verb `@RequestMapping(method =
-      # [GET, POST])` we want a single shared format so the
-      # `params=` constraint expansion matches across both routes
-      # (mirrors the legacy `||=` quirk: first verb wins).
-      first_verb = Hash(String, String).new
-      routes.each do |route|
-        key = "#{route.class_name}##{route.method_name}"
-        first_verb[key] ||= route.verb
-      end
-
-      routes.each do |route|
-        key = "#{route.class_name}##{route.method_name}"
-        format_verb = first_verb[key]? || route.verb
-
-        parameter_format = Noir::TreeSitterKotlinParameterExtractor.extract_consumes(
-          content, route.class_name, route.method_name
-        )
-        if parameter_format.nil?
-          parameter_format = case format_verb
-                             when "POST", "PUT", "DELETE", "PATCH"
-                               "form"
-                             when "GET"
-                               "query"
-                             end
+        # Pin the parameter format to the FIRST verb seen for each
+        # (class, method) — for multi-verb `@RequestMapping(method =
+        # [GET, POST])` we want a single shared format so the
+        # `params=` constraint expansion matches across both routes
+        # (mirrors the legacy `||=` quirk: first verb wins).
+        first_verb = Hash(String, String).new
+        routes.each do |route|
+          key = "#{route.class_name}##{route.method_name}"
+          first_verb[key] ||= route.verb
         end
 
-        parameters = Noir::TreeSitterKotlinParameterExtractor.extract_method_parameters(
-          content, route.class_name, route.method_name, format_verb, parameter_format, dto_index
-        )
+        routes.each do |route|
+          key = "#{route.class_name}##{route.method_name}"
+          format_verb = first_verb[key]? || route.verb
 
-        # Drop the trailing `/` on webflux_base_path when the route
-        # path already starts with one, so the join doesn't produce
-        # `//`.
-        base_path = webflux_base_path
-        if base_path.ends_with?("/") && route.path.starts_with?("/")
-          base_path = base_path[..-2]
+          parameter_format = Noir::TreeSitterKotlinParameterExtractor.extract_consumes_from(
+            root, content, route.class_name, route.method_name
+          )
+          if parameter_format.nil?
+            parameter_format = case format_verb
+                               when "POST", "PUT", "DELETE", "PATCH"
+                                 "form"
+                               when "GET"
+                                 "query"
+                               end
+          end
+
+          parameters = Noir::TreeSitterKotlinParameterExtractor.extract_method_parameters_from(
+            root, content, route.class_name, route.method_name, format_verb, parameter_format, dto_index
+          )
+
+          # Drop the trailing `/` on webflux_base_path when the route
+          # path already starts with one, so the join doesn't produce
+          # `//`.
+          base_path = webflux_base_path
+          if base_path.ends_with?("/") && route.path.starts_with?("/")
+            base_path = base_path[..-2]
+          end
+
+          line = route.line + 1
+          details = Details.new(PathInfo.new(path, line))
+          @result << Endpoint.new(join_paths(base_path, route.path), route.verb, parameters, details)
         end
-
-        line = route.line + 1
-        details = Details.new(PathInfo.new(path, line))
-        @result << Endpoint.new(join_paths(base_path, route.path), route.verb, parameters, details)
       end
     end
 
