@@ -64,21 +64,23 @@ module Noir
     def extract_routes(source : String) : Array(Route)
       routes = [] of Route
       Noir::TreeSitter.parse_javascript(source) do |root|
-        walk(root, source, routes)
+        walk(root, source, routes, 0)
       end
       routes
     end
 
     # ---- traversal --------------------------------------------------
 
-    private def walk(node : LibTreeSitter::TSNode, source : String, routes : Array(Route))
+    private def walk(node : LibTreeSitter::TSNode, source : String, routes : Array(Route), depth : Int32)
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+
       if Noir::TreeSitter.node_type(node) == "call_expression" && route_call?(node, source)
         emit_routes(node, source, routes)
         return
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, source, routes)
+        walk(child, source, routes, depth + 1)
       end
     end
 
@@ -141,7 +143,7 @@ module Noir
       has_body = false
 
       if handler
-        scan_handler(handler, source) do |kind, value|
+        scan_handler(handler, source, 0) do |kind, value|
           case kind
           when :query  then query_params << value
           when :header then header_params << value
@@ -199,7 +201,8 @@ module Noir
 
     # ---- handler-body scan ------------------------------------------
 
-    private def scan_handler(node : LibTreeSitter::TSNode, source : String, &block : Symbol, String ->)
+    private def scan_handler(node : LibTreeSitter::TSNode, source : String, depth : Int32, &block : Symbol, String ->)
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
       ty = Noir::TreeSitter.node_type(node)
 
       case ty
@@ -240,7 +243,7 @@ module Noir
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        scan_handler(child, source, &block)
+        scan_handler(child, source, depth + 1, &block)
       end
     end
 

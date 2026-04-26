@@ -91,14 +91,16 @@ module Noir
     def extract_routes(source : String) : Array(Route)
       routes = [] of Route
       Noir::TreeSitter.parse_javascript(source) do |root|
-        walk(root, source, "", routes)
+        walk(root, source, "", routes, 0)
       end
       routes
     end
 
     # ---- traversal --------------------------------------------------
 
-    private def walk(node : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route))
+    private def walk(node : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32)
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+
       if Noir::TreeSitter.node_type(node) == "call_expression"
         method = chain_method_name(node, source)
 
@@ -110,13 +112,13 @@ module Noir
           ANY_VERBS.each { |verb| emit_verb(node, source, verb, prefix, routes) }
           return
         when method == GROUP_METHOD
-          walk_group(node, source, prefix, routes)
+          walk_group(node, source, prefix, routes, depth)
           return
         when method == "resource"
           emit_resource(node, source, prefix, ANY_VERBS_ALL, routes)
           return
         when method == "prefix"
-          handle_prefix(node, source, prefix, routes)
+          handle_prefix(node, source, prefix, routes, depth)
           return
         when method == "only"
           handle_resource_filter(node, source, prefix, :only, routes)
@@ -125,13 +127,13 @@ module Noir
           handle_resource_filter(node, source, prefix, :except, routes)
           return
         when TRANSPARENT_MODIFIERS.includes?(method)
-          handle_transparent(node, source, prefix, routes)
+          handle_transparent(node, source, prefix, routes, depth)
           return
         end
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, source, prefix, routes)
+        walk(child, source, prefix, routes, depth + 1)
       end
     end
 
@@ -142,19 +144,19 @@ module Noir
 
     # `Route.group(cb).prefix('/x')` — capture '/x' and walk the
     # inner call's group with the joined prefix.
-    private def handle_prefix(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route))
+    private def handle_prefix(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32)
       arg = first_string_argument(call, source)
       receiver = chain_receiver(call)
       return unless receiver
 
       new_prefix = arg ? join_paths(prefix, arg) : prefix
-      walk(receiver, source, new_prefix, routes)
+      walk(receiver, source, new_prefix, routes, depth + 1)
     end
 
-    private def handle_transparent(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route))
+    private def handle_transparent(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32)
       receiver = chain_receiver(call)
       return unless receiver
-      walk(receiver, source, prefix, routes)
+      walk(receiver, source, prefix, routes, depth + 1)
     end
 
     # `.only([...])` / `.except([...])` modifiers on `.resource(...)`.
@@ -178,7 +180,7 @@ module Noir
       emit_resource(receiver, source, prefix, effective, routes)
     end
 
-    private def walk_group(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route))
+    private def walk_group(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32)
       args = arguments_node(call)
       return unless args
       Noir::TreeSitter.each_named_child(args) do |arg|
@@ -186,7 +188,7 @@ module Noir
                     Noir::TreeSitter.node_type(arg) == "function_expression" ||
                     Noir::TreeSitter.node_type(arg) == "function"
         if body = function_body(arg)
-          walk(body, source, prefix, routes)
+          walk(body, source, prefix, routes, depth + 1)
         end
       end
     end
