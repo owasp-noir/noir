@@ -607,8 +607,28 @@ module Noir
   class TreeSitterJavaDtoIndex
     alias Index = Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo))
 
+    # Process-wide shared cache of DTO field extractions, keyed by
+    # absolute file path. Multiple Java analyzers (Spring, JAX-RS,
+    # Quarkus, Dropwizard, Micronaut) typically scan the same
+    # codebase concurrently — without sharing, each builds its own
+    # `DtoIndex` and re-parses every DTO file independently.
+    # Promoting the cache to class scope means the Nth analyzer
+    # picks up the previously-extracted fields for free.
+    #
+    # File contents don't change during a noir run, so this is
+    # safe in production. Tests inside the same Crystal process
+    # use unique fixture paths per scenario, so cross-test
+    # contamination doesn't occur in practice; `clear_cache!` is
+    # exposed anyway for any test setup that wants explicit
+    # determinism.
+    @@shared_cache = Hash(String, Index).new
+    @@shared_cache_mutex = Mutex.new
+
+    def self.clear_cache!
+      @@shared_cache_mutex.synchronize { @@shared_cache.clear }
+    end
+
     def initialize
-      @file_cache = Hash(String, Index).new
     end
 
     # Build the DTO index visible to the Spring controller at `path`.
@@ -627,16 +647,20 @@ module Noir
     # `build_for` but uses a pre-parsed root for the current file's
     # extractions (`extract_package_name`, `extract_imports`, the
     # current file's `extract_class_fields`). Sibling files still
-    # parse independently (each via the per-file cache).
+    # parse independently — but sibling parses go through the
+    # process-wide cache so concurrent analyzers don't double-up.
     def build_for_with_root(path : String, content : String, root : LibTreeSitter::TSNode) : Index
       result = Index.new
       package_name = TreeSitterJavaParameterExtractor.extract_package_name_from(root, content)
       imports = TreeSitterJavaParameterExtractor.extract_imports_from(root, content)
 
-      # Seed the per-file cache for the current file from the
-      # already-parsed root so the upcoming `related_files` loop
-      # doesn't re-parse it.
-      @file_cache[path] = TreeSitterJavaParameterExtractor.extract_class_fields_from(root, content)
+      # Seed the shared cache for the current file from the
+      # already-parsed root so this and any concurrent analyzer's
+      # `related_files` loop reuses it.
+      current_fields = TreeSitterJavaParameterExtractor.extract_class_fields_from(root, content)
+      @@shared_cache_mutex.synchronize do
+        @@shared_cache[path] ||= current_fields
+      end
 
       Noir::ImportGraph.related_files(path, package_name, imports, "java") do |file|
         merge!(result, classes_in(file, path, content))
@@ -646,22 +670,36 @@ module Noir
     end
 
     private def classes_in(file : String, current_path : String, current_content : String) : Index
-      @file_cache[file] ||= begin
-        body =
-          if file == current_path
-            current_content
-          else
-            # Detector pre-warms a content cache for every scanned
-            # file (size-bounded). Sibling DTO files often live in
-            # that cache already — `nil` falls back to a fresh
-            # `File.read` for files outside the budget.
-            CodeLocator.instance.content_for(file) ||
-            File.read(file, encoding: "utf-8", invalid: :skip)
-          end
-        TreeSitterJavaParameterExtractor.extract_class_fields(body)
-      rescue File::NotFoundError
-        Index.new
+      cached = @@shared_cache_mutex.synchronize { @@shared_cache[file]? }
+      return cached if cached
+
+      fields = parse_classes_for(file, current_path, current_content)
+
+      # Multiple analyzers may race here on a cache miss — the
+      # `||=` keeps whichever wrote first; the loser silently
+      # discards its parse. Acceptable cost vs the per-file lock
+      # complexity that strict single-parse would require.
+      @@shared_cache_mutex.synchronize do
+        @@shared_cache[file] ||= fields
+        @@shared_cache[file]
       end
+    end
+
+    private def parse_classes_for(file : String, current_path : String, current_content : String) : Index
+      body =
+        if file == current_path
+          current_content
+        else
+          # Detector pre-warms a content cache for every scanned
+          # file (size-bounded). Sibling DTO files often live in
+          # that cache already — `nil` falls back to a fresh
+          # `File.read` for files outside the budget.
+          CodeLocator.instance.content_for(file) ||
+            File.read(file, encoding: "utf-8", invalid: :skip)
+        end
+      TreeSitterJavaParameterExtractor.extract_class_fields(body)
+    rescue File::NotFoundError
+      Index.new
     end
 
     private def merge!(into : Index, src : Index)
