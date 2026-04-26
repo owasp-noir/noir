@@ -21,7 +21,7 @@ module Analyzer::Java
         next unless File.exists?(path)
         next unless path.ends_with?(".#{JAVA_EXTENSION}")
 
-        content = File.read(path, encoding: "utf-8", invalid: :skip)
+        content = read_file_content(path)
         next unless content.includes?(DROPWIZARD_MARKER)
 
         # Some Dropwizard files (Application, Module classes) won't
@@ -55,7 +55,7 @@ module Analyzer::Java
 
       Noir::ImportGraph.related_files(path, package_name, imports, JAVA_EXTENSION) do |file|
         beans = cache[file] ||= begin
-          body = file == path ? content : File.read(file, encoding: "utf-8", invalid: :skip)
+          body = file == path ? content : read_file_content(file)
           Noir::TreeSitterJaxRsExtractor.extract_bean_fields(body)
         rescue File::NotFoundError
           {} of String => Array(Param)

@@ -51,7 +51,7 @@ module Analyzer::Java
           end
         elsif File.exists?(path) && path.ends_with?(".java")
           webflux_base_path = find_base_path(path, webflux_base_path_map)
-          content = File.read(path, encoding: "utf-8", invalid: :skip)
+          content = read_file_content(path)
 
           # Only files that mention Spring MVC / Feign bindings carry
           # annotation-based routes. Reactive `router().route()` files
