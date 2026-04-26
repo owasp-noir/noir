@@ -29,6 +29,17 @@ class Detector
     false
   end
 
+  # Whether the detector can be skipped on subsequent files once it
+  # has matched. Defaults to `true` (idempotent — the detector only
+  # signals tech presence). Detectors that perform side effects in
+  # `detect` (e.g., the C# ASP.NET ones populate the `CodeLocator`
+  # with route-config paths, the OAS/RAML detectors register spec
+  # paths) must override to `false` so the detector pass keeps
+  # invoking them on every file.
+  def idempotent? : Bool
+    true
+  end
+
   macro define_getter_methods(names)
     {% for name, index in names %}
       def {{ name.id }}

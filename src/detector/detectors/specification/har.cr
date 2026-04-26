@@ -27,5 +27,10 @@ module Detector::Specification
     def set_name
       @name = "har"
     end
+
+    # Registers HAR file paths in `CodeLocator`.
+    def idempotent? : Bool
+      false
+    end
   end
 end

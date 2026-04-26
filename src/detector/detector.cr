@@ -15,6 +15,23 @@ macro define_detectors(detectors)
   {% end %}
 end
 
+# Reference-typed atomic Boolean. Wrapping `Atomic(Int8)` in a
+# class keeps the underlying byte addressable through an Array
+# index (`Atomic` itself is a struct and would copy on `[]`).
+class AtomicFlag
+  def initialize
+    @value = Atomic(Int8).new(0_i8)
+  end
+
+  def get : Bool
+    @value.get != 0_i8
+  end
+
+  def set
+    @value.set(1_i8)
+  end
+end
+
 def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), passive_scans : Array(PassiveScan), logger : NoirLogger)
   techs = [] of String
   passive_result = [] of PassiveScanResult
@@ -304,6 +321,16 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
   # Threads for receiving and processing the contents from the channel
   concurrency = options["concurrency"].to_s.to_i
 
+  # One reference-typed atomic flag per detector — set true once
+  # `detect` matches on any file. Workers consult these flags
+  # before invoking `detect()` so already-matched detectors are
+  # skipped on the remaining files (techs are existence-only
+  # signals). The wrapper class is necessary because `Atomic(T)`
+  # is a struct: storing it directly in an `Array` would value-
+  # copy on read, so `.set` would mutate a transient copy and
+  # never persist.
+  detected_flags = Array(AtomicFlag).new(detector_list.size) { AtomicFlag.new }
+
   concurrency.times do
     wg.add(1)
     spawn do
@@ -315,8 +342,14 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
             file, content = file_content
             logger.debug "Detecting: #{file}"
 
-            detector_list.each do |detector|
+            detector_list.each_with_index do |detector, idx|
+              # Skip detectors that have already matched, unless
+              # the detector signals it has side effects in
+              # `detect` (`idempotent? == false`) — see
+              # `Detector#idempotent?` for the contract.
+              next if detector.idempotent? && detected_flags[idx].get
               if detector.detect(file, content)
+                detected_flags[idx].set
                 newly_added = false
                 mutex.synchronize do
                   unless techs.includes?(detector.name)

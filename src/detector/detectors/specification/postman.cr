@@ -28,5 +28,10 @@ module Detector::Specification
     def set_name
       @name = "postman"
     end
+
+    # Registers Postman collection paths in `CodeLocator`.
+    def idempotent? : Bool
+      false
+    end
   end
 end

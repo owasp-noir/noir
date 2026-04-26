@@ -25,5 +25,10 @@ module Detector::Specification
     def set_name
       @name = "zap_sites_tree"
     end
+
+    # Registers ZAP sites-tree paths in `CodeLocator`.
+    def idempotent? : Bool
+      false
+    end
   end
 end
