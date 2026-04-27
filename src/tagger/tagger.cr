@@ -36,6 +36,11 @@ module NoirTaggers
       desc:   "Identifies GraphQL endpoints",
       runner: GraphqlTagger,
     },
+    mcp: {
+      name:   "MCP Tagger",
+      desc:   "Identifies Model Context Protocol endpoints",
+      runner: McpTagger,
+    },
     jwt: {
       name:   "JWT Tagger",
       desc:   "Identifies JWT authentication endpoints",
