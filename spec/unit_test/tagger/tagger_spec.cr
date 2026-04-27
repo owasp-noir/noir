@@ -1,4 +1,5 @@
 require "../../spec_helper"
+require "../../../src/utils/*"
 require "../../../src/tagger/tagger"
 
 describe "Tagger" do
@@ -137,6 +138,20 @@ describe "Tagger" do
       endpoint.tags.empty?.should be_false
       endpoint.tags.each do |tag|
         tag.name.should eq("graphql")
+      end
+    end
+  end
+
+  it "mcp_tagger" do
+    noir_options = create_test_options
+    expected_endpoints = [
+      Endpoint.new("/mcp", "POST"),
+    ]
+    NoirTaggers.run_tagger(expected_endpoints, noir_options, "mcp")
+    expected_endpoints.each do |endpoint|
+      endpoint.tags.empty?.should be_false
+      endpoint.tags.each do |tag|
+        tag.name.should eq("mcp")
       end
     end
   end
