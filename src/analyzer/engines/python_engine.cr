@@ -1,4 +1,5 @@
 require "../../models/analyzer"
+require "../../miniparsers/import_graph"
 require "json"
 
 module Analyzer::Python
@@ -97,126 +98,18 @@ module Analyzer::Python
       FunctionDefinition.new(name, parameters)
     end
 
-    # Finds all the modules imported in a given Python file
+    # Resolve every `import` and `from … import …` in the file to
+    # `{name => {filepath, package_type}}`. Thin delegator over
+    # `Noir::ImportGraph::Python.find_imported_modules` so future
+    # Python analyzers (or new tagger logic) can call the resolver
+    # directly without going through `PythonEngine`.
     def find_imported_modules(app_base_path : ::String, file_path : ::String, content : ::String? = nil) : Hash(::String, Tuple(::String, Int32))
-      # If content is not provided, read it from the file
-      content = File.read(file_path, encoding: "utf-8", invalid: :skip) if content.nil?
-
-      file_base_path = file_path
-      file_base_path = File.dirname(file_path) if file_path.ends_with? ".py"
-
-      import_map = Hash(::String, Tuple(::String, Int32)).new
-      offset = 0
-      content.each_line do |line|
-        package_path = app_base_path
-        from_import = ""
-        imports = ""
-
-        # Check if the line starts with "from" or "import"
-        if line.starts_with?("from")
-          line.scan(/from\s*([^'"\s\\]*)\s*import\s*(.*)/) do |match|
-            next if match.size != 3
-            from_import = match[1]
-            imports = match[2]
-          end
-        elsif line.starts_with?("import")
-          line.scan(/import\s*([^'"\s\\]*)/) do |match|
-            next if match.size != 2
-            imports = match[1]
-          end
-        end
-
-        unless imports.empty?
-          round_bracket_index = line.index('(')
-          if !round_bracket_index.nil?
-            # Parse 'import (\n a,\n b,\n c)' pattern
-            index = offset + round_bracket_index + 1
-            while index < content.size && content[index] != ')'
-              index += 1
-            end
-            imports = content[(offset + round_bracket_index + 1)..(index - 1)].strip
-          end
-
-          # Handle relative paths
-          if from_import.starts_with?("..")
-            package_path = File.join(file_base_path, "..")
-            from_import = from_import[2..]
-          elsif from_import.starts_with?(".")
-            package_path = file_base_path
-            from_import = from_import[1..]
-          end
-
-          imports.split(",").each do |import|
-            import = import.strip
-            if import.starts_with?("..")
-              package_path = File.join(file_base_path, "..")
-            elsif import.starts_with?(".")
-              package_path = file_base_path
-            end
-
-            dotted_as_names = import
-            dotted_as_names = "#{from_import}.#{import}" unless from_import.empty?
-
-            # Create package map (Hash[name => filepath, ...])
-            import_package_map = find_imported_package(package_path, dotted_as_names)
-            next if import_package_map.empty?
-            import_package_map.each do |name, filepath, package_type|
-              import_map[name] = {filepath, package_type}
-            end
-          end
-        end
-
-        offset += line.size + 1
-      end
-
-      import_map
+      Noir::ImportGraph::Python.find_imported_modules(app_base_path, file_path, content)
     end
 
-    # Finds the package path for imported modules
+    # See `find_imported_modules` — same delegator.
     def find_imported_package(package_path : ::String, dotted_as_names : ::String) : Array(Tuple(::String, ::String, Int32))
-      package_map = Array(Tuple(::String, ::String, Int32)).new
-
-      py_path = ""
-      is_positive_travel = false
-      dotted_as_names_split = dotted_as_names.split(".")
-
-      dotted_as_names_split.each_with_index do |names, index|
-        travel_package_path = File.join(package_path, names)
-
-        py_guess = "#{travel_package_path}.py"
-        if File.directory?(travel_package_path)
-          package_path = travel_package_path
-          is_positive_travel = true
-        elsif dotted_as_names_split.size - 2 <= index && File.exists?(py_guess)
-          py_path = py_guess
-          is_positive_travel = true
-        else
-          break
-        end
-      end
-
-      if is_positive_travel
-        names = dotted_as_names_split[-1]
-        names.split(",").each do |name|
-          import = name.strip
-          next if import.empty?
-
-          alias_name = nil
-          if import.includes?(" as ")
-            import, alias_name = import.split(" as ")
-          end
-
-          package_type = File.exists?(File.join(package_path, "#{import}.py")) ? PackageType::FILE : PackageType::CODE
-
-          if !alias_name.nil?
-            package_map << {alias_name, py_path, package_type}
-          else
-            package_map << {import, py_path, package_type}
-          end
-        end
-      end
-
-      package_map
+      Noir::ImportGraph::Python.find_imported_package(package_path, dotted_as_names)
     end
 
     # Finds all parameters in JSON objects within a given code block
@@ -348,10 +241,11 @@ module Analyzer::Python
       data
     end
 
-    module PackageType
-      FILE = 0
-      CODE = 1
-    end
+    # `PackageType::FILE` / `PackageType::CODE` constants are now
+    # canonical at `Noir::ImportGraph::Python::PackageType`. Aliasing
+    # the inner module keeps `PackageType::FILE`-style references in
+    # subclasses working without a sweeping rename.
+    alias PackageType = Noir::ImportGraph::Python::PackageType
 
     class FunctionParameter
       @name : ::String

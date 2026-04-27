@@ -282,3 +282,115 @@ describe Noir::ImportGraph do
     end
   end
 end
+
+describe Noir::ImportGraph::Python do
+  describe "#find_imported_modules" do
+    it "resolves `from package.module import name` to a file path" do
+      with_tmpdir do |root|
+        Dir.mkdir_p(File.join(root, "models"))
+        target = File.join(root, "models", "user.py")
+        from_file = File.join(root, "app.py")
+        File.write(target, "def get_user(): pass\n")
+        # `get_user` chosen instead of `User` so the case-insensitive
+        # macOS filesystem doesn't collapse `User.py` and `user.py`
+        # into the same `File.exists?` truthy result inside the
+        # PackageType::FILE / CODE classifier.
+        content = "from models.user import get_user\n"
+        File.write(from_file, content)
+
+        result = Noir::ImportGraph::Python.find_imported_modules(root, from_file, content)
+        result.should eq({"get_user" => {target, Noir::ImportGraph::Python::PackageType::CODE}})
+      end
+    end
+
+    it "honours `as` aliases in the imported-name key" do
+      with_tmpdir do |root|
+        Dir.mkdir_p(File.join(root, "lib"))
+        target = File.join(root, "lib", "helpers.py")
+        from_file = File.join(root, "main.py")
+        File.write(target, "")
+        content = "from lib.helpers import format as fmt\n"
+        File.write(from_file, content)
+
+        result = Noir::ImportGraph::Python.find_imported_modules(root, from_file, content)
+        result.has_key?("fmt").should be_true
+        result.has_key?("format").should be_false
+      end
+    end
+
+    it "resolves relative imports `from . import x` against the file's directory" do
+      with_tmpdir do |root|
+        Dir.mkdir_p(File.join(root, "pkg"))
+        sibling = File.join(root, "pkg", "sibling.py")
+        from_file = File.join(root, "pkg", "main.py")
+        File.write(sibling, "")
+        content = "from . import sibling\n"
+        File.write(from_file, content)
+
+        result = Noir::ImportGraph::Python.find_imported_modules(root, from_file, content)
+        # The dotted-walk maps the bare module name to the package
+        # path — `py_path` is empty (no leaf-module hit) when we
+        # land on a directory, but the entry exists.
+        result.has_key?("sibling").should be_true
+      end
+    end
+
+    it "handles parenthesised multi-line imports" do
+      with_tmpdir do |root|
+        Dir.mkdir_p(File.join(root, "models"))
+        a = File.join(root, "models", "a.py")
+        b = File.join(root, "models", "b.py")
+        from_file = File.join(root, "app.py")
+        [a, b].each { |f| File.write(f, "") }
+        content = "from models import (\n  a,\n  b,\n)\n"
+        File.write(from_file, content)
+
+        result = Noir::ImportGraph::Python.find_imported_modules(root, from_file, content)
+        result.has_key?("a").should be_true
+        result.has_key?("b").should be_true
+      end
+    end
+
+    it "returns an empty map when no imports resolve to files" do
+      with_tmpdir do |root|
+        from_file = File.join(root, "app.py")
+        content = "from missing.package import nothing\n"
+        File.write(from_file, content)
+
+        Noir::ImportGraph::Python.find_imported_modules(root, from_file, content).should be_empty
+      end
+    end
+
+    it "reads from disk when content is omitted" do
+      with_tmpdir do |root|
+        Dir.mkdir_p(File.join(root, "lib"))
+        target = File.join(root, "lib", "x.py")
+        File.write(target, "")
+        from_file = File.join(root, "app.py")
+        File.write(from_file, "from lib.x import x\n")
+
+        result = Noir::ImportGraph::Python.find_imported_modules(root, from_file)
+        result.has_key?("x").should be_true
+      end
+    end
+  end
+
+  describe "#find_imported_package" do
+    it "marks leaf modules as PackageType::FILE" do
+      with_tmpdir do |root|
+        target = File.join(root, "user.py")
+        File.write(target, "")
+        result = Noir::ImportGraph::Python.find_imported_package(root, "user")
+        result.size.should eq(1)
+        _, _, package_type = result.first
+        package_type.should eq(Noir::ImportGraph::Python::PackageType::FILE)
+      end
+    end
+
+    it "returns an empty array for unresolvable dotted paths" do
+      with_tmpdir do |root|
+        Noir::ImportGraph::Python.find_imported_package(root, "no.such.module").should be_empty
+      end
+    end
+  end
+end
