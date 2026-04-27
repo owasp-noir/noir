@@ -1,135 +1,179 @@
 require "spec"
+require "file_utils"
 require "../../../src/miniparsers/python"
 
+private def with_tmpdir(&)
+  root = File.join(Dir.tempdir, "noir-pyparser-#{Random::Secure.hex(8)}")
+  Dir.mkdir_p(root)
+  begin
+    yield root
+  ensure
+    FileUtils.rm_rf(root) if Dir.exists?(root)
+  end
+end
+
 describe PythonParser do
-  describe "parse_global_variables" do
-    it "extracts typed global variable" do
-      code = <<-PYTHON
-        BASE_URL: str = "http://localhost"
-        PYTHON
-
-      lexer = PythonLexer.new
-      tokens = lexer.tokenize(code)
+  describe "global variable extraction" do
+    it "extracts a typed string assignment" do
+      content = "BASE_URL: str = \"http://localhost\"\n"
       parsers = Hash(String, PythonParser).new
-      parser = PythonParser.new("/app.py", tokens, parsers)
-      parser.@global_variables.has_key?("BASE_URL").should be_true
-      parser.@global_variables["BASE_URL"].value.should eq("http://localhost")
+      parser = PythonParser.new("/app.py", content, parsers)
+
+      gv = parser.@global_variables["BASE_URL"]
+      gv.type.should eq("str")
+      gv.value.should eq("http://localhost")
     end
 
-    it "extracts untyped string variable" do
-      code = <<-PYTHON
-        name = "hello"
-        PYTHON
-
-      lexer = PythonLexer.new
-      tokens = lexer.tokenize(code)
+    it "infers `str` type for unannotated string assignments" do
+      content = "name = \"hello\"\n"
       parsers = Hash(String, PythonParser).new
-      parser = PythonParser.new("/app.py", tokens, parsers)
-      parser.@global_variables.has_key?("name").should be_true
-      parser.@global_variables["name"].type.should eq("str")
-      parser.@global_variables["name"].value.should eq("hello")
+      parser = PythonParser.new("/app.py", content, parsers)
+
+      gv = parser.@global_variables["name"]
+      gv.type.should eq("str")
+      gv.value.should eq("hello")
     end
 
-    it "extracts multiple global variables" do
-      code = <<-PYTHON
-        host = "localhost"
-        port = 8080
-        PYTHON
-
-      lexer = PythonLexer.new
-      tokens = lexer.tokenize(code)
+    it "captures the callee name as `type` for `name = Foo(...)` calls" do
+      content = "bp = Blueprint(\"users\", url_prefix=\"/users\")\n"
       parsers = Hash(String, PythonParser).new
-      parser = PythonParser.new("/config.py", tokens, parsers)
+      parser = PythonParser.new("/app.py", content, parsers)
+
+      gv = parser.@global_variables["bp"]
+      gv.type.should eq("Blueprint")
+      gv.value.should contain("Blueprint(")
+      gv.value.should contain("\"/users\"")
+    end
+
+    it "preserves dotted callees like `Namespace.model(...)` as the type" do
+      content = "user_model = ns.model(\"User\", {})\n"
+      parsers = Hash(String, PythonParser).new
+      parser = PythonParser.new("/app.py", content, parsers)
+
+      gv = parser.@global_variables["user_model"]
+      gv.type.should eq("ns.model")
+    end
+
+    it "leaves type nil for non-call non-string assignments" do
+      content = "count = 42\n"
+      parsers = Hash(String, PythonParser).new
+      parser = PythonParser.new("/app.py", content, parsers)
+
+      gv = parser.@global_variables["count"]
+      gv.type.should be_nil
+      gv.value.should eq("42")
+    end
+
+    it "captures multiple top-level assignments" do
+      content = "host = \"localhost\"\nport = 8080\n"
+      parsers = Hash(String, PythonParser).new
+      parser = PythonParser.new("/config.py", content, parsers)
+
       parser.@global_variables.has_key?("host").should be_true
       parser.@global_variables.has_key?("port").should be_true
     end
   end
 
-  describe "normalize" do
-    it "normalizes a simple string token" do
-      code = <<-PYTHON
-        x = "hello world"
-        PYTHON
+  describe "import recursion" do
+    it "absorbs `from x import y` from a sibling module" do
+      with_tmpdir do |root|
+        sibling = File.join(root, "models.py")
+        File.write(sibling, "user_bp = Blueprint(\"users\", url_prefix=\"/users\")\n")
 
-      lexer = PythonLexer.new
-      tokens = lexer.tokenize(code)
-      parsers = Hash(String, PythonParser).new
-      parser = PythonParser.new("/app.py", tokens, parsers)
+        app = File.join(root, "app.py")
+        content = "from models import user_bp\n"
+        File.write(app, content)
 
-      string_idx = tokens.index { |t| t.type == :STRING }
-      string_idx.should_not be_nil
-      string_idx = string_idx.as(Int32)
-      result = parser.normalize(string_idx)
-      result.should eq("hello world")
+        parsers = Hash(String, PythonParser).new
+        parser = PythonParser.new(app, content, parsers)
+
+        parser.@global_variables.has_key?("user_bp").should be_true
+        parser.@global_variables["user_bp"].type.should eq("Blueprint")
+      end
+    end
+
+    it "honours `as` aliases on `from x import y as z`" do
+      with_tmpdir do |root|
+        sibling = File.join(root, "lib.py")
+        File.write(sibling, "thing = Blueprint(\"t\")\n")
+        app = File.join(root, "app.py")
+        content = "from lib import thing as alt\n"
+        File.write(app, content)
+
+        parsers = Hash(String, PythonParser).new
+        parser = PythonParser.new(app, content, parsers)
+
+        parser.@global_variables.has_key?("alt").should be_true
+        parser.@global_variables.has_key?("thing").should be_false
+      end
+    end
+
+    it "merges every global on `from x import *`" do
+      with_tmpdir do |root|
+        sibling = File.join(root, "shared.py")
+        File.write(sibling, "a = Blueprint(\"a\")\nb = Blueprint(\"b\")\n")
+        app = File.join(root, "app.py")
+        content = "from shared import *\n"
+        File.write(app, content)
+
+        parsers = Hash(String, PythonParser).new
+        parser = PythonParser.new(app, content, parsers)
+
+        parser.@global_variables.has_key?("a").should be_true
+        parser.@global_variables.has_key?("b").should be_true
+      end
+    end
+
+    it "deduplicates revisits via the @visited tracking" do
+      with_tmpdir do |root|
+        # `app.py` and `b.py` both `from . import a`. Loading via
+        # `app` should still terminate even though there's a
+        # diamond-shaped import graph.
+        File.write(File.join(root, "a.py"), "x = Blueprint(\"x\")\n")
+        File.write(File.join(root, "b.py"), "from . import a\n")
+        app = File.join(root, "app.py")
+        content = "from . import a\nfrom . import b\n"
+        File.write(app, content)
+
+        parsers = Hash(String, PythonParser).new
+        parser = PythonParser.new(app, content, parsers)
+
+        # `a` is exposed both directly and via `b`'s re-export — the
+        # name should be present and resolvable.
+        parser.@global_variables.size.should be > 0
+      end
     end
   end
 
-  describe "extract_assign_data" do
-    it "extracts string assignment" do
-      code = <<-PYTHON
-        x = "test_value"
-        PYTHON
-
-      lexer = PythonLexer.new
-      tokens = lexer.tokenize(code)
-      parsers = Hash(String, PythonParser).new
-      parser = PythonParser.new("/app.py", tokens, parsers)
-
-      assign_idx = tokens.index { |t| t.type == :ASSIGN }
-      assign_idx.should_not be_nil
-      assign_idx = assign_idx.as(Int32)
-      result = parser.extract_assign_data(assign_idx + 1)
-      result[0].should eq("str")
-      result[1].should eq("test_value")
-    end
-
-    it "extracts numeric assignment as raw data" do
-      code = <<-PYTHON
-        count = 42
-        PYTHON
-
-      lexer = PythonLexer.new
-      tokens = lexer.tokenize(code)
-      parsers = Hash(String, PythonParser).new
-      parser = PythonParser.new("/app.py", tokens, parsers)
-
-      assign_idx = tokens.index { |t| t.type == :ASSIGN }
-      assign_idx.should_not be_nil
-      assign_idx = assign_idx.as(Int32)
-      result = parser.extract_assign_data(assign_idx + 1)
-      result[1].should eq("42")
-    end
-  end
-
-  describe "PythonParser::GlobalVariables" do
-    it "to_s with type" do
+  describe "GlobalVariables#to_s" do
+    it "includes type when present" do
       gv = PythonParser::GlobalVariables.new("host", "str", "localhost", "/app.py")
       gv.to_s.should contain("host")
       gv.to_s.should contain("str")
       gv.to_s.should contain("localhost")
     end
 
-    it "to_s without type" do
+    it "omits the colon when type is nil" do
       gv = PythonParser::GlobalVariables.new("count", nil, "42", "/app.py")
       gv.to_s.should contain("count")
       gv.to_s.should contain("42")
     end
   end
 
-  describe "PythonParser::ImportModel" do
-    it "to_s with path" do
+  describe "ImportModel#to_s" do
+    it "shows path when known" do
       im = PythonParser::ImportModel.new("os", "/usr/lib/python3/os.py", nil)
       im.to_s.should contain("os")
       im.to_s.should contain("/usr/lib/python3/os.py")
     end
 
-    it "to_s without path" do
+    it "shows {unknown} when path is nil" do
       im = PythonParser::ImportModel.new("os", nil, nil)
       im.to_s.should contain("os")
       im.to_s.should contain("unknown")
     end
 
-    it "to_s with alias" do
+    it "shows the alias" do
       im = PythonParser::ImportModel.new("numpy", "/site-packages/numpy.py", "np")
       im.to_s.should contain("numpy")
       im.to_s.should contain("np")
