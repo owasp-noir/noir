@@ -1,4 +1,3 @@
-require "../../../minilexers/python"
 require "../../../miniparsers/python"
 require "../../../miniparsers/python_route_extractor"
 require "../../../miniparsers/python_route_extractor_ts"
@@ -552,14 +551,13 @@ module Analyzer::Python
       @file_content_cache[path] ||= read_file_content(path)
     end
 
-    # Create a Python parser for a given path and content
+    # Create a Python parser for a given path and content. The
+    # parser walks the file with tree-sitter and recursively
+    # absorbs globals from imported modules — no lexer step.
     def create_parser(path : ::String, content : ::String = "") : PythonParser
       content = fetch_file_content(path) if content.empty?
-      lexer = PythonLexer.new
-      @logger.debug "Tokenizing #{path}"
-      tokens = lexer.tokenize(content)
       @logger.debug "Parsing #{path}"
-      parser = PythonParser.new(path, tokens, @parsers, depth: 0)
+      parser = PythonParser.new(path, content, @parsers, depth: 0)
       @logger.debug "Parsed #{path}"
       parser
     end

@@ -1,341 +1,392 @@
-require "../minilexers/python"
-require "../models/minilexer/token"
+require "../ext/tree_sitter/tree_sitter"
 require "../utils/parser_limit"
+require "./import_graph"
 
+# Python source-file parser used by the Flask analyzer to resolve
+# routing-relevant globals (Blueprint / Namespace / Api instances)
+# across files. Originally a hand-rolled token consumer paired with
+# `minilexers/python.cr`; rewritten to walk the vendored tree-sitter
+# Python grammar so we shed the legacy lexer (now deleted) and get
+# accurate handling of multi-line strings, fstrings, parenthesised
+# imports, and similar shapes that the regex/token approach couldn't
+# express cleanly.
+#
+# The public surface kept stable for Flask:
+#
+#   * `PythonParser.new(path, content, parsers, depth = 0)` — same
+#     constructor shape minus the now-irrelevant `tokens` argument.
+#   * `parser.@global_variables : Hash(String, GlobalVariables)` —
+#     populated for the file at `path` plus every module reachable
+#     through its `import` / `from … import …` statements
+#     (recursive, with depth bounded by `ParserLimit`).
+#   * Per-variable `GlobalVariables` struct with `name`, `type`,
+#     `value`, `path` fields. `type` is `"str"` for string
+#     assignments, the callee identifier for `name = Foo(...)` calls
+#     (including dotted forms like `Namespace.model`), `nil`
+#     otherwise.
+#
+# `ImportModel` stays in tree but isn't populated by this rewrite —
+# nothing reads `parser.@import_statements`. We keep the class for
+# any external referrers that might construct one for logging.
 class PythonParser
-  property tokens : Array(Token)
   property path : String
 
-  # depth: import depth (0 = entry file). Used with NOIR_PARSER_MAX_DEPTH to cap how deep we follow imports.
-  def initialize(@path : String, @tokens : Array(Token), @parsers : Hash(String, PythonParser), @visited : Array(String) = Array(String).new, depth : Int32 = 0)
-    @import_statements = Hash(String, ImportModel).new
+  def initialize(@path : String,
+                 content : String,
+                 @parsers : Hash(String, PythonParser),
+                 @visited : Array(String) = Array(String).new,
+                 depth : Int32 = 0)
     @global_variables = Hash(String, GlobalVariables).new
     @basedir = File.dirname(@path)
-    @is_package_file = File.exists?(File.dirname(@path) + "/__init__.py")
     while @basedir != "" && File.exists?(@basedir + "/__init__.py")
       @basedir = File.dirname(@basedir)
     end
 
-    @debug = false
     @depth = depth
     @visited << path
-    parse
+
+    parse(content)
   end
 
-  def parse
-    parse_import_statements(@tokens)
-    parse_global_variables()
-  end
-
-  # Create a parser for the given path
-  def create_parser(path : Path, content : String = "") : PythonParser
-    if content == ""
-      content = File.read(path, encoding: "utf-8", invalid: :skip)
+  def parse(content : String)
+    Noir::TreeSitter.parse_python(content) do |root|
+      extract_imports(root, content)
+      extract_globals(root, content)
     end
-
-    lexer = PythonLexer.new
-    tokens = lexer.tokenize(content)
-    parser = PythonParser.new(path.to_s, tokens, @parsers, @visited.dup, depth: @depth + 1)
-    parser
   end
 
-  # Get the parser for the given path
-  def get_parser(path : Path) : PythonParser
-    if @parsers.has_key?(path.to_s)
-      return @parsers[path.to_s]
+  # ---- module-level globals ---------------------------------------
+
+  private def extract_globals(root : LibTreeSitter::TSNode, source : String)
+    Noir::TreeSitter.each_named_child(root) do |node|
+      next unless Noir::TreeSitter.node_type(node) == "expression_statement"
+      Noir::TreeSitter.each_named_child(node) do |child|
+        next unless Noir::TreeSitter.node_type(child) == "assignment"
+        name, type, value = analyse_assignment(child, source)
+        next if name.empty?
+        @global_variables[name] = GlobalVariables.new(name, type, value, @path)
+      end
     end
-
-    parser = create_parser(path)
-    @parsers[path.to_s] = parser
-    parser
   end
 
-  def parse_import_statements(tokens : Array(Token))
-    import_statements = Array(Array(String)).new
-    index = 0
-    while index < tokens.size
-      code_start = index == 0 || tokens[index - 1].type == :NEWLINE || tokens[index - 1].type == :INDENT
-      unless code_start
-        index += 1
+  # `assignment` shape under tree-sitter-python:
+  #
+  #   simple:   `x = "hello"` →  identifier=name, string=rhs
+  #   typed:    `x: T = ...`  →  identifier, type, rhs
+  #   call:     `x = Foo(args)` → identifier, call(callee=identifier|attribute, args)
+  #
+  # We map this to the legacy `(name, type?, value)` triple.
+  private def analyse_assignment(node : LibTreeSitter::TSNode, source : String) : Tuple(String, String?, String)
+    name = ""
+    type : String? = nil
+    value = ""
+    saw_rhs = false
+
+    Noir::TreeSitter.each_named_child(node) do |child|
+      ty = Noir::TreeSitter.node_type(child)
+
+      if !saw_rhs && ty == "identifier" && name.empty?
+        name = Noir::TreeSitter.node_text(child, source)
         next
       end
 
-      from_strings = Array(String).new
-      if tokens[index].type == :FROM
-        index += 1
-        while tokens[index].type != :IMPORT && tokens[index].type != :EOF
-          if from_strings.size > 0
-            if tokens[index].type == :DOT
-              index += 1
-              next
-            end
-          else
-            if tokens[index].type == :DOT
-              if index + 1 < tokens.size && tokens[index + 1].type == :DOT
-                from_strings << ".."
-                index += 2
-              else
-                from_strings << "."
-                index += 1
-              end
-              next
-            end
-          end
-
-          from_strings << tokens[index].value
-          index += 1
-        end
-      end
-
-      if tokens[index].type == :IMPORT
-        index += 1
-        import_strings = from_strings.dup
-        while tokens[index].type != :NEWLINE && tokens[index].type != :EOF
-          if tokens[index].type == :COMMA
-            import_strings = from_strings.dup
-            index += 1
-            next
-          elsif tokens[index].type == :DOT
-            index += 1
-            next
-          elsif tokens[index].type == :LPAREN
-            index += 1
-            next
-          elsif tokens[index].type == :RPAREN
-            index += 1
-            next
-          elsif tokens[index].type == :COMMENT
-            index += 1
-            next
-          end
-
-          # Check if the import statement has an alias
-          import_name = tokens[index].value
-          if tokens[index + 1].type != :EOF && tokens[index + 1].type == :AS
-            as_name = tokens[index + 2].value
-            index += 2
-            import_strings << import_name + " as " + as_name
-            if from_strings.size > 0
-              import_statements << import_strings
-            end
-          else
-            # No alias
-            import_strings << import_name
-            if from_strings.size > 0
-              import_statements << import_strings
-            end
-          end
-
-          index += 1
-        end
-
-        if from_strings.size == 0
-          # No from statement, so add the import statement
-          import_statements << import_strings
-        end
-      end
-
-      index += 1
-    end
-
-    import_statements.each do |import_statement|
-      name = import_statement[-1]
-
-      # Check if the name has an alias
-      as_name = nil
-      if name.includes?(" as ")
-        name, as_name = name.split(" as ") # Set as_name
-        import_statement[-1] = name        # Remove the alias part
-      end
-
-      path = nil
-      pypath = nil
-      remain_import_parts = false
-      package_dir = @basedir
-      if import_statement[0] == "."
-        package_dir = File.dirname(@path)
-        import_statement.shift
-      end
-
-      import_statement.each_with_index do |import_part, _index|
-        path = File.join(package_dir, import_part)
-        if import_part == ".."
-          path = File.dirname(package_dir)
-        end
-
-        # Order of checking is important
-        if File.directory?(path)
-          package_dir = path
-        elsif File.exists?(path + ".py")
-          pypath = path + ".py"
-          if _index != import_statement.size - 1
-            remain_import_parts = true
-          end
-          break
-        elsif package_dir != @basedir && File.exists?(File.join(package_dir, "__init__.py"))
-          pypath = File.join(package_dir, "__init__.py")
-          if _index != import_statement.size - 1
-            remain_import_parts = true
-          end
-          break
-        else
-          pypath = nil
-          break
-        end
-      end
-
-      unless pypath.nil?
-        if @visited.includes?(pypath)
-          next
-        end
-        next unless ParserLimit.allow_depth?(@depth)
-        if name == "*"
-          parser = get_parser(Path.new(pypath))
-          @global_variables.merge!(parser.@global_variables)
-        else
-          parser = get_parser(Path.new(pypath))
-          if !remain_import_parts && !pypath.ends_with?("__init__.py")
-            # import all global variables
-            parser.@global_variables.each do |key, value|
-              @global_variables["#{name}.#{key}"] = value
-            end
-          elsif parser.@global_variables.has_key?(name)
-            # import specific global variable
-            @global_variables[as_name.nil? ? name : as_name] = parser.@global_variables[name]
-          end
-        end
-      end
-    end
-  end
-
-  def parse_global_variables
-    index = 0
-    while index < tokens.size
-      if (index == 0 || tokens[index - 1].type == :NEWLINE) && index + 3 < tokens.size
-        if tokens[index].type == :IDENTIFIER && tokens[index + 1].type == :COLON && tokens[index + 3].type == :ASSIGN
-          name = tokens[index].value
-          type = tokens[index + 2].value
-          value = extract_assign_data(index + 4)[1]
-        elsif tokens[index].type == :IDENTIFIER && tokens[index + 1].type == :ASSIGN
-          name = tokens[index].value
-          t = extract_assign_data(index + 2)
-          type, value = t[0], t[1]
-          # Check if the type is a direct function or class, then get the name of the function or class
-          if type.nil? && tokens[index + 2].type == :IDENTIFIER
-            _type = ""
-            while tokens[index + 2].type == :IDENTIFIER || tokens[index + 2].type == :DOT
-              _type += tokens[index + 2].value
-              index += 1
-            end
-            if tokens[index + 2].type == :LPAREN
-              type = _type
-            end
-          end
-        else
-          index += 1
-          next
-        end
-
-        @global_variables[name] = GlobalVariables.new(name, type, value, path)
-      end
-      index += 1
-    end
-  end
-
-  # Normalize the string or fstring
-  def normalize(index) : String
-    if @tokens[index].type == :STRING
-      str = @tokens[index].value[1..-2]
-      return str
-    elsif @tokens[index].type == :FSTRING
-      str = @tokens[index].value[1..-2]
-      str = str.gsub(/\{[a-zA-Z_]\w*\}/) do |match|
-        key = match[1..-2]
-        @global_variables.has_key?(key) ? @global_variables[key] : match
-      end
-
-      return str
-    end
-
-    @tokens[index].value
-  end
-
-  def extract_assign_data(index) : Tuple(String?, String)
-    rawdata = ""
-    variable_type = nil # unknown
-    sindex = index
-    lparen = 0
-    while index < @tokens.size
-      token_type = @tokens[index].type
-      token_value = @tokens[index].value
-      if token_type == :LPAREN
-        lparen += 1
-        rawdata += token_value
-      elsif lparen > 0
-        rawdata += token_value
-        if token_type == :RPAREN
-          lparen -= 1
-          if lparen == 0
-            break
-          end
-        end
-      elsif token_type == :NEWLINE
-        break
-      elsif token_type == :COMMENT
-        index += 1
+      if !saw_rhs && ty == "type"
+        type = first_identifier_text(child, source)
         next
-      elsif sindex == index
-        # Start of the assignment
-        if token_type == :STRING || token_type == :FSTRING
-          return Tuple.new("str", normalize(index))
-        else
-          rawdata += token_value
-        end
+      end
+
+      next if saw_rhs
+
+      case ty
+      when "string"
+        type ||= "str"
+        value = decode_string(child, source)
+      when "call"
+        callee = first_named_child(child)
+        type ||= callee_name(callee, source) if callee
+        value = Noir::TreeSitter.node_text(child, source)
       else
-        rawdata += token_value
+        value = Noir::TreeSitter.node_text(child, source)
       end
-      index += 1
+      saw_rhs = true
     end
 
-    rawdata = rawdata.strip
-    if @global_variables.has_key?(rawdata)
-      # Check if the rawdata is a global variable
-      gv = @global_variables[rawdata]
-      return Tuple.new(gv.type, gv.value)
-    end
+    {name, type, value}
+  end
 
-    # Check if the rawdata is an instance variable
-    instance_parts = rawdata.split(".")
-    if instance_parts.size > 1
-      instance = instance_parts[0]
-      if @global_variables.has_key?(instance)
-        gv = @global_variables[instance]
-        gv_type = gv.type
-        if gv_type
-          variable_type = gv_type + "." + instance_parts[1].split("(")[0]
+  private def callee_name(callee : LibTreeSitter::TSNode, source : String) : String
+    case Noir::TreeSitter.node_type(callee)
+    when "identifier"
+      Noir::TreeSitter.node_text(callee, source)
+    when "attribute"
+      # Dotted forms like `Namespace.model(...)` — the legacy parser
+      # surfaced the full dotted text as `type`. Tree-sitter wraps
+      # the whole expression as `attribute`, so node_text gives us
+      # the same shape.
+      Noir::TreeSitter.node_text(callee, source)
+    else
+      ""
+    end
+  end
+
+  private def first_identifier_text(node : LibTreeSitter::TSNode, source : String) : String
+    Noir::TreeSitter.each_named_child(node) do |child|
+      return Noir::TreeSitter.node_text(child, source) if Noir::TreeSitter.node_type(child) == "identifier"
+    end
+    ""
+  end
+
+  private def decode_string(node : LibTreeSitter::TSNode, source : String) : String
+    buf = String.build do |io|
+      Noir::TreeSitter.each_named_child(node) do |child|
+        if Noir::TreeSitter.node_type(child) == "string_content"
+          io << Noir::TreeSitter.node_text(child, source)
         end
       end
     end
-
-    Tuple.new(variable_type, rawdata)
+    buf
   end
 
-  def print_line(index)
-    while index < @tokens.size
-      break if @tokens[index].type == :NEWLINE
-      STDERR.print("#{@tokens[index].type} #{@tokens[index].value.inspect}", " ")
-      index += 1
+  private def first_named_child(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+    count = LibTreeSitter.ts_node_named_child_count(node)
+    return if count == 0
+    LibTreeSitter.ts_node_named_child(node, 0_u32)
+  end
+
+  # ---- imports + recursive merge ----------------------------------
+
+  # Walk every top-level `import` / `import_from` statement and
+  # merge any reachable module's globals into ours, mirroring the
+  # legacy parser's behaviour:
+  #
+  #   `import x.y`            → key globals as `x.y.<key>` for each
+  #                              global the leaf module exports
+  #   `import x as y`         → key as `y.<key>`
+  #   `from x import a`       → key as `a` (or alias if `as`)
+  #   `from x import *`       → merge all keys verbatim
+  #   `from . import a`       → relative to the current file
+  #
+  # Bounded by `ParserLimit.allow_depth?(@depth)` so deep import
+  # webs don't melt the scanner.
+  private def extract_imports(root : LibTreeSitter::TSNode, source : String)
+    Noir::TreeSitter.each_named_child(root) do |node|
+      case Noir::TreeSitter.node_type(node)
+      when "import_statement"
+        handle_import_statement(node, source)
+      when "import_from_statement"
+        handle_import_from_statement(node, source)
+      end
     end
-    STDERR.puts ""
   end
 
-  def debug_print(s)
-    if @debug
-      STDERR.puts s
+  # `import x` / `import x.y as z` / `import a, b as c`
+  private def handle_import_statement(node : LibTreeSitter::TSNode, source : String)
+    Noir::TreeSitter.each_named_child(node) do |child|
+      case Noir::TreeSitter.node_type(child)
+      when "dotted_name"
+        dotted = Noir::TreeSitter.node_text(child, source)
+        merge_imported_module(dotted, dotted, prefix: "#{dotted}.")
+      when "aliased_import"
+        dotted, alias_name = aliased_import_parts(child, source)
+        merge_imported_module(dotted, alias_name, prefix: "#{alias_name}.")
+      end
     end
   end
 
-  # Class to model annotations
+  # `from x import a` / `from . import a` / `from x import *`
+  private def handle_import_from_statement(node : LibTreeSitter::TSNode, source : String)
+    relative = false
+    relative_prefix = 0
+    from_dotted = ""
+    name_specs = [] of Tuple(String, String?, Bool) # name, alias, wildcard
+
+    Noir::TreeSitter.each_named_child(node) do |child|
+      case Noir::TreeSitter.node_type(child)
+      when "relative_import"
+        relative = true
+        relative_prefix = count_relative_dots(child, source)
+        # `relative_import` may also wrap a `dotted_name` for
+        # `from .foo import bar` — pick that up.
+        Noir::TreeSitter.each_named_child(child) do |sub|
+          if Noir::TreeSitter.node_type(sub) == "dotted_name"
+            from_dotted = Noir::TreeSitter.node_text(sub, source)
+          end
+        end
+      when "dotted_name"
+        if from_dotted.empty? && !relative
+          from_dotted = Noir::TreeSitter.node_text(child, source)
+        else
+          name_specs << {Noir::TreeSitter.node_text(child, source), nil, false}
+        end
+      when "aliased_import"
+        dotted, alias_name = aliased_import_parts(child, source)
+        name_specs << {dotted, alias_name, false}
+      when "wildcard_import"
+        name_specs << {"*", nil, true}
+      end
+    end
+
+    base_dir = relative ? relative_base_dir(relative_prefix) : @basedir
+    return unless base_dir
+    full_module = from_dotted.empty? ? "" : from_dotted
+
+    name_specs.each do |name, alias_name, wildcard|
+      if wildcard
+        # `from X import *` — resolve X, merge every global.
+        next if full_module.empty?
+        pyfile = resolve_python_module(base_dir, full_module)
+        next unless pyfile
+        next if @visited.includes?(pyfile)
+        next unless ParserLimit.allow_depth?(@depth)
+        sub = get_or_create_parser(pyfile)
+        next unless sub
+        @global_variables.merge!(sub.@global_variables)
+        next
+      end
+
+      # Two import shapes need separate handling:
+      #
+      #   * Name lookup: `from lib import thing` where `lib.py`
+      #     exists and `thing` is a global inside it. Resolve the
+      #     from-path alone, then read `thing` out of its globals.
+      #   * Submodule import: `from pkg import sub` /
+      #     `from . import sub` where `pkg/sub.py` (or just
+      #     `sub.py` for the relative form) is itself a module.
+      #     Prefix-import all of its globals as `sub.<key>` —
+      #     matches the legacy parser's `remain_import_parts =
+      #     false` branch.
+      #
+      # Try name-lookup first when there's a from-path; fall back
+      # to submodule import. The relative-only `from . import x`
+      # case skips straight to submodule import since there's no
+      # from-path to look in.
+      local_name = alias_name || name
+
+      if !full_module.empty?
+        from_pyfile = resolve_python_module(base_dir, full_module)
+        if from_pyfile && !@visited.includes?(from_pyfile) && ParserLimit.allow_depth?(@depth)
+          sub = get_or_create_parser(from_pyfile)
+          if sub && sub.@global_variables.has_key?(name)
+            @global_variables[local_name] = sub.@global_variables[name]
+            next
+          end
+        end
+      end
+
+      submodule_path = full_module.empty? ? name : "#{full_module}.#{name}"
+      pyfile = resolve_python_module(base_dir, submodule_path)
+      next unless pyfile
+      next if @visited.includes?(pyfile)
+      next unless ParserLimit.allow_depth?(@depth)
+      sub = get_or_create_parser(pyfile)
+      next unless sub
+
+      sub.@global_variables.each do |k, v|
+        @global_variables["#{local_name}.#{k}"] = v
+      end
+    end
+  end
+
+  private def aliased_import_parts(node : LibTreeSitter::TSNode, source : String) : Tuple(String, String)
+    dotted = ""
+    alias_name = ""
+    Noir::TreeSitter.each_named_child(node) do |child|
+      case Noir::TreeSitter.node_type(child)
+      when "dotted_name"
+        dotted = Noir::TreeSitter.node_text(child, source)
+      when "identifier"
+        if dotted.empty?
+          dotted = Noir::TreeSitter.node_text(child, source)
+        else
+          alias_name = Noir::TreeSitter.node_text(child, source)
+        end
+      end
+    end
+    {dotted, alias_name}
+  end
+
+  # `relative_import` wraps an `import_prefix` with one `.` per
+  # parent directory hop. Count them.
+  private def count_relative_dots(node : LibTreeSitter::TSNode, source : String) : Int32
+    Noir::TreeSitter.each_named_child(node) do |child|
+      if Noir::TreeSitter.node_type(child) == "import_prefix"
+        return Noir::TreeSitter.node_text(child, source).size
+      end
+    end
+    0
+  end
+
+  private def relative_base_dir(prefix_dots : Int32) : String?
+    dir = File.dirname(@path)
+    (prefix_dots - 1).times do
+      dir = File.dirname(dir)
+      return if dir.empty? || dir == "/"
+    end
+    dir
+  end
+
+  private def merge_imported_module(dotted : String, key_root : String, prefix : String)
+    pyfile = resolve_python_module(@basedir, dotted)
+    return unless pyfile
+    return if @visited.includes?(pyfile)
+    return unless ParserLimit.allow_depth?(@depth)
+
+    sub = get_or_create_parser(pyfile)
+    return unless sub
+
+    sub.@global_variables.each do |k, v|
+      @global_variables["#{prefix}#{k}"] = v
+    end
+  end
+
+  # Walk a dotted Python module path under `base_dir`, preferring
+  # packages (directories) over modules (`.py` files). Mirrors the
+  # legacy parser's `parse_import_statements` resolution logic plus
+  # `Noir::ImportGraph::Python.find_imported_package` — but returns
+  # the full leaf `.py` path (not a name → path map) since we just
+  # want to recurse into one specific module.
+  private def resolve_python_module(base_dir : String, dotted : String) : String?
+    segments = dotted.split(".")
+    package_dir = base_dir
+    py_path : String? = nil
+
+    segments.each_with_index do |seg, i|
+      candidate = File.join(package_dir, seg)
+      py_guess = "#{candidate}.py"
+      if File.directory?(candidate)
+        package_dir = candidate
+      elsif File.exists?(py_guess)
+        py_path = py_guess
+        break
+      elsif File.exists?(File.join(package_dir, "__init__.py")) && i == segments.size - 1
+        py_path = File.join(package_dir, "__init__.py")
+        break
+      else
+        return
+      end
+    end
+
+    if py_path.nil? && File.exists?(File.join(package_dir, "__init__.py"))
+      py_path = File.join(package_dir, "__init__.py")
+    end
+
+    py_path
+  end
+
+  private def get_or_create_parser(pyfile : String) : PythonParser?
+    return @parsers[pyfile] if @parsers.has_key?(pyfile)
+
+    content = File.read(pyfile, encoding: "utf-8", invalid: :skip)
+    sub = PythonParser.new(pyfile, content, @parsers, @visited.dup, depth: @depth + 1)
+    @parsers[pyfile] = sub
+    sub
+  rescue File::NotFoundError | File::AccessDeniedError
+    nil
+  end
+
+  # Class to model annotations — kept for API stability even though
+  # this rewrite no longer populates it (Flask doesn't read
+  # `@import_statements` directly).
   class ImportModel
     property name : String
     property path : String?
