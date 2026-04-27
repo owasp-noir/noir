@@ -4,6 +4,7 @@ module Analyzer::Ruby
   class Sinatra < RubyEngine
     def analyze
       parallel_file_scan do |path|
+        next unless path.ends_with?(".rb")
         File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
           last_endpoint = Endpoint.new("", "")
           file.each_line.with_index do |line, index|
