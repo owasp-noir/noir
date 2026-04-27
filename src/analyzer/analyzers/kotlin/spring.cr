@@ -9,16 +9,28 @@ module Analyzer::Kotlin
 
     def analyze
       webflux_base_path_map = Hash(String, String).new
+      string_constants = Hash(String, String).new
       dto_builder = Noir::TreeSitterKotlinDtoIndex.new
 
       file_list = all_files()
+      file_list.each do |path|
+        next unless File.exists?(path)
+        next if File.directory?(path)
+        next unless path.ends_with?(".#{KOTLIN_EXTENSION}")
+
+        content = read_file_content(path)
+        Noir::TreeSitterKotlinRouteExtractor.extract_string_constants(content).each do |name, value|
+          string_constants[name] ||= value
+        end
+      end
+
       file_list.each do |path|
         next unless File.exists?(path)
 
         if File.directory?(path)
           process_directory(path, webflux_base_path_map)
         elsif path.ends_with?(".#{KOTLIN_EXTENSION}")
-          process_kotlin_file(path, dto_builder, webflux_base_path_map)
+          process_kotlin_file(path, dto_builder, webflux_base_path_map, string_constants)
         end
       end
 
@@ -131,7 +143,10 @@ module Analyzer::Kotlin
     # Tree-sitter pipeline: route discovery, parameter extraction,
     # `consumes = ...`, and DTO cross-file resolution all run on the
     # vendored Kotlin grammar — no `KotlinParser` / `KotlinLexer`.
-    private def process_kotlin_file(path : String, dto_builder : Noir::TreeSitterKotlinDtoIndex, webflux_base_path_map : Hash(String, String))
+    private def process_kotlin_file(path : String,
+                                    dto_builder : Noir::TreeSitterKotlinDtoIndex,
+                                    webflux_base_path_map : Hash(String, String),
+                                    string_constants : Hash(String, String))
       content = read_file_content(path)
 
       # Single tree-sitter parse for the whole file — every
@@ -148,7 +163,7 @@ module Analyzer::Kotlin
         webflux_base_path = find_base_path(path, webflux_base_path_map)
         dto_index = dto_builder.build_for_with_root(path, content, root)
 
-        routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes_from(root, content)
+        routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes_from(root, content, string_constants)
 
         # Pin the parameter format to the FIRST verb seen for each
         # (class, method) — for multi-verb `@RequestMapping(method =

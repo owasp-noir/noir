@@ -54,21 +54,63 @@ module Noir
       end
     end
 
-    def extract_routes(source : String) : Array(Route)
+    def extract_routes(source : String, string_constants = Hash(String, String).new) : Array(Route)
       routes = [] of Route
       Noir::TreeSitter.parse_kotlin(source) do |root|
-        routes = extract_routes_from(root, source)
+        routes = extract_routes_from(root, source, string_constants)
       end
       routes
+    end
+
+    def extract_string_constants(source : String) : Hash(String, String)
+      constants = Hash(String, String).new
+      package_name = ""
+      current_type = ""
+      current_depth = 0
+
+      source.each_line do |line|
+        if package_name.empty?
+          if match = line.match(/^\s*package\s+([A-Za-z_][A-Za-z0-9_.]*)/)
+            package_name = match[1]
+          end
+        end
+
+        if match = line.match(/^\s*(?:class|object|interface)\s+([A-Za-z_][A-Za-z0-9_]*)/)
+          current_type = match[1]
+          current_depth = 0
+        end
+
+        if match = line.match(/\b(?:const\s+)?val\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*String)?\s*=\s*"([^"]*)"/)
+          name = match[1]
+          value = match[2]
+          constants[name] ||= value
+          unless current_type.empty?
+            constants["#{current_type}.#{name}"] ||= value
+            constants["#{package_name}.#{current_type}.#{name}"] ||= value unless package_name.empty?
+          end
+        end
+
+        unless current_type.empty?
+          current_depth += line.count("{")
+          current_depth -= line.count("}")
+          if current_depth <= 0 && line.includes?("}")
+            current_type = ""
+            current_depth = 0
+          end
+        end
+      end
+
+      constants
     end
 
     # `_from(root, source)` — accept a pre-parsed root so the Kotlin
     # Spring analyzer can amortise the parse across multiple
     # extractions on the same file. Tree lifetime is the caller's
     # responsibility.
-    def extract_routes_from(root : LibTreeSitter::TSNode, source : String) : Array(Route)
+    def extract_routes_from(root : LibTreeSitter::TSNode, source : String, string_constants = Hash(String, String).new) : Array(Route)
       routes = [] of Route
       walk_classes(root, source, "", routes)
+      collect_gateway_routes(source, string_constants, routes)
       routes
     end
 
@@ -289,6 +331,206 @@ module Noir
           end
         end
       end
+    end
+
+    private struct GatewayRoute
+      getter verb : String
+      getter path : String
+
+      def initialize(@verb, @path)
+      end
+    end
+
+    private def collect_gateway_routes(source : String,
+                                       string_constants : Hash(String, String),
+                                       routes : Array(Route))
+      visible_source = visible_kotlin_code(source)
+      helpers = gateway_predicate_helpers(source, visible_source, string_constants)
+      return if helpers.empty?
+
+      visible_source.each_line.with_index do |line, idx|
+        next if line.includes?("fun PredicateSpec.")
+
+        helpers.each do |name, route|
+          next unless line.includes?(".#{name}(")
+          routes << Route.new(route.verb, route.path, "", "", idx)
+        end
+      end
+    end
+
+    private def gateway_predicate_helpers(source : String,
+                                          visible_source : String,
+                                          string_constants : Hash(String, String)) : Hash(String, GatewayRoute)
+      helpers = Hash(String, GatewayRoute).new
+      lines = source.lines
+      visible_lines = visible_source.lines
+      i = 0
+
+      while i < lines.size
+        line = visible_lines[i]
+        match = line.match(/\bfun\s+PredicateSpec\.([A-Za-z_][A-Za-z0-9_]*)\s*\([^)]*\)\s*(?::\s*[^=]+)?=/)
+        unless match
+          i += 1
+          next
+        end
+
+        name = match[1]
+        expr = lines[i][(match.end(0) || line.size)..]? || ""
+        j = i
+        unless expr.includes?(".path(")
+          j = i + 1
+          while j < lines.size
+            visible_next_line = visible_lines[j]
+            break if visible_next_line.match(/^\s*(?:[A-Za-z_][A-Za-z0-9_<>.]*\s+)*fun\b/)
+            break if visible_next_line.match(/^\s*(?:class|object|interface|companion\s+object)\b/)
+            break if visible_next_line.strip == "}"
+            expr += "\n#{lines[j]}"
+            break if visible_next_line.includes?(".path(")
+            j += 1
+          end
+        end
+
+        if route = gateway_route_from_expression(expr, string_constants)
+          helpers[name] = route
+        end
+
+        i = j + 1
+      end
+
+      helpers
+    end
+
+    private def visible_kotlin_code(source : String) : String
+      slash = '/'.ord.to_u8
+      star = '*'.ord.to_u8
+      double_quote = '"'.ord.to_u8
+      single_quote = '\''.ord.to_u8
+      backslash = '\\'.ord.to_u8
+      newline = '\n'.ord.to_u8
+      space = ' '.ord.to_u8
+
+      bytes = source.to_slice
+      mode = :code
+      quote = 0_u8
+      raw_string = false
+      escaped = false
+      i = 0
+
+      String.build(source.bytesize) do |io|
+        while i < bytes.size
+          byte = bytes[i]
+
+          case mode
+          when :line_comment
+            if byte == newline
+              io.write_byte(byte)
+              mode = :code
+            else
+              io.write_byte(space)
+            end
+            i += 1
+          when :block_comment
+            if byte == newline
+              io.write_byte(byte)
+              i += 1
+            elsif i + 1 < bytes.size && byte == star && bytes[i + 1] == slash
+              io.write_byte(space)
+              io.write_byte(space)
+              i += 2
+              mode = :code
+            else
+              io.write_byte(space)
+              i += 1
+            end
+          when :string
+            if raw_string && i + 2 < bytes.size && byte == double_quote && bytes[i + 1] == double_quote && bytes[i + 2] == double_quote
+              io.write_byte(space)
+              io.write_byte(space)
+              io.write_byte(space)
+              i += 3
+              mode = :code
+              raw_string = false
+            elsif !raw_string && byte == quote && !escaped
+              io.write_byte(space)
+              i += 1
+              mode = :code
+            else
+              io.write_byte(byte == newline ? byte : space)
+              if raw_string
+                i += 1
+              elsif escaped
+                escaped = false
+                i += 1
+              else
+                escaped = byte == backslash
+                i += 1
+              end
+            end
+          else
+            if i + 1 < bytes.size && byte == slash && bytes[i + 1] == slash
+              io.write_byte(space)
+              io.write_byte(space)
+              i += 2
+              mode = :line_comment
+            elsif i + 1 < bytes.size && byte == slash && bytes[i + 1] == star
+              io.write_byte(space)
+              io.write_byte(space)
+              i += 2
+              mode = :block_comment
+            elsif i + 2 < bytes.size && byte == double_quote && bytes[i + 1] == double_quote && bytes[i + 2] == double_quote
+              io.write_byte(space)
+              io.write_byte(space)
+              io.write_byte(space)
+              i += 3
+              mode = :string
+              raw_string = true
+            elsif byte == double_quote || byte == single_quote
+              io.write_byte(space)
+              quote = byte
+              raw_string = false
+              escaped = false
+              i += 1
+              mode = :string
+            else
+              io.write_byte(byte)
+              i += 1
+            end
+          end
+        end
+      end
+    end
+
+    private def gateway_route_from_expression(expr : String, string_constants : Hash(String, String)) : GatewayRoute?
+      verb_match = expr.match(/method\s*\(\s*(?:HttpMethod|RequestMethod)\.([A-Z]+)\s*\)/)
+      return unless verb_match
+
+      path_match = expr.match(/\.path\s*\(\s*([^)]+?)\s*\)/)
+      return unless path_match
+
+      path = resolve_gateway_path(path_match[1], string_constants)
+      return if path.empty?
+
+      GatewayRoute.new(verb_match[1], path)
+    end
+
+    private def resolve_gateway_path(raw : String, string_constants : Hash(String, String)) : String
+      value = raw.strip
+      if match = value.match(/^"([^"]*)"$/)
+        return match[1]
+      end
+
+      if resolved = string_constants[value]?
+        return resolved
+      end
+
+      if idx = value.rindex('.')
+        short_name = value[(idx + 1)..]
+        if resolved = string_constants[short_name]?
+          return resolved
+        end
+      end
+
+      ""
     end
 
     private def function_name(func : LibTreeSitter::TSNode, source : String) : String
