@@ -47,7 +47,7 @@ describe "Detect CodeIgniter" do
   end
 
   it "detects CodeIgniter 3 routes file" do
-    ci3_content = <<-'PHP'
+    ci3_content = <<-PHP
       <?php
       $route['default_controller'] = 'home';
       $route['products/(:num)'] = 'catalog/product_lookup_by_id/$1';

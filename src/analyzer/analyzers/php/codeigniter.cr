@@ -13,7 +13,7 @@ module Analyzer::Php
     }
 
     ALL_HTTP_VERBS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
-    CI3_VERBS      = %w(get post put patch delete options head cli)
+    CI3_VERBS      = %w[get post put patch delete options head cli]
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
