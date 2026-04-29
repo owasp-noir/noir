@@ -32,12 +32,14 @@ expected_endpoints = [
   Endpoint.new("/articles/delete/{id}", "POST", [Param.new("id", "", "path")]),
   Endpoint.new("/admin/dashboard", "GET"),
   Endpoint.new("/admin/users", "GET"),
+  Endpoint.new("/admin/settings/profile", "GET"),
   Endpoint.new("/api/status", "GET"),
   Endpoint.new("/api/items", "POST"),
+  Endpoint.new("/tenant/{num}/billing", "GET", [Param.new("num", "", "path")]),
   Endpoint.new("/debug", "GET"),
 ]
 
 FunctionalTester.new("fixtures/php/codeigniter/", {
   :techs     => 2,  # php_codeigniter + php_pure
-  :endpoints => 38, # 36 CodeIgniter routes + 2 php_pure files (Routes.php, Home.php)
+  :endpoints => 40, # 38 CodeIgniter routes + 2 php_pure files (Routes.php, Home.php)
 }, expected_endpoints).perform_tests

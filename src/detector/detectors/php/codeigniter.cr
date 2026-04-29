@@ -40,8 +40,8 @@ module Detector::Php
          file_contents.includes?("namespace CodeIgniter\\") ||
          file_contents.includes?("extends \\CodeIgniter\\Controller") ||
          file_contents.includes?("extends CodeIgniter\\Controller") ||
-         file_contents.includes?("extends ResourceController") &&
-         file_contents.includes?("CodeIgniter\\RESTful"))
+         (file_contents.includes?("extends ResourceController") &&
+         file_contents.includes?("CodeIgniter\\RESTful")))
         return true
       end
 

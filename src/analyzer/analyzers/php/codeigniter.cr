@@ -12,6 +12,9 @@ module Analyzer::Php
       "hash"     => "hash",
     }
 
+    ALL_HTTP_VERBS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
+    CI3_VERBS      = %w(get post put patch delete options head cli)
+
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
 
@@ -48,7 +51,7 @@ module Analyzer::Php
       # 1. Group routes: $routes->group('prefix', [opts]?, function($routes) { ... })
       group_pattern = /\$routes->group\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*\[(?:[^\[\]]|\[[^\[\]]*\])*\])?\s*,\s*(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?\{((?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*)\}/mi
       working_content.scan(group_pattern).each do |match|
-        group_prefix = match[1]
+        group_prefix = normalize_route(match[1])
         group_content = match[2]
         new_prefix = build_full_path(prefix, group_prefix)
         endpoints.concat(analyze_routes_content(group_content, new_prefix, file_path))
@@ -91,7 +94,7 @@ module Analyzer::Php
         route_path = match[1]
         full_path = build_full_path(prefix, normalize_route(route_path))
         params = extract_ci_path_params(full_path)
-        ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"].each do |http_method|
+        ALL_HTTP_VERBS.each do |http_method|
           endpoints << Endpoint.new(full_path, http_method, params, details.dup)
         end
       end
@@ -99,16 +102,14 @@ module Analyzer::Php
       # 6. $routes->resource('photos', ...) — RESTful API resource
       resource_pattern = /\$routes->resource\s*\(\s*['"]([^'"]+)['"][^)]*\)/mi
       working_content.scan(resource_pattern).each do |match|
-        resource_name = match[1]
-        full_resource_path = build_full_path(prefix, resource_name)
+        full_resource_path = build_full_path(prefix, normalize_route(match[1]))
         endpoints.concat(create_resource_endpoints(full_resource_path, file_path))
       end
 
       # 7. $routes->presenter('photos', ...) — controller-style HTML resource
       presenter_pattern = /\$routes->presenter\s*\(\s*['"]([^'"]+)['"][^)]*\)/mi
       working_content.scan(presenter_pattern).each do |match|
-        resource_name = match[1]
-        full_resource_path = build_full_path(prefix, resource_name)
+        full_resource_path = build_full_path(prefix, normalize_route(match[1]))
         endpoints.concat(create_presenter_endpoints(full_resource_path, file_path))
       end
 
@@ -129,10 +130,20 @@ module Analyzer::Php
         next if route_path == "default_controller" || route_path == "404_override" ||
                 route_path == "translate_uri_dashes"
 
-        method = method_qualifier ? method_qualifier.to_s.upcase : "GET"
+        # Only treat the second [...] as an HTTP verb when it's actually one;
+        # CI3 also uses keys like ['namespace'] or ['hostname'] for non-method config.
+        methods = if method_qualifier && CI3_VERBS.includes?(method_qualifier.downcase)
+                    [method_qualifier.upcase]
+                  else
+                    # Bare $route['x'] = '...' matches any HTTP verb.
+                    ALL_HTTP_VERBS
+                  end
+
         normalized = normalize_route(route_path)
         params = extract_ci_path_params(normalized)
-        endpoints << Endpoint.new(normalized, method, params, details.dup)
+        methods.each do |http_method|
+          endpoints << Endpoint.new(normalized, http_method, params, details.dup)
+        end
       end
 
       endpoints

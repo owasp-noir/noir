@@ -22,11 +22,19 @@ $routes->presenter('articles');
 $routes->group('admin', function ($routes) {
     $routes->get('dashboard', 'AdminController::dashboard');
     $routes->get('users', 'AdminController::users');
+
+    $routes->group('settings', function ($routes) {
+        $routes->get('profile', 'AdminSettings::profile');
+    });
 });
 
 $routes->group('api', ['namespace' => 'App\Controllers\Api'], function ($routes) {
     $routes->get('status', 'StatusController::index');
     $routes->post('items', 'ItemController::create');
+});
+
+$routes->group('tenant/(:num)', function ($routes) {
+    $routes->get('billing', 'BillingController::show');
 });
 
 $routes->environment('development', function ($routes) {
