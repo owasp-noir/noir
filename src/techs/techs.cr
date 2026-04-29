@@ -1169,6 +1169,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :php_codeigniter => {
+      :framework => "CodeIgniter",
+      :language  => "PHP",
+      :similar   => ["codeigniter", "codeigniter4", "php-codeigniter", "php_codeigniter"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :python_django => {
       :framework => "Django",
       :language  => "Python",

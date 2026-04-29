@@ -1,0 +1,7 @@
+#!/usr/bin/env php
+<?php
+// CodeIgniter command-line tool
+require __DIR__ . '/vendor/autoload.php';
+
+$paths = new Config\Paths();
+require rtrim($paths->systemDirectory, '\\/ ') . DIRECTORY_SEPARATOR . 'bootstrap.php';
