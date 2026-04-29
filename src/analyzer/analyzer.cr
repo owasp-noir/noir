@@ -78,6 +78,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"zap_sites_tree", Specification::ZapSitesTree},
     {"php_pure", Php::Php},
     {"php_cakephp", Php::CakePHP},
+    {"php_codeigniter", Php::CodeIgniter},
     {"php_laravel", Php::Laravel},
     {"php_slim", Php::Slim},
     {"php_symfony", Php::Symfony},
