@@ -182,6 +182,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :dart_frog => {
+      :framework => "Dart Frog",
+      :language  => "Dart",
+      :similar   => ["dart_frog", "dart-frog", "dartfrog", "dart frog"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => true,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :elixir_phoenix => {
       :framework => "Phoenix",
       :language  => "Elixir",
