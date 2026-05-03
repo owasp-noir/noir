@@ -1,6 +1,6 @@
 #!/usr/bin/env crystal
 # noir/scripts/check_version_consistency.cr
-# Check version consistency across multiple files using shard.yml as source of truth
+# Check version consistency across multiple files using shard.yml as source of truth.
 #
 # Usage:
 #   crystal run scripts/check_version_consistency.cr
@@ -9,189 +9,43 @@
 # Exit codes:
 #   0 - All versions match
 #   1 - Version mismatches detected
-#   2 - Error reading files or invalid format
 
-require "yaml"
+require "./version_common"
 
-class VersionChecker
-  getter shard_version : String
-  getter? quiet : Bool
+entries = collect_versions
 
-  struct CheckResult
-    getter file_path : String
-    getter pattern : String
-    getter expected : String
-    getter actual : String?
-    getter? matches : Bool
+label_width = entries.map { |label, _, _| label.size }.max
 
-    def initialize(@file_path : String, @pattern : String, @expected : String, @actual : String?, @matches : Bool)
-    end
-  end
+puts "Current versions:"
+entries.each do |label, _, version|
+  puts "  #{label.ljust(label_width)}  #{version || "Not found"}"
+end
+puts
 
-  def initialize(@quiet : Bool = false)
-    @shard_version = read_shard_version
-  end
-
-  def run : Int32
-    puts "Checking version consistency across files..." unless quiet?
-    puts "Source of truth: shard.yml version = #{@shard_version}" unless quiet?
-    puts unless quiet?
-
-    results = [] of CheckResult
-
-    # Check each file
-    results << check_flake_nix
-    results << check_dockerfile
-    results << check_noir_cr
-    results << check_sarif_cr
-    results << check_snapcraft_yaml
-    results << check_docs_index_md
-    results << check_docs_index_ko_md
-    results << check_github_action_dockerfile
-    results << check_github_action_readme
-    results << check_sarif_spec
-    results << check_copilot_instructions
-    results << check_how_to_release_md
-    results << check_how_to_release_ko_md
-
-    # Print results
-    mismatches = [] of CheckResult
-    results.each do |result|
-      if result.matches?
-        puts "✅ #{result.file_path}" unless quiet?
-      else
-        puts "❌ #{result.file_path}" unless quiet?
-        puts "   Expected: #{result.expected}" unless quiet?
-        puts "   Found: #{result.actual || "NOT FOUND"}" unless quiet?
-        mismatches << result
-      end
-    end
-
-    puts unless quiet?
-    if mismatches.empty?
-      puts "🎉 All versions match! (#{@shard_version})" unless quiet?
-      0
-    else
-      puts "❌ Version mismatch detected in #{mismatches.size} file(s):" unless quiet?
-      mismatches.each do |r|
-        puts "  - #{r.file_path}" unless quiet?
-      end
-      1
-    end
-  end
-
-  private def read_shard_version : String
-    shard_yml = YAML.parse(File.read("shard.yml"))
-    shard_yml["version"].as_s
-  rescue ex
-    STDERR.puts "Error reading version from shard.yml: #{ex.message}"
-    exit 2
-  end
-
-  private def check_file(file_path : String, pattern : Regex, expected_version : String) : CheckResult
-    if File.exists?(file_path)
-      content = File.read(file_path)
-      if match = content.match(pattern)
-        actual = match[1]
-        CheckResult.new(file_path, pattern.source, expected_version, actual, actual == expected_version)
-      else
-        CheckResult.new(file_path, pattern.source, expected_version, nil, false)
-      end
-    else
-      CheckResult.new(file_path, pattern.source, expected_version, nil, false)
-    end
-  rescue ex
-    STDERR.puts "Error checking #{file_path}: #{ex.message}"
-    CheckResult.new(file_path, pattern.source, expected_version, nil, false)
-  end
-
-  private def check_flake_nix : CheckResult
-    check_file("flake.nix", /version\s*=\s*"([^"]+)"/, @shard_version)
-  end
-
-  private def check_dockerfile : CheckResult
-    check_file("Dockerfile", /org\.opencontainers\.image\.version="([^"]+)"/, @shard_version)
-  end
-
-  private def check_noir_cr : CheckResult
-    check_file("src/noir.cr", /VERSION\s*=\s*"([^"]+)"/, @shard_version)
-  end
-
-  private def check_sarif_cr : CheckResult
-    # SARIF output now uses Noir::VERSION constant, no hardcoded version to check.
-    # Version consistency is ensured by check_noir_cr via src/noir/version.cr.
-    CheckResult.new("src/output_builder/sarif.cr", "Noir::VERSION (indirect)", @shard_version, @shard_version, true)
-  end
-
-  private def check_snapcraft_yaml : CheckResult
-    check_file("snap/snapcraft.yaml", /^version:\s*([\d.]+)\s*$/m, @shard_version)
-  end
-
-  private def check_docs_index_file(file_path : String) : CheckResult
-    # Check hero-badge version in documentation index files
-    check_file(file_path, /class="hero-badge">v([\d.]+)</, @shard_version)
-  end
-
-  private def check_docs_index_md : CheckResult
-    check_docs_index_file("docs/content/_index.md")
-  end
-
-  private def check_docs_index_ko_md : CheckResult
-    check_docs_index_file("docs/content/_index.ko.md")
-  end
-
-  private def check_github_action_dockerfile : CheckResult
-    check_file("github-action/Dockerfile", /FROM\s+ghcr\.io\/owasp-noir\/noir:v([^\s]+)/, @shard_version)
-  end
-
-  private def check_github_action_readme : CheckResult
-    check_file("github-action/README.md", /uses:\s+owasp-noir\/noir@v([\d.]+)/, @shard_version)
-  end
-
-  private def check_sarif_spec : CheckResult
-    # SARIF spec now uses Noir::VERSION constant, no hardcoded version to check.
-    # Version consistency is ensured by check_noir_cr via src/noir/version.cr.
-    CheckResult.new("spec/unit_test/output_builder/sarif_spec.cr", "Noir::VERSION (indirect)", @shard_version, @shard_version, true)
-  end
-
-  private def check_copilot_instructions : CheckResult
-    # AGENTS.md no longer contains a hardcoded version string.
-    # Version consistency is maintained through shard.yml only.
-    CheckResult.new("AGENTS.md", "N/A (no version)", @shard_version, @shard_version, true)
-  end
-
-  private def check_how_to_release_md : CheckResult
-    # Check for example version in brew command
-    check_file("docs/content/development/how_to_release/index.md", /brew bump-formula-pr --strict --version\s+([\d.]+)\s+noir/, @shard_version)
-  end
-
-  private def check_how_to_release_ko_md : CheckResult
-    # Check for example version in brew command
-    check_file("docs/content/development/how_to_release/index.ko.md", /brew bump-formula-pr --strict --version\s+([\d.]+)\s+noir/, @shard_version)
-  end
+versions = entries.map { |_, _, v| v }.compact
+if versions.empty?
+  puts "No versions found!"
+  exit 1
 end
 
-# Entry point
-quiet = ARGV.includes?("-q") || ARGV.includes?("--quiet")
-show_help = ARGV.includes?("-h") || ARGV.includes?("--help")
-
-if show_help
-  puts "Usage: crystal run scripts/check_version_consistency.cr [options]"
-  puts ""
-  puts "Options:"
-  puts "  -q, --quiet    Suppress detailed output"
-  puts "  -h, --help     Show this help message"
-  puts ""
-  puts "Description:"
-  puts "  Checks version consistency across all files using shard.yml as source of truth."
-  puts ""
-  puts "Exit codes:"
-  puts "  0 - All versions match"
-  puts "  1 - Version mismatches detected"
-  puts "  2 - Error reading files"
+unique = versions.uniq
+if unique.size == 1
+  puts "✅ All versions match: #{unique.first}"
   exit 0
+else
+  puts "❌ Versions do not match!"
+  puts "   Unique versions found: #{unique.join(", ")}"
+  puts
+  shard_v = get_shard_version
+  if shard_v
+    puts "   Source of truth (shard.yml): #{shard_v}"
+    mismatches = entries.reject { |_, _, v| v.nil? || v == shard_v }
+    unless mismatches.empty?
+      puts "   Mismatched files:"
+      mismatches.each do |label, _, v|
+        puts "     - #{label} (#{v})"
+      end
+    end
+  end
+  exit 1
 end
-
-checker = VersionChecker.new(quiet)
-exit_code = checker.run
-exit(exit_code)
