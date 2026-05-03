@@ -28,4 +28,5 @@ jobs:
           update_readme_table: false
           ignore_warnings: true
           skip_commit: false
+          skip_checksum: true
           debug: false
