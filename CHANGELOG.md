@@ -52,7 +52,7 @@ All notable changes to [Noir](https://github.com/owasp-noir/noir) will be docume
 - Elevated regex compile failures from debug to warn in passive scan
 - GraphQL analyzer now uses `Log.debug` instead of `STDERR.puts`
 - Warn when falling back to default `max_tokens` for unknown models
-- Renamed `SKIPPED_LEAFS` → `SKIPPED_LEAVES` (Fresh analyzer)
+- Corrected `SKIPPED_LEAVES` constant spelling in Fresh analyzer
 
 ## v0.29.1
 

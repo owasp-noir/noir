@@ -14,7 +14,7 @@ require "./version_common"
 
 entries = collect_versions
 
-label_width = entries.map { |label, _, _| label.size }.max
+label_width = entries.max_of { |label, _, _| label.size }
 
 puts "Current versions:"
 entries.each do |label, _, version|
@@ -22,7 +22,7 @@ entries.each do |label, _, version|
 end
 puts
 
-versions = entries.map { |_, _, v| v }.compact
+versions = entries.compact_map { |_, _, v| v }
 if versions.empty?
   puts "No versions found!"
   exit 1
