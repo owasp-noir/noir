@@ -101,6 +101,10 @@ describe LLM do
         xai["grok-4.20"].should eq(2000000)
       end
 
+      it "includes grok-4.30 with 2000000 tokens" do
+        xai["grok-4.30"].should eq(2000000)
+      end
+
       it "has default of 8000" do
         xai["default"].should eq(8000)
       end

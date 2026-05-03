@@ -342,6 +342,8 @@ module LLM
       "grok-4-fast-non-reasoning" => 2000000,
       "grok-4.20"                 => 2000000,
       "grok-4.20-fast"            => 2000000,
+      "grok-4.30"                 => 2000000,
+      "grok-4.30-fast"            => 2000000,
       "grok-code-fast"            => 2000000,
       "grok-code-fast-1"          => 2000000,
       "default"                   => 8000,
