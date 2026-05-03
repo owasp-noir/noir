@@ -432,6 +432,7 @@ module LLM
       "qwen3"           => 256000,
       "qwen3-coder"     => 256000,
       "deepseek-v3"     => 128000,
+      "deepseek-v4"     => 128000,
       "deepseek-r1"     => 128000,
       "gpt-oss"         => 128000,
       "gpt-oss-120b"    => 128000,

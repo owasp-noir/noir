@@ -237,6 +237,10 @@ describe LLM do
         ollama["deepseek-v3"].should eq(128000)
       end
 
+      it "includes deepseek-v4 with 128000 tokens" do
+        ollama["deepseek-v4"].should eq(128000)
+      end
+
       it "includes deepseek-r1 with 128000 tokens" do
         ollama["deepseek-r1"].should eq(128000)
       end
