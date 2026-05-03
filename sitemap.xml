@@ -1,0 +1,787 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
+  <url>
+    <loc>https://owasp-noir.github.io/noir/resources/contact/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/resources/contact/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/resources/contact/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/resources/contact/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/resources/contact/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/resources/contact/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/resources/faq/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/resources/faq/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/resources/faq/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/resources/faq/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/resources/faq/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/resources/faq/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/resources/artwork/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/resources/artwork/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/resources/artwork/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/resources/artwork/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/resources/artwork/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/resources/artwork/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/resources/troubleshooting/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/resources/troubleshooting/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/resources/troubleshooting/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/resources/troubleshooting/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/resources/troubleshooting/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/resources/troubleshooting/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/development/debug_flags/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/development/debug_flags/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/development/debug_flags/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/development/debug_flags/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/development/debug_flags/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/development/debug_flags/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/development/analyzer_architecture/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/development/analyzer_architecture/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/development/analyzer_architecture/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/development/analyzer_architecture/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/development/analyzer_architecture/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/development/analyzer_architecture/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/development/how_to_release/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/development/how_to_release/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/development/how_to_release/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/development/how_to_release/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/development/how_to_release/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/development/how_to_release/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/development/how_to_build/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/development/how_to_build/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/development/how_to_build/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/development/how_to_build/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/development/how_to_build/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/development/how_to_build/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/development/nix_environment/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/development/nix_environment/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/development/nix_environment/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/development/nix_environment/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/development/nix_environment/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/development/nix_environment/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/community/media/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/community/media/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/community/media/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/community/media/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/community/media/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/community/media/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/configurations/shell-completion/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/configurations/shell-completion/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/configurations/shell-completion/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/configurations/shell-completion/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/configurations/shell-completion/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/configurations/shell-completion/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/configurations/configuration_file/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/configurations/configuration_file/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/configurations/configuration_file/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/configurations/configuration_file/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/configurations/configuration_file/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/configurations/configuration_file/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/output_formats/more/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/output_formats/more/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/output_formats/more/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/output_formats/more/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/output_formats/more/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/output_formats/more/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/output_formats/mermaid/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/output_formats/mermaid/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/output_formats/mermaid/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/output_formats/mermaid/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/output_formats/mermaid/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/output_formats/mermaid/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/output_formats/openapi/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/output_formats/openapi/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/output_formats/openapi/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/output_formats/openapi/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/output_formats/openapi/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/output_formats/openapi/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/output_formats/yaml/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/output_formats/yaml/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/output_formats/yaml/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/output_formats/yaml/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/output_formats/yaml/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/output_formats/yaml/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/output_formats/curl/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/output_formats/curl/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/output_formats/curl/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/output_formats/curl/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/output_formats/curl/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/output_formats/curl/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/output_formats/html/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/output_formats/html/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/output_formats/html/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/output_formats/html/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/output_formats/html/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/output_formats/html/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/output_formats/sarif/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/output_formats/sarif/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/output_formats/sarif/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/output_formats/sarif/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/output_formats/sarif/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/output_formats/sarif/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/output_formats/json/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/output_formats/json/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/output_formats/json/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/output_formats/json/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/output_formats/json/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/output_formats/json/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/supported/tech-commands/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/supported/tech-commands/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/supported/tech-commands/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/supported/tech-commands/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/supported/tech-commands/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/supported/tech-commands/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/supported/language_and_frameworks/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/supported/language_and_frameworks/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/supported/language_and_frameworks/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/supported/language_and_frameworks/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/supported/language_and_frameworks/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/supported/language_and_frameworks/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/supported/specification/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/supported/specification/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/supported/specification/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/supported/specification/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/supported/specification/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/supported/specification/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/more_features/pipeline-for-dast/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/more_features/pipeline-for-dast/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/more_features/pipeline-for-dast/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/more_features/pipeline-for-dast/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/more_features/pipeline-for-dast/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/more_features/pipeline-for-dast/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/more_features/diff/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/more_features/diff/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/more_features/diff/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/more_features/diff/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/more_features/diff/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/more_features/diff/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/more_features/deliver/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/more_features/deliver/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/more_features/deliver/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/more_features/deliver/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/more_features/deliver/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/more_features/deliver/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/more_features/tagger/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/more_features/tagger/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/more_features/tagger/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/more_features/tagger/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/more_features/tagger/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/more_features/tagger/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/ai_providers/github_marketplace/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/ai_providers/github_marketplace/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/github_marketplace/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/ai_providers/github_marketplace/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/ai_providers/github_marketplace/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/github_marketplace/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/ai_providers/ollama/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/ai_providers/ollama/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/ollama/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/ai_providers/ollama/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/ai_providers/ollama/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/ollama/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/ai_providers/azure/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/ai_providers/azure/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/azure/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/ai_providers/azure/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/ai_providers/azure/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/azure/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/ai_providers/vllm/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/ai_providers/vllm/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/vllm/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/ai_providers/vllm/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/ai_providers/vllm/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/vllm/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/ai_providers/openai/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/ai_providers/openai/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/openai/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/ai_providers/openai/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/ai_providers/openai/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/openai/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/ai_providers/xai/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/ai_providers/xai/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/xai/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/ai_providers/xai/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/ai_providers/xai/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/xai/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/ai_providers/lmstudio/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/ai_providers/lmstudio/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/lmstudio/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/ai_providers/lmstudio/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/ai_providers/lmstudio/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/lmstudio/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/ai_providers/acp/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/ai_providers/acp/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/acp/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/ai_providers/acp/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/ai_providers/acp/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/acp/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/ai_providers/openrouter/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/ai_providers/openrouter/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/openrouter/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/ai_providers/openrouter/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/ai_providers/openrouter/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/openrouter/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/passive_scan/community_rules/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/passive_scan/community_rules/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/passive_scan/community_rules/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/passive_scan/community_rules/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/passive_scan/community_rules/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/passive_scan/community_rules/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/passive_scan/rule/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/passive_scan/rule/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/passive_scan/rule/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/passive_scan/rule/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/passive_scan/rule/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/passive_scan/rule/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/passive_scan/default_rules/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/passive_scan/default_rules/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/passive_scan/default_rules/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/passive_scan/default_rules/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/passive_scan/default_rules/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/passive_scan/default_rules/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/get_started/ai_power/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/get_started/ai_power/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/get_started/ai_power/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/get_started/ai_power/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/get_started/ai_power/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/get_started/ai_power/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/get_started/running/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/get_started/running/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/get_started/running/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/get_started/running/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/get_started/running/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/get_started/running/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/get_started/installation/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/get_started/installation/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/get_started/installation/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/get_started/installation/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/get_started/installation/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/get_started/installation/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/get_started/overview/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/get_started/overview/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/get_started/overview/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/get_started/overview/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/get_started/overview/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/get_started/overview/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/resources/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/resources/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/resources/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/resources/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/resources/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/resources/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/development/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/development/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/development/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/development/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/development/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/development/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/community/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/community/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/community/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/community/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/community/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/community/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/configurations/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/configurations/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/configurations/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/configurations/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/configurations/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/configurations/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/output_formats/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/output_formats/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/output_formats/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/output_formats/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/output_formats/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/output_formats/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/supported/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/supported/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/supported/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/supported/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/supported/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/supported/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/more_features/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/more_features/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/more_features/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/more_features/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/more_features/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/more_features/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/ai_providers/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/ai_providers/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/ai_providers/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/ai_providers/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/github_action/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/github_action/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/github_action/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/github_action/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/github_action/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/github_action/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/usage/passive_scan/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/passive_scan/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/passive_scan/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/usage/passive_scan/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/passive_scan/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/passive_scan/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/get_started/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/get_started/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/get_started/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://owasp-noir.github.io/noir/ko/get_started/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/get_started/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/get_started/" />
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+</urlset>
