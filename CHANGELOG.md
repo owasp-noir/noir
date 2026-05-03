@@ -31,6 +31,7 @@ All notable changes to [Noir](https://github.com/owasp-noir/noir) will be docume
 - Switched builder to official `crystallang/crystal` (Alpine) image
 - Consolidated duplicate `Endpoint` initializers
 - AI provider docs and Ollama model token map updates (gemma3/4, llama4, phi4)
+- **GHCR image tag convention** changed from `vX.Y.Z` to `X.Y.Z` to align with the OCI/Docker standard. `:latest`, `:0.30`, and `:0.30.0` are published; the historical `:v0.30.0` form is no longer produced. Update any pinned references accordingly.
 
 ### Performance
 - Cached file contents in `CodeLocator` for analyzer reuse
