@@ -135,14 +135,14 @@ puts
 
 # Show current versions
 entries = collect_versions
-label_width = entries.map { |label, _, _| label.size }.max
+label_width = entries.max_of { |label, _, _| label.size }
 puts "Current versions:"
 entries.each do |label, _, version|
   puts "  #{label.ljust(label_width)}  #{version || "Not found"}"
 end
 puts
 
-versions = entries.map { |_, _, v| v }.compact
+versions = entries.compact_map { |_, _, v| v }
 unique = versions.uniq
 if unique.size > 1
   puts "⚠️  Warning: Versions do not match!"
@@ -183,18 +183,18 @@ puts
 
 # Each (label, path, current value, update proc)
 updates = [
-  {"shard.yml", SHARD_FILE, get_shard_version, ->{ update_shard_version(new_version) }},
-  {"src/noir.cr", NOIR_FILE, get_noir_version, ->{ update_noir_version(new_version) }},
-  {"flake.nix", FLAKE_FILE, get_flake_version, ->{ update_flake_version(new_version) }},
-  {"Dockerfile", DOCKERFILE, get_dockerfile_version, ->{ update_dockerfile_version(new_version) }},
-  {"snap/snapcraft.yaml", SNAPCRAFT_FILE, get_snapcraft_version, ->{ update_snapcraft_version(new_version) }},
-  {"docs/_index.md", DOCS_INDEX, get_docs_index_version(DOCS_INDEX), ->{ update_docs_index_version(DOCS_INDEX, new_version) }},
-  {"docs/_index.ko.md", DOCS_INDEX_KO, get_docs_index_version(DOCS_INDEX_KO), ->{ update_docs_index_version(DOCS_INDEX_KO, new_version) }},
-  {"github-action/Dockerfile", ACTION_DOCKER, get_action_dockerfile_version, ->{ update_action_dockerfile_version(new_version) }},
-  {"github-action/README.md", ACTION_README, get_action_readme_version, ->{ update_action_readme_version(new_version) }},
-  {"how_to_release/index.md", RELEASE_DOC, get_release_doc_version(RELEASE_DOC), ->{ update_release_doc_version(RELEASE_DOC, new_version) }},
-  {"how_to_release/index.ko.md", RELEASE_DOC_KO, get_release_doc_version(RELEASE_DOC_KO), ->{ update_release_doc_version(RELEASE_DOC_KO, new_version) }},
-  {"aur/PKGBUILD", PKGBUILD_FILE, get_pkgbuild_version, ->{ update_pkgbuild_version(new_version) }},
+  {"shard.yml", SHARD_FILE, get_shard_version, -> { update_shard_version(new_version) }},
+  {"src/noir.cr", NOIR_FILE, get_noir_version, -> { update_noir_version(new_version) }},
+  {"flake.nix", FLAKE_FILE, get_flake_version, -> { update_flake_version(new_version) }},
+  {"Dockerfile", DOCKERFILE, get_dockerfile_version, -> { update_dockerfile_version(new_version) }},
+  {"snap/snapcraft.yaml", SNAPCRAFT_FILE, get_snapcraft_version, -> { update_snapcraft_version(new_version) }},
+  {"docs/_index.md", DOCS_INDEX, get_docs_index_version(DOCS_INDEX), -> { update_docs_index_version(DOCS_INDEX, new_version) }},
+  {"docs/_index.ko.md", DOCS_INDEX_KO, get_docs_index_version(DOCS_INDEX_KO), -> { update_docs_index_version(DOCS_INDEX_KO, new_version) }},
+  {"github-action/Dockerfile", ACTION_DOCKER, get_action_dockerfile_version, -> { update_action_dockerfile_version(new_version) }},
+  {"github-action/README.md", ACTION_README, get_action_readme_version, -> { update_action_readme_version(new_version) }},
+  {"how_to_release/index.md", RELEASE_DOC, get_release_doc_version(RELEASE_DOC), -> { update_release_doc_version(RELEASE_DOC, new_version) }},
+  {"how_to_release/index.ko.md", RELEASE_DOC_KO, get_release_doc_version(RELEASE_DOC_KO), -> { update_release_doc_version(RELEASE_DOC_KO, new_version) }},
+  {"aur/PKGBUILD", PKGBUILD_FILE, get_pkgbuild_version, -> { update_pkgbuild_version(new_version) }},
 ]
 
 success = 0

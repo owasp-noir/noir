@@ -2,6 +2,58 @@
 
 All notable changes to [Noir](https://github.com/owasp-noir/noir) will be documented in this file.
 
+## v0.30.0
+
+### Added
+- Tree-sitter foundation: vendored grammars for Java, Kotlin, JavaScript, and Python
+- Tree-sitter Query API for declarative detectors
+- ImportGraph module: unified Java/Kotlin cross-file resolution, relative-import support, Python half
+- 30+ new framework analyzers:
+  - Java/Kotlin: JAX-RS, Quarkus, Dropwizard, Micronaut, Javalin, Spark Java, http4k, Kotlin Gateway
+  - Node.js/JS/TS: Next.js, Hapi, Astro, SvelteKit, Remix, Fresh, Elysia, AdonisJS
+  - Python: Bottle, Falcon, Starlette, aiohttp, Pyramid, Litestar
+  - Ruby: Roda, Grape
+  - PHP: Slim, Yii2, CodeIgniter
+  - Go: Iris, Hertz
+  - Rust: Poem
+  - C++: Crow, Drogon
+  - Dart: Dart Frog
+- MCP endpoint tagger
+- `--exclude-path` flag to filter files by glob
+- Crystal 1.20 support
+- RPM, DEB, APK, and AUR package release workflows
+- Shared engine base classes for PHP, Ruby, Rust, Elixir, Swift, Crystal, Scala, JavaScript, Python, and Go analyzers
+- Analyzer architecture documentation
+
+### Changed
+- Migrated Spring, Armeria, Ktor, and Flask analyzers to tree-sitter; retired legacy Java/Kotlin miniparser/minilexer
+- Migrated Python and Go route extraction to tree-sitter
+- Switched builder to official `crystallang/crystal` (Alpine) image
+- Consolidated duplicate `Endpoint` initializers
+- AI provider docs and Ollama model token map updates (gemma3/4, llama4, phi4)
+
+### Performance
+- Cached file contents in `CodeLocator` for analyzer reuse
+- Parse-once Spring/Kotlin extractors with shared DTO sibling cache
+- Skip already-matched detectors in the per-file detect loop
+- Pruned ignored directories at walk time and deduped media stats
+- Passive scan early-out per matcher
+- Migrated unified_ai, example, fasthttp, phoenix, and Python analyzers to `file_map`
+- Skip non-`.rb` files in Sinatra analyzer
+
+### Fixed
+- Bounded recursion depth in tree-walker extractors (security)
+- Added boundary check to `ImportGraph.resolve_relative_import` (security)
+- Express config-array mount pattern resolution
+- JS miniparser: reject bare-identifier routes from `Promise.all`, accept wildcard/bare param routes
+- Go miniparser: accept grouped routes without leading slash, guarantee separator on single-match group prefix
+- OAS2 analyzer: merged duplicate form/formData branches and corrected `form` → `json` param-type mapping
+- Non-deterministic endpoint dedup in Nitro and Nuxt.js analyzers
+- Elevated regex compile failures from debug to warn in passive scan
+- GraphQL analyzer now uses `Log.debug` instead of `STDERR.puts`
+- Warn when falling back to default `max_tokens` for unknown models
+- Corrected `SKIPPED_LEAVES` constant spelling in Fresh analyzer
+
 ## v0.29.1
 
 ### Added

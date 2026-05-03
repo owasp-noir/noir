@@ -49,12 +49,12 @@ all_taggers: true
 
 # Default AI provider and model
 ai_provider: "openai"
-ai_model: "gpt-5.4"
+ai_model: "gpt-5.5"
 ```
 
 This is equivalent to running:
 
 ```bash
-noir -b /path/to/my/project -f json --exclude-codes "404,500" -T --ai-provider openai --ai-model gpt-5.4
+noir -b /path/to/my/project -f json --exclude-codes "404,500" -T --ai-provider openai --ai-model gpt-5.5
 ```
 

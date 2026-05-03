@@ -1,18 +1,18 @@
 require "yaml"
 
 # Version file locations (shard.yml is the source of truth)
-SHARD_FILE       = "shard.yml"
-NOIR_FILE        = "src/noir.cr"
-FLAKE_FILE       = "flake.nix"
-DOCKERFILE       = "Dockerfile"
-SNAPCRAFT_FILE   = "snap/snapcraft.yaml"
-DOCS_INDEX       = "docs/content/_index.md"
-DOCS_INDEX_KO    = "docs/content/_index.ko.md"
-ACTION_DOCKER    = "github-action/Dockerfile"
-ACTION_README    = "github-action/README.md"
-RELEASE_DOC      = "docs/content/development/how_to_release/index.md"
-RELEASE_DOC_KO   = "docs/content/development/how_to_release/index.ko.md"
-PKGBUILD_FILE    = "aur/PKGBUILD"
+SHARD_FILE     = "shard.yml"
+NOIR_FILE      = "src/noir.cr"
+FLAKE_FILE     = "flake.nix"
+DOCKERFILE     = "Dockerfile"
+SNAPCRAFT_FILE = "snap/snapcraft.yaml"
+DOCS_INDEX     = "docs/content/_index.md"
+DOCS_INDEX_KO  = "docs/content/_index.ko.md"
+ACTION_DOCKER  = "github-action/Dockerfile"
+ACTION_README  = "github-action/README.md"
+RELEASE_DOC    = "docs/content/development/how_to_release/index.md"
+RELEASE_DOC_KO = "docs/content/development/how_to_release/index.ko.md"
+PKGBUILD_FILE  = "aur/PKGBUILD"
 
 # Extract version from shard.yml
 def get_shard_version : String?
