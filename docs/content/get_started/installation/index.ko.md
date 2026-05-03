@@ -1,6 +1,6 @@
 +++
 title = "Noir 설치"
-description = "Homebrew, Snapcraft, Docker, Nix, 바이너리 다운로드 또는 소스 빌드를 통해 OWASP Noir를 설치합니다."
+description = "Homebrew, Snapcraft, Docker, Nix, AUR, .deb, .rpm, .apk, 바이너리 다운로드 또는 소스 빌드를 통해 OWASP Noir를 설치합니다."
 weight = 2
 sort_by = "weight"
 
@@ -93,18 +93,19 @@ nix run github:owasp-noir/noir -- -h
 
 ## Debian 패키지 (.deb)
 
-Debian/Ubuntu 계열이라면 [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest)의 `.deb` 패키지를 쓸 수 있습니다. `dpkg`/`apt`로 다른 시스템 패키지처럼 관리됩니다.
+Debian/Ubuntu 계열이라면 [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest)의 `.deb` 패키지를 쓸 수 있습니다. `dpkg`/`apt`로 다른 시스템 패키지처럼 관리됩니다. `amd64`와 `arm64`가 모두 제공됩니다.
 
-1. `.deb` 패키지를 다운로드합니다.
+1. 최신 버전을 조회하고 다운로드합니다.
 
     ```bash
-    wget https://github.com/owasp-noir/noir/releases/latest/download/noir_latest_amd64.deb
+    VERSION=$(curl -s https://api.github.com/repos/owasp-noir/noir/releases/latest | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')
+    wget "https://github.com/owasp-noir/noir/releases/download/v${VERSION}/noir_${VERSION}_amd64.deb"
     ```
 
 2. 패키지를 설치합니다.
 
     ```bash
-    sudo dpkg -i noir_latest_amd64.deb
+    sudo dpkg -i "noir_${VERSION}_amd64.deb"
     ```
 
 3. 의존성이 누락됐다면 아래 명령으로 해결합니다.
@@ -119,15 +120,65 @@ Debian/Ubuntu 계열이라면 [GitHub Releases](https://github.com/owasp-noir/no
     noir --version
     ```
 
-## Unofficial
+## Arch Linux (AUR)
 
-### Arch AUR
-
-[AUR](https://aur.archlinux.org)에 등록되어 있습니다. 원하는 AUR 헬퍼로 설치하세요.
+Noir는 [AUR](https://aur.archlinux.org/packages/noir)에 공식 등록되어 있습니다. 선호하는 AUR 헬퍼로 설치하세요.
 
 ```bash
 yay -S noir
 ```
+
+## RPM 패키지 (.rpm)
+
+Fedora, RHEL, CentOS, openSUSE 등 RPM 기반 배포판은 [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest)의 `.rpm` 패키지를 사용할 수 있습니다. `x86_64`와 `aarch64`가 모두 제공됩니다.
+
+1. 최신 버전을 조회하고 다운로드합니다.
+
+    ```bash
+    VERSION=$(curl -s https://api.github.com/repos/owasp-noir/noir/releases/latest | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')
+    wget "https://github.com/owasp-noir/noir/releases/download/v${VERSION}/noir-${VERSION}.x86_64.rpm"
+    ```
+
+2. 설치합니다.
+
+    ```bash
+    sudo rpm -i "noir-${VERSION}.x86_64.rpm"
+    ```
+
+    또는 `dnf`로 설치합니다.
+
+    ```bash
+    sudo dnf install "./noir-${VERSION}.x86_64.rpm"
+    ```
+
+3. 설치를 확인합니다.
+
+    ```bash
+    noir --version
+    ```
+
+## Alpine 패키지 (.apk)
+
+Alpine Linux 사용자는 [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest)의 `.apk` 패키지를 사용할 수 있습니다. `x86_64`와 `aarch64`가 모두 제공됩니다.
+
+1. 최신 버전을 조회하고 다운로드합니다.
+
+    ```bash
+    VERSION=$(curl -s https://api.github.com/repos/owasp-noir/noir/releases/latest | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')
+    wget "https://github.com/owasp-noir/noir/releases/download/v${VERSION}/noir-${VERSION}-r0.apk"
+    ```
+
+2. 설치합니다.
+
+    ```bash
+    sudo apk add --allow-untrusted "noir-${VERSION}-r0.apk"
+    ```
+
+3. 설치를 확인합니다.
+
+    ```bash
+    noir --version
+    ```
 
 ## 소스에서 빌드
 

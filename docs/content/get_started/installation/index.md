@@ -1,6 +1,6 @@
 +++
 title = "Install Noir"
-description = "Install OWASP Noir via Homebrew, Snapcraft, Docker, Nix, binary download, or from source."
+description = "Install OWASP Noir via Homebrew, Snapcraft, Docker, Nix, AUR, .deb, .rpm, .apk, binary download, or from source."
 weight = 2
 sort_by = "weight"
 
@@ -93,18 +93,19 @@ No package manager? Grab a prebuilt binary from [GitHub Releases](https://github
 
 ## Debian Package (.deb)
 
-Debian/Ubuntu users can use the `.deb` package from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). It integrates with `dpkg`/`apt` like any other system package.
+Debian/Ubuntu users can use the `.deb` package from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). It integrates with `dpkg`/`apt` like any other system package. Both `amd64` and `arm64` are provided.
 
-1. Download the `.deb` package:
+1. Resolve the latest version and download:
 
     ```bash
-    wget https://github.com/owasp-noir/noir/releases/latest/download/noir_latest_amd64.deb
+    VERSION=$(curl -s https://api.github.com/repos/owasp-noir/noir/releases/latest | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')
+    wget "https://github.com/owasp-noir/noir/releases/download/v${VERSION}/noir_${VERSION}_amd64.deb"
     ```
 
 2. Install:
 
     ```bash
-    sudo dpkg -i noir_latest_amd64.deb
+    sudo dpkg -i "noir_${VERSION}_amd64.deb"
     ```
 
 3. Fix missing dependencies if needed:
@@ -119,15 +120,65 @@ Debian/Ubuntu users can use the `.deb` package from [GitHub Releases](https://gi
     noir --version
     ```
 
-## Unofficial
+## Arch Linux (AUR)
 
-### Arch AUR
-
-Noir is in the [AUR](https://aur.archlinux.org). Use your preferred helper:
+Noir is officially published on the [AUR](https://aur.archlinux.org/packages/noir). Install with your preferred AUR helper:
 
 ```bash
 yay -S noir
 ```
+
+## RPM Package (.rpm)
+
+Fedora, RHEL, CentOS, openSUSE, and other RPM-based distros can use the `.rpm` package from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). Both `x86_64` and `aarch64` are provided.
+
+1. Resolve the latest version and download:
+
+    ```bash
+    VERSION=$(curl -s https://api.github.com/repos/owasp-noir/noir/releases/latest | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')
+    wget "https://github.com/owasp-noir/noir/releases/download/v${VERSION}/noir-${VERSION}.x86_64.rpm"
+    ```
+
+2. Install:
+
+    ```bash
+    sudo rpm -i "noir-${VERSION}.x86_64.rpm"
+    ```
+
+    Or with `dnf`:
+
+    ```bash
+    sudo dnf install "./noir-${VERSION}.x86_64.rpm"
+    ```
+
+3. Verify:
+
+    ```bash
+    noir --version
+    ```
+
+## Alpine Package (.apk)
+
+Alpine Linux users can use the `.apk` package from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). Both `x86_64` and `aarch64` are provided.
+
+1. Resolve the latest version and download:
+
+    ```bash
+    VERSION=$(curl -s https://api.github.com/repos/owasp-noir/noir/releases/latest | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')
+    wget "https://github.com/owasp-noir/noir/releases/download/v${VERSION}/noir-${VERSION}-r0.apk"
+    ```
+
+2. Install:
+
+    ```bash
+    sudo apk add --allow-untrusted "noir-${VERSION}-r0.apk"
+    ```
+
+3. Verify:
+
+    ```bash
+    noir --version
+    ```
 
 ## Build from Source
 
