@@ -101,8 +101,12 @@ describe LLM do
         xai["grok-4.20"].should eq(2000000)
       end
 
-      it "includes grok-4.30 with 2000000 tokens" do
-        xai["grok-4.30"].should eq(2000000)
+      it "includes grok-4.3 with 2000000 tokens" do
+        xai["grok-4.3"].should eq(2000000)
+      end
+
+      it "includes grok-4.1-fast with 2000000 tokens" do
+        xai["grok-4.1-fast"].should eq(2000000)
       end
 
       it "has default of 8000" do
@@ -241,8 +245,12 @@ describe LLM do
         ollama["deepseek-v3"].should eq(128000)
       end
 
-      it "includes deepseek-v4 with 128000 tokens" do
-        ollama["deepseek-v4"].should eq(128000)
+      it "includes deepseek-v4-pro with 1000000 tokens" do
+        ollama["deepseek-v4-pro"].should eq(1000000)
+      end
+
+      it "includes deepseek-v4-flash with 1000000 tokens" do
+        ollama["deepseek-v4-flash"].should eq(1000000)
       end
 
       it "includes deepseek-r1 with 128000 tokens" do
@@ -269,8 +277,12 @@ describe LLM do
         google["gemini-2.5-pro"].should eq(2000000)
       end
 
-      it "includes gemini-3-pro with 2000000 tokens" do
-        google["gemini-3-pro"].should eq(2000000)
+      it "includes gemini-3.1-pro-preview with 2000000 tokens" do
+        google["gemini-3.1-pro-preview"].should eq(2000000)
+      end
+
+      it "includes gemini-3-flash-preview with 1048576 tokens" do
+        google["gemini-3-flash-preview"].should eq(1048576)
       end
 
       it "has default of 32760" do

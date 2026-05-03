@@ -11,14 +11,14 @@ sort_by = "weight"
 ## 설정
 
 1.  **API 키 획득**: [xAI 웹사이트](https://x.ai/api)에서 API 키를 받으세요.
-2.  **모델 선택**: 사용할 모델을 선택하세요 (예: `grok-4.30`).
+2.  **모델 선택**: 사용할 모델을 선택하세요 (예: `grok-4.3`).
 
 ## 사용 방법
 
 ```bash
 noir -b ./spec/functional_test/fixtures/hahwul \
      --ai-provider=xai \
-     --ai-model=grok-4.30 \
+     --ai-model=grok-4.3 \
      --ai-key=xai-...
 ```
 
