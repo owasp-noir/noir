@@ -13,7 +13,7 @@
 
         noir = pkgs.crystal.buildCrystalPackage rec {
           pname = "noir";
-          version = "0.29.1";
+          version = "0.30.0";
 
           src = ./.;
 
