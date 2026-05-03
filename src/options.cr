@@ -48,8 +48,6 @@ end
 
 private def base_help : String
   <<-HELP
-    #{"Hunt every Endpoint, expose Shadow APIs, map the Attack Surface.".colorize(:cyan)}
-
     #{"USAGE:".colorize(:green)}
       noir -b BASE_PATH [flags]
 
