@@ -77,7 +77,7 @@ end
 # Update github-action/Dockerfile FROM tag
 def update_action_dockerfile_version(new_version : String) : Bool
   content = File.read(ACTION_DOCKER)
-  File.write(ACTION_DOCKER, content.gsub(/(FROM\s+ghcr\.io\/owasp-noir\/noir:)v[\d.]+/, "\\1v#{new_version}"))
+  File.write(ACTION_DOCKER, content.gsub(/(FROM\s+ghcr\.io\/owasp-noir\/noir:)v?[\d.]+/, "\\1#{new_version}"))
   true
 rescue ex
   STDERR.puts "  Error updating #{ACTION_DOCKER}: #{ex.message}"

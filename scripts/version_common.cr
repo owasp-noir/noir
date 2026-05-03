@@ -62,7 +62,7 @@ end
 
 # Extract version from github-action/Dockerfile
 def get_action_dockerfile_version : String?
-  match = File.read(ACTION_DOCKER).match(/FROM\s+ghcr\.io\/owasp-noir\/noir:v([\d.]+)/)
+  match = File.read(ACTION_DOCKER).match(/FROM\s+ghcr\.io\/owasp-noir\/noir:([\d.]+)/)
   match ? match[1] : nil
 rescue
   nil
