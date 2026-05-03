@@ -165,13 +165,13 @@ Alpine Linux 사용자는 [GitHub Releases](https://github.com/owasp-noir/noir/r
 
     ```bash
     VERSION=$(curl -s https://api.github.com/repos/owasp-noir/noir/releases/latest | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')
-    wget "https://github.com/owasp-noir/noir/releases/download/v${VERSION}/noir-${VERSION}-r0.apk"
+    wget "https://github.com/owasp-noir/noir/releases/download/v${VERSION}/noir-${VERSION}-x86_64.apk"
     ```
 
 2. 설치합니다.
 
     ```bash
-    sudo apk add --allow-untrusted "noir-${VERSION}-r0.apk"
+    sudo apk add --allow-untrusted "noir-${VERSION}-x86_64.apk"
     ```
 
 3. 설치를 확인합니다.

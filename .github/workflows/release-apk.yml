@@ -110,7 +110,12 @@ jobs:
       - name: Copy artifacts
         run: |
           mkdir -p output
-          find /home/builder/packages -name "*.apk" ! -name "APKINDEX*" -exec cp {} output/ \;
+          # abuild emits noir-${VERSION}-r${pkgrel}.apk without arch in the
+          # filename, so rename it to include the arch and avoid x86_64 /
+          # aarch64 jobs overwriting each other on the GitHub Release.
+          for src in $(find /home/builder/packages -name "*.apk" ! -name "APKINDEX*"); do
+            cp "$src" "output/noir-${{ env.VERSION }}-${{ matrix.arch }}.apk"
+          done
           ls -la output/
 
       - name: Upload artifacts

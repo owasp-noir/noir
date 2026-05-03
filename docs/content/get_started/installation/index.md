@@ -165,13 +165,13 @@ Alpine Linux users can use the `.apk` package from [GitHub Releases](https://git
 
     ```bash
     VERSION=$(curl -s https://api.github.com/repos/owasp-noir/noir/releases/latest | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')
-    wget "https://github.com/owasp-noir/noir/releases/download/v${VERSION}/noir-${VERSION}-r0.apk"
+    wget "https://github.com/owasp-noir/noir/releases/download/v${VERSION}/noir-${VERSION}-x86_64.apk"
     ```
 
 2. Install:
 
     ```bash
-    sudo apk add --allow-untrusted "noir-${VERSION}-r0.apk"
+    sudo apk add --allow-untrusted "noir-${VERSION}-x86_64.apk"
     ```
 
 3. Verify:

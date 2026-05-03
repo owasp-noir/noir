@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Install Crystal
@@ -32,7 +32,7 @@ jobs:
           else
             echo "ARCH=unknown" >> $GITHUB_ENV
           fi
-      - if: matrix.os == 'ubuntu-latest'
+      - if: startsWith(matrix.os, 'ubuntu')
         name: Build binary (Linux)
         run: |
           mkdir -p build
