@@ -11,7 +11,7 @@ Integrate Noir with [OpenAI](https://openai.com) to leverage language models lik
 ## Setup
 
 1.  **Get an API Key**: Generate from [OpenAI dashboard](https://platform.openai.com/api-keys)
-2.  **Choose a Model**: Recommended: `gpt-5.4`
+2.  **Choose a Model**: Recommended: `gpt-5.5`
 
 ## Usage
 
@@ -20,7 +20,7 @@ Run Noir with OpenAI:
 ```bash
 noir -b ./spec/functional_test/fixtures/hahwul \
      --ai-provider=openai \
-     --ai-model=gpt-5.4 \
+     --ai-model=gpt-5.5 \
      --ai-key=sk-...
 ```
 

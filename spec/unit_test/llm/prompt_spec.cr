@@ -61,6 +61,14 @@ describe LLM do
         openai["gpt-5.1"].should eq(1000000)
       end
 
+      it "includes gpt-5.4 with 1000000 tokens" do
+        openai["gpt-5.4"].should eq(1000000)
+      end
+
+      it "includes gpt-5.5 with 1000000 tokens" do
+        openai["gpt-5.5"].should eq(1000000)
+      end
+
       it "has default of 8000" do
         openai["default"].should eq(8000)
       end
@@ -89,6 +97,10 @@ describe LLM do
         xai["grok-code-fast-1"].should eq(2000000)
       end
 
+      it "includes grok-4.20 with 2000000 tokens" do
+        xai["grok-4.20"].should eq(2000000)
+      end
+
       it "has default of 8000" do
         xai["default"].should eq(8000)
       end
@@ -115,6 +127,18 @@ describe LLM do
 
       it "includes claude-opus-4-1 with 200000 tokens" do
         anthropic["claude-opus-4-1"].should eq(200000)
+      end
+
+      it "includes claude-sonnet-4-6 with 1000000 tokens" do
+        anthropic["claude-sonnet-4-6"].should eq(1000000)
+      end
+
+      it "includes claude-opus-4-6 with 200000 tokens" do
+        anthropic["claude-opus-4-6"].should eq(200000)
+      end
+
+      it "includes claude-opus-4-7 with 200000 tokens" do
+        anthropic["claude-opus-4-7"].should eq(200000)
       end
 
       it "has default of 100000" do
@@ -205,6 +229,18 @@ describe LLM do
         ollama["codellama"].should eq(100000)
       end
 
+      it "includes qwen3 with 256000 tokens" do
+        ollama["qwen3"].should eq(256000)
+      end
+
+      it "includes deepseek-v3 with 128000 tokens" do
+        ollama["deepseek-v3"].should eq(128000)
+      end
+
+      it "includes deepseek-r1 with 128000 tokens" do
+        ollama["deepseek-r1"].should eq(128000)
+      end
+
       it "has default of 4000" do
         ollama["default"].should eq(4000)
       end
@@ -223,6 +259,10 @@ describe LLM do
 
       it "includes gemini-2.5-pro with 2000000 tokens" do
         google["gemini-2.5-pro"].should eq(2000000)
+      end
+
+      it "includes gemini-3-pro with 2000000 tokens" do
+        google["gemini-3-pro"].should eq(2000000)
       end
 
       it "has default of 32760" do

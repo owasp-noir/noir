@@ -64,7 +64,7 @@ private def base_help : String
         noir -b ./myapp -P
 
       #{"AI integration".colorize(:yellow)}
-        $ noir -b . --ai-provider openai --ai-model gpt-5.1 --ai-key YOUR_API_KEY
+        $ noir -b . --ai-provider openai --ai-model gpt-5.5 --ai-key YOUR_API_KEY
         $ noir -b . --ai-provider acp:codex
         $ noir -b . --ai-provider acp:claude
 
