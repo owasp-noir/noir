@@ -24,7 +24,7 @@ jobs:
             system "shards install"
             system "shards build --release --no-debug --production"
             bin.install "bin/noir"
-          test: system "{bin}/noir", "-v"
+          test: system "#{bin}/noir", "-v"
           update_readme_table: false
           ignore_warnings: true
           skip_commit: false
