@@ -283,8 +283,8 @@ module Analyzer::Haskell
 
     private def sanitize_param_name(type_name : String) : String
       base_name = clean_type_name(type_name)
-        .gsub(/[\[\]\(\)\{\}]/, " ")
-        .gsub(/([a-z0-9])([A-Z])/, "\\1_\\2")
+        .gsub(/[[\](){}]/, " ")
+        .gsub(/([a-z0-9])([A-Z])/) { "#{$1}_#{$2}" }
         .gsub(/[^A-Za-z0-9]+/, "_")
         .downcase
         .gsub(/^_+|_+$/, "")
