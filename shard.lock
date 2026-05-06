@@ -2,11 +2,11 @@ version: 2.0
 shards:
   acp:
     git: https://github.com/hahwul/acp.cr.git
-    version: 0.1.0
+    version: 0.2.0
 
   ameba:
     git: https://github.com/crystal-ameba/ameba.git
-    version: 1.7.0-dev+git.commit.ae09e383a062d50cec1dd7cc93382ca6ad2363ce
+    version: 1.7.0-dev+git.commit.97296d4a1c6ca7308ba220671bc7aafecfcecab3
 
   crest:
     git: https://github.com/mamantoha/crest.git
