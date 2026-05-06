@@ -1,0 +1,178 @@
+require "../../engines/perl_engine"
+
+module Analyzer::Perl
+  class Mojolicious < PerlEngine
+    HTTP_VERBS    = %w(get post put delete patch options head)
+    LITE_VERB_RE  = /^\s*(get|post|put|patch|delete|del|options|head|websocket)\s+['"]([^'"]+)['"]/
+    LITE_ANY_RE   = /^\s*any\s+(?:\[([^\]]+)\]\s*=>\s*)?['"]([^'"]+)['"]/
+    FULL_VERB_RE  = /->\s*(get|post|put|patch|delete|del|options|head|websocket)\s*\(\s*['"]([^'"]+)['"]/
+    FULL_ANY_RE   = /->\s*any\s*\(\s*(?:\[([^\]]+)\]\s*,?\s*=?>?\s*)?['"]([^'"]+)['"]/
+    FULL_ROUTE_RE = /->\s*route\s*\(\s*['"]([^'"]+)['"]\s*\)(?:\s*->\s*via\s*\(\s*([^)]+)\))?/
+
+    def analyze_file(path : String) : Array(Endpoint)
+      ext = File.extname(path)
+      return [] of Endpoint unless ext == ".pl" || ext == ".pm" ||
+                                   ext == ".psgi" || ext == ".t"
+
+      endpoints = [] of Endpoint
+      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
+        content = file.gets_to_end
+        endpoints.concat(analyze_content(content, path))
+      end
+      endpoints
+    end
+
+    def analyze_content(content : String, file_path : String) : Array(Endpoint)
+      endpoints = [] of Endpoint
+      lines = content.lines
+      last_endpoint : Endpoint? = nil
+
+      lines.each_with_index do |line, index|
+        stripped = line.strip
+        next if stripped.empty? || stripped.starts_with?('#')
+
+        line_endpoints = line_to_endpoints(line)
+        line_endpoints.each do |endpoint|
+          endpoint.details = Details.new(PathInfo.new(file_path, index + 1))
+          extract_path_params(endpoint).each { |p| push_unique_param(endpoint, p) }
+          endpoints << endpoint
+        end
+
+        targets = line_endpoints.empty? ? (last_endpoint ? [last_endpoint.not_nil!] : [] of Endpoint) : line_endpoints
+        targets.each do |target|
+          extract_params_from_line(line, target.method).each do |param|
+            push_unique_param(target, param)
+          end
+        end
+
+        last_endpoint = line_endpoints.last unless line_endpoints.empty?
+      end
+
+      endpoints
+    end
+
+    def line_to_endpoints(line : String) : Array(Endpoint)
+      result = [] of Endpoint
+
+      # Mojolicious::Lite: `get '/path' => ...`
+      if m = line.match(LITE_VERB_RE)
+        result << build_endpoint(m[2], m[1])
+      end
+
+      # Mojolicious::Lite: `any '/path'` or `any [GET => 'POST'] => '/path'`
+      if m = line.match(LITE_ANY_RE)
+        methods_str = m[1]?
+        path = m[2]
+        methods_for_any(methods_str).each do |verb|
+          result << Endpoint.new(path, verb)
+        end
+      end
+
+      # Full app: `$r->get('/path')` etc.
+      if m = line.match(FULL_VERB_RE)
+        result << build_endpoint(m[2], m[1])
+      end
+
+      # Full app: `$r->any(['GET','POST'] => '/path')` or `$r->any('/path')`
+      if m = line.match(FULL_ANY_RE)
+        methods_str = m[1]?
+        path = m[2]
+        methods_for_any(methods_str).each do |verb|
+          result << Endpoint.new(path, verb)
+        end
+      end
+
+      # Full app: `$r->route('/path')->via('GET')` or `via(qw(GET POST))`
+      if m = line.match(FULL_ROUTE_RE)
+        path = m[1]
+        via_str = m[2]?
+        if via_str
+          methods_from_via(via_str).each do |verb|
+            result << Endpoint.new(path, verb)
+          end
+        else
+          # `route` without `via` defaults to any method; treat as GET
+          result << Endpoint.new(path, "GET")
+        end
+      end
+
+      result
+    end
+
+    private def build_endpoint(path : String, verb : String) : Endpoint
+      v = verb.downcase
+      if v == "websocket"
+        endpoint = Endpoint.new(path, "GET")
+        endpoint.protocol = "ws"
+        endpoint
+      else
+        v = "delete" if v == "del"
+        Endpoint.new(path, v.upcase)
+      end
+    end
+
+    private def normalize_method(verb : String) : String
+      v = verb.downcase
+      v = "delete" if v == "del"
+      v.upcase
+    end
+
+    private def methods_for_any(methods_str : String?) : Array(String)
+      return HTTP_VERBS.map(&.upcase) if methods_str.nil?
+      methods_from_via(methods_str)
+    end
+
+    private def methods_from_via(spec : String) : Array(String)
+      verbs = [] of String
+      spec.scan(/['"]?([A-Za-z]+)['"]?/) do |m|
+        verb = m[1].upcase
+        next if verb == "QW"
+        verbs << verb if HTTP_VERBS.includes?(verb.downcase)
+      end
+      verbs
+    end
+
+    private def extract_path_params(endpoint : Endpoint) : Array(Param)
+      params = [] of Param
+      endpoint.url.scan(/[:*#]([A-Za-z_][A-Za-z0-9_]*)/) do |m|
+        params << Param.new(m[1], "", "path")
+      end
+      params
+    end
+
+    private def extract_params_from_line(line : String, method : String) : Array(Param)
+      params = [] of Param
+
+      line.scan(/->\s*req\s*->\s*query_params\s*->\s*param\s*\(\s*['"]([^'"]+)['"]/) do |m|
+        params << Param.new(m[1], "", "query")
+      end
+
+      line.scan(/->\s*req\s*->\s*body_params\s*->\s*param\s*\(\s*['"]([^'"]+)['"]/) do |m|
+        params << Param.new(m[1], "", "form")
+      end
+
+      line.scan(/->\s*req\s*->\s*headers\s*->\s*header\s*\(\s*['"]([^'"]+)['"]/) do |m|
+        params << Param.new(m[1], "", "header")
+      end
+
+      line.scan(/->\s*(?:req\s*->\s*)?cookie\s*\(\s*['"]([^'"]+)['"]/) do |m|
+        params << Param.new(m[1], "", "cookie")
+      end
+
+      line.scan(/->\s*param\s*\(\s*['"]([^'"]+)['"]/) do |m|
+        param_type = (method == "GET" || method == "HEAD" || method == "OPTIONS") ? "query" : "form"
+        params << Param.new(m[1], "", param_type)
+      end
+
+      params
+    end
+
+    private def push_unique_param(endpoint : Endpoint, param : Param)
+      return if param.name.empty?
+      endpoint.params.each do |existing|
+        return if existing.name == param.name && existing.param_type == param.param_type
+      end
+      endpoint.push_param(param)
+    end
+  end
+end

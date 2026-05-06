@@ -89,6 +89,12 @@ Each table below shows the supported frameworks per language and their feature c
 | Pure | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ☑️ | ✗ |
 | Symfony | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ✗ |
 
+## Perl
+
+| Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
+|-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|
+| Mojolicious | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ☑️ |
+
 ## Python
 
 | Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |
