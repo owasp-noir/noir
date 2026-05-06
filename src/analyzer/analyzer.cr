@@ -18,6 +18,7 @@ def initialize_analyzers(logger : NoirLogger)
   define_analyzers([
     {"cpp_drogon", Cpp::Drogon},
     {"cpp_crow", Cpp::Crow},
+    {"clojure_compojure", Clojure::Compojure},
     {"cs_aspnet_mvc", CSharp::AspNetMvc},
     {"cs_aspnet_core_mvc", CSharp::AspNetCoreMvc},
     {"crystal_amber", Crystal::Amber},

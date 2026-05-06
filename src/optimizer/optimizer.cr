@@ -282,6 +282,6 @@ class EndpointOptimizer
 
   # Get allowed HTTP methods
   private def get_allowed_methods : Array(String)
-    ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "TRACE", "CONNECT"]
+    ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "TRACE", "CONNECT", "ANY"]
   end
 end
