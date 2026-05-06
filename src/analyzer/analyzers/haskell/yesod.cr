@@ -232,12 +232,13 @@ module Analyzer::Haskell
 
     private def extract_raw_segments(pattern : String) : Array(String)
       normalized = pattern
-      normalized = normalized[1..] if normalized.starts_with?("!")
-      normalized = normalized[1..] if normalized.starts_with?("/")
+      while normalized.starts_with?("!") || normalized.starts_with?("/")
+        normalized = normalized[1..]
+      end
 
       return [] of String if normalized.empty?
 
-      normalized.split('/').reject(&.empty?)
+      normalized.split('/').reject(&.empty?).map { |segment| strip_overlap_markers(segment) }
     end
 
     private def build_url_and_params(raw_segments : Array(String)) : Tuple(String, Array(Param))
@@ -246,7 +247,7 @@ module Analyzer::Haskell
       name_counts = Hash(String, Int32).new(0)
 
       raw_segments.each do |raw_segment|
-        segment = raw_segment.gsub("!", "")
+        segment = raw_segment
 
         if segment.starts_with?("#")
           type_name = segment[1..]
@@ -265,6 +266,10 @@ module Analyzer::Haskell
 
       url = rendered_segments.empty? ? "/" : "/#{rendered_segments.join("/")}"
       {url, params}
+    end
+
+    private def strip_overlap_markers(segment : String) : String
+      segment.gsub("!", "")
     end
 
     private def next_param_name(type_name : String, name_counts : Hash(String, Int32)) : String
