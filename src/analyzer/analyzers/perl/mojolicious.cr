@@ -2,7 +2,7 @@ require "../../engines/perl_engine"
 
 module Analyzer::Perl
   class Mojolicious < PerlEngine
-    HTTP_VERBS    = %w(get post put delete patch options head)
+    HTTP_VERBS    = %w[get post put delete patch options head]
     LITE_VERB_RE  = /^\s*(get|post|put|patch|delete|del|options|head|websocket)\s+['"]([^'"]+)['"]/
     LITE_ANY_RE   = /^\s*any\s+(?:\[([^\]]+)\]\s*=>\s*)?['"]([^'"]+)['"]/
     FULL_VERB_RE  = /->\s*(get|post|put|patch|delete|del|options|head|websocket)\s*\(\s*['"]([^'"]+)['"]/
@@ -38,7 +38,16 @@ module Analyzer::Perl
           endpoints << endpoint
         end
 
-        targets = line_endpoints.empty? ? (last_endpoint ? [last_endpoint.not_nil!] : [] of Endpoint) : line_endpoints
+        targets = if line_endpoints.empty?
+                    if le = last_endpoint
+                      [le]
+                    else
+                      [] of Endpoint
+                    end
+                  else
+                    line_endpoints
+                  end
+
         targets.each do |target|
           extract_params_from_line(line, target.method).each do |param|
             push_unique_param(target, param)
