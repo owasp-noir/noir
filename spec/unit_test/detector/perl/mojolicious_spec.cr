@@ -57,11 +57,11 @@ describe "Detect Perl Mojolicious" do
   end
 
   it "does not detect plain Perl files" do
-    plain = <<-PERL
+    plain = <<-'PERL'
       use strict;
       use warnings;
 
-      sub hello { print "hi\\n" }
+      sub hello { print "hi\n" }
       hello();
       PERL
 
