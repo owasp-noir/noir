@@ -28,6 +28,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"dart_frog", Dart::DartFrog},
     {"elixir_phoenix", Elixir::Phoenix},
     {"elixir_plug", Elixir::Plug},
+    {"perl_mojolicious", Perl::Mojolicious},
     {"go_beego", Go::Beego},
     {"go_echo", Go::Echo},
     {"go_fasthttp", Go::Fasthttp},

@@ -236,6 +236,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :perl_mojolicious => {
+      :framework => "Mojolicious",
+      :language  => "Perl",
+      :similar   => ["mojolicious", "perl-mojolicious", "perl_mojolicious", "mojo"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => true,
+      },
+    },
     :go_beego => {
       :framework => "Beego",
       :language  => "Go",
