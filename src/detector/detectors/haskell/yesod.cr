@@ -6,7 +6,7 @@ module Detector::Haskell
       base = File.basename(filename)
 
       if (base == "package.yaml" || filename.ends_with?(".cabal")) &&
-         file_contents.match(/(^|[\s,])yesod(?:[-\w]*)?(?=$|[\s,<>=:])/)
+         file_contents.match(/(^|[\s,])yesod(?:-[A-Za-z0-9]+)*(?=$|[\s,<>=:])/)
         return true
       end
 

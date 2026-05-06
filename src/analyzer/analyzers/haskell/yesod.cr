@@ -218,13 +218,15 @@ module Analyzer::Haskell
       explicit_methods = non_attrs.select { |token| HTTP_METHODS.includes?(token) }
 
       return explicit_methods unless explicit_methods.empty?
-      return [] of String if subsite_route?(non_attrs)
+      return [] of String if looks_like_subsite_dispatch?(non_attrs)
       return HTTP_METHODS.dup if non_attrs.empty?
 
       [] of String
     end
 
-    private def subsite_route?(tokens : Array(String)) : Bool
+    # Yesod subsite declarations use two non-method tokens after the route
+    # constructor: the subsite type and the getter function.
+    private def looks_like_subsite_dispatch?(tokens : Array(String)) : Bool
       tokens.size == 2 && tokens.none? { |token| HTTP_METHODS.includes?(token) }
     end
 
@@ -283,7 +285,7 @@ module Analyzer::Haskell
 
     private def sanitize_param_name(type_name : String) : String
       base_name = clean_type_name(type_name)
-        .gsub(/[[\](){}]/, " ")
+        .gsub(/[\[\](){}]/, " ")
         .gsub(/([a-z0-9])([A-Z])/) { "#{$1}_#{$2}" }
         .gsub(/[^A-Za-z0-9]+/, "_")
         .downcase
