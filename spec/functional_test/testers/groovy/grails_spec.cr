@@ -11,6 +11,11 @@ expected_endpoints = [
   Endpoint.new("/author/profile", "GET"),
   Endpoint.new("/api/health", "GET"),
   Endpoint.new("/api/login", "POST"),
+  # `method:` argument on a verbless URL mapping must override the
+  # default GET — see UrlMappings.groovy.
+  Endpoint.new("/api/users", "POST"),
+  # Plugin-style `<Name>UrlMappings.groovy` should also be processed.
+  Endpoint.new("/plugin/status", "GET"),
 ]
 
 FunctionalTester.new("fixtures/groovy/grails/", {

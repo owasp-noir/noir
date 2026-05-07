@@ -7,6 +7,13 @@ class BookController {
         delete: 'DELETE'
     ]
 
+    // Field-style declarations and dependency-injected services share the
+    // `def name = ...` syntax with closure-style actions; only the latter
+    // should be surfaced as endpoints.
+    def cache = [:]
+    def messages = ['hi', 'bye']
+    def bookService = new BookService()
+
     def index() {
         render 'list of books'
     }
