@@ -482,6 +482,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :haskell_servant => {
+      :framework => "Servant",
+      :language  => "Haskell",
+      :similar   => ["servant", "haskell-servant", "haskell_servant"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :haskell_yesod => {
       :framework => "Yesod",
       :language  => "Haskell",
