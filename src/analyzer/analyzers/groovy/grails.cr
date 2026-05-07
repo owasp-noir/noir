@@ -55,17 +55,26 @@ module Analyzer::Groovy
     end
 
     private def url_mappings_path?(path : String) : Bool
-      path.ends_with?("/UrlMappings.groovy") || path.ends_with?("UrlMappings.groovy")
+      # Grails plugins ship their own `<Name>UrlMappings.groovy` files
+      # alongside the canonical `UrlMappings.groovy`, so accept any basename
+      # ending in `UrlMappings.groovy` — but only inside `grails-app/conf/`
+      # so unrelated files with similar names are not picked up.
+      return false unless path.includes?("/grails-app/conf/")
+      File.basename(path).ends_with?("UrlMappings.groovy")
     end
 
     private def process_controller(path : String, content : String)
       cleaned = strip_groovy_comments(content)
 
-      cleaned.scan(/class\s+([A-Z][A-Za-z0-9_]*Controller)\b[^\{]*\{/) do |match|
-        class_name = match[1]
+      cleaned.scan(/((?:(?:public|protected|private|abstract|final|static)\s+)*)class\s+([A-Z][A-Za-z0-9_]*Controller)\b[^\{]*\{/) do |match|
+        modifiers = match[1]
+        class_name = match[2]
         match_end = match.end(0)
         match_start = match.begin(0)
         next unless match_end && match_start
+        # Abstract base controllers are templates for subclasses, not
+        # directly addressable endpoints — skip them.
+        next if modifiers.includes?("abstract")
 
         body_info = extract_braced_block(cleaned, match_end - 1)
         next unless body_info
@@ -135,7 +144,12 @@ module Analyzer::Groovy
 
         if depth == 0
           rest = body[i..]
-          m = rest.match(/\A(public\s+|protected\s+|private\s+)?def\s+([a-z_][A-Za-z0-9_]*)\s*(?:\(|\=)/)
+          # Method form: `def name(...)`
+          # Closure form: `def name = { ... }` — explicitly require the
+          # closure brace via lookahead so plain field assignments like
+          # `def cache = [:]` or `def bookService = new BookService()`
+          # are not mistaken for actions.
+          m = rest.match(/\A(public\s+|protected\s+|private\s+)?def\s+([a-z_][A-Za-z0-9_]*)\s*(?:\(|=\s*(?=\{))/)
           if m
             modifier = m[1]?
             name = m[2]
@@ -252,17 +266,26 @@ module Analyzer::Groovy
           Details.new(PathInfo.new(path, line)))
       end
 
-      # `'/path'(controller: 'foo', action: 'bar')` → defaults to GET.
+      # `'/path'(controller: 'foo', action: 'bar', method: 'POST')`
+      # — defaults to GET when no `method:` argument is supplied.
       simple_pattern = /(?:^|\n)\s*(['"])([^'"]+)\1\s*\(([^)]*?)\)/m
       cleaned.scan(simple_pattern) do |match|
         url_pattern = match[2]
         body_args = match[3]
         next unless body_args.includes?("controller:") || body_args.includes?("action:") || body_args.includes?("view:")
+        verb = extract_method_arg(body_args) || "GET"
         line = line_for_offset(content, match.begin(0) || 0)
-        @result << Endpoint.new(translate_pattern(url_pattern), "GET",
+        @result << Endpoint.new(translate_pattern(url_pattern), verb,
           extract_path_params(url_pattern),
           Details.new(PathInfo.new(path, line)))
       end
+    end
+
+    private def extract_method_arg(body_args : String) : String?
+      m = body_args.match(/method:\s*['"]([A-Za-z]+)['"]/)
+      return unless m
+      verb = m[1].upcase
+      HTTP_METHODS.includes?(verb) ? verb : nil
     end
 
     private def translate_pattern(pattern : String) : String
