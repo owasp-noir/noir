@@ -749,6 +749,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :lua_lapis => {
+      :framework => "Lapis",
+      :language  => "Lua",
+      :similar   => ["lapis", "lua-lapis", "lua_lapis"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => true,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :java_vertx => {
       :framework => "Vert.x",
       :language  => "Java",
