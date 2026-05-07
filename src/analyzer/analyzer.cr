@@ -27,6 +27,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"crystal_lucky", Crystal::Lucky},
     {"crystal_marten", Crystal::Marten},
     {"dart_frog", Dart::DartFrog},
+    {"dart_serverpod", Dart::Serverpod},
     {"elixir_phoenix", Elixir::Phoenix},
     {"elixir_plug", Elixir::Plug},
     {"perl_mojolicious", Perl::Mojolicious},
