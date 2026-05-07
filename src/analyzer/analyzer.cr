@@ -43,6 +43,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"go_gf", Go::Gf},
     {"go_httprouter", Go::Httprouter},
     {"go_mux", Go::Mux},
+    {"haskell_servant", Haskell::Servant},
     {"haskell_yesod", Haskell::Yesod},
     {"grpc", Specification::Grpc},
     {"har", Specification::Har},

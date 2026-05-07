@@ -1,0 +1,7 @@
+name: servant-fixture
+version: 0.1.0.0
+dependencies:
+  - base
+  - servant
+  - servant-server
+  - warp
