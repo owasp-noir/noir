@@ -464,6 +464,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :haskell_yesod => {
+      :framework => "Yesod",
+      :language  => "Haskell",
+      :similar   => ["yesod", "haskell-yesod", "haskell_yesod"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => true,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :har => {
       :format    => ["JSON"],
       :similar   => ["har"],

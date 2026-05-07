@@ -1,0 +1,3 @@
+/search SearchR GET
+/files/*Texts FilesR GET
+/feed/+Texts FeedR GET POST
