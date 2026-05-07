@@ -59,6 +59,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"java_quarkus", Java::Quarkus},
     {"java_spark", Java::Spark},
     {"java_spring", Java::Spring},
+    {"lua_lapis", Lua::Lapis},
     {"java_vertx", Java::Vertx},
     {"js_adonisjs", Javascript::Adonisjs},
     {"js_astro", Javascript::Astro},
