@@ -1,3 +1,0 @@
-[default.extend-words]
-# `deps.edn` is the canonical Clojure dependency file (extensible data notation).
-edn = "edn"
