@@ -2,21 +2,34 @@ require "../../../models/detector"
 
 module Detector::Groovy
   class Grails < Detector
+    GRADLE_FILES = {"build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"}
+
     def detect(filename : String, file_contents : String) : Bool
       base = File.basename(filename)
 
-      # Gradle build script referencing the Grails plugin / dependencies.
-      if (base == "build.gradle" || base == "build.gradle.kts") &&
-         (file_contents.match(/['"]org\.grails:grails-/) ||
-         file_contents.match(/['"]org\.grails\.grails-(?:web|core|plugins|gsp)['"]/) ||
+      # Gradle build / settings scripts in either DSL.
+      if GRADLE_FILES.includes?(base) &&
+         (file_contents.match(/['"]org\.grails(?:\.[a-z0-9_]+)?:[\w.-]+/) ||
+         file_contents.match(/group:\s*['"]org\.grails(?:\.[a-z0-9_]+)?['"]/) ||
          file_contents.match(/apply\s+plugin:\s*['"]org\.grails\./) ||
          file_contents.match(/id\s+['"]org\.grails\./))
         return true
       end
 
-      # Conventional grails-app/ directory layout.
-      return true if filename.includes?("/grails-app/controllers/")
-      return true if filename.includes?("/grails-app/conf/UrlMappings")
+      # Maven `pom.xml` referencing `org.grails*` groupIds or `grails-*`
+      # artifacts.
+      if base == "pom.xml" &&
+         (file_contents.match(/<groupId>\s*org\.grails(?:\.[a-z0-9_]+)?\s*<\/groupId>/) ||
+         file_contents.match(/<artifactId>\s*grails-[\w-]+\s*<\/artifactId>/))
+        return true
+      end
+
+      # Any file under the conventional `grails-app/` layout — controllers,
+      # services, domain classes, taglibs, views, conf, etc.
+      return true if filename.includes?("/grails-app/")
+
+      # GSP (Groovy Server Pages) files only exist in Grails projects.
+      return true if filename.ends_with?(".gsp")
 
       # `application.yml` / `application.groovy` carrying a `grails:` block.
       if (base == "application.yml" || base == "application.groovy") &&
