@@ -11,6 +11,8 @@ extend-ignore-re = [
 vertx = "vertx"
 Verticle = "Verticle"
 nd = "nd"
+# `deps.edn` is the canonical Clojure dependency file (extensible data notation).
+edn = "edn"
 
 [files]
 extend-exclude = [

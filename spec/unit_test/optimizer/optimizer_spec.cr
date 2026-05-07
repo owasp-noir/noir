@@ -32,6 +32,16 @@ describe "EndpointOptimizer" do
       result[0].method.should eq("GET")
     end
 
+    it "preserves ANY as a valid HTTP method" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/test", "ANY"),
+      ]
+
+      result = optimizer.optimize_endpoints(endpoints)
+      result[0].method.should eq("ANY")
+    end
+
     it "normalizes URLs with slashes" do
       optimizer = EndpointOptimizer.new(logger, options)
       endpoints = [

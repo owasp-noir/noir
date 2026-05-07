@@ -20,6 +20,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :clojure_compojure => {
+      :framework => "Compojure",
+      :language  => "Clojure",
+      :similar   => ["compojure", "clojure-compojure", "clojure_compojure", "clj-compojure"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :crystal_amber => {
       :framework => "Amber",
       :language  => "Crystal",
