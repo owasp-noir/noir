@@ -272,6 +272,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :fs_giraffe => {
+      :framework => "Giraffe",
+      :language  => "F#",
+      :similar   => ["giraffe", "fs-giraffe", "fs_giraffe", "fsharp-giraffe", "fsharp_giraffe", "f#-giraffe", "f#_giraffe"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => true,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :perl_mojolicious => {
       :framework => "Mojolicious",
       :language  => "Perl",

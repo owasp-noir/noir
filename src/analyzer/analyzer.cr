@@ -30,6 +30,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"dart_serverpod", Dart::Serverpod},
     {"elixir_phoenix", Elixir::Phoenix},
     {"elixir_plug", Elixir::Plug},
+    {"fs_giraffe", Fsharp::Giraffe},
     {"perl_mojolicious", Perl::Mojolicious},
     {"go_beego", Go::Beego},
     {"go_echo", Go::Echo},
