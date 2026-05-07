@@ -218,6 +218,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :dart_serverpod => {
+      :framework => "Serverpod",
+      :language  => "Dart",
+      :similar   => ["serverpod", "dart_serverpod", "dart-serverpod"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => true,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :elixir_phoenix => {
       :framework => "Phoenix",
       :language  => "Elixir",
