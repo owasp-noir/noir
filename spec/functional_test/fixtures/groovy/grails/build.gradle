@@ -1,0 +1,8 @@
+plugins {
+    id "org.grails.grails-web" version "6.1.0"
+}
+
+dependencies {
+    implementation "org.grails:grails-core"
+    implementation "org.grails:grails-web"
+}

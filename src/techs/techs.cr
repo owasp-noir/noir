@@ -500,6 +500,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :groovy_grails => {
+      :framework => "Grails",
+      :language  => "Groovy",
+      :similar   => ["grails", "groovy_grails", "groovy-grails"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => true,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :haskell_servant => {
       :framework => "Servant",
       :language  => "Haskell",
