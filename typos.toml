@@ -13,6 +13,8 @@ Verticle = "Verticle"
 nd = "nd"
 # `deps.edn` is the canonical Clojure dependency file (extensible data notation).
 edn = "edn"
+# `paket` is the .NET dependency manager (paket.dependencies).
+paket = "paket"
 
 [files]
 extend-exclude = [
