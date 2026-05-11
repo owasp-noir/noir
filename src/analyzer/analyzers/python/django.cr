@@ -236,8 +236,18 @@ module Analyzer::Python
             end
           end
 
+          # Build once outside the per-method emit loop: a view function
+          # routinely emits multiple endpoints (one per detected HTTP
+          # method), but they all share the same handler body. The
+          # codeblock starts at the `def` line, so `body_start_line` is
+          # that line's 0-based index — derived from the char offset.
+          body_start_line = content[0, function_start_index].count('\n')
+          handler_callees = build_callees_from(function_codeblock, body_start_line, filepath)
+
           suspicious_http_methods.uniq.each do |http_method_name|
-            endpoints << Endpoint.new(url, http_method_name, filter_params(http_method_name, suspicious_params))
+            endpoint = Endpoint.new(url, http_method_name, filter_params(http_method_name, suspicious_params))
+            handler_callees.each { |c| endpoint.push_callee(c) }
+            endpoints << endpoint
           end
 
           return endpoints
@@ -279,8 +289,18 @@ module Analyzer::Python
             end
           end
 
+          # The class codeblock spans every responder method (get/post/...)
+          # plus any helpers, and we emit one endpoint per detected HTTP
+          # method. Class-level callees go onto every emitted endpoint —
+          # finer per-method scoping would require a second AST pass and
+          # is out of scope for this 1-hop extractor.
+          body_start_line = content[0, class_start_index].count('\n')
+          handler_callees = build_callees_from(class_codeblock, body_start_line, filepath)
+
           suspicious_http_methods.uniq.each do |http_method_name|
-            endpoints << Endpoint.new(url, http_method_name, filter_params(http_method_name, suspicious_params))
+            endpoint = Endpoint.new(url, http_method_name, filter_params(http_method_name, suspicious_params))
+            handler_callees.each { |c| endpoint.push_callee(c) }
+            endpoints << endpoint
           end
 
           return endpoints
