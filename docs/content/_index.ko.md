@@ -18,7 +18,7 @@ template = "landing"
         <span class="hero-title-line hero-title-accent">공격 표면을</span>
         <span class="hero-title-line hero-title-accent">매핑합니다.</span>
       </h1>
-      <p class="hero-desc">소스 코드에서 공격 표면까지, 몇 초 만에. 50개 이상의 프레임워크에서 엔드포인트, 파라미터, 숨겨진 라우트를 정적 분석합니다.</p>
+      <p class="hero-desc">소스 코드에서 공격 표면까지, 몇 초 만에. 50개 이상의 프레임워크에서 엔드포인트, 파라미터, 숨겨진 라우트를 정적 분석하고 &mdash; DAST 도구와 AI SAST에 바로 연결합니다.</p>
       <div class="hero-actions">
         <a href="./get_started/overview" class="hero-btn hero-btn-primary">
           <span>시작하기</span>
@@ -106,8 +106,8 @@ template = "landing"
       </div>
       <div class="feature-cell">
         <div class="feature-number">05</div>
-        <h3>SAST-DAST 브릿지</h3>
-        <p>발견된 엔드포인트가 동적 테스트 도구로 직접 전달됩니다. 정적 분석과 동적 스캐닝을 결합하여 완전한 커버리지를 제공합니다.</p>
+        <h3>DAST &amp; AI SAST에 공급</h3>
+        <p>하나의 엔드포인트 인벤토리가 동적 쪽에서는 ZAP/Burp/Caido를 돌리고, 정적 쪽에서는 LLM 기반 SAST와 코드 감사를 살펴볼 진입점으로 안내합니다.</p>
       </div>
       <div class="feature-cell feature-full">
         <div class="feature-number">06</div>
@@ -143,8 +143,8 @@ template = "landing"
       <div class="how-step">
         <div class="how-step-num">03</div>
         <div class="how-step-content">
-          <h3>파이프라인에 연결하세요</h3>
-          <p>JSON, OpenAPI, SARIF로 내보내거나 DAST 도구에 직접 전송합니다. 한 줄로 CI/CD에 통합됩니다.</p>
+          <h3>DAST &mdash; 또는 AI SAST에 연결하세요</h3>
+          <p>JSON, OpenAPI, SARIF로 내보내거나 ZAP/Burp/Caido로 바로 흘려보내고, LLM 기반 SAST나 코드 감사에는 집중된 진입점 컨텍스트로 그대로 전달하세요.</p>
           <div class="how-step-code">$ noir -b . -f oas3 --send-proxy http://localhost:8090</div>
         </div>
       </div>
