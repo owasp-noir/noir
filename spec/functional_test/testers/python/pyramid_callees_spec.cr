@@ -7,7 +7,11 @@ require "../../func_spec.cr"
 # declaration line).
 expected_endpoints = [
   Endpoint.new("/users/{uid}", "GET").tap do |ep|
-    ep.push_callee(Callee.new("fetch_user"))
+    # `fetch_user(uid)` lives on line 9 of fixtures/python/pyramid_callees/app.py.
+    # Line assertion locks the def-line-threading change that emit_endpoints
+    # picked up — without it, callee.line would point at the route
+    # declaration in `main()` instead of the view body.
+    ep.push_callee(Callee.new("fetch_user", line: 9))
   end,
 ]
 

@@ -1,4 +1,3 @@
-require "../../../miniparsers/python_callee_extractor"
 require "../../engines/python_engine"
 
 module Analyzer::Python
@@ -110,12 +109,7 @@ module Analyzer::Python
               endpoint = Endpoint.new(normalize_path(route_path), http_method, params)
               endpoint.details = details
 
-              if codeblock
-                Noir::PythonCalleeExtractor.calls_in(codeblock).each do |entry|
-                  name, row = entry
-                  endpoint.push_callee(Callee.new(name, path: path, line: i + row + 1))
-                end
-              end
+              push_callees_from(endpoint, codeblock || "", i, path)
 
               result << endpoint
             end

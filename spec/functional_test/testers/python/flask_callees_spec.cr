@@ -32,6 +32,15 @@ expected_endpoints = [
   Endpoint.new("/healthz", "GET").tap do |ep|
     ep.push_callee(Callee.new("jsonify"))
   end,
+
+  # GET /many — handler has 12 unique calls; spec asserts the first 10
+  # surface (c1..c10) and that jsonify (the 13th call in source order)
+  # gets dropped under Callee::MAX_PER_ENDPOINT. Functional presence
+  # check; the strict 10-count guarantee lives in the model unit test.
+  Endpoint.new("/many", "GET").tap do |ep|
+    ep.push_callee(Callee.new("c1"))
+    ep.push_callee(Callee.new("c10"))
+  end,
 ]
 
 FunctionalTester.new("fixtures/python/flask_callees/", {

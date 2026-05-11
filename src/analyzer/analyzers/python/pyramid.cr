@@ -1,4 +1,3 @@
-require "../../../miniparsers/python_callee_extractor"
 require "../../engines/python_engine"
 
 module Analyzer::Python
@@ -233,13 +232,9 @@ module Analyzer::Python
       path_params = extract_path_params(route_path)
       request_params = extract_request_params(body)
 
-      callees = [] of Callee
-      if def_index && !body.empty?
-        Noir::PythonCalleeExtractor.calls_in(body).each do |entry|
-          name, row = entry
-          callees << Callee.new(name, path: path, line: def_index + row + 1)
-        end
-      end
+      # extract_function_body skips the def line, so body row 0 lives
+      # at def_index + 1.
+      handler_callees = def_index ? build_callees_from(body, def_index + 1, path) : [] of Callee
 
       details = Details.new(PathInfo.new(path, line_index + 1))
       methods.each do |method|
@@ -252,7 +247,7 @@ module Analyzer::Python
           # detector's method list governs which endpoints exist.
           endpoint.push_param(p)
         end
-        callees.each { |c| endpoint.push_callee(c) }
+        handler_callees.each { |c| endpoint.push_callee(c) }
         result << endpoint
       end
     end

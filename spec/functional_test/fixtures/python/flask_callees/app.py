@@ -24,3 +24,23 @@ def get_order(order_id):
 @app.route('/healthz', methods=['GET'])
 def healthz():
     return jsonify({"ok": True})
+
+
+# Handler with 12 unique callees — exercises Callee::MAX_PER_ENDPOINT.
+# The endpoint should emit exactly 10 callees, dropping the last two
+# (a, b) in source order.
+@app.route('/many', methods=['GET'])
+def many():
+    c1()
+    c2()
+    c3()
+    c4()
+    c5()
+    c6()
+    c7()
+    c8()
+    c9()
+    c10()
+    a()
+    b()
+    return jsonify({"ok": True})
