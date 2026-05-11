@@ -4,3 +4,7 @@ def save_user(name):
 
 def audit_log(user):
     pass
+
+
+def fetch_report():
+    return []

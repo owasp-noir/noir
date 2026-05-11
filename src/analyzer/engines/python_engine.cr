@@ -248,6 +248,34 @@ module Analyzer::Python
     # subclasses working without a sweeping rename.
     alias PackageType = Noir::ImportGraph::Python::PackageType
 
+    # Walk forward from `decorator_line` past any stacked decorators,
+    # blank lines, and comments to the actual `def` / `async def` that
+    # they apply to. Returns the 0-based line of the def, or nil if
+    # none is found before a non-decorator/non-blank statement.
+    #
+    # This exists because real-world Python decorator stacks
+    # (`@app.post(...)` + `@auth_required`, blank-line spacers, or a
+    # `# comment` between the route decorator and the def) make the
+    # "def is at decorator_line + 1" assumption silently wrong — both
+    # for parameter extraction and for handler-body parsing.
+    def find_def_line(lines : Array(::String), decorator_line : Int32) : Int32?
+      i = decorator_line + 1
+      while i < lines.size
+        stripped = lines[i].lstrip
+        if stripped.starts_with?("def ") || stripped.starts_with?("async def ")
+          return i
+        end
+        # Skip over stacked decorators, blank lines, and comment lines.
+        if stripped.empty? || stripped.starts_with?('@') || stripped.starts_with?('#')
+          i += 1
+          next
+        end
+        # Anything else means we walked past the handler — give up.
+        return
+      end
+      nil
+    end
+
     # Build 1-hop callees observed in `body` (a handler's Python
     # source). `body_start_line` is the 0-based file line at which
     # `body`'s first character sits, so tree-sitter rows can be

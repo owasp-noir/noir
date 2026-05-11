@@ -77,15 +77,22 @@ module Analyzer::Python
           full_path = full_path.gsub(TYPED_PATH_PARAM_REGEX) { |_| "{#{$~[1]}}" }
 
           path_params = extract_path_params(route_path)
-          handler_params = handler_line ? extract_handler_params(lines, handler_line, route_path) : [] of Param
+
+          # Parse the handler body once and share between param and
+          # callee extraction — both used to call `parse_code_block`
+          # independently, costing 2 parses per handler.
+          handler_body = if hl = handler_line
+                           parse_code_block(lines[hl..])
+                         end
+          handler_params = handler_line ? extract_handler_params(lines, handler_line, route_path, handler_body) : [] of Param
 
           # Build once per handler — a decorator can emit multiple
           # endpoints when @route(http_method=[...]) lists several verbs.
-          handler_callees = [] of Callee
-          if hl = handler_line
-            handler_body = parse_code_block(lines[hl..])
-            handler_callees = build_callees_from(handler_body || "", hl, path)
-          end
+          handler_callees = if handler_body && (hl = handler_line)
+                              build_callees_from(handler_body, hl, path)
+                            else
+                              [] of Callee
+                            end
 
           methods.uniq.each do |method|
             params = [] of Param
@@ -169,8 +176,11 @@ module Analyzer::Python
     end
 
     # Parse the handler function parameters and its body to collect
-    # query/header/cookie/body params.
-    private def extract_handler_params(lines : Array(::String), def_line_index : Int32, route_path : ::String) : Array(Param)
+    # query/header/cookie/body params. `codeblock` is the pre-parsed
+    # handler body (caller-side `parse_code_block(lines[def..])`), so
+    # the analyze loop can share one parse between this and the
+    # `build_callees_from` path instead of re-parsing here.
+    private def extract_handler_params(lines : Array(::String), def_line_index : Int32, route_path : ::String, codeblock : ::String?) : Array(Param)
       params = [] of Param
 
       function_def = parse_function_def(lines, def_line_index)
@@ -201,7 +211,6 @@ module Analyzer::Python
         end
       end
 
-      codeblock = parse_code_block(lines[def_line_index..])
       if codeblock
         codeblock.split("\n").each do |cl|
           collect_request_attr_params(cl, "query_params", "query", params)
