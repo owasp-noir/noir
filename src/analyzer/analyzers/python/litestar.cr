@@ -79,6 +79,14 @@ module Analyzer::Python
           path_params = extract_path_params(route_path)
           handler_params = handler_line ? extract_handler_params(lines, handler_line, route_path) : [] of Param
 
+          # Build once per handler — a decorator can emit multiple
+          # endpoints when @route(http_method=[...]) lists several verbs.
+          handler_callees = [] of Callee
+          if hl = handler_line
+            handler_body = parse_code_block(lines[hl..])
+            handler_callees = build_callees_from(handler_body || "", hl, path)
+          end
+
           methods.uniq.each do |method|
             params = [] of Param
             path_params.each { |p| params << p }
@@ -88,7 +96,9 @@ module Analyzer::Python
             end
 
             details = Details.new(PathInfo.new(path, line_index + 1))
-            result << Endpoint.new(full_path, method, params, details)
+            endpoint = Endpoint.new(full_path, method, params, details)
+            handler_callees.each { |c| endpoint.push_callee(c) }
+            result << endpoint
           end
         end
       end

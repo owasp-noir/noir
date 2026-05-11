@@ -158,7 +158,14 @@ module Analyzer::Python
                   end
 
                   details = Details.new(PathInfo.new(path, index + 1))
-                  result << Endpoint.new(router_class.join(http_route_path), http_method_name, params, details)
+                  endpoint = Endpoint.new(router_class.join(http_route_path), http_method_name, params, details)
+
+                  # `parse_code_block(codelines[index + 1..])` keeps the def line,
+                  # so body row 0 lives at file line index `index + 1`.
+                  handler_codeblock = parse_code_block(codelines[(index + 1)..])
+                  push_callees_from(endpoint, handler_codeblock || "", index + 1, path)
+
+                  result << endpoint
                 end
               end
             end
