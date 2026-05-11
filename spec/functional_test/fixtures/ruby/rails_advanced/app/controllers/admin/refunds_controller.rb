@@ -7,4 +7,13 @@ class Admin::RefundsController < ApplicationController
   def new_list
     request.headers['X-Page']
   end
+
+  def purge
+    request.headers['X-Confirm']
+    params["id"]
+  end
+
+  def update_metadata
+    params.require(:refund).permit("note", "kind")
+  end
 end

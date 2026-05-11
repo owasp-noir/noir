@@ -39,6 +39,15 @@ module Analyzer::Ruby
       end
     end
 
+    record ControllerData,
+      param_type : String,
+      params_method : Hash(String, Array(Param)),
+      permit_body_params : Array(Param),
+      permit_query_params : Array(Param),
+      defined_actions : Set(String)
+
+    @controller_data_cache = Hash(String, ControllerData).new
+
     def analyze
       framework_roots = discover_framework_roots("config/routes.rb")
       framework_roots = [@base_path] if framework_roots.empty?
@@ -236,7 +245,7 @@ module Analyzer::Ruby
               action_params = [] of Param
               if ctrl_action
                 ctrl_name, action = ctrl_action
-                ctrl_path = find_controller_file(framework_root, ctrl_name)
+                ctrl_path = find_controller_file(framework_root, ctrl_name, stack)
                 action_params = params_for_action(ctrl_path, action, verb)
               end
 
@@ -360,10 +369,10 @@ module Analyzer::Ruby
       return @result unless File.exists?(path)
 
       data = extract_controller_data(path)
-      defined_actions = data[:defined_actions]
-      params_method = data[:params_method]
-      params_body = data[:permit_body_params]
-      deduplication_params_query = dedup_by_name(data[:permit_query_params])
+      defined_actions = data.defined_actions
+      params_method = data.params_method
+      params_body = data.permit_body_params
+      deduplication_params_query = dedup_by_name(data.permit_query_params)
 
       methods = [] of String
       {"index", "show", "create", "update", "destroy"}.each do |name|
@@ -411,25 +420,26 @@ module Analyzer::Ruby
     end
 
     # Scans a controller file once, collecting per-method params (headers/cookies)
-    # plus shared params (params[:x], params.require...permit) and the names of
-    # every `def`. Shared because the existing heuristic associates params[:x]
-    # with the whole controller, not a specific action.
-    private def extract_controller_data(path : String)
-      param_type = "form"
+    # plus shared params (params[:x] / params["x"], params.require...permit) and
+    # the names of every `def`. Shared because the existing heuristic associates
+    # params[:x] with the whole controller, not a specific action. Results are
+    # memoized per path so re-resolution (resources + member/collection + `to:`)
+    # only reads each controller once.
+    private def extract_controller_data(path : String) : ControllerData
+      cached = @controller_data_cache[path]?
+      return cached if cached
+
       params_method = Hash(String, Array(Param)).new
       permit_body_params = [] of Param
       permit_query_params = [] of Param
       defined_actions = Set(String).new
+      param_type = "form"
 
-      empty_result = {
-        param_type:          param_type,
-        params_method:       params_method,
-        permit_body_params:  permit_body_params,
-        permit_query_params: permit_query_params,
-        defined_actions:     defined_actions,
-      }
-
-      return empty_result unless File.exists?(path)
+      unless File.exists?(path)
+        empty = ControllerData.new(param_type, params_method, permit_body_params, permit_query_params, defined_actions)
+        @controller_data_cache[path] = empty
+        return empty
+      end
 
       File.open(path, "r", encoding: "utf-8", invalid: :skip) do |controller_file|
         controller_content = controller_file.gets_to_end
@@ -438,69 +448,54 @@ module Analyzer::Ruby
         controller_file.rewind
         this_method = ""
 
-        controller_file.each_line do |controller_line|
-          if controller_line.includes?("def ")
-            stripped = strip_inline_comment(controller_line)
-            if stripped.includes?("def ")
-              func_name = stripped.split("def ", 2)[1].split("(")[0].split(";")[0].strip
-              func_name = func_name.lchop("self.").strip
-              unless func_name.empty?
-                this_method = func_name
-                defined_actions << func_name
-              end
+        controller_file.each_line do |raw_line|
+          line = strip_inline_comment(raw_line)
+
+          if line.includes?("def ")
+            func_name = line.split("def ", 2)[1].split("(")[0].split(";")[0].strip
+            func_name = func_name.lchop("self.").strip
+            unless func_name.empty?
+              this_method = func_name
+              defined_actions << func_name
             end
           end
 
-          if controller_line.includes?("params.require")
-            split_param = controller_line.strip.split("permit")
-            if split_param.size > 1
-              tparam = split_param[1].gsub("(", "").gsub(")", "").gsub("s", "").gsub(":", "")
-              tparam.split(",").each do |param|
-                permit_body_params << Param.new(param.strip, "", param_type)
-                permit_query_params << Param.new(param.strip, "", "query")
-              end
+          if pm = line.match(/permit\s*\(([^)]*)\)/)
+            pm[1].split(',').each do |raw|
+              name = raw.gsub(/[:\s'"]/, "")
+              next if name.empty?
+              permit_body_params << Param.new(name, "", param_type)
+              permit_query_params << Param.new(name, "", "query")
             end
           end
 
-          if controller_line.includes?("params[:")
-            split_param = controller_line.strip.split("params[:")[1]
-            if split_param
-              param = split_param.split("]")[0]
-              permit_body_params << Param.new(param.strip, "", param_type)
-              permit_query_params << Param.new(param.strip, "", "query")
+          line.scan(/params\[\s*(?::(\w+)|['"]([^'"]+)['"])\s*\]/) do |m|
+            name = (m[1]? || m[2]?).to_s.strip
+            next if name.empty?
+            permit_body_params << Param.new(name, "", param_type)
+            permit_query_params << Param.new(name, "", "query")
+          end
+
+          if hm = line.match(/request\.headers\[\s*['"]([^'"]+)['"]\s*\]/)
+            name = hm[1].strip
+            if !name.empty? && this_method != ""
+              params_method[this_method] ||= [] of Param
+              params_method[this_method] << Param.new(name, "", "header")
             end
           end
 
-          if controller_line.includes?("request.headers[")
-            split_param = controller_line.strip.split("request.headers[")[1]
-            if split_param
-              param = split_param.split("]")[0].gsub("'", "").gsub("\"", "")
-              if this_method != ""
-                params_method[this_method] ||= [] of Param
-                params_method[this_method] << Param.new(param.strip, "", "header")
-              end
-            end
-          end
-
-          {"cookies[:", "cookies.signed[:", "cookies.encrypted[:"}.each do |prefix|
-            next unless controller_line.includes?(prefix)
-            split_param = controller_line.strip.split(prefix)[1]
-            next unless split_param
-            param = split_param.split("]")[0].gsub("'", "").gsub("\"", "")
-            next if this_method == ""
+          line.scan(/cookies(?:\.(?:signed|encrypted))?\[\s*(?::(\w+)|['"]([^'"]+)['"])\s*\]/) do |cm|
+            name = (cm[1]? || cm[2]?).to_s.strip
+            next if name.empty? || this_method == ""
             params_method[this_method] ||= [] of Param
-            params_method[this_method] << Param.new(param.strip, "", "cookie")
+            params_method[this_method] << Param.new(name, "", "cookie")
           end
         end
       end
 
-      {
-        param_type:          param_type,
-        params_method:       params_method,
-        permit_body_params:  permit_body_params,
-        permit_query_params: permit_query_params,
-        defined_actions:     defined_actions,
-      }
+      data = ControllerData.new(param_type, params_method, permit_body_params, permit_query_params, defined_actions)
+      @controller_data_cache[path] = data
+      data
     end
 
     private def dedup_by_name(params : Array(Param)) : Array(Param)
@@ -518,18 +513,18 @@ module Analyzer::Ruby
     private def params_for_action(controller_path : String?, action : String, verb : String) : Array(Param)
       return [] of Param if controller_path.nil?
       data = extract_controller_data(controller_path)
-      return [] of Param unless data[:defined_actions].includes?(action)
+      return [] of Param unless data.defined_actions.includes?(action)
 
       result = [] of Param
-      data[:params_method][action]?.try &.each { |p| result << p }
+      data.params_method[action]?.try &.each { |p| result << p }
 
       case verb
       when "GET", "HEAD", "OPTIONS"
-        result.concat(dedup_by_name(data[:permit_query_params]))
+        result.concat(dedup_by_name(data.permit_query_params))
       when "DELETE"
         # No shared body params for delete, matching the resources flow.
       else
-        result.concat(data[:permit_body_params])
+        result.concat(data.permit_body_params)
       end
 
       result
@@ -553,10 +548,21 @@ module Analyzer::Ruby
       nil
     end
 
-    private def find_controller_file(framework_root : String, ctrl_name : String) : String?
+    # Resolve `ctrl#action` to a controller file. When the route lives inside a
+    # `namespace :admin` block, Rails resolves "monitor#ping" to
+    # `Admin::MonitorController` — try the subdir-prefixed path first, then fall
+    # back to a bare lookup so absolute-style references ("api/v1/users") still
+    # work regardless of where they're declared.
+    private def find_controller_file(framework_root : String, ctrl_name : String,
+                                     stack : Array(Frame) = [] of Frame) : String?
       return if ctrl_name.empty?
-      path = "#{framework_root}/app/controllers/#{ctrl_name}_controller.rb"
-      File.exists?(path) ? path : nil
+      candidates = [] of String
+      subdir = current_controller_subdir(stack)
+      if !subdir.empty? && !ctrl_name.includes?('/')
+        candidates << "#{framework_root}/app/controllers/#{subdir}/#{ctrl_name}_controller.rb"
+      end
+      candidates << "#{framework_root}/app/controllers/#{ctrl_name}_controller.rb"
+      candidates.find { |c| File.exists?(c) }
     end
 
     private def action_allowed?(name : String, only : Array(String), except : Array(String)) : Bool
