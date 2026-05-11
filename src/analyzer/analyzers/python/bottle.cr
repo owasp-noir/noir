@@ -118,11 +118,16 @@ module Analyzer::Python
         path_params << Param.new(match[1], "", "path")
       end
 
+      # extract_function_body skips the def line, so body row 0 lives
+      # at def_index + 1.
+      handler_callees = build_callees_from(function_body, def_index + 1, path)
+
       details = Details.new(PathInfo.new(path, line_index + 1))
       methods.each do |method|
         endpoint = Endpoint.new(route_path, method, details)
         path_params.each { |p| endpoint.push_param(p) }
         request_params.each { |p| endpoint.push_param(p) }
+        handler_callees.each { |c| endpoint.push_callee(c) }
         result << endpoint
       end
     end

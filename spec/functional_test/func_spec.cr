@@ -129,6 +129,14 @@ class FunctionalTester
                     it "check '#{callee.name}' name" do
                       callee.name.should eq found.name
                     end
+                    # Only compare the line when the spec author set one;
+                    # most specs only care about names, but Pyramid-style
+                    # cases need to verify def-line threading.
+                    if expected_line = callee.line
+                      it "check '#{callee.name}' line #{expected_line}" do
+                        found.line.should eq expected_line
+                      end
+                    end
                   end
                 end
               end

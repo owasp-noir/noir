@@ -148,6 +148,11 @@ module Analyzer::Python
       details = Details.new(PathInfo.new(path, report_line + 1))
       endpoint = Endpoint.new(route_path, method, details)
       all_params.each { |p| endpoint.push_param(p) }
+
+      # extract_function_body skips the def line, so body row 0 lives
+      # at def_index + 1.
+      push_callees_from(endpoint, function_body, def_index + 1, path)
+
       result << endpoint
     end
 

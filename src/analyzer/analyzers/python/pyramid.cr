@@ -79,7 +79,7 @@ module Analyzer::Python
               next if def_index.nil?
 
               body = extract_function_body(lines, def_index)
-              emit_endpoints(path, line_index, route_path, methods, body)
+              emit_endpoints(path, line_index, route_path, methods, body, def_index)
             end
 
             # config.add_view(view_func, route_name="name", request_method="POST")
@@ -96,12 +96,13 @@ module Analyzer::Python
 
               view_func_name = extract_view_func(args)
               body = ""
+              view_def_index : Int32? = nil
               if view_func_name && !view_func_name.empty?
                 view_def_index = find_function_def(lines, view_func_name)
                 body = extract_function_body(lines, view_def_index) unless view_def_index.nil?
               end
 
-              emit_endpoints(path, line_index, route_path, methods, body)
+              emit_endpoints(path, line_index, route_path, methods, body, view_def_index)
             end
           end
         end
@@ -223,11 +224,17 @@ module Analyzer::Python
       body.join("\n")
     end
 
-    # Build endpoint(s) for a route+methods combo.
+    # Build endpoint(s) for a route+methods combo. `def_index` is the
+    # 0-based line of the handler `def` (when known), used to translate
+    # tree-sitter rows into absolute callee call-site lines.
     private def emit_endpoints(path : String, line_index : Int32, route_path : String,
-                               methods : Array(String), body : String)
+                               methods : Array(String), body : String, def_index : Int32?)
       path_params = extract_path_params(route_path)
       request_params = extract_request_params(body)
+
+      # extract_function_body skips the def line, so body row 0 lives
+      # at def_index + 1.
+      handler_callees = def_index ? build_callees_from(body, def_index + 1, path) : [] of Callee
 
       details = Details.new(PathInfo.new(path, line_index + 1))
       methods.each do |method|
@@ -240,6 +247,7 @@ module Analyzer::Python
           # detector's method list governs which endpoints exist.
           endpoint.push_param(p)
         end
+        handler_callees.each { |c| endpoint.push_callee(c) }
         result << endpoint
       end
     end

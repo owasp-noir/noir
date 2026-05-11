@@ -1,5 +1,6 @@
 require "../../models/analyzer"
 require "../../miniparsers/import_graph"
+require "../../miniparsers/python_callee_extractor"
 require "json"
 
 module Analyzer::Python
@@ -246,6 +247,33 @@ module Analyzer::Python
     # the inner module keeps `PackageType::FILE`-style references in
     # subclasses working without a sweeping rename.
     alias PackageType = Noir::ImportGraph::Python::PackageType
+
+    # Build 1-hop callees observed in `body` (a handler's Python
+    # source). `body_start_line` is the 0-based file line at which
+    # `body`'s first character sits, so tree-sitter rows can be
+    # translated into absolute call-site lines (1-indexed). Use when
+    # one body maps to multiple endpoints (e.g. Sanic's multi-method
+    # routes) so the tree-sitter parse happens once and the same
+    # Callee list gets pushed onto each endpoint.
+    #
+    # Note: callers using `parse_code_block(lines[def_idx..])` should
+    # pass `def_idx` because that helper keeps the def line. Callers
+    # using `extract_function_body(lines, def_idx)` should pass
+    # `def_idx + 1` because that helper skips the def line.
+    def build_callees_from(body : ::String, body_start_line : Int32, path : ::String) : Array(Callee)
+      return [] of Callee if body.empty?
+      Noir::PythonCalleeExtractor.calls_in(body).map do |entry|
+        name, row = entry
+        Callee.new(name, path: path, line: body_start_line + row + 1)
+      end
+    end
+
+    # Convenience wrapper around `build_callees_from`: parse + push in
+    # one call when one body maps to exactly one endpoint.
+    # `Endpoint#push_callee` enforces dedup and the per-endpoint cap.
+    def push_callees_from(endpoint : Endpoint, body : ::String, body_start_line : Int32, path : ::String) : Nil
+      build_callees_from(body, body_start_line, path).each { |c| endpoint.push_callee(c) }
+    end
 
     class FunctionParameter
       @name : ::String

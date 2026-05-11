@@ -108,6 +108,9 @@ module Analyzer::Python
               details = Details.new(PathInfo.new(path, route_line + 1))
               endpoint = Endpoint.new(normalize_path(route_path), http_method, params)
               endpoint.details = details
+
+              push_callees_from(endpoint, codeblock || "", i, path)
+
               result << endpoint
             end
           end

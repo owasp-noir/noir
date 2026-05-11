@@ -93,4 +93,31 @@ describe "Endpoint equality" do
     endpoint2 = Endpoint.new("/abcd", "GET", [Param.new("c", "d", "json"), Param.new("a", "b", "query")])
     (endpoint1 == endpoint2).should be_true
   end
+
+  describe "#push_callee" do
+    it "stops accepting callees after MAX_PER_ENDPOINT" do
+      endpoint = Endpoint.new("/cap", "GET")
+      (Callee::MAX_PER_ENDPOINT + 5).times do |i|
+        endpoint.push_callee(Callee.new("fn#{i}"))
+      end
+      endpoint.callees.size.should eq Callee::MAX_PER_ENDPOINT
+    end
+
+    it "drops the late arrivals, not the early ones" do
+      endpoint = Endpoint.new("/cap", "GET")
+      (Callee::MAX_PER_ENDPOINT + 3).times do |i|
+        endpoint.push_callee(Callee.new("fn#{i}"))
+      end
+      endpoint.callees.first.name.should eq "fn0"
+      endpoint.callees.last.name.should eq "fn#{Callee::MAX_PER_ENDPOINT - 1}"
+    end
+
+    it "dedups by (name, path)" do
+      endpoint = Endpoint.new("/dup", "GET")
+      endpoint.push_callee(Callee.new("save", path: "app.py"))
+      endpoint.push_callee(Callee.new("save", path: "app.py"))
+      endpoint.push_callee(Callee.new("save", path: "other.py"))
+      endpoint.callees.size.should eq 2
+    end
+  end
 end

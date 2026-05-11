@@ -143,11 +143,18 @@ module Analyzer::Python
             next if codeblock.nil?
             codeblock_lines = codeblock.split("\n")
 
+            # Hoisted out of the per-endpoint loop: one route declaration
+            # can emit multiple endpoints (e.g. `methods=["POST","PUT"]`),
+            # and they all share the same handler body, so parse once.
+            handler_callees = build_callees_from(codeblock, _class_def_index, path)
+
             # Get the HTTP method from the function name when it is not specified in the route decorator
             method = HTTP_METHODS.find { |http_method| _function_name.downcase == http_method.downcase } || "GET"
             get_endpoints(method, route_path, extra_params, codeblock_lines, prefix).each do |endpoint|
               details = Details.new(PathInfo.new(path, line_index + 1))
               endpoint.details = details
+
+              handler_callees.each { |c| endpoint.push_callee(c) }
 
               # Add expect params as endpoint params
               expect_params.each do |expect_param|
