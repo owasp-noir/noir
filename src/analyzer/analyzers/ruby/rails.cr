@@ -3,23 +3,32 @@ require "../../engines/ruby_engine"
 module Analyzer::Ruby
   class Rails < RubyEngine
     def analyze
-      # Public Dir Analysis
-      begin
-        get_public_files(@base_path).each do |file|
-          # Extract the path after "/public/" regardless of depth
-          if file =~ /\/public\/(.*)/
-            relative_path = $1
-            details = Details.new(PathInfo.new(file))
-            @result << Endpoint.new("/#{relative_path}", "GET", details)
-          end
-        end
-      rescue e
-        logger.debug e
-      end
+      # Locate every Rails root under the supplied base paths so monorepos
+      # (App/, backend/, ...) and multi-app workspaces are handled. Fall
+      # back to @base_path when no anchor is registered in file_map yet so
+      # callers that bypass the detector (tests, ad-hoc usage) still work.
+      framework_roots = discover_framework_roots("config/routes.rb")
+      framework_roots = [@base_path] if framework_roots.empty?
 
-      # Config Analysis
-      if File.exists?("#{@base_path}/config/routes.rb")
-        File.open("#{@base_path}/config/routes.rb", "r", encoding: "utf-8", invalid: :skip) do |file|
+      framework_roots.each do |framework_root|
+        # Public Dir Analysis
+        begin
+          get_public_files(framework_root).each do |file|
+            # Extract the path after "/public/" regardless of depth
+            if file =~ /\/public\/(.*)/
+              relative_path = $1
+              details = Details.new(PathInfo.new(file))
+              @result << Endpoint.new("/#{relative_path}", "GET", details)
+            end
+          end
+        rescue e
+          logger.debug e
+        end
+
+        routes_path = "#{framework_root}/config/routes.rb"
+        next unless File.exists?(routes_path)
+
+        File.open(routes_path, "r", encoding: "utf-8", invalid: :skip) do |file|
           file.each_line do |line|
             stripped_line = line.strip
             if stripped_line.size > 0 && stripped_line[0] != '#'
@@ -28,13 +37,13 @@ module Analyzer::Ruby
                 if split.size > 1
                   resource = split[1].split(",")[0]
 
-                  @result += controller_to_endpoint("#{@base_path}/app/controllers/#{resource}_controller.rb", @url, resource)
-                  @result += controller_to_endpoint("#{@base_path}/app/controllers/#{resource}s_controller.rb", @url, resource)
-                  @result += controller_to_endpoint("#{@base_path}/app/controllers/#{resource}es_controller.rb", @url, resource)
+                  @result += controller_to_endpoint("#{framework_root}/app/controllers/#{resource}_controller.rb", @url, resource)
+                  @result += controller_to_endpoint("#{framework_root}/app/controllers/#{resource}s_controller.rb", @url, resource)
+                  @result += controller_to_endpoint("#{framework_root}/app/controllers/#{resource}es_controller.rb", @url, resource)
                 end
               end
 
-              details = Details.new(PathInfo.new("#{@base_path}/config/routes.rb"))
+              details = Details.new(PathInfo.new(routes_path))
               line.scan(/get\s+['"](.+?)['"]/) do |match|
                 @result << Endpoint.new("#{match[1]}", "GET", details)
               end

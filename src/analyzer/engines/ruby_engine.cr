@@ -22,6 +22,30 @@ module Analyzer::Ruby
       Endpoint.new("", "")
     end
 
+    # Locate the directories that host a known framework anchor file
+    # (e.g. `config/routes.rb`) anywhere under `base_paths`. Returns the
+    # framework root for each match, i.e. the anchor's path with the
+    # relative suffix stripped. Lets analyzers stop assuming the framework
+    # root is `@base_path` and survive monorepos where it lives in a
+    # subdirectory (`App/`, `backend/`, ...).
+    protected def discover_framework_roots(anchor : String) : Array(String)
+      suffix = anchor.starts_with?("/") ? anchor : "/#{anchor}"
+      roots = [] of String
+
+      all_files.each do |file|
+        next unless file.ends_with?(suffix)
+        next unless base_paths.any? do |base|
+                      prefix = base.ends_with?("/") ? base : "#{base}/"
+                      file.starts_with?(prefix) || file == "#{base}#{suffix}"
+                    end
+
+        root = file[0, file.size - suffix.size]
+        roots << root unless roots.includes?(root)
+      end
+
+      roots
+    end
+
     # Walk the project file tree in parallel, invoking the block for each
     # readable non-directory file. Used by analyzers that scan the whole
     # tree (Sinatra); Rails/Hanami target specific config files directly.
