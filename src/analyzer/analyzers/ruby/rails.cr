@@ -32,8 +32,10 @@ module Analyzer::Ruby
       property path : String
       property controller_subdir : String
       property resource_name : String?
+      property controller_path : String?
 
-      def initialize(@kind : Symbol, @path : String = "", @controller_subdir : String = "", @resource_name : String? = nil)
+      def initialize(@kind : Symbol, @path : String = "", @controller_subdir : String = "",
+                     @resource_name : String? = nil, @controller_path : String? = nil)
       end
     end
 
@@ -173,6 +175,8 @@ module Analyzer::Ruby
               candidates << "#{framework_root}/app/controllers/#{file_base}es_controller.rb"
             end
 
+            existing_controller_path = candidates.find { |c| File.exists?(c) }
+
             candidates.each do |ctrl_path|
               @result += controller_to_endpoint(
                 ctrl_path, @url, url_segment,
@@ -185,7 +189,8 @@ module Analyzer::Ruby
 
             if opens_block
               child_path = singular ? url_segment : "#{url_segment}/1"
-              stack << Frame.new(:resources, path: child_path, resource_name: name)
+              stack << Frame.new(:resources, path: child_path, resource_name: name,
+                controller_path: existing_controller_path)
             end
             next
           end
@@ -212,7 +217,11 @@ module Analyzer::Ruby
             if (am = rest.match(/^\s*:(\w+)\b/)) && (in_member || in_collection)
               action = am[1]
               url = member_collection_url(stack, action, in_collection)
-              @result << Endpoint.new(url, verb, details) if url
+              if url
+                parent = parent_resources_frame(stack)
+                action_params = parent ? params_for_action(parent.controller_path, action, verb) : ([] of Param)
+                @result << Endpoint.new(url, verb, action_params, details)
+              end
               next
             end
 
@@ -222,7 +231,16 @@ module Analyzer::Ruby
               prefix = current_path_prefix(stack)
               path_part = path.starts_with?("/") ? path : "/#{path}"
               url = prefix.empty? ? path_part : "/#{prefix}#{path_part}"
-              @result << Endpoint.new(url, verb, details)
+
+              ctrl_action = parse_controller_action(rest)
+              action_params = [] of Param
+              if ctrl_action
+                ctrl_name, action = ctrl_action
+                ctrl_path = find_controller_file(framework_root, ctrl_name)
+                action_params = params_for_action(ctrl_path, action, verb)
+              end
+
+              @result << Endpoint.new(url, verb, action_params, details)
               next
             end
             next
@@ -341,210 +359,204 @@ module Analyzer::Ruby
 
       return @result unless File.exists?(path)
 
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |controller_file|
-        param_type = "form"
-        params_query = [] of Param
-        params_body = [] of Param
-        params_method = Hash(String, Array(Param)).new
-        methods = [] of String
-        this_method = ""
+      data = extract_controller_data(path)
+      defined_actions = data[:defined_actions]
+      params_method = data[:params_method]
+      params_body = data[:permit_body_params]
+      deduplication_params_query = dedup_by_name(data[:permit_query_params])
 
-        controller_content = controller_file.gets_to_end
-        if controller_content.includes? "render json:"
-          param_type = "json"
+      methods = [] of String
+      {"index", "show", "create", "update", "destroy"}.each do |name|
+        next unless defined_actions.includes?(name)
+        next unless action_allowed?(name, only, except)
+        case name
+        when "index"
+          methods << "GET/INDEX" unless singular
+        when "show"
+          methods << "GET/SHOW"
+        when "create"
+          methods << "POST"
+        when "update"
+          methods << "PUT"
+        when "destroy"
+          methods << "DELETE"
         end
+      end
 
-        controller_file.rewind
-        controller_file.each_line do |controller_line|
-          if controller_line.includes? "def "
-            func_name = strip_inline_comment(controller_line).split("def ")[1].split("(")[0].split(";")[0].strip
-            case func_name
-            when "index"
-              if action_allowed?("index", only, except) && !singular
-                methods << "GET/INDEX"
-              end
-              this_method = func_name
-            when "show"
-              if action_allowed?("show", only, except)
-                methods << "GET/SHOW"
-              end
-              this_method = func_name
-            when "create"
-              if action_allowed?("create", only, except)
-                methods << "POST"
-              end
-              this_method = func_name
-            when "update"
-              if action_allowed?("update", only, except)
-                methods << "PUT"
-              end
-              this_method = func_name
-            when "destroy"
-              if action_allowed?("destroy", only, except)
-                methods << "DELETE"
-              end
-              this_method = func_name
-            end
-          end
+      details = Details.new(PathInfo.new(path))
+      index_url = compose_url(path_prefix, "/#{resource}")
+      member_url = compose_url(path_prefix, singular ? "/#{resource}" : "/#{resource}/1")
 
-          if controller_line.includes? "params.require"
-            split_param = controller_line.strip.split("permit")
-            if split_param.size > 1
-              tparam = split_param[1].gsub("(", "").gsub(")", "").gsub("s", "").gsub(":", "")
-              tparam.split(",").each do |param|
-                params_body << Param.new(param.strip, "", param_type)
-                params_query << Param.new(param.strip, "", "query")
-              end
-            end
-          end
-
-          if controller_line.includes? "params[:"
-            split_param = controller_line.strip.split("params[:")[1]
-            if split_param
-              param = split_param.split("]")[0]
-              params_body << Param.new(param.strip, "", param_type)
-              params_query << Param.new(param.strip, "", "query")
-            end
-          end
-
-          if controller_line.includes? "request.headers["
-            split_param = controller_line.strip.split("request.headers[")[1]
-            if split_param
-              param = split_param.split("]")[0].gsub("'", "").gsub("\"", "")
-              param_line = Param.new(param.strip, "", "header")
-              if params_method.has_key? this_method
-                params_method[this_method] << param_line
-              else
-                params_method[this_method] = [] of Param
-                params_method[this_method] << param_line
-              end
-            end
-          end
-
-          if controller_line.includes? "cookies[:"
-            split_param = controller_line.strip.split("cookies[:")[1]
-            if split_param
-              param = split_param.split("]")[0].gsub("'", "").gsub("\"", "")
-              if this_method != ""
-                param_line = Param.new(param.strip, "", "cookie")
-                if params_method.has_key? this_method
-                  params_method[this_method] << param_line
-                else
-                  params_method[this_method] = [] of Param
-                  params_method[this_method] << param_line
-                end
-              end
-            end
-          end
-
-          if controller_line.includes? "cookies.signed[:"
-            split_param = controller_line.strip.split("cookies.signed[:")[1]
-            if split_param
-              param = split_param.split("]")[0].gsub("'", "").gsub("\"", "")
-              if this_method != ""
-                param_line = Param.new(param.strip, "", "cookie")
-                if params_method.has_key? this_method
-                  params_method[this_method] << param_line
-                else
-                  params_method[this_method] = [] of Param
-                  params_method[this_method] << param_line
-                end
-              end
-            end
-          end
-
-          if controller_line.includes? "cookies.encrypted[:"
-            split_param = controller_line.strip.split("cookies.encrypted[:")[1]
-            if split_param
-              param = split_param.split("]")[0].gsub("'", "").gsub("\"", "")
-              if this_method != ""
-                param_line = Param.new(param.strip, "", "cookie")
-                if params_method.has_key? this_method
-                  params_method[this_method] << param_line
-                else
-                  params_method[this_method] = [] of Param
-                  params_method[this_method] << param_line
-                end
-              end
-            end
-          end
-        end
-
-        deduplication_params_query = [] of Param
-        get_param_duplicated : Array(String) = [] of String
-
-        params_query.each do |get_param|
-          unless get_param_duplicated.includes? get_param.name
-            deduplication_params_query << get_param
-            get_param_duplicated << get_param.name
-          end
-        end
-
-        details = Details.new(PathInfo.new(path))
-        index_url = compose_url(path_prefix, "/#{resource}")
-        member_url = compose_url(path_prefix, singular ? "/#{resource}" : "/#{resource}/1")
-
-        methods.each do |method|
-          if method == "GET/INDEX"
-            if params_method.has_key? "index"
-              index_params = [] of Param
-              params_method["index"].each do |param|
-                index_params << param
-              end
-            end
-
-            index_params ||= [] of Param
-            deduplication_params_query ||= [] of Param
-            last_params = index_params + deduplication_params_query
-            @result << Endpoint.new(index_url, "GET", last_params, details)
-          elsif method == "GET/SHOW"
-            if params_method.has_key? "show"
-              show_params = [] of Param
-              params_method["show"].each do |param|
-                show_params << param
-              end
-            end
-            show_params ||= [] of Param
-            deduplication_params_query ||= [] of Param
-            last_params = show_params + deduplication_params_query
-            @result << Endpoint.new(member_url, "GET", last_params, details)
-          else
-            if method == "POST"
-              if params_method.has_key? "create"
-                create_params = [] of Param
-                params_method["create"].each do |param|
-                  create_params << param
-                end
-              end
-              create_params ||= [] of Param
-              params_body ||= [] of Param
-              last_params = create_params + params_body
-              @result << Endpoint.new(index_url, method, last_params, details)
-            elsif method == "DELETE"
-              params_delete = [] of Param
-              if params_method.has_key? "delete"
-                params_method["delete"].each do |param|
-                  params_delete << param
-                end
-              end
-              @result << Endpoint.new(member_url, method, params_delete, details)
-            else
-              if params_method.has_key? "update"
-                update_params = [] of Param
-                params_method["update"].each do |param|
-                  update_params << param
-                end
-              end
-              update_params ||= [] of Param
-              params_body ||= [] of Param
-              last_params = update_params + params_body
-              @result << Endpoint.new(member_url, method, last_params, details)
-            end
-          end
+      methods.each do |method|
+        case method
+        when "GET/INDEX"
+          last_params = (params_method["index"]? || [] of Param) + deduplication_params_query
+          @result << Endpoint.new(index_url, "GET", last_params, details)
+        when "GET/SHOW"
+          last_params = (params_method["show"]? || [] of Param) + deduplication_params_query
+          @result << Endpoint.new(member_url, "GET", last_params, details)
+        when "POST"
+          last_params = (params_method["create"]? || [] of Param) + params_body
+          @result << Endpoint.new(index_url, method, last_params, details)
+        when "DELETE"
+          last_params = params_method["destroy"]? || [] of Param
+          @result << Endpoint.new(member_url, method, last_params, details)
+        else
+          last_params = (params_method["update"]? || [] of Param) + params_body
+          @result << Endpoint.new(member_url, method, last_params, details)
         end
       end
 
       @result
+    end
+
+    # Scans a controller file once, collecting per-method params (headers/cookies)
+    # plus shared params (params[:x], params.require...permit) and the names of
+    # every `def`. Shared because the existing heuristic associates params[:x]
+    # with the whole controller, not a specific action.
+    private def extract_controller_data(path : String)
+      param_type = "form"
+      params_method = Hash(String, Array(Param)).new
+      permit_body_params = [] of Param
+      permit_query_params = [] of Param
+      defined_actions = Set(String).new
+
+      empty_result = {
+        param_type:          param_type,
+        params_method:       params_method,
+        permit_body_params:  permit_body_params,
+        permit_query_params: permit_query_params,
+        defined_actions:     defined_actions,
+      }
+
+      return empty_result unless File.exists?(path)
+
+      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |controller_file|
+        controller_content = controller_file.gets_to_end
+        param_type = "json" if controller_content.includes?("render json:")
+
+        controller_file.rewind
+        this_method = ""
+
+        controller_file.each_line do |controller_line|
+          if controller_line.includes?("def ")
+            stripped = strip_inline_comment(controller_line)
+            if stripped.includes?("def ")
+              func_name = stripped.split("def ", 2)[1].split("(")[0].split(";")[0].strip
+              func_name = func_name.lchop("self.").strip
+              unless func_name.empty?
+                this_method = func_name
+                defined_actions << func_name
+              end
+            end
+          end
+
+          if controller_line.includes?("params.require")
+            split_param = controller_line.strip.split("permit")
+            if split_param.size > 1
+              tparam = split_param[1].gsub("(", "").gsub(")", "").gsub("s", "").gsub(":", "")
+              tparam.split(",").each do |param|
+                permit_body_params << Param.new(param.strip, "", param_type)
+                permit_query_params << Param.new(param.strip, "", "query")
+              end
+            end
+          end
+
+          if controller_line.includes?("params[:")
+            split_param = controller_line.strip.split("params[:")[1]
+            if split_param
+              param = split_param.split("]")[0]
+              permit_body_params << Param.new(param.strip, "", param_type)
+              permit_query_params << Param.new(param.strip, "", "query")
+            end
+          end
+
+          if controller_line.includes?("request.headers[")
+            split_param = controller_line.strip.split("request.headers[")[1]
+            if split_param
+              param = split_param.split("]")[0].gsub("'", "").gsub("\"", "")
+              if this_method != ""
+                params_method[this_method] ||= [] of Param
+                params_method[this_method] << Param.new(param.strip, "", "header")
+              end
+            end
+          end
+
+          {"cookies[:", "cookies.signed[:", "cookies.encrypted[:"}.each do |prefix|
+            next unless controller_line.includes?(prefix)
+            split_param = controller_line.strip.split(prefix)[1]
+            next unless split_param
+            param = split_param.split("]")[0].gsub("'", "").gsub("\"", "")
+            next if this_method == ""
+            params_method[this_method] ||= [] of Param
+            params_method[this_method] << Param.new(param.strip, "", "cookie")
+          end
+        end
+      end
+
+      {
+        param_type:          param_type,
+        params_method:       params_method,
+        permit_body_params:  permit_body_params,
+        permit_query_params: permit_query_params,
+        defined_actions:     defined_actions,
+      }
+    end
+
+    private def dedup_by_name(params : Array(Param)) : Array(Param)
+      seen = Set(String).new
+      params.each_with_object([] of Param) do |p, acc|
+        next if seen.includes?(p.name)
+        seen << p.name
+        acc << p
+      end
+    end
+
+    # Build params for a custom action (member/collection or explicit
+    # controller#action). Mirrors the resources flow: per-action headers/cookies
+    # plus the controller's shared permitted/body/query params for the verb.
+    private def params_for_action(controller_path : String?, action : String, verb : String) : Array(Param)
+      return [] of Param if controller_path.nil?
+      data = extract_controller_data(controller_path)
+      return [] of Param unless data[:defined_actions].includes?(action)
+
+      result = [] of Param
+      data[:params_method][action]?.try &.each { |p| result << p }
+
+      case verb
+      when "GET", "HEAD", "OPTIONS"
+        result.concat(dedup_by_name(data[:permit_query_params]))
+      when "DELETE"
+        # No shared body params for delete, matching the resources flow.
+      else
+        result.concat(data[:permit_body_params])
+      end
+
+      result
+    end
+
+    private def parent_resources_frame(stack : Array(Frame)) : Frame?
+      stack.reverse_each do |f|
+        return f if f.kind == :resources
+      end
+      nil
+    end
+
+    # Parses `=> "ctrl#action"` and `to: "ctrl#action"` forms.
+    private def parse_controller_action(rest : String) : Tuple(String, String)?
+      if m = rest.match(/=>\s*['"]([^'"#]+)#([\w]+)['"]/)
+        return {m[1], m[2]}
+      end
+      if m = rest.match(/to:\s*['"]([^'"#]+)#([\w]+)['"]/)
+        return {m[1], m[2]}
+      end
+      nil
+    end
+
+    private def find_controller_file(framework_root : String, ctrl_name : String) : String?
+      return if ctrl_name.empty?
+      path = "#{framework_root}/app/controllers/#{ctrl_name}_controller.rb"
+      File.exists?(path) ? path : nil
     end
 
     private def action_allowed?(name : String, only : Array(String), except : Array(String)) : Bool
