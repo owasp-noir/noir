@@ -10,10 +10,10 @@ sort_by = "weight"
 
 사용 가능한 플래그
 
-- `--override-analyze-prompt` — 개별 파일 분석용 내부 ANALYZE_PROMPT를 덮어씁니다.
-- `--override-llm-optimize-prompt` — 엔드포인트 최적화용 내부 LLM_OPTIMIZE_PROMPT를 덮어씁니다.
-- `--override-bundle-analyze-prompt` — 번들(다중 파일) 분석용 내부 BUNDLE_ANALYZE_PROMPT를 덮어씁니다.
-- `--override-filter-prompt` — 파일 필터링용 내부 FILTER_PROMPT를 덮어씁니다.
+- `--override-analyze-prompt`: 개별 파일 분석용 내부 ANALYZE_PROMPT를 덮어씁니다.
+- `--override-llm-optimize-prompt`: 엔드포인트 최적화용 내부 LLM_OPTIMIZE_PROMPT를 덮어씁니다.
+- `--override-bundle-analyze-prompt`: 번들(다중 파일) 분석용 내부 BUNDLE_ANALYZE_PROMPT를 덮어씁니다.
+- `--override-filter-prompt`: 파일 필터링용 내부 FILTER_PROMPT를 덮어씁니다.
 
 언제 사용하나요
 
