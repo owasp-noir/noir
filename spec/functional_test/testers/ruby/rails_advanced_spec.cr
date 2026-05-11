@@ -23,9 +23,26 @@ expected_endpoints = [
     Param.new("X-Refund-Reason", "", "header"),
     Param.new("status", "", "form"),
   ]),
+  # DELETE custom action — no shared body params, only the action's headers.
+  Endpoint.new("/admin/refunds/1/purge", "DELETE", [
+    Param.new("X-Confirm", "", "header"),
+  ]),
+  # `permit("note", "kind")` (string form) and member POST verb.
+  Endpoint.new("/admin/refunds/1/update_metadata", "POST", [
+    Param.new("note", "", "form"),
+    Param.new("kind", "", "form"),
+  ]),
   Endpoint.new("/admin/refunds/new_list", "GET", [
     Param.new("X-Page", "", "header"),
     Param.new("status", "", "query"),
+  ]),
+
+  # Namespaced `to: "ctrl#action"` resolves against `admin/monitor_controller.rb`,
+  # not the root-level `monitor_controller.rb`. Also exercises `params["id"]`
+  # (string-key form).
+  Endpoint.new("/admin/monitor/heartbeat", "GET", [
+    Param.new("X-Heartbeat", "", "header"),
+    Param.new("id", "", "query"),
   ]),
 
   # scope :api do resources :items, only: [:index, :show] end
@@ -50,9 +67,11 @@ expected_endpoints = [
   Endpoint.new("/posts/1/comments", "GET"),
   Endpoint.new("/posts/1/comments/1", "GET"),
 
-  # hash-rocket and to: forms. #1359: `to: "ctrl#action"` resolves the
-  # controller and attaches the action's params.
-  Endpoint.new("/up", "GET"),
+  # hash-rocket and to: forms. #1359: `=> "ctrl#action"` / `to: "ctrl#action"`
+  # resolves the controller and attaches the action's params.
+  Endpoint.new("/up", "GET", [
+    Param.new("X-Health", "", "header"),
+  ]),
   Endpoint.new("/ping", "GET", [
     Param.new("X-Ping", "", "header"),
   ]),
@@ -74,7 +93,8 @@ expected_endpoints = [
 # /scans/1) and devise_for emits its full route set.
 total_endpoints = 1 +  # root
                   5 +  # admin/reports
-                  2 +  # admin/refunds member+collection
+                  4 +  # admin/refunds member (change_status, purge, update_metadata) + collection (new_list)
+                  1 +  # admin/monitor/heartbeat (namespaced `to:`)
                   2 +  # api/items only:[index,show]
                   4 +  # internal/statements except:[destroy]
                   1 +  # /scans only:[index] via controller override

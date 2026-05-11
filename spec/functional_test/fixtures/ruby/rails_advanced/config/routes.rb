@@ -6,11 +6,15 @@ Rails.application.routes.draw do
     resources :refunds do
       member do
         post :change_status
+        delete :purge
+        post :update_metadata
       end
       collection do
         get :new_list
       end
     end
+
+    get "monitor/heartbeat", to: "monitor#heartbeat"
   end
 
   scope :api do
