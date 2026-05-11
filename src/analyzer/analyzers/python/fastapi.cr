@@ -91,8 +91,17 @@ module Analyzer::Python
                     end
                   end
 
+                  # Resolve the actual `def` line, skipping stacked
+                  # decorators / comments / blank lines between the
+                  # route decorator and the handler. Both param
+                  # extraction and callee extraction below need this
+                  # to be accurate; the previous `index + 1` shortcut
+                  # silently misfired on `@app.post(...)` + `@auth_required`
+                  # style stacks.
+                  def_line = find_def_line(codelines, index) || (index + 1)
+
                   # Parsing extra params
-                  function_definition = parse_function_def(codelines, index + 1)
+                  function_definition = parse_function_def(codelines, def_line)
                   if !function_definition.nil?
                     function_params = function_definition.params
                     if function_params.size > 0
@@ -125,7 +134,7 @@ module Analyzer::Python
                           if param_type.nil?
                             if /^#{PYTHON_VAR_NAME_REGEX}$/.match(param.type)
                               if param.type.in?(%w[Request dict])
-                                function_codeblock = parse_code_block(codelines[index + 1..])
+                                function_codeblock = parse_code_block(codelines[def_line..])
                                 next if function_codeblock.nil?
                                 new_params = find_dictionary_params(function_codeblock, param)
                               elsif import_modules.has_key?(param.type)
@@ -158,7 +167,15 @@ module Analyzer::Python
                   end
 
                   details = Details.new(PathInfo.new(path, index + 1))
-                  result << Endpoint.new(router_class.join(http_route_path), http_method_name, params, details)
+                  endpoint = Endpoint.new(router_class.join(http_route_path), http_method_name, params, details)
+
+                  # `parse_code_block(codelines[def_line..])` keeps the
+                  # def line, so body row 0 lives at file line `def_line`.
+                  if handler_codeblock = parse_code_block(codelines[def_line..])
+                    push_callees_from(endpoint, handler_codeblock, def_line, path)
+                  end
+
+                  result << endpoint
                 end
               end
             end
