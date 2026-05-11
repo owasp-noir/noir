@@ -1,4 +1,4 @@
-class FeedsController < ApplicationController
+class StatementsController < ApplicationController
   def index
   end
 

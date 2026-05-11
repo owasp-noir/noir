@@ -15,18 +15,18 @@ expected_endpoints = [
   Endpoint.new("/admin/reports/1", "DELETE"),
 
   # member/collection actions on namespaced resource
-  Endpoint.new("/admin/quests/1/change_status", "POST"),
-  Endpoint.new("/admin/quests/new_list", "GET"),
+  Endpoint.new("/admin/refunds/1/change_status", "POST"),
+  Endpoint.new("/admin/refunds/new_list", "GET"),
 
   # scope :api do resources :items, only: [:index, :show] end
   Endpoint.new("/api/items", "GET"),
   Endpoint.new("/api/items/1", "GET"),
 
-  # scope path: "intel" do resources :feeds, except: [:destroy] end
-  Endpoint.new("/intel/feeds", "GET"),
-  Endpoint.new("/intel/feeds/1", "GET"),
-  Endpoint.new("/intel/feeds", "POST"),
-  Endpoint.new("/intel/feeds/1", "PUT"),
+  # scope path: "internal" do resources :statements, except: [:destroy] end
+  Endpoint.new("/internal/statements", "GET"),
+  Endpoint.new("/internal/statements/1", "GET"),
+  Endpoint.new("/internal/statements", "POST"),
+  Endpoint.new("/internal/statements/1", "PUT"),
 
   # resources :scans, controller: "billing/scans", only: [:index]
   Endpoint.new("/scans", "GET"),
@@ -57,13 +57,13 @@ expected_endpoints = [
 ]
 
 # Locking the total count ensures only:/except: filters drop the expected
-# endpoints (e.g. no POST /api/items, no DELETE /intel/feeds, no /scans/1)
-# and devise_for emits its full route set.
+# endpoints (e.g. no POST /api/items, no DELETE /internal/statements, no
+# /scans/1) and devise_for emits its full route set.
 total_endpoints = 1 +  # root
                   5 +  # admin/reports
-                  2 +  # admin/quests member+collection
+                  2 +  # admin/refunds member+collection
                   2 +  # api/items only:[index,show]
-                  4 +  # intel/feeds except:[destroy]
+                  4 +  # internal/statements except:[destroy]
                   1 +  # /scans only:[index] via controller override
                   5 +  # posts
                   2 +  # posts/1/comments

@@ -3,7 +3,7 @@ Rails.application.routes.draw do
 
   namespace :admin do
     resources :reports
-    resources :quests do
+    resources :refunds do
       member do
         post :change_status
       end
@@ -17,8 +17,8 @@ Rails.application.routes.draw do
     resources :items, only: [:index, :show]
   end
 
-  scope path: "intel" do
-    resources :feeds, except: [:destroy]
+  scope path: "internal" do
+    resources :statements, except: [:destroy]
   end
 
   resources :scans, controller: "billing/scans", only: [:index]
