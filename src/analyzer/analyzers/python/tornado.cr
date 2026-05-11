@@ -340,6 +340,18 @@ module Analyzer::Python
           if stripped.starts_with?("def #{http_method}(") || stripped.starts_with?("async def #{http_method}(")
             params = extract_params_from_method(lines, line_index, file_path)
             endpoint = Endpoint.new(route_path, http_method.upcase, params)
+
+            # Attach 1-hop callees from this method's body. Each
+            # handler method (`def get` / `async def post` / ...) maps
+            # to its own endpoint, so the codeblock is per-method —
+            # callee scope stays correctly bound to the HTTP verb.
+            # `parse_code_block(lines[line_index..])` keeps the def
+            # line, so `body_start_line = line_index` matches the
+            # helper's contract.
+            if codeblock = parse_code_block(lines[line_index..])
+              push_callees_from(endpoint, codeblock, line_index, file_path)
+            end
+
             endpoints << endpoint
           end
         end
