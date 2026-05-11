@@ -1,4 +1,5 @@
 require "../../../miniparsers/python"
+require "../../../miniparsers/python_callee_extractor"
 require "../../../miniparsers/python_route_extractor"
 require "../../../miniparsers/python_route_extractor_ts"
 require "../../engines/python_engine"
@@ -416,6 +417,10 @@ module Analyzer::Python
               details = Details.new(PathInfo.new(path, line_index + 1))
               endpoint.details = details
 
+              extract_handler_callees(codeblock, _class_def_index, path).each do |callee|
+                endpoint.push_callee(callee)
+              end
+
               # Add expect params as endpoint params
               if expect_params.size > 0
                 expect_params.each do |param|
@@ -532,6 +537,11 @@ module Analyzer::Python
             details = Details.new(PathInfo.new(class_file, method_def_index + 1))
             endpoint = Endpoint.new(route_url, http_method, params)
             endpoint.details = details
+
+            extract_handler_callees(codeblock, method_def_index, class_file).each do |callee|
+              endpoint.push_callee(callee)
+            end
+
             result << endpoint
           end
         end
@@ -549,6 +559,18 @@ module Analyzer::Python
     # `File.read` calls per file.
     private def fetch_file_content(path : ::String) : ::String
       @file_content_cache[path] ||= read_file_content(path)
+    end
+
+    # Build the list of 1-hop callees observed in the handler body.
+    # `codeblock` is the Python source of the handler (from
+    # `parse_code_block`), `def_line_index` is the 0-based line the
+    # codeblock starts at in `path`. Dedup and the per-endpoint cap
+    # are enforced by `Endpoint#push_callee`.
+    private def extract_handler_callees(codeblock : ::String, def_line_index : Int32, path : ::String) : Array(Callee)
+      Noir::PythonCalleeExtractor.calls_in(codeblock).map do |entry|
+        name, row = entry
+        Callee.new(name, path: path, line: def_line_index + row + 1)
+      end
     end
 
     # Create a Python parser for a given path and content. The

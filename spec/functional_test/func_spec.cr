@@ -116,6 +116,23 @@ class FunctionalTester
                 end
               end
             end
+
+            if expected.callees.size > 0
+              describe "check - callees" do
+                expected.callees.each do |callee|
+                  found = actual.callees.find { |c| c.name == callee.name }
+                  if found.nil?
+                    it "callee '#{callee.name}' not found for [#{key}] in tester: #{@path}" do
+                      false.should be_true
+                    end
+                  else
+                    it "check '#{callee.name}' name" do
+                      callee.name.should eq found.name
+                    end
+                  end
+                end
+              end
+            end
           end
         end
       end

@@ -6,15 +6,16 @@ require "../../../src/utils/utils"
 describe "OutputBuilderCommon" do
   it "should not display tech by default" do
     options = {
-      "debug"         => YAML::Any.new(false),
-      "verbose"       => YAML::Any.new(false),
-      "color"         => YAML::Any.new(false),
-      "nolog"         => YAML::Any.new(false),
-      "output"        => YAML::Any.new(""),
-      "include_techs" => YAML::Any.new(false),
-      "include_path"  => YAML::Any.new(false),
-      "status_codes"  => YAML::Any.new(false),
-      "exclude_codes" => YAML::Any.new(""),
+      "debug"          => YAML::Any.new(false),
+      "verbose"        => YAML::Any.new(false),
+      "color"          => YAML::Any.new(false),
+      "nolog"          => YAML::Any.new(false),
+      "output"         => YAML::Any.new(""),
+      "include_techs"  => YAML::Any.new(false),
+      "include_path"   => YAML::Any.new(false),
+      "include_callee" => YAML::Any.new(false),
+      "status_codes"   => YAML::Any.new(false),
+      "exclude_codes"  => YAML::Any.new(""),
     }
     builder = OutputBuilderCommon.new(options)
     builder.io = IO::Memory.new
@@ -33,15 +34,16 @@ describe "OutputBuilderCommon" do
 
   it "should display tech when include_techs flag is set" do
     options = {
-      "debug"         => YAML::Any.new(false),
-      "verbose"       => YAML::Any.new(false),
-      "color"         => YAML::Any.new(false),
-      "nolog"         => YAML::Any.new(false),
-      "output"        => YAML::Any.new(""),
-      "include_techs" => YAML::Any.new(true),
-      "include_path"  => YAML::Any.new(false),
-      "status_codes"  => YAML::Any.new(false),
-      "exclude_codes" => YAML::Any.new(""),
+      "debug"          => YAML::Any.new(false),
+      "verbose"        => YAML::Any.new(false),
+      "color"          => YAML::Any.new(false),
+      "nolog"          => YAML::Any.new(false),
+      "output"         => YAML::Any.new(""),
+      "include_techs"  => YAML::Any.new(true),
+      "include_path"   => YAML::Any.new(false),
+      "include_callee" => YAML::Any.new(false),
+      "status_codes"   => YAML::Any.new(false),
+      "exclude_codes"  => YAML::Any.new(""),
     }
     builder = OutputBuilderCommon.new(options)
     builder.io = IO::Memory.new
@@ -60,15 +62,16 @@ describe "OutputBuilderCommon" do
 
   it "should not display tech line when technology is nil" do
     options = {
-      "debug"         => YAML::Any.new(false),
-      "verbose"       => YAML::Any.new(false),
-      "color"         => YAML::Any.new(false),
-      "nolog"         => YAML::Any.new(false),
-      "output"        => YAML::Any.new(""),
-      "include_techs" => YAML::Any.new(true),
-      "include_path"  => YAML::Any.new(false),
-      "status_codes"  => YAML::Any.new(false),
-      "exclude_codes" => YAML::Any.new(""),
+      "debug"          => YAML::Any.new(false),
+      "verbose"        => YAML::Any.new(false),
+      "color"          => YAML::Any.new(false),
+      "nolog"          => YAML::Any.new(false),
+      "output"         => YAML::Any.new(""),
+      "include_techs"  => YAML::Any.new(true),
+      "include_path"   => YAML::Any.new(false),
+      "include_callee" => YAML::Any.new(false),
+      "status_codes"   => YAML::Any.new(false),
+      "exclude_codes"  => YAML::Any.new(""),
     }
     builder = OutputBuilderCommon.new(options)
     builder.io = IO::Memory.new
@@ -86,15 +89,16 @@ describe "OutputBuilderCommon" do
 
   it "should work correctly with both include_path and include_techs" do
     options = {
-      "debug"         => YAML::Any.new(false),
-      "verbose"       => YAML::Any.new(false),
-      "color"         => YAML::Any.new(false),
-      "nolog"         => YAML::Any.new(false),
-      "output"        => YAML::Any.new(""),
-      "include_path"  => YAML::Any.new(true),
-      "include_techs" => YAML::Any.new(true),
-      "status_codes"  => YAML::Any.new(false),
-      "exclude_codes" => YAML::Any.new(""),
+      "debug"          => YAML::Any.new(false),
+      "verbose"        => YAML::Any.new(false),
+      "color"          => YAML::Any.new(false),
+      "nolog"          => YAML::Any.new(false),
+      "output"         => YAML::Any.new(""),
+      "include_path"   => YAML::Any.new(true),
+      "include_callee" => YAML::Any.new(false),
+      "include_techs"  => YAML::Any.new(true),
+      "status_codes"   => YAML::Any.new(false),
+      "exclude_codes"  => YAML::Any.new(""),
     }
     builder = OutputBuilderCommon.new(options)
     builder.io = IO::Memory.new
