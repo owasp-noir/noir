@@ -1,4 +1,4 @@
-class YeOt::ScansController < ApplicationController
+class Billing::ScansController < ApplicationController
   def index
   end
 

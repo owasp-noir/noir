@@ -28,7 +28,7 @@ expected_endpoints = [
   Endpoint.new("/intel/feeds", "POST"),
   Endpoint.new("/intel/feeds/1", "PUT"),
 
-  # resources :scans, controller: "ye_ot/scans", only: [:index]
+  # resources :scans, controller: "billing/scans", only: [:index]
   Endpoint.new("/scans", "GET"),
 
   # nested resources :posts do resources :comments end
@@ -59,17 +59,17 @@ expected_endpoints = [
 # Locking the total count ensures only:/except: filters drop the expected
 # endpoints (e.g. no POST /api/items, no DELETE /intel/feeds, no /scans/1)
 # and devise_for emits its full route set.
-total_endpoints = 1 +                # root
-                  5 +                # admin/reports
-                  2 +                # admin/quests member+collection
-                  2 +                # api/items only:[index,show]
-                  4 +                # intel/feeds except:[destroy]
-                  1 +                # /scans only:[index] via controller override
-                  5 +                # posts
-                  2 +                # posts/1/comments
-                  2 +                # /up + /ping
-                  20 +               # devise_for :users
-                  1 # mount sidekiq
+total_endpoints = 1 +  # root
+                  5 +  # admin/reports
+                  2 +  # admin/quests member+collection
+                  2 +  # api/items only:[index,show]
+                  4 +  # intel/feeds except:[destroy]
+                  1 +  # /scans only:[index] via controller override
+                  5 +  # posts
+                  2 +  # posts/1/comments
+                  2 +  # /up + /ping
+                  20 + # devise_for :users
+                  1    # mount sidekiq
 
 FunctionalTester.new("fixtures/ruby/rails_advanced/", {
   :techs     => 1,

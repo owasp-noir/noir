@@ -21,7 +21,7 @@ Rails.application.routes.draw do
     resources :feeds, except: [:destroy]
   end
 
-  resources :scans, controller: "ye_ot/scans", only: [:index]
+  resources :scans, controller: "billing/scans", only: [:index]
 
   resources :posts do
     resources :comments
