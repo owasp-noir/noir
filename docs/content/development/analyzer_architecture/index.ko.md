@@ -42,13 +42,13 @@ Detector 는 manifest 파일(`go.mod`, `package.json`, `Gemfile` 등) 에 대한
 - **Language engines** (`engines/`): PHP, Ruby, Rust, Elixir, Swift, Crystal, Scala, JavaScript/TypeScript, Python, Go.
 - **Route extractors** (`miniparsers/`): JavaScript (Hono, Express, Fastify, Koa, NestJS, Restify, TypeScript NestJS 에서 사용) + Go (8개 분석기에서 사용).
 - **의도적으로 엔진 밖**: CSharp 의 두 orchestrator, Scala Play (multi-phase 흐름이라 per-file 스캔 안 맞음), Go 의 Chi/Httprouter/Fasthttp (자체 완결 추출). `Analyzer` 를 직접 상속.
-- Python, Kotlin, Java 는 parser 는 있지만 route extractor 층이 아직 없음 — 후속 작업.
+- Python, Kotlin, Java 는 parser 는 있지만 route extractor 층이 아직 없음 (후속 작업).
 
 ## 두 가지 엔진 shape
 
 모든 엔진이 `parallel_file_scan(&block)` 를 protected helper 로 노출합니다. 어댑터는 다음 중 하나를 선택합니다.
 
-**Shape A — `analyze_file`** (단순, 순수 per-file):
+**Shape A. `analyze_file`** (단순, 순수 per-file):
 
 ```crystal
 class MyFramework < PhpEngine
@@ -61,7 +61,7 @@ end
 
 엔진의 기본 `analyze` 가 파일 순회를 돌리고 반환된 엔드포인트를 concat 합니다. 대부분의 Php / Rust / Swift / Crystal / Elixir / Scala 분석기가 이 shape.
 
-**Shape B — `analyze` 직접 오버라이드** (클로저 상태, pre/post-phase 필요):
+**Shape B. `analyze` 직접 오버라이드** (클로저 상태, pre/post-phase 필요):
 
 ```crystal
 class MyFramework < JavascriptEngine
@@ -313,7 +313,7 @@ end
 
 ## 실행 모델 참고
 
-Noir 는 **single-threaded** 로 빌드됩니다 (`preview_mt` 미사용). `parallel_analyze` 는 OS 스레드가 아니라 cooperative Crystal fiber 를 spawn 합니다. 따라서 여러 fiber 에서 `result << endpoint`, `result.concat(...)` 은 안전합니다 — `Array#<<` 와 `#concat` 에 yield 지점이 없기 때문. 모든 per-file 분석기가 result 배열에 Mutex 를 쓰지 않는 것이 그 이유이며, 코드베이스 전반이 그렇게 일관됩니다. 나중에 MT 모드를 켜게 되면 동기화는 `parallel_analyze` 레이어에 한 번 추가해야 하는 일이지, 분석기마다 흩어져 있을 일이 아닙니다.
+Noir 는 **single-threaded** 로 빌드됩니다 (`preview_mt` 미사용). `parallel_analyze` 는 OS 스레드가 아니라 cooperative Crystal fiber 를 spawn 합니다. 따라서 여러 fiber 에서 `result << endpoint`, `result.concat(...)` 는 안전한데, `Array#<<` 와 `#concat` 에 yield 지점이 없기 때문입니다. 모든 per-file 분석기가 result 배열에 Mutex 를 쓰지 않는 이유가 여기에 있고, 코드베이스 전반이 그렇게 일관되게 작성되어 있습니다. 나중에 MT 모드를 켜게 되면 동기화는 `parallel_analyze` 레이어에 한 번 추가하면 되는 일이지, 분석기마다 흩어 둘 일이 아닙니다.
 
 ## 다음에 볼 것
 

@@ -12,12 +12,12 @@ sort_by = "weight"
 
 관련 플래그는 아래와 같습니다.
 
-*   `--send-req` — 웹 요청으로 전송
-*   `--send-proxy http://proxy...` — HTTP 프록시를 통해 전송
-*   `--send-es http://es...` — Elasticsearch로 전송
-*   `--with-headers X-Header:Value` — 사용자 정의 헤더 추가
-*   `--use-matchers string` — 일치하는 엔드포인트만 전송 (URL, 메서드, 또는 메서드:URL)
-*   `--use-filters string` — 일치하는 엔드포인트 제외 (URL, 메서드, 또는 메서드:URL)
+*   `--send-req`: 웹 요청으로 전송
+*   `--send-proxy http://proxy...`: HTTP 프록시를 통해 전송
+*   `--send-es http://es...`: Elasticsearch로 전송
+*   `--with-headers X-Header:Value`: 사용자 정의 헤더 추가
+*   `--use-matchers string`: 일치하는 엔드포인트만 전송 (URL, 메서드, 또는 메서드:URL)
+*   `--use-filters string`: 일치하는 엔드포인트 제외 (URL, 메서드, 또는 메서드:URL)
 
 ### 프록시로 전송
 

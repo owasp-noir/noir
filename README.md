@@ -26,17 +26,17 @@
   <a href="./CHANGELOG.md">Changelog</a>
 </p>
 
-Noir bridges the gap between SAST and DAST by analyzing source code to generate accurate, authenticated endpoint inventories. It detects what others miss: shadow APIs, deprecated endpoints, and hidden routes.
+Noir reads source code and extracts every endpoint your application exposes — shadow APIs, deprecated routes, and hidden surfaces included.
 
-By bypassing outdated documentation and proxies, Noir uses your source code to deliver a comprehensive, actionable attack surface inventory. This single source of truth empowers White-box security teams and Pentesters and integrates directly with DAST solutions, eliminating testing blind spots across your DevSecOps pipeline.
+That inventory drives two downstream stacks. ZAP, Burp Suite, and Caido pick up endpoints they would never have crawled on their own. AI SAST — LLM-based code auditors and security agents — gets the entrypoints, files, parameters, and tags it needs to review attacker-reachable code, instead of skimming the whole repository.
 
 ## Why Noir?
 
 - Attack Surface Discovery: Analyzes source code to identify your application's complete attack surface, including hidden endpoints, shadow APIs, and other security blind spots.
-- AI-Powered Analysis: Leverages Large Language Models (LLMs) to detect endpoints in any language or framework—even those not natively supported.
-- SAST-to-DAST Bridge: Connects static code analysis with dynamic testing by providing discovered endpoints to DAST tools, enabling more comprehensive and accurate security scans.
+- AI-Powered Analysis: Leverages Large Language Models (LLMs) to detect endpoints in any language or framework — even those not natively supported.
+- Feeds DAST & AI SAST: One endpoint inventory drives ZAP, Burp Suite, and Caido on the dynamic side, and points LLM-based SAST and code auditors at the entrypoints, files, and parameters worth reviewing on the static side.
 - DevSecOps Ready: Designed for seamless integration into security pipelines with support for tools like ZAP, Burp Suite, Caido, and more.
-- Multi-Format Output: Delivers results in JSON, YAML, TOML, OpenAPI Specification, and other formats for easy integration with your existing workflow.
+- Multi-Format Output: Delivers results in JSON, YAML, TOML, OpenAPI Specification, SARIF, and other formats for easy integration with your existing workflow.
 
 ## Usage
 
@@ -60,7 +60,7 @@ We plan to expand the range of supported programming languages and frameworks, a
 
 Initially conceived as a tool to assist with WhiteBox testing, our immediate goal remains to extract and provide endpoints from the source code within the DevSecOps Pipeline. This enables Dynamic Application Security Testing (DAST) tools to conduct more accurate and stable scans.
 
-Looking ahead, our ambition is for our tool to evolve into a crucial bridge, seamlessly connecting source code with DAST and other security testing tools, thereby facilitating a more integrated and effective security posture.
+Looking ahead, our ambition is for Noir to become the canonical attack-surface layer for application security — the single inventory that DAST tools and AI SAST share, so every downstream consumer starts from the same view of what is actually exposed.
 
 ## News & Updates
 

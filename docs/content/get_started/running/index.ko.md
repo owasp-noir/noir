@@ -26,7 +26,7 @@ noir -b .
 
 ![](./running.png)
 
-Noir가 소스 파일을 읽고, 사용 중인 프레임워크를 탐지하고, 발견한 모든 엔드포인트를 출력합니다 — 메서드, 경로, 파라미터, 헤더, 쿠키를 포함해서.
+Noir가 소스 파일을 읽고, 사용 중인 프레임워크를 탐지하고, 발견한 모든 엔드포인트를 출력합니다. 메서드, 경로, 파라미터, 헤더, 쿠키까지 함께요.
 
 ## 탐지된 기술 확인
 
@@ -120,7 +120,7 @@ noir -b . --exclude-techs express
 
 시작하기 가이드를 완료했습니다! 다음으로 살펴볼 내용:
 
-- **[설정](@/usage/configurations/configuration_file/index.md)** — 매번 플래그를 반복하지 않도록 기본 옵션 설정
-- **[출력 형식](@/usage/output_formats/_index.md)** — 모든 출력 형식 자세히 알아보기
-- **[패시브 스캔](@/usage/passive_scan/_index.md)** — 하드코딩된 비밀키, 잘못된 설정 등 보안 이슈 스캔
-- **[AI 기반 분석](@/get_started/ai_power/index.md)** — AI로 미지원 프레임워크의 엔드포인트 탐지
+- **[설정](@/usage/configurations/configuration_file/index.md)**: 매번 플래그를 반복하지 않도록 기본 옵션 설정
+- **[출력 형식](@/usage/output_formats/_index.md)**: 모든 출력 형식 자세히 알아보기
+- **[패시브 스캔](@/usage/passive_scan/_index.md)**: 하드코딩된 비밀키, 잘못된 설정 등 보안 이슈 스캔
+- **[AI 기반 분석](@/get_started/ai_power/index.md)**: AI로 미지원 프레임워크의 엔드포인트 탐지

@@ -18,7 +18,7 @@ template = "landing"
         <span class="hero-title-line hero-title-accent">Map the</span>
         <span class="hero-title-line hero-title-accent">Attack Surface.</span>
       </h1>
-      <p class="hero-desc">Source code to attack surface in seconds. Static analysis for endpoints, parameters, and hidden routes across 50+ frameworks.</p>
+      <p class="hero-desc">Source code to attack surface in seconds. Static analysis for endpoints, parameters, and hidden routes across 50+ frameworks &mdash; ready to feed DAST tools and AI SAST.</p>
       <div class="hero-actions">
         <a href="./get_started/overview" class="hero-btn hero-btn-primary">
           <span>Get Started</span>
@@ -106,8 +106,8 @@ template = "landing"
       </div>
       <div class="feature-cell">
         <div class="feature-number">05</div>
-        <h3>SAST-to-DAST Bridge</h3>
-        <p>Discovered endpoints feed directly into dynamic testing tools. Static analysis meets dynamic scanning.</p>
+        <h3>Feeds DAST &amp; AI SAST</h3>
+        <p>One endpoint inventory drives ZAP/Burp/Caido on the dynamic side and points LLM-based SAST and code auditors at the entrypoints worth reviewing on the static side.</p>
       </div>
       <div class="feature-cell feature-full">
         <div class="feature-number">06</div>
@@ -143,8 +143,8 @@ template = "landing"
       <div class="how-step">
         <div class="how-step-num">03</div>
         <div class="how-step-content">
-          <h3>Feed your pipeline</h3>
-          <p>Export to JSON, OpenAPI, SARIF, or send directly to DAST tools. Integrate with CI/CD in one line.</p>
+          <h3>Feed DAST &mdash; or AI SAST</h3>
+          <p>Export to JSON, OpenAPI, or SARIF; pipe straight into ZAP/Burp/Caido; or hand the inventory to an LLM-based SAST or code auditor as focused entrypoint context.</p>
           <div class="how-step-code">$ noir -b . -f oas3 --send-proxy http://localhost:8090</div>
         </div>
       </div>

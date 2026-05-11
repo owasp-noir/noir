@@ -12,7 +12,7 @@ Hi! I'm Hak, the Noir mascot. Let me show you what Noir can do for you.
 
 Noir is an open-source attack surface detector. It reads your source code and discovers all API endpoints — including shadow APIs and undocumented routes that may not appear in your documentation.
 
-Security teams use Noir to find what attackers would look for: forgotten endpoints, exposed parameters, and hidden routes that slip through code reviews. Developers use it to keep API documentation accurate and feed endpoint data into testing pipelines.
+Security teams use Noir to surface what attackers would look for: forgotten endpoints, exposed parameters, and hidden routes that slip past code review. Developers use it to keep API documentation accurate, hand endpoint data to DAST pipelines, and point LLM-based SAST and code auditors at the attacker-reachable code they should actually be reviewing.
 
 ![noir-usage](./noir-usage.jpg)
 
@@ -24,7 +24,9 @@ Security teams use Noir to find what attackers would look for: forgotten endpoin
 
 **Bring AI to the table.** For frameworks Noir doesn't natively support, connect an LLM (OpenAI, Ollama, etc.) and let AI analyze the code for you.
 
-**Bridge SAST and DAST.** Noir discovers endpoints from source code (SAST side), then feeds them directly into ZAP, Burp Suite, or Caido for dynamic testing (DAST side). This closes the gap where DAST tools miss endpoints they don't know about.
+**Feed DAST tools.** Noir maps endpoints from source code and pipes them straight into ZAP, Burp Suite, or Caido. The crawler stops missing routes that were never linked from a page.
+
+**Point AI SAST at the real attack surface.** Noir's endpoint inventory — entrypoints, source files, parameters, and tags — is exactly the context an LLM-based SAST tool, code auditor, or security agent needs to find attacker-reachable bugs. Hand it the surface Noir already mapped instead of asking the model to scan the whole repository.
 
 **Export in any format.** Results come out as JSON, YAML, OpenAPI specs, SARIF for CI/CD, cURL commands, HTML reports, or Postman collections — whatever your workflow needs.
 
