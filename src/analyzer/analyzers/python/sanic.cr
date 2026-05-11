@@ -1,3 +1,4 @@
+require "../../../miniparsers/python_callee_extractor"
 require "../../../miniparsers/python_route_extractor"
 require "../../../miniparsers/python_route_extractor_ts"
 require "../../engines/python_engine"
@@ -148,6 +149,11 @@ module Analyzer::Python
             get_endpoints(method, route_path, extra_params, codeblock_lines, prefix).each do |endpoint|
               details = Details.new(PathInfo.new(path, line_index + 1))
               endpoint.details = details
+
+              Noir::PythonCalleeExtractor.calls_in(codeblock).each do |entry|
+                name, row = entry
+                endpoint.push_callee(Callee.new(name, path: path, line: _class_def_index + row + 1))
+              end
 
               # Add expect params as endpoint params
               expect_params.each do |expect_param|

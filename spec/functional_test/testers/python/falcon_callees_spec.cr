@@ -1,0 +1,21 @@
+require "../../func_spec.cr"
+
+# Regression test for --include-callee on Falcon. Falcon's class-based
+# resource pattern means each responder (on_get / on_post / …) is a
+# separate handler with its own body — the spec verifies that callees
+# stay scoped to the right HTTP method and don't bleed across responders
+# in the same class.
+expected_endpoints = [
+  Endpoint.new("/items", "GET").tap do |ep|
+    ep.push_callee(Callee.new("list_items"))
+  end,
+
+  Endpoint.new("/items", "POST").tap do |ep|
+    ep.push_callee(Callee.new("save_item"))
+  end,
+]
+
+FunctionalTester.new("fixtures/python/falcon_callees/", {
+  :techs     => 1,
+  :endpoints => expected_endpoints.size,
+}, expected_endpoints).perform_tests
