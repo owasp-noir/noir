@@ -2,7 +2,9 @@ require "../../func_spec.cr"
 
 # Regression test for #1358: Rails routes.rb DSL features (namespace, scope,
 # nested resources, member/collection, only:/except:, controller: override,
-# root, devise_for, mount, hash-rocket form) must be parsed correctly.
+# root, devise_for, mount, hash-rocket form) must be parsed correctly. Also
+# covers #1359: custom controller actions (member/collection + `to:`/=>
+# controller#action) must surface with their per-action params.
 expected_endpoints = [
   # root "home#index"
   Endpoint.new("/", "GET"),
@@ -14,9 +16,17 @@ expected_endpoints = [
   Endpoint.new("/admin/reports/1", "PUT"),
   Endpoint.new("/admin/reports/1", "DELETE"),
 
-  # member/collection actions on namespaced resource
-  Endpoint.new("/admin/refunds/1/change_status", "POST"),
-  Endpoint.new("/admin/refunds/new_list", "GET"),
+  # member/collection actions on namespaced resource. #1359: action-scoped
+  # headers must surface on the custom-action endpoint (previously dropped
+  # because the controller scan only switched action context on 5 REST names).
+  Endpoint.new("/admin/refunds/1/change_status", "POST", [
+    Param.new("X-Refund-Reason", "", "header"),
+    Param.new("status", "", "form"),
+  ]),
+  Endpoint.new("/admin/refunds/new_list", "GET", [
+    Param.new("X-Page", "", "header"),
+    Param.new("status", "", "query"),
+  ]),
 
   # scope :api do resources :items, only: [:index, :show] end
   Endpoint.new("/api/items", "GET"),
@@ -40,9 +50,12 @@ expected_endpoints = [
   Endpoint.new("/posts/1/comments", "GET"),
   Endpoint.new("/posts/1/comments/1", "GET"),
 
-  # hash-rocket and to: forms
+  # hash-rocket and to: forms. #1359: `to: "ctrl#action"` resolves the
+  # controller and attaches the action's params.
   Endpoint.new("/up", "GET"),
-  Endpoint.new("/ping", "GET"),
+  Endpoint.new("/ping", "GET", [
+    Param.new("X-Ping", "", "header"),
+  ]),
 
   # devise_for :users — sample of generated routes
   Endpoint.new("/users/sign_in", "GET"),
