@@ -186,6 +186,9 @@ def run_options_parser
     parser.on "--include-techs", "Include technology in plain output" do
       noir_options["include_techs"] = YAML::Any.new(true)
     end
+    parser.on "--include-callee", "Include 1-hop handler callees in plain output (best-effort, see docs)" do
+      noir_options["include_callee"] = YAML::Any.new(true)
+    end
     parser.on "--no-color", "Disable color output" do
       noir_options["color"] = YAML::Any.new(false)
     end

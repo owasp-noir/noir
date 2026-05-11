@@ -102,6 +102,11 @@ class OutputBuilderCommon < OutputBuilder
         end
       end
 
+      if any_to_bool(@options["include_callee"]) && !endpoint.callees.empty?
+        r_callees = endpoint.callees.map(&.name).join(" ").colorize(:light_cyan).toggle(@is_color)
+        r_buffer << "\n  ○ callees: #{r_callees}"
+      end
+
       ob_puts r_buffer.to_s
     end
   end

@@ -4,18 +4,26 @@ require "yaml"
 struct Endpoint
   include JSON::Serializable
   include YAML::Serializable
-  property url, method, params, protocol, details, tags, internal
+  property url, method, params, protocol, details, tags, callees, internal
+
+  # Per-endpoint context for AI code reviewers: 1-hop callees from the
+  # handler body. Best-effort, intentionally incomplete on dynamic
+  # dispatch / middleware / decorators. Populated by analyzers that
+  # opt in; empty for the rest.
+  @callees : Array(Callee) = [] of Callee
 
   def initialize(@url : String, @method : String, @params : Array(Param) = [] of Param,
                  @details : Details = Details.new, @internal : Bool = false)
     @protocol = "http"
     @tags = [] of Tag
+    @callees = [] of Callee
   end
 
   def initialize(@url : String, @method : String, @details : Details)
     @params = [] of Param
     @protocol = "http"
     @tags = [] of Tag
+    @callees = [] of Callee
     @internal = false
   end
 
@@ -37,6 +45,13 @@ struct Endpoint
 
   def push_param(param : Param)
     @params << param
+  end
+
+  # Add a callee, deduping by (name, path). Caller is responsible for
+  # capping the total — see Callee::MAX_PER_ENDPOINT.
+  def push_callee(callee : Callee)
+    return if @callees.any? { |c| c.name == callee.name && c.path == callee.path }
+    @callees << callee
   end
 
   def params_to_hash
@@ -162,5 +177,30 @@ struct Tag
   property name, description, tagger
 
   def initialize(@name : String, @description : String, @tagger : String)
+  end
+end
+
+# A function/method invoked directly from an endpoint's handler body
+# (1-hop only). `name` is the textual callee as it appears in source
+# (e.g. `User.create`, `raw_sql_query`). `path` and `line` point at the
+# call site — i.e. where the call appears in the handler — not at the
+# callee's definition; resolving to the definition is future work.
+#
+# The list is intentionally incomplete: dynamic dispatch (Rails
+# `before_action`, JS middleware, Python decorators) bypasses the body
+# walk by design. AI consumers should treat callees as a useful prior,
+# not a complete dependency graph.
+struct Callee
+  include JSON::Serializable
+  include YAML::Serializable
+  property name, path, line
+
+  MAX_PER_ENDPOINT = 10
+
+  def initialize(@name : String, @path : String? = nil, @line : Int32? = nil)
+  end
+
+  def ==(other : Callee) : Bool
+    @name == other.name && @path == other.path && @line == other.line
   end
 end
