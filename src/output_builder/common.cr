@@ -103,8 +103,13 @@ class OutputBuilderCommon < OutputBuilder
       end
 
       if any_to_bool(@options["include_callee"]) && !endpoint.callees.empty?
-        r_callees = endpoint.callees.map(&.name).join(" ").colorize(:light_cyan).toggle(@is_color)
-        r_buffer << "\n  ○ callees: #{r_callees}"
+        r_buffer << "\n  ○ callees: "
+        endpoint.callees.each_with_index do |callee, index|
+          prefix = index == endpoint.callees.size - 1 ? "└── " : "├── "
+          label = callee.line ? "#{callee.name} (line #{callee.line})" : callee.name
+          r_callee = "#{prefix}#{label}".colorize(:light_cyan).toggle(@is_color)
+          r_buffer << "\n    #{r_callee}"
+        end
       end
 
       ob_puts r_buffer.to_s

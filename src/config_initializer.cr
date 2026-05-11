@@ -44,7 +44,7 @@ class ConfigInitializer
       symbolized_hash = parsed_yaml.transform_keys(&.to_s)
 
       # Transform specific keys from "yes"/"no" to true/false for old version noir config
-      ["color", "debug", "include_path", "include_techs", "nolog", "send_req", "all_taggers"].each do |key|
+      ["color", "debug", "include_path", "include_techs", "include_callee", "nolog", "send_req", "all_taggers"].each do |key|
         if symbolized_hash[key] == "yes"
           symbolized_hash[key] = YAML::Any.new(true)
         elsif symbolized_hash[key] == "no"
@@ -98,6 +98,7 @@ class ConfigInitializer
       "format"                       => YAML::Any.new("plain"),
       "include_path"                 => YAML::Any.new(false),
       "include_techs"                => YAML::Any.new(false),
+      "include_callee"               => YAML::Any.new(false),
       "nolog"                        => YAML::Any.new(false),
       "output"                       => YAML::Any.new(""),
       "send_es"                      => YAML::Any.new(""),
@@ -187,6 +188,9 @@ class ConfigInitializer
 
       # Whether to include the technology in the output
       include_techs: #{options["include_techs"]}
+
+      # Whether to include 1-hop handler callees in the output
+      include_callee: #{options["include_callee"]}
 
       # Whether to disable logging
       nolog: #{options["nolog"]}

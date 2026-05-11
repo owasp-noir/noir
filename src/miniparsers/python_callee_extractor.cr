@@ -53,9 +53,36 @@ module Noir::PythonCalleeExtractor
 
   private def self.callee_text(node : LibTreeSitter::TSNode, source : String) : String
     case Noir::TreeSitter.node_type(node)
-    when "identifier", "attribute"
+    when "identifier"
       Noir::TreeSitter.node_text(node, source)
+    when "attribute"
+      build_attribute_text(node, source)
     else
+      ""
+    end
+  end
+
+  # Build an `a.b.c` dotted callee from an attribute node by descending
+  # only through identifier/attribute children. If the attribute is
+  # chained on a call result (e.g. `User.query.filter(args).first`),
+  # returns an empty string — the inner call's name is already emitted
+  # as its own callee, so surfacing the outer chained form would just
+  # be a noisy duplicate with embedded argument text.
+  private def self.build_attribute_text(node : LibTreeSitter::TSNode, source : String) : String
+    object = Noir::TreeSitter.field(node, "object")
+    attribute = Noir::TreeSitter.field(node, "attribute")
+    return "" unless attribute
+    return "" unless object
+
+    attr_name = Noir::TreeSitter.node_text(attribute, source)
+    case Noir::TreeSitter.node_type(object)
+    when "identifier"
+      "#{Noir::TreeSitter.node_text(object, source)}.#{attr_name}"
+    when "attribute"
+      inner = build_attribute_text(object, source)
+      inner.empty? ? "" : "#{inner}.#{attr_name}"
+    else
+      # object is a call / subscript / literal — drop to avoid noise.
       ""
     end
   end

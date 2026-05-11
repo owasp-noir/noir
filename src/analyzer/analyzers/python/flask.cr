@@ -561,22 +561,16 @@ module Analyzer::Python
       @file_content_cache[path] ||= read_file_content(path)
     end
 
-    # Build a deduped, capped list of 1-hop callees observed in the
-    # handler body. `codeblock` is the Python source of the handler
-    # (from `parse_code_block`), `def_line_index` is the 0-based line
-    # the codeblock starts at in `path`, used to translate tree-sitter
-    # rows into absolute file lines.
+    # Build the list of 1-hop callees observed in the handler body.
+    # `codeblock` is the Python source of the handler (from
+    # `parse_code_block`), `def_line_index` is the 0-based line the
+    # codeblock starts at in `path`. Dedup and the per-endpoint cap
+    # are enforced by `Endpoint#push_callee`.
     private def extract_handler_callees(codeblock : ::String, def_line_index : Int32, path : ::String) : Array(Callee)
-      seen = Set(::String).new
-      callees = [] of Callee
-      Noir::PythonCalleeExtractor.calls_in(codeblock).each do |entry|
+      Noir::PythonCalleeExtractor.calls_in(codeblock).map do |entry|
         name, row = entry
-        next if seen.includes?(name)
-        seen << name
-        callees << Callee.new(name, path: path, line: def_line_index + row + 1)
-        break if callees.size >= Callee::MAX_PER_ENDPOINT
+        Callee.new(name, path: path, line: def_line_index + row + 1)
       end
-      callees
     end
 
     # Create a Python parser for a given path and content. The

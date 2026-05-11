@@ -47,9 +47,11 @@ struct Endpoint
     @params << param
   end
 
-  # Add a callee, deduping by (name, path). Caller is responsible for
-  # capping the total — see Callee::MAX_PER_ENDPOINT.
+  # Add a callee, deduping by (name, path) and enforcing the
+  # `Callee::MAX_PER_ENDPOINT` cap. Both checks are kept here so
+  # individual analyzers can't forget them and let the list balloon.
   def push_callee(callee : Callee)
+    return if @callees.size >= Callee::MAX_PER_ENDPOINT
     return if @callees.any? { |c| c.name == callee.name && c.path == callee.path }
     @callees << callee
   end
