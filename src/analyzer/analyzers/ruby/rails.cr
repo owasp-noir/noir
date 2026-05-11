@@ -236,10 +236,17 @@ module Analyzer::Ruby
 
     private def strip_inline_comment(line : String) : String
       in_str = false
+      escaped = false
       quote = '\0'
       line.each_char_with_index do |c, i|
         if in_str
-          in_str = false if c == quote
+          if escaped
+            escaped = false
+          elsif c == '\\'
+            escaped = true
+          elsif c == quote
+            in_str = false
+          end
         else
           if c == '"' || c == '\''
             in_str = true
@@ -350,7 +357,7 @@ module Analyzer::Ruby
         controller_file.rewind
         controller_file.each_line do |controller_line|
           if controller_line.includes? "def "
-            func_name = controller_line.split("def ")[1].split("(")[0].strip
+            func_name = strip_inline_comment(controller_line).split("def ")[1].split("(")[0].split(";")[0].strip
             case func_name
             when "index"
               if action_allowed?("index", only, except) && !singular
@@ -467,9 +474,8 @@ module Analyzer::Ruby
         get_param_duplicated : Array(String) = [] of String
 
         params_query.each do |get_param|
-          if get_param_duplicated.includes? get_param.name
+          unless get_param_duplicated.includes? get_param.name
             deduplication_params_query << get_param
-          else
             get_param_duplicated << get_param.name
           end
         end
