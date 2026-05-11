@@ -3,16 +3,20 @@ require "../../engines/ruby_engine"
 module Analyzer::Ruby
   class Hanami < RubyEngine
     def analyze
-      # Config Analysis
-      path = "#{@base_path}/config/routes.rb"
-      if File.exists?(path)
+      framework_roots = discover_framework_roots("config/routes.rb")
+      framework_roots = [@base_path] if framework_roots.empty?
+
+      framework_roots.each do |framework_root|
+        path = "#{framework_root}/config/routes.rb"
+        next unless File.exists?(path)
+
         File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
           file.each_line.with_index do |line, index|
             details = Details.new(PathInfo.new(path, index + 1))
             endpoint = line_to_endpoint(line, details)
             if endpoint.method != ""
               # Extract action path from route
-              action_path = extract_action_path(line)
+              action_path = extract_action_path(line, framework_root)
               if action_path != ""
                 # Scan action file for parameters
                 scan_action_file(endpoint, action_path)
@@ -27,13 +31,13 @@ module Analyzer::Ruby
       @result
     end
 
-    def extract_action_path(content : String) : String
+    def extract_action_path(content : String, framework_root : String = @base_path) : String
       # Extract action from to: parameter, e.g., to: "books.index" -> app/actions/books/index.rb
       content.scan(/to:\s*['"](.+?)['"]/) do |match|
         if match.size > 1
           action = match[1]
           # Convert "books.index" to "app/actions/books/index.rb"
-          return "#{@base_path}/app/actions/#{action.gsub(".", "/")}.rb"
+          return "#{framework_root}/app/actions/#{action.gsub(".", "/")}.rb"
         end
       end
       ""
