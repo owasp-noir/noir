@@ -62,15 +62,20 @@ module Noir::KotlinCalleeExtractor
     sink
   end
 
-  # Ktor entry: given a verb DSL call's lambda body (the `statements`
-  # node), return every 1-hop callee inside it. Nested routing DSL
-  # calls are skipped wholesale so their bodies' callees stay
-  # attributed to their own routes.
+  # Ktor / http4k entry: given a handler body node, return every
+  # 1-hop callee inside it. `skip_routing` controls whether Ktor's
+  # routing DSL (`route { ... }`, sibling verb calls, etc.) is
+  # treated as a NESTED ROUTE boundary — Ktor needs this on so a
+  # nested route's callees don't leak into the parent; http4k uses
+  # an entirely different routing idiom (`"/x" bind GET to h`) and
+  # turns the skip off so a real handler call named `get` isn't
+  # silently dropped.
   def callees_in_lambda(body : LibTreeSitter::TSNode,
                         source : String,
-                        file_path : String) : Array(Tuple(String, String, Int32))
+                        file_path : String,
+                        skip_routing : Bool = true) : Array(Tuple(String, String, Int32))
     sink = [] of Tuple(String, String, Int32)
-    walk_callees(body, source, file_path, sink, skip_routing: true)
+    walk_callees(body, source, file_path, sink, skip_routing: skip_routing)
     sink
   end
 

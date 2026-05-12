@@ -59,6 +59,27 @@ module Noir::JavaCalleeExtractor
     sink
   end
 
+  # Lambda/handler entry point used by DSL analyzers (Javalin, Spark,
+  # …) where the handler body is a `lambda_expression`'s body — a
+  # `block` or a single expression — not a `method_declaration`.
+  # Caller is responsible for locating the body (the JVM lambda DSL
+  # extractor already does this for parameter scanning) and passing
+  # it in. Walks the body and returns every 1-hop `method_invocation`
+  # callee.
+  def callees_in_lambda(body : LibTreeSitter::TSNode,
+                        source : String,
+                        file_path : String) : Array(Tuple(String, String, Int32))
+    sink = [] of Tuple(String, String, Int32)
+    walk(body) do |n|
+      next unless Noir::TreeSitter.node_type(n) == "method_invocation"
+      name = callee_text(n, source)
+      next if name.empty?
+      row = Noir::TreeSitter.node_start_row(n)
+      sink << {name, file_path, row + 1}
+    end
+    sink
+  end
+
   # ---- private helpers -----------------------------------------------
 
   private def callee_text(call : LibTreeSitter::TSNode, source : String) : String

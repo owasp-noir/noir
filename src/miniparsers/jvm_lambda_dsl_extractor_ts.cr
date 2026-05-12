@@ -1,4 +1,5 @@
 require "../ext/tree_sitter/tree_sitter"
+require "./java_callee_extractor"
 require "../models/endpoint"
 
 module Noir
@@ -71,9 +72,14 @@ module Noir
       getter form_params : Array(String)
       getter header_params : Array(String)
       getter cookie_params : Array(String)
+      # 1-hop callees out of the handler lambda body. `path` is filled
+      # in by the analyzer (the route extractor doesn't carry the file
+      # path itself); each tuple is (callee_name, line_1_based).
+      getter callees : Array(Tuple(String, Int32))
 
       def initialize(@verb, @path, @line, @body_type, @has_body,
-                     @query_params, @form_params, @header_params, @cookie_params)
+                     @query_params, @form_params, @header_params, @cookie_params,
+                     @callees)
       end
     end
 
@@ -136,6 +142,7 @@ module Noir
       cookie_params = [] of String
       body_type : String? = nil
       has_body = false
+      callees = [] of Tuple(String, Int32)
 
       if body = lambda_body_in_args(call)
         scan_handler(body, source, config, 0) do |kind, value|
@@ -150,10 +157,18 @@ module Noir
             has_body = true
           end
         end
+        # JavaCalleeExtractor takes (name, file_path, line); the route
+        # extractor doesn't carry the file path, so drop the placeholder
+        # here and let the analyzer attach the real path when it builds
+        # the endpoint.
+        Noir::JavaCalleeExtractor.callees_in_lambda(body, source, "").each do |entry|
+          name, _path, line_no = entry
+          callees << {name, line_no}
+        end
       end
 
       routes << Route.new(verb, full_path, line, body_type, has_body,
-        query_params, form_params, header_params, cookie_params)
+        query_params, form_params, header_params, cookie_params, callees)
     end
 
     private def scan_handler(node : LibTreeSitter::TSNode, source : String, config : Config, depth : Int32, &block : Symbol, String ->)
