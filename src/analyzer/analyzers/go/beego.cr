@@ -6,6 +6,12 @@ module Analyzer::Go
     def analyze
       # Source Analysis
       public_dirs = [] of (Hash(String, String))
+      # Pre-pass for cross-file identifier-handler resolution. Beego's
+      # `web.Get("/x", h)` shape is picked up by `extract_routes`, and
+      # callee resolution wires identical to Gin/Echo/etc. Beego doesn't
+      # use group routes, so we just need file_contents — no fixpoint.
+      file_contents = read_package_file_contents
+      package_function_bodies = collect_package_function_bodies(file_contents)
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
       begin
@@ -31,12 +37,24 @@ module Analyzer::Go
                       routes_by_line[r.line] << r
                     end
 
+                    # Resolve 1-hop callees for every route (see Gin).
+                    route_rows = Set(Int32).new
+                    routes_by_line.each_key { |row| route_rows << row }
+                    external_fns = ts_function_bodies_for_directory(package_function_bodies, File.dirname(path))
+                    callees_by_route = Noir::GoCalleeExtractor.callees_for_routes(content, path, route_rows, external_fns)
+
                     lines.each_with_index do |line, index|
                       details = Details.new(PathInfo.new(path, index + 1))
 
                       if ts_hits = routes_by_line[index]?
                         ts_hits.each do |route|
                           new_endpoint = Endpoint.new(route.path, route.verb, details)
+                          if entries = callees_by_route[route.line]?
+                            entries.each do |entry|
+                              name, callee_path, callee_line = entry
+                              new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+                            end
+                          end
                           result << new_endpoint
                           last_endpoint = new_endpoint
                         end
