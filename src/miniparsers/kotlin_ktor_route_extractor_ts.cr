@@ -1,5 +1,6 @@
 require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
+require "./kotlin_callee_extractor"
 
 module Noir
   # Tree-sitter-backed Ktor DSL route extractor.
@@ -71,8 +72,12 @@ module Noir
       getter receive_type : String?
       getter query_params : Array(String)
       getter header_params : Array(String)
+      # 1-hop callees out of the handler lambda body. `path` is left
+      # for the caller to fill in (the route extractor doesn't carry
+      # the file path itself); each tuple is (callee_name, line_1_based).
+      getter callees : Array(Tuple(String, Int32))
 
-      def initialize(@verb, @path, @line, @receive_type, @query_params, @header_params)
+      def initialize(@verb, @path, @line, @receive_type, @query_params, @header_params, @callees)
       end
     end
 
@@ -126,14 +131,24 @@ module Noir
       receive_type : String? = nil
       query_params = [] of String
       header_params = [] of String
+      callees = [] of Tuple(String, Int32)
 
       if body = call_lambda_body(node)
         scan_handler_body(body, source, query_params, header_params).tap do |rt|
           receive_type = rt
         end
+        # KotlinCalleeExtractor uses `(name, file_path, line)` so it can
+        # mirror the Java/Python/Go shape, but Ktor's route extractor
+        # doesn't carry the file path — drop the placeholder here and
+        # let the analyzer attach the real path when it builds the
+        # endpoint.
+        Noir::KotlinCalleeExtractor.callees_in_lambda(body, source, "").each do |entry|
+          name, _path, line_no = entry
+          callees << {name, line_no}
+        end
       end
 
-      routes << Route.new(verb, full_path, line, receive_type, query_params, header_params)
+      routes << Route.new(verb, full_path, line, receive_type, query_params, header_params, callees)
     end
 
     # ---- call shape helpers ------------------------------------------
