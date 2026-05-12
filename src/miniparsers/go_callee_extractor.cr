@@ -59,6 +59,31 @@ module Noir::GoCalleeExtractor
     "bool", "error",
   }
 
+  # Walk every cached `.go` source in `file_contents` and collect
+  # top-level `function_declaration` nodes into a per-directory map
+  # so cross-file identifier-handler resolution is O(1) at lookup
+  # time. Keyed by directory because Go's name resolution is scoped
+  # to a single package (== single directory). Module-level twin of
+  # `GoEngine#collect_package_function_bodies` for analyzers (Chi)
+  # that don't inherit from `GoEngine`.
+  def package_function_bodies(file_contents : Hash(String, String)) : Hash(String, Hash(String, FunctionBody))
+    bodies = Hash(String, Hash(String, FunctionBody)).new
+    file_contents.each do |path, content|
+      dir = File.dirname(path)
+      fns = collect_function_bodies(content, path)
+      next if fns.empty?
+      bodies[dir] ||= Hash(String, FunctionBody).new
+      fns.each { |name, fb| bodies[dir][name] ||= fb }
+    end
+    bodies
+  end
+
+  # Returns the cross-file function-body map for the given directory,
+  # or an empty map. Mirrors `GoEngine#ts_function_bodies_for_directory`.
+  def function_bodies_for_directory(package_bodies : Hash(String, Hash(String, FunctionBody)), dir : String) : Hash(String, FunctionBody)
+    package_bodies[dir]? || Hash(String, FunctionBody).new
+  end
+
   # Returns top-level function declarations in `source`, keyed by name.
   # `file_path` is recorded on each `FunctionBody` so callees emitted by
   # later re-parsing can report a useful path.
