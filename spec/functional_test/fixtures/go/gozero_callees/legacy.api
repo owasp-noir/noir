@@ -1,0 +1,6 @@
+syntax = "v1"
+
+service legacy-api {
+    @handler GetLegacy
+    get /legacy
+}
