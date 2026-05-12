@@ -1,6 +1,7 @@
 require "../../../models/analyzer"
 require "../../../miniparsers/kotlin_route_extractor_ts"
 require "../../../miniparsers/kotlin_parameter_extractor_ts"
+require "../../../miniparsers/kotlin_callee_extractor"
 require "../../../utils/utils.cr"
 
 module Analyzer::Kotlin
@@ -206,7 +207,22 @@ module Analyzer::Kotlin
 
           line = route.line + 1
           details = Details.new(PathInfo.new(path, line))
-          @result << Endpoint.new(join_paths(base_path, route.path), route.verb, parameters, details)
+          endpoint = Endpoint.new(join_paths(base_path, route.path), route.verb, parameters, details)
+
+          # 1-hop callees out of the handler function body. Cross-file
+          # definition resolution is intentionally out of scope —
+          # `Callee#path` points at the call site, matching every
+          # other analyzer's first-cut honest scope.
+          unless route.class_name.empty? || route.method_name.empty?
+            Noir::KotlinCalleeExtractor.callees_in_method(
+              root, content, path, route.class_name, route.method_name
+            ).each do |entry|
+              name, callee_path, callee_line = entry
+              endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+            end
+          end
+
+          @result << endpoint
         end
       end
     end

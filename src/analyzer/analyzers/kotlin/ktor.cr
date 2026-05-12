@@ -47,7 +47,17 @@ module Analyzer::Kotlin
         params << Param.new(name, "", "header")
       end
 
-      Endpoint.new(route.path, route.verb, params, details)
+      endpoint = Endpoint.new(route.path, route.verb, params, details)
+
+      # 1-hop callees out of the handler lambda body. The Route
+      # extractor doesn't know the file path it came from, so attach
+      # it here.
+      route.callees.each do |entry|
+        name, line = entry
+        endpoint.push_callee(Callee.new(name, path: path, line: line))
+      end
+
+      endpoint
     end
   end
 end
