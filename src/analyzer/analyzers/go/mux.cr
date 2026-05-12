@@ -10,6 +10,11 @@ module Analyzer::Go
       # treats "Subrouter" as the grouping method and peeks through the
       # chain to read the PathPrefix argument.
       package_groups, file_contents = collect_package_groups_ts("Subrouter")
+      # Pre-pass for cross-file identifier-handler resolution (see Gin).
+      # Mux's HandleFunc/Methods chain stores `route.line` on the
+      # HandleFunc call_expression itself, so the row-keyed callee
+      # lookup matches it cleanly.
+      package_function_bodies = collect_package_function_bodies(file_contents)
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       begin
         populate_channel_with_filtered_files(channel, ".go")
@@ -39,6 +44,12 @@ module Analyzer::Go
                       routes_by_line[r.line] << r
                     end
 
+                    # Resolve 1-hop callees for every route (see Gin).
+                    route_rows = Set(Int32).new
+                    routes_by_line.each_key { |row| route_rows << row }
+                    external_fns = ts_function_bodies_for_directory(package_function_bodies, File.dirname(path))
+                    callees_by_route = Noir::GoCalleeExtractor.callees_for_routes(content, path, route_rows, external_fns)
+
                     # Mux static-file: `r.PathPrefix("/x/").Handler(... http.Dir("./x/") ...)`
                     Noir::TreeSitterGoRouteExtractor.extract_mux_statics(content).each do |sp|
                       public_dirs << {"static_path" => sp.url_prefix, "file_path" => sp.disk_path}
@@ -54,6 +65,12 @@ module Analyzer::Go
                           # required query params; bind them to the endpoint.
                           route.query_params.each do |qp|
                             new_endpoint.params << Param.new(qp, "", "query")
+                          end
+                          if entries = callees_by_route[route.line]?
+                            entries.each do |entry|
+                              name, callee_path, callee_line = entry
+                              new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+                            end
                           end
                           result << new_endpoint
                           last_endpoint = new_endpoint
