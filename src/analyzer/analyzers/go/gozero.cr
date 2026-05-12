@@ -6,6 +6,15 @@ module Analyzer::Go
     def analyze
       # Source Analysis
       public_dirs = [] of (Hash(String, String))
+      # Pre-pass for cross-file identifier-handler resolution. Only
+      # `.go` routes (`server.Get("/x", h)` shape) get callees —
+      # gozero's `.api` files are a non-Go DSL that declares routes as
+      # `get /path (Request)` with an `@handler Name` directive; there's
+      # no Go call_expression to extract a 1-hop graph from.
+      # `read_package_file_contents` already filters to `.go`, so the
+      # function-body map naturally skips `.api`.
+      file_contents = read_package_file_contents
+      package_function_bodies = collect_package_function_bodies(file_contents)
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       begin
         populate_channel_with_filtered_files(channel, [".go", ".api"])
@@ -29,6 +38,7 @@ module Analyzer::Go
                     # pattern Gin uses, no groups in gozero's common idioms).
                     # .api files use a non-Go DSL — keep the legacy regex.
                     routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
+                    callees_by_route = Hash(Int32, Array(Tuple(String, String, Int32))).new
                     if File.extname(path) == ".go"
                       Noir::TreeSitterGoRouteExtractor.extract_routes(content).each do |r|
                         next unless r.raw_path.starts_with?("/")
@@ -38,6 +48,12 @@ module Analyzer::Go
                       Noir::TreeSitterGoRouteExtractor.extract_simple_statics(content).each do |sp|
                         public_dirs << {"static_path" => sp.url_prefix, "file_path" => sp.disk_path}
                       end
+
+                      # Resolve 1-hop callees for every .go route.
+                      route_rows = Set(Int32).new
+                      routes_by_line.each_key { |row| route_rows << row }
+                      external_fns = ts_function_bodies_for_directory(package_function_bodies, File.dirname(path))
+                      callees_by_route = Noir::GoCalleeExtractor.callees_for_routes(content, path, route_rows, external_fns)
                     end
 
                     lines.each_with_index do |line, index|
@@ -59,6 +75,12 @@ module Analyzer::Go
                         if ts_hits = routes_by_line[index]?
                           ts_hits.each do |route|
                             new_endpoint = Endpoint.new(route.path, route.verb, details)
+                            if entries = callees_by_route[route.line]?
+                              entries.each do |entry|
+                                name, callee_path, callee_line = entry
+                                new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+                              end
+                            end
                             result << new_endpoint
                             last_endpoint = new_endpoint
                           end
