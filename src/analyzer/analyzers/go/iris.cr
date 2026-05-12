@@ -8,6 +8,8 @@ module Analyzer::Go
       # Iris uses `.Party(...)` for route groups; pass that into both the
       # engine's fixpoint group collection and the per-file extractor.
       package_groups, file_contents = collect_package_groups_ts("Party")
+      # Pre-pass for cross-file identifier-handler resolution (see Gin).
+      package_function_bodies = collect_package_function_bodies(file_contents)
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
       begin
@@ -36,20 +38,35 @@ module Analyzer::Go
                       routes_by_line[r.line] << r
                     end
 
+                    # Resolve 1-hop callees for every route (see Gin).
+                    route_rows = Set(Int32).new
+                    routes_by_line.each_key { |row| route_rows << row }
+                    external_fns = ts_function_bodies_for_directory(package_function_bodies, File.dirname(path))
+                    callees_by_route = Noir::GoCalleeExtractor.callees_for_routes(content, path, route_rows, external_fns)
+
                     lines.each_with_index do |line, index|
                       details = Details.new(PathInfo.new(path, index + 1))
 
                       if ts_hits = routes_by_line[index]?
                         ts_hits.each do |route|
                           normalized = normalize_iris_path(route.path)
+                          callee_entries = callees_by_route[route.line]?
                           if route.verb == "ANY"
                             HTTP_METHODS.each do |m|
                               new_endpoint = Endpoint.new(normalized, m, details)
+                              callee_entries.try &.each do |entry|
+                                name, callee_path, callee_line = entry
+                                new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+                              end
                               result << new_endpoint
                               last_endpoint = new_endpoint
                             end
                           else
                             new_endpoint = Endpoint.new(normalized, route.verb, details)
+                            callee_entries.try &.each do |entry|
+                              name, callee_path, callee_line = entry
+                              new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+                            end
                             result << new_endpoint
                             last_endpoint = new_endpoint
                           end

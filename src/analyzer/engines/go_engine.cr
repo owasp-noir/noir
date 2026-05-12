@@ -93,6 +93,23 @@ module Analyzer::Go
       package_function_bodies[dir]? || Hash(String, Noir::GoCalleeExtractor::FunctionBody).new
     end
 
+    # Read every `.go` file once into a `{path => source}` hash. Used by
+    # analyzers (Goyave) that don't otherwise call
+    # `collect_package_groups_ts` but still need the file_contents hash
+    # as input to `collect_package_function_bodies`.
+    def read_package_file_contents : Hash(String, String)
+      file_contents = Hash(String, String).new
+      get_files_by_extension(".go").each do |path|
+        next if File.directory?(path)
+        begin
+          file_contents[path] = File.read(path, encoding: "utf-8", invalid: :skip)
+        rescue File::NotFoundError
+          # skip
+        end
+      end
+      file_contents
+    end
+
     # --- Adapter helpers (shared across Go framework adapters) ----------
 
     def add_param_to_endpoint(param : Param, endpoint : Endpoint)
