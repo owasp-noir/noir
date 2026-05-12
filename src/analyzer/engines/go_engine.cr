@@ -1,4 +1,5 @@
 require "../../models/analyzer"
+require "../../miniparsers/go_callee_extractor"
 require "../../miniparsers/go_route_extractor_ts"
 
 module Analyzer::Go
@@ -63,6 +64,33 @@ module Analyzer::Go
     # empty map when the directory has no registered groups.
     def ts_groups_for_directory(package_groups : Hash(String, Hash(String, String)), dir : String) : Hash(String, String)
       package_groups[dir]? || Hash(String, String).new
+    end
+
+    # --- Cross-file function body pre-pass --------------------------------
+    #
+    # Walks every cached `.go` source in `file_contents` and collects
+    # top-level `function_declaration` nodes into a per-directory map
+    # so cross-file identifier-handler resolution in
+    # `Noir::GoCalleeExtractor` is O(1) at lookup time. The map is
+    # keyed by directory because Go's name resolution rules are scoped
+    # to a single package (== single directory), so we never have to
+    # worry about cross-package leakage.
+    def collect_package_function_bodies(file_contents : Hash(String, String)) : Hash(String, Hash(String, Noir::GoCalleeExtractor::FunctionBody))
+      result = Hash(String, Hash(String, Noir::GoCalleeExtractor::FunctionBody)).new
+      file_contents.each do |path, content|
+        dir = File.dirname(path)
+        fns = Noir::GoCalleeExtractor.collect_function_bodies(content, path)
+        next if fns.empty?
+        result[dir] ||= Hash(String, Noir::GoCalleeExtractor::FunctionBody).new
+        fns.each { |name, fb| result[dir][name] ||= fb }
+      end
+      result
+    end
+
+    # Returns the cross-file function-body map for the given directory,
+    # or an empty map when the directory has no captured functions.
+    def ts_function_bodies_for_directory(package_function_bodies : Hash(String, Hash(String, Noir::GoCalleeExtractor::FunctionBody)), dir : String) : Hash(String, Noir::GoCalleeExtractor::FunctionBody)
+      package_function_bodies[dir]? || Hash(String, Noir::GoCalleeExtractor::FunctionBody).new
     end
 
     # --- Adapter helpers (shared across Go framework adapters) ----------
