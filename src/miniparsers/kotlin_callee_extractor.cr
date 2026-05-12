@@ -163,8 +163,7 @@ module Noir::KotlinCalleeExtractor
 
   # The "root" name of a call for routing-DSL detection. Only bare
   # calls qualify — `obj.get("x")` returns "" so a method named
-  # `get` on a real object doesn't get mis-classified as nested
-  # routing.
+  # `get` on a real object isn't misclassified as nested routing.
   private def call_root_name(call : LibTreeSitter::TSNode, source : String) : String
     callable = first_named_child(call)
     return "" unless callable
