@@ -14,3 +14,32 @@ updates:
     directory: /
     schedule:
       interval: weekly
+
+  # Test fixtures under spec/ are intentionally pinned for reproducible
+  # functional tests. Suppress both version and security updates for them.
+  - package-ecosystem: bundler
+    directories:
+      - "/spec/functional_test/fixtures/**"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
+
+  - package-ecosystem: pip
+    directories:
+      - "/spec/functional_test/fixtures/python/**"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
+
+  - package-ecosystem: npm
+    directories:
+      - "/spec/functional_test/fixtures/javascript/**"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
