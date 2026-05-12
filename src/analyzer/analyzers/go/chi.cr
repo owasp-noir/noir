@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../../miniparsers/go_callee_extractor"
 require "../../../miniparsers/go_route_extractor_ts"
 
 module Analyzer::Go
@@ -47,6 +48,16 @@ module Analyzer::Go
         end
       end
 
+      # Pre-pass for cross-file identifier-handler resolution (see Gin).
+      # Chi extends `Analyzer` directly (not `GoEngine`), so we use the
+      # module-level twins on `GoCalleeExtractor` instead of the engine
+      # instance methods. Mount-expanded routes don't pick up callees
+      # in this first cut — `analyze_router_function` runs its own
+      # isolated route walk and would need separate wiring. Tracking
+      # that as a follow-up; for now Mount endpoints keep an empty
+      # callees list.
+      package_function_bodies = Noir::GoCalleeExtractor.package_function_bodies(file_contents_cache)
+
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       begin
         populate_channel_with_filtered_files(channel, ".go")
@@ -76,6 +87,16 @@ module Analyzer::Go
                     routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
                     routes_by_line[r.line] << r
                   end
+
+                  # Resolve 1-hop callees for every route in this file.
+                  # Inline-closure handlers (the common Chi shape inside
+                  # `r.Route("/x", func(r chi.Router){ r.Get(...) })`)
+                  # walk in place; bare identifier handlers fall through
+                  # to sibling-file function bodies via the per-directory map.
+                  route_rows = Set(Int32).new
+                  routes_by_line.each_key { |row| route_rows << row }
+                  external_fns = Noir::GoCalleeExtractor.function_bodies_for_directory(package_function_bodies, dir)
+                  callees_by_route = Noir::GoCalleeExtractor.callees_for_routes(content, path, route_rows, external_fns)
 
                   state = ChiRouteState.new
                   last_endpoint = Endpoint.new("", "")
@@ -129,6 +150,12 @@ module Analyzer::Go
                     if ts_hits = routes_by_line[index]?
                       ts_hits.each do |route|
                         endpoint = Endpoint.new(route.path, route.verb, details)
+                        if entries = callees_by_route[route.line]?
+                          entries.each do |entry|
+                            name, callee_path, callee_line = entry
+                            endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+                          end
+                        end
                         result << endpoint
                         last_endpoint = endpoint
                       end
