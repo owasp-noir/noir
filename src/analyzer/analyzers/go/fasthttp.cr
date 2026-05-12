@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../../miniparsers/go_callee_extractor"
 require "../../../miniparsers/go_route_extractor_ts"
 
 module Analyzer::Go
@@ -9,6 +10,22 @@ module Analyzer::Go
         # Pulls from the detector-built file_map so subtree pruning and
         # --exclude-path apply to this pass too.
         go_files = get_files_by_extension(".go")
+
+        # Pre-pass for cross-file identifier-handler resolution.
+        # Fasthttp extends `Analyzer` directly (not `GoEngine`), so we
+        # build the file_contents hash inline and use the module-level
+        # twins on `GoCalleeExtractor`.
+        file_contents = Hash(String, String).new
+        go_files.each do |fp|
+          next if File.directory?(fp)
+          begin
+            file_contents[fp] = read_file_content(fp)
+          rescue File::NotFoundError
+            # skip
+          end
+        end
+        package_function_bodies = Noir::GoCalleeExtractor.package_function_bodies(file_contents)
+
         base_paths.each do |current_base_path|
           base_dir_prefix = current_base_path.ends_with?("/") ? current_base_path : "#{current_base_path}/"
           go_files.each do |path|
@@ -32,12 +49,24 @@ module Analyzer::Go
                 routes_by_line[r.line] << r
               end
 
+              # Resolve 1-hop callees for every route (see Gin).
+              route_rows = Set(Int32).new
+              routes_by_line.each_key { |row| route_rows << row }
+              external_fns = Noir::GoCalleeExtractor.function_bodies_for_directory(package_function_bodies, File.dirname(path))
+              callees_by_route = Noir::GoCalleeExtractor.callees_for_routes(content, path, route_rows, external_fns)
+
               content.each_line.with_index do |line, index|
                 details = Details.new(PathInfo.new(path, index + 1))
 
                 if ts_hits = routes_by_line[index]?
                   ts_hits.each do |route|
                     endpoint = Endpoint.new(route.path, route.verb, details)
+                    if entries = callees_by_route[route.line]?
+                      entries.each do |entry|
+                        name, callee_path, callee_line = entry
+                        endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+                      end
+                    end
                     result << endpoint
                     last_endpoint = endpoint
                   end
