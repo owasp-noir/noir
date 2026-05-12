@@ -1,6 +1,7 @@
 require "../../../models/analyzer"
 require "../../../miniparsers/java_route_extractor_ts"
 require "../../../miniparsers/java_parameter_extractor_ts"
+require "../../../miniparsers/java_callee_extractor"
 
 module Analyzer::Java
   class Spring < Analyzer
@@ -105,6 +106,20 @@ module Analyzer::Java
                 endpoint = Endpoint.new(
                   join_paths(base_path, route.path), route.verb, parameters, details, is_feign_client
                 )
+
+                # 1-hop callees out of the handler method body. Cross-file
+                # definition resolution is intentionally out of scope —
+                # `Callee#path` points at the call site, matching every
+                # other analyzer's first-cut honest scope.
+                unless route.class_name.empty? || route.method_name.empty?
+                  Noir::JavaCalleeExtractor.callees_in_method(
+                    root, content, path, route.class_name, route.method_name
+                  ).each do |entry|
+                    name, callee_path, callee_line = entry
+                    endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+                  end
+                end
+
                 @result << endpoint
               end
             end
