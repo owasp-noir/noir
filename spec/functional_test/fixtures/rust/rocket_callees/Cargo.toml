@@ -1,0 +1,8 @@
+[package]
+name = "rocket-callees-example"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rocket = { version = "0.5", features = ["json"] }
+serde = { version = "1", features = ["derive"] }

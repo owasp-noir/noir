@@ -10,7 +10,8 @@ module Analyzer::Rust
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
+      lines = read_file_content(path).lines
+      include_callee = any_to_bool(@options["include_callee"]?)
 
       lines.each_with_index do |line, index|
         next unless line.includes?("#[") && line.includes?(")]")
@@ -30,6 +31,7 @@ module Analyzer::Rust
 
           # Look ahead to extract cookies and headers from function signature/body
           extract_function_params(lines, index + 1, endpoint)
+          attach_handler_callees(lines, index + 1, path, endpoint) if include_callee
 
           endpoints << endpoint
         rescue
@@ -46,6 +48,25 @@ module Analyzer::Rust
       end
 
       method.upcase
+    end
+
+    private def attach_handler_callees(lines : Array(String), start_index : Int32, path : String, endpoint : Endpoint)
+      function_index = find_next_function_index(lines, start_index)
+      return unless function_index
+
+      function_body = extract_rust_function_body(lines, function_index)
+      return unless function_body
+
+      body, body_start_line = function_body
+      callees = Noir::RustCalleeExtractor.callees_for_body(body, path, body_start_line)
+      attach_rust_callees(endpoint, callees)
+    end
+
+    private def find_next_function_index(lines : Array(String), start_index : Int32) : Int32?
+      (start_index...[start_index + MAX_FUNCTION_SCAN_LINES, lines.size].min).each do |index|
+        stripped = Noir::RustCalleeExtractor.strip_comment(lines[index]).strip
+        return index if stripped.match(/^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+[A-Za-z_]\w*\b/)
+      end
     end
 
     private def extract_params(route : String, data_param : String?) : Array(Param)
@@ -87,12 +108,15 @@ module Analyzer::Rust
 
     # Extract parameters from function signature and body (cookies, headers)
     private def extract_function_params(lines : Array(String), start_index : Int32, endpoint : Endpoint)
+      function_index = find_next_function_index(lines, start_index)
+      return unless function_index
+
       in_function = false
       brace_count = 0
       seen_opening_brace = false
       has_cookie_jar = false
 
-      (start_index...[start_index + MAX_FUNCTION_SCAN_LINES, lines.size].min).each do |i|
+      (function_index...[function_index + MAX_FUNCTION_SCAN_LINES, lines.size].min).each do |i|
         line = lines[i]
 
         # Track if we're inside the function
@@ -138,13 +162,6 @@ module Analyzer::Rust
 
         # Stop if we've moved past the function
         if in_function && seen_opening_brace && brace_count == 0 && i > start_index
-          break
-        end
-
-        # Also stop if we hit another route attribute
-        if i > start_index && (line.strip.starts_with?("#[get") || line.strip.starts_with?("#[post") ||
-           line.strip.starts_with?("#[put") || line.strip.starts_with?("#[delete") ||
-           line.strip.starts_with?("#[patch"))
           break
         end
       end
