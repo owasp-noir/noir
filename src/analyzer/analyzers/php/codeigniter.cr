@@ -30,10 +30,11 @@ module Analyzer::Php
 
     private def analyze_routes_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
+      include_callee = any_to_bool(@options["include_callee"]?)
       begin
         File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
           content = file.gets_to_end
-          endpoints.concat(analyze_routes_content(content, "", path))
+          endpoints.concat(analyze_routes_content(content, "", path, include_callee, "App\\Controllers"))
           endpoints.concat(analyze_ci3_routes(content, path))
         end
       rescue e
@@ -42,19 +43,25 @@ module Analyzer::Php
       endpoints
     end
 
-    private def analyze_routes_content(content : String, prefix : String, file_path : String) : Array(Endpoint)
+    private def analyze_routes_content(content : String,
+                                       prefix : String,
+                                       file_path : String,
+                                       include_callee : Bool,
+                                       controller_namespace : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       details = Details.new(PathInfo.new(file_path))
 
       working_content = content
 
       # 1. Group routes: $routes->group('prefix', [opts]?, function($routes) { ... })
-      group_pattern = /\$routes->group\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*\[(?:[^\[\]]|\[[^\[\]]*\])*\])?\s*,\s*(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?\{((?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*)\}/mi
+      group_pattern = /\$routes->group\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*(\[(?:[^\[\]]|\[[^\[\]]*\])*\]))?\s*,\s*(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?\{((?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*)\}/mi
       working_content.scan(group_pattern).each do |match|
         group_prefix = normalize_route(match[1])
-        group_content = match[2]
+        group_options = match[2]?
+        group_content = match[3]
+        group_namespace = extract_group_namespace(group_options) || controller_namespace
         new_prefix = build_full_path(prefix, group_prefix)
-        endpoints.concat(analyze_routes_content(group_content, new_prefix, file_path))
+        endpoints.concat(analyze_routes_content(group_content, new_prefix, file_path, include_callee, group_namespace))
       end
       working_content = working_content.gsub(group_pattern, "")
 
@@ -62,40 +69,49 @@ module Analyzer::Php
       env_pattern = /\$routes->environment\s*\(\s*['"][^'"]+['"]\s*,\s*(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?\{((?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*)\}/mi
       working_content.scan(env_pattern).each do |match|
         env_content = match[1]
-        endpoints.concat(analyze_routes_content(env_content, prefix, file_path))
+        endpoints.concat(analyze_routes_content(env_content, prefix, file_path, include_callee, controller_namespace))
       end
       working_content = working_content.gsub(env_pattern, "")
 
       # 3. HTTP verb routes: $routes->get/post/put/patch/delete/options/head('path', ...)
-      verb_pattern = /\$routes->(get|post|put|patch|delete|options|head)\s*\(\s*['"]([^'"]+)['"][^)]*\)/mi
+      verb_pattern = /\$routes->(get|post|put|patch|delete|options|head)\s*\(\s*['"]([^'"]+)['"](?:\s*,\s*(.*?))?\s*\)/mi
       working_content.scan(verb_pattern).each do |match|
         method = match[1].upcase
         route_path = match[2]
+        handler = extract_ci4_handler(match[3]?)
         full_path = build_full_path(prefix, normalize_route(route_path))
         params = extract_ci_path_params(full_path)
-        endpoints << Endpoint.new(full_path, method, params, details.dup)
+        endpoint = Endpoint.new(full_path, method, params, details.dup)
+        attach_route_target_callees(endpoint, handler, file_path, controller_namespace) if include_callee
+        endpoints << endpoint
       end
 
       # 4. $routes->match(['get','post'], 'path', ...)
-      match_pattern = /\$routes->match\s*\(\s*\[([^\]]+)\]\s*,\s*['"]([^'"]+)['"][^)]*\)/mi
+      match_pattern = /\$routes->match\s*\(\s*\[([^\]]+)\]\s*,\s*['"]([^'"]+)['"](?:\s*,\s*(.*?))?\s*\)/mi
       working_content.scan(match_pattern).each do |match|
         methods = extract_methods_from_array(match[1])
         route_path = match[2]
+        handler = extract_ci4_handler(match[3]?)
         full_path = build_full_path(prefix, normalize_route(route_path))
         params = extract_ci_path_params(full_path)
         methods.each do |http_method|
-          endpoints << Endpoint.new(full_path, http_method, params, details.dup)
+          endpoint = Endpoint.new(full_path, http_method, params, details.dup)
+          attach_route_target_callees(endpoint, handler, file_path, controller_namespace) if include_callee
+          endpoints << endpoint
         end
       end
 
       # 5. $routes->add('path', ...) — any HTTP verb
-      add_pattern = /\$routes->add\s*\(\s*['"]([^'"]+)['"][^)]*\)/mi
+      add_pattern = /\$routes->add\s*\(\s*['"]([^'"]+)['"](?:\s*,\s*(.*?))?\s*\)/mi
       working_content.scan(add_pattern).each do |match|
         route_path = match[1]
+        handler = extract_ci4_handler(match[2]?)
         full_path = build_full_path(prefix, normalize_route(route_path))
         params = extract_ci_path_params(full_path)
         ALL_HTTP_VERBS.each do |http_method|
-          endpoints << Endpoint.new(full_path, http_method, params, details.dup)
+          endpoint = Endpoint.new(full_path, http_method, params, details.dup)
+          attach_route_target_callees(endpoint, handler, file_path, controller_namespace) if include_callee
+          endpoints << endpoint
         end
       end
 
@@ -114,6 +130,99 @@ module Analyzer::Php
       end
 
       endpoints
+    end
+
+    private def attach_route_target_callees(endpoint : Endpoint,
+                                            handler : String?,
+                                            routes_file_path : String,
+                                            controller_namespace : String)
+      method_body = extract_handler_method_body(routes_file_path, handler, controller_namespace)
+      return unless method_body
+
+      body, controller_path, start_line = method_body
+      callees = Noir::PhpCalleeExtractor.callees_for_body(body, controller_path, start_line)
+      attach_php_callees(endpoint, callees)
+    end
+
+    private def extract_handler_method_body(routes_file_path : String,
+                                            handler : String?,
+                                            controller_namespace : String) : Tuple(String, String, Int32)?
+      target = parse_ci4_handler(handler)
+      return unless target
+
+      controller_name, action_name = target
+      controller_path = resolve_ci4_controller_path(routes_file_path, controller_name, controller_namespace)
+      return unless controller_path && File.exists?(controller_path)
+
+      content = File.read(controller_path, encoding: "utf-8", invalid: :skip)
+      method_match = content.match(/(?:public|protected|private)\s+function\s+#{action_name}\s*\(/)
+      return unless method_match
+
+      method_body = extract_php_method_body_after(content, method_match.begin(0))
+      return unless method_body
+
+      body, start_line = method_body
+      {body, controller_path, start_line}
+    rescue e
+      logger.debug "Error resolving CodeIgniter handler #{handler}: #{e}"
+      nil
+    end
+
+    private def extract_group_namespace(options : String?) : String?
+      return unless options
+
+      if namespace_match = options.match(/['"]namespace['"]\s*=>\s*['"]([^'"]+)['"]/)
+        namespace_match[1]
+      end
+    end
+
+    private def extract_ci4_handler(argument : String?) : String?
+      return unless argument
+
+      handler = argument.strip
+      if string_match = handler.match(/\A['"]([^'"]+)['"]/)
+        return string_match[1]
+      end
+
+      if array_match = handler.match(/\A\[\s*([^,\]]+)\s*,\s*['"]([^'"]+)['"]/)
+        controller_expr = array_match[1].strip
+        action_name = array_match[2]
+        if class_match = controller_expr.match(/\A((?:\\?[A-Za-z_]\w*\\)*\\?[A-Za-z_]\w*)::class\z/)
+          "#{class_match[1]}::#{action_name}"
+        end
+      end
+    end
+
+    private def parse_ci4_handler(handler : String?) : Tuple(String, String)?
+      return unless handler
+
+      target = handler.split("/", 2)[0].strip
+      parts = target.split("::", 2)
+      return unless parts.size == 2
+
+      controller_name = parts[0].strip
+      action_name = parts[1].strip
+      return if controller_name.empty?
+      return unless action_name.match(/\A[A-Za-z_]\w*\z/)
+
+      {controller_name, action_name}
+    end
+
+    private def resolve_ci4_controller_path(routes_file_path : String,
+                                            controller_name : String,
+                                            controller_namespace : String) : String?
+      marker = "/app/Config/Routes.php"
+      marker_index = routes_file_path.index(marker)
+      return unless marker_index
+
+      controller_root = File.join(routes_file_path[0...marker_index], "app", "Controllers")
+      full_controller = controller_name.includes?("\\") ? controller_name : "#{controller_namespace}\\#{controller_name}"
+      relative = full_controller.gsub("\\", "/")
+      relative = relative.sub(/\A\/+/, "")
+      relative = relative.sub(/\AApp\/Controllers\/?/, "")
+      return if relative.empty? || relative.includes?("..")
+
+      File.join(controller_root, "#{relative}.php")
     end
 
     # CodeIgniter 3 style: $route['products/(:num)'] = 'catalog/lookup/$1';
