@@ -1,0 +1,12 @@
+name: kemal_callees
+version: 0.1.0
+
+targets:
+  kemal_callees:
+    main: src/testapp.cr
+
+dependencies:
+  kemal:
+    github: kemalcr/kemal
+
+crystal: 1.8.2
