@@ -41,7 +41,9 @@ class SendReq < Deliver
               user_agent: "Noir/#{Noir::VERSION}"
             )
           end
-        rescue
+        rescue e
+          @logger.debug "Exception during request delivery"
+          @logger.debug_sub e
         ensure
           wg.done
         end
