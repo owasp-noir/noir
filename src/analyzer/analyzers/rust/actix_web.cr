@@ -2,11 +2,13 @@ require "../../engines/rust_engine"
 
 module Analyzer::Rust
   class ActixWeb < RustEngine
-    ROUTE_PATTERN = /#\[(get|post|put|delete|patch)\("([^"]+)"\)\]/
+    ROUTE_PATTERN            = /#\[(get|post|put|delete|patch)\("([^"]+)"\)\]/
+    FUNCTION_LOOKAHEAD_LINES = 20
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
+      lines = read_file_content(path).lines
+      include_callee = any_to_bool(@options["include_callee"]?)
 
       lines.each_with_index do |line, index|
         next unless line.to_s.includes? "#["
@@ -21,6 +23,7 @@ module Analyzer::Rust
 
           extract_path_params(route_argument, endpoint)
           extract_function_params(lines, index + 1, endpoint)
+          attach_handler_callees(lines, index + 1, path, endpoint) if include_callee
 
           endpoints << endpoint
         rescue e
@@ -40,6 +43,26 @@ module Analyzer::Rust
       method.upcase
     end
 
+    private def attach_handler_callees(lines : Array(String), start_index : Int32, path : String, endpoint : Endpoint)
+      function_index = find_next_function_index(lines, start_index)
+      return unless function_index
+
+      function_body = extract_rust_function_body(lines, function_index)
+      return unless function_body
+
+      body, body_start_line = function_body
+      callees = Noir::RustCalleeExtractor.callees_for_body(body, path, body_start_line)
+      attach_rust_callees(endpoint, callees)
+    end
+
+    private def find_next_function_index(lines : Array(String), start_index : Int32) : Int32?
+      (start_index...[start_index + FUNCTION_LOOKAHEAD_LINES, lines.size].min).each do |index|
+        stripped = Noir::RustCalleeExtractor.strip_comment(lines[index]).strip
+        return index if stripped.match(/^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+[A-Za-z_]\w*\b/)
+        break if index > start_index && stripped.match(ROUTE_PATTERN)
+      end
+    end
+
     # Extract path parameters from the route pattern like /users/{id}
     def extract_path_params(route : String, endpoint : Endpoint)
       route.scan(/\{(\w+)\}/) do |match|
@@ -55,7 +78,7 @@ module Analyzer::Rust
       brace_count = 0
       seen_opening_brace = false
 
-      (start_index...[start_index + 20, lines.size].min).each do |i|
+      (start_index...[start_index + FUNCTION_LOOKAHEAD_LINES, lines.size].min).each do |i|
         line = lines[i]
 
         # Track if we're inside the function
@@ -108,8 +131,8 @@ module Analyzer::Rust
           break
         end
 
-        # Also stop if we hit another attribute
-        if i > start_index && line.strip.starts_with?("#[")
+        # Also stop if we hit another route attribute
+        if i > start_index && line.strip.match(ROUTE_PATTERN)
           break
         end
       end
