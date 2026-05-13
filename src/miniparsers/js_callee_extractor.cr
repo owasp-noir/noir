@@ -61,6 +61,22 @@ module Noir::JSCalleeExtractor
     language == :typescript ? fallback_callees_for_function_body(body, file_path, open_brace_line) : [] of Entry
   end
 
+  def callees_for_exported_function(source : String,
+                                    file_path : String,
+                                    export_name : String) : Array(Entry)
+    source_for_ast = normalize_exported_handler_source(source)
+    sink = [] of Entry
+    Noir::TreeSitter.parse_javascript(source_for_ast) do |root|
+      if handler = exported_handler(root, root, source_for_ast, export_name, 0)
+        walk_callees(handler_body(handler), source_for_ast, file_path, sink, 0)
+      end
+    end
+
+    dedup_entries(sink)
+  rescue
+    [] of Entry
+  end
+
   def route_key(method : String, path : String, line : Int32) : String
     "#{method.upcase}::#{path}::#{line}"
   end
@@ -133,10 +149,128 @@ module Noir::JSCalleeExtractor
   end
 
   private def callees_in_handler(handler : LibTreeSitter::TSNode, source : String, file_path : String) : Array(Entry)
-    body = Noir::TreeSitter.field(handler, "body") || handler
     sink = [] of Entry
-    walk_callees(body, source, file_path, sink, 0)
+    walk_callees(handler_body(handler), source, file_path, sink, 0)
     sink
+  end
+
+  private def normalize_exported_handler_source(source : String) : String
+    # The vendored JavaScript grammar still exposes useful nodes for many
+    # TypeScript files, but `const GET: RequestHandler = ...` makes the
+    # variable name parse as the type. Strip same-line annotations while
+    # preserving line numbers so AST row-based callee locations stay valid.
+    source.gsub(/(\b(?:export\s+)?(?:const|let|var)\s+[A-Za-z_$][\w$]*)\s*:\s*[^=\n]+=/, "\\1 =")
+  end
+
+  private def exported_handler(root : LibTreeSitter::TSNode,
+                               node : LibTreeSitter::TSNode,
+                               source : String,
+                               export_name : String,
+                               depth : Int32) : LibTreeSitter::TSNode?
+    return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+
+    if Noir::TreeSitter.node_type(node) == "export_statement"
+      if declaration = Noir::TreeSitter.field(node, "declaration")
+        if handler = declaration_handler(declaration, source, export_name)
+          return handler
+        end
+      elsif local_name = export_clause_local_name(node, source, export_name)
+        return local_handler(root, source, local_name, 0)
+      end
+    end
+
+    Noir::TreeSitter.each_named_child(node) do |child|
+      if handler = exported_handler(root, child, source, export_name, depth + 1)
+        return handler
+      end
+    end
+  end
+
+  private def declaration_handler(node : LibTreeSitter::TSNode,
+                                  source : String,
+                                  name : String) : LibTreeSitter::TSNode?
+    if handler_node?(node)
+      node_name = Noir::TreeSitter.field(node, "name")
+      return node if node_name && Noir::TreeSitter.node_text(node_name, source) == name
+    end
+
+    variable_handler(node, source, name, 0)
+  end
+
+  private def local_handler(node : LibTreeSitter::TSNode,
+                            source : String,
+                            name : String,
+                            depth : Int32) : LibTreeSitter::TSNode?
+    return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+
+    if handler_node?(node)
+      node_name = Noir::TreeSitter.field(node, "name")
+      return node if node_name && Noir::TreeSitter.node_text(node_name, source) == name
+    end
+
+    if handler = variable_handler(node, source, name, depth)
+      return handler
+    end
+
+    Noir::TreeSitter.each_named_child(node) do |child|
+      if handler = local_handler(child, source, name, depth + 1)
+        return handler
+      end
+    end
+  end
+
+  private def variable_handler(node : LibTreeSitter::TSNode,
+                               source : String,
+                               name : String,
+                               depth : Int32) : LibTreeSitter::TSNode?
+    return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+
+    if Noir::TreeSitter.node_type(node) == "variable_declarator"
+      node_name = Noir::TreeSitter.field(node, "name")
+      if node_name && Noir::TreeSitter.node_text(node_name, source) == name
+        value = Noir::TreeSitter.field(node, "value")
+        return value if value && handler_node?(value)
+      end
+    end
+
+    Noir::TreeSitter.each_named_child(node) do |child|
+      if handler = variable_handler(child, source, name, depth + 1)
+        return handler
+      end
+    end
+  end
+
+  private def export_clause_local_name(node : LibTreeSitter::TSNode,
+                                       source : String,
+                                       export_name : String) : String?
+    Noir::TreeSitter.each_named_child(node) do |child|
+      if Noir::TreeSitter.node_type(child) == "export_clause"
+        Noir::TreeSitter.each_named_child(child) do |specifier|
+          next unless Noir::TreeSitter.node_type(specifier) == "export_specifier"
+
+          name = Noir::TreeSitter.field(specifier, "name")
+          alias_name = Noir::TreeSitter.field(specifier, "alias")
+          exported = alias_name || name
+          next unless name && exported
+          next unless Noir::TreeSitter.node_text(exported, source) == export_name
+
+          return Noir::TreeSitter.node_text(name, source)
+        end
+      end
+    end
+  end
+
+  private def handler_body(handler : LibTreeSitter::TSNode) : LibTreeSitter::TSNode
+    Noir::TreeSitter.field(handler, "body") || handler
+  end
+
+  private def handler_node?(node : LibTreeSitter::TSNode) : Bool
+    case Noir::TreeSitter.node_type(node)
+    when "function_declaration", "function_expression", "arrow_function"
+      true
+    else
+      false
+    end
   end
 
   private def walk_first_function_body(node : LibTreeSitter::TSNode,

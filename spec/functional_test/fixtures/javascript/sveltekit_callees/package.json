@@ -1,0 +1,8 @@
+{
+  "name": "sveltekit-callees-fixture",
+  "private": true,
+  "dependencies": {
+    "@sveltejs/kit": "^2.0.0",
+    "@sveltejs/adapter-node": "^5.0.0"
+  }
+}
