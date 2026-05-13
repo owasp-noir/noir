@@ -19,6 +19,7 @@ module Analyzer::Crystal
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       lines = File.read_lines(path)
+      include_callee = any_to_bool(@options["include_callee"]?)
 
       # Pre-scan: build mount_map (variable_name => mount_path)
       mount_map = {} of String => String
@@ -108,6 +109,7 @@ module Analyzer::Crystal
           endpoint.url = full_path
           details = Details.new(PathInfo.new(path, index + 1))
           endpoint.details = details
+          attach_route_callees(endpoint, lines, index, path) if include_callee
           endpoints << endpoint
           last_endpoint = endpoint
         end
@@ -124,6 +126,15 @@ module Analyzer::Crystal
       end
 
       endpoints
+    end
+
+    private def attach_route_callees(endpoint : Endpoint, lines : Array(String), index : Int32, path : String)
+      route_body = extract_crystal_do_block(lines, index)
+      return unless route_body
+
+      body, body_start_line = route_body
+      callees = Noir::CrystalCalleeExtractor.callees_for_body(body, path, body_start_line)
+      attach_crystal_callees(endpoint, callees)
     end
 
     private def collect_public_dir_endpoints
