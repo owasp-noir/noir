@@ -106,10 +106,9 @@ module Noir::RustCalleeExtractor
 
   private def skip_callee?(name : String) : Bool
     return true if name.empty?
-    return false if name.includes?("::")
 
     last = name.split('.').last.split("::").last
-    RESERVED.includes?(last)
+    RESERVED.includes?(last) && (!name.includes?("::") || last.includes?('!'))
   end
 
   private def dedup_entries(entries : Array(Entry)) : Array(Entry)

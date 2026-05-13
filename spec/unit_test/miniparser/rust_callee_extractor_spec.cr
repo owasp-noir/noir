@@ -35,14 +35,15 @@ describe Noir::RustCalleeExtractor do
   it "keeps namespaced calls whose final segment is a common Rust wrapper" do
     body = <<-RUST
       Ok(user)
+      std::format!("user {}", user.id)
       HttpResponse::Ok().json(user)
       HttpResponse::Created().finish()
       RUST
 
     callees = Noir::RustCalleeExtractor.callees_for_body(body, "main.rs", 40)
     callees.map { |name, _, line| {name, line} }.should eq([
-      {"HttpResponse::Ok", 41},
-      {"HttpResponse::Created", 42},
+      {"HttpResponse::Ok", 42},
+      {"HttpResponse::Created", 43},
     ])
   end
 

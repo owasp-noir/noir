@@ -34,11 +34,29 @@ protected_endpoint = Endpoint.new("/protected", "GET", [
   ep.push_callee(Callee.new("HttpResponse::Ok", line: 37))
 end
 
+multi_route_get = Endpoint.new("/multi-a", "GET").tap do |ep|
+  ep.push_callee(Callee.new("MultiService::serve", line: 45))
+  ep.push_callee(Callee.new("HttpResponse::Ok", line: 46))
+end
+
+multi_route_post = Endpoint.new("/multi-b", "POST").tap do |ep|
+  ep.push_callee(Callee.new("MultiService::serve", line: 45))
+  ep.push_callee(Callee.new("HttpResponse::Ok", line: 46))
+end
+
+multi_route_put = Endpoint.new("/multi-c", "PUT").tap do |ep|
+  ep.push_callee(Callee.new("MultiService::serve", line: 45))
+  ep.push_callee(Callee.new("HttpResponse::Ok", line: 46))
+end
+
 expected_endpoints = [
   hello,
   get_user,
   create_user,
   protected_endpoint,
+  multi_route_get,
+  multi_route_post,
+  multi_route_put,
 ]
 
 FunctionalTester.new("fixtures/rust/actix_web_callees/", {

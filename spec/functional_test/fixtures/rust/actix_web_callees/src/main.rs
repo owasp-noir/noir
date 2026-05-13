@@ -36,3 +36,12 @@ async fn protected(req: HttpRequest) -> impl Responder {
     AuthService::validate(auth);
     HttpResponse::Ok().body(marker)
 }
+
+#[get("/multi-a")]
+#[post("/multi-b")]
+#[put("/multi-c")]
+#[allow(dead_code)]
+async fn multi_route() -> impl Responder {
+    MultiService::serve();
+    HttpResponse::Ok().finish()
+}

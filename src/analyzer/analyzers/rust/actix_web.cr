@@ -59,7 +59,6 @@ module Analyzer::Rust
       (start_index...[start_index + FUNCTION_LOOKAHEAD_LINES, lines.size].min).each do |index|
         stripped = Noir::RustCalleeExtractor.strip_comment(lines[index]).strip
         return index if stripped.match(/^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+[A-Za-z_]\w*\b/)
-        break if index > start_index && stripped.match(ROUTE_PATTERN)
       end
     end
 
@@ -128,11 +127,6 @@ module Analyzer::Rust
 
         # Stop if we've moved past the function (brace count is back to 0 after we've seen an opening brace)
         if in_function && seen_opening_brace && brace_count == 0 && i > start_index
-          break
-        end
-
-        # Also stop if we hit another route attribute
-        if i > start_index && line.strip.match(ROUTE_PATTERN)
           break
         end
       end
