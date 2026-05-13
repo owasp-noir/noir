@@ -44,7 +44,8 @@ module Analyzer::Ruby
       params_method : Hash(String, Array(Param)),
       permit_body_params : Array(Param),
       permit_query_params : Array(Param),
-      defined_actions : Set(String)
+      defined_actions : Set(String),
+      callees_by_action : Hash(String, Array(Noir::RubyCalleeExtractor::Entry))
 
     @controller_data_cache = Hash(String, ControllerData).new
 
@@ -229,7 +230,9 @@ module Analyzer::Ruby
               if url
                 parent = parent_resources_frame(stack)
                 action_params = parent ? params_for_action(parent.controller_path, action, verb) : ([] of Param)
-                @result << Endpoint.new(url, verb, action_params, details)
+                endpoint = Endpoint.new(url, verb, action_params, details)
+                attach_callees_for_action(endpoint, parent.try(&.controller_path), action)
+                @result << endpoint
               end
               next
             end
@@ -243,13 +246,18 @@ module Analyzer::Ruby
 
               ctrl_action = parse_controller_action(rest)
               action_params = [] of Param
+              ctrl_path = nil.as(String?)
+              action_name = nil.as(String?)
               if ctrl_action
                 ctrl_name, action = ctrl_action
                 ctrl_path = find_controller_file(framework_root, ctrl_name, stack)
+                action_name = action
                 action_params = params_for_action(ctrl_path, action, verb)
               end
 
-              @result << Endpoint.new(url, verb, action_params, details)
+              endpoint = Endpoint.new(url, verb, action_params, details)
+              attach_callees_for_action(endpoint, ctrl_path, action) if action = action_name
+              @result << endpoint
               next
             end
             next
@@ -400,19 +408,29 @@ module Analyzer::Ruby
         case method
         when "GET/INDEX"
           last_params = (params_method["index"]? || [] of Param) + deduplication_params_query
-          @result << Endpoint.new(index_url, "GET", last_params, details)
+          endpoint = Endpoint.new(index_url, "GET", last_params, details)
+          attach_callees_for_action(endpoint, data, "index")
+          @result << endpoint
         when "GET/SHOW"
           last_params = (params_method["show"]? || [] of Param) + deduplication_params_query
-          @result << Endpoint.new(member_url, "GET", last_params, details)
+          endpoint = Endpoint.new(member_url, "GET", last_params, details)
+          attach_callees_for_action(endpoint, data, "show")
+          @result << endpoint
         when "POST"
           last_params = (params_method["create"]? || [] of Param) + params_body
-          @result << Endpoint.new(index_url, method, last_params, details)
+          endpoint = Endpoint.new(index_url, method, last_params, details)
+          attach_callees_for_action(endpoint, data, "create")
+          @result << endpoint
         when "DELETE"
           last_params = params_method["destroy"]? || [] of Param
-          @result << Endpoint.new(member_url, method, last_params, details)
+          endpoint = Endpoint.new(member_url, method, last_params, details)
+          attach_callees_for_action(endpoint, data, "destroy")
+          @result << endpoint
         else
           last_params = (params_method["update"]? || [] of Param) + params_body
-          @result << Endpoint.new(member_url, method, last_params, details)
+          endpoint = Endpoint.new(member_url, method, last_params, details)
+          attach_callees_for_action(endpoint, data, "update")
+          @result << endpoint
         end
       end
 
@@ -433,10 +451,12 @@ module Analyzer::Ruby
       permit_body_params = [] of Param
       permit_query_params = [] of Param
       defined_actions = Set(String).new
+      callees_by_action = Hash(String, Array(Noir::RubyCalleeExtractor::Entry)).new
       param_type = "form"
 
       unless File.exists?(path)
-        empty = ControllerData.new(param_type, params_method, permit_body_params, permit_query_params, defined_actions)
+        empty = ControllerData.new(param_type, params_method, permit_body_params, permit_query_params,
+          defined_actions, callees_by_action)
         @controller_data_cache[path] = empty
         return empty
       end
@@ -444,6 +464,7 @@ module Analyzer::Ruby
       File.open(path, "r", encoding: "utf-8", invalid: :skip) do |controller_file|
         controller_content = controller_file.gets_to_end
         param_type = "json" if controller_content.includes?("render json:")
+        callees_by_action = extract_action_callees(controller_content, path) if include_callee?
 
         controller_file.rewind
         this_method = ""
@@ -493,9 +514,62 @@ module Analyzer::Ruby
         end
       end
 
-      data = ControllerData.new(param_type, params_method, permit_body_params, permit_query_params, defined_actions)
+      data = ControllerData.new(param_type, params_method, permit_body_params, permit_query_params,
+        defined_actions, callees_by_action)
       @controller_data_cache[path] = data
       data
+    end
+
+    private def extract_action_callees(content : String, path : String) : Hash(String, Array(Noir::RubyCalleeExtractor::Entry))
+      result = Hash(String, Array(Noir::RubyCalleeExtractor::Entry)).new
+      lines = content.lines
+      index = 0
+
+      while index < lines.size
+        stripped = strip_inline_comment(lines[index]).strip
+        if m = stripped.match(/^(?:private\s+|protected\s+|public\s+)?def\s+(?:self\.)?([A-Za-z_]\w*[!?=]?)\b/)
+          action = m[1]
+          body_lines = [] of String
+          body_start_line = index + 2
+          depth = 1
+          index += 1
+
+          while index < lines.size
+            raw_body_line = lines[index]
+            body_line = strip_inline_comment(raw_body_line).strip
+
+            if closes_ruby_block?(body_line)
+              depth -= 1
+              break if depth == 0
+              body_lines << raw_body_line
+              index += 1
+              next
+            end
+
+            body_lines << raw_body_line
+            depth += ruby_block_open_delta(body_line)
+            index += 1
+          end
+
+          callees = Noir::RubyCalleeExtractor.callees_for_body(body_lines.join("\n"), path, body_start_line)
+          result[action] = callees unless callees.empty?
+        end
+
+        index += 1
+      end
+
+      result
+    end
+
+    private def ruby_block_open_delta(line : String) : Int32
+      return 0 if line.empty?
+      return 1 if line.match(/\bdo\b\s*(\|[^|]*\|)?\s*\z/)
+      return 1 if line.match(/^(if|unless|case|begin|while|until|for|class|module|def)\b/)
+      0
+    end
+
+    private def closes_ruby_block?(line : String) : Bool
+      line == "end" || line.starts_with?("end ") || line.starts_with?("end;")
     end
 
     private def dedup_by_name(params : Array(Param)) : Array(Param)
@@ -528,6 +602,22 @@ module Analyzer::Ruby
       end
 
       result
+    end
+
+    private def attach_callees_for_action(endpoint : Endpoint, controller_path : String?, action : String)
+      return if controller_path.nil?
+      attach_callees_for_action(endpoint, extract_controller_data(controller_path), action)
+    end
+
+    private def attach_callees_for_action(endpoint : Endpoint, data : ControllerData, action : String)
+      return unless include_callee?
+      if callees = data.callees_by_action[action]?
+        attach_ruby_callees(endpoint, callees)
+      end
+    end
+
+    private def include_callee? : Bool
+      any_to_bool(@options["include_callee"]?)
     end
 
     private def parent_resources_frame(stack : Array(Frame)) : Frame?

@@ -1,0 +1,34 @@
+require "../../spec_helper"
+require "../../../src/miniparsers/ruby_callee_extractor"
+
+describe Noir::RubyCalleeExtractor do
+  it "extracts receiver and bare calls from Ruby handler bodies with line numbers" do
+    body = <<-RUBY
+      posts = PostQuery.list(params[:page])
+      AuditLog.write("index")
+      render(json: serialize_posts(posts))
+      RUBY
+
+    callees = Noir::RubyCalleeExtractor.callees_for_body(body, "posts_controller.rb", 10)
+    callees.map { |name, _, line| {name, line} }.should eq([
+      {"PostQuery.list", 10},
+      {"AuditLog.write", 11},
+      {"render", 12},
+      {"serialize_posts", 12},
+    ])
+  end
+
+  it "skips comments and receiver method duplicates" do
+    body = <<-RUBY
+      # AuditLog.write("ignored")
+      @post.save!
+      Admin::Health.check()
+      RUBY
+
+    callees = Noir::RubyCalleeExtractor.callees_for_body(body, "posts_controller.rb", 20)
+    callees.map { |name, _, line| {name, line} }.should eq([
+      {"@post.save!", 21},
+      {"Admin::Health.check", 22},
+    ])
+  end
+end
