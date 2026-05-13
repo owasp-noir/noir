@@ -13,9 +13,10 @@ module Noir::PhpCalleeExtractor
     "static", "switch", "throw", "trait", "try", "unset", "while",
   }
 
-  OBJECT_CALL_REGEX = /(\$[A-Za-z_]\w*(?:\s*->\s*[A-Za-z_]\w*\s*(?:\(\s*\))?)*\s*->\s*[A-Za-z_]\w*)\s*\(/
-  STATIC_CALL_REGEX = /((?:\\?[A-Za-z_]\w*\\?)*[A-Za-z_]\w*(?:::[A-Za-z_]\w*)+)\s*\(/
-  BARE_CALL_REGEX   = /(?<![>\w:$\\])((?:\\?[A-Za-z_]\w*\\)*\\?[A-Za-z_]\w*)\s*\(/
+  CLASS_PROPERTY_CALL_REGEX = /((?:\\?[A-Za-z_]\w*\\?)*[A-Za-z_]\w*::\$\w+(?:\s*->\s*[A-Za-z_]\w*\s*(?:\(\s*\))?)*\s*->\s*[A-Za-z_]\w*)\s*\(/
+  OBJECT_CALL_REGEX         = /(?<!:)(\$[A-Za-z_]\w*(?:\s*->\s*[A-Za-z_]\w*\s*(?:\(\s*\))?)*\s*->\s*[A-Za-z_]\w*)\s*\(/
+  STATIC_CALL_REGEX         = /((?:\\?[A-Za-z_]\w*\\?)*[A-Za-z_]\w*(?:::[A-Za-z_]\w*)+)\s*\(/
+  BARE_CALL_REGEX           = /(?<![>\w:$\\])((?:\\?[A-Za-z_]\w*\\)*\\?[A-Za-z_]\w*)\s*\(/
 
   def callees_for_body(body : String, file_path : String, start_line : Int32) : Array(Entry)
     entries = [] of Entry
@@ -37,6 +38,13 @@ module Noir::PhpCalleeExtractor
   end
 
   private def scan_line(line : String, file_path : String, line_number : Int32, entries : Array(Entry))
+    line.scan(CLASS_PROPERTY_CALL_REGEX) do |match|
+      name = normalize_object_call(match[1])
+      next if skip_callee?(name)
+
+      entries << {name, file_path, line_number}
+    end
+
     line.scan(OBJECT_CALL_REGEX) do |match|
       name = normalize_object_call(match[1])
       next if skip_callee?(name)

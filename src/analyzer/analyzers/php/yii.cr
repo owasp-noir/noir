@@ -16,6 +16,7 @@ module Analyzer::Php
       endpoints = [] of Endpoint
 
       return endpoints unless path.ends_with?(".php")
+      include_callee = any_to_bool(@options["include_callee"]?)
 
       File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
         content = file.gets_to_end
@@ -25,7 +26,7 @@ module Analyzer::Php
         end
 
         if path.ends_with?("Controller.php") || content.match(/class\s+\w+Controller\s+extends/)
-          endpoints.concat(analyze_controller(path, content))
+          endpoints.concat(analyze_controller(path, content, include_callee))
         end
       end
 
@@ -110,7 +111,7 @@ module Analyzer::Php
       normalized
     end
 
-    private def analyze_controller(path : String, content : String) : Array(Endpoint)
+    private def analyze_controller(path : String, content : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
 
       controller_name = extract_controller_name(path, content)
@@ -147,7 +148,8 @@ module Analyzer::Php
 
         params = extract_action_signature_params(param_sig)
 
-        method_body = extract_method_body(content, method_start + full_match.size - 1)
+        method_body_info = extract_php_method_body_after(content, method_start)
+        method_body = method_body_info ? method_body_info[0] : ""
         body_params = extract_request_params(method_body)
 
         seen = Set(String).new(params.map(&.name))
@@ -161,7 +163,9 @@ module Analyzer::Php
         methods = infer_methods_from_body(method_body)
 
         methods.each do |method|
-          endpoints << Endpoint.new(route_path, method, params, details)
+          endpoint = Endpoint.new(route_path, method, params, details)
+          attach_action_callees(endpoint, method_body_info, path) if include_callee
+          endpoints << endpoint
         end
       end
 
@@ -196,28 +200,12 @@ module Analyzer::Php
       result
     end
 
-    # Brace-count from an opening `{` to isolate the matching method body;
-    # prevents param/method leakage across adjacent action methods.
-    # Note: brace counting may be inaccurate if braces appear inside strings or comments.
-    # A full PHP parser is out of scope; this is a best-effort implementation.
-    private def extract_method_body(content : String, brace_start : Int32) : String
-      return "" unless brace_start < content.size && content[brace_start] == '{'
+    private def attach_action_callees(endpoint : Endpoint, method_body : Tuple(String, Int32)?, path : String)
+      return unless method_body
 
-      depth = 1
-      pos = brace_start + 1
-      while pos < content.size && depth > 0
-        case content[pos]
-        when '{'
-          depth += 1
-        when '}'
-          depth -= 1
-          break if depth == 0
-        end
-        pos += 1
-      end
-
-      return "" if depth != 0 || pos <= brace_start + 1
-      content[(brace_start + 1)...pos]
+      body, start_line = method_body
+      callees = Noir::PhpCalleeExtractor.callees_for_body(body, path, start_line)
+      attach_php_callees(endpoint, callees)
     end
 
     private def extract_action_signature_params(signature : String) : Array(Param)
