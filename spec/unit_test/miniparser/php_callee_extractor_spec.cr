@@ -50,4 +50,17 @@ describe Noir::PhpCalleeExtractor do
       {"\\Vendor\\Package\\notify", 35},
     ])
   end
+
+  it "preserves static property object chains" do
+    body = <<-'PHP'
+      $page = Yii::$app->request->get('page');
+      $token = \App\Container::$request->headers->get('Authorization');
+      PHP
+
+    callees = Noir::PhpCalleeExtractor.callees_for_body(body, "index.php", 40)
+    callees.map { |name, _, line| {name, line} }.should eq([
+      {"Yii::$app->request->get", 40},
+      {"\\App\\Container::$request->headers->get", 41},
+    ])
+  end
 end
