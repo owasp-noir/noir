@@ -1,4 +1,5 @@
 require "../../models/analyzer"
+require "../../miniparsers/php_callee_extractor"
 require "../../utils/utils.cr"
 
 module Analyzer::Php
@@ -60,6 +61,10 @@ module Analyzer::Php
         params << Param.new(match[1], "", "path")
       end
       params
+    end
+
+    protected def attach_php_callees(endpoint : Endpoint, callees : Array(Noir::PhpCalleeExtractor::Entry))
+      Noir::PhpCalleeExtractor.attach_to(endpoint, callees)
     end
   end
 end
