@@ -1,4 +1,5 @@
 require "../../engines/javascript_engine"
+require "../../../miniparsers/js_callee_extractor"
 
 module Analyzer::Javascript
   class Nextjs < JavascriptEngine
@@ -8,14 +9,15 @@ module Analyzer::Javascript
     def analyze
       result = [] of Endpoint
       mutex = Mutex.new
+      include_callee = any_to_bool(@options["include_callee"]?)
 
       parallel_file_scan(EXTENSIONS) do |path|
         if app_router_file?(path)
-          analyze_app_router_file(path, result, mutex)
+          analyze_app_router_file(path, result, mutex, include_callee)
         elsif pages_router_file?(path)
-          analyze_pages_router_file(path, result, mutex)
+          analyze_pages_router_file(path, result, mutex, include_callee)
         else
-          analyze_server_actions_file(path, result, mutex)
+          analyze_server_actions_file(path, result, mutex, include_callee)
         end
       end
 
@@ -31,7 +33,7 @@ module Analyzer::Javascript
       path.includes?("/pages/api/")
     end
 
-    private def analyze_pages_router_file(path : String, result : Array(Endpoint), mutex : Mutex)
+    private def analyze_pages_router_file(path : String, result : Array(Endpoint), mutex : Mutex, include_callee : Bool)
       idx = path.index("/pages/api/")
       return if idx.nil?
 
@@ -52,6 +54,7 @@ module Analyzer::Javascript
       end
 
       methods = detect_pages_router_methods(content)
+      default_body_info = include_callee ? extract_default_export_body(content) : nil
 
       methods.each do |method|
         endpoint = Endpoint.new(url, method)
@@ -59,12 +62,16 @@ module Analyzer::Javascript
 
         extract_path_params(url, endpoint)
         extract_pages_router_params(content, endpoint)
+        if include_callee
+          body_info = extract_exported_method_body(content, method) || default_body_info
+          attach_callees(endpoint, path, body_info) if body_info
+        end
 
         mutex.synchronize { result << endpoint }
       end
     end
 
-    private def analyze_app_router_file(path : String, result : Array(Endpoint), mutex : Mutex)
+    private def analyze_app_router_file(path : String, result : Array(Endpoint), mutex : Mutex, include_callee : Bool)
       idx = path.index("/app/")
       return if idx.nil?
 
@@ -106,12 +113,16 @@ module Analyzer::Javascript
 
         extract_path_params(url, endpoint)
         extract_app_router_params(content, endpoint)
+        if include_callee
+          body_info = extract_exported_method_body(content, method)
+          attach_callees(endpoint, path, body_info) if body_info
+        end
 
         mutex.synchronize { result << endpoint }
       end
     end
 
-    private def analyze_server_actions_file(path : String, result : Array(Endpoint), mutex : Mutex)
+    private def analyze_server_actions_file(path : String, result : Array(Endpoint), mutex : Mutex, include_callee : Bool)
       begin
         content = read_file_content(path)
       rescue e
@@ -129,7 +140,7 @@ module Analyzer::Javascript
         action_name = match[1]
         next if seen.includes?(action_name)
         seen << action_name
-        register_server_action(path, action_name, match[2], content, match, result, mutex)
+        register_server_action(path, action_name, match[2], content, match, result, mutex, include_callee)
       end
 
       # export const NAME = async (args) => { ... }
@@ -137,7 +148,7 @@ module Analyzer::Javascript
         action_name = match[1]
         next if seen.includes?(action_name)
         seen << action_name
-        register_server_action(path, action_name, match[2], content, match, result, mutex)
+        register_server_action(path, action_name, match[2], content, match, result, mutex, include_callee)
       end
 
       # Note: `export default` actions are unaddressable by name, and
@@ -146,25 +157,106 @@ module Analyzer::Javascript
 
     private def register_server_action(path : String, action_name : String, args : String,
                                        content : String, match : Regex::MatchData,
-                                       result : Array(Endpoint), mutex : Mutex)
-      body = extract_action_body(content, match)
+                                       result : Array(Endpoint), mutex : Mutex, include_callee : Bool)
+      body_info = extract_action_body(content, match)
+      body = body_info.try(&.[0]) || ""
 
       url = "/" + action_name
       endpoint = Endpoint.new(url, "POST")
       endpoint.details = Details.new(PathInfo.new(path, 1))
 
       extract_server_action_params(args, body, endpoint)
+      attach_callees(endpoint, path, body_info) if include_callee && body_info
 
       mutex.synchronize { result << endpoint }
     end
 
-    # Return the text inside the function body that starts after the match's args list.
-    # Falls back to an empty string if the body cannot be located.
-    private def extract_action_body(content : String, match : Regex::MatchData) : String
+    # Return the text and opening line for the braced function body that starts
+    # after the match's args list.
+    private def extract_action_body(content : String, match : Regex::MatchData) : Tuple(String, Int32)?
       match_end = match.end(0)
-      return "" if match_end.nil?
-      open_pos = content.index('{', match_end)
-      return "" if open_pos.nil?
+      return if match_end.nil?
+      extract_braced_body(content, match_end)
+    end
+
+    private def extract_default_export_body(content : String) : Tuple(String, Int32)?
+      match = content.match(/export\s+default\s+(?:async\s+)?function(?:\s+\w+)?\s*\([^)]*\)/)
+      if match
+        match_end = match.end(0)
+        return extract_braced_body(content, match_end) if match_end
+      end
+
+      arrow_match = content.match(/export\s+default\s+(?:async\s*)?(?:\([^)]*\)|\w+)(?:\s*:\s*[^=]+?)?\s*=>/)
+      if arrow_match
+        match_end = arrow_match.end(0)
+        return extract_braced_body(content, match_end) if match_end
+      end
+
+      alias_match = content.match(/export\s+default\s+([A-Za-z_$][\w$]*)\s*;?/)
+      extract_named_function_body(content, alias_match[1]) if alias_match
+    end
+
+    private def extract_exported_method_body(content : String, method : String) : Tuple(String, Int32)?
+      if body_info = extract_direct_exported_method_body(content, method)
+        return body_info
+      end
+
+      if local_name = exported_alias_for_method(content, method)
+        extract_named_function_body(content, local_name)
+      end
+    end
+
+    private def extract_direct_exported_method_body(content : String, method : String) : Tuple(String, Int32)?
+      escaped_method = Regex.escape(method)
+      function_match = content.match(/export\s+(?:async\s+)?function\s+#{escaped_method}\b\s*\([^)]*\)/)
+      if function_match
+        match_end = function_match.end(0)
+        return extract_braced_body(content, match_end) if match_end
+      end
+
+      const_match = content.match(/export\s+const\s+#{escaped_method}\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)(?:\s*:\s*[^=]+?)?\s*=>/)
+      if const_match
+        match_end = const_match.end(0)
+        extract_braced_body(content, match_end) if match_end
+      end
+    end
+
+    private def extract_named_function_body(content : String, name : String) : Tuple(String, Int32)?
+      escaped_name = Regex.escape(name)
+      function_match = content.match(/(?:^|[^\w$])(?:async\s+)?function\s+#{escaped_name}\b\s*\([^)]*\)/)
+      if function_match
+        match_end = function_match.end(0)
+        return extract_braced_body(content, match_end) if match_end
+      end
+
+      const_match = content.match(/(?:const|let|var)\s+#{escaped_name}\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)(?:\s*:\s*[^=]+?)?\s*=>/)
+      if const_match
+        match_end = const_match.end(0)
+        extract_braced_body(content, match_end) if match_end
+      end
+    end
+
+    private def exported_alias_for_method(content : String, method : String) : String?
+      content.scan(/export\s+\{([^}]+)\}/) do |match|
+        split_top_level_commas(match[1]).each do |part|
+          pieces = part.strip.split(/\s+as\s+/)
+          next if pieces.empty?
+
+          if pieces.size == 1
+            name = pieces[0].strip
+            return name if name == method
+          elsif pieces.size == 2
+            local_name = pieces[0].strip
+            exported_name = pieces[1].strip
+            return local_name if exported_name == method
+          end
+        end
+      end
+    end
+
+    private def extract_braced_body(content : String, start_pos : Int32) : Tuple(String, Int32)?
+      open_pos = content.index('{', start_pos)
+      return if open_pos.nil?
       depth = 1
       i = open_pos + 1
       while i < content.size && depth > 0
@@ -177,7 +269,25 @@ module Analyzer::Javascript
         end
         i += 1
       end
-      content[(open_pos + 1)...i]
+      return if depth > 0
+
+      {content[(open_pos + 1)...i], line_for_index(content, open_pos)}
+    end
+
+    private def attach_callees(endpoint : Endpoint, path : String, body_info : Tuple(String, Int32))
+      body, open_brace_line = body_info
+      language = typescript_source?(path) ? :typescript : :javascript
+      Noir::JSCalleeExtractor.callees_for_function_body(body, path, open_brace_line, language: language).each do |name, callee_path, line|
+        endpoint.push_callee(Callee.new(name, path: callee_path, line: line))
+      end
+    end
+
+    private def typescript_source?(path : String) : Bool
+      path.ends_with?(".ts") || path.ends_with?(".tsx")
+    end
+
+    private def line_for_index(content : String, index : Int32) : Int32
+      content.to_slice[0, index].count('\n'.ord.to_u8) + 1
     end
 
     private def detect_pages_router_methods(content : String) : Array(String)
