@@ -9,28 +9,45 @@ module Analyzer::Crystal
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
+      lines = [] of String
 
       File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        last_endpoint = Endpoint.new("", "")
-        file.each_line.with_index do |line, index|
-          endpoint = line_to_endpoint(line)
-          if endpoint.method != ""
-            details = Details.new(PathInfo.new(path, index + 1))
-            endpoint.details = details
-            endpoints << endpoint
-            last_endpoint = endpoint
-          end
+        file.each_line do |line|
+          lines << line
+        end
+      end
 
-          param = line_to_param(line)
-          if param.name != ""
-            if last_endpoint.method != ""
-              last_endpoint.push_param(param)
-            end
+      include_callee = any_to_bool(@options["include_callee"]?)
+      last_endpoint = Endpoint.new("", "")
+
+      lines.each_with_index do |line, index|
+        endpoint = line_to_endpoint(line)
+        if endpoint.method != ""
+          details = Details.new(PathInfo.new(path, index + 1))
+          endpoint.details = details
+          attach_route_callees(endpoint, lines, index, path) if include_callee
+          endpoints << endpoint
+          last_endpoint = endpoint
+        end
+
+        param = line_to_param(line)
+        if param.name != ""
+          if last_endpoint.method != ""
+            last_endpoint.push_param(param)
           end
         end
       end
 
       endpoints
+    end
+
+    private def attach_route_callees(endpoint : Endpoint, lines : Array(String), index : Int32, path : String)
+      route_body = extract_crystal_do_block(lines, index)
+      return unless route_body
+
+      body, body_start_line = route_body
+      callees = Noir::CrystalCalleeExtractor.callees_for_body(body, path, body_start_line)
+      attach_crystal_callees(endpoint, callees)
     end
 
     private def collect_public_dir_endpoints
