@@ -10,13 +10,13 @@ module Noir::PhpCalleeExtractor
     "elseif", "empty", "eval", "exit", "fn", "for", "foreach",
     "function", "global", "if", "include", "include_once", "isset",
     "list", "match", "print", "require", "require_once", "return",
-    "static", "switch", "throw", "trait", "try", "unset", "while",
+    "static", "switch", "throw", "trait", "try", "unset", "use", "while",
   }
 
-  CLASS_PROPERTY_CALL_REGEX = /((?:\\?[A-Za-z_]\w*\\?)*[A-Za-z_]\w*::\$\w+(?:\s*->\s*[A-Za-z_]\w*\s*(?:\(\s*\))?)*\s*->\s*[A-Za-z_]\w*)\s*\(/
+  CLASS_PROPERTY_CALL_REGEX = /(\\?[A-Za-z_]\w*(?:\\[A-Za-z_]\w*)*::\$\w+(?:\s*->\s*[A-Za-z_]\w*\s*(?:\(\s*\))?)*\s*->\s*[A-Za-z_]\w*)\s*\(/
   OBJECT_CALL_REGEX         = /(?<!:)(\$[A-Za-z_]\w*(?:\s*->\s*[A-Za-z_]\w*\s*(?:\(\s*\))?)*\s*->\s*[A-Za-z_]\w*)\s*\(/
-  STATIC_CALL_REGEX         = /((?:\\?[A-Za-z_]\w*\\?)*[A-Za-z_]\w*(?:::[A-Za-z_]\w*)+)\s*\(/
-  BARE_CALL_REGEX           = /(?<![>\w:$\\])((?:\\?[A-Za-z_]\w*\\)*\\?[A-Za-z_]\w*)\s*\(/
+  STATIC_CALL_REGEX         = /(\\?[A-Za-z_]\w*(?:\\[A-Za-z_]\w*)*(?:::[A-Za-z_]\w*)+)\s*\(/
+  BARE_CALL_REGEX           = /(?<![>\w:$\\])(\\?[A-Za-z_]\w*(?:\\[A-Za-z_]\w*)*)\s*\(/
 
   def callees_for_body(body : String, file_path : String, start_line : Int32) : Array(Entry)
     entries = [] of Entry
@@ -61,10 +61,17 @@ module Noir::PhpCalleeExtractor
 
     line.scan(BARE_CALL_REGEX) do |match|
       name = match[1]
+      next if declaration_name?(line, match.begin(1))
       next if skip_callee?(name)
 
       entries << {name, file_path, line_number}
     end
+  end
+
+  private def declaration_name?(line : String, name_start : Int32?) : Bool
+    return false unless name_start
+
+    line[0...name_start].match(/\bfunction\s*&?\s*$/) ? true : false
   end
 
   private def normalize_object_call(name : String) : String
