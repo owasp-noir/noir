@@ -40,6 +40,7 @@ module Analyzer::Python
     private def analyze_file(path : ::String, source : ::String)
       lines = source.split("\n")
       function_index = build_function_index(lines)
+      handler_cache = {} of ::String => Tuple(Array(Param), Array(Callee))
       # Stack of active Mount prefixes. Each entry stores the paren depth
       # at which the Mount was opened; when the running depth drops below
       # that value the mount has closed and its prefix must be popped.
@@ -74,6 +75,7 @@ module Analyzer::Python
           path_params = extract_path_params(route_path)
 
           handler_params = [] of Param
+          handler_callees = [] of Callee
           handler_name = nil
           if endpoint_keyword_match = tail.match(/endpoint\s*=\s*([a-zA-Z_][a-zA-Z0-9_]*)/)
             handler_name = endpoint_keyword_match[1]
@@ -81,7 +83,7 @@ module Analyzer::Python
             handler_name = positional_match[1]
           end
           if handler_name
-            handler_params = extract_handler_params(lines, function_index, handler_name)
+            handler_params, handler_callees = handler_context_for(lines, function_index, handler_name, path, handler_cache)
           end
 
           methods.uniq.each do |method|
@@ -93,7 +95,9 @@ module Analyzer::Python
             end
 
             details = Details.new(PathInfo.new(path, line_index + 1))
-            result << Endpoint.new(full_url, method, params, details)
+            endpoint = Endpoint.new(full_url, method, params, details)
+            handler_callees.each { |c| endpoint.push_callee(c) }
+            result << endpoint
           end
         end
 
@@ -127,15 +131,30 @@ module Analyzer::Python
       index
     end
 
-    private def extract_handler_params(lines : Array(::String), function_index : Hash(::String, Tuple(Int32, ::String)), handler_name : ::String) : Array(Param)
+    private def handler_context_for(lines : Array(::String),
+                                    function_index : Hash(::String, Tuple(Int32, ::String)),
+                                    handler_name : ::String,
+                                    path : ::String,
+                                    cache : Hash(::String, Tuple(Array(Param), Array(Callee)))) : Tuple(Array(Param), Array(Callee))
+      cached = cache[handler_name]?
+      return cached if cached
+
       params = [] of Param
+      callees = [] of Callee
 
       entry = function_index[handler_name]?
-      return params unless entry
+      unless entry
+        cache[handler_name] = {params, callees}
+        return cache[handler_name]
+      end
       idx, request_name = entry
 
       codeblock = parse_code_block(lines[idx..])
-      return params if codeblock.nil?
+      if codeblock.nil?
+        cache[handler_name] = {params, callees}
+        return cache[handler_name]
+      end
+
       codeblock.split("\n").each do |cl|
         collect_request_attr_params(cl, request_name, "path_params", "path", params)
         collect_request_attr_params(cl, request_name, "query_params", "query", params)
@@ -150,7 +169,9 @@ module Analyzer::Python
         end
       end
 
-      params
+      callees = build_callees_from(codeblock, idx, path)
+      cache[handler_name] = {params, callees}
+      cache[handler_name]
     end
 
     private def collect_request_attr_params(line : ::String, request_name : ::String, attr : ::String, noir_type : ::String, params : Array(Param))
