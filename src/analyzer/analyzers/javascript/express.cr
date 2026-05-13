@@ -16,6 +16,7 @@ module Analyzer::Javascript
     def analyze
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
+      include_callee = any_to_bool(@options["include_callee"]?)
 
       # Phase 1: Pre-scan to build router mount map
       scan_for_router_mounts
@@ -23,7 +24,8 @@ module Analyzer::Javascript
       parallel_file_scan do |path|
         begin
           content = read_file_content(path)
-          parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug)
+          parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
+            include_callees: include_callee)
           parser_endpoints.each do |endpoint|
             # Use the line number already set by the extractor; fall back to path-only if missing
             if endpoint.details.code_paths.empty?
