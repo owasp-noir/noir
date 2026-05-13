@@ -1,4 +1,5 @@
 require "../models/endpoint"
+require "../miniparsers/js_callee_extractor"
 require "../minilexers/js_lexer"
 require "../miniparsers/js_parser"
 require "../models/code_locator"
@@ -12,13 +13,23 @@ module Noir
     # Import constants for key generation
     ROUTER_PREFIX_KEY = Analyzer::Javascript::ExpressConstants::ROUTER_PREFIX_KEY
 
-    def self.extract_routes(file_path : String, content : String? = nil, debug : Bool = false) : Array(Endpoint)
+    def self.extract_routes(file_path : String,
+                            content : String? = nil,
+                            debug : Bool = false,
+                            *,
+                            include_callees : Bool = false,
+                            route_callees : Hash(String, Array(JSCalleeExtractor::Entry))? = nil) : Array(Endpoint)
       return [] of Endpoint unless File.exists?(file_path)
 
       begin
         content = content || File.read(file_path, encoding: "utf-8", invalid: :skip)
         parser = JSParser.new(content)
         route_patterns = parser.parse_routes
+        callees_by_route = if include_callees
+                             route_callees || JSCalleeExtractor.callees_for_routes(content, file_path)
+                           else
+                             {} of String => Array(JSCalleeExtractor::Entry)
+                           end
 
         if debug && parser.hit_max_iterations?
           STDERR.puts "Warning: Maximum iterations reached in JS parser, parsing may be incomplete"
@@ -178,6 +189,7 @@ module Noir
 
                 # Extract other parameters like body, query, etc. from the content around this route
                 extract_params_from_context(content, pattern, endpoint)
+                attach_callees(endpoint, callees_by_route, normalized_method, pattern.raw_path, line_number)
 
                 endpoints << endpoint
               end
@@ -191,6 +203,7 @@ module Noir
 
               # Extract other parameters like body, query, etc. from the content around this route
               extract_params_from_context(content, pattern, endpoint)
+              attach_callees(endpoint, callees_by_route, normalized_method, pattern.raw_path, line_number)
 
               endpoints << endpoint
             end
@@ -201,6 +214,19 @@ module Noir
       rescue
         # If parser fails, return empty array
         [] of Endpoint
+      end
+    end
+
+    def self.attach_callees(endpoint : Endpoint,
+                            callees_by_route : Hash(String, Array(JSCalleeExtractor::Entry)),
+                            method : String,
+                            path : String,
+                            line : Int32)
+      callees = callees_by_route[JSCalleeExtractor.route_key(method, path, line)]?
+      return unless callees
+
+      callees.each do |name, callee_path, callee_line|
+        endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
       end
     end
 

@@ -1,4 +1,5 @@
 require "../../engines/javascript_engine"
+require "../../../miniparsers/js_callee_extractor"
 require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Javascript
@@ -10,17 +11,17 @@ module Analyzer::Javascript
       parallel_file_scan do |path|
         begin
           content = File.read(path, encoding: "utf-8", invalid: :skip)
-          parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug)
+          include_callee = any_to_bool(@options["include_callee"])
+          callees_by_route = include_callee ? Noir::JSCalleeExtractor.callees_for_routes(content, path) : {} of String => Array(Noir::JSCalleeExtractor::Entry)
+          parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
+            include_callees: include_callee, route_callees: callees_by_route)
           parser_endpoints.each do |endpoint|
-            details = Details.new(PathInfo.new(path, 1))
-            endpoint.details = details
-
             extract_path_params(endpoint)
             result << endpoint
           end
 
           # Extract app.on() patterns not handled by JSRouteExtractor
-          extract_on_routes(path, content, result)
+          extract_on_routes(path, content, result, callees_by_route)
 
           Noir::JSRouteExtractor.extract_static_paths(content).each do |static_path|
             static_dirs << static_path unless static_dirs.any? { |s| s["static_path"] == static_path["static_path"] && s["file_path"] == static_path["file_path"] }
@@ -56,7 +57,10 @@ module Analyzer::Javascript
       end
     end
 
-    private def extract_on_routes(path : String, content : String, result : Array(Endpoint))
+    private def extract_on_routes(path : String,
+                                  content : String,
+                                  result : Array(Endpoint),
+                                  callees_by_route : Hash(String, Array(Noir::JSCalleeExtractor::Entry)))
       http_methods = %w[get post put delete patch options head]
       lines = content.lines
       lines.each_with_index do |line, index|
@@ -69,6 +73,7 @@ module Analyzer::Javascript
               endpoint = Endpoint.new(url, method.upcase)
               details = Details.new(PathInfo.new(path, index + 1))
               endpoint.details = details
+              Noir::JSRouteExtractor.attach_callees(endpoint, callees_by_route, method.upcase, url, index + 1)
 
               # Extract params from subsequent lines in the handler body
               ((index + 1)...lines.size).each do |i|
