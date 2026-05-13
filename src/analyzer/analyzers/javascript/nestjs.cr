@@ -1,14 +1,20 @@
 require "../../engines/javascript_engine"
+require "../../../miniparsers/js_callee_extractor"
 require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Javascript
   class Nestjs < JavascriptEngine
     def analyze
+      analyze_with_extensions([".js", ".jsx"])
+    end
+
+    protected def analyze_with_extensions(extensions : Array(String)) : Array(Endpoint)
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
+      include_callee = any_to_bool(@options["include_callee"]?)
 
-      parallel_file_scan([".js", ".jsx"]) do |path|
-        analyze_nestjs_file(path, result, static_dirs)
+      parallel_file_scan(extensions) do |path|
+        analyze_nestjs_file(path, result, static_dirs, include_callee)
       end
 
       # Process static directories to create endpoints for static files
@@ -39,7 +45,7 @@ module Analyzer::Javascript
       end
     end
 
-    private def analyze_nestjs_file(path : String, result : Array(Endpoint), static_dirs : Array(Hash(String, String)))
+    private def analyze_nestjs_file(path : String, result : Array(Endpoint), static_dirs : Array(Hash(String, String)), include_callee : Bool)
       File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
         content = file.gets_to_end
 
@@ -48,21 +54,22 @@ module Analyzer::Javascript
           static_dirs << static_path unless static_dirs.any? { |s| s["static_path"] == static_path["static_path"] && s["file_path"] == static_path["file_path"] }
         end
 
-        analyze_nestjs_controllers(content, path, result)
+        analyze_nestjs_controllers(content, path, result, include_callee)
       end
     rescue e : Exception
       logger.debug "Error analyzing NestJS file #{path}: #{e.message}"
     end
 
-    private def analyze_nestjs_controllers(content : String, path : String, result : Array(Endpoint))
+    private def analyze_nestjs_controllers(content : String, path : String, result : Array(Endpoint), include_callee : Bool)
       # Split content by controllers and process each separately
       controllers = extract_controllers(content)
 
       controllers.each do |controller_info|
         base_path = controller_info[:base_path]
         controller_content = controller_info[:content]
+        controller_start_line = controller_info[:start_line]?.try(&.to_i) || 1
 
-        process_http_methods(controller_content, base_path, path, result)
+        process_http_methods(controller_content, base_path, path, result, include_callee, controller_start_line)
       end
     end
 
@@ -75,13 +82,14 @@ module Analyzer::Javascript
       brace_count = 0
       in_class = false
 
-      lines.each do |line|
+      lines.each_with_index do |line, index|
         # Check for @Controller decorator
         if line =~ /@Controller\s*\(\s*['"`]([^'"`]*?)['"`]\s*\)/
           controller_path = $1
           current_controller = {
-            :base_path => controller_path,
-            :content   => "",
+            :base_path  => controller_path,
+            :content    => "",
+            :start_line => "1",
           }
         end
 
@@ -89,6 +97,7 @@ module Analyzer::Javascript
         if current_controller && line =~ /export\s+class\s+\w+/
           in_class = true
           brace_count = 0
+          current_controller[:start_line] = (index + 1).to_s
         end
 
         # Count braces to find class end
@@ -110,7 +119,7 @@ module Analyzer::Javascript
       controllers
     end
 
-    private def process_http_methods(class_content : String, base_path : String, file_path : String, result : Array(Endpoint))
+    private def process_http_methods(class_content : String, base_path : String, file_path : String, result : Array(Endpoint), include_callee : Bool, controller_start_line : Int32)
       http_methods = ["Get", "Post", "Put", "Delete", "Patch", "Options", "Head"]
 
       http_methods.each do |method|
@@ -135,11 +144,42 @@ module Analyzer::Javascript
           # Extract parameters from the method area
           if match.begin
             extract_method_parameters(class_content, match.begin + match[0].size, endpoint)
+            attach_method_callees(class_content, match.begin + match[0].size, file_path, endpoint, controller_start_line) if include_callee
           end
 
           result << endpoint
         end
       end
+    end
+
+    private def attach_method_callees(content : String, start_pos : Int32, file_path : String, endpoint : Endpoint, controller_start_line : Int32)
+      body_info = extract_method_body(content, start_pos)
+      return unless body_info
+
+      body, open_brace_idx = body_info
+      open_brace_line = controller_start_line + content[0...open_brace_idx].count('\n')
+      language = file_path.ends_with?(".ts") || file_path.ends_with?(".tsx") ? :typescript : :javascript
+      Noir::JSCalleeExtractor.callees_for_function_body(body, file_path, open_brace_line, language: language).each do |name, callee_path, line|
+        endpoint.push_callee(Callee.new(name, path: callee_path, line: line))
+      end
+    end
+
+    private def extract_method_body(content : String, start_pos : Int32) : Tuple(String, Int32)?
+      method_section = content[start_pos..-1]
+      method_name_match = method_section.match(/\s*(\w+)\s*\(/)
+      return unless method_name_match
+
+      start_paren = start_pos + method_name_match.end
+      end_paren = Noir::JSRouteExtractor.find_matching_paren(content, start_paren - 1)
+      return unless end_paren
+
+      open_brace_idx = content.index("{", end_paren)
+      return unless open_brace_idx
+
+      close_brace_idx = Noir::JSRouteExtractor.find_matching_brace(content, open_brace_idx)
+      return unless close_brace_idx && close_brace_idx > open_brace_idx
+
+      {content[(open_brace_idx + 1)...close_brace_idx], open_brace_idx}
     end
 
     private def extract_method_parameters(content : String, start_pos : Int32, endpoint : Endpoint)
