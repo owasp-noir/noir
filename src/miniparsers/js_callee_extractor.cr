@@ -16,6 +16,15 @@ module Noir::JSCalleeExtractor
     "connect" => "CONNECT",
     "all"     => "ALL",
   }
+  FALLBACK_RESERVED_CALLEES = Set{
+    "catch",
+    "for",
+    "function",
+    "if",
+    "return",
+    "switch",
+    "while",
+  }
 
   alias Entry = Tuple(String, String, Int32)
 
@@ -27,6 +36,29 @@ module Noir::JSCalleeExtractor
     by_route
   rescue
     {} of String => Array(Entry)
+  end
+
+  def callees_for_function_body(body : String,
+                                file_path : String,
+                                open_brace_line : Int32,
+                                *,
+                                language : Symbol = :javascript) : Array(Entry)
+    wrapper = "function __noir_handler__() {#{body}\n}"
+    sink = [] of Entry
+
+    Noir::TreeSitter.parse_javascript(wrapper) do |root|
+      walk_first_function_body(root, wrapper, file_path, sink, 0)
+    end
+
+    if sink.empty? && language == :typescript
+      return fallback_callees_for_function_body(body, file_path, open_brace_line)
+    end
+
+    sink.map do |name, path, line|
+      {name, path, open_brace_line + line - 1}
+    end
+  rescue
+    language == :typescript ? fallback_callees_for_function_body(body, file_path, open_brace_line) : [] of Entry
   end
 
   def route_key(method : String, path : String, line : Int32) : String
@@ -105,6 +137,44 @@ module Noir::JSCalleeExtractor
     sink = [] of Entry
     walk_callees(body, source, file_path, sink, 0)
     sink
+  end
+
+  private def walk_first_function_body(node : LibTreeSitter::TSNode,
+                                       source : String,
+                                       file_path : String,
+                                       sink : Array(Entry),
+                                       depth : Int32) : Bool
+    return false if depth > Noir::TreeSitter::MAX_AST_DEPTH
+
+    if Noir::TreeSitter.node_type(node) == "function_declaration"
+      if body = Noir::TreeSitter.field(node, "body")
+        walk_callees(body, source, file_path, sink, 0)
+        return true
+      end
+    end
+
+    Noir::TreeSitter.each_named_child(node) do |child|
+      return true if walk_first_function_body(child, source, file_path, sink, depth + 1)
+    end
+
+    false
+  end
+
+  private def fallback_callees_for_function_body(body : String, file_path : String, open_brace_line : Int32) : Array(Entry)
+    entries = [] of Entry
+
+    body.each_line.with_index do |line, index|
+      line.scan(/((?:this|super|[A-Za-z_$][\w$]*)(?:\s*\(\s*\))?(?:\.[A-Za-z_$][\w$]*(?:\s*\(\s*\))?)*)\s*\(/) do |match|
+        next unless match.size > 1
+
+        name = match[1].gsub(/\s+/, "")
+        next if name.empty? || FALLBACK_RESERVED_CALLEES.includes?(name)
+
+        entries << {name, file_path, open_brace_line + index}
+      end
+    end
+
+    dedup_entries(entries)
   end
 
   private def walk_callees(node : LibTreeSitter::TSNode,
@@ -215,6 +285,19 @@ module Noir::JSCalleeExtractor
   private def same_node?(left : LibTreeSitter::TSNode, right : LibTreeSitter::TSNode) : Bool
     LibTreeSitter.ts_node_start_byte(left) == LibTreeSitter.ts_node_start_byte(right) &&
       LibTreeSitter.ts_node_end_byte(left) == LibTreeSitter.ts_node_end_byte(right)
+  end
+
+  private def dedup_entries(entries : Array(Entry)) : Array(Entry)
+    seen = Set(String).new
+    entries.select do |name, path, line|
+      key = "#{name}\0#{path}\0#{line}"
+      if seen.includes?(key)
+        false
+      else
+        seen.add(key)
+        true
+      end
+    end
   end
 
   private def decode_string(node : LibTreeSitter::TSNode, source : String) : String
