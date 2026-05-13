@@ -1,0 +1,8 @@
+[package]
+name = "actix-web-callees-example"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+actix-web = "4.9"
+serde = { version = "1", features = ["derive"] }

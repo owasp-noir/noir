@@ -108,7 +108,7 @@ module Noir::RustCalleeExtractor
     return true if name.empty?
 
     last = name.split('.').last.split("::").last
-    RESERVED.includes?(last)
+    RESERVED.includes?(last) && (!name.includes?("::") || last.includes?('!'))
   end
 
   private def dedup_entries(entries : Array(Entry)) : Array(Entry)
