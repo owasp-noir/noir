@@ -1,0 +1,12 @@
+name: amber_callees
+version: 0.1.0
+
+targets:
+  amber_callees:
+    main: src/testapp.cr
+
+dependencies:
+  amber:
+    github: amberframework/amber
+
+crystal: 1.8.2
