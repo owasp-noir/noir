@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "../../../ext/tree_sitter/tree_sitter"
+require "../../../miniparsers/java_callee_extractor"
 
 module Analyzer::Java
   class Armeria < Analyzer
@@ -134,9 +135,21 @@ module Analyzer::Java
 
         parameters = collect_method_params(method, content, url_path)
         endpoint = Endpoint.new(url_path, http_method, parameters, details)
+        collect_method_callees(method, content, path).each do |(name, callee_path, callee_line)|
+          endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+        end
         extract_path_parameters(url_path, endpoint)
         @result << endpoint
       end
+    end
+
+    private def collect_method_callees(method : LibTreeSitter::TSNode,
+                                       content : String,
+                                       path : String) : Array(Tuple(String, String, Int32))
+      body = Noir::TreeSitter.field(method, "body")
+      return [] of Tuple(String, String, Int32) unless body
+
+      Noir::JavaCalleeExtractor.callees_in_body(body, content, path)
     end
 
     private def find_modifiers(decl : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?

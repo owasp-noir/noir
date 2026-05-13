@@ -1,0 +1,9 @@
+<project>
+  <dependencies>
+    <dependency>
+      <groupId>com.linecorp.armeria</groupId>
+      <artifactId>armeria</artifactId>
+      <version>1.30.0</version>
+    </dependency>
+  </dependencies>
+</project>
