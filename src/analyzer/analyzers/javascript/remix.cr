@@ -1,4 +1,5 @@
 require "../../engines/javascript_engine"
+require "../../../miniparsers/js_callee_extractor"
 
 module Analyzer::Javascript
   # Remix v2 is filesystem-routed under `app/routes/`. The route URL
@@ -48,6 +49,7 @@ module Analyzer::Javascript
     def analyze
       result = [] of Endpoint
       mutex = Mutex.new
+      include_callee = any_to_bool(@options["include_callee"]?)
 
       parallel_file_scan(EXTENSIONS) do |path|
         idx = path.index("/app/routes/")
@@ -72,11 +74,27 @@ module Analyzer::Javascript
         end
 
         is_page = PAGE_EXTENSIONS.any? { |ext| relative.ends_with?(ext) }
-        verbs = detect_verbs(content, is_page)
+        has_loader = export_named?(content, "loader")
+        has_action = export_named?(content, "action")
+        verbs = detect_verbs(is_page, has_loader, has_action)
         next if verbs.empty?
 
+        loader_callees = include_callee && has_loader ? Noir::JSCalleeExtractor.callees_for_exported_function(content, path, "loader") : nil
+        action_callees = include_callee && has_action ? Noir::JSCalleeExtractor.callees_for_exported_function(content, path, "action") : nil
+
+        endpoints = verbs.map do |verb|
+          endpoint = build_endpoint(url, verb, path)
+          if include_callee
+            callees = verb == "GET" ? loader_callees : action_callees
+            callees.try &.each do |name, callee_path, line|
+              endpoint.push_callee(Callee.new(name, path: callee_path, line: line))
+            end
+          end
+          endpoint
+        end
+
         mutex.synchronize do
-          verbs.each { |verb| result << build_endpoint(url, verb, path) }
+          endpoints.each { |endpoint| result << endpoint }
         end
       end
 
@@ -132,13 +150,10 @@ module Analyzer::Javascript
       url == "/" ? "/" : url.sub(/\/+$/, "")
     end
 
-    # `verbs(content, is_page)` — figure out which verbs the file
+    # `verbs(is_page, has_loader, has_action)` — figure out which verbs the file
     # registers based on the page-vs-resource shape and the
     # exported names.
-    private def detect_verbs(content : String, is_page : Bool) : Array(String)
-      has_loader = export_named?(content, "loader")
-      has_action = export_named?(content, "action")
-
+    private def detect_verbs(is_page : Bool, has_loader : Bool, has_action : Bool) : Array(String)
       verbs = [] of String
       verbs << "GET" if is_page || has_loader
       verbs.concat(NON_GET_VERBS) if has_action
