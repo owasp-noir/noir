@@ -142,7 +142,7 @@ module Analyzer::Python
             end
           end
         end
-        next if new_django_urls != nil
+        next if new_django_urls
 
         details = Details.new(PathInfo.new(django_urls.filepath))
         if view == ""

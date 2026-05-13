@@ -157,11 +157,11 @@ module Analyzer::Groovy
     end
 
     private def extends_restful_controller?(clause : String) : Bool
-      clause.match(/extends\s+RestfulController\b/) != nil
+      !!clause.match(/extends\s+RestfulController\b/)
     end
 
     private def has_scaffold?(body : String) : Bool
-      body.match(/static\s+scaffold\s*=/) != nil
+      !!body.match(/static\s+scaffold\s*=/)
     end
 
     private def emit_inherited_action(path : String, content : String,
