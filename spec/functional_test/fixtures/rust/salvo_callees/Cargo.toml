@@ -1,0 +1,9 @@
+[package]
+name = "salvo-callees-example"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+salvo = { version = "0.68", features = ["oapi"] }
+tokio = { version = "1", features = ["macros"] }
+serde_json = "1"

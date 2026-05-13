@@ -4,21 +4,22 @@ module Analyzer::Rust
   class Salvo < RustEngine
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
+      lines = read_file_content(path).lines
+      include_callee = any_to_bool(@options["include_callee"]?)
 
       # Strategy 1: Parse Router chain patterns
       # e.g., Router::with_path("users/<id>").get(get_user)
       # e.g., Router::new().push(Router::with_path("items").get(list_items))
-      parse_router_chains(lines, path, endpoints)
+      parse_router_chains(lines, path, endpoints, include_callee)
 
       # Strategy 2: Parse #[endpoint] macro patterns
       # e.g., #[endpoint(method = Get, path = "/api/users")]
-      parse_endpoint_macros(lines, path, endpoints)
+      parse_endpoint_macros(lines, path, endpoints, include_callee)
 
       endpoints
     end
 
-    def parse_router_chains(lines : Array(String), path : String, endpoints : Array(Endpoint))
+    def parse_router_chains(lines : Array(String), path : String, endpoints : Array(Endpoint), include_callee : Bool)
       lines.each_with_index do |line, index|
         # Match Router::with_path("...").method(handler) or .path("...").method(handler)
         # Pattern: with_path("path") followed by .method(handler)
@@ -45,6 +46,7 @@ module Analyzer::Rust
                 if handler_match
                   handler_name = handler_match[2]
                   extract_handler_params(lines, handler_name, endpoint)
+                  attach_handler_callees(lines, handler_name, path, endpoint) if include_callee
                 end
 
                 endpoints << endpoint
@@ -56,7 +58,7 @@ module Analyzer::Rust
       end
     end
 
-    def parse_endpoint_macros(lines : Array(String), path : String, endpoints : Array(Endpoint))
+    def parse_endpoint_macros(lines : Array(String), path : String, endpoints : Array(Endpoint), include_callee : Bool)
       lines.each_with_index do |line, index|
         # Match #[endpoint(method = Get, path = "/path")]
         if line.strip.starts_with?("#[endpoint(")
@@ -78,6 +80,7 @@ module Analyzer::Rust
 
           extract_path_params(route_path, endpoint)
           extract_function_params(lines, index + 1, endpoint)
+          attach_next_function_callees(lines, index + 1, path, endpoint) if include_callee
 
           endpoints << endpoint
         end
@@ -94,20 +97,19 @@ module Analyzer::Rust
 
     # Look for handler function definition and extract params from its signature/body
     def extract_handler_params(lines : Array(String), handler_name : String, endpoint : Endpoint)
-      lines.each_with_index do |line, index|
-        if line.includes?("fn #{handler_name}")
-          extract_function_params(lines, index, endpoint)
-          break
-        end
-      end
+      function_index = find_handler_function_index(lines, handler_name)
+      extract_function_params(lines, function_index, endpoint) if function_index
     end
 
     # Extract parameters from function signature and body
     def extract_function_params(lines : Array(String), start_index : Int32, endpoint : Endpoint)
+      function_index = find_next_function_index(lines, start_index)
+      return unless function_index
+
       brace_count = 0
       seen_opening_brace = false
 
-      (start_index...[start_index + 30, lines.size].min).each do |i|
+      (function_index...[function_index + 30, lines.size].min).each do |i|
         line = lines[i]
 
         brace_count += line.count('{')
@@ -149,13 +151,42 @@ module Analyzer::Rust
           end
         end
 
-        if seen_opening_brace && brace_count == 0 && i > start_index
+        if seen_opening_brace && brace_count == 0 && i > function_index
           break
         end
+      end
+    end
 
-        if i > start_index && line.strip.starts_with?("#[")
-          break
-        end
+    private def attach_handler_callees(lines : Array(String), handler_name : String, path : String, endpoint : Endpoint)
+      function_index = find_handler_function_index(lines, handler_name)
+      attach_function_callees(lines, function_index, path, endpoint) if function_index
+    end
+
+    private def attach_next_function_callees(lines : Array(String), start_index : Int32, path : String, endpoint : Endpoint)
+      function_index = find_next_function_index(lines, start_index)
+      attach_function_callees(lines, function_index, path, endpoint) if function_index
+    end
+
+    private def attach_function_callees(lines : Array(String), function_index : Int32, path : String, endpoint : Endpoint)
+      function_body = extract_rust_function_body(lines, function_index)
+      return unless function_body
+
+      body, body_start_line = function_body
+      callees = Noir::RustCalleeExtractor.callees_for_body(body, path, body_start_line)
+      attach_rust_callees(endpoint, callees)
+    end
+
+    private def find_handler_function_index(lines : Array(String), handler_name : String) : Int32?
+      lines.each_with_index do |line, index|
+        stripped = Noir::RustCalleeExtractor.strip_comment(line).strip
+        return index if stripped.match(/^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+#{handler_name}\b/)
+      end
+    end
+
+    private def find_next_function_index(lines : Array(String), start_index : Int32) : Int32?
+      (start_index...[start_index + 30, lines.size].min).each do |index|
+        stripped = Noir::RustCalleeExtractor.strip_comment(lines[index]).strip
+        return index if stripped.match(/^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+[A-Za-z_]\w*\b/)
       end
     end
   end
