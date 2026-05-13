@@ -69,6 +69,15 @@ module Noir::JavaCalleeExtractor
   def callees_in_lambda(body : LibTreeSitter::TSNode,
                         source : String,
                         file_path : String) : Array(Tuple(String, String, Int32))
+    callees_in_body(body, source, file_path)
+  end
+
+  # Generic body walker for analyzers/extractors that already have the
+  # handler method/lambda body node. Returns every 1-hop
+  # `method_invocation` callee inside that body.
+  def callees_in_body(body : LibTreeSitter::TSNode,
+                      source : String,
+                      file_path : String) : Array(Tuple(String, String, Int32))
     sink = [] of Tuple(String, String, Int32)
     walk(body) do |n|
       next unless Noir::TreeSitter.node_type(n) == "method_invocation"

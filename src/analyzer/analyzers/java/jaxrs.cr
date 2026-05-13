@@ -36,7 +36,11 @@ module Analyzer::Java
         Noir::TreeSitterJaxRsExtractor.extract_routes(content, dto_index, bean_index).each do |route|
           line = route.line + 1
           details = Details.new(PathInfo.new(path, line))
-          @result << Endpoint.new(route.path, route.verb, route.params, details)
+          endpoint = Endpoint.new(route.path, route.verb, route.params, details)
+          route.callees.each do |name, callee_line|
+            endpoint.push_callee(Callee.new(name, path: path, line: callee_line))
+          end
+          @result << endpoint
         end
       end
 

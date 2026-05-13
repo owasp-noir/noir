@@ -1,5 +1,6 @@
 require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
+require "./java_callee_extractor"
 require "./java_parameter_extractor_ts"
 require "./import_graph"
 
@@ -80,9 +81,10 @@ module Noir
       getter line : Int32
       getter parameter_format : String?
       getter params : Array(Param)
+      getter callees : Array(Tuple(String, Int32))
 
       def initialize(@verb, @path, @class_name, @method_name, @line,
-                     @parameter_format, @params)
+                     @parameter_format, @params, @callees)
       end
     end
 
@@ -95,9 +97,21 @@ module Noir
                        bean_index : Hash(String, Array(Param)) = {} of String => Array(Param)) : Array(Route)
       routes = [] of Route
       Noir::TreeSitter.parse_java(source) do |root|
-        walk_classes(root) do |decl|
-          collect_class_routes(decl, source, dto_index, bean_index, routes)
-        end
+        routes.concat(extract_routes_from(root, source, dto_index, bean_index))
+      end
+      routes
+    end
+
+    # Same as `extract_routes`, but reuses a Java tree-sitter root the
+    # caller already parsed. Analyzer adapters use this when they also
+    # need to attach method-body callees without reparsing the file.
+    def extract_routes_from(root : LibTreeSitter::TSNode,
+                            source : String,
+                            dto_index : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)) = {} of String => Array(TreeSitterJavaParameterExtractor::FieldInfo),
+                            bean_index : Hash(String, Array(Param)) = {} of String => Array(Param)) : Array(Route)
+      routes = [] of Route
+      walk_classes(root) do |decl|
+        collect_class_routes(decl, source, dto_index, bean_index, routes)
       end
       routes
     end
@@ -174,8 +188,19 @@ module Noir
           dto_index, bean_index)
 
         line = Noir::TreeSitter.node_start_row(verb_node)
+        callees = collect_method_callees(member, source)
         routes << Route.new(verb, full_path, class_name, method_name, line,
-          method_consumes, params)
+          method_consumes, params, callees)
+      end
+    end
+
+    private def collect_method_callees(method : LibTreeSitter::TSNode,
+                                       source : String) : Array(Tuple(String, Int32))
+      body = Noir::TreeSitter.field(method, "body")
+      return [] of Tuple(String, Int32) unless body
+
+      Noir::JavaCalleeExtractor.callees_in_body(body, source, "").map do |name, _path, line|
+        {name, line}
       end
     end
 
