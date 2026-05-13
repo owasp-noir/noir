@@ -47,4 +47,46 @@ describe Noir::JSCalleeExtractor do
       {"this.usersService.create", 22},
     ])
   end
+
+  it "extracts callees from exported handlers using the AST" do
+    source = <<-JS
+      export const GET = async ({ url }) => {
+        const marker = "}"
+        // }
+        return json(loadUsers(marker))
+      }
+
+      const remove = async ({ params }) => json(deleteUser(params.id))
+      export { remove as DELETE }
+      JS
+
+    get_callees = Noir::JSCalleeExtractor.callees_for_exported_function(source, "routes/+server.ts", "GET")
+    get_callees.map { |name, _, line| {name, line} }.should eq([
+      {"json", 4},
+      {"loadUsers", 4},
+    ])
+
+    delete_callees = Noir::JSCalleeExtractor.callees_for_exported_function(source, "routes/+server.ts", "DELETE")
+    delete_callees.map { |name, _, line| {name, line} }.should eq([
+      {"json", 7},
+      {"deleteUser", 7},
+    ])
+  end
+
+  it "extracts callees from typed exported arrow handlers" do
+    source = <<-TS
+      import { type RequestHandler } from '@sveltejs/kit'
+
+      export const POST: RequestHandler = async ({ request }) => {
+        const body = await request.json()
+        await serviceFactory().create(body)
+      }
+      TS
+
+    callees = Noir::JSCalleeExtractor.callees_for_exported_function(source, "routes/+server.ts", "POST")
+    callees.map { |name, _, line| {name, line} }.should eq([
+      {"request.json", 4},
+      {"serviceFactory().create", 5},
+    ])
+  end
 end

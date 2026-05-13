@@ -1,4 +1,5 @@
 require "../../engines/javascript_engine"
+require "../../../miniparsers/js_callee_extractor"
 
 module Analyzer::Javascript
   # SvelteKit is a filesystem-routed framework. Routes live under
@@ -40,6 +41,7 @@ module Analyzer::Javascript
     def analyze
       result = [] of Endpoint
       mutex = Mutex.new
+      include_callee = any_to_bool(@options["include_callee"]?)
 
       parallel_file_scan(EXTENSIONS) do |path|
         idx = path.index("/src/routes/")
@@ -52,7 +54,7 @@ module Analyzer::Javascript
         if page_file?(leaf)
           analyze_page(path, relative, result, mutex)
         elsif server_file?(leaf)
-          analyze_api_route(path, relative, result, mutex)
+          analyze_api_route(path, relative, result, mutex, include_callee)
         end
       end
 
@@ -82,7 +84,7 @@ module Analyzer::Javascript
       mutex.synchronize { result << endpoint }
     end
 
-    private def analyze_api_route(path : String, relative : String, result : Array(Endpoint), mutex : Mutex)
+    private def analyze_api_route(path : String, relative : String, result : Array(Endpoint), mutex : Mutex, include_callee : Bool)
       url = url_for(relative)
       content = begin
         read_file_content(path)
@@ -92,10 +94,14 @@ module Analyzer::Javascript
       end
 
       methods = detect_api_methods(content)
+      endpoints = methods.map do |verb|
+        endpoint = build_endpoint(url, verb, path)
+        attach_callees(endpoint, path, content, verb) if include_callee
+        endpoint
+      end
+
       mutex.synchronize do
-        methods.each do |verb|
-          result << build_endpoint(url, verb, path)
-        end
+        endpoints.each { |endpoint| result << endpoint }
       end
     end
 
@@ -147,6 +153,12 @@ module Analyzer::Javascript
         end
       end
       explicit.empty? ? FALLBACK_API_METHODS : explicit
+    end
+
+    private def attach_callees(endpoint : Endpoint, path : String, content : String, verb : String)
+      Noir::JSCalleeExtractor.callees_for_exported_function(content, path, verb).each do |name, callee_path, line|
+        endpoint.push_callee(Callee.new(name, path: callee_path, line: line))
+      end
     end
   end
 end
