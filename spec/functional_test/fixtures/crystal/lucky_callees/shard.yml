@@ -1,0 +1,12 @@
+name: lucky_callees
+version: 0.1.0
+
+targets:
+  lucky_callees:
+    main: src/app.cr
+
+dependencies:
+  lucky:
+    github: luckyframework/lucky
+
+crystal: 1.8.2
