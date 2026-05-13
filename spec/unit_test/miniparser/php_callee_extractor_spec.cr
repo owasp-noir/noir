@@ -63,4 +63,32 @@ describe Noir::PhpCalleeExtractor do
       {"\\App\\Container::$request->headers->get", 41},
     ])
   end
+
+  it "handles namespaced type hints in closure declarations" do
+    body = <<-'PHP'
+      $app->group('/api', static function (\Slim\Routing\RouteCollectorProxy $group) use ($app): void {
+        Yii::$app->request->get('page');
+      });
+      PHP
+
+    callees = Noir::PhpCalleeExtractor.callees_for_body(body, "index.php", 50)
+    callees.map { |name, _, line| {name, line} }.should eq([
+      {"$app->group", 50},
+      {"Yii::$app->request->get", 51},
+    ])
+  end
+
+  it "skips named function declarations" do
+    body = <<-PHP
+      function sanitize_name($value) {
+      }
+
+      sanitize_name($payload);
+      PHP
+
+    callees = Noir::PhpCalleeExtractor.callees_for_body(body, "index.php", 60)
+    callees.map { |name, _, line| {name, line} }.should eq([
+      {"sanitize_name", 63},
+    ])
+  end
 end
