@@ -65,7 +65,16 @@ module Analyzer::Java
       end
 
       details = Details.new(PathInfo.new(path, route.line + 1))
-      Endpoint.new(route.path, route.verb, params, details)
+      endpoint = Endpoint.new(route.path, route.verb, params, details)
+
+      # 1-hop callees out of the handler lambda body. The Route
+      # extractor doesn't carry the file path, so attach it here.
+      route.callees.each do |entry|
+        name, line = entry
+        endpoint.push_callee(Callee.new(name, path: path, line: line))
+      end
+
+      endpoint
     end
   end
 end

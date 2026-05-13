@@ -1,5 +1,6 @@
 require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
+require "./kotlin_callee_extractor"
 
 module Noir
   # Tree-sitter-backed http4k extractor.
@@ -60,9 +61,14 @@ module Noir
       getter query_params : Array(String)
       getter header_params : Array(String)
       getter form_params : Array(String)
+      # 1-hop callees out of the handler expression. `path` is filled
+      # in by the analyzer (the route extractor doesn't carry the
+      # file path); each tuple is (callee_name, line_1_based).
+      getter callees : Array(Tuple(String, Int32))
 
       def initialize(@verb, @path, @line, @has_body,
-                     @query_params, @header_params, @form_params)
+                     @query_params, @header_params, @form_params,
+                     @callees)
       end
     end
 
@@ -133,7 +139,18 @@ module Noir
           end
         end
 
-        routes << Route.new(verb, full, line, has_body, query, header, form)
+        # http4k's routing idiom is `"/x" bind GET to handler`, not
+        # `get { ... }` — there's no Ktor-style nested routing DSL
+        # inside a handler body, so the routing-skip filter is off
+        # to avoid silently dropping real handler calls named `get`,
+        # `post`, etc.
+        callees = [] of Tuple(String, Int32)
+        Noir::KotlinCalleeExtractor.callees_in_lambda(rhs, source, "", skip_routing: false).each do |entry|
+          name, _path, line_no = entry
+          callees << {name, line_no}
+        end
+
+        routes << Route.new(verb, full, line, has_body, query, header, form, callees)
         true
       when "bind"
         return false unless Noir::TreeSitter.node_type(lhs) == "string_literal"
