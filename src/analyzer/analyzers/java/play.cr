@@ -1,9 +1,10 @@
 require "../../../models/analyzer"
+require "../../../miniparsers/java_callee_extractor"
 
 module Analyzer::Java
   class Play < Analyzer
     # Stores parsed controller methods with their parameters
-    alias ControllerMethod = NamedTuple(headers: Array(String), cookies: Array(String), body_type: String?)
+    alias ControllerMethod = NamedTuple(headers: Array(String), cookies: Array(String), body_type: String?, callees: Array(Callee))
 
     def analyze
       file_list = all_files()
@@ -46,63 +47,61 @@ module Analyzer::Java
           package_name = pkg_match[1]
         end
 
-        # Find all classes in the file and their methods
-        # Match class definitions: class ClassName extends/implements ... {
-        class_regex = /(?:public\s+)?class\s+(\w+)(?:\s+extends\s+\w+)?(?:\s+implements\s+[\w,\s]+)?\s*\{/
-        class_matches = content.scan(class_regex)
+        Noir::TreeSitter.parse_java(content) do |root|
+          walk_class_declarations(root) do |class_decl|
+            class_name = class_name_of(class_decl, content)
+            next if class_name.empty?
 
-        class_matches.each do |class_match|
-          class_name = class_match[1]
-          next if class_name.empty?
+            class_body = Noir::TreeSitter.field(class_decl, "body")
+            next unless class_body
 
-          # Find the class body - need to find where this class starts and ends
-          class_start_idx = content.index(/(?:public\s+)?class\s+#{Regex.escape(class_name)}/)
-          next unless class_start_idx
+            Noir::TreeSitter.each_named_child(class_body) do |method|
+              next unless Noir::TreeSitter.node_type(method) == "method_declaration"
+              method_name = method_name_of(method, content)
+              next if method_name.empty?
+              next unless play_action_method?(method, method_name, content)
+              full_method_name = package_name.empty? ? "#{class_name}.#{method_name}" : "#{package_name}.#{class_name}.#{method_name}"
 
-          # Find methods within this class
-          class_content = content[class_start_idx..]
+              method_body_node = Noir::TreeSitter.field(method, "body")
+              next unless method_body_node
+              method_body = Noir::TreeSitter.node_text(method_body_node, content)
 
-          # Match method signatures: public Result methodName() or public Result methodName(params)
-          method_regex = /(?:public|protected)\s+(?:Result|CompletionStage<Result>)\s+(\w+)\s*\([^)]*\)\s*\{/
-          class_content.scan(method_regex) do |match|
-            method_name = match[1]
-            full_method_name = package_name.empty? ? "#{class_name}.#{method_name}" : "#{package_name}.#{class_name}.#{method_name}"
+              headers = [] of String
+              cookies = [] of String
+              body_type : String? = nil
 
-            # Find the method body
-            method_body = extract_method_body(class_content, method_name)
-            next if method_body.empty?
+              # Extract headers: request().header("Header-Name") or request().getHeaders().get("Header-Name")
+              method_body.scan(/request\(\)\s*\.\s*(?:header|getHeaders\(\)\s*\.\s*get)\s*\(\s*["']([^"']+)["']\s*\)/) do |header_match|
+                headers << header_match[1] unless headers.includes?(header_match[1])
+              end
 
-            headers = [] of String
-            cookies = [] of String
-            body_type : String? = nil
+              # Also match Http.Context.current().request().header("Header-Name")
+              method_body.scan(/(?:Http\s*\.\s*)?(?:Context\s*\.\s*current\(\)\s*\.\s*)?request\(\)\s*\.\s*header\s*\(\s*["']([^"']+)["']\s*\)/) do |header_match|
+                headers << header_match[1] unless headers.includes?(header_match[1])
+              end
 
-            # Extract headers: request().header("Header-Name") or request().getHeaders().get("Header-Name")
-            method_body.scan(/request\(\)\s*\.\s*(?:header|getHeaders\(\)\s*\.\s*get)\s*\(\s*["']([^"']+)["']\s*\)/) do |header_match|
-              headers << header_match[1] unless headers.includes?(header_match[1])
+              # Extract cookies: request().cookie("cookie-name") or request().cookies().get("cookie-name")
+              method_body.scan(/request\(\)\s*\.\s*(?:cookie|cookies\(\)\s*\.\s*get)\s*\(\s*["']([^"']+)["']\s*\)/) do |cookie_match|
+                cookies << cookie_match[1] unless cookies.includes?(cookie_match[1])
+              end
+
+              # Extract body type
+              if method_body.match(/request\(\)\s*\.\s*body\(\)\s*\.\s*(?:asJson|as\(\s*JsonNode)/)
+                body_type = "json"
+              elsif method_body.match(/request\(\)\s*\.\s*body\(\)\s*\.\s*(?:asFormUrlEncoded|asMultipartFormData)/)
+                body_type = "form"
+              elsif method_body.match(/request\(\)\s*\.\s*body\(\)\s*\.\s*asXml/)
+                body_type = "xml"
+              elsif method_body.match(/request\(\)\s*\.\s*body\(\)\s*\.\s*as(?:Text|Raw|Bytes)/)
+                body_type = "body"
+              end
+
+              callees = Noir::JavaCalleeExtractor.callees_in_body(method_body_node, content, path).map do |(name, callee_path, callee_line)|
+                Callee.new(name, path: callee_path, line: callee_line)
+              end
+
+              controller_methods[full_method_name] = {headers: headers, cookies: cookies, body_type: body_type, callees: callees}
             end
-
-            # Also match Http.Context.current().request().header("Header-Name")
-            method_body.scan(/(?:Http\s*\.\s*)?(?:Context\s*\.\s*current\(\)\s*\.\s*)?request\(\)\s*\.\s*header\s*\(\s*["']([^"']+)["']\s*\)/) do |header_match|
-              headers << header_match[1] unless headers.includes?(header_match[1])
-            end
-
-            # Extract cookies: request().cookie("cookie-name") or request().cookies().get("cookie-name")
-            method_body.scan(/request\(\)\s*\.\s*(?:cookie|cookies\(\)\s*\.\s*get)\s*\(\s*["']([^"']+)["']\s*\)/) do |cookie_match|
-              cookies << cookie_match[1] unless cookies.includes?(cookie_match[1])
-            end
-
-            # Extract body type
-            if method_body.match(/request\(\)\s*\.\s*body\(\)\s*\.\s*(?:asJson|as\(\s*JsonNode)/)
-              body_type = "json"
-            elsif method_body.match(/request\(\)\s*\.\s*body\(\)\s*\.\s*(?:asFormUrlEncoded|asMultipartFormData)/)
-              body_type = "form"
-            elsif method_body.match(/request\(\)\s*\.\s*body\(\)\s*\.\s*asXml/)
-              body_type = "xml"
-            elsif method_body.match(/request\(\)\s*\.\s*body\(\)\s*\.\s*as(?:Text|Raw|Bytes)/)
-              body_type = "body"
-            end
-
-            controller_methods[full_method_name] = {headers: headers, cookies: cookies, body_type: body_type}
           end
         end
       end
@@ -110,30 +109,27 @@ module Analyzer::Java
       controller_methods
     end
 
-    # Extract method body from content
-    private def extract_method_body(content : String, method_name : String) : String
-      # Find method start
-      method_start_regex = /(?:public|protected)\s+(?:Result|CompletionStage<Result>)\s+#{Regex.escape(method_name)}\s*\([^)]*\)\s*\{/
-      match = content.match(method_start_regex)
-      return "" unless match
-
-      start_index = match.end
-      return "" unless start_index
-
-      # Find matching closing brace
-      brace_count = 1
-      end_index = start_index
-      while end_index < content.size && brace_count > 0
-        case content[end_index]
-        when '{'
-          brace_count += 1
-        when '}'
-          brace_count -= 1
-        end
-        end_index += 1
+    private def walk_class_declarations(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
+      ty = Noir::TreeSitter.node_type(node)
+      block.call(node) if ty == "class_declaration"
+      Noir::TreeSitter.each_named_child(node) do |child|
+        walk_class_declarations(child, &block)
       end
+    end
 
-      content[start_index...end_index - 1]
+    private def class_name_of(class_decl : LibTreeSitter::TSNode, content : String) : String
+      name = Noir::TreeSitter.field(class_decl, "name")
+      name ? Noir::TreeSitter.node_text(name, content) : ""
+    end
+
+    private def method_name_of(method : LibTreeSitter::TSNode, content : String) : String
+      name = Noir::TreeSitter.field(method, "name")
+      name ? Noir::TreeSitter.node_text(name, content) : ""
+    end
+
+    private def play_action_method?(method : LibTreeSitter::TSNode, method_name : String, content : String) : Bool
+      method_source = Noir::TreeSitter.node_text(method, content)
+      !!method_source.match(/(?:public|protected)\s+(?:Result|CompletionStage<Result>)\s+#{Regex.escape(method_name)}\s*\(/)
     end
 
     # Process a Play routes file
@@ -258,6 +254,10 @@ module Analyzer::Java
           unless endpoint.params.any? { |p| p.name == "body" }
             endpoint.push_param(Param.new("body", "", body_type))
           end
+        end
+
+        method_info[:callees].each do |callee|
+          endpoint.push_callee(callee)
         end
       end
     end
