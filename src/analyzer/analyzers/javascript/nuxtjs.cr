@@ -5,17 +5,18 @@ module Analyzer::Javascript
     def analyze
       result = [] of Endpoint
       mutex = Mutex.new
+      include_callee = any_to_bool(@options["include_callee"]?)
 
       parallel_file_scan([".js", ".ts", ".mjs", ".mts"]) do |path|
         # Focus on server/api and server/routes directories for Nuxt 3
         next unless path.includes?("/server/api/") || path.includes?("/server/routes/")
-        analyze_nuxt_file(path, result, mutex)
+        analyze_nuxt_file(path, result, mutex, include_callee)
       end
 
       result
     end
 
-    private def analyze_nuxt_file(path : String, result : Array(Endpoint), mutex : Mutex)
+    private def analyze_nuxt_file(path : String, result : Array(Endpoint), mutex : Mutex, include_callee : Bool)
       # Extract endpoint from file path
       # server/api/hello.ts -> /api/hello
       # server/api/users/[id].ts -> /api/users/:id
@@ -78,6 +79,7 @@ module Analyzer::Javascript
       # Read file content to extract parameters
       begin
         content = File.read(path, encoding: "utf-8", invalid: :skip)
+        callees = include_callee ? Noir::JSCalleeExtractor.callees_for_default_event_handler(content, path, language: javascript_source_language(path)) : [] of Noir::JSCalleeExtractor::Entry
 
         methods.each do |method|
           endpoint = Endpoint.new(url, method)
@@ -135,6 +137,8 @@ module Analyzer::Javascript
             param = Param.new(cookie_name, "", "cookie")
             endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == cookie_name && p.param_type == "cookie" }
           end
+
+          attach_js_callees(endpoint, callees) if include_callee
 
           mutex.synchronize do
             existing_idx = result.index { |e| e.url == url && e.method == method }

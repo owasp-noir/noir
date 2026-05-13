@@ -25,6 +25,12 @@ module Noir::JSCalleeExtractor
     "switch",
     "while",
   }
+  EVENT_HANDLER_CALLS = Set{
+    "defineEventHandler",
+    "eventHandler",
+    "defineCachedEventHandler",
+    "cachedEventHandler",
+  }
 
   alias Entry = Tuple(String, String, Int32)
 
@@ -64,10 +70,28 @@ module Noir::JSCalleeExtractor
   def callees_for_exported_function(source : String,
                                     file_path : String,
                                     export_name : String) : Array(Entry)
-    source_for_ast = normalize_exported_handler_source(source)
+    source_for_ast = normalize_handler_source(source)
     sink = [] of Entry
     Noir::TreeSitter.parse_javascript(source_for_ast) do |root|
       if handler = exported_handler(root, root, source_for_ast, export_name, 0)
+        walk_callees(handler_body(handler), source_for_ast, file_path, sink, 0)
+      end
+    end
+
+    dedup_entries(sink)
+  rescue
+    [] of Entry
+  end
+
+  def callees_for_default_event_handler(source : String,
+                                        file_path : String,
+                                        *,
+                                        language : Symbol = :javascript) : Array(Entry)
+    source_for_ast = normalize_handler_source(source)
+    event_handler_calls = event_handler_call_names(source_for_ast)
+    sink = [] of Entry
+    Noir::TreeSitter.parse_javascript(source_for_ast) do |root|
+      if handler = exported_event_handler(root, root, source_for_ast, event_handler_calls, 0)
         walk_callees(handler_body(handler), source_for_ast, file_path, sink, 0)
       end
     end
@@ -154,12 +178,16 @@ module Noir::JSCalleeExtractor
     sink
   end
 
-  private def normalize_exported_handler_source(source : String) : String
+  private def normalize_handler_source(source : String) : String
     # The vendored JavaScript grammar still exposes useful nodes for many
     # TypeScript files, but `const GET: RequestHandler = ...` makes the
     # variable name parse as the type. Strip same-line annotations while
     # preserving line numbers so AST row-based callee locations stay valid.
-    source.gsub(/(\b(?:export\s+)?(?:const|let|var)\s+[A-Za-z_$][\w$]*)\s*:\s*[^=\n]+=/, "\\1 =")
+    source
+      .gsub(/(\b(?:export\s+)?(?:const|let|var)\s+[A-Za-z_$][\w$]*)\s*:\s*[^=\n]+=/, "\\1 =")
+      .gsub(/([,(]\s*[A-Za-z_$][\w$]*)\s*:\s*(?:\{[^}\n]*\}|[^,\)=]+)(?=[,\)])/, "\\1")
+      .gsub(/\)\s*:\s*(?:\{[^}\n]*\}|[^=\n]+)=>/, ") =>")
+      .gsub(/\)\s*:\s*(?:\{[^}\n]*\}|[^{\n]+){/, ") {")
   end
 
   private def exported_handler(root : LibTreeSitter::TSNode,
@@ -258,6 +286,199 @@ module Noir::JSCalleeExtractor
         end
       end
     end
+  end
+
+  private def exported_event_handler(root : LibTreeSitter::TSNode,
+                                     node : LibTreeSitter::TSNode,
+                                     source : String,
+                                     event_handler_calls : Set(String),
+                                     depth : Int32) : LibTreeSitter::TSNode?
+    return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+
+    if Noir::TreeSitter.node_type(node) == "export_statement"
+      if value = Noir::TreeSitter.field(node, "value")
+        if handler = event_handler_from_default_value(root, value, source, event_handler_calls)
+          return handler
+        end
+      elsif default_export?(node, source)
+        if declaration = Noir::TreeSitter.field(node, "declaration")
+          return declaration if handler_node?(declaration)
+        end
+      elsif local_name = export_clause_local_name(node, source, "default")
+        if handler = local_default_event_handler(root, source, local_name, event_handler_calls)
+          return handler
+        end
+      end
+    end
+
+    Noir::TreeSitter.each_named_child(node) do |child|
+      if handler = exported_event_handler(root, child, source, event_handler_calls, depth + 1)
+        return handler
+      end
+    end
+  end
+
+  private def event_handler_from_default_value(root : LibTreeSitter::TSNode,
+                                               node : LibTreeSitter::TSNode,
+                                               source : String,
+                                               event_handler_calls : Set(String)) : LibTreeSitter::TSNode?
+    return node if handler_node?(node)
+
+    if Noir::TreeSitter.node_type(node) == "identifier"
+      return local_default_event_handler(root, source, Noir::TreeSitter.node_text(node, source), event_handler_calls)
+    end
+
+    event_handler_from_wrapper_call(root, node, source, event_handler_calls, 0)
+  end
+
+  private def local_default_event_handler(root : LibTreeSitter::TSNode,
+                                          source : String,
+                                          name : String,
+                                          event_handler_calls : Set(String)) : LibTreeSitter::TSNode?
+    local_wrapped_event_handler(root, root, source, name, event_handler_calls, 0) ||
+      local_callable_handler(root, source, name, 0)
+  end
+
+  private def local_wrapped_event_handler(root : LibTreeSitter::TSNode,
+                                          node : LibTreeSitter::TSNode,
+                                          source : String,
+                                          name : String,
+                                          event_handler_calls : Set(String),
+                                          depth : Int32) : LibTreeSitter::TSNode?
+    return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+
+    if Noir::TreeSitter.node_type(node) == "variable_declarator"
+      node_name = Noir::TreeSitter.field(node, "name")
+      if node_name && Noir::TreeSitter.node_text(node_name, source) == name
+        value = Noir::TreeSitter.field(node, "value")
+        return event_handler_from_wrapper_call(root, value, source, event_handler_calls, 0) if value
+      end
+    end
+
+    Noir::TreeSitter.each_named_child(node) do |child|
+      if handler = local_wrapped_event_handler(root, child, source, name, event_handler_calls, depth + 1)
+        return handler
+      end
+    end
+  end
+
+  private def event_handler_from_wrapper_call(root : LibTreeSitter::TSNode,
+                                              node : LibTreeSitter::TSNode,
+                                              source : String,
+                                              event_handler_calls : Set(String),
+                                              depth : Int32) : LibTreeSitter::TSNode?
+    return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+
+    if Noir::TreeSitter.node_type(node) == "call_expression"
+      name = callee_text(node, source)
+      if event_handler_call?(name, event_handler_calls)
+        args = arguments_node(node)
+        if args
+          Noir::TreeSitter.each_named_child(args) do |arg|
+            if handler = event_handler_from_arg(root, arg, source, event_handler_calls, depth + 1)
+              return handler
+            end
+          end
+        end
+      end
+    end
+
+    if Noir::TreeSitter.node_type(node) == "parenthesized_expression" || Noir::TreeSitter.node_type(node) == "sequence_expression"
+      Noir::TreeSitter.each_named_child(node) do |child|
+        if handler = event_handler_from_wrapper_call(root, child, source, event_handler_calls, depth + 1)
+          return handler
+        end
+      end
+    end
+  end
+
+  private def event_handler_from_arg(root : LibTreeSitter::TSNode,
+                                     node : LibTreeSitter::TSNode,
+                                     source : String,
+                                     event_handler_calls : Set(String),
+                                     depth : Int32) : LibTreeSitter::TSNode?
+    return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+    return node if handler_node?(node)
+
+    if Noir::TreeSitter.node_type(node) == "identifier"
+      return local_callable_handler(root, source, Noir::TreeSitter.node_text(node, source), 0)
+    end
+
+    if handler = event_handler_from_wrapper_call(root, node, source, event_handler_calls, depth + 1)
+      return handler
+    end
+
+    if Noir::TreeSitter.node_type(node) == "parenthesized_expression" || Noir::TreeSitter.node_type(node) == "sequence_expression"
+      Noir::TreeSitter.each_named_child(node) do |child|
+        if handler = event_handler_from_arg(root, child, source, event_handler_calls, depth + 1)
+          return handler
+        end
+      end
+    end
+  end
+
+  private def local_callable_handler(node : LibTreeSitter::TSNode,
+                                     source : String,
+                                     name : String,
+                                     depth : Int32) : LibTreeSitter::TSNode?
+    return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+
+    if handler_node?(node)
+      node_name = Noir::TreeSitter.field(node, "name")
+      return node if node_name && Noir::TreeSitter.node_text(node_name, source) == name
+    end
+
+    if Noir::TreeSitter.node_type(node) == "variable_declarator"
+      node_name = Noir::TreeSitter.field(node, "name")
+      if node_name && Noir::TreeSitter.node_text(node_name, source) == name
+        value = Noir::TreeSitter.field(node, "value")
+        return value if value && handler_node?(value)
+      end
+    end
+
+    Noir::TreeSitter.each_named_child(node) do |child|
+      if handler = local_callable_handler(child, source, name, depth + 1)
+        return handler
+      end
+    end
+  end
+
+  private def event_handler_call_names(source : String) : Set(String)
+    names = EVENT_HANDLER_CALLS.dup
+
+    source.scan(/import\s*\{([^}]+)\}\s*from\s*['"][^'"]+['"]/) do |match|
+      match[1].split(",").each do |specifier|
+        parts = specifier.strip.split(/\s+as\s+/)
+        imported = parts[0]?.try &.strip
+        local = parts[1]?.try &.strip
+        names.add(local) if imported && local && EVENT_HANDLER_CALLS.includes?(imported)
+      end
+    end
+
+    loop do
+      size = names.size
+      alternation = names.map { |name| Regex.escape(name) }.join("|")
+      source.scan(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:[A-Za-z_$][\w$]*\.)?(?:#{alternation})\b/) do |match|
+        names.add(match[1])
+      end
+      break if names.size == size
+    end
+
+    names
+  end
+
+  private def event_handler_call?(name : String, event_handler_calls : Set(String)) : Bool
+    return true if event_handler_calls.includes?(name)
+
+    if dot = name.rindex('.')
+      event_handler_calls.includes?(name[(dot + 1)..-1])
+    else
+      false
+    end
+  end
+
+  private def default_export?(node : LibTreeSitter::TSNode, source : String) : Bool
+    Noir::TreeSitter.node_text(node, source).matches?(/\Aexport\s+default\b/)
   end
 
   private def handler_body(handler : LibTreeSitter::TSNode) : LibTreeSitter::TSNode

@@ -89,4 +89,98 @@ describe Noir::JSCalleeExtractor do
       {"serviceFactory().create", 5},
     ])
   end
+
+  it "extracts callees from default Nitro/Nuxt event handlers" do
+    source = <<-TS
+      export default defineEventHandler((event: { foo: string, bar: number }): { ok: boolean, user: unknown } => {
+        const body = await readBody(event)
+        AuditLog.write(body)
+        return serializeUser(body)
+      })
+      TS
+
+    callees = Noir::JSCalleeExtractor.callees_for_default_event_handler(source, "server/api/users.post.ts", language: :typescript)
+    callees.map { |name, _, line| {name, line} }.should eq([
+      {"readBody", 2},
+      {"AuditLog.write", 3},
+      {"serializeUser", 4},
+    ])
+  end
+
+  it "extracts default event handlers through wrapper and handler aliases" do
+    source = <<-JS
+      import { defineEventHandler as h } from 'h3'
+
+      const load = (event) => send(loadUser(event))
+      const wrapped = h(load)
+      export default wrapped
+      JS
+
+    callees = Noir::JSCalleeExtractor.callees_for_default_event_handler(source, "server/api/users.get.ts")
+    callees.map { |name, _, line| {name, line} }.should eq([
+      {"send", 3},
+      {"loadUser", 3},
+    ])
+  end
+
+  it "extracts default event handlers from default export clauses" do
+    source = <<-JS
+      export const ignored = defineEventHandler(() => ignoredCall())
+
+      const handler = defineEventHandler((event) => {
+        return send(loadUser(event))
+      })
+
+      export { handler as default }
+      JS
+
+    callees = Noir::JSCalleeExtractor.callees_for_default_event_handler(source, "server/api/users.get.ts")
+    callees.map { |name, _, line| {name, line} }.should eq([
+      {"send", 4},
+      {"loadUser", 4},
+    ])
+  end
+
+  it "extracts concise default event handler arrows" do
+    source = <<-JS
+      export default defineEventHandler(event => send(loadUser(event)))
+      JS
+
+    callees = Noir::JSCalleeExtractor.callees_for_default_event_handler(source, "server/api/users.get.ts")
+    callees.map { |name, _, line| {name, line} }.should eq([
+      {"send", 1},
+      {"loadUser", 1},
+    ])
+  end
+
+  it "detects event handler aliases from property assignments" do
+    source = <<-JS
+      const wrap = h3.defineEventHandler
+      export default wrap((event) => send(loadUser(event)))
+      JS
+
+    callees = Noir::JSCalleeExtractor.callees_for_default_event_handler(source, "server/api/users.get.ts")
+    callees.map { |name, _, line| {name, line} }.should eq([
+      {"send", 2},
+      {"loadUser", 2},
+    ])
+  end
+
+  it "extracts cached default event handlers but skips unrelated default exports" do
+    source = <<-JS
+      function handler(event) {
+        return send(loadUser(event))
+      }
+
+      export default defineCachedEventHandler(handler, { maxAge: 60 })
+      JS
+
+    callees = Noir::JSCalleeExtractor.callees_for_default_event_handler(source, "server/api/users.get.ts")
+    callees.map { |name, _, line| {name, line} }.should eq([
+      {"send", 2},
+      {"loadUser", 2},
+    ])
+
+    Noir::JSCalleeExtractor.callees_for_default_event_handler("export default { setup() { track() } }", "server/api/users.get.ts").should be_empty
+  end
 end
