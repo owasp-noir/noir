@@ -55,7 +55,7 @@ module Noir::RubyCalleeExtractor
     RESERVED.includes?(last)
   end
 
-  private def strip_comment(line : String) : String
+  def strip_comment(line : String) : String
     in_string = false
     escaped = false
     quote = '\0'

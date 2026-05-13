@@ -8,7 +8,7 @@ module Analyzer::Ruby
       parallel_file_scan do |path|
         next unless path.ends_with?(".rb") || path.ends_with?(".ru")
         File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-          lines = file.gets_to_end.lines
+          lines = file.each_line.to_a
           last_endpoint = Endpoint.new("", "")
           lines.each_with_index do |line, index|
             next unless line.valid_encoding?

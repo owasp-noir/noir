@@ -80,7 +80,7 @@ module Analyzer::Ruby
     protected def extract_ruby_do_block(lines : Array(String), start_index : Int32) : Tuple(String, Int32)?
       return if start_index >= lines.size
 
-      start_line = strip_ruby_inline_comment(lines[start_index]).strip
+      start_line = Noir::RubyCalleeExtractor.strip_comment(lines[start_index]).strip
       match = start_line.match(/\bdo\b(?:\s*\|[^|]*\|)?(.*)$/)
       return unless match
 
@@ -103,7 +103,7 @@ module Analyzer::Ruby
       index = start_index + 1
       while index < lines.size
         raw_body_line = lines[index]
-        body_line = strip_ruby_inline_comment(raw_body_line).strip
+        body_line = Noir::RubyCalleeExtractor.strip_comment(raw_body_line).strip
 
         if ruby_closes_block?(body_line)
           depth -= 1
@@ -123,38 +123,13 @@ module Analyzer::Ruby
 
     private def ruby_do_block_open_delta(line : String) : Int32
       return 0 if line.empty?
-      return 1 if line.match(/\bdo\b\s*(\|[^|]*\|)?\s*\z/)
-      return 1 if line.match(/^(if|unless|case|begin|while|until|for|class|module|def)\b/) && !line.match(/\bend\b/)
+      return 1 if line.match(/\bdo\b/) && !line.match(/\bend\b/)
+      return 1 if line.match(/(?:^|=[^=>])\s*(if|unless|case|begin|while|until|for|class|module|def)\b/) && !line.match(/\bend\b/)
       0
     end
 
     private def ruby_closes_block?(line : String) : Bool
       !!line.match(/^end\b/)
-    end
-
-    private def strip_ruby_inline_comment(line : String) : String
-      in_string = false
-      escaped = false
-      quote = '\0'
-
-      line.each_char_with_index do |char, index|
-        if in_string
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == quote
-            in_string = false
-          end
-        elsif char == '"' || char == '\''
-          in_string = true
-          quote = char
-        elsif char == '#'
-          return line[0, index]
-        end
-      end
-
-      line
     end
   end
 end

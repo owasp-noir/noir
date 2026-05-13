@@ -3,7 +3,8 @@ require 'sinatra'
 get '/users' do
   page = params['page']
   users = UserService.list(page)
-  AuditLog.write('list')
+  users.each do |user| AuditLog.write(user)
+  end
   json serialize_users(users)
 end
 
@@ -16,7 +17,10 @@ end
 get '/ping' do; head :ok; end
 
 get '/ready' do
-  if Health.ready?
-    json status_payload(Health.check)
+  status = if Health.ready?
+    Health.check
+  else
+    Health.down
   end
+  json status_payload(status)
 end
