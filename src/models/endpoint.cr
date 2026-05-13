@@ -122,13 +122,10 @@ struct Details
   property status_code : Int32?
   property technology : String?
 
-  # + New details types to be added in the future..
+  # New details types can be added in the future.
 
-  def initialize
-  end
-
-  def initialize(code_path : PathInfo)
-    @code_paths << code_path
+  def initialize(code_path : PathInfo? = nil)
+    @code_paths << code_path if code_path
   end
 
   def add_path(code_path : PathInfo)
