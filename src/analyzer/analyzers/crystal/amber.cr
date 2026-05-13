@@ -13,54 +13,123 @@ module Analyzer::Crystal
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
+      lines = [] of String
 
       File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        last_endpoint = Endpoint.new("", "")
-        file.each_line.with_index do |line, index|
-          endpoint = line_to_endpoint(line)
-          if endpoint.method != ""
-            details = Details.new(PathInfo.new(path, index + 1))
-            endpoint.details = details
-            endpoints << endpoint
-            last_endpoint = endpoint
+        file.each_line do |line|
+          lines << line
+        end
+      end
+
+      include_callee = any_to_bool(@options["include_callee"]?)
+      actions = include_callee ? collect_controller_actions(lines, path) : Hash(String, Array(Noir::CrystalCalleeExtractor::Entry)).new
+      last_endpoint = Endpoint.new("", "")
+
+      lines.each_with_index do |line, index|
+        endpoint = line_to_endpoint(line)
+        if endpoint.method != ""
+          details = Details.new(PathInfo.new(path, index + 1))
+          endpoint.details = details
+          attach_route_callees(endpoint, line, actions) if include_callee
+          endpoints << endpoint
+          last_endpoint = endpoint
+        end
+
+        param = line_to_param(line)
+        if param.name != ""
+          if last_endpoint.method != ""
+            last_endpoint.push_param(param)
           end
+        end
 
-          param = line_to_param(line)
-          if param.name != ""
-            if last_endpoint.method != ""
-              last_endpoint.push_param(param)
-            end
-          end
+        if line.includes?("serve_static false") || line.includes?("serve_static(false)")
+          @is_public = false
+        end
 
-          if line.includes?("serve_static false") || line.includes?("serve_static(false)")
-            @is_public = false
-          end
+        if line.includes?("public_folder")
+          begin
+            split = line.split("public_folder")
 
-          if line.includes?("public_folder")
-            begin
-              split = line.split("public_folder")
+            if split.size > 1
+              # Extract path more carefully handling quotes and spaces
+              match_data = split[1].match(/[=\(]\s*['"]?(.*?)['"]?\s*[\),]/)
+              public_folder = if match_data && match_data[1]?
+                                match_data[1].strip
+                              else
+                                # Fallback to the previous approach
+                                split[1].gsub("(", "").gsub(")", "").gsub(" ", "").gsub("\"", "").gsub("'", "")
+                              end
 
-              if split.size > 1
-                # Extract path more carefully handling quotes and spaces
-                match_data = split[1].match(/[=\(]\s*['"]?(.*?)['"]?\s*[\),]/)
-                public_folder = if match_data && match_data[1]?
-                                  match_data[1].strip
-                                else
-                                  # Fallback to the previous approach
-                                  split[1].gsub("(", "").gsub(")", "").gsub(" ", "").gsub("\"", "").gsub("'", "")
-                                end
-
-                if public_folder != ""
-                  @public_folders << public_folder
-                end
+              if public_folder != ""
+                @public_folders << public_folder
               end
-            rescue
             end
+          rescue
           end
         end
       end
 
       endpoints
+    end
+
+    private def collect_controller_actions(lines : Array(String), path : String) : Hash(String, Array(Noir::CrystalCalleeExtractor::Entry))
+      actions = Hash(String, Array(Noir::CrystalCalleeExtractor::Entry)).new
+      current_class = ""
+      class_depth = 0
+
+      lines.each_with_index do |line, index|
+        stripped = Noir::CrystalCalleeExtractor.strip_comment(line).strip
+        if class_match = stripped.match(/^class\s+([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)\b/)
+          current_class = class_match[1]
+          class_depth = 1
+          next
+        end
+
+        next if current_class.empty?
+        if stripped == "end" || stripped.starts_with?("end ")
+          class_depth -= 1
+          if class_depth <= 0
+            current_class = ""
+            class_depth = 0
+          end
+          next
+        end
+
+        if class_depth == 1 && (def_match = stripped.match(/^(?:(?:private|protected)\s+)?def\s+([A-Za-z_]\w*[!?=]?)/))
+          method_body = extract_crystal_def_block(lines, index)
+          if method_body
+            body, body_start_line = method_body
+            callees = Noir::CrystalCalleeExtractor.callees_for_body(body, path, body_start_line)
+            actions[controller_action_key(current_class, def_match[1])] = callees
+          end
+        end
+
+        class_depth += crystal_do_block_open_delta(stripped)
+      end
+
+      actions
+    end
+
+    private def attach_route_callees(endpoint : Endpoint,
+                                     line : String,
+                                     actions : Hash(String, Array(Noir::CrystalCalleeExtractor::Entry)))
+      route_target = extract_route_target(line)
+      return unless route_target
+
+      controller, action = route_target
+      if callees = actions[controller_action_key(controller, action)]?
+        attach_crystal_callees(endpoint, callees)
+      end
+    end
+
+    private def extract_route_target(line : String) : Tuple(String, String)?
+      if match = line.match(/\b(?:get|post|put|delete|patch|head|options|ws)\s+['"][^'"]+['"]\s*,\s*([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)\s*,\s*:(\w+)/)
+        {match[1], match[2]}
+      end
+    end
+
+    private def controller_action_key(controller : String, action : String) : String
+      "#{controller}##{action}"
     end
 
     private def collect_public_dir_endpoints
