@@ -121,7 +121,7 @@ module Analyzer::Ruby
       {body_lines.join("\n"), body_start_line}
     end
 
-    private def ruby_do_block_open_delta(line : String) : Int32
+    protected def ruby_do_block_open_delta(line : String) : Int32
       return 0 if line.empty?
       return 1 if line.match(/\bdo\b/) && !line.match(/\bend\b/)
       return 1 if line.match(/(?:^|=[^=>])\s*(if|unless|case|begin|while|until|for|class|module|def)\b/) && !line.match(/\bend\b/)

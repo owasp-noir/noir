@@ -5,25 +5,28 @@ module Analyzer::Ruby
     GRAPE_VERBS = ["get", "post", "put", "delete", "patch", "head", "options"]
 
     def analyze
+      include_callee = any_to_bool(@options["include_callee"]?)
+
       parallel_file_scan do |path|
         next unless path.ends_with?(".rb")
         content = read_file_content(path)
         next unless content.includes?("Grape::API")
-        process_file(path, content)
+        process_file(path, content, include_callee)
       end
 
       @result
     end
 
-    private def process_file(path : String, content : String) : Nil
+    private def process_file(path : String, content : String, include_callee : Bool) : Nil
       prefix_segments = [] of String
       block_kinds = [] of Symbol
       class_prefix = ""
       pending_params = [] of String
       in_params_block = false
       last_endpoint : Endpoint? = nil
+      lines = content.lines
 
-      content.each_line.with_index do |raw_line, index|
+      lines.each_with_index do |raw_line, index|
         line = raw_line
         stripped = line.strip
         next if stripped.empty? || stripped.starts_with?('#')
@@ -73,9 +76,10 @@ module Analyzer::Ruby
             end
             pending_params.clear
 
+            attach_route_callees(endpoint, lines, index, path) if include_callee
             @result << endpoint
             last_endpoint = endpoint
-            block_kinds << :other
+            block_kinds << :other unless stripped.match(/\bend\b/)
             verb_handled = true
             break
           end
@@ -90,9 +94,10 @@ module Analyzer::Ruby
             end
             pending_params.clear
 
+            attach_route_callees(endpoint, lines, index, path) if include_callee
             @result << endpoint
             last_endpoint = endpoint
-            block_kinds << :other
+            block_kinds << :other unless stripped.match(/\bend\b/)
             verb_handled = true
             break
           end
@@ -118,15 +123,7 @@ module Analyzer::Ruby
           end
         end
 
-        if stripped.matches?(/\bdo(\s*\|[^|]*\|)?\s*$/)
-          block_kinds << :other
-        elsif stripped.starts_with?("if ") || stripped == "if" ||
-              stripped.starts_with?("unless ") || stripped == "unless" ||
-              stripped.starts_with?("def ") || stripped == "def" ||
-              stripped.starts_with?("class ") || stripped == "class" ||
-              stripped.starts_with?("module ") || stripped == "module" ||
-              stripped.starts_with?("begin ") || stripped == "begin" ||
-              stripped.starts_with?("case ") || stripped == "case"
+        if ruby_do_block_open_delta(stripped) > 0
           block_kinds << :other
         end
 
@@ -136,6 +133,14 @@ module Analyzer::Ruby
             prefix_segments.pop
           end
         end
+      end
+    end
+
+    private def attach_route_callees(endpoint : Endpoint, lines : Array(String), index : Int32, path : String)
+      if block = extract_ruby_do_block(lines, index)
+        body, body_start_line = block
+        callees = Noir::RubyCalleeExtractor.callees_for_body(body, path, body_start_line)
+        attach_ruby_callees(endpoint, callees)
       end
     end
 
