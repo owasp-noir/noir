@@ -114,15 +114,19 @@ module Noir::JSCalleeExtractor
                            depth : Int32)
     return if depth > Noir::TreeSitter::MAX_AST_DEPTH
 
+    skip_function_child : LibTreeSitter::TSNode? = nil
     if Noir::TreeSitter.node_type(node) == "call_expression"
       name = callee_text(node, source)
       unless name.empty?
         line = Noir::TreeSitter.node_start_row(node) + 1
         sink << {name, file_path, line}
+        skip_function_child = Noir::TreeSitter.field(node, "function") || first_named_child(node)
       end
     end
 
     Noir::TreeSitter.each_named_child(node) do |child|
+      next if skip_function_child && same_node?(child, skip_function_child)
+
       walk_callees(child, source, file_path, sink, depth + 1)
     end
   end
@@ -206,6 +210,11 @@ module Noir::JSCalleeExtractor
     return if child_count == 0
 
     LibTreeSitter.ts_node_named_child(node, child_count - 1)
+  end
+
+  private def same_node?(left : LibTreeSitter::TSNode, right : LibTreeSitter::TSNode) : Bool
+    LibTreeSitter.ts_node_start_byte(left) == LibTreeSitter.ts_node_start_byte(right) &&
+      LibTreeSitter.ts_node_end_byte(left) == LibTreeSitter.ts_node_end_byte(right)
   end
 
   private def decode_string(node : LibTreeSitter::TSNode, source : String) : String
