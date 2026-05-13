@@ -1,5 +1,6 @@
 require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
+require "./java_callee_extractor"
 require "./java_parameter_extractor_ts"
 
 module Noir
@@ -65,8 +66,9 @@ module Noir
       getter method_name : String
       getter line : Int32
       getter params : Array(Param)
+      getter callees : Array(Tuple(String, Int32))
 
-      def initialize(@verb, @path, @class_name, @method_name, @line, @params)
+      def initialize(@verb, @path, @class_name, @method_name, @line, @params, @callees)
       end
     end
 
@@ -153,14 +155,25 @@ module Noir
         method_consumes = consumes_format(member, source) || class_consumes
 
         params = collect_method_params(member, source, method_consumes, dto_index)
+        callees = collect_method_callees(member, source)
         line = Noir::TreeSitter.node_start_row(verb_node)
 
         controller_paths.each do |class_path|
           method_paths.each do |method_path|
             full_path = join_paths(class_path, method_path)
-            routes << Route.new(verb, full_path, class_name, method_name, line, params.dup)
+            routes << Route.new(verb, full_path, class_name, method_name, line, params.dup, callees)
           end
         end
+      end
+    end
+
+    private def collect_method_callees(method : LibTreeSitter::TSNode,
+                                       source : String) : Array(Tuple(String, Int32))
+      body = Noir::TreeSitter.field(method, "body")
+      return [] of Tuple(String, Int32) unless body
+
+      Noir::JavaCalleeExtractor.callees_in_body(body, source, "").map do |(name, _path, line)|
+        {name, line}
       end
     end
 
