@@ -1,4 +1,5 @@
 require "../../models/analyzer"
+require "../../miniparsers/js_callee_extractor"
 
 module Analyzer::Javascript
   abstract class JavascriptEngine < Analyzer
@@ -33,6 +34,16 @@ module Analyzer::Javascript
       rescue e
         logger.debug e
       end
+    end
+
+    protected def attach_js_callees(endpoint : Endpoint, callees : Array(Noir::JSCalleeExtractor::Entry))
+      callees.each do |name, callee_path, line|
+        endpoint.push_callee(Callee.new(name, path: callee_path, line: line))
+      end
+    end
+
+    protected def javascript_source_language(path : String) : Symbol
+      path.ends_with?(".ts") || path.ends_with?(".mts") || path.ends_with?(".tsx") ? :typescript : :javascript
     end
   end
 end
