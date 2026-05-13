@@ -14,7 +14,7 @@ module Noir::RubyCalleeExtractor
   }
 
   RECEIVER_CALL_REGEX = /((?:@{1,2})?[A-Za-z_][\w]*(?:::[A-Za-z_][\w]*)*(?:\.[A-Za-z_][\w]*[!?=]?)+)\s*(?:\(|\b|$)/
-  BARE_CALL_REGEX     = /(?<![.\w:])([a-z_][\w]*[!?=]?)\s*\(/
+  BARE_CALL_REGEX     = /(?<![.\w:])([a-z_][\w]*[!?=]?)(?:\s*\(|(?=\s+(?:[:'"]|@{1,2}[A-Za-z_]|[A-Za-z_][\w]*[!?=]?)))/
 
   def callees_for_body(body : String, file_path : String, start_line : Int32) : Array(Entry)
     entries = [] of Entry

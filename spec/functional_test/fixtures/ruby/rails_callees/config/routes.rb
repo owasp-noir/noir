@@ -6,4 +6,6 @@ Rails.application.routes.draw do
   end
 
   get "status", to: "monitor#status"
+  get "ping", to: "monitor#ping"
+  get "ready", to: "monitor#ready"
 end

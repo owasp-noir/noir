@@ -529,26 +529,31 @@ module Analyzer::Ruby
         stripped = strip_inline_comment(lines[index]).strip
         if m = stripped.match(/^(?:private\s+|protected\s+|public\s+)?def\s+(?:self\.)?([A-Za-z_]\w*[!?=]?)\b/)
           action = m[1]
+          inline_body, closed_on_def_line = inline_def_body(stripped, m[0])
           body_lines = [] of String
-          body_start_line = index + 2
-          depth = 1
-          index += 1
+          body_start_line = inline_body ? index + 1 : index + 2
+          body_lines << inline_body if inline_body
 
-          while index < lines.size
-            raw_body_line = lines[index]
-            body_line = strip_inline_comment(raw_body_line).strip
-
-            if closes_ruby_block?(body_line)
-              depth -= 1
-              break if depth == 0
-              body_lines << raw_body_line
-              index += 1
-              next
-            end
-
-            body_lines << raw_body_line
-            depth += ruby_block_open_delta(body_line)
+          unless closed_on_def_line
+            depth = 1
             index += 1
+
+            while index < lines.size
+              raw_body_line = lines[index]
+              body_line = strip_inline_comment(raw_body_line).strip
+
+              if closes_ruby_block?(body_line)
+                depth -= 1
+                break if depth == 0
+                body_lines << raw_body_line
+                index += 1
+                next
+              end
+
+              body_lines << raw_body_line
+              depth += ruby_block_open_delta(body_line)
+              index += 1
+            end
           end
 
           callees = Noir::RubyCalleeExtractor.callees_for_body(body_lines.join("\n"), path, body_start_line)
@@ -561,15 +566,30 @@ module Analyzer::Ruby
       result
     end
 
+    private def inline_def_body(line : String, match_text : String) : Tuple(String?, Bool)
+      return {nil, false} if match_text.size >= line.size
+
+      tail = line[match_text.size, line.size - match_text.size].strip
+      return {nil, false} unless tail.starts_with?(";")
+
+      tail = tail[1, tail.size - 1].strip
+      if m = tail.match(/^(.*?)(?:;\s*)?end\b/)
+        body = m[1].strip
+        return {body.empty? ? nil : body, true}
+      end
+
+      {tail.empty? ? nil : tail, false}
+    end
+
     private def ruby_block_open_delta(line : String) : Int32
       return 0 if line.empty?
       return 1 if line.match(/\bdo\b\s*(\|[^|]*\|)?\s*\z/)
-      return 1 if line.match(/^(if|unless|case|begin|while|until|for|class|module|def)\b/)
+      return 1 if line.match(/^(if|unless|case|begin|while|until|for|class|module|def)\b/) && !line.match(/\bend\b/)
       0
     end
 
     private def closes_ruby_block?(line : String) : Bool
-      line == "end" || line.starts_with?("end ") || line.starts_with?("end;")
+      !!line.match(/^end\b/)
     end
 
     private def dedup_by_name(params : Array(Param)) : Array(Param)

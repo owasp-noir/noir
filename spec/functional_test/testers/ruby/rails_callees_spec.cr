@@ -32,12 +32,24 @@ status_endpoint = Endpoint.new("/status", "GET").tap do |ep|
   ep.push_callee(Callee.new("status_payload", line: 4))
 end
 
+ping_endpoint = Endpoint.new("/ping", "GET").tap do |ep|
+  ep.push_callee(Callee.new("render", line: 7))
+  ep.push_callee(Callee.new("Health.check", line: 7))
+end
+
+ready_endpoint = Endpoint.new("/ready", "GET").tap do |ep|
+  ep.push_callee(Callee.new("render", line: 10))
+  ep.push_callee(Callee.new("Ready.check", line: 10))
+end
+
 expected_endpoints = [
   index_endpoint,
   show_endpoint,
   create_endpoint,
   preview_endpoint,
   status_endpoint,
+  ping_endpoint,
+  ready_endpoint,
 ]
 
 FunctionalTester.new("fixtures/ruby/rails_callees/", {

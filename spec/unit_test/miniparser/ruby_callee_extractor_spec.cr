@@ -31,4 +31,21 @@ describe Noir::RubyCalleeExtractor do
       {"Admin::Health.check", 22},
     ])
   end
+
+  it "extracts Ruby command-style calls without parentheses" do
+    body = <<-RUBY
+      render json: serialize_posts(posts)
+      redirect_to post_url(post)
+      head :no_content
+      RUBY
+
+    callees = Noir::RubyCalleeExtractor.callees_for_body(body, "posts_controller.rb", 30)
+    callees.map { |name, _, line| {name, line} }.should eq([
+      {"render", 30},
+      {"serialize_posts", 30},
+      {"redirect_to", 31},
+      {"post_url", 31},
+      {"head", 32},
+    ])
+  end
 end
