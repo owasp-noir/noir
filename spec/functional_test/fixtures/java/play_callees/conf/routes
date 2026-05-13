@@ -1,0 +1,2 @@
+POST /users/:id controllers.AppController.create(id: String)
+GET /profile controllers.AppController.profile
