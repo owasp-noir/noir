@@ -8,7 +8,7 @@ class API < Grape::API
       optional :page, type: Integer
     end
 
-    get do
+    get do # comment mentions end
       users = UserService.list(params[:page])
       AuditLog.write("list")
       present serialize_users(users)

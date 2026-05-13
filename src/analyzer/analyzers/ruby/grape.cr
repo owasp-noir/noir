@@ -27,7 +27,7 @@ module Analyzer::Ruby
       lines = content.lines
 
       lines.each_with_index do |raw_line, index|
-        line = raw_line
+        line = Noir::RubyCalleeExtractor.strip_comment(raw_line)
         stripped = line.strip
         next if stripped.empty? || stripped.starts_with?('#')
 
