@@ -1,17 +1,21 @@
 require "../../../models/analyzer"
+require "./common"
 
 module Analyzer::CSharp
   class AspNetCoreMvc < Analyzer
+    include Common
+
     DEFAULT_ROUTE = "{controller=Home}/{action=Index}/{id?}"
 
     def analyze
+      include_callee = any_to_bool(@options["include_callee"]?)
       route_patterns = load_route_patterns
-      analyze_controllers(route_patterns)
-      analyze_route_builder_endpoints
+      analyze_controllers(route_patterns, include_callee)
+      analyze_route_builder_endpoints(include_callee)
       @result
     end
 
-    private def analyze_route_builder_endpoints
+    private def analyze_route_builder_endpoints(include_callee : Bool)
       map_regex = /Map(Get|Post|Put|Delete|Patch|Head|Options)\s*\(\s*"([^"]+)"/
       map_methods_block_regex = /MapMethods\s*\(\s*"([^"]+)"\s*,\s*([\s\S]+?)=>/
 
@@ -27,7 +31,10 @@ module Analyzer::CSharp
             extra_params = extract_params_from_block(block)
             extra_params.concat(extract_bind_params_from_file(block, lines))
             endpoint = build_endpoint_from_route(route, http_method, file, index + 1, extra_params)
-            @result << endpoint if endpoint
+            if endpoint
+              attach_csharp_callees(endpoint, block, file, index + 1, include_callee)
+              @result << endpoint
+            end
           end
 
           if line.includes?("MapMethods")
@@ -50,7 +57,10 @@ module Analyzer::CSharp
               extra_params.concat(extract_bind_params_from_file(block, lines))
               methods.each do |method|
                 endpoint = build_endpoint_from_route(route, method, file, index + 1, extra_params)
-                @result << endpoint if endpoint
+                if endpoint
+                  attach_csharp_callees(endpoint, block, file, index + 1, include_callee)
+                  @result << endpoint
+                end
               end
             end
           end
@@ -69,6 +79,7 @@ module Analyzer::CSharp
         paren_depth += line.count('(') - line.count(')')
         brace_depth += line.count('{') - line.count('}')
         io << line
+        io << '\n'
 
         if paren_depth <= 0 && brace_depth <= 0 && line.includes?(";")
           break
@@ -185,18 +196,18 @@ module Analyzer::CSharp
       patterns
     end
 
-    private def analyze_controllers(route_patterns : Array(String))
+    private def analyze_controllers(route_patterns : Array(String), include_callee : Bool)
       controller_files = get_files_by_extension(".cs").select do |file|
         base = File.basename(file)
         base.includes?("Controller") && !base.ends_with?("RouteConfig.cs") && base != "Program.cs" && base != "Startup.cs"
       end
 
       controller_files.each do |file|
-        analyze_controller_file(file, route_patterns)
+        analyze_controller_file(file, route_patterns, include_callee)
       end
     end
 
-    private def analyze_controller_file(file : String, route_patterns : Array(String))
+    private def analyze_controller_file(file : String, route_patterns : Array(String), include_callee : Bool)
       return unless File.exists?(file)
 
       content = File.read(file, encoding: "utf-8", invalid: :skip)
@@ -244,6 +255,7 @@ module Analyzer::CSharp
                   endpoint.params << param
                 end
 
+                attach_csharp_callees(endpoint, body_block, file, end_index + 1, include_callee, skip_first_line: true)
                 @result << endpoint
               end
 
@@ -292,40 +304,6 @@ module Analyzer::CSharp
 
     private def potential_action_signature?(line : String) : Bool
       line.includes?("public") && line.includes?("(") && !line.includes?(" class ")
-    end
-
-    private def build_signature(lines : Array(String), start_index : Int32) : Tuple(String, Int32)
-      signature = lines[start_index]
-      paren_count = signature.count('(') - signature.count(')')
-      index = start_index + 1
-
-      while paren_count > 0 && index < lines.size
-        signature += " " + lines[index]
-        paren_count += lines[index].count('(') - lines[index].count(')')
-        index += 1
-      end
-
-      {signature, index - 1}
-    end
-
-    private def extract_method_block(lines : Array(String), start_index : Int32) : String
-      io = String::Builder.new
-      brace = 0
-      started = false
-      i = start_index
-
-      while i < lines.size
-        line = lines[i]
-        brace += line.count('{') - line.count('}')
-        started ||= brace > 0 || line.includes?("{")
-        io << line
-        if started && brace <= 0 && line.includes?("}")
-          break
-        end
-        i += 1
-      end
-
-      io.to_s
     end
 
     private def action_method?(signature : String) : Bool

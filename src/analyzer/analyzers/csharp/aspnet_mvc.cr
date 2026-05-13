@@ -1,8 +1,12 @@
 require "../../../models/analyzer"
+require "./common"
 
 module Analyzer::CSharp
   class AspNetMvc < Analyzer
+    include Common
+
     def analyze
+      include_callee = any_to_bool(@options["include_callee"]?)
       # Static Analysis
       locator = CodeLocator.instance
       route_config_file = locator.get("cs-apinet-mvc-routeconfig")
@@ -44,22 +48,22 @@ module Analyzer::CSharp
       end
 
       # Analyze controller files for action methods and parameters
-      analyze_controllers()
+      analyze_controllers(include_callee)
 
       @result
     end
 
-    private def analyze_controllers
+    private def analyze_controllers(include_callee : Bool)
       controller_files = get_files_by_extension(".cs").select do |file|
         file.includes?("Controller") && !file.includes?("RouteConfig")
       end
 
       controller_files.each do |file|
-        analyze_controller_file(file)
+        analyze_controller_file(file, include_callee)
       end
     end
 
-    private def analyze_controller_file(file : String)
+    private def analyze_controller_file(file : String, include_callee : Bool)
       return unless File.exists?(file)
 
       content = File.read(file, encoding: "utf-8", invalid: :skip)
@@ -101,25 +105,29 @@ module Analyzer::CSharp
 
         # Check for action method definition
         if line.includes?("public") && line.includes?("ActionResult") && line.includes?("(")
-          action_name = extract_action_name(line)
-          parameters = extract_parameters(line, lines, i, http_method)
+          signature, end_index = build_signature(lines, i)
+          action_name = extract_action_name(signature)
+          parameters = extract_parameters(signature, http_method)
 
           unless action_name.empty?
             # Build URL from controller route, action route, and action name
             url = build_url(controller_route_prefix, action_route, controller_name, action_name)
             details = Details.new(PathInfo.new(file, i + 1))
             endpoint = Endpoint.new(url, http_method, details)
+            body_block = extract_method_block(lines, end_index)
 
             parameters.each do |param|
               endpoint.params << param
             end
 
+            attach_csharp_callees(endpoint, body_block, file, end_index + 1, include_callee, skip_first_line: true)
             @result << endpoint
 
             # Reset to default after processing the method
             http_method = "GET"
             action_route = ""
           end
+          i = end_index
         end
 
         i += 1
@@ -140,20 +148,8 @@ module Analyzer::CSharp
       match[1]
     end
 
-    private def extract_parameters(line : String, lines : Array(String), start_index : Int32, http_method : String) : Array(Param)
+    private def extract_parameters(full_signature : String, http_method : String) : Array(Param)
       parameters = [] of Param
-
-      # Extract parameters from method signature
-      # Handle multi-line method signatures
-      full_signature = line
-      paren_count = line.count('(') - line.count(')')
-
-      current_index = start_index + 1
-      while paren_count > 0 && current_index < lines.size
-        full_signature += " " + lines[current_index]
-        paren_count += lines[current_index].count('(') - lines[current_index].count(')')
-        current_index += 1
-      end
 
       # Extract parameter list from signature
       match = full_signature.match(/\((.*?)\)/)
