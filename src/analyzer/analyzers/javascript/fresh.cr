@@ -155,7 +155,7 @@ module Analyzer::Javascript
     end
 
     private def has_default_export?(content : String) : Bool
-      content.match(/export\s+default\b/) != nil
+      !!content.match(/export\s+default\b/)
     end
 
     # Carve the `{...}` object literal out of `export const handler =
@@ -173,8 +173,8 @@ module Analyzer::Javascript
     end
 
     private def handler_function?(content : String) : Bool
-      content.match(/export\s+(?:async\s+)?function\s+handler\b/) != nil ||
-        content.match(/export\s+(?:const|let|var)\s+handler\b\s*(?::[^=]+)?=\s*(?:async\s*)?(?:function\b|\()/) != nil
+      !!(content.match(/export\s+(?:async\s+)?function\s+handler\b/) ||
+        content.match(/export\s+(?:const|let|var)\s+handler\b\s*(?::[^=]+)?=\s*(?:async\s*)?(?:function\b|\()/))
     end
 
     # Extract the verb names appearing as object keys inside the

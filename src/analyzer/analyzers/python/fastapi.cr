@@ -242,7 +242,7 @@ module Analyzer::Python
     def infer_parameter_type(data : ::String, is_param_type = false) : ::String?
       if data.match(/(\b)*Cookie(\b)*/)
         "cookie"
-      elsif data.match(/(\b)*Header(\b)*/) != nil
+      elsif data.match(/(\b)*Header(\b)*/)
         "header"
       elsif data.match(/(\b)*Body(\b)*/) || data.match(/(\b)*Form(\b)*/) ||
             data.match(/(\b)*File(\b)*/) || data.match(/(\b)*UploadFile(\b)*/)
