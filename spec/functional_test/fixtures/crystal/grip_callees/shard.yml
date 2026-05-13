@@ -1,0 +1,12 @@
+name: grip_callees
+version: 0.1.0
+
+targets:
+  grip_callees:
+    main: src/testapp.cr
+
+dependencies:
+  grip:
+    github: grip-framework/grip
+
+crystal: 1.8.2
