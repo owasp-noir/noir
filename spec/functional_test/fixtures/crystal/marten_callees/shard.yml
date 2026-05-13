@@ -1,0 +1,18 @@
+name: testmarten
+version: 0.1.0
+
+authors:
+  - example <example@gmail.com>
+
+targets:
+  testmarten:
+    main: src/testmarten.cr
+
+dependencies:
+  marten:
+    github: martenframework/marten
+    version: ~> 0.4.0
+
+crystal: 1.8.2
+
+license: MIT
