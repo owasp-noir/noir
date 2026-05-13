@@ -66,5 +66,84 @@ module Analyzer::Php
     protected def attach_php_callees(endpoint : Endpoint, callees : Array(Noir::PhpCalleeExtractor::Entry))
       Noir::PhpCalleeExtractor.attach_to(endpoint, callees)
     end
+
+    protected def extract_php_method_body_after(content : String, start_pos : Int32) : Tuple(String, Int32)?
+      return unless start_pos < content.size
+
+      context = content[start_pos..]
+      func_match = context.match(/(?:public|protected|private)\s+function\s+\w+[^{]*\{/m)
+      return unless func_match
+
+      func_start = context.index(func_match[0])
+      return unless func_start
+
+      brace_start = start_pos + func_start + func_match[0].size - 1
+      method_end = find_matching_php_close_brace(content, brace_start)
+      return unless method_end
+      return if method_end <= brace_start + 1
+
+      body_start_line = php_line_number_for_index(content, brace_start)
+      {content[(brace_start + 1)...method_end], body_start_line}
+    end
+
+    protected def php_line_number_for_index(content : String, index : Int32) : Int32
+      return 1 if index <= 0
+
+      content[0...index].count('\n') + 1
+    end
+
+    protected def find_matching_php_close_brace(content : String, open_pos : Int32) : Int32?
+      return unless open_pos < content.size && content[open_pos] == '{'
+
+      depth = 0
+      in_string = false
+      in_line_comment = false
+      in_block_comment = false
+      escaped = false
+      quote = '\0'
+      pos = open_pos
+
+      while pos < content.size
+        char = content[pos]
+        next_char = content[pos + 1]?
+
+        if in_line_comment
+          in_line_comment = false if char == '\n'
+        elsif in_block_comment
+          if char == '*' && next_char == '/'
+            in_block_comment = false
+            pos += 1
+          end
+        elsif in_string
+          if escaped
+            escaped = false
+          elsif char == '\\'
+            escaped = true
+          elsif char == quote
+            in_string = false
+          end
+        elsif char == '/' && next_char == '/'
+          in_line_comment = true
+          pos += 1
+        elsif char == '/' && next_char == '*'
+          in_block_comment = true
+          pos += 1
+        elsif char == '#'
+          in_line_comment = true
+        elsif char == '"' || char == '\''
+          in_string = true
+          quote = char
+        elsif char == '{'
+          depth += 1
+        elsif char == '}'
+          depth -= 1
+          return pos if depth == 0
+        end
+
+        pos += 1
+      end
+
+      nil
+    end
   end
 end

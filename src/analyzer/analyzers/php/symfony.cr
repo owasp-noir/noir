@@ -4,10 +4,11 @@ module Analyzer::Php
   class Symfony < PhpEngine
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
+      include_callee = any_to_bool(@options["include_callee"]?)
 
       # Analyze PHP controller files
       if path.ends_with?(".php")
-        endpoints.concat(analyze_php_routes(path))
+        endpoints.concat(analyze_php_routes(path, include_callee))
       end
 
       # Analyze YAML route files
@@ -20,7 +21,7 @@ module Analyzer::Php
       endpoints
     end
 
-    private def analyze_php_routes(path : String) : Array(Endpoint)
+    private def analyze_php_routes(path : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
 
       File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
@@ -42,18 +43,18 @@ module Analyzer::Php
             methods = extract_methods_from_annotation_context(full_match)
             methods = ["GET"] if methods.empty?
 
-            # Get context for method body parameter extraction (starts from annotation)
-            context_end = [route_start + 1000, content.size].min
-            method_context = content[route_start..context_end]
+            method_body = extract_php_method_body_after(content, route_start)
 
             params = extract_brace_path_params(route_path)
             # Extract additional parameters from method body
-            params.concat(extract_method_params(method_context))
+            params.concat(extract_method_params(method_body[0])) if method_body
 
             details = Details.new(PathInfo.new(path))
 
             methods.each do |method|
-              endpoints << Endpoint.new(route_path, method.upcase, params, details)
+              endpoint = Endpoint.new(route_path, method.upcase, params, details)
+              attach_method_callees(endpoint, method_body, path) if include_callee
+              endpoints << endpoint
             end
           end
         end
@@ -74,18 +75,18 @@ module Analyzer::Php
             methods = extract_methods_from_attribute_context(full_match)
             methods = ["GET"] if methods.empty?
 
-            # Get context for method body parameter extraction (starts from attribute)
-            context_end = [route_start + 1000, content.size].min
-            method_context = content[route_start..context_end]
+            method_body = extract_php_method_body_after(content, route_start)
 
             params = extract_brace_path_params(route_path)
             # Extract additional parameters from method body
-            params.concat(extract_method_params(method_context))
+            params.concat(extract_method_params(method_body[0])) if method_body
 
             details = Details.new(PathInfo.new(path))
 
             methods.each do |method|
-              endpoints << Endpoint.new(route_path, method.upcase, params, details)
+              endpoint = Endpoint.new(route_path, method.upcase, params, details)
+              attach_method_callees(endpoint, method_body, path) if include_callee
+              endpoints << endpoint
             end
           end
         end
@@ -163,39 +164,17 @@ module Analyzer::Php
       endpoints
     end
 
-    private def extract_method_params(context : String) : Array(Param)
+    private def attach_method_callees(endpoint : Endpoint, method_body : Tuple(String, Int32)?, path : String)
+      return unless method_body
+
+      body, start_line = method_body
+      callees = Noir::PhpCalleeExtractor.callees_for_body(body, path, start_line)
+      attach_php_callees(endpoint, callees)
+    end
+
+    private def extract_method_params(method_body : String) : Array(Param)
       params = [] of Param
       seen_params = Set(String).new
-
-      # Improved method body extraction using brace counting
-      # Find the start of the method function
-      func_match = context.match(/public\s+function\s+\w+[^{]*\{/)
-      return params unless func_match
-
-      # Find the opening brace position
-      start_pos = context.index(func_match[0])
-      return params unless start_pos
-
-      brace_start = start_pos + func_match[0].size - 1 # Position of the opening '{'
-
-      # Count braces to find the matching closing brace
-      brace_count = 1
-      pos = brace_start + 1
-      method_end = pos
-
-      while pos < context.size && brace_count > 0
-        if context[pos] == '{'
-          brace_count += 1
-        elsif context[pos] == '}'
-          brace_count -= 1
-          method_end = pos if brace_count == 0
-        end
-        pos += 1
-      end
-
-      # Extract the method body (between the opening and closing braces)
-      return params if method_end <= brace_start + 1
-      method_body = context[(brace_start + 1)...method_end]
 
       # Extract query parameters: $request->query->get('param')
       query_matches = method_body.scan(/\$request->query->get\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*[^)]+)?\)/)
