@@ -1,4 +1,5 @@
 require "../../models/analyzer"
+require "../../miniparsers/ruby_callee_extractor"
 
 module Analyzer::Ruby
   abstract class RubyEngine < Analyzer
@@ -70,6 +71,10 @@ module Analyzer::Ruby
       rescue e
         logger.debug e
       end
+    end
+
+    protected def attach_ruby_callees(endpoint : Endpoint, callees : Array(Noir::RubyCalleeExtractor::Entry))
+      Noir::RubyCalleeExtractor.attach_to(endpoint, callees)
     end
   end
 end
