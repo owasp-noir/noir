@@ -7,24 +7,27 @@ module Analyzer::Ruby
     alias PrefixEntry = NamedTuple(depth: Int32, segments: Array(String), path_params: Array(String))
 
     def analyze
+      include_callee = any_to_bool(@options["include_callee"]?)
+
       parallel_file_scan do |path|
         next unless path.ends_with?(".rb")
-        analyze_file(path)
+        analyze_file(path, include_callee)
       end
 
       @result
     end
 
-    private def analyze_file(path : String)
+    private def analyze_file(path : String, include_callee : Bool)
       content = read_file_content(path)
       return unless content.includes?("Roda") || content.includes?("route do")
 
+      lines = content.lines
       in_route = false
       depth = 0
       prefix_stack = [] of PrefixEntry
       last_endpoint_index = -1
 
-      content.each_line.with_index do |line, index|
+      lines.each_with_index do |line, index|
         next unless line.valid_encoding?
 
         stripped_for_code = strip_comment(line)
@@ -39,7 +42,7 @@ module Analyzer::Ruby
           next
         end
 
-        emitted = process_route_line(stripped_for_code, path, index, depth, prefix_stack)
+        emitted = process_route_line(stripped_for_code, path, index, depth, prefix_stack, lines, include_callee)
         if emitted >= 0
           last_endpoint_index = emitted
         end
@@ -65,7 +68,9 @@ module Analyzer::Ruby
 
     private def process_route_line(line : String, path : String, index : Int32,
                                    depth : Int32,
-                                   prefix_stack : Array(PrefixEntry)) : Int32
+                                   prefix_stack : Array(PrefixEntry),
+                                   lines : Array(String),
+                                   include_callee : Bool) : Int32
       if m = line.match(/\br\.on\s+(.+?)\s*(?:do\b|\{)/)
         segments, path_params = parse_on_args(m[1])
         unless segments.empty? && path_params.empty?
@@ -79,6 +84,7 @@ module Analyzer::Ruby
         url = "/" if url.empty?
         ep = build_endpoint(url, "GET", path, index)
         apply_path_params(ep, prefix_stack)
+        attach_route_callees(ep, lines, index, path) if include_callee
         @result << ep
         return @result.size - 1
       end
@@ -88,6 +94,7 @@ module Analyzer::Ruby
           url = build_url(collect_segments(prefix_stack), m[1], nil)
           ep = build_endpoint(url, verb.upcase, path, index)
           apply_path_params(ep, prefix_stack)
+          attach_route_callees(ep, lines, index, path) if include_callee
           @result << ep
           return @result.size - 1
         end
@@ -97,12 +104,104 @@ module Analyzer::Ruby
           url = "/" if url.empty?
           ep = build_endpoint(url, verb.upcase, path, index)
           apply_path_params(ep, prefix_stack)
+          attach_route_callees(ep, lines, index, path) if include_callee
           @result << ep
           return @result.size - 1
         end
       end
 
       -1
+    end
+
+    private def attach_route_callees(endpoint : Endpoint, lines : Array(String), index : Int32, path : String)
+      if block = extract_route_block(lines, index)
+        body, body_start_line = block
+        callees = Noir::RubyCalleeExtractor.callees_for_body(body, path, body_start_line)
+        attach_ruby_callees(endpoint, callees)
+      end
+    end
+
+    private def extract_route_block(lines : Array(String), index : Int32) : Tuple(String, Int32)?
+      return if index >= lines.size
+
+      start_line = Noir::RubyCalleeExtractor.strip_comment(lines[index]).strip
+      return extract_ruby_do_block(lines, index) if start_line.match(/\bdo\b/)
+      extract_ruby_brace_block(lines, index) if start_line.includes?('{')
+    end
+
+    private def extract_ruby_brace_block(lines : Array(String), start_index : Int32) : Tuple(String, Int32)?
+      return if start_index >= lines.size
+
+      start_line = Noir::RubyCalleeExtractor.strip_comment(lines[start_index])
+      open_index = start_line.index('{')
+      return unless open_index
+
+      body_lines = [] of String
+      body_start_line = start_index + 2
+      depth = 1
+      tail = start_line[(open_index + 1)..].strip
+      tail = tail.sub(/^\|[^|]*\|\s*/, "")
+
+      unless tail.empty?
+        body, depth = consume_brace_block_fragment(tail, depth)
+        unless body.empty?
+          body_start_line = start_index + 1
+          body_lines << body
+        end
+        return {body_lines.join("\n"), body_start_line} if depth == 0
+      end
+
+      index = start_index + 1
+      while index < lines.size
+        body, depth = consume_brace_block_fragment(Noir::RubyCalleeExtractor.strip_comment(lines[index]), depth)
+        if depth == 0
+          body_lines << body unless body.empty?
+          break
+        end
+
+        body_lines << lines[index]
+        index += 1
+      end
+
+      {body_lines.join("\n"), body_start_line}
+    end
+
+    private def consume_brace_block_fragment(fragment : String, depth : Int32) : Tuple(String, Int32)
+      current_depth = depth
+      in_string = false
+      escaped = false
+      quote = '\0'
+
+      body = String.build do |io|
+        fragment.each_char do |char|
+          if in_string
+            io << char
+            if escaped
+              escaped = false
+            elsif char == '\\'
+              escaped = true
+            elsif char == quote
+              in_string = false
+            end
+          elsif char == '"' || char == '\''
+            in_string = true
+            quote = char
+            io << char
+          elsif char == '{'
+            current_depth += 1
+            io << char
+          elsif char == '}'
+            current_depth -= 1
+            break if current_depth == 0
+
+            io << char
+          else
+            io << char
+          end
+        end
+      end
+
+      {body.strip, current_depth}
     end
 
     private def extract_params_for_line(line : String, last_endpoint_index : Int32)
@@ -185,12 +284,13 @@ module Analyzer::Ruby
     end
 
     private def strip_comment(line : String) : String
-      idx = line.index('#')
-      idx ? line[0, idx] : line
+      Noir::RubyCalleeExtractor.strip_comment(line)
     end
 
     private def count_opens(line : String) : Int32
-      line.scan(/\bdo\b|\{/).size
+      opens = line.scan(/\bdo\b|\{/).size
+      opens += 1 if line.match(/(?:^|=[^=>])\s*(if|unless|case|begin|while|until|for|class|module|def)\b/)
+      opens
     end
 
     private def count_closes(line : String) : Int32
