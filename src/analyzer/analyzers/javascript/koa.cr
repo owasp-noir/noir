@@ -6,11 +6,13 @@ module Analyzer::Javascript
     def analyze
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
+      include_callee = any_to_bool(@options["include_callee"])
 
       parallel_file_scan([".js", ".ts", ".mjs"]) do |path|
         begin
           content = File.read(path, encoding: "utf-8", invalid: :skip)
-          parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug)
+          parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
+            include_callees: include_callee)
           parser_endpoints.each do |endpoint|
             details = Details.new(PathInfo.new(path, 1)) # Line number is approximate
             endpoint.details = details
