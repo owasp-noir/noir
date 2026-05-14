@@ -98,6 +98,8 @@ class OutputBuilderOas2 < OutputBuilder
         operation["consumes"] = JSON::Any.new(consumes.map { |c| JSON::Any.new(c) })
       end
 
+      add_noir_callees_extension(operation, endpoint)
+
       # Convert path parameters from :param to {param} format for OAS2
       uri = URI.parse(endpoint.url)
       oas_path = uri.path.gsub(/:(\w+)/, "{\\1}")

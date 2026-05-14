@@ -14,7 +14,9 @@ plain 출력에서 callee를 보려면 `--include-callee`를 사용하세요:
 noir -b . --include-callee
 ```
 
-JSON, JSONL, YAML, TOML 같은 모델 기반 포맷과 plain 모델 직렬화는 엔드포인트 모델을 통해 `callees` 필드를 포함합니다. 현재 `path`와 `line`은 callee 정의 위치가 아니라 호출 위치를 가리킵니다.
+JSON, JSONL, YAML, TOML 같은 모델 기반 포맷과 plain 모델 직렬화는 엔드포인트 모델을 통해 `callees` 필드를 포함합니다. OpenAPI 2.0/3.0은 operation 레벨의 `x-noir-callees` extension으로, SARIF는 `result.properties.noir.callees`로, Postman collection은 item description의 사람이 읽을 수 있는 목록으로 callee를 제공합니다. cURL, HTTPie, PowerShell, only-url, only-param 같은 명령/필터 목적 출력은 주 출력 형태를 안정적으로 유지하기 위해 callee를 생략합니다.
+
+현재 `path`와 `line`은 callee 정의 위치가 아니라 호출 위치를 가리킵니다.
 
 ## 커버리지 매트릭스
 

@@ -20,6 +20,8 @@ describe "OutputBuilderOas2" do
     endpoint1 = Endpoint.new("/pets/{petId}", "GET")
     endpoint1.push_param(Param.new("petId", "123", "path"))
     endpoint1.push_param(Param.new("api_key", "key123", "header"))
+    endpoint1.push_callee(Callee.new("PetService.find", "app/controllers/pets.cr", 12))
+    endpoint1.push_callee(Callee.new("AuditLog.record", line: 13))
 
     endpoint2 = Endpoint.new("/pets", "POST")
     endpoint2.push_param(Param.new("name", "Fluffy", "json"))
@@ -74,6 +76,16 @@ describe "OutputBuilderOas2" do
     header_param = header_param.should_not be_nil
     header_param["name"].as_s.should eq("api_key")
     header_param["type"].as_s.should eq("string")
+
+    # Check Noir callee extension
+    callees = get_op["x-noir-callees"].as_a
+    callees.size.should eq(2)
+    callees[0]["name"].as_s.should eq("PetService.find")
+    callees[0]["path"].as_s.should eq("app/controllers/pets.cr")
+    callees[0]["line"].as_i.should eq(12)
+    callees[1]["name"].as_s.should eq("AuditLog.record")
+    callees[1].as_h.has_key?("path").should be_false
+    callees[1]["line"].as_i.should eq(13)
 
     # Check POST endpoint with JSON body
     post_json_op = paths["/pets"]["post"]

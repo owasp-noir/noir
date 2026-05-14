@@ -19,6 +19,8 @@ describe "OutputBuilderSarif" do
 
     endpoint = Endpoint.new("/test", "GET")
     endpoint.push_param(Param.new("id", "1", "query"))
+    endpoint.push_callee(Callee.new("PetService.find", "app/controllers/pets.cr", 12))
+    endpoint.push_callee(Callee.new("AuditLog.record", line: 13))
     endpoints = [endpoint]
 
     builder.print(endpoints)
@@ -43,6 +45,14 @@ describe "OutputBuilderSarif" do
     results[0]["message"]["text"].as_s.should contain("GET")
     results[0]["message"]["text"].as_s.should contain("/test")
     results[0]["message"]["text"].as_s.should contain("query: id")
+    callees = results[0]["properties"]["noir"]["callees"].as_a
+    callees.size.should eq(2)
+    callees[0]["name"].as_s.should eq("PetService.find")
+    callees[0]["path"].as_s.should eq("app/controllers/pets.cr")
+    callees[0]["line"].as_i.should eq(12)
+    callees[1]["name"].as_s.should eq("AuditLog.record")
+    callees[1].as_h.has_key?("path").should be_false
+    callees[1]["line"].as_i.should eq(13)
   end
 
   it "print with endpoints and passive results" do

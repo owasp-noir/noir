@@ -116,6 +116,8 @@ class OutputBuilderOas3 < OutputBuilder
         } of String => JSON::Any)
       end
 
+      add_noir_callees_extension(operation, endpoint)
+
       # Convert path parameters from :param to {param} format for OAS3
       uri = URI.parse(endpoint.url)
       oas_path = uri.path.gsub(/:(\w+)/, "{\\1}")
