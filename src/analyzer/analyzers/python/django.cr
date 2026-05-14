@@ -277,11 +277,19 @@ module Analyzer::Python
             suspicious_http_methods << "POST"
           end
 
+          body_start_line = content[0, class_start_index].count('\n')
+          method_callees = Hash(String, Array(Callee)).new
+
           # Check HTTP methods in class methods
-          lines.each do |line|
-            method_function_match = line.match(/\s+def\s+(#{regext_http_methods})\s*\(/)
+          lines.each_with_index do |line, offset|
+            method_function_match = line.match(/\s+(?:async\s+)?def\s+(#{regext_http_methods})\s*\(/)
             if !method_function_match.nil?
-              suspicious_http_methods << method_function_match[1].upcase
+              method_name = method_function_match[1].upcase
+              suspicious_http_methods << method_name
+
+              if codeblock = parse_code_block(lines[offset..])
+                method_callees[method_name] = build_callees_from(codeblock, body_start_line + offset + 1, filepath)
+              end
             end
 
             extract_params_from_line(line, suspicious_http_methods).each do |param|
@@ -289,17 +297,11 @@ module Analyzer::Python
             end
           end
 
-          # The class codeblock spans every responder method (get/post/...)
-          # plus any helpers, and we emit one endpoint per detected HTTP
-          # method. Class-level callees go onto every emitted endpoint —
-          # finer per-method scoping would require a second AST pass and
-          # is out of scope for this 1-hop extractor.
-          body_start_line = content[0, class_start_index].count('\n')
-          handler_callees = build_callees_from(class_codeblock, body_start_line, filepath)
-
           suspicious_http_methods.uniq.each do |http_method_name|
             endpoint = Endpoint.new(url, http_method_name, filter_params(http_method_name, suspicious_params))
-            handler_callees.each { |c| endpoint.push_callee(c) }
+            if callees = method_callees[http_method_name]?
+              callees.each { |c| endpoint.push_callee(c) }
+            end
             endpoints << endpoint
           end
 
