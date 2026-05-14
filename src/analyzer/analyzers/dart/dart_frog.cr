@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../../miniparsers/dart_callee_extractor"
 
 module Analyzer::Dart
   # Dart Frog is a filesystem-routed framework. Routes live under
@@ -33,6 +34,7 @@ module Analyzer::Dart
     FALLBACK_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"]
 
     def analyze
+      include_callee = any_to_bool(@options["include_callee"]?)
       result = [] of Endpoint
       mutex = Mutex.new
 
@@ -61,9 +63,10 @@ module Analyzer::Dart
           end
 
           methods = detect_methods(content)
+          callees = include_callee ? callees_for_on_request(content, path) : [] of Noir::DartCalleeExtractor::Entry
           mutex.synchronize do
             methods.each do |verb|
-              result << build_endpoint(url, verb, path)
+              result << build_endpoint(url, verb, path, callees)
             end
           end
         end
@@ -74,13 +77,37 @@ module Analyzer::Dart
       result
     end
 
-    private def build_endpoint(url : String, verb : String, path : String) : Endpoint
+    private def build_endpoint(url : String,
+                               verb : String,
+                               path : String,
+                               callees : Array(Noir::DartCalleeExtractor::Entry) = [] of Noir::DartCalleeExtractor::Entry) : Endpoint
       endpoint = Endpoint.new(url, verb)
       endpoint.details = Details.new(PathInfo.new(path, 1))
       url.scan(/\{(\w+)\}/) do |match|
         endpoint.push_param(Param.new(match[1], "", "path"))
       end
+      Noir::DartCalleeExtractor.attach_to(endpoint, callees)
       endpoint
+    end
+
+    private def callees_for_on_request(content : String, path : String) : Array(Noir::DartCalleeExtractor::Entry)
+      content.scan(/\bonRequest\s*\(/) do |match|
+        match_start = match.begin(0) || 0
+        open_paren = Noir::DartCalleeExtractor.find_next_code_char(content, '(', match_start)
+        next unless open_paren
+
+        close_paren = Noir::DartCalleeExtractor.find_matching_delimiter(content, open_paren, '(', ')')
+        next unless close_paren
+
+        body_info = Noir::DartCalleeExtractor.extract_body_after(content, close_paren + 1)
+        next unless body_info
+
+        body, body_start, _ = body_info
+        start_line = Noir::DartCalleeExtractor.line_number_for(content, body_start)
+        return Noir::DartCalleeExtractor.callees_for_body(body, path, start_line)
+      end
+
+      [] of Noir::DartCalleeExtractor::Entry
     end
 
     # Filesystem path → URL pattern. Drops the `.dart` extension,
