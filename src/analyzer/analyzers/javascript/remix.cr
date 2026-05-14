@@ -166,9 +166,9 @@ module Analyzer::Javascript
     end
 
     private def export_named?(content : String, name : String) : Bool
-      !!(content.match(/export\s+(?:async\s+)?function\s+#{name}\b/) ||
-        content.match(/export\s+(?:const|let|var)\s+#{name}\b\s*(?::[^=]+)?=/) ||
-        content.match(/export\s+\{\s*[^}]*\b#{name}\b[^}]*\}/))
+      content.matches?(/export\s+(?:async\s+)?function\s+#{name}\b/) ||
+        content.matches?(/export\s+(?:const|let|var)\s+#{name}\b\s*(?::[^=]+)?=/) ||
+        content.matches?(/export\s+\{\s*[^}]*\b#{name}\b[^}]*\}/)
     end
   end
 end
