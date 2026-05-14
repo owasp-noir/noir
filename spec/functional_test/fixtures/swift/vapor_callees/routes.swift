@@ -12,6 +12,10 @@ func routes(_ app: Application) throws {
     }
 
     app.get("health") { req -> String in
+        let template = """
+        }
+        """
+        // }
         HealthService.check()
         return "ok"
     }

@@ -39,4 +39,28 @@ describe Noir::SwiftCalleeExtractor do
       {"SafeService.run", 26},
     ])
   end
+
+  it "tracks nested comments, multiline strings, and trailing closure calls" do
+    body = <<-SWIFT
+      /*
+       OuterService.call()
+       /*
+        InnerService.call()
+        */
+       StillHidden.call()
+       */
+      let template = """
+        HiddenService.call()
+      """
+      dispatch {
+        Worker.run()
+      }
+      SWIFT
+
+    callees = Noir::SwiftCalleeExtractor.callees_for_body(body, "routes.swift", 30)
+    callees.map { |name, _, line| {name, line} }.should eq([
+      {"dispatch", 40},
+      {"Worker.run", 41},
+    ])
+  end
 end

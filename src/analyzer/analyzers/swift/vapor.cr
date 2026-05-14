@@ -185,28 +185,33 @@ module Analyzer::Swift
       return {"", route_index + 2} unless opening_brace
 
       first_fragment = route_line[(opening_brace + 1)..]? || ""
+      clean_fragment, block_comment_depth, in_multiline_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(first_fragment, 0, false)
       body_lines = [] of String
-      brace_count = 1 + first_fragment.count('{') - first_fragment.count('}')
+      brace_count = 1 + clean_fragment.count('{') - clean_fragment.count('}')
 
       if brace_count <= 0
-        closing_brace = first_fragment.rindex('}')
+        closing_brace = clean_fragment.rindex('}')
         first_fragment = first_fragment[0...closing_brace] if closing_brace
         return {first_fragment, route_index + 1}
       end
 
-      body_lines << first_fragment unless first_fragment.strip.empty?
+      body_lines << first_fragment
       index = route_index + 1
 
       while index < lines.size && brace_count > 0
         line = lines[index]
-        opens = line.count('{')
-        closes = line.count('}')
+        stripped, block_comment_depth, in_multiline_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(
+          line,
+          block_comment_depth,
+          in_multiline_string
+        )
+        opens = stripped.count('{')
+        closes = stripped.count('}')
         next_brace_count = brace_count + opens - closes
 
         if next_brace_count <= 0
           if line.strip != "}"
-            closing_brace = line.rindex('}')
-            body_lines << (closing_brace ? line[0...closing_brace] : line)
+            body_lines << line
           end
           break
         end

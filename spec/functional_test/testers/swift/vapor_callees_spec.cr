@@ -11,10 +11,10 @@ create_endpoint.push_callee(Callee.new("user.save", line: 9))
 create_endpoint.push_callee(Callee.new("ResponseBuilder.created", line: 10))
 
 health_endpoint = Endpoint.new("/health", "GET")
-health_endpoint.push_callee(Callee.new("HealthService.check", line: 15))
+health_endpoint.push_callee(Callee.new("HealthService.check", line: 19))
 
 ping_endpoint = Endpoint.new("/ping", "GET")
-ping_endpoint.push_callee(Callee.new("PingService.pong", line: 19))
+ping_endpoint.push_callee(Callee.new("PingService.pong", line: 23))
 
 expected_endpoints = [
   create_endpoint,

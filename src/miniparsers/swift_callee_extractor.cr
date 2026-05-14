@@ -18,14 +18,19 @@ module Noir::SwiftCalleeExtractor
   }
 
   RECEIVER_CALL_REGEX = /([A-Za-z_]\w*(?:\??\.[A-Za-z_]\w*)+)\s*(?:\(|\{)/
-  BARE_CALL_REGEX     = /(?<![.\w])([A-Za-z_]\w*)\s*\(/
+  BARE_CALL_REGEX     = /(?<![.\w])([A-Za-z_]\w*)\s*(\(|\{)/
 
   def callees_for_body(body : String, file_path : String, start_line : Int32) : Array(Entry)
     entries = [] of Entry
-    in_block_comment = false
+    block_comment_depth = 0
+    in_multiline_string = false
 
     body.lines.each_with_index do |line, index|
-      stripped, in_block_comment = strip_comment_with_state(line, in_block_comment)
+      stripped, block_comment_depth, in_multiline_string = strip_non_code_with_state(
+        line,
+        block_comment_depth,
+        in_multiline_string
+      )
       scan_line(stripped, file_path, start_line + index, entries)
     end
 
@@ -44,6 +49,13 @@ module Noir::SwiftCalleeExtractor
   end
 
   def strip_comment_with_state(line : String, in_block_comment : Bool) : Tuple(String, Bool)
+    stripped, block_comment_depth, _ = strip_non_code_with_state(line, in_block_comment ? 1 : 0, false)
+    {stripped, block_comment_depth > 0}
+  end
+
+  def strip_non_code_with_state(line : String,
+                                block_comment_depth : Int32,
+                                in_multiline_string : Bool) : Tuple(String, Int32, Bool)
     in_string = false
     escaped = false
     index = 0
@@ -51,10 +63,21 @@ module Noir::SwiftCalleeExtractor
 
     while index < line.size
       char = line[index]
-      if in_block_comment
-        if char == '*' && line[index + 1]? == '/'
-          in_block_comment = false
+      next_char = line[index + 1]?
+      third_char = line[index + 2]?
+
+      if block_comment_depth > 0
+        if char == '/' && next_char == '*'
+          block_comment_depth += 1
           index += 1
+        elsif char == '*' && next_char == '/'
+          block_comment_depth -= 1
+          index += 1
+        end
+      elsif in_multiline_string
+        if char == '"' && next_char == '"' && third_char == '"'
+          in_multiline_string = false
+          index += 2
         end
       elsif in_string
         if escaped
@@ -65,11 +88,16 @@ module Noir::SwiftCalleeExtractor
           in_string = false
         end
       elsif char == '"'
-        in_string = true
+        if next_char == '"' && third_char == '"'
+          in_multiline_string = true
+          index += 2
+        else
+          in_string = true
+        end
       elsif char == '/' && line[index + 1]? == '/'
-        return {stripped.to_s, in_block_comment}
+        return {stripped.to_s, block_comment_depth, in_multiline_string}
       elsif char == '/' && line[index + 1]? == '*'
-        in_block_comment = true
+        block_comment_depth += 1
         index += 1
       else
         stripped << char
@@ -77,7 +105,7 @@ module Noir::SwiftCalleeExtractor
       index += 1
     end
 
-    {stripped.to_s, in_block_comment}
+    {stripped.to_s, block_comment_depth, in_multiline_string}
   end
 
   private def scan_line(line : String, file_path : String, line_number : Int32, entries : Array(Entry))
@@ -90,6 +118,11 @@ module Noir::SwiftCalleeExtractor
 
     line.scan(BARE_CALL_REGEX) do |match|
       name = match[1]
+      delimiter = match[2]
+      if delimiter == "{"
+        name_start = match.begin(1) || 0
+        next if control_flow_condition?(line, name_start)
+      end
       next if skip_callee?(name)
 
       entries << {name, file_path, line_number}
@@ -101,6 +134,11 @@ module Noir::SwiftCalleeExtractor
 
     last = name.split('.').last
     RESERVED.includes?(last)
+  end
+
+  private def control_flow_condition?(line : String, name_start : Int32) : Bool
+    prefix = line[0...name_start].strip
+    !!prefix.match(/\b(if|guard|while|for|switch|catch|else|do)$/)
   end
 
   private def dedup_entries(entries : Array(Entry)) : Array(Entry)
