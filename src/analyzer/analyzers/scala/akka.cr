@@ -6,11 +6,11 @@ module Analyzer::Scala
 
     def analyze_file(path : String) : Array(Endpoint)
       content = File.read(path)
-      extract_routes_from_content(path, content)
+      extract_routes_from_content(path, content, any_to_bool(@options["include_callee"]?))
     end
 
     # Extract routes from Akka HTTP DSL
-    private def extract_routes_from_content(path : String, content : String) : Array(Endpoint)
+    private def extract_routes_from_content(path : String, content : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
       lines = content.split('\n')
       prefix_stack = [] of String
@@ -18,7 +18,8 @@ module Analyzer::Scala
       prefix_depths = [] of Int32 # Track at which depth each prefix was added
 
       lines.each_with_index do |line, index|
-        stripped_line = line.strip
+        stripped_line = scala_code_line(line).strip
+        structural_line = scala_structural_line(line).strip
 
         # Handle pathPrefix: pathPrefix("api") { ... }
         if path_prefix_match = stripped_line.match(/pathPrefix\s*\(\s*"([^"]+)"\s*\)/)
@@ -51,7 +52,11 @@ module Analyzer::Scala
           full_path = prefix_stack.empty? ? route_path : "#{prefix_stack.join("")}#{route_path}"
 
           # Find HTTP methods in the following lines within the same block
-          block_content = extract_block_from_index(lines, index)
+          block = extract_block_from_index(lines, index)
+          next unless block
+
+          block_content = block[0]
+          block_end = block[2]
 
           HTTP_METHODS.each do |method|
             if block_content =~ /\b#{method}\s*\{/
@@ -64,6 +69,7 @@ module Analyzer::Scala
 
               # Extract additional parameters from the block
               extract_params_from_block(endpoint, block_content)
+              attach_method_callees(endpoint, lines, index, block_end, method, path) if include_callee
 
               endpoints << endpoint
             end
@@ -71,8 +77,8 @@ module Analyzer::Scala
         end
 
         # Track brace depth to manage prefix stack
-        opening_braces = stripped_line.count('{')
-        closing_braces = stripped_line.count('}')
+        opening_braces = structural_line.count('{')
+        closing_braces = structural_line.count('}')
 
         brace_depth += opening_braces
         brace_depth -= closing_braces
@@ -88,27 +94,48 @@ module Analyzer::Scala
     end
 
     # Extract block content starting from a given index
-    private def extract_block_from_index(lines : Array(String), start_index : Int32) : String
-      block_lines = [] of String
-      brace_count = 0
-      started = false
+    private def extract_block_from_index(lines : Array(String), start_index : Int32) : Tuple(String, Int32, Int32)?
+      extract_scala_brace_block_with_end(lines, start_index)
+    end
 
-      (start_index...lines.size).each do |i|
-        line = lines[i]
+    private def attach_method_callees(endpoint : Endpoint,
+                                      lines : Array(String),
+                                      route_start : Int32,
+                                      route_end : Int32,
+                                      method : String,
+                                      path : String)
+      extract_method_blocks(lines, route_start, route_end, method).each do |body, start_line|
+        callees = Noir::ScalaCalleeExtractor.callees_for_body(body, path, start_line)
+        attach_scala_callees(endpoint, callees)
+      end
+    end
 
-        brace_count += line.count('{')
+    private def extract_method_blocks(lines : Array(String),
+                                      route_start : Int32,
+                                      route_end : Int32,
+                                      method : String) : Array(Tuple(String, Int32))
+      blocks = [] of Tuple(String, Int32)
+      index = route_start
 
-        if brace_count > 0
-          started = true
-          block_lines << line
+      while index <= route_end
+        stripped = scala_structural_line(lines[index])
+        match = stripped.match(/(?<![.\w])#{Regex.escape(method)}\s*\{/)
+        unless match
+          index += 1
+          next
         end
 
-        brace_count -= line.count('}')
+        opening_brace = (match.end(0) || 1) - 1
+        if block = extract_scala_brace_block_with_end_at(lines, index, opening_brace)
+          blocks << {block[0], block[1]}
+          index = block[2] + 1
+          next
+        end
 
-        break if started && brace_count <= 0
+        index += 1
       end
 
-      block_lines.join(" ")
+      blocks
     end
 
     # Extract parameters from a code block
