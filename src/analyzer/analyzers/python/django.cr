@@ -242,7 +242,13 @@ module Analyzer::Python
           # codeblock starts at the `def` line, so `body_start_line` is
           # that line's 0-based index — derived from the char offset.
           body_start_line = content[0, function_start_index].count('\n')
-          handler_callees = build_callees_from(function_codeblock, body_start_line, filepath)
+          handler_callees = build_callees_from(
+            function_codeblock,
+            body_start_line,
+            filepath,
+            definition_base_path: @django_base_path,
+            source: content
+          )
 
           suspicious_http_methods.uniq.each do |http_method_name|
             endpoint = Endpoint.new(url, http_method_name, filter_params(http_method_name, suspicious_params))
@@ -288,7 +294,13 @@ module Analyzer::Python
               suspicious_http_methods << method_name
 
               if codeblock = parse_code_block(lines[offset..])
-                method_callees[method_name] = build_callees_from(codeblock, body_start_line + offset + 1, filepath)
+                method_callees[method_name] = build_callees_from(
+                  codeblock,
+                  body_start_line + offset + 1,
+                  filepath,
+                  definition_base_path: @django_base_path,
+                  source: content
+                )
               end
             end
 

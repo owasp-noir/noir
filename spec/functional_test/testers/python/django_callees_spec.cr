@@ -19,6 +19,8 @@ require "../../func_spec.cr"
 #
 # Line assertions verify that body_start_line conversion (char-offset
 # → 0-based line) lands correctly for both paths.
+helpers_path = "./spec/functional_test/fixtures/python/django_callees/helpers.py"
+
 expected_endpoints = [
   # Django's `request.POST.get(...)` registers as a form param, and
   # `form` type accepts GET as well (existing REQUEST_PARAM_TYPE_MAP
@@ -27,8 +29,8 @@ expected_endpoints = [
     Param.new("name", "", "form"),
   ]).tap do |ep|
     ep.push_callee(Callee.new("request.POST.get", line: 8))
-    ep.push_callee(Callee.new("save_user", line: 9))
-    ep.push_callee(Callee.new("audit_log", line: 10))
+    ep.push_callee(Callee.new("save_user", helpers_path, 1))
+    ep.push_callee(Callee.new("audit_log", helpers_path, 5))
     ep.push_callee(Callee.new("JsonResponse", line: 11))
   end,
 
@@ -36,20 +38,20 @@ expected_endpoints = [
     Param.new("name", "", "form"),
   ]).tap do |ep|
     ep.push_callee(Callee.new("request.POST.get", line: 8))
-    ep.push_callee(Callee.new("save_user", line: 9))
-    ep.push_callee(Callee.new("audit_log", line: 10))
+    ep.push_callee(Callee.new("save_user", helpers_path, 1))
+    ep.push_callee(Callee.new("audit_log", helpers_path, 5))
     ep.push_callee(Callee.new("JsonResponse", line: 11))
   end,
 
   Endpoint.new("/profile", "GET").tap do |ep|
-    ep.push_callee(Callee.new("build_profile", line: 16))
-    ep.push_callee(Callee.new("audit_log", line: 17))
+    ep.push_callee(Callee.new("build_profile", helpers_path, 9))
+    ep.push_callee(Callee.new("audit_log", helpers_path, 5))
     ep.push_callee(Callee.new("JsonResponse", line: 18))
   end,
 
   Endpoint.new("/profile", "POST").tap do |ep|
-    ep.push_callee(Callee.new("save_user", line: 21))
-    ep.push_callee(Callee.new("audit_log", line: 22))
+    ep.push_callee(Callee.new("save_user", helpers_path, 1))
+    ep.push_callee(Callee.new("audit_log", helpers_path, 5))
     ep.push_callee(Callee.new("JsonResponse", line: 23))
   end,
 ]
