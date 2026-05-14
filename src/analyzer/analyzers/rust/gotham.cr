@@ -11,7 +11,8 @@ module Analyzer::Rust
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
+      lines = read_file_content(path).lines
+      include_callee = any_to_bool(@options["include_callee"]?)
 
       lines.each_with_index do |line, index|
         # Look for Gotham routing patterns like .get("/path")
@@ -44,7 +45,12 @@ module Analyzer::Rust
           # Look for .to(handler_name) in nearby lines
           handler_name = find_handler_name(lines, index)
           if handler_name
-            extract_handler_params(lines, handler_name, endpoint)
+            function_body = find_handler_body(lines, handler_name)
+            if function_body
+              body, body_start_line = function_body
+              extract_handler_params(body, endpoint)
+              attach_rust_callees(endpoint, Noir::RustCalleeExtractor.callees_for_body(body, path, body_start_line)) if include_callee
+            end
           end
 
           endpoints << endpoint
@@ -59,7 +65,7 @@ module Analyzer::Rust
     private def find_handler_name(lines : Array(String), start_index : Int32) : String?
       (start_index...[start_index + MAX_HANDLER_LOOKUP_LINES, lines.size].min).each do |i|
         line = lines[i]
-        match = line.match(/\.to\s*\(\s*(\w+)\s*\)/)
+        match = line.match(/\.to\s*\(\s*(?:[A-Za-z_]\w*::)*([A-Za-z_]\w*)\s*\)/)
         if match
           return match[1]
         end
@@ -67,30 +73,33 @@ module Analyzer::Rust
       nil
     end
 
+    private def find_handler_body(lines : Array(String), handler_name : String) : Tuple(String, Int32)?
+      function_index = find_handler_function_index(lines, handler_name)
+      return unless function_index
+
+      extract_rust_function_body(lines, function_index)
+    end
+
+    private def find_handler_function_index(lines : Array(String), handler_name : String) : Int32?
+      in_block_comment = false
+
+      lines.each_with_index do |line, index|
+        stripped, in_block_comment = Noir::RustCalleeExtractor.strip_comment_with_state(line, in_block_comment)
+        match = stripped.strip.match(/^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_]\w*)\b/)
+        return index if match && match[1] == handler_name
+      end
+    end
+
     # Extract cookies and headers from the handler function body
-    private def extract_handler_params(lines : Array(String), handler_name : String, endpoint : Endpoint)
-      in_function = false
-      brace_count = 0
-      seen_opening_brace = false
+    private def extract_handler_params(body : String, endpoint : Endpoint)
+      in_block_comment = false
 
-      lines.each do |line|
-        # Find the handler function definition
-        if !in_function && line.includes?("fn #{handler_name}")
-          in_function = true
-        end
-
-        next unless in_function
-
-        # Track braces
-        brace_count += line.count('{')
-        if brace_count > 0
-          seen_opening_brace = true
-        end
-        brace_count -= line.count('}')
+      body.each_line do |raw_line|
+        line, in_block_comment = Noir::RustCalleeExtractor.strip_comment_with_state(raw_line, in_block_comment)
 
         # Extract cookies from .cookie() or cookies().get() patterns
         if line.includes?(".cookie(")
-          match = line.match(/\.cookie\s*\(\s*"([^"]+)"\s*\)/)
+          match = raw_line.match(/\.cookie\s*\(\s*"([^"]+)"\s*\)/)
           if match
             cookie_name = match[1]
             unless endpoint.params.any? { |p| p.name == cookie_name && p.param_type == "cookie" }
@@ -101,7 +110,7 @@ module Analyzer::Rust
 
         # Extract headers from .headers().get() or HeaderMap access
         if line.includes?(".headers()") && line.includes?(".get(")
-          match = line.match(/\.headers\(\)\s*\.get\s*\(\s*"([^"]+)"\s*\)/)
+          match = raw_line.match(/\.headers\(\)\s*\.get\s*\(\s*"([^"]+)"\s*\)/)
           if match
             header_name = match[1]
             unless endpoint.params.any? { |p| p.name == header_name && p.param_type == "header" }
@@ -119,11 +128,6 @@ module Analyzer::Rust
               endpoint.push_param(Param.new(header_name, "", "header"))
             end
           end
-        end
-
-        # Stop if we've moved past the function
-        if seen_opening_brace && brace_count == 0
-          break
         end
       end
     end
