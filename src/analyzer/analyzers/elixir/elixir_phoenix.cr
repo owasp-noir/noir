@@ -66,6 +66,7 @@ module Analyzer::Elixir
 
     def extract_params_from_controller(content : String, controller_name : String, controller_path : String)
       lines = content.lines
+      include_callee = any_to_bool(@options["include_callee"]?)
 
       # Find all function definitions and extract parameters
       lines.each_with_index do |line, index|
@@ -86,6 +87,8 @@ module Analyzer::Elixir
               # Extract parameters from the function block
               params = extract_params_from_function_block(lines, index, block_end, endpoint.method)
               params.each { |param| endpoint.push_param(param) }
+
+              attach_callees_from_function_block(endpoint, lines, index, block_end, controller_path) if include_callee
             end
           end
         end
@@ -189,6 +192,20 @@ module Analyzer::Elixir
       end
 
       params
+    end
+
+    private def attach_callees_from_function_block(endpoint : Endpoint,
+                                                   lines : Array(String),
+                                                   start_index : Int32,
+                                                   end_index : Int32,
+                                                   controller_path : String)
+      return if end_index <= start_index
+
+      body_lines = lines[(start_index + 1)...end_index]
+      return if body_lines.empty?
+
+      callees = Noir::ElixirCalleeExtractor.callees_for_lines(body_lines, controller_path, start_index + 2)
+      attach_elixir_callees(endpoint, callees)
     end
 
     def line_to_endpoint(line : String, file_path : String) : Array(Endpoint)
