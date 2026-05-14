@@ -248,16 +248,16 @@ module Analyzer::Python
 
     # Infers the type of the parameter based on its default value or type annotation
     def infer_parameter_type(data : ::String, is_param_type = false) : ::String?
-      if data.match(/(\b)*Cookie(\b)*/)
+      if data.matches?(/Cookie/)
         "cookie"
-      elsif data.match(/(\b)*Header(\b)*/)
+      elsif data.matches?(/Header/)
         "header"
-      elsif data.match(/(\b)*Body(\b)*/) || data.match(/(\b)*Form(\b)*/) ||
-            data.match(/(\b)*File(\b)*/) || data.match(/(\b)*UploadFile(\b)*/)
+      elsif data.matches?(/Body/) || data.matches?(/Form/) ||
+            data.matches?(/File/) || data.matches?(/UploadFile/)
         "form"
-      elsif data.match(/(\b)*Query(\b)*/)
+      elsif data.matches?(/Query/)
         "query"
-      elsif data.match(/(\b)*WebSocket(\b)*/)
+      elsif data.matches?(/WebSocket/)
         "websocket"
       elsif is_param_type
         # default variable type
