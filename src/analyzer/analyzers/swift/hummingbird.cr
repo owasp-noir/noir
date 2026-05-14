@@ -1,4 +1,5 @@
 require "../../engines/swift_engine"
+require "../../../miniparsers/swift_callee_extractor"
 
 module Analyzer::Swift
   class Hummingbird < SwiftEngine
@@ -13,6 +14,7 @@ module Analyzer::Swift
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
+      include_callee = any_to_bool(@options["include_callee"]?)
 
       lines.each_with_index do |line, index|
         next unless route_definition_line?(line)
@@ -29,6 +31,7 @@ module Analyzer::Swift
 
           extract_path_params(route_path, endpoint)
           extract_function_params(lines, index + 1, endpoint)
+          attach_route_callees(lines, index, path, endpoint) if include_callee
 
           endpoints << endpoint
         rescue e
@@ -156,6 +159,60 @@ module Analyzer::Swift
       route_definition?(line) &&
         !line.includes?("context.parameters") &&
         !line.includes?("request.uri.queryParameters")
+    end
+
+    private def attach_route_callees(lines : Array(String), route_index : Int32, path : String, endpoint : Endpoint)
+      body, start_line = route_body(lines, route_index)
+      return if body.empty?
+
+      callees = Noir::SwiftCalleeExtractor.callees_for_body(body, path, start_line)
+      Noir::SwiftCalleeExtractor.attach_to(endpoint, callees)
+    end
+
+    private def route_body(lines : Array(String), route_index : Int32) : Tuple(String, Int32)
+      route_line = lines[route_index]
+      opening_brace = route_line.index('{')
+      return {"", route_index + 2} unless opening_brace
+
+      first_fragment = route_line[(opening_brace + 1)..]? || ""
+      clean_fragment, block_comment_depth, in_multiline_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(first_fragment, 0, false)
+      body_lines = [] of String
+      brace_count = 1 + clean_fragment.count('{') - clean_fragment.count('}')
+
+      if brace_count <= 0
+        closing_brace = clean_fragment.rindex('}')
+        first_fragment = first_fragment[0...closing_brace] if closing_brace
+        return {first_fragment, route_index + 1}
+      end
+
+      body_lines << first_fragment
+      index = route_index + 1
+
+      while index < lines.size && brace_count > 0
+        line = lines[index]
+        stripped, block_comment_depth, in_multiline_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(
+          line,
+          block_comment_depth,
+          in_multiline_string
+        )
+        opens = stripped.count('{')
+        closes = stripped.count('}')
+        next_brace_count = brace_count + opens - closes
+
+        if next_brace_count <= 0
+          if line.strip != "}"
+            body_lines << line
+          end
+          break
+        end
+
+        body_lines << line
+        brace_count = next_brace_count
+
+        index += 1
+      end
+
+      {body_lines.join("\n"), route_index + 1}
     end
   end
 end
