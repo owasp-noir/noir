@@ -27,13 +27,17 @@ module Analyzer::Rust
           http_method = infer_http_method(method_name, line)
 
           endpoint = Endpoint.new(endpoint_path, http_method, details)
+          function_body = extract_rust_function_body(lines, index)
 
           # Extract path parameters from the endpoint path
           extract_path_params(endpoint_path, endpoint)
 
           # Extract parameters from function signature and body
-          extract_function_params(lines, index, endpoint)
-          attach_handler_callees(lines, index, path, endpoint) if include_callee
+          extract_function_params(lines, index, endpoint, function_body.try(&.[0]))
+          if include_callee && function_body
+            body, body_start_line = function_body
+            attach_rust_callees(endpoint, Noir::RustCalleeExtractor.callees_for_body(body, path, body_start_line))
+          end
 
           endpoints << endpoint
         rescue e
@@ -43,14 +47,6 @@ module Analyzer::Rust
       end
 
       endpoints
-    end
-
-    private def attach_handler_callees(lines : Array(String), function_index : Int32, path : String, endpoint : Endpoint)
-      function_body = extract_rust_function_body(lines, function_index)
-      return unless function_body
-
-      body, body_start_line = function_body
-      attach_rust_callees(endpoint, Noir::RustCalleeExtractor.callees_for_body(body, path, body_start_line))
     end
 
     private def action_to_path(action_name : String, file_path : String) : String
@@ -134,7 +130,7 @@ module Analyzer::Rust
     # - Json<T> for JSON body
     # - Form<T> for form data
     # - HeaderMap or headers for header access
-    private def extract_function_params(lines : Array(String), start_index : Int32, endpoint : Endpoint)
+    private def extract_function_params(lines : Array(String), start_index : Int32, endpoint : Endpoint, body : String? = nil)
       # Look ahead up to 30 lines for the function definition and body
       in_function = false
       brace_count = 0
@@ -203,9 +199,7 @@ module Analyzer::Rust
       # Extract headers - look for HeaderMap or headers parameter
       if param_section.includes?("HeaderMap") || param_section.includes?(": HeaderMap")
         # Look in the function body for specific header usage
-        (start_index...[start_index + 30, lines.size].min).each do |i|
-          line = lines[i]
-
+        each_function_body_line(lines, start_index, body) do |line|
           # Extract specific header names from .get("header_name") or headers.get("header_name")
           if line.includes?(".get(\"")
             line.scan(/\.get\("([^"]+)"\)/) do |match|
@@ -220,15 +214,25 @@ module Analyzer::Rust
       end
 
       # Extract cookies from cookie access patterns
-      (start_index...[start_index + 30, lines.size].min).each do |i|
-        line = lines[i]
-
+      each_function_body_line(lines, start_index, body) do |line|
         # Look for .cookie("name") patterns
         if line.includes?(".cookie(\"")
           line.scan(/\.cookie\("([^"]+)"\)/) do |match|
             cookie_name = match[1]
             endpoint.push_param(Param.new(cookie_name, "", "cookie"))
           end
+        end
+      end
+    end
+
+    private def each_function_body_line(lines : Array(String), start_index : Int32, body : String?, &)
+      if body
+        body.each_line do |line|
+          yield line
+        end
+      else
+        (start_index...[start_index + 30, lines.size].min).each do |i|
+          yield lines[i]
         end
       end
     end
