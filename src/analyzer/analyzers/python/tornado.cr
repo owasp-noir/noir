@@ -349,7 +349,14 @@ module Analyzer::Python
             # line, so `body_start_line = line_index` matches the
             # helper's contract.
             if codeblock = parse_code_block(lines[line_index..])
-              push_callees_from(endpoint, codeblock, line_index, file_path)
+              push_callees_from(
+                endpoint,
+                codeblock,
+                line_index,
+                file_path,
+                definition_base_path: base_path_for(file_path),
+                source: read_file_content(file_path),
+              )
             end
 
             endpoints << endpoint
@@ -368,9 +375,14 @@ module Analyzer::Python
     private def resolve_imports(file_path : ::String) : Hash(::String, Tuple(::String, Int32))
       @import_modules_cache[file_path] ||= begin
         content = read_file_content(file_path)
-        base_path = base_paths.find { |bp| file_path.starts_with?(bp) } || base_paths[0]? || ""
-        find_imported_modules(base_path, file_path, content)
+        find_imported_modules(base_path_for(file_path), file_path, content)
       end
+    end
+
+    # Pick the base path that owns this file so the engine's definition
+    # resolver can locate imported modules relative to the right root.
+    private def base_path_for(file_path : ::String) : ::String
+      base_paths.find { |bp| file_path.starts_with?(bp) } || base_paths[0]? || ""
     end
 
     private def read_file_lines(file_path : ::String) : Array(::String)
