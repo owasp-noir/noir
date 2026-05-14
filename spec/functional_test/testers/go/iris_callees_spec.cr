@@ -14,11 +14,13 @@ require "../../func_spec.cr"
 # This fixture does not exercise the ANY-route fan-out path; the
 # callee push lives in both branches of iris.cr, but adding an
 # `.Any("/x", h)` here would just re-state the same assertion N times.
+helpers_path = "./spec/functional_test/fixtures/go/iris_callees/helpers.go"
+
 expected_endpoints = [
   Endpoint.new("/users", "POST").tap do |ep|
     ep.push_callee(Callee.new("ctx.PostValue", line: 8))
-    ep.push_callee(Callee.new("saveUser", line: 9))
-    ep.push_callee(Callee.new("auditLog", line: 10))
+    ep.push_callee(Callee.new("saveUser", helpers_path, 3))
+    ep.push_callee(Callee.new("auditLog", helpers_path, 7))
     ep.push_callee(Callee.new("ctx.JSON", line: 11))
   end,
 
@@ -27,8 +29,8 @@ expected_endpoints = [
   end,
 
   Endpoint.new("/profile", "GET").tap do |ep|
-    ep.push_callee(Callee.new("buildProfile", line: 15))
-    ep.push_callee(Callee.new("auditLog", line: 16))
+    ep.push_callee(Callee.new("buildProfile", helpers_path, 10))
+    ep.push_callee(Callee.new("auditLog", helpers_path, 7))
     ep.push_callee(Callee.new("ctx.JSON", line: 17))
   end,
 ]

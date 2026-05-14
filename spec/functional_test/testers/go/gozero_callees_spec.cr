@@ -19,11 +19,13 @@ require "../../func_spec.cr"
 #   - GET /healthz  — inline closure in main.go.
 #   - GET /profile  — second named handler in handlers.go.
 #   - GET /legacy   — declared in `legacy.api` (DSL); zero callees.
+helpers_path = "./spec/functional_test/fixtures/go/gozero_callees/helpers.go"
+
 expected_endpoints = [
   Endpoint.new("/users", "POST").tap do |ep|
     ep.push_callee(Callee.new("r.FormValue", line: 10))
-    ep.push_callee(Callee.new("saveUser", line: 11))
-    ep.push_callee(Callee.new("auditLog", line: 12))
+    ep.push_callee(Callee.new("saveUser", helpers_path, 3))
+    ep.push_callee(Callee.new("auditLog", helpers_path, 7))
     ep.push_callee(Callee.new("httpx.OkJson", line: 13))
   end,
 
@@ -32,8 +34,8 @@ expected_endpoints = [
   end,
 
   Endpoint.new("/profile", "GET").tap do |ep|
-    ep.push_callee(Callee.new("buildProfile", line: 17))
-    ep.push_callee(Callee.new("auditLog", line: 18))
+    ep.push_callee(Callee.new("buildProfile", helpers_path, 10))
+    ep.push_callee(Callee.new("auditLog", helpers_path, 7))
     ep.push_callee(Callee.new("httpx.OkJson", line: 19))
   end,
 
