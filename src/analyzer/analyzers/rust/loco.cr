@@ -10,7 +10,8 @@ module Analyzer::Rust
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
+      lines = read_file_content(path).lines
+      include_callee = any_to_bool(@options["include_callee"]?)
 
       lines.each_with_index do |line, index|
         next unless line.to_s.includes? "pub async fn"
@@ -32,6 +33,7 @@ module Analyzer::Rust
 
           # Extract parameters from function signature and body
           extract_function_params(lines, index, endpoint)
+          attach_handler_callees(lines, index, path, endpoint) if include_callee
 
           endpoints << endpoint
         rescue e
@@ -41,6 +43,14 @@ module Analyzer::Rust
       end
 
       endpoints
+    end
+
+    private def attach_handler_callees(lines : Array(String), function_index : Int32, path : String, endpoint : Endpoint)
+      function_body = extract_rust_function_body(lines, function_index)
+      return unless function_body
+
+      body, body_start_line = function_body
+      attach_rust_callees(endpoint, Noir::RustCalleeExtractor.callees_for_body(body, path, body_start_line))
     end
 
     private def action_to_path(action_name : String, file_path : String) : String
