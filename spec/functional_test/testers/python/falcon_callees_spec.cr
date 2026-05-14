@@ -5,13 +5,15 @@ require "../../func_spec.cr"
 # separate handler with its own body — the spec verifies that callees
 # stay scoped to the right HTTP method and don't bleed across responders
 # in the same class.
+db_path = "./spec/functional_test/fixtures/python/falcon_callees/db.py"
+
 expected_endpoints = [
   Endpoint.new("/items", "GET").tap do |ep|
-    ep.push_callee(Callee.new("list_items"))
+    ep.push_callee(Callee.new("list_items", db_path, 1))
   end,
 
   Endpoint.new("/items", "POST").tap do |ep|
-    ep.push_callee(Callee.new("save_item"))
+    ep.push_callee(Callee.new("save_item", db_path, 5))
   end,
 ]
 
