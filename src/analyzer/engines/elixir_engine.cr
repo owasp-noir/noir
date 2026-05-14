@@ -1,4 +1,5 @@
 require "../../models/analyzer"
+require "../../miniparsers/elixir_callee_extractor"
 
 module Analyzer::Elixir
   abstract class ElixirEngine < Analyzer
@@ -10,6 +11,10 @@ module Analyzer::Elixir
     end
 
     abstract def analyze_file(path : String) : Array(Endpoint)
+
+    protected def attach_elixir_callees(endpoint : Endpoint, callees : Array(Noir::ElixirCalleeExtractor::Entry))
+      Noir::ElixirCalleeExtractor.attach_to(endpoint, callees)
+    end
 
     # No extension filter: Phoenix uses `.ex` only, Plug also accepts
     # `.exs`, so each analyzer filters inside `analyze_file`.

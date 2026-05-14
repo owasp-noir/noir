@@ -18,6 +18,7 @@ module Analyzer::Elixir
 
     def analyze_content(content : String, file_path : String) : Array(Endpoint)
       endpoints = Array(Endpoint).new
+      include_callee = any_to_bool(@options["include_callee"]?)
 
       # Find all route blocks and extract params
       lines = content.lines
@@ -28,9 +29,12 @@ module Analyzer::Elixir
             details = Details.new(PathInfo.new(file_path, index + 1))
             endpoint.details = details
 
-            # Extract parameters from the route block
-            params = extract_params_from_block(lines, index, endpoint.method)
+            block_end = find_block_end(lines, index)
+
+            params = extract_params_from_block(lines, index, endpoint.method, block_end)
             params.each { |param| endpoint.push_param(param) }
+
+            attach_callees_from_block(endpoint, lines, index, block_end, file_path) if include_callee
 
             endpoints << endpoint
           end
@@ -40,16 +44,16 @@ module Analyzer::Elixir
       endpoints
     end
 
-    def extract_params_from_block(lines : Array(String), start_index : Int32, method : String) : Array(Param)
+    def extract_params_from_block(lines : Array(String), start_index : Int32, method : String, block_end : Int32? = nil) : Array(Param)
       params = Array(Param).new
       seen_params = Set(String).new # Track seen params for O(1) lookup
 
       # Find the end of the current route block (find matching "end")
-      block_end = find_block_end(lines, start_index)
-      return params if block_end == -1
+      end_index = block_end || find_block_end(lines, start_index)
+      return params if end_index == -1
 
       # Extract parameters from the block content
-      (start_index..block_end).each do |i|
+      (start_index..end_index).each do |i|
         line = lines[i]
 
         # Extract query parameters (conn.query_params["param"] or conn.params["param"] for GET)
@@ -105,6 +109,21 @@ module Analyzer::Elixir
       end
 
       params
+    end
+
+    private def attach_callees_from_block(endpoint : Endpoint,
+                                          lines : Array(String),
+                                          start_index : Int32,
+                                          block_end : Int32?,
+                                          file_path : String)
+      return unless block_end
+      return if block_end == -1 || block_end <= start_index
+
+      body_lines = lines[(start_index + 1)...block_end]
+      return if body_lines.empty?
+
+      callees = Noir::ElixirCalleeExtractor.callees_for_lines(body_lines, file_path, start_index + 2)
+      attach_elixir_callees(endpoint, callees)
     end
 
     def find_block_end(lines : Array(String), start_index : Int32) : Int32
