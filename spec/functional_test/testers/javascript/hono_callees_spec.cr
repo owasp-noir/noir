@@ -8,7 +8,7 @@ expected_endpoints = [
     Param.new("id", "", "path"),
   ]).tap do |ep|
     ep.push_callee(Callee.new("c.req.param", line: 8))
-    ep.push_callee(Callee.new("parseUser", line: 9))
+    ep.push_callee(Callee.new("parseUser", line: 29))
     ep.push_callee(Callee.new("serviceFactory().save", line: 10))
     ep.push_callee(Callee.new("AuditLog.write", line: 11))
     ep.push_callee(Callee.new("c.json", line: 13))
@@ -18,7 +18,7 @@ expected_endpoints = [
     Param.new("sessionId", "", "cookie"),
   ]).tap do |ep|
     ep.push_callee(Callee.new("getCookie", line: 17))
-    ep.push_callee(Callee.new("buildProfile", line: 18))
+    ep.push_callee(Callee.new("buildProfile", line: 37))
     ep.push_callee(Callee.new("c.json", line: 20))
   end,
 

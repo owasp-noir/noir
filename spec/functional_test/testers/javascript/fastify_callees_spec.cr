@@ -7,7 +7,7 @@ expected_endpoints = [
   Endpoint.new("/users/:id", "POST", [
     Param.new("id", "", "path"),
   ]).tap do |ep|
-    ep.push_callee(Callee.new("parseUser", line: 7))
+    ep.push_callee(Callee.new("parseUser", line: 20))
     ep.push_callee(Callee.new("serviceFactory().save", line: 8))
     ep.push_callee(Callee.new("AuditLog.write", line: 9))
     ep.push_callee(Callee.new("reply.send", line: 11))
@@ -16,7 +16,7 @@ expected_endpoints = [
   Endpoint.new("/profile", "GET", [
     Param.new("userId", "", "query"),
   ]).tap do |ep|
-    ep.push_callee(Callee.new("loadProfile", line: 15))
+    ep.push_callee(Callee.new("loadProfile", line: 28))
     ep.push_callee(Callee.new("reply.send", line: 17))
   end,
 ]

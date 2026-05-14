@@ -33,11 +33,13 @@ module Noir::JSCalleeExtractor
   }
 
   alias Entry = Tuple(String, String, Int32)
+  alias Definitions = Hash(String, Int32?)
 
   def callees_for_routes(source : String, file_path : String) : Hash(String, Array(Entry))
     by_route = {} of String => Array(Entry)
     Noir::TreeSitter.parse_javascript(source) do |root|
-      walk_routes(root, source, file_path, by_route, 0)
+      definitions = top_level_definitions(root, source)
+      walk_routes(root, source, file_path, by_route, 0, definitions)
     end
     by_route
   rescue
@@ -73,8 +75,9 @@ module Noir::JSCalleeExtractor
     source_for_ast = normalize_handler_source(source)
     sink = [] of Entry
     Noir::TreeSitter.parse_javascript(source_for_ast) do |root|
+      definitions = top_level_definitions(root, source_for_ast)
       if handler = exported_handler(root, root, source_for_ast, export_name, 0)
-        walk_callees(handler_body(handler), source_for_ast, file_path, sink, 0)
+        walk_callees(handler_body(handler), source_for_ast, file_path, sink, 0, definitions)
       end
     end
 
@@ -91,8 +94,9 @@ module Noir::JSCalleeExtractor
     event_handler_calls = event_handler_call_names(source_for_ast)
     sink = [] of Entry
     Noir::TreeSitter.parse_javascript(source_for_ast) do |root|
+      definitions = top_level_definitions(root, source_for_ast)
       if handler = exported_event_handler(root, root, source_for_ast, event_handler_calls, 0)
-        walk_callees(handler_body(handler), source_for_ast, file_path, sink, 0)
+        walk_callees(handler_body(handler), source_for_ast, file_path, sink, 0, definitions)
       end
     end
 
@@ -105,11 +109,66 @@ module Noir::JSCalleeExtractor
     "#{method.upcase}::#{path}::#{line}"
   end
 
+  # Collect same-file top-level declarations that we can use to resolve
+  # bare-identifier callees to their definition lines. Walks only the
+  # program's immediate children (and `export_statement` wrappers); nested
+  # scopes are ignored. Names declared more than once are mapped to `nil`
+  # so callers can leave ambiguous references at the call site.
+  private def top_level_definitions(root : LibTreeSitter::TSNode, source : String) : Definitions
+    definitions = Definitions.new
+    Noir::TreeSitter.each_named_child(root) do |child|
+      collect_top_level_definition(child, source, definitions)
+    end
+    definitions
+  end
+
+  private def collect_top_level_definition(node : LibTreeSitter::TSNode,
+                                           source : String,
+                                           definitions : Definitions)
+    type = Noir::TreeSitter.node_type(node)
+    case type
+    when "function_declaration", "generator_function_declaration"
+      if name_node = Noir::TreeSitter.field(node, "name")
+        record_definition(definitions, Noir::TreeSitter.node_text(name_node, source), node)
+      end
+    when "lexical_declaration", "variable_declaration"
+      Noir::TreeSitter.each_named_child(node) do |child|
+        next unless Noir::TreeSitter.node_type(child) == "variable_declarator"
+        name_node = Noir::TreeSitter.field(child, "name")
+        value_node = Noir::TreeSitter.field(child, "value")
+        next unless name_node && value_node
+        next unless Noir::TreeSitter.node_type(name_node) == "identifier"
+
+        case Noir::TreeSitter.node_type(value_node)
+        when "arrow_function", "function_expression"
+          record_definition(definitions, Noir::TreeSitter.node_text(name_node, source), child)
+        end
+      end
+    when "export_statement"
+      if declaration = Noir::TreeSitter.field(node, "declaration")
+        collect_top_level_definition(declaration, source, definitions)
+      end
+    end
+  end
+
+  private def record_definition(definitions : Definitions,
+                                name : String,
+                                node : LibTreeSitter::TSNode)
+    return if name.empty?
+
+    if definitions.has_key?(name)
+      definitions[name] = nil
+    else
+      definitions[name] = Noir::TreeSitter.node_start_row(node) + 1
+    end
+  end
+
   private def walk_routes(node : LibTreeSitter::TSNode,
                           source : String,
                           file_path : String,
                           by_route : Hash(String, Array(Entry)),
-                          depth : Int32)
+                          depth : Int32,
+                          definitions : Definitions)
     return if depth > Noir::TreeSitter::MAX_AST_DEPTH
 
     if Noir::TreeSitter.node_type(node) == "call_expression"
@@ -117,12 +176,12 @@ module Noir::JSCalleeExtractor
       if route_info
         method, path, handler = route_info
         line = Noir::TreeSitter.node_start_row(node) + 1
-        by_route[route_key(method, path, line)] = callees_in_handler(handler, source, file_path)
+        by_route[route_key(method, path, line)] = callees_in_handler(handler, source, file_path, definitions)
       end
     end
 
     Noir::TreeSitter.each_named_child(node) do |child|
-      walk_routes(child, source, file_path, by_route, depth + 1)
+      walk_routes(child, source, file_path, by_route, depth + 1, definitions)
     end
   end
 
@@ -172,9 +231,12 @@ module Noir::JSCalleeExtractor
     {method, strings[1], handler}
   end
 
-  private def callees_in_handler(handler : LibTreeSitter::TSNode, source : String, file_path : String) : Array(Entry)
+  private def callees_in_handler(handler : LibTreeSitter::TSNode,
+                                 source : String,
+                                 file_path : String,
+                                 definitions : Definitions) : Array(Entry)
     sink = [] of Entry
-    walk_callees(handler_body(handler), source, file_path, sink, 0)
+    walk_callees(handler_body(handler), source, file_path, sink, 0, definitions)
     sink
   end
 
@@ -536,23 +598,30 @@ module Noir::JSCalleeExtractor
                            source : String,
                            file_path : String,
                            sink : Array(Entry),
-                           depth : Int32)
+                           depth : Int32,
+                           definitions : Definitions = Definitions.new)
     return if depth > Noir::TreeSitter::MAX_AST_DEPTH
 
     skip_function_child : LibTreeSitter::TSNode? = nil
     if Noir::TreeSitter.node_type(node) == "call_expression"
+      function = Noir::TreeSitter.field(node, "function") || first_named_child(node)
       name = callee_text(node, source)
       unless name.empty?
         line = Noir::TreeSitter.node_start_row(node) + 1
+        if function && Noir::TreeSitter.node_type(function) == "identifier"
+          if definitions.has_key?(name) && (def_line = definitions[name])
+            line = def_line
+          end
+        end
         sink << {name, file_path, line}
-        skip_function_child = Noir::TreeSitter.field(node, "function") || first_named_child(node)
+        skip_function_child = function
       end
     end
 
     Noir::TreeSitter.each_named_child(node) do |child|
       next if skip_function_child && same_node?(child, skip_function_child)
 
-      walk_callees(child, source, file_path, sink, depth + 1)
+      walk_callees(child, source, file_path, sink, depth + 1, definitions)
     end
   end
 
