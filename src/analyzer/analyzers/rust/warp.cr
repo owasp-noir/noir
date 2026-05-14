@@ -4,18 +4,18 @@ module Analyzer::Rust
   class Warp < RustEngine
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
+      content = read_file_content(path)
+      include_callee = any_to_bool(@options["include_callee"]?)
+      function_callees = include_callee ? collect_function_callees(content.lines, path) : Hash(String, Array(Noir::RustCalleeExtractor::Entry)).new
 
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        content = file.gets_to_end
-
-        # Simple approach: split by let statements and analyze each
-        statements = content.split(/(?=let\s+\w+\s*=)/)
-        statements.each do |statement|
-          if statement.includes?("warp::") && (statement.includes?("get()") || statement.includes?("post()") || statement.includes?("put()") || statement.includes?("delete()"))
-            endpoint = parse_warp_statement(statement, path)
-            if endpoint
-              endpoints << endpoint
-            end
+      # Simple approach: split by let statements and analyze each
+      statements = content.split(/(?=let\s+\w+\s*=)/)
+      statements.each do |statement|
+        if statement.includes?("warp::") && (statement.includes?("get()") || statement.includes?("post()") || statement.includes?("put()") || statement.includes?("delete()"))
+          endpoint = parse_warp_statement(statement, path)
+          if endpoint
+            attach_handler_callees(statement, function_callees, endpoint) if include_callee
+            endpoints << endpoint
           end
         end
       end
@@ -81,6 +81,49 @@ module Analyzer::Rust
       Endpoint.new(route_path, method, params, details)
     rescue
       nil
+    end
+
+    private def collect_function_callees(lines : Array(String), path : String) : Hash(String, Array(Noir::RustCalleeExtractor::Entry))
+      function_callees = Hash(String, Array(Noir::RustCalleeExtractor::Entry)).new
+      in_block_comment = false
+      index = 0
+
+      while index < lines.size
+        stripped, in_block_comment = Noir::RustCalleeExtractor.strip_comment_with_state(lines[index], in_block_comment)
+        match = stripped.strip.match(/^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+|const\s+|unsafe\s+)*fn\s+([A-Za-z_]\w*)\b/)
+
+        if match
+          function_body = extract_rust_function_body_with_end(lines, index)
+          if function_body
+            body, body_start_line, end_index = function_body
+            function_callees[match[1]] = Noir::RustCalleeExtractor.callees_for_body(body, path, body_start_line)
+            index = end_index
+            in_block_comment = false
+          end
+        end
+
+        index += 1
+      end
+
+      function_callees
+    end
+
+    private def attach_handler_callees(statement : String,
+                                       function_callees : Hash(String, Array(Noir::RustCalleeExtractor::Entry)),
+                                       endpoint : Endpoint)
+      handler_name = extract_handler_name(statement)
+      return unless handler_name
+
+      if callees = function_callees[handler_name]?
+        attach_rust_callees(endpoint, callees)
+      end
+    end
+
+    private def extract_handler_name(statement : String) : String?
+      match = statement.match(/\.(?:map|and_then|then)\s*\(\s*((?:[A-Za-z_]\w*::)*[A-Za-z_]\w*)(?:::<[^>]+>)?\s*\)/)
+      return unless match
+
+      match[1].split("::").last
     end
 
     private def extract_non_path_params(statement : String, params : Array(Param))
