@@ -5,15 +5,18 @@ require "../../func_spec.cr"
 # body in hand at emit time, so wiring is a one-liner — this spec
 # locks the per-endpoint scope (web.json_response shows up on both
 # routes, save_order only on /orders).
+app_path = "./spec/functional_test/fixtures/python/aiohttp_callees/app.py"
+db_path = "./spec/functional_test/fixtures/python/aiohttp_callees/db.py"
+
 expected_endpoints = [
   Endpoint.new("/orders", "POST").tap do |ep|
-    ep.push_callee(Callee.new("request.json"))
-    ep.push_callee(Callee.new("save_order"))
-    ep.push_callee(Callee.new("web.json_response"))
+    ep.push_callee(Callee.new("request.json", app_path, 9))
+    ep.push_callee(Callee.new("save_order", db_path, 1))
+    ep.push_callee(Callee.new("web.json_response", app_path, 11))
   end,
 
   Endpoint.new("/healthz", "GET").tap do |ep|
-    ep.push_callee(Callee.new("web.json_response"))
+    ep.push_callee(Callee.new("web.json_response", app_path, 16))
   end,
 ]
 

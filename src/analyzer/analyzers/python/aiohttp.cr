@@ -58,7 +58,16 @@ module Analyzer::Python
               deco.methods.uniq.each do |deco_method|
                 def_line = deco.def_line >= 0 ? deco.def_line : deco.decorator_line
                 next if def_line == deco.decorator_line
-                emit_endpoint(path, lines, def_line, deco.path, deco_method, deco.decorator_line)
+                emit_endpoint(
+                  path,
+                  lines,
+                  def_line,
+                  deco.path,
+                  deco_method,
+                  deco.decorator_line,
+                  definition_base_path: current_base_path,
+                  source: file_content
+                )
               end
             end
 
@@ -75,7 +84,15 @@ module Analyzer::Python
                 if orig_match = line.match(/@#{aiohttp_route_deco[1]}\s*\.\s*route\s*\(\s*[rf]?['"][A-Za-z*]+['"]\s*,\s*[rf]?['"]([^'"]*)['"]/)
                   route_path = orig_match[1]
                 end
-                process_decorator_route(path, lines, line_index, route_path, method)
+                process_decorator_route(
+                  path,
+                  lines,
+                  line_index,
+                  route_path,
+                  method,
+                  definition_base_path: current_base_path,
+                  source: file_content
+                )
               end
 
               # Style A: app.router.add_<method>("/path", handler)
@@ -107,7 +124,16 @@ module Analyzer::Python
             handler_routes[path].each do |route_path, method, line_index, handler_name|
               def_index = find_handler_def(lines, handler_name)
               next if def_index.nil?
-              emit_endpoint(path, lines, def_index, route_path, method, line_index)
+              emit_endpoint(
+                path,
+                lines,
+                def_index,
+                route_path,
+                method,
+                line_index,
+                definition_base_path: current_base_path,
+                source: file_content
+              )
             end
           end
         end
@@ -116,13 +142,37 @@ module Analyzer::Python
       result
     end
 
-    private def process_decorator_route(path : ::String, lines : Array(::String), line_index : Int32, route_path : ::String, method : ::String)
+    private def process_decorator_route(path : ::String,
+                                        lines : Array(::String),
+                                        line_index : Int32,
+                                        route_path : ::String,
+                                        method : ::String,
+                                        *,
+                                        definition_base_path : ::String,
+                                        source : ::String)
       def_index = Noir::PythonRouteExtractor.find_def_line(lines, line_index)
       return if def_index == line_index
-      emit_endpoint(path, lines, def_index, route_path, method, line_index)
+      emit_endpoint(
+        path,
+        lines,
+        def_index,
+        route_path,
+        method,
+        line_index,
+        definition_base_path: definition_base_path,
+        source: source
+      )
     end
 
-    private def emit_endpoint(path : ::String, lines : Array(::String), def_index : Int32, route_path : ::String, method : ::String, report_line : Int32)
+    private def emit_endpoint(path : ::String,
+                              lines : Array(::String),
+                              def_index : Int32,
+                              route_path : ::String,
+                              method : ::String,
+                              report_line : Int32,
+                              *,
+                              definition_base_path : ::String,
+                              source : ::String)
       function_body = extract_function_body(lines, def_index)
       request_params = extract_request_params(function_body, method)
 
@@ -151,7 +201,14 @@ module Analyzer::Python
 
       # extract_function_body skips the def line, so body row 0 lives
       # at def_index + 1.
-      push_callees_from(endpoint, function_body, def_index + 1, path)
+      push_callees_from(
+        endpoint,
+        function_body,
+        def_index + 1,
+        path,
+        definition_base_path: definition_base_path,
+        source: source
+      )
 
       result << endpoint
     end
