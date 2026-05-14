@@ -49,12 +49,15 @@ module Noir::JavaCalleeExtractor
     body = Noir::TreeSitter.field(method_node, "body")
     return sink unless body
 
+    decl_index = build_method_decl_index(root, source)
+
     walk(body) do |n|
       next unless Noir::TreeSitter.node_type(n) == "method_invocation"
       name = callee_text(n, source)
       next if name.empty?
       row = Noir::TreeSitter.node_start_row(n)
-      sink << {name, file_path, row + 1}
+      resolved_line = resolve_same_file_line(n, source, decl_index)
+      sink << {name, file_path, resolved_line || (row + 1)}
     end
     sink
   end
@@ -161,5 +164,56 @@ module Noir::JavaCalleeExtractor
     Noir::TreeSitter.each_named_child(node) do |child|
       walk(child, &block)
     end
+  end
+
+  # Build a same-file method-name -> start row map. `nil` value marks
+  # an ambiguous name (multiple `method_declaration`s share it), so the
+  # caller knows to keep the call site location instead of guessing
+  # which overload to point at. Conservative by design — overloads,
+  # qualified non-`this` calls, and missing declarations all stay at
+  # call site.
+  private def build_method_decl_index(root : LibTreeSitter::TSNode,
+                                      source : String) : Hash(String, Int32?)
+    index = {} of String => Int32?
+    walk(root) do |n|
+      next unless Noir::TreeSitter.node_type(n) == "method_declaration"
+      name_node = Noir::TreeSitter.field(n, "name")
+      next unless name_node
+      name = Noir::TreeSitter.node_text(name_node, source)
+      next if name.empty?
+      if index.has_key?(name)
+        index[name] = nil # ambiguous: skip resolution for this name
+      else
+        index[name] = Noir::TreeSitter.node_start_row(n)
+      end
+    end
+    index
+  end
+
+  # Resolve a `method_invocation` to a same-file `method_declaration`
+  # line (1-based) only when the call is unambiguous:
+  #   - unqualified `foo(...)` (no `object` field), or
+  #   - `this.foo(...)` (object is the literal `this`),
+  # AND the same-file declaration map contains exactly one match.
+  # Returns `nil` for qualified non-`this` calls, ambiguous names, and
+  # names with no matching same-file declaration — callers fall back to
+  # the call site row.
+  private def resolve_same_file_line(call : LibTreeSitter::TSNode,
+                                     source : String,
+                                     decl_index : Hash(String, Int32?)) : Int32?
+    name_node = Noir::TreeSitter.field(call, "name")
+    return nil unless name_node
+    name = Noir::TreeSitter.node_text(name_node, source)
+    return nil if name.empty?
+
+    object = Noir::TreeSitter.field(call, "object")
+    unless object.nil?
+      return nil unless Noir::TreeSitter.node_type(object) == "this"
+    end
+
+    return nil unless decl_index.has_key?(name)
+    row = decl_index[name]
+    return nil if row.nil?
+    row + 1
   end
 end

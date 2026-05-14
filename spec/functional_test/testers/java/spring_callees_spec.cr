@@ -15,7 +15,12 @@ require "../../func_spec.cr"
 #   - POST /api/users/        — bare static (`AuditLog.write`) and
 #                               selector-on-identifier
 #                               (`service.save`) receivers.
-#   - GET  /api/users/profile — `this.foo` receiver shape.
+#   - GET  /api/users/profile — `this.foo` receiver shape; the
+#                               unambiguous same-file
+#                               `buildProfile` declaration resolves
+#                               to its definition line, while
+#                               `AuditLog.write` (qualified
+#                               non-`this`) stays at the call site.
 #   - GET  /api/orders/legacy — chained-on-call (`getLegacy().toString()`)
 #                               drops the outer `toString` and keeps
 #                               only the inner `getLegacy`, matching
@@ -27,13 +32,13 @@ expected_endpoints = [
   end,
 
   Endpoint.new("/api/users/profile", "GET").tap do |ep|
-    ep.push_callee(Callee.new("this.buildProfile", line: 27))
+    ep.push_callee(Callee.new("this.buildProfile", line: 32))
     ep.push_callee(Callee.new("AuditLog.write", line: 28))
   end,
 
   Endpoint.new("/api/orders/legacy", "GET").tap do |ep|
     ep.push_callee(Callee.new("AuditLog.write", line: 13))
-    ep.push_callee(Callee.new("getLegacy", line: 14))
+    ep.push_callee(Callee.new("getLegacy", line: 17))
   end,
 ]
 
