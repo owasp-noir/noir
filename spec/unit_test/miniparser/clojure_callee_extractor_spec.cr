@@ -33,4 +33,18 @@ describe Noir::ClojureCalleeExtractor do
       {"safe.service/run!", 25},
     ])
   end
+
+  it "keeps namespaced callees that share reserved base names" do
+    body = <<-CLJ
+      (let [items (db/filter params)]
+        (my-service/map items)
+        (clojure.core/map identity items))
+      CLJ
+
+    callees = Noir::ClojureCalleeExtractor.callees_for_body(body, "core.clj", 30)
+    callees.map { |name, _, line| {name, line} }.should eq([
+      {"db/filter", 30},
+      {"my-service/map", 31},
+    ])
+  end
 end

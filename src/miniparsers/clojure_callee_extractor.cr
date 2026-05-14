@@ -69,20 +69,38 @@ module Noir::ClojureCalleeExtractor
   end
 
   private def quoted_form?(symbol : String) : Bool
-    base_symbol(symbol) == "quote"
+    reserved_symbol?(symbol, "quote")
   end
 
   private def skip_callee?(symbol : String) : Bool
     return true if symbol.empty?
     return true if symbol.starts_with?(':')
 
-    base = base_symbol(symbol)
-    RESERVED.includes?(base)
+    reserved_symbol?(symbol)
+  end
+
+  private def reserved_symbol?(symbol : String, expected : String? = nil) : Bool
+    if symbol.includes?('/')
+      return false unless symbol.starts_with?("clojure.core/")
+
+      base = base_symbol(symbol)
+    else
+      base = symbol
+    end
+
+    if expected
+      base == expected
+    else
+      RESERVED.includes?(base)
+    end
   end
 
   private def base_symbol(symbol : String) : String
-    parts = symbol.split('/')
-    parts.last? || symbol
+    if index = symbol.rindex('/')
+      symbol[(index + 1)..]
+    else
+      symbol
+    end
   end
 
   private def skip_quoted_form(source : String, index : Int32, limit : Int32) : Int32
@@ -182,7 +200,7 @@ module Noir::ClojureCalleeExtractor
   end
 
   private def line_number_for(source : String, index : Int32, start_line : Int32) : Int32
-    start_line + source[0...index].count('\n')
+    start_line + source.to_slice[0, index].count('\n'.ord.to_u8)
   end
 
   private def whitespace?(char : Char) : Bool
@@ -190,15 +208,7 @@ module Noir::ClojureCalleeExtractor
   end
 
   private def dedup_entries(entries : Array(Entry)) : Array(Entry)
-    seen = Set(String).new
-    entries.select do |name, path, line|
-      key = "#{name}\0#{path}\0#{line}"
-      if seen.includes?(key)
-        false
-      else
-        seen.add(key)
-        true
-      end
-    end
+    seen = Set(Entry).new
+    entries.select { |entry| seen.add?(entry) }
   end
 end
