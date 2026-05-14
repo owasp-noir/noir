@@ -37,12 +37,12 @@ module Noir::RustCalleeExtractor
     end
   end
 
-  def strip_comment(line : String, in_block_comment : Bool = false) : String
-    stripped, _ = strip_comment_with_state(line, in_block_comment)
+  def strip_comment(line : String, in_block_comment : Bool = false, preserve_strings : Bool = false) : String
+    stripped, _ = strip_comment_with_state(line, in_block_comment, preserve_strings)
     stripped
   end
 
-  def strip_comment_with_state(line : String, in_block_comment : Bool) : Tuple(String, Bool)
+  def strip_comment_with_state(line : String, in_block_comment : Bool, preserve_strings : Bool = false) : Tuple(String, Bool)
     in_string = false
     escaped = false
     quote = '\0'
@@ -57,6 +57,7 @@ module Noir::RustCalleeExtractor
           index += 1
         end
       elsif in_string
+        stripped << char if preserve_strings
         if escaped
           escaped = false
         elsif char == '\\'
@@ -67,6 +68,7 @@ module Noir::RustCalleeExtractor
       elsif char == '"'
         in_string = true
         quote = char
+        stripped << char if preserve_strings
       elsif char == '/' && line[index + 1]? == '/'
         return {stripped.to_s, in_block_comment}
       elsif char == '/' && line[index + 1]? == '*'
