@@ -1,0 +1,6 @@
+name: yesod-callees-fixture
+version: 0.1.0.0
+dependencies:
+  - base
+  - yesod
+  - warp

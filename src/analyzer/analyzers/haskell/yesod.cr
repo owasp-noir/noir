@@ -1,12 +1,16 @@
 require "../../../models/analyzer"
+require "../../../miniparsers/haskell_callee_extractor"
 require "set"
 
 module Analyzer::Haskell
   class Yesod < Analyzer
     HTTP_METHODS = %w[GET POST PUT DELETE PATCH OPTIONS HEAD]
+    alias HandlerBody = Noir::HaskellCalleeExtractor::FunctionBody
 
     def analyze
       processed_route_files = Set(String).new
+      include_callee = any_to_bool(@options["include_callee"]?)
+      handler_bodies = include_callee ? build_handler_bodies : {} of String => HandlerBody
 
       all_files.each do |path|
         next if File.directory?(path)
@@ -15,7 +19,7 @@ module Analyzer::Haskell
           expanded_path = File.expand_path(path)
           next if processed_route_files.includes?(expanded_path)
 
-          process_route_content(expanded_path, read_file_content(path))
+          process_route_content(expanded_path, read_file_content(path), include_callee, handler_bodies)
           processed_route_files << expanded_path
           next
         end
@@ -24,7 +28,7 @@ module Analyzer::Haskell
 
         content = read_file_content(path)
         extract_inline_route_blocks(content).each do |block|
-          process_route_content(path, block)
+          process_route_content(path, block, include_callee, handler_bodies)
         end
 
         extract_external_route_paths(content).each do |relative_path|
@@ -33,7 +37,7 @@ module Analyzer::Haskell
           next if File.directory?(referenced_path)
           next if processed_route_files.includes?(referenced_path)
 
-          process_route_content(referenced_path, read_file_content(referenced_path))
+          process_route_content(referenced_path, read_file_content(referenced_path), include_callee, handler_bodies)
           processed_route_files << referenced_path
         end
       end
@@ -49,6 +53,21 @@ module Analyzer::Haskell
       return true if path.ends_with?(".yesodroutes")
 
       File.basename(path) == "routes" && File.dirname(path).ends_with?("/config")
+    end
+
+    private def build_handler_bodies : Hash(String, HandlerBody)
+      handlers = {} of String => HandlerBody
+
+      all_files.each do |path|
+        next if File.directory?(path)
+        next unless haskell_source?(path)
+
+        Noir::HaskellCalleeExtractor.function_bodies(read_file_content(path), path).each do |body|
+          handlers[body[:name]] = body
+        end
+      end
+
+      handlers
     end
 
     private def extract_inline_route_blocks(content : String) : Array(String)
@@ -73,7 +92,10 @@ module Analyzer::Haskell
       paths.uniq
     end
 
-    private def process_route_content(source_path : String, content : String)
+    private def process_route_content(source_path : String,
+                                      content : String,
+                                      include_callee : Bool,
+                                      handler_bodies : Hash(String, HandlerBody))
       scope_stack = [{indent: -1, raw_segments: [] of String}]
 
       logical_route_lines(content).each do |entry|
@@ -82,6 +104,7 @@ module Analyzer::Haskell
 
         tokens = split_route_tokens(stripped_line)
         next if tokens.size < 2
+        route_name = tokens[1]
 
         indent = entry[:indent]
         while scope_stack.size > 1 && indent <= scope_stack.last[:indent]
@@ -99,15 +122,41 @@ module Analyzer::Haskell
 
         methods = extract_methods(tokens)
         next if methods.empty?
+        methodless_route = methodless_route?(tokens)
 
         url, params = build_url_and_params(scope_stack.last[:raw_segments] + raw_segments)
         details = Details.new(PathInfo.new(source_path, entry[:line]))
 
         methods.each do |method|
           endpoint_params = params.map { |param| Param.new(param.name, param.value, param.param_type) }
-          @result << Endpoint.new(url, method, endpoint_params, details)
+          endpoint = Endpoint.new(url, method, endpoint_params, details)
+          attach_handler_callees(endpoint, method, route_name, methodless_route, handler_bodies) if include_callee
+          @result << endpoint
         end
       end
+    end
+
+    private def attach_handler_callees(endpoint : Endpoint,
+                                       method : String,
+                                       route_name : String,
+                                       methodless_route : Bool,
+                                       handler_bodies : Hash(String, HandlerBody))
+      handler_name = handler_name_for(method, route_name, methodless_route)
+      handler_body = handler_bodies[handler_name]?
+      return unless handler_body
+
+      callees = Noir::HaskellCalleeExtractor.callees_for_body(
+        handler_body[:body],
+        handler_body[:path],
+        handler_body[:start_line]
+      )
+      Noir::HaskellCalleeExtractor.attach_to(endpoint, callees)
+    end
+
+    private def handler_name_for(method : String, route_name : String, methodless_route : Bool) : String
+      return "handle#{route_name}" if methodless_route
+
+      method.downcase + route_name
     end
 
     private def logical_route_lines(content : String) : Array(NamedTuple(text: String, line: Int32, indent: Int32))
@@ -222,6 +271,12 @@ module Analyzer::Haskell
       return HTTP_METHODS.dup if non_attrs.empty?
 
       [] of String
+    end
+
+    private def methodless_route?(tokens : Array(String)) : Bool
+      rest = tokens[2..]? || [] of String
+      non_attrs = rest.reject(&.starts_with?("!"))
+      non_attrs.empty?
     end
 
     # Yesod subsite declarations use two non-method tokens after the route
