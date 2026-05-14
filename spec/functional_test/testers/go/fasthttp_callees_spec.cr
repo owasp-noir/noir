@@ -15,11 +15,13 @@ require "../../func_spec.cr"
 #   - GET /healthz  — inline `func(ctx *fasthttp.RequestCtx)` closure
 #                     handler in main.go.
 #   - GET /profile  — second named handler in handlers.go.
+helpers_path = "./spec/functional_test/fixtures/go/fasthttp_callees/helpers.go"
+
 expected_endpoints = [
   Endpoint.new("/users", "POST").tap do |ep|
     ep.push_callee(Callee.new("ctx.FormValue", line: 8))
-    ep.push_callee(Callee.new("saveUser", line: 9))
-    ep.push_callee(Callee.new("auditLog", line: 10))
+    ep.push_callee(Callee.new("saveUser", helpers_path, 3))
+    ep.push_callee(Callee.new("auditLog", helpers_path, 7))
     ep.push_callee(Callee.new("ctx.WriteString", line: 11))
   end,
 
@@ -28,8 +30,8 @@ expected_endpoints = [
   end,
 
   Endpoint.new("/profile", "GET").tap do |ep|
-    ep.push_callee(Callee.new("buildProfile", line: 15))
-    ep.push_callee(Callee.new("auditLog", line: 16))
+    ep.push_callee(Callee.new("buildProfile", helpers_path, 10))
+    ep.push_callee(Callee.new("auditLog", helpers_path, 7))
     ep.push_callee(Callee.new("ctx.WriteString", line: 17))
   end,
 ]

@@ -21,11 +21,13 @@ require "../../func_spec.cr"
 # get callees in this first cut — `analyze_router_function` runs its
 # own isolated route walk and would need separate wiring. Tracking
 # that as a follow-up in #1366.
+helpers_path = "./spec/functional_test/fixtures/go/chi_callees/helpers.go"
+
 expected_endpoints = [
   Endpoint.new("/users", "POST").tap do |ep|
     ep.push_callee(Callee.new("r.FormValue", line: 8))
-    ep.push_callee(Callee.new("saveUser", line: 9))
-    ep.push_callee(Callee.new("auditLog", line: 10))
+    ep.push_callee(Callee.new("saveUser", helpers_path, 3))
+    ep.push_callee(Callee.new("auditLog", helpers_path, 7))
     ep.push_callee(Callee.new("w.Write", line: 11))
   end,
 
@@ -34,8 +36,8 @@ expected_endpoints = [
   end,
 
   Endpoint.new("/profile/", "GET").tap do |ep|
-    ep.push_callee(Callee.new("buildProfile", line: 15))
-    ep.push_callee(Callee.new("auditLog", line: 16))
+    ep.push_callee(Callee.new("buildProfile", helpers_path, 10))
+    ep.push_callee(Callee.new("auditLog", helpers_path, 7))
     ep.push_callee(Callee.new("w.Write", line: 17))
   end,
 ]

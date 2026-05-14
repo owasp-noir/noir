@@ -136,16 +136,16 @@ module Noir::GoCalleeExtractor
         case Noir::TreeSitter.node_type(handler_arg)
         when "func_literal"
           if body = Noir::TreeSitter.field(handler_arg, "body")
-            walk_calls_in_node(body, source, file_path, callees, 0)
+            walk_calls_in_node(body, source, file_path, callees, 0, external_functions)
           end
         when "identifier"
           name = Noir::TreeSitter.node_text(handler_arg, source)
           if fn_node = local_functions[name]?
             if body = Noir::TreeSitter.field(fn_node, "body")
-              walk_calls_in_node(body, source, file_path, callees, 0)
+              walk_calls_in_node(body, source, file_path, callees, 0, external_functions)
             end
           elsif extern = external_functions[name]?
-            callees.concat(calls_in_external(extern))
+            callees.concat(calls_in_external(extern, external_functions))
           end
         else
           # selector_expression / method values — out of scope for now.
@@ -185,7 +185,8 @@ module Noir::GoCalleeExtractor
                                  source : String,
                                  file_path : String,
                                  sink : Array(Tuple(String, String, Int32)),
-                                 line_offset : Int32)
+                                 line_offset : Int32,
+                                 external_functions : Hash(String, FunctionBody))
     walk(body_node) do |n|
       next unless Noir::TreeSitter.node_type(n) == "call_expression"
       func = Noir::TreeSitter.field(n, "function")
@@ -194,8 +195,14 @@ module Noir::GoCalleeExtractor
       next if name.empty?
       next if BUILTINS.includes?(name)
       next if name.starts_with?("_")
-      row = Noir::TreeSitter.node_start_row(func) + line_offset
-      sink << {name, file_path, row + 1}
+      # Same-package bare identifier callees are rewritten to point at the
+      # function definition; selector/method calls stay at the call-site.
+      if Noir::TreeSitter.node_type(func) == "identifier" && (extern = external_functions[name]?)
+        sink << {name, extern.file_path, extern.start_row + 1}
+      else
+        row = Noir::TreeSitter.node_start_row(func) + line_offset
+        sink << {name, file_path, row + 1}
+      end
     end
   end
 
@@ -204,7 +211,8 @@ module Noir::GoCalleeExtractor
   # in a `package` line so tree-sitter Go can parse it as a complete
   # `source_file`; the wrap adds exactly one row, which we subtract via
   # `start_row - 1` to map walked rows back to the original file.
-  private def calls_in_external(fn : FunctionBody) : Array(Tuple(String, String, Int32))
+  private def calls_in_external(fn : FunctionBody,
+                                external_functions : Hash(String, FunctionBody)) : Array(Tuple(String, String, Int32))
     sink = [] of Tuple(String, String, Int32)
     wrapped = "package _noir_callee_wrap\n#{fn.source}\n"
     line_offset = fn.start_row - 1
@@ -212,7 +220,7 @@ module Noir::GoCalleeExtractor
       Noir::TreeSitter.each_named_child(root) do |child|
         next unless Noir::TreeSitter.node_type(child) == "function_declaration"
         if body = Noir::TreeSitter.field(child, "body")
-          walk_calls_in_node(body, wrapped, fn.file_path, sink, line_offset)
+          walk_calls_in_node(body, wrapped, fn.file_path, sink, line_offset, external_functions)
           break
         end
       end

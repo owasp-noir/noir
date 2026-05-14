@@ -14,11 +14,13 @@ require "../../func_spec.cr"
 #
 # Also note `string(name)` in handlers.go is filtered by `BUILTINS` —
 # Go primitive type-conversions don't surface as callees.
+helpers_path = "./spec/functional_test/fixtures/go/hertz_callees/helpers.go"
+
 expected_endpoints = [
   Endpoint.new("/users", "POST").tap do |ep|
     ep.push_callee(Callee.new("ctx.PostForm", line: 10))
-    ep.push_callee(Callee.new("saveUser", line: 11))
-    ep.push_callee(Callee.new("auditLog", line: 12))
+    ep.push_callee(Callee.new("saveUser", helpers_path, 3))
+    ep.push_callee(Callee.new("auditLog", helpers_path, 7))
     ep.push_callee(Callee.new("ctx.JSON", line: 13))
   end,
 
@@ -27,8 +29,8 @@ expected_endpoints = [
   end,
 
   Endpoint.new("/profile", "GET").tap do |ep|
-    ep.push_callee(Callee.new("buildProfile", line: 17))
-    ep.push_callee(Callee.new("auditLog", line: 18))
+    ep.push_callee(Callee.new("buildProfile", helpers_path, 10))
+    ep.push_callee(Callee.new("auditLog", helpers_path, 7))
     ep.push_callee(Callee.new("ctx.JSON", line: 19))
   end,
 ]
