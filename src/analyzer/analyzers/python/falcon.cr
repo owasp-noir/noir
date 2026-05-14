@@ -36,18 +36,16 @@ module Analyzer::Python
           next if path.includes?("/site-packages/")
           @logger.debug "Analyzing #{path}"
 
-          analyze_file(path)
+          analyze_file(path, current_base_path)
         end
       end
 
       result
     end
 
-    private def analyze_file(path : ::String)
-      lines = [] of ::String
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        lines = file.each_line.to_a
-      end
+    private def analyze_file(path : ::String, definition_base_path : ::String)
+      source = File.read(path, encoding: "utf-8", invalid: :skip)
+      lines = source.lines
       return unless lines.any?(&.includes?("falcon"))
 
       routes = [] of Tuple(Int32, ::String, ::String, ::String)
@@ -78,12 +76,24 @@ module Analyzer::Python
         next if class_line.nil?
 
         responder_name = suffix.empty? ? nil : suffix
-        emit_endpoints_for_class(path, lines, class_line, route_path, line_index, responder_name)
+        emit_endpoints_for_class(
+          path,
+          lines,
+          class_line,
+          route_path,
+          line_index,
+          responder_name,
+          definition_base_path: definition_base_path,
+          source: source
+        )
       end
     end
 
     private def emit_endpoints_for_class(path : ::String, lines : Array(::String), class_line : Int32,
-                                         route_path : ::String, route_line : Int32, suffix : ::String?)
+                                         route_path : ::String, route_line : Int32, suffix : ::String?,
+                                         *,
+                                         definition_base_path : ::String,
+                                         source : ::String)
       class_indent = indent_level(lines[class_line])
 
       i = class_line + 1
@@ -109,7 +119,14 @@ module Analyzer::Python
               endpoint = Endpoint.new(normalize_path(route_path), http_method, params)
               endpoint.details = details
 
-              push_callees_from(endpoint, codeblock || "", i, path)
+              push_callees_from(
+                endpoint,
+                codeblock || "",
+                i,
+                path,
+                definition_base_path: definition_base_path,
+                source: source
+              )
 
               result << endpoint
             end
