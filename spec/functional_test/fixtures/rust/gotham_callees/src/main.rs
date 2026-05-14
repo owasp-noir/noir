@@ -24,13 +24,13 @@ fn create_user_handler(state: State) -> (State, Response<Body>) {
 }
 
 fn session_handler(state: State) -> (State, Response<Body>) {
-    let session_id = state.cookie("session_id");
+    let session_id = /* state.cookie("debug_session") */ state.cookie("session_id");
     AuthService::session(session_id);
     respond(state, "session".to_string(), StatusCode::OK)
 }
 
 fn auth_handler(state: State) -> (State, Response<Body>) {
-    let auth = state.headers().get("Authorization");
+    let auth = /* state.headers().get("X-Debug") */ state.headers().get("Authorization");
     let api_key = state.headers().get("X-API-Key");
     AuthService::validate(auth, api_key);
     respond(state, "auth".to_string(), StatusCode::OK)

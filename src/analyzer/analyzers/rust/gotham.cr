@@ -13,6 +13,7 @@ module Analyzer::Rust
       endpoints = [] of Endpoint
       lines = read_file_content(path).lines
       include_callee = any_to_bool(@options["include_callee"]?)
+      function_bodies = collect_function_bodies(lines)
 
       lines.each_with_index do |line, index|
         # Look for Gotham routing patterns like .get("/path")
@@ -45,8 +46,7 @@ module Analyzer::Rust
           # Look for .to(handler_name) in nearby lines
           handler_name = find_handler_name(lines, index)
           if handler_name
-            function_body = find_handler_body(lines, handler_name)
-            if function_body
+            if function_body = function_bodies[handler_name]?
               body, body_start_line = function_body
               extract_handler_params(body, endpoint)
               attach_rust_callees(endpoint, Noir::RustCalleeExtractor.callees_for_body(body, path, body_start_line)) if include_callee
@@ -73,21 +73,29 @@ module Analyzer::Rust
       nil
     end
 
-    private def find_handler_body(lines : Array(String), handler_name : String) : Tuple(String, Int32)?
-      function_index = find_handler_function_index(lines, handler_name)
-      return unless function_index
-
-      extract_rust_function_body(lines, function_index)
-    end
-
-    private def find_handler_function_index(lines : Array(String), handler_name : String) : Int32?
+    private def collect_function_bodies(lines : Array(String)) : Hash(String, Tuple(String, Int32))
+      function_bodies = {} of String => Tuple(String, Int32)
       in_block_comment = false
+      index = 0
 
-      lines.each_with_index do |line, index|
-        stripped, in_block_comment = Noir::RustCalleeExtractor.strip_comment_with_state(line, in_block_comment)
+      while index < lines.size
+        stripped, in_block_comment = Noir::RustCalleeExtractor.strip_comment_with_state(lines[index], in_block_comment)
         match = stripped.strip.match(/^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_]\w*)\b/)
-        return index if match && match[1] == handler_name
+
+        if match
+          function_body = extract_rust_function_body_with_end(lines, index)
+          if function_body
+            body, body_start_line, end_index = function_body
+            function_bodies[match[1]] = {body, body_start_line}
+            index = end_index
+            in_block_comment = false
+          end
+        end
+
+        index += 1
       end
+
+      function_bodies
     end
 
     # Extract cookies and headers from the handler function body
@@ -95,11 +103,11 @@ module Analyzer::Rust
       in_block_comment = false
 
       body.each_line do |raw_line|
-        line, in_block_comment = Noir::RustCalleeExtractor.strip_comment_with_state(raw_line, in_block_comment)
+        line, in_block_comment = strip_comments_preserving_strings(raw_line, in_block_comment)
 
         # Extract cookies from .cookie() or cookies().get() patterns
         if line.includes?(".cookie(")
-          match = raw_line.match(/\.cookie\s*\(\s*"([^"]+)"\s*\)/)
+          match = line.match(/\.cookie\s*\(\s*"([^"]+)"\s*\)/)
           if match
             cookie_name = match[1]
             unless endpoint.params.any? { |p| p.name == cookie_name && p.param_type == "cookie" }
@@ -110,7 +118,7 @@ module Analyzer::Rust
 
         # Extract headers from .headers().get() or HeaderMap access
         if line.includes?(".headers()") && line.includes?(".get(")
-          match = raw_line.match(/\.headers\(\)\s*\.get\s*\(\s*"([^"]+)"\s*\)/)
+          match = line.match(/\.headers\(\)\s*\.get\s*\(\s*"([^"]+)"\s*\)/)
           if match
             header_name = match[1]
             unless endpoint.params.any? { |p| p.name == header_name && p.param_type == "header" }
@@ -130,6 +138,47 @@ module Analyzer::Rust
           end
         end
       end
+    end
+
+    private def strip_comments_preserving_strings(line : String, in_block_comment : Bool) : Tuple(String, Bool)
+      in_string = false
+      escaped = false
+      index = 0
+      stripped = String::Builder.new
+
+      while index < line.size
+        char = line[index]
+
+        if in_block_comment
+          if char == '*' && line[index + 1]? == '/'
+            in_block_comment = false
+            index += 1
+          end
+        elsif in_string
+          stripped << char
+          if escaped
+            escaped = false
+          elsif char == '\\'
+            escaped = true
+          elsif char == '"'
+            in_string = false
+          end
+        elsif char == '"'
+          in_string = true
+          stripped << char
+        elsif char == '/' && line[index + 1]? == '/'
+          return {stripped.to_s, in_block_comment}
+        elsif char == '/' && line[index + 1]? == '*'
+          in_block_comment = true
+          index += 1
+        else
+          stripped << char
+        end
+
+        index += 1
+      end
+
+      {stripped.to_s, in_block_comment}
     end
   end
 end
