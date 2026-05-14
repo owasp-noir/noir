@@ -16,7 +16,7 @@ noir -b . --include-callee
 
 JSON, JSONL, YAML, TOML 같은 모델 기반 포맷과 plain 모델 직렬화는 엔드포인트 모델을 통해 `callees` 필드를 포함합니다. OpenAPI 2.0/3.0은 operation 레벨의 `x-noir-callees` extension으로, SARIF는 `result.properties.noir.callees`로, Postman collection은 item description의 사람이 읽을 수 있는 목록으로 callee를 제공합니다. cURL, HTTPie, PowerShell, only-url, only-param 같은 명령/필터 목적 출력은 주 출력 형태를 안정적으로 유지하기 위해 callee를 생략합니다.
 
-현재 `path`와 `line`은 callee 정의 위치가 아니라 호출 위치를 가리킵니다.
+`path`와 `line`은 best-effort 위치 정보입니다. 대부분의 analyzer는 호출 위치를 보고하고, definition resolution을 지원하는 analyzer는 도달 가능한 경우 callee 정의 위치를 보고하며 그렇지 않으면 호출 위치를 유지합니다.
 
 ## 커버리지 매트릭스
 
@@ -52,5 +52,6 @@ JSON, JSONL, YAML, TOML 같은 모델 기반 포맷과 plain 모델 직렬화는
 - Callee는 1-hop만 제공합니다. Noir는 transitive call graph를 만들지 않습니다.
 - Dynamic dispatch, middleware chain, decorator, macro expansion, generated code, reflection은 정적 추출에서 누락될 수 있습니다.
 - Named handler 기반 프레임워크는 동적이거나 inline callback이 많은 프레임워크보다 callee 커버리지가 좋은 편입니다.
+- Definition resolution은 점진적으로 적용되며 현재 analyzer별로 지원됩니다.
 - downstream 도구가 쓰기 쉽도록 callee는 엔드포인트별로 dedup되고 개수가 제한됩니다.
 - renderer나 request accessor 같은 프레임워크 helper는 엔드포인트가 입력과 출력을 어떻게 다루는지 보여주므로 의도적으로 유지합니다.

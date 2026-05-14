@@ -64,6 +64,7 @@ module Analyzer::Python
 
         include_router_map.each do |path, router_map|
           source = File.read(path, encoding: "utf-8", invalid: :skip)
+          definition_base_path = base_paths.find { |base_path| path.starts_with?(base_path) } || @fastapi_base_path
           import_modules = find_imported_modules(@fastapi_base_path, path, source)
           codelines = source.split("\n")
           router_map.each do |instance_name, router_class|
@@ -172,7 +173,14 @@ module Analyzer::Python
                   # `parse_code_block(codelines[def_line..])` keeps the
                   # def line, so body row 0 lives at file line `def_line`.
                   if handler_codeblock = parse_code_block(codelines[def_line..])
-                    push_callees_from(endpoint, handler_codeblock, def_line, path)
+                    push_callees_from(
+                      endpoint,
+                      handler_codeblock,
+                      def_line,
+                      path,
+                      definition_base_path: definition_base_path,
+                      source: source
+                    )
                   end
 
                   result << endpoint

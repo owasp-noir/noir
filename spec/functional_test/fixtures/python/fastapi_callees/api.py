@@ -1,10 +1,10 @@
 from fastapi import APIRouter
-from db import fetch_report
+import db
 
 api = APIRouter()
 
 
 @api.get("/reports")
 def list_reports():
-    rows = fetch_report()
+    rows = db.fetch_report()
     return rows

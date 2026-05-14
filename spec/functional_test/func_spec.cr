@@ -137,6 +137,15 @@ class FunctionalTester
                         found.line.should eq expected_line
                       end
                     end
+                    if expected_path = callee.path
+                      it "check '#{callee.name}' path #{expected_path}" do
+                        actual_path = found.path
+                        actual_path.should_not be_nil
+                        if actual_path
+                          File.expand_path(actual_path).should eq File.expand_path(expected_path)
+                        end
+                      end
+                    end
                   end
                 end
               end

@@ -13,6 +13,10 @@ def rate_limit(_n):
     return deco
 
 
+def build_status():
+    return {"ok": True}
+
+
 app = FastAPI()
 app.include_router(api, prefix="/internal")
 
@@ -26,7 +30,7 @@ def create_user(name: str):
 
 @app.get("/healthz")
 def healthz():
-    return {"ok": True}
+    return build_status()
 
 
 # Stacked decorators between the route declaration and the def — used

@@ -181,9 +181,9 @@ end
 
 # A function/method invoked directly from an endpoint's handler body
 # (1-hop only). `name` is the textual callee as it appears in source
-# (e.g. `User.create`, `raw_sql_query`). `path` and `line` point at the
-# call site — i.e. where the call appears in the handler — not at the
-# callee's definition; resolving to the definition is future work.
+# (e.g. `User.create`, `raw_sql_query`). `path` and `line` are
+# best-effort location metadata: analyzers with definition resolution use
+# the callee's definition when reachable; the rest keep the call site.
 #
 # The list is intentionally incomplete: dynamic dispatch (Rails
 # `before_action`, JS middleware, Python decorators) bypasses the body
