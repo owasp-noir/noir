@@ -288,19 +288,145 @@ module Analyzer::Python
     # pass `def_idx` because that helper keeps the def line. Callers
     # using `extract_function_body(lines, def_idx)` should pass
     # `def_idx + 1` because that helper skips the def line.
-    def build_callees_from(body : ::String, body_start_line : Int32, path : ::String) : Array(Callee)
+    # When `definition_base_path` is provided, callees with reachable
+    # same-file or imported Python definitions are rewritten to that
+    # definition location; unresolved callees keep their call-site
+    # `path`/`line`.
+    def build_callees_from(body : ::String,
+                           body_start_line : Int32,
+                           path : ::String,
+                           *,
+                           definition_base_path : ::String? = nil,
+                           source : ::String? = nil) : Array(Callee)
       return [] of Callee if body.empty?
-      Noir::PythonCalleeExtractor.calls_in(body).map do |entry|
+      callees = Noir::PythonCalleeExtractor.calls_in(body).map do |entry|
         name, row = entry
         Callee.new(name, path: path, line: body_start_line + row + 1)
       end
+
+      return callees unless base_path = definition_base_path
+
+      resolve_python_callee_definitions(callees, base_path, path, source)
     end
 
     # Convenience wrapper around `build_callees_from`: parse + push in
     # one call when one body maps to exactly one endpoint.
     # `Endpoint#push_callee` enforces dedup and the per-endpoint cap.
-    def push_callees_from(endpoint : Endpoint, body : ::String, body_start_line : Int32, path : ::String) : Nil
-      build_callees_from(body, body_start_line, path).each { |c| endpoint.push_callee(c) }
+    def push_callees_from(endpoint : Endpoint,
+                          body : ::String,
+                          body_start_line : Int32,
+                          path : ::String,
+                          *,
+                          definition_base_path : ::String? = nil,
+                          source : ::String? = nil) : Nil
+      build_callees_from(
+        body,
+        body_start_line,
+        path,
+        definition_base_path: definition_base_path,
+        source: source
+      ).each { |c| endpoint.push_callee(c) }
+    end
+
+    private def resolve_python_callee_definitions(callees : Array(Callee),
+                                                  app_base_path : ::String,
+                                                  caller_path : ::String,
+                                                  caller_source : ::String?) : Array(Callee)
+      source_cache = Hash(::String, ::String).new
+      source_cache[caller_path] = caller_source || File.read(caller_path, encoding: "utf-8", invalid: :skip)
+      import_map = find_imported_modules(app_base_path, caller_path, source_cache[caller_path])
+
+      callees.map do |callee|
+        if definition = resolve_python_callee_definition(callee.name, caller_path, source_cache, import_map)
+          definition_path, definition_line = definition
+          Callee.new(callee.name, path: definition_path, line: definition_line)
+        else
+          callee
+        end
+      end
+    rescue
+      callees
+    end
+
+    private def resolve_python_callee_definition(name : ::String,
+                                                 caller_path : ::String,
+                                                 source_cache : Hash(::String, ::String),
+                                                 import_map : Hash(::String, Tuple(::String, Int32))) : Tuple(::String, Int32)?
+      parts = name.split(".")
+      return if parts.empty?
+
+      caller_source = source_cache[caller_path]
+      if definition = find_python_definition(caller_path, caller_source, parts)
+        return definition
+      end
+
+      first_part = parts[0]
+      return unless imported = import_map[first_part]?
+
+      imported_path = imported.first
+      return if imported_path.empty? || !File.exists?(imported_path)
+
+      imported_source = source_cache[imported_path] ||= File.read(imported_path, encoding: "utf-8", invalid: :skip)
+      imported_parts = parts.size == 1 ? parts : parts[1..]
+      find_python_definition(imported_path, imported_source, imported_parts) ||
+        find_python_definition(imported_path, imported_source, parts)
+    end
+
+    private def find_python_definition(path : ::String, source : ::String, parts : Array(::String)) : Tuple(::String, Int32)?
+      return if parts.empty?
+
+      if parts.size == 1
+        line = find_python_function_or_class_line(source, parts[0])
+        return {path, line} if line
+        return
+      end
+
+      if line = find_python_class_method_line(source, parts[0], parts[1])
+        return {path, line}
+      end
+    end
+
+    private def find_python_function_or_class_line(source : ::String, name : ::String) : Int32?
+      source.lines.each_with_index do |line, index|
+        stripped = line.lstrip
+        next if stripped.starts_with?("#")
+        if python_def_matches?(stripped, name) || python_class_matches?(stripped, name)
+          return index + 1
+        end
+      end
+    end
+
+    private def find_python_class_method_line(source : ::String, class_name : ::String, method_name : ::String) : Int32?
+      lines = source.lines
+      class_indent : Int32? = nil
+
+      lines.each_with_index do |line, index|
+        stripped = line.lstrip
+        next if stripped.starts_with?("#")
+
+        if class_indent.nil?
+          next unless python_class_matches?(stripped, class_name)
+
+          class_indent = line.size - stripped.size
+          next
+        end
+
+        indent = line.size - stripped.size
+        next if stripped.empty? || stripped.starts_with?("@") || stripped.starts_with?("#")
+        if current_class_indent = class_indent
+          return if indent <= current_class_indent
+        end
+
+        return index + 1 if python_def_matches?(stripped, method_name)
+      end
+    end
+
+    private def python_def_matches?(stripped : ::String, name : ::String) : Bool
+      stripped.starts_with?("def #{name}(") || stripped.starts_with?("async def #{name}(")
+    end
+
+    private def python_class_matches?(stripped : ::String, name : ::String) : Bool
+      stripped.starts_with?("class #{name}:") || stripped.starts_with?("class #{name}(")
     end
 
     class FunctionParameter

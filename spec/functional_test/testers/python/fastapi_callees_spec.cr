@@ -19,27 +19,32 @@ require "../../func_spec.cr"
 #                              a separate file; locks in that the
 #                              include_router emit branch also pushes
 #                              callees.
+db_path = "./spec/functional_test/fixtures/python/fastapi_callees/db.py"
+main_path = "./spec/functional_test/fixtures/python/fastapi_callees/main.py"
+
 expected_endpoints = [
   Endpoint.new("/users", "POST", [
     Param.new("name", "", "query"),
   ]).tap do |ep|
-    ep.push_callee(Callee.new("save_user", line: 22))
-    ep.push_callee(Callee.new("audit_log", line: 23))
+    ep.push_callee(Callee.new("save_user", db_path, 1))
+    ep.push_callee(Callee.new("audit_log", db_path, 5))
   end,
 
-  Endpoint.new("/healthz", "GET"),
+  Endpoint.new("/healthz", "GET").tap do |ep|
+    ep.push_callee(Callee.new("build_status", main_path, 16))
+  end,
 
   Endpoint.new("/profile", "GET").tap do |ep|
-    ep.push_callee(Callee.new("save_user", line: 39))
-    ep.push_callee(Callee.new("audit_log", line: 40))
+    ep.push_callee(Callee.new("save_user", db_path, 1))
+    ep.push_callee(Callee.new("audit_log", db_path, 5))
   end,
 
   Endpoint.new("/orders/{order_id}", "DELETE").tap do |ep|
-    ep.push_callee(Callee.new("audit_log", line: 49))
+    ep.push_callee(Callee.new("audit_log", db_path, 5))
   end,
 
   Endpoint.new("/reports", "GET").tap do |ep|
-    ep.push_callee(Callee.new("fetch_report", line: 9))
+    ep.push_callee(Callee.new("db.fetch_report", db_path, 9))
   end,
 ]
 
