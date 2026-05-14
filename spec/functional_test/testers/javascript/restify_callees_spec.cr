@@ -10,22 +10,22 @@ expected_endpoints = [
     Param.new("X-Actor", "", "header"),
   ]).tap do |ep|
     ep.push_callee(Callee.new("req.header", line: 9))
-    ep.push_callee(Callee.new("parseUser", line: 10))
+    ep.push_callee(Callee.new("parseUser", line: 34))
     ep.push_callee(Callee.new("serviceFactory().save", line: 11))
     ep.push_callee(Callee.new("AuditLog.write", line: 12))
     ep.push_callee(Callee.new("res.send", line: 14))
-    ep.push_callee(Callee.new("serializeUser", line: 14))
+    ep.push_callee(Callee.new("serializeUser", line: 42))
   end,
 
   Endpoint.new("/health", "GET").tap do |ep|
-    ep.push_callee(Callee.new("loadHealth", line: 20))
+    ep.push_callee(Callee.new("loadHealth", line: 46))
     ep.push_callee(Callee.new("res.send", line: 21))
   end,
 
   Endpoint.new("/profile", "GET", [
     Param.new("userId", "", "query"),
   ]).tap do |ep|
-    ep.push_callee(Callee.new("loadProfile", line: 28))
+    ep.push_callee(Callee.new("loadProfile", line: 50))
     ep.push_callee(Callee.new("res.send", line: 30))
   end,
 ]

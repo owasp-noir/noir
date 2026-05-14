@@ -8,17 +8,17 @@ expected_endpoints = [
     Param.new("X-Actor", "", "header"),
   ]).tap do |ep|
     ep.push_callee(Callee.new("ctx.get", line: 9))
-    ep.push_callee(Callee.new("parseBody", line: 10))
+    ep.push_callee(Callee.new("parseBody", line: 24))
     ep.push_callee(Callee.new("serviceFactory().save", line: 11))
     ep.push_callee(Callee.new("AuditLog.write", line: 12))
-    ep.push_callee(Callee.new("serializeUser", line: 14))
+    ep.push_callee(Callee.new("serializeUser", line: 32))
   end,
 
   Endpoint.new("/session", "GET", [
     Param.new("sessionId", "", "cookie"),
   ]).tap do |ep|
     ep.push_callee(Callee.new("ctx.cookies.get", line: 18))
-    ep.push_callee(Callee.new("loadProfile", line: 19))
+    ep.push_callee(Callee.new("loadProfile", line: 36))
   end,
 ]
 
