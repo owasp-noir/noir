@@ -416,7 +416,14 @@ module Analyzer::Python
               details = Details.new(PathInfo.new(path, line_index + 1))
               endpoint.details = details
 
-              push_callees_from(endpoint, codeblock, _class_def_index, path)
+              push_callees_from(
+                endpoint,
+                codeblock,
+                _class_def_index,
+                path,
+                definition_base_path: base_path_for(path),
+                source: fetch_file_content(path),
+              )
 
               # Add expect params as endpoint params
               if expect_params.size > 0
@@ -535,7 +542,14 @@ module Analyzer::Python
             endpoint = Endpoint.new(route_url, http_method, params)
             endpoint.details = details
 
-            push_callees_from(endpoint, codeblock, method_def_index, class_file)
+            push_callees_from(
+              endpoint,
+              codeblock,
+              method_def_index,
+              class_file,
+              definition_base_path: base_path_for(class_file),
+              source: fetch_file_content(class_file),
+            )
 
             result << endpoint
           end
@@ -554,6 +568,12 @@ module Analyzer::Python
     # `File.read` calls per file.
     private def fetch_file_content(path : ::String) : ::String
       @file_content_cache[path] ||= read_file_content(path)
+    end
+
+    # Pick the base path that owns this file so the engine's definition
+    # resolver can locate imported modules relative to the right root.
+    private def base_path_for(file_path : ::String) : ::String
+      base_paths.find { |bp| file_path.starts_with?(bp) } || base_paths[0]? || ""
     end
 
     # Create a Python parser for a given path and content. The
