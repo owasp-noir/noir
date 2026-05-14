@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../../miniparsers/dart_callee_extractor"
 
 module Analyzer::Dart
   # Serverpod is an RPC-style backend framework. Server endpoints are
@@ -16,20 +17,22 @@ module Analyzer::Dart
   class Serverpod < Analyzer
     HTTP_METHOD         = "POST"
     RESERVED_DART_NAMES = %w[if else for while switch case return try catch finally throw new const final var late void await async assert]
+    alias MethodParam = NamedTuple(name: String, type: String)
 
     def analyze
+      include_callee = any_to_bool(@options["include_callee"]?)
       all_files.each do |path|
         next if File.directory?(path)
         next unless path.ends_with?(".dart")
 
         content = read_file_content(path)
-        process_file(path, content)
+        process_file(path, content, include_callee)
       end
 
       @result
     end
 
-    private def process_file(path : String, content : String)
+    private def process_file(path : String, content : String, include_callee : Bool)
       cleaned = strip_dart_comments(content)
 
       cleaned.scan(/class\s+([A-Z][A-Za-z0-9_]*)(?:\s*<[^>]*>)?\s+extends\s+(?:StreamingEndpoint|Endpoint)\b/) do |match|
@@ -44,7 +47,7 @@ module Analyzer::Dart
         body, body_start = body_info
         line_number = line_for_offset(content, match_start)
         endpoint_name = endpoint_name_for(class_name)
-        process_class_body(path, endpoint_name, body, body_start, content, line_number)
+        process_class_body(path, endpoint_name, body, body_start, content, line_number, include_callee)
       end
     end
 
@@ -55,7 +58,13 @@ module Analyzer::Dart
       base[0].downcase.to_s + base[1..]
     end
 
-    private def process_class_body(path : String, endpoint_name : String, body : String, body_start : Int32, file_content : String, fallback_line : Int32)
+    private def process_class_body(path : String,
+                                   endpoint_name : String,
+                                   body : String,
+                                   body_start : Int32,
+                                   file_content : String,
+                                   fallback_line : Int32,
+                                   include_callee : Bool)
       depth = 0
       in_string = false
       string_quote = '\0'
@@ -103,7 +112,8 @@ module Analyzer::Dart
                 params = parse_method_params(params_text)
                 line = line_for_offset(file_content, body_start + i)
                 line = fallback_line if line <= 0
-                emit_endpoint(path, endpoint_name, method_name, params, line)
+                callees = include_callee ? callees_for_method_body(path, body, body_start, close_paren, file_content) : [] of Noir::DartCalleeExtractor::Entry
+                emit_endpoint(path, endpoint_name, method_name, params, line, callees)
                 i = close_paren + 1
                 next
               end
@@ -133,8 +143,8 @@ module Analyzer::Dart
       candidate
     end
 
-    private def parse_method_params(params_text : String) : Array(NamedTuple(name: String, type: String))
-      result = [] of NamedTuple(name: String, type: String)
+    private def parse_method_params(params_text : String) : Array(MethodParam)
+      result = [] of MethodParam
       stripped = params_text.gsub(/[\[\]{}]/, " ")
       split_top_level_commas(stripped).each do |raw|
         part = raw.strip
@@ -196,11 +206,31 @@ module Analyzer::Dart
       parts
     end
 
-    private def emit_endpoint(path : String, endpoint_name : String, method_name : String, params : Array(NamedTuple(name: String, type: String)), line : Int32)
+    private def emit_endpoint(path : String,
+                              endpoint_name : String,
+                              method_name : String,
+                              params : Array(MethodParam),
+                              line : Int32,
+                              callees : Array(Noir::DartCalleeExtractor::Entry) = [] of Noir::DartCalleeExtractor::Entry)
       url = "/#{endpoint_name}/#{method_name}"
       details = Details.new(PathInfo.new(path, line))
       endpoint_params = params.map { |p| Param.new(p[:name], p[:type], "json") }
-      @result << Endpoint.new(url, HTTP_METHOD, endpoint_params, details)
+      endpoint = Endpoint.new(url, HTTP_METHOD, endpoint_params, details)
+      Noir::DartCalleeExtractor.attach_to(endpoint, callees)
+      @result << endpoint
+    end
+
+    private def callees_for_method_body(path : String,
+                                        class_body : String,
+                                        class_body_start : Int32,
+                                        close_paren : Int32,
+                                        file_content : String) : Array(Noir::DartCalleeExtractor::Entry)
+      body_info = Noir::DartCalleeExtractor.extract_body_after(class_body, close_paren + 1)
+      return [] of Noir::DartCalleeExtractor::Entry unless body_info
+
+      body, body_start, _ = body_info
+      start_line = line_for_offset(file_content, class_body_start + body_start)
+      Noir::DartCalleeExtractor.callees_for_body(body, path, start_line)
     end
 
     private def find_matching_paren(text : String, open_idx : Int32) : Int32?
@@ -316,19 +346,33 @@ module Analyzer::Dart
         end
 
         if i + 1 < chars.size && c == '/' && chars[i + 1] == '/'
+          result << ' '
+          result << ' '
+          i += 2
           while i < chars.size && chars[i] != '\n'
+            result << ' '
+            i += 1
+          end
+          if i < chars.size
+            result << chars[i]
             i += 1
           end
           next
         end
 
         if i + 1 < chars.size && c == '/' && chars[i + 1] == '*'
+          result << ' '
+          result << ' '
           i += 2
           while i + 1 < chars.size && !(chars[i] == '*' && chars[i + 1] == '/')
-            result << '\n' if chars[i] == '\n'
+            result << (chars[i] == '\n' ? '\n' : ' ')
             i += 1
           end
-          i += 2 if i + 1 < chars.size
+          if i + 1 < chars.size
+            result << ' '
+            result << ' '
+            i += 2
+          end
           next
         end
 

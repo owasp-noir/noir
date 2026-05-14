@@ -1,0 +1,6 @@
+name: serverpod_callees
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+dependencies:
+  serverpod: ^2.0.0
+  serverpod_server: ^2.0.0
