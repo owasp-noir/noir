@@ -69,3 +69,11 @@ async fn complex_handler(mut req: Request<()>) -> Result {
     ComplexService::process(id, query, user, token, session);
     Ok("complex".into())
 }
+
+/*
+async fn complex_handler(mut req: Request<()>) -> Result {
+    let shadow: ShadowPayload = req.body_json().await?;
+    ShadowService::hidden(shadow);
+    Ok("shadow".into())
+}
+*/

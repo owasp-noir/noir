@@ -42,7 +42,7 @@ module Noir::RustCalleeExtractor
     stripped
   end
 
-  private def strip_comment_with_state(line : String, in_block_comment : Bool) : Tuple(String, Bool)
+  def strip_comment_with_state(line : String, in_block_comment : Bool) : Tuple(String, Bool)
     in_string = false
     escaped = false
     quote = '\0'

@@ -10,9 +10,8 @@ module Analyzer::Rust
     private def parse_tide_routes(content : String, file_path : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
 
-      # Map function names to their content for parameter extraction
-      functions_map = extract_functions(content)
-      function_callees = include_callee ? collect_function_callees(content.lines, file_path) : Hash(String, Array(Noir::RustCalleeExtractor::Entry)).new
+      # Map function names to their content and callees for route handlers.
+      functions_map, function_callees = extract_functions(content, file_path, include_callee)
 
       # Find .at() method calls with chained HTTP methods
       # Pattern: .at("/path").get(handler) or .at("/path").get(|_| async { ... })
@@ -124,71 +123,34 @@ module Analyzer::Rust
     end
 
     # Extract function definitions and their bodies
-    private def extract_functions(content : String) : Hash(String, String)
+    private def extract_functions(content : String, file_path : String, include_callee : Bool) : Tuple(Hash(String, String), Hash(String, Array(Noir::RustCalleeExtractor::Entry)))
       functions = {} of String => String
-
-      # Pattern to match async function definitions - simplified to handle all cases
-      # async fn function_name(...) -> ... {
-      fn_pattern = /async\s+fn\s+(\w+)[^{]*\{/
-
-      content.scan(fn_pattern) do |match|
-        if match.size >= 2
-          fn_name = match[1]
-          # Find the full function body by tracking braces
-          start_pos = match.begin
-          if start_pos
-            fn_body = extract_function_body(content, start_pos)
-            functions[fn_name] = fn_body if fn_body
-          end
-        end
-      end
-
-      functions
-    end
-
-    # Extract function body by tracking brace matching
-    private def extract_function_body(content : String, start_pos : Int32) : String?
-      brace_count = 0
-      in_body = false
-      body_start = 0
-
-      (start_pos...content.size).each do |i|
-        char = content[i]
-
-        if char == '{'
-          if brace_count == 0
-            body_start = i
-            in_body = true
-          end
-          brace_count += 1
-        elsif char == '}'
-          brace_count -= 1
-          if brace_count == 0 && in_body
-            return content[body_start..i]
-          end
-        end
-      end
-
-      nil
-    rescue
-      nil
-    end
-
-    private def collect_function_callees(lines : Array(String), file_path : String) : Hash(String, Array(Noir::RustCalleeExtractor::Entry))
       function_callees = Hash(String, Array(Noir::RustCalleeExtractor::Entry)).new
+      lines = content.lines
+      in_block_comment = false
+      index = 0
 
-      lines.each_with_index do |line, index|
-        stripped = Noir::RustCalleeExtractor.strip_comment(line).strip
-        next unless match = stripped.match(/^(?:pub(?:\([^)]*\))?\s+)?async\s+fn\s+([A-Za-z_]\w*)\b/)
+      while index < lines.size
+        stripped, in_block_comment = Noir::RustCalleeExtractor.strip_comment_with_state(lines[index], in_block_comment)
+        match = stripped.strip.match(/^(?:pub(?:\([^)]*\))?\s+)?async\s+fn\s+([A-Za-z_]\w*)\b/)
 
-        function_body = extract_rust_function_body(lines, index)
-        next unless function_body
+        if match
+          fn_name = match[1]
+          function_body = extract_rust_function_body_with_end(lines, index)
 
-        body, body_start_line = function_body
-        function_callees[match[1]] = Noir::RustCalleeExtractor.callees_for_body(body, file_path, body_start_line)
+          if function_body
+            body, body_start_line, end_index = function_body
+            functions[fn_name] = body
+            function_callees[fn_name] = Noir::RustCalleeExtractor.callees_for_body(body, file_path, body_start_line) if include_callee
+            index = end_index
+            in_block_comment = false
+          end
+        end
+
+        index += 1
       end
 
-      function_callees
+      {functions, function_callees}
     end
 
     private def attach_handler_callees(handler : String,
@@ -206,7 +168,7 @@ module Analyzer::Rust
       stripped = handler.strip
       return if stripped.starts_with?("|")
 
-      match = stripped.match(/^(?:[A-Za-z_]\w*::)*([A-Za-z_]\w*)\b/)
+      match = stripped.match(/^(?:[A-Za-z_]\w*::)*([A-Za-z_]\w*)$/)
       match[1] if match
     end
 
