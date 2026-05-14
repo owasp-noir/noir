@@ -29,7 +29,7 @@ module Analyzer::Python
           source = read_file_content(path)
           next unless source.includes?("starlette")
 
-          analyze_file(path, source)
+          analyze_file(path, source, current_base_path)
         end
       end
 
@@ -37,7 +37,7 @@ module Analyzer::Python
       result
     end
 
-    private def analyze_file(path : ::String, source : ::String)
+    private def analyze_file(path : ::String, source : ::String, definition_base_path : ::String)
       lines = source.split("\n")
       function_index = build_function_index(lines)
       handler_cache = {} of ::String => Tuple(Array(Param), Array(Callee))
@@ -83,7 +83,8 @@ module Analyzer::Python
             handler_name = positional_match[1]
           end
           if handler_name
-            handler_params, handler_callees = handler_context_for(lines, function_index, handler_name, path, handler_cache)
+            handler_params, handler_callees = handler_context_for(lines, function_index, handler_name, path, handler_cache,
+              definition_base_path: definition_base_path, source: source)
           end
 
           methods.uniq.each do |method|
@@ -135,7 +136,10 @@ module Analyzer::Python
                                     function_index : Hash(::String, Tuple(Int32, ::String)),
                                     handler_name : ::String,
                                     path : ::String,
-                                    cache : Hash(::String, Tuple(Array(Param), Array(Callee)))) : Tuple(Array(Param), Array(Callee))
+                                    cache : Hash(::String, Tuple(Array(Param), Array(Callee))),
+                                    *,
+                                    definition_base_path : ::String,
+                                    source : ::String) : Tuple(Array(Param), Array(Callee))
       cached = cache[handler_name]?
       return cached if cached
 
@@ -169,7 +173,8 @@ module Analyzer::Python
         end
       end
 
-      callees = build_callees_from(codeblock, idx, path)
+      callees = build_callees_from(codeblock, idx, path,
+        definition_base_path: definition_base_path, source: source)
       cache[handler_name] = {params, callees}
       cache[handler_name]
     end
