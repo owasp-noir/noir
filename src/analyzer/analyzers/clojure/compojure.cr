@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../../miniparsers/clojure_callee_extractor"
 require "../../../utils/utils"
 
 module Analyzer::Clojure
@@ -16,13 +17,14 @@ module Analyzer::Clojure
     CLOJURE_EXTENSIONS = {".clj", ".cljc", ".cljs"}
 
     def analyze
+      include_callee = any_to_bool(@options["include_callee"]?)
       all_files.each do |path|
         next unless clojure_file?(path)
 
         content = read_file_content(path)
         next unless compojure_source?(content)
 
-        scan_forms(content, 0, content.bytesize, "", path)
+        scan_forms(content, 0, content.bytesize, "", path, include_callee)
       end
 
       Fiber.yield
@@ -37,7 +39,7 @@ module Analyzer::Clojure
       content.includes?("compojure.core") || content.includes?("defroutes") || content.includes?("(context")
     end
 
-    private def scan_forms(source : String, start_index : Int32, end_index : Int32, prefix : String, path : String)
+    private def scan_forms(source : String, start_index : Int32, end_index : Int32, prefix : String, path : String, include_callee : Bool)
       i = start_index
       while i < end_index
         case source.byte_at(i).unsafe_chr
@@ -58,14 +60,14 @@ module Analyzer::Clojure
           when "context"
             context_path, _ = first_string_literal(source, after_symbol, form_end)
             next_prefix = context_path ? join_path(prefix, context_path) : prefix
-            scan_forms(source, after_symbol, form_end, next_prefix, path)
+            scan_forms(source, after_symbol, form_end, next_prefix, path, include_callee)
           when "defroutes", "routes"
-            scan_forms(source, after_symbol, form_end, prefix, path)
+            scan_forms(source, after_symbol, form_end, prefix, path, include_callee)
           else
             if route_method = ROUTE_METHODS[base]?
-              add_route(source, i, after_symbol, form_end, prefix, path, route_method)
+              add_route(source, i, after_symbol, form_end, prefix, path, route_method, include_callee)
             else
-              scan_forms(source, after_symbol, form_end, prefix, path)
+              scan_forms(source, after_symbol, form_end, prefix, path, include_callee)
             end
           end
 
@@ -77,7 +79,7 @@ module Analyzer::Clojure
     end
 
     private def add_route(source : String, form_start : Int32, args_start : Int32, form_end : Int32,
-                          prefix : String, path : String, method : String)
+                          prefix : String, path : String, method : String, include_callee : Bool)
       route_path, path_end = first_string_literal(source, args_start, form_end)
       return unless route_path
 
@@ -95,7 +97,38 @@ module Analyzer::Clojure
         end
       end
 
+      attach_route_callees(endpoint, source, path_end + 1, form_end, path) if include_callee
+
       @result << endpoint
+    end
+
+    private def attach_route_callees(endpoint : Endpoint, source : String, args_start : Int32, form_end : Int32, path : String)
+      body_start = route_body_start(source, args_start, form_end)
+      return if body_start >= form_end
+
+      body = source[body_start...form_end]
+      start_line = line_number_for(source, body_start)
+      callees = Noir::ClojureCalleeExtractor.callees_for_body(body, path, start_line)
+      Noir::ClojureCalleeExtractor.attach_to(endpoint, callees)
+    end
+
+    private def route_body_start(source : String, index : Int32, limit : Int32) : Int32
+      i = skip_ws_and_comments(source, index, limit)
+      return i if i >= limit
+
+      case source.byte_at(i).unsafe_chr
+      when '['
+        binding_end = find_matching_delimiter(source, i, '[', ']', limit)
+        binding_end > i ? binding_end + 1 : i
+      when '{'
+        binding_end = find_matching_delimiter(source, i, '{', '}', limit)
+        binding_end > i ? binding_end + 1 : i
+      when '('
+        i
+      else
+        _, after_symbol = read_symbol(source, i, limit)
+        after_symbol
+      end
     end
 
     private def extract_path_param_names(route_path : String) : Array(String)
