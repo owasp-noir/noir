@@ -1,0 +1,5 @@
+name: servant-callees-cross-alias-fixture
+version: 0.1.0.0
+dependencies:
+  - base
+  - servant

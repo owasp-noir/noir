@@ -22,6 +22,24 @@ describe Noir::HaskellCalleeExtractor do
     ])
   end
 
+  it "keeps scanning after Servant promoted type lists" do
+    source = <<-HASKELL
+      type API = "users" :> Get '[JSON] User
+
+      server = handler
+
+      handler = do
+        value <- loadValue
+        return value
+      HASKELL
+
+    bodies = Noir::HaskellCalleeExtractor.function_bodies(source, "Api.hs")
+    bodies.map { |body| {body[:name], body[:start_line]} }.should eq([
+      {"server", 3},
+      {"handler", 5},
+    ])
+  end
+
   it "extracts direct calls from Haskell handler bodies" do
     body = <<-HASKELL
       do
