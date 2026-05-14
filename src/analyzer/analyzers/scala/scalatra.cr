@@ -6,16 +6,16 @@ module Analyzer::Scala
 
     def analyze_file(path : String) : Array(Endpoint)
       content = File.read(path)
-      extract_routes_from_content(path, content)
+      extract_routes_from_content(path, content, any_to_bool(@options["include_callee"]?))
     end
 
     # Extract routes from Scalatra DSL
-    private def extract_routes_from_content(path : String, content : String) : Array(Endpoint)
+    private def extract_routes_from_content(path : String, content : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
       lines = content.split('\n')
 
       lines.each_with_index do |line, index|
-        stripped_line = line.strip
+        stripped_line = scala_code_line(line).strip
 
         # Match Scalatra route definitions: get("/path") { ... }
         HTTP_METHODS.each do |method|
@@ -32,8 +32,10 @@ module Analyzer::Scala
             extract_path_params(endpoint, route_path)
 
             # Extract parameters from the route block
-            block_content = extract_block_from_index(lines, index)
+            block = extract_block_from_index(lines, index)
+            block_content = block ? block[0] : ""
             extract_params_from_block(endpoint, block_content)
+            attach_route_callees(endpoint, block_content, path, block[1]) if include_callee && block
 
             endpoints << endpoint
           end
@@ -59,27 +61,13 @@ module Analyzer::Scala
     end
 
     # Extract block content starting from a given index
-    private def extract_block_from_index(lines : Array(String), start_index : Int32) : String
-      block_lines = [] of String
-      brace_count = 0
-      started = false
+    private def extract_block_from_index(lines : Array(String), start_index : Int32) : Tuple(String, Int32)?
+      extract_scala_brace_block(lines, start_index)
+    end
 
-      (start_index...lines.size).each do |i|
-        line = lines[i]
-
-        brace_count += line.count('{')
-
-        if brace_count > 0
-          started = true
-          block_lines << line
-        end
-
-        brace_count -= line.count('}')
-
-        break if started && brace_count <= 0
-      end
-
-      block_lines.join("\n")
+    private def attach_route_callees(endpoint : Endpoint, body : String, path : String, start_line : Int32)
+      callees = Noir::ScalaCalleeExtractor.callees_for_body(body, path, start_line)
+      attach_scala_callees(endpoint, callees)
     end
 
     # Extract parameters from a code block
