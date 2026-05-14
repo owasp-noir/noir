@@ -69,16 +69,24 @@ module Noir::SwiftCalleeExtractor
       if block_comment_depth > 0
         if char == '/' && next_char == '*'
           block_comment_depth += 1
-          index += 1
+          append_spaces(stripped, 2)
+          index += 2
+          next
         elsif char == '*' && next_char == '/'
           block_comment_depth -= 1
-          index += 1
+          append_spaces(stripped, 2)
+          index += 2
+          next
         end
+        stripped << ' '
       elsif in_multiline_string
         if char == '"' && next_char == '"' && third_char == '"'
           in_multiline_string = false
-          index += 2
+          append_spaces(stripped, 3)
+          index += 3
+          next
         end
+        stripped << ' '
       elsif in_string
         if escaped
           escaped = false
@@ -87,18 +95,25 @@ module Noir::SwiftCalleeExtractor
         elsif char == '"'
           in_string = false
         end
+        stripped << ' '
       elsif char == '"'
         if next_char == '"' && third_char == '"'
           in_multiline_string = true
-          index += 2
+          append_spaces(stripped, 3)
+          index += 3
+          next
         else
           in_string = true
         end
+        stripped << ' '
       elsif char == '/' && line[index + 1]? == '/'
+        append_spaces(stripped, line.size - index)
         return {stripped.to_s, block_comment_depth, in_multiline_string}
       elsif char == '/' && line[index + 1]? == '*'
         block_comment_depth += 1
-        index += 1
+        append_spaces(stripped, 2)
+        index += 2
+        next
       else
         stripped << char
       end
@@ -106,6 +121,10 @@ module Noir::SwiftCalleeExtractor
     end
 
     {stripped.to_s, block_comment_depth, in_multiline_string}
+  end
+
+  private def append_spaces(stripped : String::Builder, count : Int32)
+    count.times { stripped << ' ' }
   end
 
   private def scan_line(line : String, file_path : String, line_number : Int32, entries : Array(Entry))
