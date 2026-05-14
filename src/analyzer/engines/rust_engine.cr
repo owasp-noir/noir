@@ -42,6 +42,14 @@ module Analyzer::Rust
     end
 
     protected def extract_rust_function_body(lines : Array(String), start_index : Int32) : Tuple(String, Int32)?
+      function_body = extract_rust_function_body_with_end(lines, start_index)
+      return unless function_body
+
+      body, body_start_line, _ = function_body
+      {body, body_start_line}
+    end
+
+    protected def extract_rust_function_body_with_end(lines : Array(String), start_index : Int32) : Tuple(String, Int32, Int32)?
       return if start_index >= lines.size
       return if Noir::RustCalleeExtractor.strip_comment(lines[start_index]).includes?(";")
 
@@ -49,10 +57,11 @@ module Analyzer::Rust
       body_start_line = start_index + 2
       found_opening_brace = false
       depth = 0
+      in_block_comment = false
 
       (start_index...lines.size).each do |index|
         raw_line = lines[index]
-        line = Noir::RustCalleeExtractor.strip_comment(raw_line)
+        line, in_block_comment = Noir::RustCalleeExtractor.strip_comment_with_state(raw_line, in_block_comment)
 
         unless found_opening_brace
           return if index > start_index && line.strip.match(/^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+[A-Za-z_]\w*\b/)
@@ -70,7 +79,7 @@ module Analyzer::Rust
             close_count = tail.count('}')
             if depth + open_count - close_count <= 0
               close_index = tail.rindex('}') || close_index
-              return {tail[0, close_index].strip, body_start_line}
+              return {tail[0, close_index].strip, body_start_line, index}
             end
           end
 
@@ -93,7 +102,7 @@ module Analyzer::Rust
             before_close = line[0, close_index].strip
             body_lines << before_close unless before_close.empty?
           end
-          break
+          return {body_lines.join("\n"), body_start_line, index}
         end
 
         body_lines << raw_line
@@ -102,7 +111,7 @@ module Analyzer::Rust
 
       return unless found_opening_brace
 
-      {body_lines.join("\n"), body_start_line}
+      {body_lines.join("\n"), body_start_line, lines.size - 1}
     end
   end
 end

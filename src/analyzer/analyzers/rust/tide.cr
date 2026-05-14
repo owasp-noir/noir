@@ -3,21 +3,15 @@ require "../../engines/rust_engine"
 module Analyzer::Rust
   class Tide < RustEngine
     def analyze_file(path : String) : Array(Endpoint)
-      endpoints = [] of Endpoint
-
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        content = file.gets_to_end
-        endpoints = parse_tide_routes(content, path)
-      end
-
-      endpoints
+      content = read_file_content(path)
+      parse_tide_routes(content, path, any_to_bool(@options["include_callee"]?))
     end
 
-    private def parse_tide_routes(content : String, file_path : String) : Array(Endpoint)
+    private def parse_tide_routes(content : String, file_path : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
 
-      # Map function names to their content for parameter extraction
-      functions_map = extract_functions(content)
+      # Map function names to their content and callees for route handlers.
+      functions_map, function_callees = extract_functions(content, file_path, include_callee)
 
       # Find .at() method calls with chained HTTP methods
       # Pattern: .at("/path").get(handler) or .at("/path").get(|_| async { ... })
@@ -45,7 +39,9 @@ module Analyzer::Rust
             extract_handler_params(handler, functions_map, params)
 
             details = Details.new(PathInfo.new(file_path, 1))
-            endpoints << Endpoint.new(final_path, method, params, details)
+            endpoint = Endpoint.new(final_path, method, params, details)
+            attach_handler_callees(handler, function_callees, endpoint) if include_callee
+            endpoints << endpoint
           end
         end
       end
@@ -94,7 +90,9 @@ module Analyzer::Rust
             extract_handler_params(handler, functions_map, params)
 
             details = Details.new(PathInfo.new(file_path, 1))
-            endpoints << Endpoint.new(final_path, method, params, details)
+            endpoint = Endpoint.new(final_path, method, params, details)
+            attach_handler_callees(handler, function_callees, endpoint) if include_callee
+            endpoints << endpoint
           end
         end
       end
@@ -125,54 +123,53 @@ module Analyzer::Rust
     end
 
     # Extract function definitions and their bodies
-    private def extract_functions(content : String) : Hash(String, String)
+    private def extract_functions(content : String, file_path : String, include_callee : Bool) : Tuple(Hash(String, String), Hash(String, Array(Noir::RustCalleeExtractor::Entry)))
       functions = {} of String => String
+      function_callees = Hash(String, Array(Noir::RustCalleeExtractor::Entry)).new
+      lines = content.lines
+      in_block_comment = false
+      index = 0
 
-      # Pattern to match async function definitions - simplified to handle all cases
-      # async fn function_name(...) -> ... {
-      fn_pattern = /async\s+fn\s+(\w+)[^{]*\{/
+      while index < lines.size
+        stripped, in_block_comment = Noir::RustCalleeExtractor.strip_comment_with_state(lines[index], in_block_comment)
+        match = stripped.strip.match(/^(?:pub(?:\([^)]*\))?\s+)?async\s+fn\s+([A-Za-z_]\w*)\b/)
 
-      content.scan(fn_pattern) do |match|
-        if match.size >= 2
+        if match
           fn_name = match[1]
-          # Find the full function body by tracking braces
-          start_pos = match.begin
-          if start_pos
-            fn_body = extract_function_body(content, start_pos)
-            functions[fn_name] = fn_body if fn_body
+          function_body = extract_rust_function_body_with_end(lines, index)
+
+          if function_body
+            body, body_start_line, end_index = function_body
+            functions[fn_name] = body
+            function_callees[fn_name] = Noir::RustCalleeExtractor.callees_for_body(body, file_path, body_start_line) if include_callee
+            index = end_index
+            in_block_comment = false
           end
         end
+
+        index += 1
       end
 
-      functions
+      {functions, function_callees}
     end
 
-    # Extract function body by tracking brace matching
-    private def extract_function_body(content : String, start_pos : Int32) : String?
-      brace_count = 0
-      in_body = false
-      body_start = 0
+    private def attach_handler_callees(handler : String,
+                                       function_callees : Hash(String, Array(Noir::RustCalleeExtractor::Entry)),
+                                       endpoint : Endpoint)
+      handler_name = extract_handler_name(handler)
+      return unless handler_name
 
-      (start_pos...content.size).each do |i|
-        char = content[i]
-
-        if char == '{'
-          if brace_count == 0
-            body_start = i
-            in_body = true
-          end
-          brace_count += 1
-        elsif char == '}'
-          brace_count -= 1
-          if brace_count == 0 && in_body
-            return content[body_start..i]
-          end
-        end
+      if callees = function_callees[handler_name]?
+        attach_rust_callees(endpoint, callees)
       end
+    end
 
-      nil
-    rescue
-      nil
+    private def extract_handler_name(handler : String) : String?
+      stripped = handler.strip
+      return if stripped.starts_with?("|")
+
+      match = stripped.match(/^(?:[A-Za-z_]\w*::)*([A-Za-z_]\w*)$/)
+      match[1] if match
     end
 
     # Extract parameters from handler function
