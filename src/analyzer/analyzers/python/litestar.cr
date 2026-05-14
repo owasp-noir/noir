@@ -30,7 +30,7 @@ module Analyzer::Python
           source = read_file_content(path)
           next unless source.includes?("litestar")
 
-          analyze_file(path, source)
+          analyze_file(path, source, current_base_path)
         end
       end
 
@@ -38,7 +38,7 @@ module Analyzer::Python
       result
     end
 
-    private def analyze_file(path : ::String, source : ::String)
+    private def analyze_file(path : ::String, source : ::String, definition_base_path : ::String)
       lines = source.split("\n")
       router_prefixes = collect_router_prefixes(source)
       handler_routers = collect_handler_to_router(source, router_prefixes)
@@ -89,7 +89,13 @@ module Analyzer::Python
           # Build once per handler — a decorator can emit multiple
           # endpoints when @route(http_method=[...]) lists several verbs.
           handler_callees = if handler_body && (hl = handler_line)
-                              build_callees_from(handler_body, hl, path)
+                              build_callees_from(
+                                handler_body,
+                                hl,
+                                path,
+                                definition_base_path: definition_base_path,
+                                source: source
+                              )
                             else
                               [] of Callee
                             end
