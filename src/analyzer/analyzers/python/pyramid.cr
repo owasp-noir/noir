@@ -79,7 +79,8 @@ module Analyzer::Python
               next if def_index.nil?
 
               body = extract_function_body(lines, def_index)
-              emit_endpoints(path, line_index, route_path, methods, body, def_index)
+              emit_endpoints(path, line_index, route_path, methods, body, def_index,
+                definition_base_path: current_base_path, source: content)
             end
 
             # config.add_view(view_func, route_name="name", request_method="POST")
@@ -102,7 +103,8 @@ module Analyzer::Python
                 body = extract_function_body(lines, view_def_index) unless view_def_index.nil?
               end
 
-              emit_endpoints(path, line_index, route_path, methods, body, view_def_index)
+              emit_endpoints(path, line_index, route_path, methods, body, view_def_index,
+                definition_base_path: current_base_path, source: content)
             end
           end
         end
@@ -228,13 +230,22 @@ module Analyzer::Python
     # 0-based line of the handler `def` (when known), used to translate
     # tree-sitter rows into absolute callee call-site lines.
     private def emit_endpoints(path : String, line_index : Int32, route_path : String,
-                               methods : Array(String), body : String, def_index : Int32?)
+                               methods : Array(String), body : String, def_index : Int32?,
+                               *,
+                               definition_base_path : String,
+                               source : String)
       path_params = extract_path_params(route_path)
       request_params = extract_request_params(body)
 
       # extract_function_body skips the def line, so body row 0 lives
       # at def_index + 1.
-      handler_callees = def_index ? build_callees_from(body, def_index + 1, path) : [] of Callee
+      handler_callees = def_index ? build_callees_from(
+        body,
+        def_index + 1,
+        path,
+        definition_base_path: definition_base_path,
+        source: source
+      ) : [] of Callee
 
       details = Details.new(PathInfo.new(path, line_index + 1))
       methods.each do |method|

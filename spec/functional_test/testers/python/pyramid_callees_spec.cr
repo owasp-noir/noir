@@ -1,17 +1,14 @@
 require "../../func_spec.cr"
 
 # Regression test for --include-callee on Pyramid. The fixture exercises
-# the @view_config + config.add_route pattern; the spec confirms the
-# handler def line is threaded through emit_endpoints, so callee line
-# numbers point at the call site inside the view body (not the route
-# declaration line).
+# the @view_config + config.add_route pattern; the spec confirms that
+# callees with reachable same-file or imported Python definitions resolve
+# to the definition location instead of the call site inside the view.
+db_path = "./spec/functional_test/fixtures/python/pyramid_callees/db.py"
+
 expected_endpoints = [
   Endpoint.new("/users/{uid}", "GET").tap do |ep|
-    # `fetch_user(uid)` lives on line 9 of fixtures/python/pyramid_callees/app.py.
-    # Line assertion locks the def-line-threading change that emit_endpoints
-    # picked up — without it, callee.line would point at the route
-    # declaration in `main()` instead of the view body.
-    ep.push_callee(Callee.new("fetch_user", line: 9))
+    ep.push_callee(Callee.new("fetch_user", db_path, 1))
   end,
 ]
 
