@@ -16,3 +16,8 @@ class ProfileView(View):
         data = build_profile()
         audit_log(data)
         return JsonResponse(data)
+
+    def post(self, request):
+        user = save_user('profile')
+        audit_log(user)
+        return JsonResponse({'id': user})
