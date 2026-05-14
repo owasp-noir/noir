@@ -86,7 +86,9 @@ module Analyzer::Python
       @routes.each do |router_name, router_info_list|
         router_info_list.each do |router_info|
           line_index, path, route_path, extra_params = router_info
-          lines = fetch_file_content(path).lines
+          source = fetch_file_content(path)
+          lines = source.lines
+          definition_base_path = base_paths.find { |base_path| path.starts_with?(base_path) } || @base_path
           expect_params, class_def_index = extract_params_from_decorator(path, lines, line_index)
           api_instances = path_api_instances[path]
           if api_instances.has_key?(router_name)
@@ -146,7 +148,13 @@ module Analyzer::Python
             # Hoisted out of the per-endpoint loop: one route declaration
             # can emit multiple endpoints (e.g. `methods=["POST","PUT"]`),
             # and they all share the same handler body, so parse once.
-            handler_callees = build_callees_from(codeblock, _class_def_index, path)
+            handler_callees = build_callees_from(
+              codeblock,
+              _class_def_index,
+              path,
+              definition_base_path: definition_base_path,
+              source: source
+            )
 
             # Get the HTTP method from the function name when it is not specified in the route decorator
             method = HTTP_METHODS.find { |http_method| _function_name.downcase == http_method.downcase } || "GET"
