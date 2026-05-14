@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../../miniparsers/cpp_callee_extractor"
 
 module Analyzer::Cpp
   class Crow < Analyzer
@@ -18,6 +19,7 @@ module Analyzer::Cpp
     BODY_ACCESS      = /\b(req|request)\s*\.\s*body\b/
 
     def analyze
+      include_callee = any_to_bool(@options["include_callee"]?)
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
       begin
@@ -26,7 +28,7 @@ module Analyzer::Cpp
         parallel_analyze(channel) do |path|
           next if File.directory?(path)
           next unless File.exists?(path)
-          analyze_file(path)
+          analyze_file(path, include_callee)
         end
       rescue e
         logger.debug "Crow analyzer failed: #{e.message}"
@@ -35,11 +37,12 @@ module Analyzer::Cpp
       result
     end
 
-    private def analyze_file(path : String)
+    private def analyze_file(path : String, include_callee : Bool)
       source = read_file_content(path)
       return unless source.includes?("CROW_ROUTE") || source.includes?("CROW_BP_ROUTE")
 
       lines = source.split("\n")
+      line_offsets = line_start_offsets(source)
       last_endpoints = [] of Endpoint
 
       lines.each_with_index do |line, index|
@@ -68,10 +71,13 @@ module Analyzer::Cpp
 
           normalized_path, path_params = normalize_path(route_path)
           details = Details.new(PathInfo.new(path, index + 1))
+          route_offset = line_offsets[index] + (route_match.begin(0) || 0)
+          route_callees = include_callee ? callees_for_route(source, path, route_offset + route_match[0].bytesize) : [] of Noir::CppCalleeExtractor::Entry
 
           last_endpoints.clear
           methods.uniq.each do |method|
             endpoint = Endpoint.new(normalized_path, method, path_params.dup, details)
+            Noir::CppCalleeExtractor.attach_to(endpoint, route_callees) if include_callee
             result << endpoint
             last_endpoints << endpoint
           end
@@ -82,6 +88,32 @@ module Analyzer::Cpp
           end
         end
       end
+    end
+
+    private def callees_for_route(source : String, path : String, search_start : Int32) : Array(Noir::CppCalleeExtractor::Entry)
+      block = Noir::CppCalleeExtractor.extract_lambda_block_after(source, search_start, next_route_offset(source, search_start))
+      return [] of Noir::CppCalleeExtractor::Entry unless block
+
+      body, start_line = block
+      Noir::CppCalleeExtractor.callees_for_body(body, path, start_line)
+    end
+
+    private def next_route_offset(source : String, search_start : Int32) : Int32
+      offsets = [
+        source.index("CROW_ROUTE", search_start),
+        source.index("CROW_BP_ROUTE", search_start),
+      ].compact
+      offsets.min? || source.bytesize
+    end
+
+    private def line_start_offsets(source : String) : Array(Int32)
+      offsets = [0]
+      index = 0
+      while index < source.bytesize
+        offsets << index + 1 if source.byte_at(index) == '\n'.ord
+        index += 1
+      end
+      offsets
     end
 
     private def normalize_path(route_path : String) : Tuple(String, Array(Param))
