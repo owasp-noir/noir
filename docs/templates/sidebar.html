@@ -113,6 +113,12 @@
                         </li>
                         <li>
                             <a
+                                href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/supported/callee_coverage/"
+                                >{% if page.language == "ko" %}Callee 커버리지{% else %}Callee Coverage{% endif %}</a
+                            >
+                        </li>
+                        <li>
+                            <a
                                 href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/usage/supported/tech-commands/"
                                 >{% if page.language == "ko" %}기술 명령어{% else %}Tech Commands{% endif %}</a
                             >

@@ -10,5 +10,6 @@ Noir is designed to be a versatile tool that can work with a wide variety of tec
 
 *   **Languages and Frameworks**: See which programming languages and web frameworks Noir can analyze to discover endpoints and their parameters.
 *   **Specifications**: Learn about the API and data specification formats that Noir can parse, such as OpenAPI (Swagger), RAML, and HAR.
+*   **Callee Coverage**: Check which frameworks can emit best-effort 1-hop handler callees for AI SAST and code review workflows.
 
 By understanding what Noir supports, you can better integrate it into your existing development and security workflows.
