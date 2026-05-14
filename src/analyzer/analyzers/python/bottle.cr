@@ -49,7 +49,15 @@ module Analyzer::Python
             Noir::TreeSitterPythonRouteExtractor.extract_decorations(file_content).each do |deco|
               methods_literal = deco.methods.map { |m| "'#{m}'" }.join(",")
               extra_params = "methods=[#{methods_literal}]"
-              process_route(path, lines, deco.decorator_line, deco.path, extra_params)
+              process_route(
+                path,
+                lines,
+                line_index: deco.decorator_line,
+                route_path: deco.path,
+                extra_params: extra_params,
+                definition_base_path: current_base_path,
+                source: file_content
+              )
             end
 
             # Form 2 still needs per-line regex — bare `@route("/path")` has
@@ -66,7 +74,15 @@ module Analyzer::Python
                     path_value = orig_match[1]
                   end
                   extra = deco_name == "route" ? bare_match[2] : "methods=['#{deco_name.upcase}']"
-                  process_route(path, lines, line_index, path_value, extra)
+                  process_route(
+                    path,
+                    lines,
+                    line_index,
+                    path_value,
+                    extra,
+                    definition_base_path: current_base_path,
+                    source: file_content
+                  )
                 end
               end
             end
@@ -101,7 +117,14 @@ module Analyzer::Python
       methods.uniq
     end
 
-    private def process_route(path : String, lines : Array(String), line_index : Int32, route_path : String, extra_params : String)
+    private def process_route(path : String,
+                              lines : Array(String),
+                              line_index : Int32,
+                              route_path : String,
+                              extra_params : String,
+                              *,
+                              definition_base_path : String,
+                              source : String)
       methods = extract_methods(extra_params)
       methods = ["GET"] if methods.empty?
 
@@ -120,7 +143,13 @@ module Analyzer::Python
 
       # extract_function_body skips the def line, so body row 0 lives
       # at def_index + 1.
-      handler_callees = build_callees_from(function_body, def_index + 1, path)
+      handler_callees = build_callees_from(
+        function_body,
+        def_index + 1,
+        path,
+        definition_base_path: definition_base_path,
+        source: source
+      )
 
       details = Details.new(PathInfo.new(path, line_index + 1))
       methods.each do |method|
