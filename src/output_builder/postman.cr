@@ -153,6 +153,10 @@ class OutputBuilderPostman < OutputBuilder
         "request" => JSON::Any.new(request),
       } of String => JSON::Any
 
+      if description = noir_callees_description(endpoint)
+        item["description"] = JSON::Any.new(description)
+      end
+
       items << item
     end
 

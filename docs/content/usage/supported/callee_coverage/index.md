@@ -14,7 +14,9 @@ Use `--include-callee` to show callees in plain output:
 noir -b . --include-callee
 ```
 
-Model-based formats such as JSON, JSONL, YAML, TOML, and plain model serialization include the `callees` field through the endpoint model. The `path` and `line` values currently point to the call site, not the callee definition.
+Model-based formats such as JSON, JSONL, YAML, TOML, and plain model serialization include the `callees` field through the endpoint model. OpenAPI 2.0 and 3.0 expose callees as the operation-level `x-noir-callees` extension, SARIF stores them in `result.properties.noir.callees`, and Postman collections add a human-readable list to the item description. Purpose-specific command and filter outputs such as cURL, HTTPie, PowerShell, only-url, and only-param omit callees to keep their primary output stable.
+
+The `path` and `line` values currently point to the call site, not the callee definition.
 
 ## Coverage Matrix
 

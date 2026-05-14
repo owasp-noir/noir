@@ -1,4 +1,5 @@
 require "./logger"
+require "./endpoint"
 
 class OutputBuilder
   @logger : NoirLogger
@@ -128,6 +129,58 @@ class OutputBuilder
       tags:       final_tags.uniq,
       body_type:  is_json ? "json" : "form",
     }
+  end
+
+  protected def noir_callee_json(callee : Callee) : JSON::Any
+    data = {
+      "name" => JSON::Any.new(callee.name),
+    } of String => JSON::Any
+
+    if path = callee.path
+      data["path"] = JSON::Any.new(path)
+    end
+
+    if line = callee.line
+      data["line"] = JSON::Any.new(line.to_i64)
+    end
+
+    JSON::Any.new(data)
+  end
+
+  protected def noir_callees_json(endpoint : Endpoint) : Array(JSON::Any)
+    endpoint.callees.map { |callee| noir_callee_json(callee) }
+  end
+
+  protected def add_noir_callees_extension(operation : Hash(String, JSON::Any), endpoint : Endpoint)
+    return if endpoint.callees.empty?
+
+    operation["x-noir-callees"] = JSON::Any.new(noir_callees_json(endpoint))
+  end
+
+  protected def noir_callees_description(endpoint : Endpoint) : String?
+    return if endpoint.callees.empty?
+
+    lines = ["Noir callees:"]
+    endpoint.callees.each do |callee|
+      lines << "- #{format_noir_callee(callee)}"
+    end
+    lines.join("\n")
+  end
+
+  private def format_noir_callee(callee : Callee) : String
+    if path = callee.path
+      if line = callee.line
+        return "#{callee.name} (#{path}:#{line})"
+      end
+
+      return "#{callee.name} (#{path})"
+    end
+
+    if line = callee.line
+      return "#{callee.name} (line #{line})"
+    end
+
+    callee.name
   end
 
   macro define_getter_methods(names)

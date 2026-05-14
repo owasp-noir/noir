@@ -81,7 +81,37 @@ class OutputBuilderSarif < OutputBuilder
       end
     end
 
-    log.to_json
+    attach_noir_callees(log.to_json, endpoints)
+  end
+
+  private def attach_noir_callees(message : String, endpoints : Array(Endpoint)) : String
+    return message unless endpoints.any? { |endpoint| !endpoint.callees.empty? }
+
+    sarif = JSON.parse(message)
+    runs = sarif["runs"].as_a
+    return message if runs.empty?
+
+    results_json = runs[0]["results"]?
+    return message unless results_json
+
+    endpoint_index = 0
+    results_json.as_a.each do |result_json|
+      result = result_json.as_h
+      next unless result["ruleId"]?.try(&.as_s?) == "endpoint-discovery"
+
+      endpoint = endpoints[endpoint_index]?
+      endpoint_index += 1
+      next unless endpoint
+      next if endpoint.callees.empty?
+
+      properties = result["properties"]?.try(&.as_h?) || {} of String => JSON::Any
+      properties["noir"] = JSON::Any.new({
+        "callees" => JSON::Any.new(noir_callees_json(endpoint)),
+      } of String => JSON::Any)
+      result["properties"] = JSON::Any.new(properties)
+    end
+
+    sarif.to_json
   end
 
   private def map_severity_to_sarif_level(severity : String) : Sarif::Level
