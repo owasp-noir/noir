@@ -1,4 +1,6 @@
 require "../../../models/analyzer"
+require "../../../miniparsers/groovy_callee_extractor"
+require "../../../utils/groovy_literal_scanner"
 
 module Analyzer::Groovy
   # Grails follows a convention-over-configuration layout where each
@@ -67,6 +69,7 @@ module Analyzer::Groovy
     ]
 
     def analyze
+      include_callee = any_to_bool(@options["include_callee"]?)
       all_files.each do |path|
         next if File.directory?(path)
         next unless path.ends_with?(".groovy")
@@ -74,7 +77,7 @@ module Analyzer::Groovy
         content = read_file_content(path)
 
         if controller_path?(path)
-          process_controller(path, content)
+          process_controller(path, content, include_callee)
         end
 
         if url_mappings_path?(path)
@@ -98,7 +101,7 @@ module Analyzer::Groovy
       File.basename(path).ends_with?("UrlMappings.groovy")
     end
 
-    private def process_controller(path : String, content : String)
+    private def process_controller(path : String, content : String, include_callee : Bool)
       cleaned = strip_groovy_comments(content)
 
       cleaned.scan(/((?:(?:public|protected|private|abstract|final|static)\s+)*)class\s+([A-Z][A-Za-z0-9_]*Controller)\b([^\{]*)\{/) do |match|
@@ -147,13 +150,24 @@ module Analyzer::Groovy
           methods = allowed_methods[action[:name]]? || DEFAULT_METHODS
           line = line_for_offset(content, body_start + action[:offset])
           line = line_for_offset(content, match_start) if line <= 0
+          callees = include_callee ? callees_for_action(path, content, body_start, action) : [] of Noir::GroovyCalleeExtractor::Entry
           methods.each do |verb|
             url = "/#{controller_name}/#{action[:name]}"
             details = Details.new(PathInfo.new(path, line))
-            @result << Endpoint.new(url, verb, [] of Param, details)
+            endpoint = Endpoint.new(url, verb, [] of Param, details)
+            Noir::GroovyCalleeExtractor.attach_to(endpoint, callees)
+            @result << endpoint
           end
         end
       end
+    end
+
+    private def callees_for_action(path : String,
+                                   content : String,
+                                   class_body_start : Int32,
+                                   action : Action) : Array(Noir::GroovyCalleeExtractor::Entry)
+      start_line = line_for_offset(content, class_body_start + action[:body_start])
+      Noir::GroovyCalleeExtractor.callees_for_body(action[:body], path, start_line)
     end
 
     private def extends_restful_controller?(clause : String) : Bool
@@ -185,32 +199,22 @@ module Analyzer::Groovy
       base[0].downcase.to_s + base[1..]
     end
 
-    private def extract_actions(body : String) : Array(NamedTuple(name: String, offset: Int32))
-      actions = [] of NamedTuple(name: String, offset: Int32)
+    alias Action = NamedTuple(name: String, offset: Int32, body: String, body_start: Int32)
+
+    private def extract_actions(body : String) : Array(Action)
+      actions = [] of Action
       depth = 0
-      in_string = false
-      string_quote = '\0'
       i = 0
 
       while i < body.size
         c = body[i]
 
-        if in_string
-          if c == '\\' && i + 1 < body.size
-            i += 2
-            next
-          end
-          in_string = false if c == string_quote
-          i += 1
+        if literal_end = Noir::GroovyLiteralScanner.skip_literal(body, i)
+          i = literal_end
           next
         end
 
         case c
-        when '"', '\''
-          in_string = true
-          string_quote = c
-          i += 1
-          next
         when '{'
           depth += 1
           i += 1
@@ -236,7 +240,10 @@ module Analyzer::Groovy
             name = m[2]
             is_private = modifier && modifier.lstrip.starts_with?("private")
             unless is_private || SKIP_ACTION_NAMES.includes?(name)
-              actions << {name: name, offset: i}
+              if action_body = extract_braced_block(body, i + (m.end(0) || 0))
+                action_body_text, action_body_start = action_body
+                actions << {name: name, offset: i, body: action_body_text, body_start: action_body_start}
+              end
             end
             match_end = m.end(0)
             i = match_end ? i + match_end : i + 1
@@ -251,7 +258,11 @@ module Analyzer::Groovy
           if m2
             name = m2[3]
             unless SKIP_ACTION_NAMES.includes?(name)
-              actions << {name: name, offset: i}
+              open_brace = i + (m2.end(0) || 1) - 1
+              if action_body = extract_braced_block(body, open_brace)
+                action_body_text, action_body_start = action_body
+                actions << {name: name, offset: i, body: action_body_text, body_start: action_body_start}
+              end
             end
             match_end = m2.end(0)
             i = match_end ? i + match_end : i + 1
@@ -444,23 +455,14 @@ module Analyzer::Groovy
       return unless open_idx < text.size && text[open_idx] == '{'
       depth = 1
       i = open_idx + 1
-      in_string = false
-      string_quote = '\0'
       while i < text.size && depth > 0
-        c = text[i]
-        if in_string
-          if c == '\\' && i + 1 < text.size
-            i += 2
-            next
-          end
-          in_string = false if c == string_quote
-          i += 1
+        if literal_end = Noir::GroovyLiteralScanner.skip_literal(text, i)
+          i = literal_end
           next
         end
+
+        c = text[i]
         case c
-        when '"', '\''
-          in_string = true
-          string_quote = c
         when '{'
           depth += 1
         when '}'
@@ -510,25 +512,15 @@ module Analyzer::Groovy
       body_start = i + 1
       depth = 1
       i += 1
-      in_string = false
-      string_quote = '\0'
 
       while i < text.size && depth > 0
-        c = text[i]
-        if in_string
-          if c == '\\' && i + 1 < text.size
-            i += 2
-            next
-          end
-          in_string = false if c == string_quote
-          i += 1
+        if literal_end = Noir::GroovyLiteralScanner.skip_literal(text, i)
+          i = literal_end
           next
         end
 
+        c = text[i]
         case c
-        when '"', '\''
-          in_string = true
-          string_quote = c
         when '{'
           depth += 1
         when '}'
@@ -547,49 +539,44 @@ module Analyzer::Groovy
     private def strip_groovy_comments(text : String) : String
       result = String::Builder.new
       i = 0
-      chars = text.chars
-      in_string = false
-      string_quote = '\0'
 
-      while i < chars.size
-        c = chars[i]
+      while i < text.size
+        c = text[i]
 
-        if in_string
-          if c == '\\' && i + 1 < chars.size
-            result << c
-            result << chars[i + 1]
-            i += 2
-            next
-          elsif c == string_quote
-            in_string = false
-          end
-          result << c
-          i += 1
+        if literal_end = Noir::GroovyLiteralScanner.skip_literal(text, i)
+          append_source_range(result, text, i, literal_end)
+          i = literal_end
           next
         end
 
-        if c == '"' || c == '\''
-          in_string = true
-          string_quote = c
-          result << c
-          i += 1
-          next
-        end
-
-        if i + 1 < chars.size && c == '/' && chars[i + 1] == '/'
-          while i < chars.size && chars[i] != '\n'
-            i += 1
-          end
-          next
-        end
-
-        if i + 1 < chars.size && c == '/' && chars[i + 1] == '*'
+        if i + 1 < text.size && c == '/' && text[i + 1] == '/'
+          result << ' '
+          result << ' '
           i += 2
-          while i + 1 < chars.size && !(chars[i] == '*' && chars[i + 1] == '/')
-            result << '\n' if chars[i] == '\n'
+          while i < text.size && text[i] != '\n'
+            result << ' '
             i += 1
           end
-          i += 2 if i + 1 < chars.size
+          if i < text.size
+            result << text[i]
+            i += 1
+          end
+          next
+        end
+
+        if i + 1 < text.size && c == '/' && text[i + 1] == '*'
+          result << ' '
+          result << ' '
+          i += 2
+          while i + 1 < text.size && !(text[i] == '*' && text[i + 1] == '/')
+            result << (text[i] == '\n' ? '\n' : ' ')
+            i += 1
+          end
+          if i + 1 < text.size
+            result << ' '
+            result << ' '
+            i += 2
+          end
           next
         end
 
@@ -598,6 +585,14 @@ module Analyzer::Groovy
       end
 
       result.to_s
+    end
+
+    private def append_source_range(result : String::Builder, text : String, start : Int32, finish : Int32)
+      index = start
+      while index < finish && index < text.size
+        result << text[index]
+        index += 1
+      end
     end
 
     private def line_for_offset(content : String, offset : Int32) : Int32
