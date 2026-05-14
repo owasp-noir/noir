@@ -9,7 +9,8 @@ module Analyzer::Swift
     # Patterns for route definitions in Hummingbird:
     # router.get("path") { ... }
     # router.post("path") { ... }
-    ROUTE_PATTERN = /(\w+)\.(get|post|put|delete|patch)\(([^)]+)\)/
+    ROUTE_PATTERN              = /(\w+)\.(get|post|put|delete|patch)\(([^)]+)\)/
+    ROUTE_BODY_LOOKAHEAD_LIMIT = 5
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
@@ -170,10 +171,22 @@ module Analyzer::Swift
     end
 
     private def route_body(lines : Array(String), route_index : Int32) : Tuple(String, Int32)
-      route_line = lines[route_index]
-      opening_brace = route_line.index('{')
+      opening_index = route_index
+      opening_brace = structural_opening_brace(lines[opening_index])
+      unless opening_brace
+        ((route_index + 1)...[route_index + ROUTE_BODY_LOOKAHEAD_LIMIT, lines.size].min).each do |index|
+          break if route_definition_line?(lines[index])
+
+          if brace_index = structural_opening_brace(lines[index])
+            opening_index = index
+            opening_brace = brace_index
+            break
+          end
+        end
+      end
       return {"", route_index + 2} unless opening_brace
 
+      route_line = lines[opening_index]
       first_fragment = route_line[(opening_brace + 1)..]? || ""
       clean_fragment, block_comment_depth, in_multiline_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(first_fragment, 0, false)
       body_lines = [] of String
@@ -182,11 +195,11 @@ module Analyzer::Swift
       if brace_count <= 0
         closing_brace = clean_fragment.rindex('}')
         first_fragment = first_fragment[0...closing_brace] if closing_brace
-        return {first_fragment, route_index + 1}
+        return {first_fragment, opening_index + 1}
       end
 
       body_lines << first_fragment
-      index = route_index + 1
+      index = opening_index + 1
 
       while index < lines.size && brace_count > 0
         line = lines[index]
@@ -201,7 +214,8 @@ module Analyzer::Swift
 
         if next_brace_count <= 0
           if line.strip != "}"
-            body_lines << line
+            closing_brace = stripped.rindex('}')
+            body_lines << (closing_brace ? line[0...closing_brace] : line)
           end
           break
         end
@@ -212,7 +226,12 @@ module Analyzer::Swift
         index += 1
       end
 
-      {body_lines.join("\n"), route_index + 1}
+      {body_lines.join("\n"), opening_index + 1}
+    end
+
+    private def structural_opening_brace(line : String) : Int32?
+      stripped, _, _ = Noir::SwiftCalleeExtractor.strip_non_code_with_state(line, 0, false)
+      stripped.index('{')
     end
   end
 end

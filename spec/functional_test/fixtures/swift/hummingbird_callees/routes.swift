@@ -20,4 +20,9 @@ func routes(_ router: Router<some RequestContext>) {
     }
 
     router.get("ping") { request, context in PingService.pong() }
+
+    router.get("delayed")
+    { request, context in
+        DelayService.wait()
+    } ; OutsideService.noise()
 }

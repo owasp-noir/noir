@@ -18,10 +18,14 @@ search_endpoint.push_callee(Callee.new("SearchService.render", line: 19))
 ping_endpoint = Endpoint.new("/ping", "GET")
 ping_endpoint.push_callee(Callee.new("PingService.pong", line: 22))
 
+delayed_endpoint = Endpoint.new("/delayed", "GET")
+delayed_endpoint.push_callee(Callee.new("DelayService.wait", line: 26))
+
 expected_endpoints = [
   create_endpoint,
   search_endpoint,
   ping_endpoint,
+  delayed_endpoint,
 ]
 
 FunctionalTester.new("fixtures/swift/hummingbird_callees/", {
