@@ -1,0 +1,9 @@
+[package]
+name = "tide-callees-example"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tide = "0.16"
+async-std = { version = "1", features = ["attributes"] }
+serde = { version = "1", features = ["derive"] }

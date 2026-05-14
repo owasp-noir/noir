@@ -3,21 +3,16 @@ require "../../engines/rust_engine"
 module Analyzer::Rust
   class Tide < RustEngine
     def analyze_file(path : String) : Array(Endpoint)
-      endpoints = [] of Endpoint
-
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        content = file.gets_to_end
-        endpoints = parse_tide_routes(content, path)
-      end
-
-      endpoints
+      content = read_file_content(path)
+      parse_tide_routes(content, path, any_to_bool(@options["include_callee"]?))
     end
 
-    private def parse_tide_routes(content : String, file_path : String) : Array(Endpoint)
+    private def parse_tide_routes(content : String, file_path : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
 
       # Map function names to their content for parameter extraction
       functions_map = extract_functions(content)
+      function_callees = include_callee ? collect_function_callees(content.lines, file_path) : Hash(String, Array(Noir::RustCalleeExtractor::Entry)).new
 
       # Find .at() method calls with chained HTTP methods
       # Pattern: .at("/path").get(handler) or .at("/path").get(|_| async { ... })
@@ -45,7 +40,9 @@ module Analyzer::Rust
             extract_handler_params(handler, functions_map, params)
 
             details = Details.new(PathInfo.new(file_path, 1))
-            endpoints << Endpoint.new(final_path, method, params, details)
+            endpoint = Endpoint.new(final_path, method, params, details)
+            attach_handler_callees(handler, function_callees, endpoint) if include_callee
+            endpoints << endpoint
           end
         end
       end
@@ -94,7 +91,9 @@ module Analyzer::Rust
             extract_handler_params(handler, functions_map, params)
 
             details = Details.new(PathInfo.new(file_path, 1))
-            endpoints << Endpoint.new(final_path, method, params, details)
+            endpoint = Endpoint.new(final_path, method, params, details)
+            attach_handler_callees(handler, function_callees, endpoint) if include_callee
+            endpoints << endpoint
           end
         end
       end
@@ -173,6 +172,42 @@ module Analyzer::Rust
       nil
     rescue
       nil
+    end
+
+    private def collect_function_callees(lines : Array(String), file_path : String) : Hash(String, Array(Noir::RustCalleeExtractor::Entry))
+      function_callees = Hash(String, Array(Noir::RustCalleeExtractor::Entry)).new
+
+      lines.each_with_index do |line, index|
+        stripped = Noir::RustCalleeExtractor.strip_comment(line).strip
+        next unless match = stripped.match(/^(?:pub(?:\([^)]*\))?\s+)?async\s+fn\s+([A-Za-z_]\w*)\b/)
+
+        function_body = extract_rust_function_body(lines, index)
+        next unless function_body
+
+        body, body_start_line = function_body
+        function_callees[match[1]] = Noir::RustCalleeExtractor.callees_for_body(body, file_path, body_start_line)
+      end
+
+      function_callees
+    end
+
+    private def attach_handler_callees(handler : String,
+                                       function_callees : Hash(String, Array(Noir::RustCalleeExtractor::Entry)),
+                                       endpoint : Endpoint)
+      handler_name = extract_handler_name(handler)
+      return unless handler_name
+
+      if callees = function_callees[handler_name]?
+        attach_rust_callees(endpoint, callees)
+      end
+    end
+
+    private def extract_handler_name(handler : String) : String?
+      stripped = handler.strip
+      return if stripped.starts_with?("|")
+
+      match = stripped.match(/^(?:[A-Za-z_]\w*::)*([A-Za-z_]\w*)\b/)
+      match[1] if match
     end
 
     # Extract parameters from handler function
