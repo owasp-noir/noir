@@ -18,20 +18,17 @@ class SendElasticSearch < Deliver
     es_headers["Content-Type"] = "application/json"
     es_headers["Accept"] = "application/json"
 
-    begin
-      Crest::Request.execute(
-        method: :post,
-        url: uri.to_s,
-        tls: OpenSSL::SSL::Context::Client.insecure,
-        user_agent: "Noir/#{Noir::VERSION}",
-        form: body,
-        headers: @headers,
-        json: true
-      )
-    rescue e
-      @logger.debug "Exception of ES Delivery"
-      @logger.debug_sub e
-    end
-  rescue
+    Crest::Request.execute(
+      method: :post,
+      url: uri.to_s,
+      tls: OpenSSL::SSL::Context::Client.insecure,
+      user_agent: "Noir/#{Noir::VERSION}",
+      form: body,
+      headers: @headers,
+      json: true
+    )
+  rescue e
+    @logger.debug "Exception of ES Delivery"
+    @logger.debug_sub e
   end
 end
