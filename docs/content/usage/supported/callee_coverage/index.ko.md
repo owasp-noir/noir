@@ -1,0 +1,54 @@
++++
+title = "Callee 커버리지"
+description = "Noir의 엔드포인트별 1-hop callee 추출을 지원하는 프레임워크 범위입니다."
+weight = 4
+sort_by = "weight"
+
++++
+
+Noir는 엔드포인트에 best-effort 1-hop handler callee를 붙일 수 있습니다. callee는 라우트 핸들러 본문 안에서 직접 관찰된 함수, 메서드, 프레임워크 호출입니다. AI SAST 도구와 코드 리뷰어가 다음에 확인할 코드를 좁히는 데 사용할 수 있습니다.
+
+plain 출력에서 callee를 보려면 `--include-callee`를 사용하세요:
+
+```bash
+noir -b . --include-callee
+```
+
+JSON, JSONL, YAML, TOML 같은 모델 기반 포맷과 plain 모델 직렬화는 엔드포인트 모델을 통해 `callees` 필드를 포함합니다. 현재 `path`와 `line`은 callee 정의 위치가 아니라 호출 위치를 가리킵니다.
+
+## 커버리지 매트릭스
+
+아래 표는 callee 추출 functional test가 있는 프레임워크를 보여줍니다. 여기에 없는 프레임워크도 엔드포인트 탐지는 지원될 수 있지만, AI 소비자는 callee 커버리지를 없거나 검증되지 않은 것으로 취급하는 것이 안전합니다.
+
+| 언어 | callee 커버리지가 있는 프레임워크 |
+|------|-----------------------------------|
+| C# | ASP.NET Core MVC, ASP.NET MVC |
+| Clojure | Compojure |
+| C++ | Crow, Drogon |
+| Crystal | Amber, Grip, Kemal, Lucky, Marten |
+| Dart | Dart Frog, Serverpod |
+| Elixir | Phoenix, Plug |
+| F# | Giraffe |
+| Go | Beego, Chi, Echo, fasthttp, Fiber, Gin, GoFrame, Goyave, go-zero, Hertz, httprouter, Iris, Gorilla Mux |
+| Groovy | Grails |
+| Haskell | Servant, Yesod |
+| Java | Armeria, Dropwizard, Javalin, JAX-RS, Micronaut, Play, Quarkus, Spark, Spring, Vert.x |
+| JavaScript | Express, Fastify, Hono, Koa, NestJS, Next.js, Nitro, Nuxt, Remix, Restify, SvelteKit |
+| Kotlin | http4k, Ktor, Spring |
+| Lua | Lapis |
+| Perl | Mojolicious |
+| PHP | CakePHP, CodeIgniter, Laravel, Pure PHP, Slim, Symfony, Yii |
+| Python | Aiohttp, Bottle, Django, Falcon, FastAPI, Flask, Litestar, Pyramid, Sanic, Starlette, Tornado |
+| Ruby | Grape, Hanami, Rails, Roda, Sinatra |
+| Rust | Actix Web, Axum, Gotham, Loco, Poem, Rocket, RWF, Salvo, Tide, Warp |
+| Scala | Akka HTTP, Scalatra |
+| Swift | Hummingbird, Kitura, Vapor |
+| TypeScript | NestJS |
+
+## 완성도 참고사항
+
+- Callee는 1-hop만 제공합니다. Noir는 transitive call graph를 만들지 않습니다.
+- Dynamic dispatch, middleware chain, decorator, macro expansion, generated code, reflection은 정적 추출에서 누락될 수 있습니다.
+- Named handler 기반 프레임워크는 동적이거나 inline callback이 많은 프레임워크보다 callee 커버리지가 좋은 편입니다.
+- downstream 도구가 쓰기 쉽도록 callee는 엔드포인트별로 dedup되고 개수가 제한됩니다.
+- renderer나 request accessor 같은 프레임워크 helper는 엔드포인트가 입력과 출력을 어떻게 다루는지 보여주므로 의도적으로 유지합니다.
