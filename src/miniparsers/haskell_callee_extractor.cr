@@ -175,7 +175,7 @@ module Noir::HaskellCalleeExtractor
         next
       end
 
-      if char == '\''
+      if char == '\'' && char_literal_start?(source, index)
         finish = skip_char(source, index)
         append_blanks(stripped, source, index, finish)
         index = finish
@@ -194,6 +194,15 @@ module Noir::HaskellCalleeExtractor
     end
 
     stripped.to_s
+  end
+
+  private def char_literal_start?(source : String, start : Int32) : Bool
+    return false if start + 2 >= source.size
+    return false if source[start + 1] == '['
+
+    finish = skip_char(source, start)
+    return false if finish >= source.size
+    finish - start <= 8
   end
 
   private def append_blanks_until_line_end(stripped : String::Builder, source : String, start : Int32) : Int32

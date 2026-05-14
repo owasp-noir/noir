@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../../miniparsers/haskell_callee_extractor"
 require "set"
 
 module Analyzer::Haskell
@@ -6,9 +7,15 @@ module Analyzer::Haskell
     HTTP_METHOD_VERBS = %w[GET POST PUT DELETE PATCH OPTIONS HEAD]
 
     alias TypeAlias = NamedTuple(body: String, source: String, line: Int32)
+    alias HandlerBody = Noir::HaskellCalleeExtractor::FunctionBody
+    alias HandlerBodies = Hash(String, Array(HandlerBody))
+    alias ServerBindings = Hash(Tuple(String, String), String)
 
     def analyze
       type_aliases = {} of String => TypeAlias
+      include_callee = any_to_bool(@options["include_callee"]?)
+      handler_bodies = include_callee ? build_handler_bodies : HandlerBodies.new
+      server_bindings = include_callee ? build_server_bindings : ServerBindings.new
 
       all_files.each do |path|
         next if File.directory?(path)
@@ -37,10 +44,61 @@ module Analyzer::Haskell
         expanded = expand_references(entry[:body], type_aliases)
         next unless contains_servant_signature?(expanded)
 
-        process_api_body(entry[:source], entry[:line], expanded)
+        endpoints = process_api_body(entry[:source], entry[:line], expanded)
+        attach_servant_callees(name, entry[:source], endpoints, handler_bodies, server_bindings) if include_callee
+        @result.concat(endpoints)
       end
 
       @result
+    end
+
+    private def build_handler_bodies : HandlerBodies
+      handlers = HandlerBodies.new
+
+      all_files.each do |path|
+        next if File.directory?(path)
+        next unless haskell_source?(path)
+
+        Noir::HaskellCalleeExtractor.function_bodies(read_file_content(path), path).each do |body|
+          handlers[body[:name]] ||= [] of HandlerBody
+          handlers[body[:name]] << body
+        end
+      end
+
+      handlers
+    end
+
+    private def build_server_bindings : ServerBindings
+      bindings = ServerBindings.new
+
+      all_files.each do |path|
+        next if File.directory?(path)
+        next unless haskell_source?(path)
+
+        extract_server_binding_targets(read_file_content(path)).each do |entry|
+          bindings[{path, entry[:name]}] = entry[:target]
+        end
+      end
+
+      bindings
+    end
+
+    private def extract_server_binding_targets(content : String) : Array(NamedTuple(name: String, target: String))
+      targets = [] of NamedTuple(name: String, target: String)
+      cleaned = strip_haskell_comments(content)
+
+      cleaned.each_line do |line|
+        match = line.match(/^\s*([a-z_][A-Za-z0-9_']*)\s*::.*\bServer(?:T)?\b\s*(.*)$/)
+        next unless match
+
+        target_match = match[2].strip.match(/\A([A-Z][A-Za-z0-9_']*)\b/)
+        targets << {
+          name:   match[1],
+          target: target_match ? target_match[1] : "",
+        }
+      end
+
+      targets.uniq
     end
 
     private def haskell_source?(path : String) : Bool
@@ -190,12 +248,154 @@ module Analyzer::Haskell
       false
     end
 
-    private def process_api_body(source : String, line_number : Int32, body : String)
+    private def process_api_body(source : String, line_number : Int32, body : String) : Array(Endpoint)
+      endpoints = [] of Endpoint
       flat = flatten_alternatives(body)
       routes = split_top_level(flat, ":<|>")
       routes.each do |route|
-        process_route(source, line_number, route)
+        if endpoint = process_route(source, line_number, route)
+          endpoints << endpoint
+        end
       end
+      endpoints
+    end
+
+    private def attach_servant_callees(api_name : String,
+                                       api_source : String,
+                                       endpoints : Array(Endpoint),
+                                       handler_bodies : HandlerBodies,
+                                       server_bindings : ServerBindings)
+      leaf_names = server_leaf_names_for(api_name, api_source, endpoints.size, handler_bodies, server_bindings)
+      return unless leaf_names
+
+      endpoints.zip(leaf_names).each do |endpoint, handler_name|
+        handler_body = unique_handler_body(handler_name, handler_bodies)
+        next unless handler_body
+
+        callees = Noir::HaskellCalleeExtractor.callees_for_body(
+          handler_body[:body],
+          handler_body[:path],
+          handler_body[:start_line]
+        )
+        Noir::HaskellCalleeExtractor.attach_to(endpoint, callees)
+      end
+    end
+
+    private def server_leaf_names_for(api_name : String,
+                                      api_source : String,
+                                      endpoint_count : Int32,
+                                      handler_bodies : HandlerBodies,
+                                      server_bindings : ServerBindings) : Array(String)?
+      server_candidate_names(api_name).each do |server_name|
+        binding = body_for_path(server_name, api_source, handler_bodies)
+        next unless binding
+        next unless root_server_matches_api?(server_name, api_source, api_name, server_bindings)
+
+        visited = Set(Tuple(String, String)).new
+        visited << {binding[:path], server_name}
+        leaves = flatten_server_expression(binding[:body], handler_bodies, server_bindings, binding[:path], visited)
+        next unless leaves
+        next unless leaves.size == endpoint_count
+        next unless leaves.all? { |leaf| !unique_handler_body(leaf, handler_bodies).nil? }
+
+        return leaves
+      end
+
+      nil
+    end
+
+    private def server_candidate_names(api_name : String) : Array(String)
+      candidates = ["server", "#{lower_camel(api_name)}Server"]
+
+      if api_name.ends_with?("API")
+        prefix = api_name[0...(api_name.size - "API".size)]
+        candidates << "#{lower_camel(prefix)}Server" unless prefix.empty?
+      end
+
+      candidates.uniq
+    end
+
+    private def lower_camel(name : String) : String
+      return name if name.empty?
+
+      name[0].downcase.to_s + name[1..]
+    end
+
+    private def flatten_server_expression(expression : String,
+                                          handler_bodies : HandlerBodies,
+                                          server_bindings : ServerBindings,
+                                          current_path : String,
+                                          visited : Set(Tuple(String, String))) : Array(String)?
+      parts = split_top_level(expression, ":<|>")
+      leaves = [] of String
+
+      parts.each do |part|
+        part_leaves = flatten_server_part(part, handler_bodies, server_bindings, current_path, visited)
+        return unless part_leaves
+
+        leaves.concat(part_leaves)
+      end
+
+      leaves
+    end
+
+    private def flatten_server_part(part : String,
+                                    handler_bodies : HandlerBodies,
+                                    server_bindings : ServerBindings,
+                                    current_path : String,
+                                    visited : Set(Tuple(String, String))) : Array(String)?
+      name = unwrap_parens(part.strip)
+      return unless simple_value_name?(name)
+
+      binding = body_for_path(name, current_path, handler_bodies)
+      if binding
+        key = {current_path, name}
+        server_binding = server_bindings.has_key?(key) || server_like_name?(name)
+        if (server_binding || binding[:body].includes?(":<|>")) && !visited.includes?(key)
+          visited << key
+          expanded = flatten_server_expression(binding[:body], handler_bodies, server_bindings, binding[:path], visited)
+          visited.delete(key)
+          return expanded if expanded && expanded.size > 0
+          return if server_binding
+        end
+      end
+
+      return if server_like_name?(name) || server_binding_name?(name, server_bindings)
+
+      [name]
+    end
+
+    private def root_server_matches_api?(server_name : String,
+                                         api_source : String,
+                                         api_name : String,
+                                         server_bindings : ServerBindings) : Bool
+      server_bindings[{api_source, server_name}]? == api_name
+    end
+
+    private def body_for_path(name : String, path : String, handler_bodies : HandlerBodies) : HandlerBody?
+      bodies = handler_bodies[name]?
+      return unless bodies
+
+      bodies.find { |body| body[:path] == path }
+    end
+
+    private def unique_handler_body(name : String, handler_bodies : HandlerBodies) : HandlerBody?
+      bodies = handler_bodies[name]?
+      return unless bodies && bodies.size == 1
+
+      bodies.first
+    end
+
+    private def server_like_name?(name : String) : Bool
+      name == "server" || name.ends_with?("Server")
+    end
+
+    private def server_binding_name?(name : String, server_bindings : ServerBindings) : Bool
+      server_bindings.keys.any? { |key| key[1] == name }
+    end
+
+    private def simple_value_name?(name : String) : Bool
+      !!name.match(/\A[a-z_][A-Za-z0-9_']*\z/)
     end
 
     private def flatten_alternatives(body : String) : String
@@ -238,7 +438,7 @@ module Analyzer::Haskell
       [route]
     end
 
-    private def process_route(source : String, line_number : Int32, route : String)
+    private def process_route(source : String, line_number : Int32, route : String) : Endpoint?
       raw = unwrap_parens(route.strip)
       return if raw.empty?
 
@@ -306,7 +506,7 @@ module Analyzer::Haskell
       url = url_parts.empty? ? "/" : "/#{url_parts.join("/")}"
       details = Details.new(PathInfo.new(source, line_number))
       endpoint_params = params.map { |p| Param.new(p.name, p.value, p.param_type) }
-      @result << Endpoint.new(url, resolved_method, endpoint_params, details)
+      Endpoint.new(url, resolved_method, endpoint_params, details)
     end
 
     private def http_method_for(token : String) : String?
