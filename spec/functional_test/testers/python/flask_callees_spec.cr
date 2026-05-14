@@ -5,6 +5,13 @@ require "../../func_spec.cr"
 # Builtins (print/len/range/...) and Python dunder methods are filtered;
 # framework calls like `jsonify` are kept on purpose because they tell a
 # reviewer how the endpoint shapes its output.
+#
+# Imported helper callees (build_user_query, run_sql_query, log_audit,
+# notify_admin) resolve to their definitions in helpers.py; framework
+# calls like `jsonify` stay unresolved (no Python definition reachable
+# from the project root) and keep their call-site location.
+helpers_path = "./spec/functional_test/fixtures/python/flask_callees/helpers.py"
+
 expected_endpoints = [
   # POST /users — exercises every callee in the handler plus dedup
   # (`run_sql_query` is only called once but `request.form[...]` is a
@@ -12,18 +19,18 @@ expected_endpoints = [
   Endpoint.new("/users", "POST", [
     Param.new("name", "", "form"),
   ]).tap do |ep|
-    ep.push_callee(Callee.new("build_user_query"))
-    ep.push_callee(Callee.new("run_sql_query"))
-    ep.push_callee(Callee.new("log_audit"))
-    ep.push_callee(Callee.new("notify_admin"))
+    ep.push_callee(Callee.new("build_user_query", helpers_path, 1))
+    ep.push_callee(Callee.new("run_sql_query", helpers_path, 5))
+    ep.push_callee(Callee.new("log_audit", helpers_path, 14))
+    ep.push_callee(Callee.new("notify_admin", helpers_path, 10))
     ep.push_callee(Callee.new("jsonify"))
   end,
 
   # GET /orders/<order_id> — same helpers as POST /users (verifies the
   # callee list is per-handler, not deduped across endpoints).
   Endpoint.new("/orders/<order_id>", "GET").tap do |ep|
-    ep.push_callee(Callee.new("build_user_query"))
-    ep.push_callee(Callee.new("run_sql_query"))
+    ep.push_callee(Callee.new("build_user_query", helpers_path, 1))
+    ep.push_callee(Callee.new("run_sql_query", helpers_path, 5))
     ep.push_callee(Callee.new("jsonify"))
   end,
 
