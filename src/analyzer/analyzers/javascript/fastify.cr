@@ -10,7 +10,7 @@ module Analyzer::Javascript
 
       parallel_file_scan do |path|
         begin
-          content = File.read(path, encoding: "utf-8", invalid: :skip)
+          content = read_file_content(path)
           parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
             include_callees: include_callee)
           parser_endpoints.each do |endpoint|

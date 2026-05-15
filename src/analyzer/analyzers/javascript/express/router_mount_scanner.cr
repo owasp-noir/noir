@@ -52,7 +52,7 @@ module Analyzer::Javascript
       file_contexts : Hash(String, FileContext),
       global_deferred_mounts : Array(Tuple(String, String, String, String)),
     )
-      content = File.read(main_file, encoding: "utf-8", invalid: :skip)
+      content = CodeLocator.instance.content_for(main_file) || File.read(main_file, encoding: "utf-8", invalid: :skip)
 
       # Parse imports
       imports = parse_imports(content, main_file)
@@ -445,7 +445,7 @@ module Analyzer::Javascript
       return false unless File.file?(file_path)
 
       begin
-        content = File.read(file_path, encoding: "utf-8", invalid: :skip)
+        content = CodeLocator.instance.content_for(file_path) || File.read(file_path, encoding: "utf-8", invalid: :skip)
         # Look for common route definition patterns
         # Matches: router.get(, router.post(, .get(, .post(, etc.
         content.matches?(/\.(get|post|put|delete|patch|all|head|options)\s*\(/)
