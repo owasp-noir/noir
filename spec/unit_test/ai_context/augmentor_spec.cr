@@ -283,6 +283,28 @@ describe "NoirAIContext" do
     end
   end
 
+  it "does not treat upload-flavored headers as file inputs by default" do
+    source = <<-CODE
+      fastify.post("/upload", async (request, reply) => {
+        return { uploaded: true }
+      })
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/upload", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_param(Param.new("upload-token", "", "header"))
+
+      endpoints = NoirAIContext.apply([endpoint])
+      context = endpoints[0].ai_context
+      context = context.should_not be_nil
+
+      context.signals.map(&.kind).should_not contain("file_input")
+    end
+  end
+
   it "avoids treating generic user agent headers as identifier inputs" do
     source = <<-CODE
       r.Get("/api-test", func(w http.ResponseWriter, r *http.Request) {

@@ -291,6 +291,7 @@ module NoirAIContext
     end
 
     private def skip_param_signal?(endpoint : Endpoint, param : Param, pattern : PatternDefinition) : Bool
+      return true if pattern.kind == "file_input" && param.param_type == "header"
       return false unless pattern.kind == "identifier_input"
       return !header_identifier_like?(param.name) if param.param_type == "header"
       return false unless BODY_LIKE_PARAM_TYPES.includes?(param.param_type)

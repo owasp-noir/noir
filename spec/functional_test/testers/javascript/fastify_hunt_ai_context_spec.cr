@@ -44,5 +44,9 @@ describe "--ai-context Hunt signals on Fastify fixtures" do
     process_context.signals.map(&.kind).should contain("idor")
     process_context.signals.map(&.kind).should contain("idor_review")
     process_context.signals.map(&.kind).should_not contain("guard_absence")
+
+    upload_context = endpoints.find! { |ep| ep.method == "POST" && ep.url == "/upload" }.ai_context
+    upload_context = upload_context.should_not be_nil
+    upload_context.signals.map(&.kind).should_not contain("file_input")
   end
 end
