@@ -23,6 +23,9 @@ describe "OutputBuilderOas3" do
     endpoint1.push_param(Param.new("api_key", "key123", "header"))
     endpoint1.push_callee(Callee.new("PetService.find", "app/controllers/pets.cr", 12))
     endpoint1.push_callee(Callee.new("AuditLog.record", line: 13))
+    context = AIContext.new
+    context.push_guard(AIContextEntry.new("auth", "auth", source: "express_auth", description: "Protected by Express requireAuth middleware"))
+    endpoint1.ai_context = context
 
     endpoint2 = Endpoint.new("/pets", "POST")
     endpoint2.push_param(Param.new("name", "Fluffy", "json"))
@@ -92,6 +95,8 @@ describe "OutputBuilderOas3" do
     callees[1]["name"].as_s.should eq("AuditLog.record")
     callees[1].as_h.has_key?("path").should be_false
     callees[1]["line"].as_i.should eq(13)
+    get_op["x-noir-ai-context"]["guards"].as_a.size.should eq(1)
+    get_op["x-noir-ai-context"]["guards"][0]["source"].as_s.should eq("express_auth")
 
     # Check POST endpoint with JSON body
     post_json_op = paths["/pets"]["post"]

@@ -137,6 +137,25 @@ def initialize_analyzers(logger : NoirLogger)
   analyzers
 end
 
+def filter_redundant_generic_techs(techs : Array(String)) : Array(String)
+  filtered = techs.dup
+
+  php_frameworks = Set{
+    "php_laravel",
+    "php_symfony",
+    "php_cakephp",
+    "php_codeigniter",
+    "php_slim",
+    "php_yii",
+  }
+
+  if filtered.includes?("php_pure") && filtered.any? { |tech| php_frameworks.includes?(tech) }
+    filtered.reject!("php_pure")
+  end
+
+  filtered
+end
+
 def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLogger)
   result = [] of Endpoint
   file_analyzer = FileAnalyzer.new options
@@ -165,7 +184,7 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
   end
 
   # Run tech analyzers concurrently to avoid long stalls from a single analyzer
-  selected_techs = techs.select { |t| analyzer.has_key?(t) }
+  selected_techs = filter_redundant_generic_techs(techs).select { |t| analyzer.has_key?(t) }
   mutex = Mutex.new
 
   WaitGroup.wait do |wg|

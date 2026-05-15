@@ -71,7 +71,7 @@ expected_endpoints = [
 
 FunctionalTester.new("fixtures/php/symfony/", {
   :techs     => 2,
-  :endpoints => 20,
+  :endpoints => 18,
 }, expected_endpoints, {
   "include_callee" => YAML::Any.new(true),
 }).perform_tests

@@ -5,6 +5,7 @@ struct Endpoint
   include JSON::Serializable
   include YAML::Serializable
   property url, method, params, protocol, details, tags, callees, internal
+  property ai_context : AIContext?
 
   # Per-endpoint context for AI code reviewers: 1-hop callees from the
   # handler body. Best-effort, intentionally incomplete on dynamic
@@ -17,6 +18,7 @@ struct Endpoint
     @protocol = "http"
     @tags = [] of Tag
     @callees = [] of Callee
+    @ai_context = nil
   end
 
   def initialize(@url : String, @method : String, @details : Details)
@@ -25,6 +27,7 @@ struct Endpoint
     @tags = [] of Tag
     @callees = [] of Callee
     @internal = false
+    @ai_context = nil
   end
 
   def details=(details : Details)
@@ -201,5 +204,85 @@ struct Callee
 
   def ==(other : Callee) : Bool
     @name == other.name && @path == other.path && @line == other.line
+  end
+end
+
+struct AIContext
+  include JSON::Serializable
+  include YAML::Serializable
+
+  MAX_PER_SECTION = 16
+
+  property guards : Array(AIContextEntry) = [] of AIContextEntry
+  property callees : Array(AIContextEntry) = [] of AIContextEntry
+  property sinks : Array(AIContextEntry) = [] of AIContextEntry
+  property validators : Array(AIContextEntry) = [] of AIContextEntry
+  property signals : Array(AIContextEntry) = [] of AIContextEntry
+
+  def initialize
+    @guards = [] of AIContextEntry
+    @callees = [] of AIContextEntry
+    @sinks = [] of AIContextEntry
+    @validators = [] of AIContextEntry
+    @signals = [] of AIContextEntry
+  end
+
+  def empty? : Bool
+    @guards.empty? &&
+      @callees.empty? &&
+      @sinks.empty? &&
+      @validators.empty? &&
+      @signals.empty?
+  end
+
+  def push_guard(entry : AIContextEntry)
+    push_entry(@guards, entry)
+  end
+
+  def push_callee(entry : AIContextEntry)
+    push_entry(@callees, entry)
+  end
+
+  def push_sink(entry : AIContextEntry)
+    push_entry(@sinks, entry)
+  end
+
+  def push_validator(entry : AIContextEntry)
+    push_entry(@validators, entry)
+  end
+
+  def push_signal(entry : AIContextEntry)
+    push_entry(@signals, entry)
+  end
+
+  private def push_entry(bucket : Array(AIContextEntry), entry : AIContextEntry)
+    return if bucket.size >= MAX_PER_SECTION
+    return if bucket.any? { |existing| existing == entry }
+    bucket << entry
+  end
+end
+
+struct AIContextEntry
+  include JSON::Serializable
+  include YAML::Serializable
+
+  property kind, name, source, description, path, line, confidence, snippet
+
+  def initialize(@kind : String,
+                 @name : String,
+                 @source : String? = nil,
+                 @description : String? = nil,
+                 @path : String? = nil,
+                 @line : Int32? = nil,
+                 @confidence : Int32? = nil,
+                 @snippet : String? = nil)
+  end
+
+  def ==(other : AIContextEntry) : Bool
+    @kind == other.kind &&
+      @name == other.name &&
+      @source == other.source &&
+      @path == other.path &&
+      @line == other.line
   end
 end

@@ -92,6 +92,16 @@ module Noir
               end
             end
           end
+
+          body.scan(/\b\w+\.register\s*\(\s*(\w+)\s*,\s*\{[^}]*prefix\s*:\s*['"]([^'"]+)['"]/) do |m|
+            if m.size >= 3
+              child_func = m[1]
+              prefix = m[2]
+              if function_names.includes?(child_func)
+                internal_mounts << {func_name, child_func, prefix}
+              end
+            end
+          end
         end
 
         # Seed function-specific prefixes from CodeLocator
@@ -109,6 +119,15 @@ module Noir
               prefixes_by_function[func_name] << value
             end
           end
+        end
+
+        # Seed same-file Fastify plugin registrations from top-level mounts.
+        content.scan(/\b\w+\.register\s*\(\s*(\w+)\s*,\s*\{[^}]*prefix\s*:\s*['"]([^'"]+)['"]/) do |m|
+          next unless m.size >= 3
+          func_name = m[1]
+          prefix = m[2]
+          next unless function_names.includes?(func_name)
+          prefixes_by_function[func_name] << prefix unless prefixes_by_function[func_name].includes?(prefix)
         end
 
         # Propagate prefixes through internal mounts with max iteration protection

@@ -81,11 +81,11 @@ class OutputBuilderSarif < OutputBuilder
       end
     end
 
-    attach_noir_callees(log.to_json, endpoints)
+    attach_noir_properties(log.to_json, endpoints)
   end
 
-  private def attach_noir_callees(message : String, endpoints : Array(Endpoint)) : String
-    return message unless endpoints.any? { |endpoint| !endpoint.callees.empty? }
+  private def attach_noir_properties(message : String, endpoints : Array(Endpoint)) : String
+    return message unless endpoints.any? { |endpoint| !endpoint.callees.empty? || !endpoint.ai_context.nil? }
 
     sarif = JSON.parse(message)
     runs = sarif["runs"].as_a
@@ -102,12 +102,19 @@ class OutputBuilderSarif < OutputBuilder
       endpoint = endpoints[endpoint_index]?
       endpoint_index += 1
       next unless endpoint
-      next if endpoint.callees.empty?
 
       properties = result["properties"]?.try(&.as_h?) || {} of String => JSON::Any
-      properties["noir"] = JSON::Any.new({
-        "callees" => JSON::Any.new(noir_callees_json(endpoint)),
-      } of String => JSON::Any)
+      noir_props = {} of String => JSON::Any
+      unless endpoint.callees.empty?
+        noir_props["callees"] = JSON::Any.new(noir_callees_json(endpoint))
+      end
+      context_json = noir_ai_context_json(endpoint)
+      if context_json
+        noir_props["ai_context"] = context_json
+      end
+      next if noir_props.empty?
+
+      properties["noir"] = JSON::Any.new(noir_props)
       result["properties"] = JSON::Any.new(properties)
     end
 

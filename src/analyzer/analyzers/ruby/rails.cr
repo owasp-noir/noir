@@ -42,10 +42,12 @@ module Analyzer::Ruby
     record ControllerData,
       param_type : String,
       params_method : Hash(String, Array(Param)),
-      permit_body_params : Array(Param),
-      permit_query_params : Array(Param),
+      params_body_by_action : Hash(String, Array(Param)),
+      params_query_by_action : Hash(String, Array(Param)),
       defined_actions : Set(String),
-      callees_by_action : Hash(String, Array(Noir::RubyCalleeExtractor::Entry))
+      helper_calls_by_action : Hash(String, Array(String)),
+      callees_by_action : Hash(String, Array(Noir::RubyCalleeExtractor::Entry)),
+      action_lines : Hash(String, Int32)
 
     @controller_data_cache = Hash(String, ControllerData).new
 
@@ -379,8 +381,6 @@ module Analyzer::Ruby
       data = extract_controller_data(path)
       defined_actions = data.defined_actions
       params_method = data.params_method
-      params_body = data.permit_body_params
-      deduplication_params_query = dedup_by_name(data.permit_query_params)
 
       methods = [] of String
       {"index", "show", "create", "update", "destroy"}.each do |name|
@@ -400,34 +400,38 @@ module Analyzer::Ruby
         end
       end
 
-      details = Details.new(PathInfo.new(path))
       index_url = compose_url(path_prefix, "/#{resource}")
       member_url = compose_url(path_prefix, singular ? "/#{resource}" : "/#{resource}/1")
 
       methods.each do |method|
         case method
         when "GET/INDEX"
-          last_params = (params_method["index"]? || [] of Param) + deduplication_params_query
+          last_params = action_params(data, "index", "GET")
+          details = Details.new(PathInfo.new(path, data.action_lines["index"]?))
           endpoint = Endpoint.new(index_url, "GET", last_params, details)
           attach_callees_for_action(endpoint, data, "index")
           @result << endpoint
         when "GET/SHOW"
-          last_params = (params_method["show"]? || [] of Param) + deduplication_params_query
+          last_params = promote_identifier_to_path(action_params(data, "show", "GET"))
+          details = Details.new(PathInfo.new(path, data.action_lines["show"]?))
           endpoint = Endpoint.new(member_url, "GET", last_params, details)
           attach_callees_for_action(endpoint, data, "show")
           @result << endpoint
         when "POST"
-          last_params = (params_method["create"]? || [] of Param) + params_body
+          last_params = action_params(data, "create", method)
+          details = Details.new(PathInfo.new(path, data.action_lines["create"]?))
           endpoint = Endpoint.new(index_url, method, last_params, details)
           attach_callees_for_action(endpoint, data, "create")
           @result << endpoint
         when "DELETE"
-          last_params = params_method["destroy"]? || [] of Param
+          last_params = promote_identifier_to_path(action_params(data, "destroy", method))
+          details = Details.new(PathInfo.new(path, data.action_lines["destroy"]?))
           endpoint = Endpoint.new(member_url, method, last_params, details)
           attach_callees_for_action(endpoint, data, "destroy")
           @result << endpoint
         else
-          last_params = (params_method["update"]? || [] of Param) + params_body
+          last_params = promote_identifier_to_path(action_params(data, "update", method))
+          details = Details.new(PathInfo.new(path, data.action_lines["update"]?))
           endpoint = Endpoint.new(member_url, method, last_params, details)
           attach_callees_for_action(endpoint, data, "update")
           @result << endpoint
@@ -448,15 +452,18 @@ module Analyzer::Ruby
       return cached if cached
 
       params_method = Hash(String, Array(Param)).new
-      permit_body_params = [] of Param
-      permit_query_params = [] of Param
+      params_body_by_action = Hash(String, Array(Param)).new
+      params_query_by_action = Hash(String, Array(Param)).new
       defined_actions = Set(String).new
+      helper_calls_by_action = Hash(String, Array(String)).new
       callees_by_action = Hash(String, Array(Noir::RubyCalleeExtractor::Entry)).new
+      action_lines = Hash(String, Int32).new
+      method_bodies = Hash(String, Array(String)).new
       param_type = "form"
 
       unless File.exists?(path)
-        empty = ControllerData.new(param_type, params_method, permit_body_params, permit_query_params,
-          defined_actions, callees_by_action)
+        empty = ControllerData.new(param_type, params_method, params_body_by_action, params_query_by_action,
+          defined_actions, helper_calls_by_action, callees_by_action, action_lines)
         @controller_data_cache[path] = empty
         return empty
       end
@@ -464,12 +471,12 @@ module Analyzer::Ruby
       File.open(path, "r", encoding: "utf-8", invalid: :skip) do |controller_file|
         controller_content = controller_file.gets_to_end
         param_type = "json" if controller_content.includes?("render json:")
-        callees_by_action = extract_action_callees(controller_content, path) if include_callee?
+        callees_by_action = extract_action_callees(controller_content, path)
 
         controller_file.rewind
         this_method = ""
 
-        controller_file.each_line do |raw_line|
+        controller_file.each_line.with_index do |raw_line, index|
           line = strip_inline_comment(raw_line)
 
           if line.includes?("def ")
@@ -478,23 +485,34 @@ module Analyzer::Ruby
             unless func_name.empty?
               this_method = func_name
               defined_actions << func_name
+              action_lines[func_name] = index + 1
+              method_bodies[this_method] ||= [] of String
             end
+          end
+
+          unless this_method.empty?
+            method_bodies[this_method] ||= [] of String
+            method_bodies[this_method] << line
           end
 
           if pm = line.match(/permit\s*\(([^)]*)\)/)
             pm[1].split(',').each do |raw|
               name = raw.gsub(/[:\s'"]/, "")
-              next if name.empty?
-              permit_body_params << Param.new(name, "", param_type)
-              permit_query_params << Param.new(name, "", "query")
+              next if name.empty? || this_method.empty?
+              params_body_by_action[this_method] ||= [] of Param
+              params_body_by_action[this_method] << Param.new(name, "", param_type)
+              params_query_by_action[this_method] ||= [] of Param
+              params_query_by_action[this_method] << Param.new(name, "", "query")
             end
           end
 
           line.scan(/params\[\s*(?::(\w+)|['"]([^'"]+)['"])\s*\]/) do |m|
             name = (m[1]? || m[2]?).to_s.strip
-            next if name.empty?
-            permit_body_params << Param.new(name, "", param_type)
-            permit_query_params << Param.new(name, "", "query")
+            next if name.empty? || this_method.empty?
+            params_body_by_action[this_method] ||= [] of Param
+            params_body_by_action[this_method] << Param.new(name, "", param_type)
+            params_query_by_action[this_method] ||= [] of Param
+            params_query_by_action[this_method] << Param.new(name, "", "query")
           end
 
           if hm = line.match(/request\.headers\[\s*['"]([^'"]+)['"]\s*\]/)
@@ -514,8 +532,10 @@ module Analyzer::Ruby
         end
       end
 
-      data = ControllerData.new(param_type, params_method, permit_body_params, permit_query_params,
-        defined_actions, callees_by_action)
+      helper_calls_by_action = build_helper_call_map(method_bodies, defined_actions)
+
+      data = ControllerData.new(param_type, params_method, params_body_by_action, params_query_by_action,
+        defined_actions, helper_calls_by_action, callees_by_action, action_lines)
       @controller_data_cache[path] = data
       data
     end
@@ -603,25 +623,75 @@ module Analyzer::Ruby
 
     # Build params for a custom action (member/collection or explicit
     # controller#action). Mirrors the resources flow: per-action headers/cookies
-    # plus the controller's shared permitted/body/query params for the verb.
+    # plus the action-local body/query params for the verb.
     private def params_for_action(controller_path : String?, action : String, verb : String) : Array(Param)
       return [] of Param if controller_path.nil?
       data = extract_controller_data(controller_path)
       return [] of Param unless data.defined_actions.includes?(action)
 
-      result = [] of Param
-      data.params_method[action]?.try &.each { |p| result << p }
+      action_params(data, action, verb)
+    end
 
-      case verb
-      when "GET", "HEAD", "OPTIONS"
-        result.concat(dedup_by_name(data.permit_query_params))
-      when "DELETE"
-        # No shared body params for delete, matching the resources flow.
-      else
-        result.concat(data.permit_body_params)
+    private def action_params(data : ControllerData, action : String, verb : String) : Array(Param)
+      result = [] of Param
+      merge_action_params(result, data, action, verb)
+
+      helper_names = data.helper_calls_by_action[action]? || [] of String
+      helper_names.each do |helper_name|
+        next if helper_name == action
+        merge_action_params(result, data, helper_name, verb)
       end
 
       result
+    end
+
+    private def merge_action_params(result : Array(Param), data : ControllerData, action : String, verb : String)
+      data.params_method[action]?.try &.each { |p| push_unique_param(result, clone_param(p)) }
+
+      source_params = case verb
+                      when "GET", "HEAD", "OPTIONS", "DELETE"
+                        dedup_by_name(data.params_query_by_action[action]? || [] of Param)
+                      else
+                        dedup_by_name(data.params_body_by_action[action]? || [] of Param)
+                      end
+
+      source_params.each do |param|
+        push_unique_param(result, clone_param(param))
+      end
+    end
+
+    private def push_unique_param(params : Array(Param), param : Param)
+      params << param unless params.any? { |existing| existing.name == param.name && existing.param_type == param.param_type }
+    end
+
+    private def promote_identifier_to_path(params : Array(Param)) : Array(Param)
+      params.each_index do |index|
+        next unless params[index].name == "id"
+        param = params[index]
+        param.param_type = "path"
+        params[index] = param
+      end
+      params
+    end
+
+    private def clone_param(param : Param) : Param
+      Param.new(param.name, param.value, param.param_type)
+    end
+
+    private def build_helper_call_map(method_bodies : Hash(String, Array(String)), defined_actions : Set(String)) : Hash(String, Array(String))
+      helper_calls = Hash(String, Array(String)).new
+
+      method_bodies.each do |method_name, body_lines|
+        body = body_lines.join("\n")
+        defined_actions.each do |candidate|
+          next if candidate == method_name
+          next unless body.matches?(/\b#{Regex.escape(candidate)}\b/)
+          helper_calls[method_name] ||= [] of String
+          helper_calls[method_name] << candidate unless helper_calls[method_name].includes?(candidate)
+        end
+      end
+
+      helper_calls
     end
 
     private def attach_callees_for_action(endpoint : Endpoint, controller_path : String?, action : String)

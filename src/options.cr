@@ -82,7 +82,7 @@ private def full_examples_and_env : String
         $ noir -b . -u http://example.com --send-proxy http://localhost:8090
 
       #{"Detailed analysis".colorize(:yellow)}
-        $ noir -b . -T --include-path
+        $ noir -b . --ai-context --include-path
 
       #{"JSON or YAML output without logs".colorize(:yellow)}
         $ noir -b . -f json --no-log
@@ -188,6 +188,9 @@ def run_options_parser
     end
     parser.on "--include-callee", "Include 1-hop handler callees in plain output (best-effort, see docs)" do
       noir_options["include_callee"] = YAML::Any.new(true)
+    end
+    parser.on "--ai-context", "Include aggregated AI review context (guards, callees, sinks, validators, signals)" do
+      noir_options["ai_context"] = YAML::Any.new(true)
     end
     parser.on "--no-color", "Disable color output" do
       noir_options["color"] = YAML::Any.new(false)

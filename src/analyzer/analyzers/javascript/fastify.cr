@@ -14,9 +14,12 @@ module Analyzer::Javascript
           parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
             include_callees: include_callee)
           parser_endpoints.each do |endpoint|
-            # Add file location details
-            details = Details.new(PathInfo.new(path, 1)) # Line number is approximate
-            endpoint.details = details
+            # Preserve the precise route line supplied by the shared extractor.
+            # Falling back to path-only keeps older behavior if a parser result
+            # somehow lacks location metadata.
+            if endpoint.details.code_paths.empty?
+              endpoint.details = Details.new(PathInfo.new(path))
+            end
 
             # Parse path parameters from the URL path itself
             if endpoint.url.includes?(":")

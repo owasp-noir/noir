@@ -1,4 +1,5 @@
 require "../spec_helper"
+require "../../src/options.cr"
 
 describe "default_options" do
   it "init" do
@@ -14,6 +15,11 @@ describe "default_options" do
   it "has default native tool-calling allowlist" do
     noir_options = create_test_options
     noir_options["ai_native_tools_allowlist"].to_s.should eq("openai,xai,github")
+  end
+
+  it "has ai_context disabled by default" do
+    noir_options = create_test_options
+    noir_options["ai_context"].should be_false
   end
 end
 
@@ -67,6 +73,21 @@ describe "run_options_parser" do
     begin
       noir_options = run_options_parser()
       noir_options["ai_agent"].should be_true
+    ensure
+      ARGV.clear
+      ARGV.concat(original_argv)
+    end
+  end
+
+  it "supports --ai-context flag" do
+    original_argv = ARGV.dup
+
+    ARGV.clear
+    ARGV.concat(["-b", "./single_app", "--ai-context"])
+
+    begin
+      noir_options = run_options_parser()
+      noir_options["ai_context"].should be_true
     ensure
       ARGV.clear
       ARGV.concat(original_argv)

@@ -102,7 +102,17 @@ class OutputBuilderCommon < OutputBuilder
         end
       end
 
-      if any_to_bool(@options["include_callee"]) && !endpoint.callees.empty?
+      context = endpoint.ai_context
+      if any_to_bool(@options["ai_context"]) && !context.nil?
+        unless context.empty?
+          r_buffer << "\n  ○ ai_context:"
+          append_ai_context_block(r_buffer, "guards", context.guards)
+          append_ai_context_block(r_buffer, "callees", context.callees)
+          append_ai_context_block(r_buffer, "sinks", context.sinks)
+          append_ai_context_block(r_buffer, "validators", context.validators)
+          append_ai_context_block(r_buffer, "signals", context.signals)
+        end
+      elsif any_to_bool(@options["include_callee"]) && !endpoint.callees.empty?
         r_buffer << "\n  ○ callees: "
         endpoint.callees.each_with_index do |callee, index|
           prefix = index == endpoint.callees.size - 1 ? "└── " : "├── "
@@ -114,5 +124,26 @@ class OutputBuilderCommon < OutputBuilder
 
       ob_puts r_buffer.to_s
     end
+  end
+
+  private def append_ai_context_block(r_buffer : String::Builder, label : String, entries : Array(AIContextEntry))
+    return if entries.empty?
+
+    r_buffer << "\n    - #{label}:"
+    entries.each do |entry|
+      r_entry = format_ai_context_entry(entry).colorize(:light_cyan).toggle(@is_color)
+      r_buffer << "\n      * #{r_entry}"
+    end
+  end
+
+  private def format_ai_context_entry(entry : AIContextEntry) : String
+    label = "#{entry.kind}: #{entry.name}"
+    label += " [#{entry.source}]" if entry.source
+    label += " (#{entry.path}:#{entry.line})" if entry.path && entry.line
+    label += " (#{entry.path})" if entry.path && entry.line.nil?
+    label += " (line #{entry.line})" if entry.path.nil? && entry.line
+    label += " - #{entry.description}" if entry.description
+    label += " :: #{entry.snippet}" if entry.snippet
+    label
   end
 end

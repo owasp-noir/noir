@@ -11,7 +11,6 @@ expected_endpoints = [
     Param.new("X-API-KEY", "", "header"),
   ]),
   Endpoint.new("/posts", "POST", [
-    Param.new("id", "", "json"),
     Param.new("title", "", "json"),
     Param.new("context", "", "json"),
   ]),

@@ -133,10 +133,9 @@ module Analyzer::Python
 
           if File.exists?(new_route_path)
             new_django_urls = DjangoUrls.new("#{django_urls.prefix}#{route}", new_route_path, django_urls.basepath)
-            details = Details.new(PathInfo.new(new_route_path))
             unless @visited_url_paths.has_key? new_django_urls.filepath
               extract_endpoints(new_django_urls).each do |endpoint|
-                endpoint.details = details
+                append_code_path(endpoint.details, PathInfo.new(new_route_path))
                 endpoints << endpoint
               end
             end
@@ -144,9 +143,9 @@ module Analyzer::Python
         end
         next if new_django_urls
 
-        details = Details.new(PathInfo.new(django_urls.filepath))
+        route_path = PathInfo.new(django_urls.filepath)
         if view == ""
-          endpoints << Endpoint.new(url, "GET", details)
+          endpoints << Endpoint.new(url, "GET", Details.new(route_path))
         else
           dotted_as_names_split = view.split(".")
 
@@ -166,12 +165,12 @@ module Analyzer::Python
 
           if filepath != "" && /^[a-zA-Z_][a-zA-Z0-9_]*$/.match(function_or_class_name)
             extract_endpoints_from_file(url, filepath, function_or_class_name).each do |endpoint|
-              endpoint.details = details
+              append_code_path(endpoint.details, route_path)
               endpoints << endpoint
             end
           else
             # By default, Django allows requests with methods other than GET as well
-            endpoints << Endpoint.new(url, "GET", details)
+            endpoints << Endpoint.new(url, "GET", Details.new(route_path))
           end
         end
       end
@@ -242,6 +241,7 @@ module Analyzer::Python
           # codeblock starts at the `def` line, so `body_start_line` is
           # that line's 0-based index — derived from the char offset.
           body_start_line = content[0, function_start_index].count('\n')
+          definition_line = body_start_line + 1
           handler_callees = build_callees_from(
             function_codeblock,
             body_start_line,
@@ -251,7 +251,8 @@ module Analyzer::Python
           )
 
           suspicious_http_methods.uniq.each do |http_method_name|
-            endpoint = Endpoint.new(url, http_method_name, filter_params(http_method_name, suspicious_params))
+            details = Details.new(PathInfo.new(filepath, definition_line))
+            endpoint = Endpoint.new(url, http_method_name, filter_params(http_method_name, suspicious_params), details)
             handler_callees.each { |c| endpoint.push_callee(c) }
             endpoints << endpoint
           end
@@ -284,7 +285,9 @@ module Analyzer::Python
           end
 
           body_start_line = content[0, class_start_index].count('\n')
+          class_definition_line = body_start_line + 1
           method_callees = Hash(String, Array(Callee)).new
+          method_lines = Hash(String, Int32).new
 
           # Check HTTP methods in class methods
           lines.each_with_index do |line, offset|
@@ -292,6 +295,7 @@ module Analyzer::Python
             if !method_function_match.nil?
               method_name = method_function_match[1].upcase
               suspicious_http_methods << method_name
+              method_lines[method_name] = body_start_line + offset + 2
 
               if codeblock = parse_code_block(lines[offset..])
                 method_callees[method_name] = build_callees_from(
@@ -310,7 +314,9 @@ module Analyzer::Python
           end
 
           suspicious_http_methods.uniq.each do |http_method_name|
-            endpoint = Endpoint.new(url, http_method_name, filter_params(http_method_name, suspicious_params))
+            definition_line = method_lines[http_method_name]? || class_definition_line
+            details = Details.new(PathInfo.new(filepath, definition_line))
+            endpoint = Endpoint.new(url, http_method_name, filter_params(http_method_name, suspicious_params), details)
             if callees = method_callees[http_method_name]?
               callees.each { |c| endpoint.push_callee(c) }
             end
@@ -322,7 +328,12 @@ module Analyzer::Python
       end
 
       # Default to GET method
-      [Endpoint.new(url, "GET")]
+      [Endpoint.new(url, "GET", Details.new(PathInfo.new(filepath)))]
+    end
+
+    private def append_code_path(details : Details, path_info : PathInfo)
+      return if details.code_paths.any? { |existing| existing == path_info }
+      details.add_path(path_info)
     end
 
     # Extract parameters from a line of code

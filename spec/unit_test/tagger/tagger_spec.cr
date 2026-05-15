@@ -15,7 +15,7 @@ describe "Tagger" do
       Endpoint.new("/api/sign_ups", "POST", [
         Param.new("url", "", "cookie"),
         Param.new("command", "", "cookie"),
-        Param.new("role", "", "cookie"),
+        Param.new("sort", "", "query"),
       ]),
     ]
     NoirTaggers.run_tagger(expected_endpoints, noir_options, "hunt")
@@ -23,16 +23,13 @@ describe "Tagger" do
       endpoint.params.each do |param|
         case param.name
         when "query"
-          param.tags.empty?.should be_false
-          param.tags.each do |tag|
-            tag.name.should eq("sqli")
-          end
+          param.tags.should be_empty
         when "url"
           param.tags.empty?.should be_false
           param.tags.each do |tag|
             tag.name.should eq("ssrf")
           end
-        when "role"
+        when "sort"
           param.tags.empty?.should be_false
           param.tags.each do |tag|
             tag.name.should eq("sqli")

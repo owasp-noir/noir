@@ -55,7 +55,8 @@ module Noir::RubyCalleeExtractor
     RESERVED.includes?(last)
   end
 
-  def strip_comment(line : String) : String
+  def strip_comment(line : String, preserve_strings : Bool = false) : String
+    stripped = String::Builder.new
     in_string = false
     escaped = false
     quote = '\0'
@@ -63,21 +64,29 @@ module Noir::RubyCalleeExtractor
     line.each_char_with_index do |char, index|
       if in_string
         if escaped
+          stripped << (preserve_strings ? char : ' ')
           escaped = false
         elsif char == '\\'
+          stripped << (preserve_strings ? char : ' ')
           escaped = true
         elsif char == quote
+          stripped << char
           in_string = false
+        else
+          stripped << (preserve_strings ? char : ' ')
         end
       elsif char == '"' || char == '\''
         in_string = true
         quote = char
+        stripped << char
       elsif char == '#'
-        return line[0, index]
+        return stripped.to_s
+      else
+        stripped << char
       end
     end
 
-    line
+    stripped.to_s
   end
 
   private def dedup_entries(entries : Array(Entry)) : Array(Entry)

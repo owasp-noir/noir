@@ -99,6 +99,7 @@ class OutputBuilderOas2 < OutputBuilder
       end
 
       add_noir_callees_extension(operation, endpoint)
+      add_noir_ai_context_extension(operation, endpoint)
 
       # Convert path parameters from :param to {param} format for OAS2
       uri = URI.parse(endpoint.url)

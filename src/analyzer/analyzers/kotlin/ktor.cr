@@ -26,12 +26,14 @@ module Analyzer::Kotlin
     private def build_endpoint(route : Noir::TreeSitterKotlinKtorRouteExtractor::Route, path : String) : Endpoint
       details = Details.new(PathInfo.new(path, route.line + 1))
       params = [] of Param
+      path_param_names = Set(String).new
 
       # Path placeholders (`{id}`) — emit one path-typed param per
       # placeholder. The optimizer also synthesises these from the
       # URL string, but emitting here keeps parity with the legacy
       # analyzer.
       route.path.scan(/\{([^}]+)\}/) do |match|
+        path_param_names << match[1]
         params << Param.new(match[1], "", "path")
       end
 
@@ -40,6 +42,7 @@ module Analyzer::Kotlin
       end
 
       route.query_params.each do |name|
+        next if path_param_names.includes?(name)
         params << Param.new(name, "", "query")
       end
 

@@ -21,6 +21,9 @@ describe "OutputBuilderSarif" do
     endpoint.push_param(Param.new("id", "1", "query"))
     endpoint.push_callee(Callee.new("PetService.find", "app/controllers/pets.cr", 12))
     endpoint.push_callee(Callee.new("AuditLog.record", line: 13))
+    context = AIContext.new
+    context.push_guard(AIContextEntry.new("auth", "auth", source: "express_auth", description: "Protected by auth middleware"))
+    endpoint.ai_context = context
     endpoints = [endpoint]
 
     builder.print(endpoints)
@@ -53,6 +56,9 @@ describe "OutputBuilderSarif" do
     callees[1]["name"].as_s.should eq("AuditLog.record")
     callees[1].as_h.has_key?("path").should be_false
     callees[1]["line"].as_i.should eq(13)
+    guards = results[0]["properties"]["noir"]["ai_context"]["guards"].as_a
+    guards.size.should eq(1)
+    guards[0]["source"].as_s.should eq("express_auth")
   end
 
   it "print with endpoints and passive results" do

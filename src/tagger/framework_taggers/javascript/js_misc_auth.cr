@@ -2,6 +2,8 @@ require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 
 class JsMiscAuthTagger < FrameworkTagger
+  MAX_ROUTE_SCOPE_LINES = 12
+
   # Fastify auth patterns
   FASTIFY_PATTERNS = [
     {/onRequest.*authenticate/, "Fastify onRequest authenticate hook"},
@@ -66,15 +68,9 @@ class JsMiscAuthTagger < FrameworkTagger
       next if line_num.nil?
       line_idx = line_num - 1
 
-      # Check route definition line for auth middleware
-      description = check_route_line(lines, line_idx)
-      if description
-        endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "js_misc_auth"))
-        return
-      end
-
-      # Check nearby context (hooks, before handlers)
-      description = check_nearby_auth(lines, line_idx)
+      # Check the route statement/block itself so nearby auth hooks from
+      # previous routes do not bleed into public handlers.
+      description = check_route_scope(route_scope(lines, line_idx))
       if description
         endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "js_misc_auth"))
         return
@@ -82,40 +78,44 @@ class JsMiscAuthTagger < FrameworkTagger
     end
   end
 
-  private def check_route_line(lines : Array(String), line_idx : Int32) : String?
-    return if line_idx < 0 || line_idx >= lines.size
-
-    # Check the route definition line and adjacent lines
-    start_idx = [line_idx - 2, 0].max
-    end_idx = [line_idx + 3, lines.size - 1].min
-
-    (start_idx..end_idx).each do |idx|
-      current = lines[idx]
-
-      all_patterns = FASTIFY_PATTERNS + KOA_PATTERNS + RESTIFY_PATTERNS + GENERIC_NODE_AUTH
+  private def check_route_scope(scope : Array(String)) : String?
+    all_patterns = FASTIFY_PATTERNS + KOA_PATTERNS + RESTIFY_PATTERNS + GENERIC_NODE_AUTH
+    scope.each do |current|
       all_patterns.each do |pattern, desc|
         return desc if current.matches?(pattern)
       end
     end
-
     nil
   end
 
-  private def check_nearby_auth(lines : Array(String), line_idx : Int32) : String?
-    # Walk backwards to find hooks or middleware applied to this route context
-    idx = line_idx - 1
-    while idx >= 0 && idx >= line_idx - 10
-      current = lines[idx].strip
-      break if current.empty? && idx < line_idx - 3
+  private def route_scope(lines : Array(String), line_idx : Int32) : Array(String)
+    return [] of String if line_idx < 0 || line_idx >= lines.size
 
-      all_patterns = FASTIFY_PATTERNS + KOA_PATTERNS + RESTIFY_PATTERNS
-      all_patterns.each do |pattern, desc|
-        return desc if current.matches?(pattern)
+    selected = [] of String
+    brace_depth = 0
+    paren_balance = 0
+    seen_block = false
+
+    line_idx.upto(Math.min(line_idx + MAX_ROUTE_SCOPE_LINES - 1, lines.size - 1)) do |idx|
+      raw_line = lines[idx]
+      selected << raw_line
+
+      sanitized = raw_line.gsub(/(['"]).*?\1/, "\"\"")
+      opens = sanitized.count('{')
+      closes = sanitized.count('}')
+      brace_depth += opens - closes
+      paren_balance += sanitized.count('(') - sanitized.count(')')
+      seen_block ||= opens > 0
+
+      if seen_block
+        break if brace_depth <= 0
+      else
+        stripped = sanitized.strip
+        statement_done = stripped.ends_with?(";") || stripped.ends_with?(")")
+        break if statement_done && paren_balance <= 0
       end
-
-      idx -= 1
     end
 
-    nil
+    selected
   end
 end

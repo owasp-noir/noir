@@ -16,6 +16,6 @@ expected_endpoints = [
 ]
 
 FunctionalTester.new("fixtures/php/cakephp/", {
-  :techs     => 2,  # php_cakephp and php_pure
-  :endpoints => 14, # 12 CakePHP routes + 2 php_pure files (routes.php, ArticlesController.php)
+  :techs     => 2,  # Detection still sees php_cakephp and php_pure
+  :endpoints => 12, # Analysis suppresses redundant php_pure file endpoints
 }, expected_endpoints).perform_tests
