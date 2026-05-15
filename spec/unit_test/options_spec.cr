@@ -21,6 +21,18 @@ describe "default_options" do
     noir_options = create_test_options
     noir_options["ai_context"].should be_false
   end
+
+  # Concurrency is auto-scaled to the host's CPU count, clamped to the
+  # [4, 32] window. The exact value depends on the box the suite runs
+  # on, so the spec asserts the window rather than a literal.
+  it "auto-scales concurrency to the host CPU count within a safe window" do
+    noir_options = create_test_options
+    value = noir_options["concurrency"].to_s.to_i
+    value.should be >= 4
+    value.should be <= 32
+    expected = System.cpu_count.clamp(4, 32)
+    value.should eq(expected)
+  end
 end
 
 describe "run_options_parser" do
