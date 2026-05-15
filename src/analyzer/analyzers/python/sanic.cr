@@ -180,7 +180,7 @@ module Analyzer::Python
 
     private def fetch_file_content(path : ::String) : ::String
       unless @file_content_cache.has_key?(path)
-        @file_content_cache[path] = File.read(path, encoding: "utf-8", invalid: :skip)
+        @file_content_cache[path] = read_file_content(path)
       end
       @file_content_cache[path]
     end

@@ -44,7 +44,7 @@ module Analyzer::Python
     end
 
     private def analyze_file(path : ::String, definition_base_path : ::String)
-      source = File.read(path, encoding: "utf-8", invalid: :skip)
+      source = read_file_content(path)
       lines = source.lines
       return unless lines.any?(&.includes?("falcon"))
 

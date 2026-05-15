@@ -74,7 +74,7 @@ module Analyzer::Python
                 next if File.directory?(file)
                 next if file.includes?("/site-packages/")
                 if file.ends_with? ".py"
-                  content = File.read(file, encoding: "utf-8", invalid: :skip)
+                  content = read_file_content(file)
                   content.scan(REGEX_ROOT_URLCONF) do |match|
                     next if match.size != 2
                     dotted_as_urlconf = match[1].split(".")
@@ -186,7 +186,7 @@ module Analyzer::Python
       suspicious_http_methods = ["GET"]
       suspicious_params = Array(Param).new
 
-      content = File.read(filepath, encoding: "utf-8", invalid: :skip)
+      content = read_file_content(filepath)
       content_lines = content.split "\n"
 
       # Function Based View

@@ -333,7 +333,7 @@ module Analyzer::Python
                                                   caller_path : ::String,
                                                   caller_source : ::String?) : Array(Callee)
       source_cache = Hash(::String, ::String).new
-      source_cache[caller_path] = caller_source || File.read(caller_path, encoding: "utf-8", invalid: :skip)
+      source_cache[caller_path] = caller_source || read_file_content(caller_path)
       import_map = find_imported_modules(app_base_path, caller_path, source_cache[caller_path])
 
       callees.map do |callee|
@@ -366,7 +366,7 @@ module Analyzer::Python
       imported_path = imported.first
       return if imported_path.empty? || !File.exists?(imported_path)
 
-      imported_source = source_cache[imported_path] ||= File.read(imported_path, encoding: "utf-8", invalid: :skip)
+      imported_source = source_cache[imported_path] ||= read_file_content(imported_path)
       imported_parts = parts.size == 1 ? parts : parts[1..]
       find_python_definition(imported_path, imported_source, imported_parts) ||
         find_python_definition(imported_path, imported_source, parts)
