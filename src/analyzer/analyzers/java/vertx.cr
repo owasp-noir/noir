@@ -30,7 +30,7 @@ module Analyzer::Java
 
                   if File.exists?(path) && (path.ends_with?(".java") || path.ends_with?(".kt"))
                     details = Details.new(PathInfo.new(path))
-                    content = File.read(path, encoding: "utf-8", invalid: :skip)
+                    content = read_file_content(path)
 
                     # Skip if no Vert.x related content
                     next unless content.includes?("Router") || content.includes?("vertx")

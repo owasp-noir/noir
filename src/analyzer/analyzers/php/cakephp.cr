@@ -166,7 +166,7 @@ module Analyzer::Php
       controller_path = resolve_cakephp_controller_path(routes_file_path, controller_name)
       return unless controller_path && File.exists?(controller_path)
 
-      content = File.read(controller_path, encoding: "utf-8", invalid: :skip)
+      content = read_file_content(controller_path)
       method_match = content.match(/(?:public|protected|private)\s+function\s+#{action_name}\s*\(/)
       return unless method_match
 

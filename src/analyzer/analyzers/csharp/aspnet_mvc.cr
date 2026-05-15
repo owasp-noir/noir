@@ -66,7 +66,7 @@ module Analyzer::CSharp
     private def analyze_controller_file(file : String, include_callee : Bool)
       return unless File.exists?(file)
 
-      content = File.read(file, encoding: "utf-8", invalid: :skip)
+      content = read_file_content(file)
       return unless content.includes?("Controller") && content.includes?("ActionResult")
 
       lines = content.lines

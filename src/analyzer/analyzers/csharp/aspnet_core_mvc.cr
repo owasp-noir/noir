@@ -22,7 +22,7 @@ module Analyzer::CSharp
       get_files_by_extension(".cs").each do |file|
         next unless File.exists?(file)
 
-        lines = File.read(file, encoding: "utf-8", invalid: :skip).lines
+        lines = read_file_content(file).lines
         lines.each_with_index do |line, index|
           if match = map_regex.match(line)
             http_method = match[1].upcase
@@ -152,7 +152,7 @@ module Analyzer::CSharp
 
       files.each do |file|
         begin
-          content = File.read(file, encoding: "utf-8", invalid: :skip)
+          content = read_file_content(file)
           patterns.concat(extract_route_patterns(content))
         rescue e
           logger.debug "Failed to read #{file}: #{e.message}"
@@ -210,7 +210,7 @@ module Analyzer::CSharp
     private def analyze_controller_file(file : String, route_patterns : Array(String), include_callee : Bool)
       return unless File.exists?(file)
 
-      content = File.read(file, encoding: "utf-8", invalid: :skip)
+      content = read_file_content(file)
       return unless content.includes?("Controller")
 
       controller_name = extract_controller_name(content)

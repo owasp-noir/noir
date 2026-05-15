@@ -53,7 +53,7 @@ module Analyzer::Elixir
         next unless File.exists?(controller_path)
 
         begin
-          content = File.read(controller_path, encoding: "utf-8", invalid: :skip)
+          content = read_file_content(controller_path)
           controller_name = File.basename(controller_path, ".ex")
 
           # Extract parameters from each action in the controller
