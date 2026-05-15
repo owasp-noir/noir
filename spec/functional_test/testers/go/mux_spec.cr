@@ -10,7 +10,7 @@ expected_endpoints = [
   ]),
   Endpoint.new("/submit", "POST", [
     Param.new("username", "", "form"),
-    Param.new("password", "", "query"),
+    Param.new("password", "", "form"),
     Param.new("User-Agent", "", "header"),
   ]),
   Endpoint.new("/users/{id}", "GET", [
@@ -35,7 +35,7 @@ expected_endpoints = [
   # handlers.go: PATCH method with path variable and form param
   Endpoint.new("/items/{id}/status", "PATCH", [
     Param.new("id", "", "path"),
-    Param.new("status", "", "query"),
+    Param.new("status", "", "form"),
   ]),
   # handlers.go: multiple path variables with query param
   Endpoint.new("/shops/{shopId}/products/{productId}", "GET", [

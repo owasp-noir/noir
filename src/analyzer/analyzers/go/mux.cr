@@ -83,9 +83,9 @@ module Analyzer::Go
                       elsif line.includes?("Query().Get(")
                         add_param_to_endpoint(get_param(line, "Query"), last_endpoint)
                       elsif line.includes?("PostFormValue(")
-                        add_param_to_endpoint(get_param(line, "PostFormValue"), last_endpoint)
+                        add_param_to_endpoint(get_param(line, "PostFormValue", last_endpoint), last_endpoint)
                       elsif line.includes?("FormValue(")
-                        add_param_to_endpoint(get_param(line, "FormValue"), last_endpoint)
+                        add_param_to_endpoint(get_param(line, "FormValue", last_endpoint), last_endpoint)
                       elsif line.includes?("Header.Get(")
                         add_param_to_endpoint(get_param(line, "Header"), last_endpoint)
                       elsif line.includes?("Cookie(")
@@ -138,7 +138,7 @@ module Analyzer::Go
       end
     end
 
-    def get_param(line : String, pattern : String) : Param
+    def get_param(line : String, pattern : String, endpoint : Endpoint? = nil) : Param
       param_name = ""
       param_type = ""
 
@@ -166,7 +166,7 @@ module Analyzer::Go
         # Handle r.FormValue("password") pattern
         if match = line.match(/FormValue\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
           param_name = match[1]
-          param_type = "query"
+          param_type = form_value_param_type(endpoint)
         end
       when "Header"
         # Handle r.Header.Get("User-Agent") pattern
@@ -183,6 +183,17 @@ module Analyzer::Go
       end
 
       Param.new(param_name, "", param_type)
+    end
+
+    private def form_value_param_type(endpoint : Endpoint?) : String
+      return "query" unless endpoint
+
+      case endpoint.method
+      when "GET", "HEAD", ""
+        "query"
+      else
+        "form"
+      end
     end
   end
 end
