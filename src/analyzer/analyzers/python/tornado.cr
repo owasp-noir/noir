@@ -393,7 +393,7 @@ module Analyzer::Python
     private def read_file_content(file_path : ::String) : ::String
       return @file_content_cache[file_path] if @file_content_cache.has_key?(file_path)
       content = begin
-        File.read(file_path, encoding: "utf-8", invalid: :skip)
+        CodeLocator.instance.content_for(file_path) || File.read(file_path, encoding: "utf-8", invalid: :skip)
       rescue e : IO::Error
         @logger.debug "Failed to read file: #{file_path} (#{e.message})"
         ""

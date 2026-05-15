@@ -18,7 +18,7 @@ module Analyzer::Python
           python_files.each do |path|
             next unless path.starts_with?(base_dir_prefix) || path == current_base_path
             next if path.includes?("/site-packages/")
-            source = File.read(path, encoding: "utf-8", invalid: :skip)
+            source = read_file_content(path)
 
             source.each_line do |line|
               line = line.gsub(" ", "")
@@ -63,7 +63,7 @@ module Analyzer::Python
         configure_router_prefix(fastapi_base_file, include_router_map)
 
         include_router_map.each do |path, router_map|
-          source = File.read(path, encoding: "utf-8", invalid: :skip)
+          source = read_file_content(path)
           definition_base_path = base_paths.find { |base_path| path.starts_with?(base_path) } || @fastapi_base_path
           import_modules = find_imported_modules(@fastapi_base_path, path, source)
           codelines = source.split("\n")
@@ -145,7 +145,7 @@ module Analyzer::Python
                                 # Skip if import module path is not identified
                                 next if import_module_path.empty?
 
-                                import_module_source = File.read(import_module_path, encoding: "utf-8", invalid: :skip)
+                                import_module_source = read_file_content(import_module_path)
                                 new_params = find_base_model_params(import_module_source, param.type, param.name)
                               else
                                 # Parse model class from current source
@@ -202,7 +202,7 @@ module Analyzer::Python
       return if file.empty? || !File.exists?(file)
 
       # Parse the source file for router configuration
-      source = File.read(file, encoding: "utf-8", invalid: :skip)
+      source = read_file_content(file)
       import_modules = find_imported_modules(@fastapi_base_path, file, source)
       include_router_map[file].each do |instance_name, router_class|
         router_class.prefix = router_prefix
