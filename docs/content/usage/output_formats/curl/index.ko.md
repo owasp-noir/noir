@@ -52,3 +52,43 @@ Invoke-WebRequest -Method GET -Uri "https://www.example.com/" -Headers @{"x-api-
 Invoke-WebRequest -Method POST -Uri "https://www.example.com/query" -Headers @{"Cookie"="my_auth="} -Body "query=" -ContentType "application/x-www-form-urlencoded"
 Invoke-WebRequest -Method GET -Uri "https://www.example.com/token" -Body "client_id=&redirect_url=&grant_type=" -ContentType "application/x-www-form-urlencoded"
 ```
+
+## 파라미터 값 채우기
+
+Noir는 기본적으로 파라미터 값을 비워두기 때문에(`x-api-key=`, `query=` …) 생성된 명령은 템플릿처럼 동작합니다. 그대로 실행하거나 퍼징 입력 시드를 만들고 싶다면 `--set-pvalue` 계열로 값을 미리 채울 수 있습니다.
+
+| 플래그 | 적용 범위 |
+|---|---|
+| `--set-pvalue VALUE` | 모든 파라미터 타입 |
+| `--set-pvalue-query VALUE` | 쿼리 스트링 |
+| `--set-pvalue-form VALUE` | 폼 바디 (`application/x-www-form-urlencoded`) |
+| `--set-pvalue-json VALUE` | JSON 바디 |
+| `--set-pvalue-header VALUE` | 요청 헤더 |
+| `--set-pvalue-cookie VALUE` | 쿠키 |
+| `--set-pvalue-path VALUE` | 경로 파라미터 |
+
+`VALUE`는 두 가지 형태를 받습니다.
+
+| 형태 | 동작 |
+|---|---|
+| `<value>` | 대상 타입의 모든 파라미터에 사용 |
+| `<name>=<value>` 또는 `<name>:<value>` | 이름이 `<name>`인 파라미터에만 사용 |
+
+모든 플래그는 반복 사용 가능하며, 동일 파라미터에 매치되면 타입별 규칙이 일반 `--set-pvalue`보다 우선합니다.
+
+```bash
+# 모든 파라미터를 `test`로 채움
+noir -b . -f curl -u https://example.com --set-pvalue "test"
+
+# `Authorization` 헤더와 `id` 경로 파라미터에만 값 채움
+noir -b . -f curl -u https://example.com \
+  --set-pvalue-header "Authorization=Bearer xyz" \
+  --set-pvalue-path "id=42"
+
+# 쿼리/폼은 기본 `1`이지만 `limit`은 항상 10
+noir -b . -f curl -u https://example.com \
+  --set-pvalue-query "1" \
+  --set-pvalue-query "limit=10"
+```
+
+같은 플래그는 HTTPie와 PowerShell 출력에도 적용되며, OpenAPI / Postman / JSON 등 값이 렌더링되는 다른 형식에도 전파됩니다.

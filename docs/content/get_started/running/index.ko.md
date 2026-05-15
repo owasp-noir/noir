@@ -93,7 +93,10 @@ noir -b . --include-path --include-techs -f json -o results.json
 대규모 모노레포에는 여러 프레임워크가 포함될 수 있습니다. 필요한 것만 스캔할 수 있습니다:
 
 ```bash
-# Rails와 Django 엔드포인트만 스캔
+# Rails와 Django 디텍터만 실행 (나머지는 건너뜀)
+noir -b . --only-techs rails,django
+
+# 디텍터는 돌리지 않고 결과에 강제로 태그만 부여
 noir -b . --techs rails,django
 
 # Express를 제외한 모든 것 스캔
@@ -102,6 +105,8 @@ noir -b . --exclude-techs express
 # glob으로 파일 단위 제외 (모노레포에서 유용 — 쉼표 구분)
 noir -b . --exclude-path "*_test.go,vendor/*,**/node_modules/**"
 ```
+
+`--only-techs`와 `--techs`는 비슷해 보이지만 다릅니다: `--only-techs`는 디텍터 리스트를 필터링해서 그 항목만 실제로 탐지를 수행(스캔 속도 향상)하고, `--techs`는 탐지 없이 결과에 기술 태그만 강제로 추가(스택을 이미 알고 있을 때 사용)합니다.
 
 ## 출력 보강하기
 
@@ -129,12 +134,16 @@ noir -b . --ai-context
 | `--include-techs` | 탐지된 기술 표시 |
 | `--include-callee` | 1-hop 핸들러 callee 첨부 |
 | `--ai-context` | AI 리뷰용 guard/sink/validator/signal 첨부 |
-| `--techs` | 이 프레임워크만 스캔 |
+| `--set-pvalue` / `--set-pvalue-<type>` | 출력에 파라미터 값을 채워 넣음 ([HTTP 클라이언트 명령어](@/usage/output_formats/curl/index.md) 참고) |
+| `--only-techs` | 이 디텍터만 실행 (나머지 건너뜀) |
+| `--techs` | 디텍터는 건너뛰고 결과에 기술 태그만 강제 추가 |
 | `--exclude-techs` | 이 프레임워크 건너뛰기 |
 | `--exclude-path` | 쉼표 구분 glob 패턴에 매치되는 파일 제외 |
 | `--config-file <경로>` | YAML 설정 파일에서 기본 옵션 로드 |
 | `--verbose` | 상세 로깅 |
 | `--no-log` | 모든 로그 억제 |
+| `--no-color` | plain 출력의 ANSI 색상 비활성화 |
+| `--build-info` | noir / Crystal / LLVM 버전과 타깃 트리플 출력 |
 | `--help` | 전체 도움말 |
 
 ---
