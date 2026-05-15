@@ -28,7 +28,7 @@ module Analyzer::Go
                   break if path.nil?
                   next if File.directory?(path)
                   if File.exists?(path)
-                    content = file_contents[path]? || File.read(path, encoding: "utf-8", invalid: :skip)
+                    content = file_contents[path]? || read_file_content(path)
                     lines = content.lines
                     last_endpoint = Endpoint.new("", "")
 

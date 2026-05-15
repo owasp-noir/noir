@@ -27,7 +27,7 @@ module Analyzer::Go
           package_files[dir] ||= [] of String
           package_files[dir] << scan_path
 
-          content = File.read(scan_path, encoding: "utf-8", invalid: :skip)
+          content = read_file_content(scan_path)
           file_contents_cache[scan_path] = content
           file_lines_cache[scan_path] = content.lines
 
@@ -70,7 +70,7 @@ module Analyzer::Go
                 break if path.nil?
                 next if File.directory?(path)
                 if File.exists?(path)
-                  content = file_contents_cache[path]? || File.read(path, encoding: "utf-8", invalid: :skip)
+                  content = file_contents_cache[path]? || read_file_content(path)
                   lines = file_lines_cache[path]? || content.lines
 
                   dir = File.dirname(path)
@@ -291,7 +291,7 @@ module Analyzer::Go
         content =
           (file_contents_cache.try &.[search_path]?) ||
             begin
-              File.read(search_path, encoding: "utf-8", invalid: :skip)
+              read_file_content(search_path)
             rescue File::NotFoundError
               next
             end

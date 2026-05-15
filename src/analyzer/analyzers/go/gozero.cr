@@ -30,7 +30,7 @@ module Analyzer::Go
 
                   # Handle both .go files and .api files
                   if File.exists?(path) && (File.extname(path) == ".go" || File.extname(path) == ".api")
-                    content = File.read(path, encoding: "utf-8", invalid: :skip)
+                    content = read_file_content(path)
                     lines = content.lines
                     last_endpoint = Endpoint.new("", "")
 

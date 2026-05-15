@@ -35,7 +35,7 @@ module Analyzer::Go
       files_by_dir.each do |_dir, paths|
         paths.each do |path|
           begin
-            file_contents[path] = File.read(path, encoding: "utf-8", invalid: :skip)
+            file_contents[path] = read_file_content(path)
           rescue File::NotFoundError
             # skip
           end
@@ -102,7 +102,7 @@ module Analyzer::Go
       get_files_by_extension(".go").each do |path|
         next if File.directory?(path)
         begin
-          file_contents[path] = File.read(path, encoding: "utf-8", invalid: :skip)
+          file_contents[path] = read_file_content(path)
         rescue File::NotFoundError
           # skip
         end
