@@ -107,6 +107,7 @@ lib LibTreeSitter
   fun tree_sitter_java : TSLanguage
   fun tree_sitter_kotlin : TSLanguage
   fun tree_sitter_javascript : TSLanguage
+  fun tree_sitter_rust : TSLanguage
 end
 
 # Thin high-level facade. Keeps tree lifetime tied to an object so callers
@@ -170,6 +171,13 @@ module Noir::TreeSitter
   # `parse_typescript` (not yet vendored).
   def self.parse_javascript(source : String, &)
     parse(source, LibTreeSitter.tree_sitter_javascript) { |root| yield root }
+  end
+
+  # Parses `source` with the Rust grammar and yields the root node.
+  # Covers `.rs` files. Used by the Rust framework analyzers
+  # (axum, actix-web, rocket, …) and the Rust callee extractor.
+  def self.parse_rust(source : String, &)
+    parse(source, LibTreeSitter.tree_sitter_rust) { |root| yield root }
   end
 
   # Convenience: returns the root-node s-expression for `source`.
