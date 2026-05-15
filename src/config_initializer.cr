@@ -83,12 +83,23 @@ class ConfigInitializer
     end
   end
 
+  # Default concurrency scales with the host's CPU count, clamped to a
+  # safe window. The lower bound of 4 keeps low-core CI runners from
+  # serializing on a single worker; the upper bound of 32 keeps
+  # channel-synchronisation overhead and (under MT) GC pressure in check
+  # on very large boxes. Users who want a specific value still get it
+  # via `--concurrency N` or `concurrency:` in the config file — those
+  # paths overwrite this default.
+  def default_concurrency : String
+    System.cpu_count.clamp(4, 32).to_s
+  end
+
   def default_options
     noir_options = {
       "base"                         => YAML::Any.new([] of YAML::Any),
       "color"                        => YAML::Any.new(true),
       "config_file"                  => YAML::Any.new(""),
-      "concurrency"                  => YAML::Any.new("20"),
+      "concurrency"                  => YAML::Any.new(default_concurrency),
       "debug"                        => YAML::Any.new(false),
       "verbose"                      => YAML::Any.new(false),
       "exclude_codes"                => YAML::Any.new(""),
