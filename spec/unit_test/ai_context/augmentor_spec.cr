@@ -64,7 +64,7 @@ describe "NoirAIContext" do
     end
   end
 
-  it "adds low-confidence guard absence signals for unguarded state-changing endpoints" do
+  it "prefers idor review over generic guard absence on unguarded identifier routes" do
     source = <<-CODE
       post "/projects/:id/rotate" do
         rotate_secret(params[:id])
@@ -82,8 +82,30 @@ describe "NoirAIContext" do
       context = endpoints[0].ai_context
       context = context.should_not be_nil
 
-      context.signals.map(&.kind).should contain("guard_absence")
       context.signals.map(&.kind).should contain("idor_review")
+      context.signals.map(&.kind).should_not contain("guard_absence")
+    end
+  end
+
+  it "keeps guard absence for unguarded state-changing endpoints without identifier paths" do
+    source = <<-CODE
+      delete "/cache" do
+        clear_cache()
+      end
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/cache", "DELETE")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      endpoints = NoirAIContext.apply([endpoint])
+      context = endpoints[0].ai_context
+      context = context.should_not be_nil
+
+      context.signals.map(&.kind).should contain("guard_absence")
+      context.signals.map(&.kind).should_not contain("idor_review")
     end
   end
 

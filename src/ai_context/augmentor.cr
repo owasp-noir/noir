@@ -414,17 +414,6 @@ module NoirAIContext
       return unless STATE_CHANGING_METHODS.includes?(endpoint.method)
       return unless context.guards.empty?
 
-      context.push_signal(AIContextEntry.new(
-        "guard_absence",
-        endpoint.method,
-        source: "heuristic",
-        description: "No auth guard was detected for this state-changing endpoint. This may be real or a heuristic blind spot; review manually.",
-        path: anchor.try(&.path),
-        line: anchor.try(&.line),
-        confidence: 28,
-        snippet: route_snippet
-      ))
-
       if endpoint.params.any? { |param| param.param_type == "path" && identifier_like?(param.name) }
         context.push_signal(AIContextEntry.new(
           "idor_review",
@@ -434,6 +423,17 @@ module NoirAIContext
           path: anchor.try(&.path),
           line: anchor.try(&.line),
           confidence: 36,
+          snippet: route_snippet
+        ))
+      else
+        context.push_signal(AIContextEntry.new(
+          "guard_absence",
+          endpoint.method,
+          source: "heuristic",
+          description: "No auth guard was detected for this state-changing endpoint. This may be real or a heuristic blind spot; review manually.",
+          path: anchor.try(&.path),
+          line: anchor.try(&.line),
+          confidence: 28,
           snippet: route_snippet
         ))
       end

@@ -33,6 +33,13 @@ describe "--ai-context Hunt signals on Echo fixtures" do
     patch_context = patch_context.should_not be_nil
     patch_context.signals.map(&.kind).should contain("path_param")
     patch_context.signals.map(&.kind).should contain("idor")
+    patch_context.signals.map(&.kind).should contain("idor_review")
     patch_context.signals.map(&.kind).should_not contain("identifier_input")
+    patch_context.signals.map(&.kind).should_not contain("guard_absence")
+
+    cache_context = endpoints.find! { |ep| ep.method == "DELETE" && ep.url == "/v2/admin/cache" }.ai_context
+    cache_context = cache_context.should_not be_nil
+    cache_context.signals.map(&.kind).should contain("guard_absence")
+    cache_context.signals.map(&.kind).should_not contain("idor_review")
   end
 end
