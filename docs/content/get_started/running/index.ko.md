@@ -98,7 +98,24 @@ noir -b . --techs rails,django
 
 # Express를 제외한 모든 것 스캔
 noir -b . --exclude-techs express
+
+# glob으로 파일 단위 제외 (모노레포에서 유용 — 쉼표 구분)
+noir -b . --exclude-path "*_test.go,vendor/*,**/node_modules/**"
 ```
+
+## 출력 보강하기
+
+탐지 파이프라인은 그대로 둔 채 엔드포인트에 부가 컨텍스트만 덧붙이는 플래그들:
+
+```bash
+# 라우트 본문 안의 1-hop 핸들러 callee를 첨부
+noir -b . --include-callee
+
+# AI 리뷰에 바로 쓸 컨텍스트 첨부 (guards, callees, sinks, validators, signals)
+noir -b . --ai-context
+```
+
+데이터 모양과 프레임워크별 지원은 [Callee 커버리지](@/usage/supported/callee_coverage/index.md)와 [AI 컨텍스트](@/usage/supported/ai_context_coverage/index.md)를 참고하세요.
 
 ## 주요 플래그 정리
 
@@ -110,8 +127,12 @@ noir -b . --exclude-techs express
 | `-u <URL>` | cURL/HTTPie 출력의 기본 URL |
 | `--include-path` | 소스 파일 위치 표시 |
 | `--include-techs` | 탐지된 기술 표시 |
+| `--include-callee` | 1-hop 핸들러 callee 첨부 |
+| `--ai-context` | AI 리뷰용 guard/sink/validator/signal 첨부 |
 | `--techs` | 이 프레임워크만 스캔 |
 | `--exclude-techs` | 이 프레임워크 건너뛰기 |
+| `--exclude-path` | 쉼표 구분 glob 패턴에 매치되는 파일 제외 |
+| `--config-file <경로>` | YAML 설정 파일에서 기본 옵션 로드 |
 | `--verbose` | 상세 로깅 |
 | `--no-log` | 모든 로그 억제 |
 | `--help` | 전체 도움말 |

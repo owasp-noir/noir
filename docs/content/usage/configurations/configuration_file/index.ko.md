@@ -16,7 +16,11 @@ sort_by = "weight"
 | Linux | `~/.config/noir/` |
 | Windows | `%APPDATA%\noir\` |
 
-설정 파일의 값은 명령줄 인자로 재정의할 수 있습니다.
+설정 파일의 값은 명령줄 인자로 재정의할 수 있습니다. 기본 위치가 아닌 곳에서 설정을 불러오려면 `--config-file <경로>`를 사용하세요:
+
+```bash
+noir -b . --config-file ./ci/noir.yaml
+```
 
 ## 디렉터리 구조
 
@@ -47,6 +51,12 @@ exclude_codes: "404,500"
 # 기본적으로 모든 태거 활성화
 all_taggers: true
 
+# 엔드포인트마다 1-hop 핸들러 callee 첨부
+include_callee: true
+
+# AI 리뷰 컨텍스트(guards, sinks, validators, signals) 첨부
+ai_context: true
+
 # 기본 AI 제공자 및 모델
 ai_provider: "openai"
 ai_model: "gpt-5.5"
@@ -55,6 +65,6 @@ ai_model: "gpt-5.5"
 위 설정은 다음 명령과 동일합니다:
 
 ```bash
-noir -b /path/to/my/project -f json --exclude-codes "404,500" -T --ai-provider openai --ai-model gpt-5.5
+noir -b /path/to/my/project -f json --exclude-codes "404,500" -T --include-callee --ai-context --ai-provider openai --ai-model gpt-5.5
 ```
 

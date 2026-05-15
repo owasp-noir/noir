@@ -98,7 +98,24 @@ noir -b . --techs rails,django
 
 # Scan everything except Express
 noir -b . --exclude-techs express
+
+# Skip files by glob (useful in monorepos — comma-separated)
+noir -b . --exclude-path "*_test.go,vendor/*,**/node_modules/**"
 ```
+
+## Enrich the Output
+
+A few flags add extra context to each endpoint without changing the detection pipeline:
+
+```bash
+# Attach 1-hop handler callees (function/method calls inside the route body)
+noir -b . --include-callee
+
+# Attach an AI-review-ready context (guards, callees, sinks, validators, signals)
+noir -b . --ai-context
+```
+
+See [Callee Coverage](@/usage/supported/callee_coverage/index.md) and [AI Context](@/usage/supported/ai_context_coverage/index.md) for the data shape and per-framework support.
 
 ## Quick Reference
 
@@ -110,8 +127,12 @@ noir -b . --exclude-techs express
 | `-u <url>` | Base URL for cURL/HTTPie output |
 | `--include-path` | Show source file locations |
 | `--include-techs` | Show detected technologies |
+| `--include-callee` | Attach 1-hop handler callees |
+| `--ai-context` | Attach guards, sinks, validators, and signals for AI review |
 | `--techs` | Only scan these frameworks |
 | `--exclude-techs` | Skip these frameworks |
+| `--exclude-path` | Skip files matching a comma-separated glob list |
+| `--config-file <path>` | Load default options from a YAML config file |
 | `--verbose` | Detailed logging |
 | `--no-log` | Suppress all logs |
 | `--help` | Full help |
