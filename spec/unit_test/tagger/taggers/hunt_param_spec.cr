@@ -196,6 +196,20 @@ describe "HuntParamTagger" do
       tag_names.should_not contain("sqli")
     end
 
+    it "treats camelCase path ids as IDOR-oriented identifiers" do
+      tagger = HuntParamTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/payments/:methodId", "GET", [
+        Param.new("methodId", "card", "path"),
+      ])
+
+      tagger.perform([endpoint])
+
+      tag_names = endpoint.params[0].tags.map(&.name)
+      tag_names.should contain("idor")
+      tag_names.should_not contain("sqli")
+    end
+
     it "tags file inclusion vulnerable parameters" do
       tagger = HuntParamTagger.new(default_tagger_options)
 

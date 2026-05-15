@@ -526,13 +526,25 @@ module NoirAIContext
     end
 
     private def identifier_like?(name : String) : Bool
-      matches_any?(name, PARAM_PATTERNS.find { |pattern| pattern.kind == "identifier_input" }.not_nil!.name_patterns)
+      return true if matches_any?(name, PARAM_PATTERNS.find { |pattern| pattern.kind == "identifier_input" }.not_nil!.name_patterns)
+      return true if identifier_suffix_like?(name)
+
+      false
     end
 
     private def header_identifier_like?(name : String) : Bool
       normalized = name.downcase
       return true if normalized.matches?(/\b[a-z0-9_-]*id\b/)
       return true if normalized.matches?(/\b(client|account|order|profile|project|merchant|store|user)[_-]?id\b/)
+
+      false
+    end
+
+    private def identifier_suffix_like?(name : String) : Bool
+      return true if name == "id"
+      return true if name.matches?(/[_-]id$/i)
+      return true if name.matches?(/[a-z0-9]Id$/)
+      return true if name.matches?(/[a-z0-9]ID$/)
 
       false
     end

@@ -109,6 +109,30 @@ describe "NoirAIContext" do
     end
   end
 
+  it "treats camelCase path ids as identifier routes for idor review" do
+    source = <<-CODE
+      fastify.post("/process/:methodId", async (request, reply) => {
+        return { ok: true }
+      })
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/process/:methodId", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_param(Param.new("methodId", "", "path"))
+
+      endpoints = NoirAIContext.apply([endpoint])
+      context = endpoints[0].ai_context
+      context = context.should_not be_nil
+
+      context.signals.map(&.kind).should contain("path_param")
+      context.signals.map(&.kind).should contain("idor_review")
+      context.signals.map(&.kind).should_not contain("guard_absence")
+    end
+  end
+
   it "avoids broad sink false positives from request locals and non-template json renders" do
     source = <<-CODE
       def create_user(request)

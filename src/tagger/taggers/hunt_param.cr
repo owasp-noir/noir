@@ -47,7 +47,7 @@ class HuntParamTagger < Tagger
         TAG_DEFINITIONS.each do |k, v|
           next if param.param_type == "path" && !PATH_ALLOWED_TAGS.includes?(k)
           next if skip_idor_body_heuristic?(k, param)
-          if v["words"].includes? param.name
+          if tag_matches_param_name?(k, v["words"].as(Array(String)), param)
             next if param.tags.any? { |existing| existing.name == k && existing.tagger == "Hunt" }
             tag = Tag.new(k, v["description"].to_s, "Hunt")
             param.add_tag(tag)
@@ -62,5 +62,22 @@ class HuntParamTagger < Tagger
     return false unless BODY_LIKE_PARAM_TYPES.includes?(param.param_type)
 
     param.name == "id"
+  end
+
+  private def tag_matches_param_name?(tag_name : String, words : Array(String), param : Param) : Bool
+    return true if words.includes?(param.name)
+    return false unless tag_name == "idor"
+    return false unless param.param_type == "path"
+
+    identifier_suffix_like?(param.name)
+  end
+
+  private def identifier_suffix_like?(name : String) : Bool
+    return true if name == "id"
+    return true if name.matches?(/[_-]id$/i)
+    return true if name.matches?(/[a-z0-9]Id$/)
+    return true if name.matches?(/[a-z0-9]ID$/)
+
+    false
   end
 end
