@@ -38,7 +38,7 @@ module Analyzer::Scala
       controller_methods = Hash(String, ControllerMethod).new
 
       scala_files.each do |path|
-        content = File.read(path, encoding: "utf-8", invalid: :skip)
+        content = read_file_content(path)
 
         # Extract package name
         package_name = ""
