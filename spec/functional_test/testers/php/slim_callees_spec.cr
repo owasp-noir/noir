@@ -53,7 +53,7 @@ expected_endpoints = [
 
 FunctionalTester.new("fixtures/php/slim_callees/", {
   :techs     => 2,
-  :endpoints => 7,
+  :endpoints => 6,
 }, expected_endpoints, {
   "include_callee" => YAML::Any.new(true),
 }).perform_tests

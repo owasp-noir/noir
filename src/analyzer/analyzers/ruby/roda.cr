@@ -124,7 +124,7 @@ module Analyzer::Ruby
     private def extract_route_block(lines : Array(String), index : Int32) : Tuple(String, Int32)?
       return if index >= lines.size
 
-      start_line = Noir::RubyCalleeExtractor.strip_comment(lines[index]).strip
+      start_line = Noir::RubyCalleeExtractor.strip_comment(lines[index], preserve_strings: true).strip
       return extract_ruby_do_block(lines, index) if start_line.match(/\bdo\b/)
       extract_ruby_brace_block(lines, index) if start_line.includes?('{')
     end
@@ -132,7 +132,7 @@ module Analyzer::Ruby
     private def extract_ruby_brace_block(lines : Array(String), start_index : Int32) : Tuple(String, Int32)?
       return if start_index >= lines.size
 
-      start_line = Noir::RubyCalleeExtractor.strip_comment(lines[start_index])
+      start_line = Noir::RubyCalleeExtractor.strip_comment(lines[start_index], preserve_strings: true)
       open_index = start_line.index('{')
       return unless open_index
 
@@ -153,7 +153,7 @@ module Analyzer::Ruby
 
       index = start_index + 1
       while index < lines.size
-        body, depth = consume_brace_block_fragment(Noir::RubyCalleeExtractor.strip_comment(lines[index]), depth)
+        body, depth = consume_brace_block_fragment(Noir::RubyCalleeExtractor.strip_comment(lines[index], preserve_strings: true), depth)
         if depth == 0
           body_lines << body unless body.empty?
           break
@@ -284,7 +284,7 @@ module Analyzer::Ruby
     end
 
     private def strip_comment(line : String) : String
-      Noir::RubyCalleeExtractor.strip_comment(line)
+      Noir::RubyCalleeExtractor.strip_comment(line, preserve_strings: true)
     end
 
     private def count_opens(line : String) : Int32

@@ -48,4 +48,17 @@ describe Noir::RubyCalleeExtractor do
       {"head", 32},
     ])
   end
+
+  it "does not extract bare words from string literals" do
+    body = <<-RUBY
+      format.html { redirect_to post_url(@post), notice: "Post was successfully created." }
+      RUBY
+
+    callees = Noir::RubyCalleeExtractor.callees_for_body(body, "posts_controller.rb", 40)
+    callees.map { |name, _, line| {name, line} }.should eq([
+      {"format.html", 40},
+      {"redirect_to", 40},
+      {"post_url", 40},
+    ])
+  end
 end

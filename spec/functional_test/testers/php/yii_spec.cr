@@ -51,13 +51,9 @@ expected_endpoints = [
     Param.new("q", "", "query"),
     Param.new("tag", "", "query"),
   ]),
-  # php_pure analyzer emits a generic GET endpoint per .php file
-  Endpoint.new("/config/web.php", "GET"),
-  Endpoint.new("/controllers/PostController.php", "GET"),
-  Endpoint.new("/controllers/UserController.php", "GET"),
 ]
 
 FunctionalTester.new("fixtures/php/yii/", {
   :techs     => 2,
-  :endpoints => 23,
+  :endpoints => 20,
 }, expected_endpoints).perform_tests

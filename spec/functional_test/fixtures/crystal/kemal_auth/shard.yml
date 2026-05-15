@@ -1,0 +1,6 @@
+name: kemal_auth_fixture
+version: 0.1.0
+
+dependencies:
+  kemal:
+    github: kemalcr/kemal

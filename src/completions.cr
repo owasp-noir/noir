@@ -18,6 +18,7 @@ def generate_zsh_completion_script
       '--exclude-codes[Exclude specific HTTP response codes (comma-separated)]:status:' \\
       '--include-path[Include file path in the plain result]' \\
       '--include-techs[Include technology in the plain result]' \\
+      '--ai-context[Include aggregated AI review context]' \\
       '--no-color[Disable color output]' \\
       '--no-log[Displaying only the results]' \\
       '-P[Perform a passive scan for security issues using rules from the specified path]' \\
@@ -83,6 +84,7 @@ def generate_bash_completion_script
             --exclude-codes
             --include-path
             --include-techs
+            --ai-context
             --no-color
             --no-log
             -P --passive-scan
@@ -181,6 +183,7 @@ def generate_fish_completion_script
     complete -c noir -n '__fish_noir_needs_command' -a '--exclude-codes' -d 'Exclude specific HTTP response codes (comma-separated)'
     complete -c noir -n '__fish_noir_needs_command' -a '--include-path' -d 'Include file path in the plain result'
     complete -c noir -n '__fish_noir_needs_command' -a '--include-techs' -d 'Include technology in the plain result'
+    complete -c noir -n '__fish_noir_needs_command' -a '--ai-context' -d 'Include aggregated AI review context'
     complete -c noir -n '__fish_noir_needs_command' -a '--no-color' -d 'Disable color output'
     complete -c noir -n '__fish_noir_needs_command' -a '--no-log' -d 'Displaying only the results'
     complete -c noir -n '__fish_noir_needs_command' -a '-P' -d 'Perform a passive scan for security issues using rules from the specified path'

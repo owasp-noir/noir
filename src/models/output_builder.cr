@@ -157,6 +157,60 @@ class OutputBuilder
     operation["x-noir-callees"] = JSON::Any.new(noir_callees_json(endpoint))
   end
 
+  protected def noir_ai_context_entry_json(entry : AIContextEntry) : JSON::Any
+    data = {
+      "kind" => JSON::Any.new(entry.kind),
+      "name" => JSON::Any.new(entry.name),
+    } of String => JSON::Any
+
+    if source = entry.source
+      data["source"] = JSON::Any.new(source)
+    end
+
+    if description = entry.description
+      data["description"] = JSON::Any.new(description)
+    end
+
+    if path = entry.path
+      data["path"] = JSON::Any.new(path)
+    end
+
+    if line = entry.line
+      data["line"] = JSON::Any.new(line.to_i64)
+    end
+
+    if confidence = entry.confidence
+      data["confidence"] = JSON::Any.new(confidence.to_i64)
+    end
+
+    if snippet = entry.snippet
+      data["snippet"] = JSON::Any.new(snippet)
+    end
+
+    JSON::Any.new(data)
+  end
+
+  protected def noir_ai_context_json(endpoint : Endpoint) : JSON::Any?
+    context = endpoint.ai_context
+    return unless context
+    return if context.empty?
+
+    JSON::Any.new({
+      "guards"     => JSON::Any.new(context.guards.map { |entry| noir_ai_context_entry_json(entry) }),
+      "callees"    => JSON::Any.new(context.callees.map { |entry| noir_ai_context_entry_json(entry) }),
+      "sinks"      => JSON::Any.new(context.sinks.map { |entry| noir_ai_context_entry_json(entry) }),
+      "validators" => JSON::Any.new(context.validators.map { |entry| noir_ai_context_entry_json(entry) }),
+      "signals"    => JSON::Any.new(context.signals.map { |entry| noir_ai_context_entry_json(entry) }),
+    } of String => JSON::Any)
+  end
+
+  protected def add_noir_ai_context_extension(operation : Hash(String, JSON::Any), endpoint : Endpoint)
+    context_json = noir_ai_context_json(endpoint)
+    if context_json
+      operation["x-noir-ai-context"] = context_json
+    end
+  end
+
   protected def noir_callees_description(endpoint : Endpoint) : String?
     return if endpoint.callees.empty?
 
@@ -164,6 +218,20 @@ class OutputBuilder
     endpoint.callees.each do |callee|
       lines << "- #{format_noir_callee(callee)}"
     end
+    lines.join("\n")
+  end
+
+  protected def noir_ai_context_description(endpoint : Endpoint) : String?
+    context = endpoint.ai_context
+    return unless context
+    return if context.empty?
+
+    lines = ["Noir AI context:"]
+    append_ai_context_description(lines, "guards", context.guards)
+    append_ai_context_description(lines, "callees", context.callees)
+    append_ai_context_description(lines, "sinks", context.sinks)
+    append_ai_context_description(lines, "validators", context.validators)
+    append_ai_context_description(lines, "signals", context.signals)
     lines.join("\n")
   end
 
@@ -181,6 +249,26 @@ class OutputBuilder
     end
 
     callee.name
+  end
+
+  private def format_ai_context_entry(entry : AIContextEntry) : String
+    label = "#{entry.kind}: #{entry.name}"
+    label += " (#{entry.path}:#{entry.line})" if entry.path && entry.line
+    label += " (#{entry.path})" if entry.path && entry.line.nil?
+    label += " (line #{entry.line})" if entry.path.nil? && entry.line
+    label += " [#{entry.source}]" if entry.source
+    label += " - #{entry.description}" if entry.description
+    label += " :: #{entry.snippet}" if entry.snippet
+    label
+  end
+
+  private def append_ai_context_description(lines : Array(String), label : String, entries : Array(AIContextEntry))
+    return if entries.empty?
+
+    lines << "- #{label}:"
+    entries.each do |entry|
+      lines << "  - #{format_ai_context_entry(entry)}"
+    end
   end
 
   macro define_getter_methods(names)

@@ -7,6 +7,8 @@ INSTALLED_APPS = [
     'blog',
 ]
 
+ROOT_URLCONF = 'djangoproject.urls'
+
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework.authentication.SessionAuthentication',

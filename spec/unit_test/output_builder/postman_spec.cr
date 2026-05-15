@@ -23,6 +23,9 @@ describe "OutputBuilderPostman" do
     endpoint1.push_param(Param.new("api_key", "key123", "header"))
     endpoint1.push_callee(Callee.new("PetService.find", "app/controllers/pets.cr", 12))
     endpoint1.push_callee(Callee.new("AuditLog.record", line: 13))
+    context = AIContext.new
+    context.push_guard(AIContextEntry.new("auth", "auth", source: "express_auth", description: "Protected by auth middleware"))
+    endpoint1.ai_context = context
 
     endpoint2 = Endpoint.new("/pets", "POST")
     endpoint2.push_param(Param.new("name", "Fluffy", "json"))
@@ -62,9 +65,9 @@ describe "OutputBuilderPostman" do
     item1["request"]["url"]["variable"][0]["key"].as_s.should eq("petId")
     item1["request"]["header"].as_a.size.should eq(1)
     item1["request"]["header"][0]["key"].as_s.should eq("api_key")
-    item1["description"].as_s.should contain("Noir callees:")
-    item1["description"].as_s.should contain("PetService.find (app/controllers/pets.cr:12)")
-    item1["description"].as_s.should contain("AuditLog.record (line 13)")
+    item1["description"].as_s.should contain("Noir AI context:")
+    item1["description"].as_s.should contain("guards:")
+    item1["description"].as_s.should contain("auth: auth [express_auth]")
 
     # Check second item (POST with JSON body)
     item2 = items[1]

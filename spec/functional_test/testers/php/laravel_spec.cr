@@ -21,6 +21,6 @@ expected_endpoints = [
 ]
 
 FunctionalTester.new("fixtures/php/laravel/", {
-  :techs     => 2,  # Both php_laravel and php_pure are detected
-  :endpoints => 51, # Total detected endpoints
+  :techs     => 2,  # Detection still sees both php_laravel and php_pure
+  :endpoints => 45, # Analysis suppresses redundant php_pure endpoints
 }, expected_endpoints).perform_tests

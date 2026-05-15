@@ -11,6 +11,9 @@ describe "Initialize 2 arguments" do
   it "detect_params" do
     endpoint.params.should eq([] of Param)
   end
+  it "has no ai_context by default" do
+    endpoint.ai_context.should be_nil
+  end
 end
 
 describe "Initialize 3 arguments" do

@@ -34,7 +34,6 @@ expected_endpoints = [
   ]),
   Endpoint.new("/admin/refunds/new_list", "GET", [
     Param.new("X-Page", "", "header"),
-    Param.new("status", "", "query"),
   ]),
 
   # Namespaced `to: "ctrl#action"` resolves against `admin/monitor_controller.rb`,

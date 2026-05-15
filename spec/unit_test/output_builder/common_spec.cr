@@ -14,6 +14,7 @@ describe "OutputBuilderCommon" do
       "include_techs"  => YAML::Any.new(false),
       "include_path"   => YAML::Any.new(false),
       "include_callee" => YAML::Any.new(false),
+      "ai_context"     => YAML::Any.new(false),
       "status_codes"   => YAML::Any.new(false),
       "exclude_codes"  => YAML::Any.new(""),
     }
@@ -42,6 +43,7 @@ describe "OutputBuilderCommon" do
       "include_techs"  => YAML::Any.new(true),
       "include_path"   => YAML::Any.new(false),
       "include_callee" => YAML::Any.new(false),
+      "ai_context"     => YAML::Any.new(false),
       "status_codes"   => YAML::Any.new(false),
       "exclude_codes"  => YAML::Any.new(""),
     }
@@ -70,6 +72,7 @@ describe "OutputBuilderCommon" do
       "include_techs"  => YAML::Any.new(true),
       "include_path"   => YAML::Any.new(false),
       "include_callee" => YAML::Any.new(false),
+      "ai_context"     => YAML::Any.new(false),
       "status_codes"   => YAML::Any.new(false),
       "exclude_codes"  => YAML::Any.new(""),
     }
@@ -97,6 +100,7 @@ describe "OutputBuilderCommon" do
       "include_path"   => YAML::Any.new(true),
       "include_callee" => YAML::Any.new(false),
       "include_techs"  => YAML::Any.new(true),
+      "ai_context"     => YAML::Any.new(false),
       "status_codes"   => YAML::Any.new(false),
       "exclude_codes"  => YAML::Any.new(""),
     }
@@ -117,5 +121,36 @@ describe "OutputBuilderCommon" do
     output.should contain("file:")
     output.should contain("/app/test.py")
     output.should contain("line 42")
+  end
+
+  it "should display ai_context when ai_context flag is set" do
+    options = {
+      "debug"          => YAML::Any.new(false),
+      "verbose"        => YAML::Any.new(false),
+      "color"          => YAML::Any.new(false),
+      "nolog"          => YAML::Any.new(false),
+      "output"         => YAML::Any.new(""),
+      "include_path"   => YAML::Any.new(false),
+      "include_callee" => YAML::Any.new(false),
+      "include_techs"  => YAML::Any.new(false),
+      "ai_context"     => YAML::Any.new(true),
+      "status_codes"   => YAML::Any.new(false),
+      "exclude_codes"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderCommon.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/test", "GET")
+    context = AIContext.new
+    context.push_guard(AIContextEntry.new("auth", "auth", source: "express_auth", description: "Protected by auth middleware"))
+    context.push_sink(AIContextEntry.new("sql", "User.find_by_sql", source: "callee", line: 12))
+    endpoint.ai_context = context
+
+    builder.print([endpoint])
+    output = builder.io.to_s
+
+    output.should contain("ai_context:")
+    output.should contain("guards:")
+    output.should contain("sql: User.find_by_sql")
   end
 end

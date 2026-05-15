@@ -5,6 +5,7 @@ require "../passive_scan/rules.cr"
 require "../deliver/*"
 require "../output_builder/*"
 require "../optimizer/llm_optimizer.cr"
+require "../ai_context/augmentor.cr"
 require "./endpoint.cr"
 require "./logger.cr"
 require "../utils/*"
@@ -64,6 +65,10 @@ class NoirRunner
     @concurrency = @options["concurrency"].to_s.to_i
 
     @logger = NoirLogger.new @is_debug, @is_verbose, @is_color, @is_log
+
+    if ai_context_enabled?
+      @options["include_callee"] = YAML::Any.new(true)
+    end
 
     if any_to_bool(@options["passive_scan"])
       @logger.info "Passive scanner enabled."
@@ -138,10 +143,22 @@ class NoirRunner
     elsif @options["use_taggers"] != ""
       @logger.success "Running #{@options["use_taggers"]} taggers."
       NoirTaggers.run_tagger @endpoints, @options, @options["use_taggers"].to_s
+    elsif ai_context_enabled?
+      @logger.success "Running AI-context taggers."
+      NoirTaggers.run_tagger @endpoints, @options, "all"
+    end
+
+    if ai_context_enabled?
+      @logger.success "Building aggregated AI context."
+      NoirAIContext.apply(@endpoints)
     end
 
     # Run deliver
     deliver
+  end
+
+  private def ai_context_enabled? : Bool
+    any_to_bool(@options["ai_context"]?)
   end
 
   def update_status_codes

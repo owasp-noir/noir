@@ -56,12 +56,11 @@ describe "HuntParamTagger" do
       tagger = HuntParamTagger.new(default_tagger_options)
 
       endpoint = Endpoint.new("/users", "GET", [
-        Param.new("id", "123", "query"),
+        Param.new("query", "select * from users", "query"),
       ])
 
       tagger.perform([endpoint])
 
-      # 'id' matches both sqli and idor
       endpoint.params[0].tags.size.should be >= 1
       tag_names = endpoint.params[0].tags.map(&.name)
       tag_names.should contain("sqli")
@@ -79,6 +78,124 @@ describe "HuntParamTagger" do
       endpoint.params[0].tags.size.should be >= 1
       tag_names = endpoint.params[0].tags.map(&.name)
       tag_names.should contain("idor")
+    end
+
+    it "keeps generic id parameters focused on IDOR heuristics" do
+      tagger = HuntParamTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/users/:id", "GET", [
+        Param.new("id", "123", "path"),
+      ])
+
+      tagger.perform([endpoint])
+
+      tag_names = endpoint.params[0].tags.map(&.name)
+      tag_names.should contain("idor")
+      tag_names.should_not contain("sqli")
+      tag_names.should_not contain("ssti")
+    end
+
+    it "does not tag body ids as Hunt IDOR by default" do
+      tagger = HuntParamTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/items", "POST", [
+        Param.new("id", "123", "json"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.params[0].tags.map(&.name).should_not contain("idor")
+    end
+
+    it "does not tag emails as Hunt IDOR by default" do
+      tagger = HuntParamTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/register", "POST", [
+        Param.new("email", "user@example.com", "form"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.params[0].tags.map(&.name).should_not contain("idor")
+    end
+
+    it "does not treat common name fields as SSTI or SQLi by default" do
+      tagger = HuntParamTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/profile", "POST", [
+        Param.new("name", "alice", "json"),
+      ])
+
+      tagger.perform([endpoint])
+
+      tag_names = endpoint.params[0].tags.map(&.name)
+      tag_names.should_not contain("ssti")
+      tag_names.should_not contain("sqli")
+    end
+
+    it "does not treat role flags as SQLi by default" do
+      tagger = HuntParamTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/admin/users", "POST", [
+        Param.new("role", "admin", "json"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.params[0].tags.map(&.name).should_not contain("sqli")
+    end
+
+    it "does not treat generic from filters as SQLi by default" do
+      tagger = HuntParamTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/analytics", "GET", [
+        Param.new("from", "2025-01-01", "query"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.params[0].tags.map(&.name).should_not contain("sqli")
+    end
+
+    it "keeps sort controls tagged as SQLi-oriented query builder inputs" do
+      tagger = HuntParamTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/reviews", "GET", [
+        Param.new("sort", "created_at", "query"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.params[0].tags.map(&.name).should contain("sqli")
+    end
+
+    it "does not treat view switches as SSTI or SSRF by default" do
+      tagger = HuntParamTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/dashboard", "GET", [
+        Param.new("view", "summary", "query"),
+      ])
+
+      tagger.perform([endpoint])
+
+      tag_names = endpoint.params[0].tags.map(&.name)
+      tag_names.should_not contain("ssti")
+      tag_names.should_not contain("ssrf")
+      tag_names.should_not contain("sqli")
+    end
+
+    it "keeps path users focused on IDOR heuristics" do
+      tagger = HuntParamTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/users/:user", "GET", [
+        Param.new("user", "alice", "path"),
+      ])
+
+      tagger.perform([endpoint])
+
+      tag_names = endpoint.params[0].tags.map(&.name)
+      tag_names.should contain("idor")
+      tag_names.should_not contain("sqli")
     end
 
     it "tags file inclusion vulnerable parameters" do
@@ -165,6 +282,19 @@ describe "HuntParamTagger" do
 
       endpoint1.params[0].tags.size.should be >= 1
       endpoint2.params[0].tags.size.should eq(0)
+    end
+
+    it "does not add duplicate Hunt tags that already exist" do
+      tagger = HuntParamTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/users/:id", "GET", [
+        Param.new("id", "123", "path"),
+      ])
+      endpoint.params[0].add_tag(Tag.new("idor", "existing", "Hunt"))
+
+      tagger.perform([endpoint])
+
+      endpoint.params[0].tags.count { |tag| tag.name == "idor" && tag.tagger == "Hunt" }.should eq(1)
     end
   end
 end

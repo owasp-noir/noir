@@ -40,6 +40,6 @@ expected_endpoints = [
 ]
 
 FunctionalTester.new("fixtures/php/codeigniter/", {
-  :techs     => 2,  # php_codeigniter + php_pure
-  :endpoints => 40, # 38 CodeIgniter routes + 2 php_pure files (Routes.php, Home.php)
+  :techs     => 2,  # Detection still sees php_codeigniter and php_pure
+  :endpoints => 38, # Analysis suppresses redundant php_pure file endpoints
 }, expected_endpoints).perform_tests

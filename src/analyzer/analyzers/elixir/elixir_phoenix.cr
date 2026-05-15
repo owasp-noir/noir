@@ -88,6 +88,8 @@ module Analyzer::Elixir
           callees = include_callee ? callees_from_function_block(lines, index, block_end, controller_path) : nil
 
           matching_endpoints.each do |endpoint|
+            append_code_path(endpoint.details, PathInfo.new(controller_path, index + 1))
+
             # Extract parameters from the function block
             params = extract_params_from_function_block(lines, index, block_end, endpoint.method)
             params.each { |param| endpoint.push_param(param) }
@@ -195,6 +197,11 @@ module Analyzer::Elixir
       end
 
       params
+    end
+
+    private def append_code_path(details : Details, path_info : PathInfo)
+      return if details.code_paths.any? { |existing| existing == path_info }
+      details.add_path(path_info)
     end
 
     private def callees_from_function_block(lines : Array(String),

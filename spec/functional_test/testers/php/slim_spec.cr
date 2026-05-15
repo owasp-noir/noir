@@ -19,6 +19,6 @@ expected_endpoints = [
 ]
 
 FunctionalTester.new("fixtures/php/slim/", {
-  :techs     => 2,  # php_slim and php_pure
-  :endpoints => 13, # 12 Slim routes + 1 php_pure GET for index.php
+  :techs     => 2,  # Detection still sees php_slim and php_pure
+  :endpoints => 12, # Analysis suppresses the redundant php_pure file endpoint
 }, expected_endpoints).perform_tests

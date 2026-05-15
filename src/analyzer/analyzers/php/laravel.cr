@@ -82,7 +82,6 @@ module Analyzer::Php
                                        include_callee : Bool,
                                        base_line : Int32 = 1) : Array(Endpoint)
       endpoints = [] of Endpoint
-      details = Details.new(PathInfo.new(file_path))
 
       # 1. Simple routes: Route::get, Route::post, etc.
       verb_regex = /Route::(get|post|put|patch|delete|options|head)\s*\(\s*['"]([^'"]+)['"]\s*,/mi
@@ -91,10 +90,12 @@ module Analyzer::Php
         methods = [route_match[1].upcase]
         route_path = route_match[2]
         full_path = build_full_path(prefix, route_path)
+        route_line = base_line + newline_count_before(content, route_match.begin(0))
         handler_body, next_pos, body_start_line = extract_inline_closure_body(content, route_match.end(0), base_line)
         params = extract_brace_path_params(full_path)
 
         methods.each do |http_method|
+          details = Details.new(PathInfo.new(file_path, route_line))
           endpoint = Endpoint.new(full_path, http_method, params, details.dup)
           attach_route_callees(endpoint, handler_body, file_path, body_start_line) if include_callee
           endpoints << endpoint
@@ -108,10 +109,12 @@ module Analyzer::Php
         methods = extract_methods_from_array(route_match[1])
         route_path = route_match[2]
         full_path = build_full_path(prefix, route_path)
+        route_line = base_line + newline_count_before(content, route_match.begin(0))
         handler_body, next_pos, body_start_line = extract_inline_closure_body(content, route_match.end(0), base_line)
         params = extract_brace_path_params(full_path)
 
         methods.each do |http_method|
+          details = Details.new(PathInfo.new(file_path, route_line))
           endpoint = Endpoint.new(full_path, http_method, params, details.dup)
           attach_route_callees(endpoint, handler_body, file_path, body_start_line) if include_callee
           endpoints << endpoint
@@ -125,10 +128,12 @@ module Analyzer::Php
         methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
         route_path = route_match[1]
         full_path = build_full_path(prefix, route_path)
+        route_line = base_line + newline_count_before(content, route_match.begin(0))
         handler_body, next_pos, body_start_line = extract_inline_closure_body(content, route_match.end(0), base_line)
         params = extract_brace_path_params(full_path)
 
         methods.each do |http_method|
+          details = Details.new(PathInfo.new(file_path, route_line))
           endpoint = Endpoint.new(full_path, http_method, params, details.dup)
           attach_route_callees(endpoint, handler_body, file_path, body_start_line) if include_callee
           endpoints << endpoint
@@ -141,14 +146,16 @@ module Analyzer::Php
       resource_matches.each do |match|
         resource_name = match[1]
         full_resource_path = build_full_path(prefix, resource_name)
-        endpoints.concat(create_resource_endpoints(full_resource_path.lstrip('/'), file_path))
+        route_line = base_line + newline_count_before(content, match.begin(0))
+        endpoints.concat(create_resource_endpoints(full_resource_path.lstrip('/'), file_path, route_line))
       end
 
       api_resource_matches = content.scan(/Route::apiResource\s*\(\s*['"]([^'"]+)['"][^)]*\)/mi)
       api_resource_matches.each do |match|
         resource_name = match[1]
         full_resource_path = build_full_path(prefix, resource_name)
-        endpoints.concat(create_api_resource_endpoints(full_resource_path.lstrip('/'), file_path))
+        route_line = base_line + newline_count_before(content, match.begin(0))
+        endpoints.concat(create_api_resource_endpoints(full_resource_path.lstrip('/'), file_path, route_line))
       end
 
       # 3. Group routes (recursive)
@@ -304,9 +311,9 @@ module Analyzer::Php
       content[0...pos].count('\n')
     end
 
-    private def create_resource_endpoints(resource : String, file_path : String) : Array(Endpoint)
+    private def create_resource_endpoints(resource : String, file_path : String, line : Int32? = nil) : Array(Endpoint)
       endpoints = [] of Endpoint
-      details = Details.new(PathInfo.new(file_path))
+      details = Details.new(PathInfo.new(file_path, line))
 
       # Standard Laravel resource routes
       resource_routes = [
@@ -329,9 +336,9 @@ module Analyzer::Php
       endpoints
     end
 
-    private def create_api_resource_endpoints(resource : String, file_path : String) : Array(Endpoint)
+    private def create_api_resource_endpoints(resource : String, file_path : String, line : Int32? = nil) : Array(Endpoint)
       endpoints = [] of Endpoint
-      details = Details.new(PathInfo.new(file_path))
+      details = Details.new(PathInfo.new(file_path, line))
 
       # API resource routes (excludes create and edit forms)
       api_resource_routes = [
