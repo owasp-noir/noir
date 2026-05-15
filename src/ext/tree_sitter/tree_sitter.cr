@@ -123,16 +123,63 @@ module Noir::TreeSitter
   # ceiling.
   MAX_AST_DEPTH = 1024
 
-  # Parses `source` with the given `language` and yields the root
-  # `LibTreeSitter::TSNode`. The parser and tree are freed when the
-  # block returns.
-  def self.parse(source : String, language : LibTreeSitter::TSLanguage, &)
+  # Per-language pool of idle parsers. Allocating a tree-sitter parser
+  # plus binding a language on every `parse` is cheap individually but
+  # adds up across the tens of thousands of files a monorepo scan
+  # touches — every Python/Go/Java/Kotlin/JS/Rust analyzer reuses the
+  # same grammar over and over. The pool keeps freshly-released parsers
+  # alive so the next call skips both `ts_parser_new` and
+  # `ts_parser_set_language`.
+  #
+  # tree-sitter parsers are not safe for concurrent use, so each fiber
+  # checks one out for the duration of a `parse` call and returns it
+  # when the block exits. The pool itself is mutex-guarded so the
+  # checkout/checkin pair is fiber-safe under the MT runtime as well.
+  @@parser_pool = Hash(UInt64, Array(LibTreeSitter::TSParser)).new
+  @@parser_pool_mutex = Mutex.new
+
+  private def self.checkout_parser(language : LibTreeSitter::TSLanguage) : LibTreeSitter::TSParser
+    key = language.address
+    @@parser_pool_mutex.synchronize do
+      if bucket = @@parser_pool[key]?
+        unless bucket.empty?
+          return bucket.pop
+        end
+      end
+    end
+
     parser = LibTreeSitter.ts_parser_new
     raise "ts_parser_new returned null" if parser.null?
+    unless LibTreeSitter.ts_parser_set_language(parser, language)
+      LibTreeSitter.ts_parser_delete(parser)
+      raise "ts_parser_set_language failed (ABI mismatch?)"
+    end
+    parser
+  end
+
+  private def self.checkin_parser(language : LibTreeSitter::TSLanguage, parser : LibTreeSitter::TSParser)
+    key = language.address
+    @@parser_pool_mutex.synchronize do
+      bucket = @@parser_pool[key] ||= [] of LibTreeSitter::TSParser
+      bucket << parser
+    end
+  end
+
+  # Idle parser count for a given language. Exposed for tests and
+  # diagnostics; not part of the public API contract.
+  def self.parser_pool_size(language : LibTreeSitter::TSLanguage) : Int32
+    @@parser_pool_mutex.synchronize do
+      (@@parser_pool[language.address]? || [] of LibTreeSitter::TSParser).size
+    end
+  end
+
+  # Parses `source` with the given `language` and yields the root
+  # `LibTreeSitter::TSNode`. The parser is checked out from a per-language
+  # pool and returned when the block exits; the tree is freed in the
+  # same `ensure`.
+  def self.parse(source : String, language : LibTreeSitter::TSLanguage, &)
+    parser = checkout_parser(language)
     begin
-      unless LibTreeSitter.ts_parser_set_language(parser, language)
-        raise "ts_parser_set_language failed (ABI mismatch?)"
-      end
       tree = LibTreeSitter.ts_parser_parse_string(parser, Pointer(Void).null.as(LibTreeSitter::TSTree), source.to_unsafe, source.bytesize.to_u32)
       raise "ts_parser_parse_string returned null" if tree.null?
       begin
@@ -141,7 +188,7 @@ module Noir::TreeSitter
         LibTreeSitter.ts_tree_delete(tree)
       end
     ensure
-      LibTreeSitter.ts_parser_delete(parser)
+      checkin_parser(language, parser)
     end
   end
 
