@@ -34,11 +34,11 @@ describe "--ai-context Hunt signals on Fastify fixtures" do
     dashboard_context.signals.map(&.kind).should_not contain("ssrf")
     dashboard_context.signals.map(&.kind).should_not contain("sqli")
 
-    admin_create_context = endpoints.find! { |ep| ep.method == "POST" && ep.url == "/users/create" }.ai_context
+    admin_create_context = endpoints.find! { |ep| ep.method == "POST" && ep.url == "/admin/users/create" }.ai_context
     admin_create_context = admin_create_context.should_not be_nil
     admin_create_context.signals.map(&.kind).should_not contain("sqli")
 
-    process_context = endpoints.find! { |ep| ep.method == "POST" && ep.url == "/process/:methodId" }.ai_context
+    process_context = endpoints.find! { |ep| ep.method == "POST" && ep.url == "/payments/process/:methodId" }.ai_context
     process_context = process_context.should_not be_nil
     process_context.signals.map(&.kind).should contain("path_param")
     process_context.signals.map(&.kind).should contain("idor")

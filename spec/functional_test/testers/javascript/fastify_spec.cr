@@ -33,38 +33,38 @@ expected_endpoints = [
     Param.new("view", "", "query"),
     Param.new("sessionId", "", "cookie"),
   ]),
-  # Routes from plugin functions (detected without prefix in current implementation)
-  Endpoint.new("/status", "GET", [
+  # Routes from plugin functions
+  Endpoint.new("/api/v1/status", "GET", [
     Param.new("format", "", "query"),
     Param.new("x-status-key", "", "header"),
   ]),
-  Endpoint.new("/config", "PUT", [
+  Endpoint.new("/api/v1/config", "PUT", [
     Param.new("theme", "", "json"),
     Param.new("notifications", "", "json"),
     Param.new("configToken", "", "cookie"),
   ]),
-  Endpoint.new("/stats", "GET", [
+  Endpoint.new("/admin/stats", "GET", [
     Param.new("period", "", "query"),
     Param.new("admin-token", "", "header"),
   ]),
-  Endpoint.new("/users/create", "POST", [
+  Endpoint.new("/admin/users/create", "POST", [
     Param.new("username", "", "json"),
     Param.new("role", "", "json"),
     Param.new("permissions", "", "json"),
     Param.new("masterKey", "", "cookie"),
   ]),
-  Endpoint.new("/system/logs", "GET", [
+  Endpoint.new("/admin/system/logs", "GET", [
     Param.new("date", "", "query"),
     Param.new("level", "", "query"),
   ]),
-  Endpoint.new("/process/:methodId", "POST", [
+  Endpoint.new("/payments/process/:methodId", "POST", [
     Param.new("methodId", "", "path"),
     Param.new("amount", "", "json"),
     Param.new("currency", "", "json"),
     Param.new("description", "", "json"),
     Param.new("payment-key", "", "header"),
   ]),
-  Endpoint.new("/transactions", "GET", [
+  Endpoint.new("/payments/transactions", "GET", [
     Param.new("startDate", "", "query"),
     Param.new("endDate", "", "query"),
     Param.new("merchant-id", "", "header"),
