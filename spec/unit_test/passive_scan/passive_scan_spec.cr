@@ -176,6 +176,43 @@ describe NoirPassiveScan do
       results[0].line_number.should eq(2)
     end
 
+    it "emits one result per matcher hit when several matchers fire on the same line" do
+      logger = NoirLogger.new(false, false, false, true)
+      rules = [
+        PassiveScan.new(YAML.parse(<<-YAML)),
+          id: or-branch-multi
+          info:
+            name: or branch multi
+            author: [test]
+            severity: critical
+            description: ...
+            reference: [https://example.com]
+          matchers-condition: or
+          matchers:
+            - type: word
+              patterns:
+                - alpha
+              condition: or
+            - type: word
+              patterns:
+                - beta
+              condition: or
+          category: security
+          techs: ['*']
+          YAML
+      ]
+      # Line 1: matches alpha only. Line 2: matches both. Line 3: matches beta only.
+      file_content = "alpha line\nalpha and beta both here\nbeta line"
+      results = NoirPassiveScan.detect("test.txt", file_content, rules, logger)
+
+      # Three line hits, plus an extra hit on line 2 from the second matcher.
+      results.size.should eq(4)
+      # Line numbers must come back in ascending order — the single-pass
+      # walk over lines preserves natural ordering regardless of matcher
+      # composition.
+      results.map(&.line_number).should eq([1, 2, 2, 3])
+    end
+
     it "returns no results and takes the early-out when no matcher fires" do
       logger = NoirLogger.new(false, false, false, true)
       rules = [
