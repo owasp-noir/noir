@@ -1,192 +1,299 @@
 require "../../engines/rust_engine"
+require "../../../ext/tree_sitter/tree_sitter"
+require "../../../miniparsers/rust_callee_extractor_ts"
 
 module Analyzer::Rust
+  # Salvo analyzer (tree-sitter port). Salvo wires routes in two
+  # shapes, both handled here:
+  #
+  #   1. Router-chain DSL:
+  #        Router::with_path("users/<id>").get(get_user)
+  #      Each `.with_path(...)` / `.path(...)` is paired with the
+  #      following `.<verb>(handler)` method in the same chain.
+  #
+  #   2. Attribute macro:
+  #        #[endpoint(method = Post, path = "/api/submit/<id>")]
+  #        async fn submit_form(...) { ... }
   class Salvo < RustEngine
+    HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options"}
+
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = read_file_content(path).lines
+      source = read_file_content(path)
       include_callee = any_to_bool(@options["include_callee"]?)
 
-      # Strategy 1: Parse Router chain patterns
-      # e.g., Router::with_path("users/<id>").get(get_user)
-      # e.g., Router::new().push(Router::with_path("items").get(list_items))
-      parse_router_chains(lines, path, endpoints, include_callee)
+      Noir::TreeSitter.parse_rust(source) do |root|
+        function_index = build_function_index(root, source)
 
-      # Strategy 2: Parse #[endpoint] macro patterns
-      # e.g., #[endpoint(method = Get, path = "/api/users")]
-      parse_endpoint_macros(lines, path, endpoints, include_callee)
+        walk(root) do |node|
+          next unless Noir::TreeSitter.node_type(node) == "call_expression"
+          chain = decode_router_chain(node, source)
+          next unless chain
+          route_path, method, handler_name = chain
+
+          details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
+          endpoint = Endpoint.new("/#{route_path.lstrip('/')}", method, details)
+          extract_path_params(route_path, endpoint)
+
+          if handler_function = function_index[handler_name]?
+            extract_function_params(handler_function, source, endpoint)
+            attach_handler_callees(handler_function, source, path, endpoint) if include_callee
+          end
+
+          endpoints << endpoint
+        end
+
+        each_routing_pair(root) do |attr_item, function|
+          route = decode_endpoint_macro(attr_item, source)
+          next unless route
+          route_path, method, attr_row = route
+
+          details = Details.new(PathInfo.new(path, attr_row))
+          endpoint = Endpoint.new(route_path, method, details)
+          extract_path_params(route_path, endpoint)
+          extract_function_params(function, source, endpoint)
+          attach_handler_callees(function, source, path, endpoint) if include_callee
+
+          endpoints << endpoint
+        end
+      end
 
       endpoints
     end
 
-    def parse_router_chains(lines : Array(String), path : String, endpoints : Array(Endpoint), include_callee : Bool)
-      lines.each_with_index do |line, index|
-        # Match Router::with_path("...").method(handler) or .path("...").method(handler)
-        # Pattern: with_path("path") followed by .method(handler)
-        if line.includes?("with_path(") || line.includes?(".path(")
-          # Extract path from with_path("...") or .path("...")
-          path_match = line.match(/(?:with_path|\.path)\s*\(\s*"([^"]+)"\s*\)/)
-          if path_match
-            route_path = path_match[1]
+    # `<chain>.with_path("x").get(handler)` — tree-sitter sees each
+    # method call as its own `call_expression { function:
+    # field_expression { field: "get", value: call_expression {
+    # function: field_expression { field: "with_path", … } } } }`.
+    # When the outer call's verb is an HTTP verb AND the receiver is a
+    # `.with_path(...)` / `.path(...)` call, we have a complete chain.
+    private def decode_router_chain(call : LibTreeSitter::TSNode, source : String) : Tuple(String, String, String)?
+      fn_node = Noir::TreeSitter.field(call, "function")
+      return unless fn_node && Noir::TreeSitter.node_type(fn_node) == "field_expression"
+      verb_field = Noir::TreeSitter.field(fn_node, "field")
+      return unless verb_field
+      verb = Noir::TreeSitter.node_text(verb_field, source).downcase
+      return unless HTTP_VERBS.includes?(verb)
 
-            # Look for HTTP method in same line or nearby lines
-            search_range = [index, [index + 3, lines.size - 1].min]
-            (search_range[0]..search_range[1]).each do |i|
-              method_match = lines[i].match(/\.(get|post|put|delete|patch|head|options)\s*\(/)
-              if method_match
-                method = method_match[1].upcase
-                details = Details.new(PathInfo.new(path, index + 1))
-                endpoint = Endpoint.new("/#{route_path.lstrip('/')}", method, details)
+      receiver = Noir::TreeSitter.field(fn_node, "value")
+      return unless receiver && Noir::TreeSitter.node_type(receiver) == "call_expression"
+      receiver_fn = Noir::TreeSitter.field(receiver, "function")
+      return unless receiver_fn
+      # `with_path(...)` shows up as both a chain method
+      # (`field_expression` with `field: "with_path"`) and a path
+      # constructor (`scoped_identifier` like `Router::with_path`).
+      # Accept either shape and key off the trailing segment.
+      receiver_name =
+        case Noir::TreeSitter.node_type(receiver_fn)
+        when "field_expression"
+          (field = Noir::TreeSitter.field(receiver_fn, "field")) ? Noir::TreeSitter.node_text(field, source) : ""
+        when "scoped_identifier"
+          Noir::TreeSitter.node_text(receiver_fn, source).split("::").last
+        else
+          ""
+        end
+      return unless receiver_name == "with_path" || receiver_name == "path"
 
-                # Extract path parameters like <id>
-                extract_path_params(route_path, endpoint)
+      route_path = first_string_literal_text(Noir::TreeSitter.field(receiver, "arguments"), source)
+      return unless route_path
 
-                # Look for handler function and extract params
-                handler_match = lines[i].match(/\.(get|post|put|delete|patch|head|options)\s*\(\s*(\w+)/)
-                if handler_match
-                  handler_name = handler_match[2]
-                  extract_handler_params(lines, handler_name, endpoint)
-                  attach_handler_callees(lines, handler_name, path, endpoint) if include_callee
-                end
+      handler_name = first_identifier_argument(call, source)
+      return unless handler_name
+      {route_path, verb.upcase, handler_name}
+    end
 
-                endpoints << endpoint
-                break
-              end
+    # `#[endpoint(method = Post, path = "/x")]`. tree-sitter-rust
+    # leaves the macro arguments as a `token_tree`, but the inner
+    # tokens are still tagged — we look for the `method` / `path`
+    # keywords and pull the following identifier / string literal.
+    private def decode_endpoint_macro(attr_item : LibTreeSitter::TSNode,
+                                      source : String) : Tuple(String, String, Int32)?
+      attr = find_named_child(attr_item, "attribute")
+      return unless attr
+
+      attr_name = nil.as(String?)
+      Noir::TreeSitter.each_named_child(attr) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "identifier", "scoped_identifier"
+          attr_name = Noir::TreeSitter.node_text(child, source)
+          break
+        end
+      end
+      return unless attr_name == "endpoint"
+
+      arguments = Noir::TreeSitter.field(attr, "arguments")
+      return unless arguments
+
+      method = "GET"
+      route_path = "/"
+      saw_method = false
+      saw_path = false
+      Noir::TreeSitter.each_named_child(arguments) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "identifier"
+          name = Noir::TreeSitter.node_text(child, source)
+          case name
+          when "method"
+            saw_method = true
+          when "path"
+            saw_path = true
+          else
+            method = name.upcase if saw_method
+            saw_method = false
+          end
+        when "string_literal"
+          if saw_path
+            text = string_content(child, source)
+            route_path = text if text
+            saw_path = false
+          end
+        end
+      end
+      {route_path, method, Noir::TreeSitter.node_start_row(attr_item) + 1}
+    end
+
+    private def extract_path_params(route : String, endpoint : Endpoint)
+      route.scan(/<(\w+)>/) do |match|
+        endpoint.push_param(Param.new(match[1], "", "path"))
+      end
+    end
+
+    # Walk parameters + body looking for QueryParam / JsonBody /
+    # FormBody / req.header / req.cookie shapes. Bounded to the
+    # function so unrelated calls in the file don't bleed in.
+    private def extract_function_params(function : LibTreeSitter::TSNode,
+                                        source : String,
+                                        endpoint : Endpoint)
+      body = Noir::TreeSitter.field(function, "body")
+      return unless body
+
+      walk(body) do |node|
+        text = Noir::TreeSitter.node_text(node, source)
+        case Noir::TreeSitter.node_type(node)
+        when "let_declaration", "type_identifier", "scoped_type_identifier", "generic_type"
+          if text.includes?("QueryParam") && !endpoint.params.any? { |p| p.name == "query" && p.param_type == "query" }
+            endpoint.push_param(Param.new("query", "", "query"))
+          end
+          if text.includes?("JsonBody") && !endpoint.params.any? { |p| p.name == "body" && p.param_type == "json" }
+            endpoint.push_param(Param.new("body", "", "json"))
+          end
+          if text.includes?("FormBody") && !endpoint.params.any? { |p| p.name == "form" && p.param_type == "form" }
+            endpoint.push_param(Param.new("form", "", "form"))
+          end
+        when "call_expression"
+          fn_text = call_function_text(node, source)
+          next if fn_text.nil?
+          if fn_text == "req.query" && !endpoint.params.any? { |p| p.name == "query" && p.param_type == "query" }
+            endpoint.push_param(Param.new("query", "", "query"))
+          end
+          if fn_text == "req.header" || fn_text.ends_with?("req.headers().get")
+            if name = first_string_literal_text(Noir::TreeSitter.field(node, "arguments"), source)
+              endpoint.push_param(Param.new(name, "", "header")) unless endpoint.params.any? { |p| p.name == name && p.param_type == "header" }
+            end
+          end
+          if fn_text == "req.cookie"
+            if name = first_string_literal_text(Noir::TreeSitter.field(node, "arguments"), source)
+              endpoint.push_param(Param.new(name, "", "cookie")) unless endpoint.params.any? { |p| p.name == name && p.param_type == "cookie" }
             end
           end
         end
       end
     end
 
-    def parse_endpoint_macros(lines : Array(String), path : String, endpoints : Array(Endpoint), include_callee : Bool)
-      lines.each_with_index do |line, index|
-        # Match #[endpoint(method = Get, path = "/path")]
-        if line.strip.starts_with?("#[endpoint(")
-          method = "GET"
-          route_path = "/"
+    private def attach_handler_callees(function : LibTreeSitter::TSNode,
+                                       source : String,
+                                       path : String,
+                                       endpoint : Endpoint)
+      body = Noir::TreeSitter.field(function, "body")
+      return unless body
+      entries = Noir::RustCalleeExtractorTS.callees_in_body(body, source, path)
+      attach_rust_callees(endpoint, entries)
+    end
 
-          method_match = line.match(/method\s*=\s*(\w+)/)
-          if method_match
-            method = method_match[1].upcase
-          end
+    private def call_function_text(call : LibTreeSitter::TSNode, source : String) : String?
+      fn_node = Noir::TreeSitter.field(call, "function")
+      return unless fn_node
+      Noir::TreeSitter.node_text(fn_node, source)
+    end
 
-          path_match = line.match(/path\s*=\s*"([^"]+)"/)
-          if path_match
-            route_path = path_match[1]
-          end
+    private def first_identifier_argument(call : LibTreeSitter::TSNode, source : String) : String?
+      args = Noir::TreeSitter.field(call, "arguments")
+      return unless args
+      Noir::TreeSitter.each_named_child(args) do |child|
+        return Noir::TreeSitter.node_text(child, source) if Noir::TreeSitter.node_type(child) == "identifier"
+      end
+      nil
+    end
 
-          details = Details.new(PathInfo.new(path, index + 1))
-          endpoint = Endpoint.new(route_path, method, details)
+    private def build_function_index(root : LibTreeSitter::TSNode, source : String) : Hash(String, LibTreeSitter::TSNode)
+      index = {} of String => LibTreeSitter::TSNode
+      walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "function_item"
+        name_node = Noir::TreeSitter.field(node, "name")
+        next unless name_node
+        name = Noir::TreeSitter.node_text(name_node, source)
+        index[name] = node unless index.has_key?(name)
+      end
+      index
+    end
 
-          extract_path_params(route_path, endpoint)
-          extract_function_params(lines, index + 1, endpoint)
-          attach_next_function_callees(lines, index + 1, path, endpoint) if include_callee
-
-          endpoints << endpoint
+    private def each_routing_pair(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode, LibTreeSitter::TSNode ->)
+      named = [] of LibTreeSitter::TSNode
+      Noir::TreeSitter.each_named_child(node) { |c| named << c }
+      named.each_with_index do |child, idx|
+        if Noir::TreeSitter.node_type(child) == "attribute_item"
+          pair_function = find_paired_function(named, idx + 1)
+          block.call(child, pair_function) if pair_function
         end
+        each_routing_pair(child, &block)
       end
     end
 
-    # Extract path parameters from the route pattern like /users/<id>
-    def extract_path_params(route : String, endpoint : Endpoint)
-      route.scan(/<(\w+)>/) do |match|
-        param_name = match[1]
-        endpoint.push_param(Param.new(param_name, "", "path"))
-      end
-    end
-
-    # Look for handler function definition and extract params from its signature/body
-    def extract_handler_params(lines : Array(String), handler_name : String, endpoint : Endpoint)
-      function_index = find_handler_function_index(lines, handler_name)
-      extract_function_params(lines, function_index, endpoint) if function_index
-    end
-
-    # Extract parameters from function signature and body
-    def extract_function_params(lines : Array(String), start_index : Int32, endpoint : Endpoint)
-      function_index = find_next_function_index(lines, start_index)
-      return unless function_index
-
-      brace_count = 0
-      seen_opening_brace = false
-
-      (function_index...[function_index + 30, lines.size].min).each do |i|
-        line = lines[i]
-
-        brace_count += line.count('{')
-        if brace_count > 0
-          seen_opening_brace = true
-        end
-        brace_count -= line.count('}')
-
-        # Extract query parameters from QueryParam or req.query
-        if line.includes?("QueryParam") || line.includes?("req.query")
-          endpoint.push_param(Param.new("query", "", "query"))
-        end
-
-        # Extract JSON body from JsonBody
-        if line.includes?("JsonBody")
-          endpoint.push_param(Param.new("body", "", "json"))
-        end
-
-        # Extract form body from FormBody
-        if line.includes?("FormBody")
-          endpoint.push_param(Param.new("form", "", "form"))
-        end
-
-        # Extract headers from req.header/req.headers
-        if line.includes?("req.header(") || line.includes?("req.headers().get(")
-          match = line.match(/req\.header(?:s\(\)\.get)?\s*\(\s*"([^"]+)"\s*\)/)
-          if match
-            header_name = match[1]
-            endpoint.push_param(Param.new(header_name, "", "header"))
-          end
-        end
-
-        # Extract cookies from req.cookie
-        if line.includes?("req.cookie(")
-          match = line.match(/req\.cookie\s*\(\s*"([^"]+)"\s*\)/)
-          if match
-            cookie_name = match[1]
-            endpoint.push_param(Param.new(cookie_name, "", "cookie"))
-          end
-        end
-
-        if seen_opening_brace && brace_count == 0 && i > function_index
-          break
+    private def find_paired_function(named : Array(LibTreeSitter::TSNode), start : Int32) : LibTreeSitter::TSNode?
+      (start...named.size).each do |i|
+        next_node = named[i]
+        case Noir::TreeSitter.node_type(next_node)
+        when "function_item"
+          return next_node
+        when "attribute_item", "line_comment", "block_comment"
+          next
+        else
+          return
         end
       end
+      nil
     end
 
-    private def attach_handler_callees(lines : Array(String), handler_name : String, path : String, endpoint : Endpoint)
-      function_index = find_handler_function_index(lines, handler_name)
-      attach_function_callees(lines, function_index, path, endpoint) if function_index
-    end
-
-    private def attach_next_function_callees(lines : Array(String), start_index : Int32, path : String, endpoint : Endpoint)
-      function_index = find_next_function_index(lines, start_index)
-      attach_function_callees(lines, function_index, path, endpoint) if function_index
-    end
-
-    private def attach_function_callees(lines : Array(String), function_index : Int32, path : String, endpoint : Endpoint)
-      function_body = extract_rust_function_body(lines, function_index)
-      return unless function_body
-
-      body, body_start_line = function_body
-      callees = Noir::RustCalleeExtractor.callees_for_body(body, path, body_start_line)
-      attach_rust_callees(endpoint, callees)
-    end
-
-    private def find_handler_function_index(lines : Array(String), handler_name : String) : Int32?
-      lines.each_with_index do |line, index|
-        stripped = Noir::RustCalleeExtractor.strip_comment(line).strip
-        return index if stripped.match(/^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+#{handler_name}\b/)
+    private def first_string_literal_text(node : LibTreeSitter::TSNode?, source : String) : String?
+      return unless node
+      result : String? = nil
+      walk(node) do |child|
+        next if result
+        if Noir::TreeSitter.node_type(child) == "string_literal"
+          result = string_content(child, source)
+        end
       end
+      result
     end
 
-    private def find_next_function_index(lines : Array(String), start_index : Int32) : Int32?
-      (start_index...[start_index + 30, lines.size].min).each do |index|
-        stripped = Noir::RustCalleeExtractor.strip_comment(lines[index]).strip
-        return index if stripped.match(/^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+[A-Za-z_]\w*\b/)
+    private def string_content(string_literal : LibTreeSitter::TSNode, source : String) : String?
+      Noir::TreeSitter.each_named_child(string_literal) do |grand|
+        return Noir::TreeSitter.node_text(grand, source) if Noir::TreeSitter.node_type(grand) == "string_content"
+      end
+      nil
+    end
+
+    private def find_named_child(node : LibTreeSitter::TSNode, type : String) : LibTreeSitter::TSNode?
+      Noir::TreeSitter.each_named_child(node) do |child|
+        return child if Noir::TreeSitter.node_type(child) == type
+      end
+      nil
+    end
+
+    private def walk(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
+      block.call(node)
+      Noir::TreeSitter.each_named_child(node) do |child|
+        walk(child, &block)
       end
     end
   end
