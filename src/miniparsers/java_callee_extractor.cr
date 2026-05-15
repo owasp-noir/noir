@@ -202,18 +202,18 @@ module Noir::JavaCalleeExtractor
                                      source : String,
                                      decl_index : Hash(String, Int32?)) : Int32?
     name_node = Noir::TreeSitter.field(call, "name")
-    return nil unless name_node
+    return unless name_node
     name = Noir::TreeSitter.node_text(name_node, source)
-    return nil if name.empty?
+    return if name.empty?
 
     object = Noir::TreeSitter.field(call, "object")
     unless object.nil?
-      return nil unless Noir::TreeSitter.node_type(object) == "this"
+      return unless Noir::TreeSitter.node_type(object) == "this"
     end
 
-    return nil unless decl_index.has_key?(name)
+    return unless decl_index.has_key?(name)
     row = decl_index[name]
-    return nil if row.nil?
+    return if row.nil?
     row + 1
   end
 end
