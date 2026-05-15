@@ -23,10 +23,7 @@ describe "Tagger" do
       endpoint.params.each do |param|
         case param.name
         when "query"
-          param.tags.empty?.should be_false
-          param.tags.each do |tag|
-            tag.name.should eq("sqli")
-          end
+          param.tags.should be_empty
         when "url"
           param.tags.empty?.should be_false
           param.tags.each do |tag|

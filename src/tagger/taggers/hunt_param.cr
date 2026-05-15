@@ -15,7 +15,7 @@ class HuntParamTagger < Tagger
       "description" => "This parameter may be vulnerable to Server Side Request Forgery (SSRF) attacks.",
     },
     "sqli" => {
-      "words"       => ["select", "report", "update", "query", "sort", "where", "search", "params", "process", "row", "table", "sel", "results", "sleep", "fetch", "order", "keyword", "column", "field", "delete", "filter"],
+      "words"       => ["select", "report", "update", "sort", "where", "search", "params", "process", "row", "table", "sel", "results", "sleep", "fetch", "order", "keyword", "column", "field", "delete", "filter"],
       "description" => "This parameter may be vulnerable to SQL Injection attacks.",
     },
     "idor" => {

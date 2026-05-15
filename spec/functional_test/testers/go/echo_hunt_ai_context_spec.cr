@@ -21,7 +21,7 @@ describe "--ai-context Hunt signals on Echo fixtures" do
 
     pet_context = endpoints.find! { |ep| ep.method == "GET" && ep.url == "/pet" }.ai_context
     pet_context = pet_context.should_not be_nil
-    pet_context.signals.map(&.kind).should contain("sqli")
+    pet_context.signals.map(&.kind).should_not contain("sqli")
     pet_context.signals.map(&.kind).should_not contain("query_builder_input")
 
     review_context = endpoints.find! { |ep| ep.method == "GET" && ep.url == "/items/:itemId/reviews" }.ai_context

@@ -52,7 +52,7 @@ describe "HuntParamTagger" do
       endpoint.params[0].tags[0].name.should eq("ssrf")
     end
 
-    it "tags SQLi vulnerable parameters" do
+    it "does not treat bare query parameters as SQLi by default" do
       tagger = HuntParamTagger.new(default_tagger_options)
 
       endpoint = Endpoint.new("/users", "GET", [
@@ -61,9 +61,7 @@ describe "HuntParamTagger" do
 
       tagger.perform([endpoint])
 
-      endpoint.params[0].tags.size.should be >= 1
-      tag_names = endpoint.params[0].tags.map(&.name)
-      tag_names.should contain("sqli")
+      endpoint.params[0].tags.map(&.name).should_not contain("sqli")
     end
 
     it "tags IDOR vulnerable parameters" do
@@ -251,7 +249,7 @@ describe "HuntParamTagger" do
       endpoint.params[1].tags.size.should eq(0)
     end
 
-    it "can tag multiple parameters in one endpoint" do
+    it "can tag multiple parameters in one endpoint while leaving generic query names alone" do
       tagger = HuntParamTagger.new(default_tagger_options)
 
       endpoint = Endpoint.new("/search", "GET", [
@@ -262,7 +260,7 @@ describe "HuntParamTagger" do
 
       tagger.perform([endpoint])
 
-      endpoint.params[0].tags.size.should be >= 1
+      endpoint.params[0].tags.size.should eq(0)
       endpoint.params[1].tags.size.should eq(1)
       endpoint.params[2].tags.size.should eq(1)
     end

@@ -235,6 +235,30 @@ describe "NoirAIContext" do
     end
   end
 
+  it "does not treat bare query params as query-builder signals by default" do
+    source = <<-CODE
+      e.GET("/pet", func(c echo.Context) error {
+        _ = c.QueryParam("query")
+        return c.String(http.StatusOK, "pet")
+      })
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/pet", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_param(Param.new("query", "", "query"))
+
+      endpoints = NoirAIContext.apply([endpoint])
+      context = endpoints[0].ai_context
+      context = context.should_not be_nil
+
+      context.signals.map(&.kind).should_not contain("query_builder_input")
+      context.signals.map(&.name).should_not contain("query.query")
+    end
+  end
+
   it "avoids treating generic user agent headers as identifier inputs" do
     source = <<-CODE
       r.Get("/api-test", func(w http.ResponseWriter, r *http.Request) {

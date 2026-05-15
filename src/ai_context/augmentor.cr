@@ -145,7 +145,7 @@ module NoirAIContext
         "query_builder_input",
         "Query-builder-like input can influence filtering, sorting, or data access clauses",
         70,
-        name_patterns: [/\b(sort|order|filter|where|search|query|select|field|column)\b/i]
+        name_patterns: [/\b(sort|order|filter|where|search|select|field|column)\b/i]
       ),
     ] of PatternDefinition
 
