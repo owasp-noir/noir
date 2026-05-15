@@ -22,7 +22,7 @@ module Analyzer::Go
       get_files_by_extension(".go").each do |fp|
         next if File.directory?(fp)
         begin
-          file_contents[fp] = File.read(fp, encoding: "utf-8", invalid: :skip)
+          file_contents[fp] = read_file_content(fp)
         rescue File::NotFoundError
           # skip
         end
@@ -42,7 +42,7 @@ module Analyzer::Go
                   break if path.nil?
                   next if File.directory?(path)
                   if File.exists?(path)
-                    content = File.read(path, encoding: "utf-8", invalid: :skip)
+                    content = read_file_content(path)
                     lines = content.lines
                     last_endpoint = Endpoint.new("", "")
 
