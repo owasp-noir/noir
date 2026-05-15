@@ -93,7 +93,10 @@ noir -b . --include-path --include-techs -f json -o results.json
 Large monorepos may contain many frameworks. You can narrow the scan to what matters:
 
 ```bash
-# Only scan for Rails and Django endpoints
+# Run only the Rails and Django detectors (skip everything else)
+noir -b . --only-techs rails,django
+
+# Force-tag the project with these techs without running their detectors
 noir -b . --techs rails,django
 
 # Scan everything except Express
@@ -102,6 +105,8 @@ noir -b . --exclude-techs express
 # Skip files by glob (useful in monorepos — comma-separated)
 noir -b . --exclude-path "*_test.go,vendor/*,**/node_modules/**"
 ```
+
+`--only-techs` and `--techs` look similar but do different things: `--only-techs` filters the detector list (faster scan, only those detectors run), while `--techs` adds techs to the result without running detection (useful when you already know the stack and want to skip discovery).
 
 ## Enrich the Output
 
@@ -129,12 +134,16 @@ See [Callee Coverage](@/usage/supported/callee_coverage/index.md) and [AI Contex
 | `--include-techs` | Show detected technologies |
 | `--include-callee` | Attach 1-hop handler callees |
 | `--ai-context` | Attach guards, sinks, validators, and signals for AI review |
-| `--techs` | Only scan these frameworks |
+| `--set-pvalue` / `--set-pvalue-<type>` | Fill parameter values in output (see [HTTP Client Commands](@/usage/output_formats/curl/index.md)) |
+| `--only-techs` | Run only these tech detectors (skip the rest) |
+| `--techs` | Force-tag these techs without running their detectors |
 | `--exclude-techs` | Skip these frameworks |
 | `--exclude-path` | Skip files matching a comma-separated glob list |
 | `--config-file <path>` | Load default options from a YAML config file |
 | `--verbose` | Detailed logging |
 | `--no-log` | Suppress all logs |
+| `--no-color` | Disable ANSI colors in plain output |
+| `--build-info` | Print noir / Crystal / LLVM versions and target triple |
 | `--help` | Full help |
 
 ---
