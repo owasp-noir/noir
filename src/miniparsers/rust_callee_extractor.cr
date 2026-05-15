@@ -1,34 +1,23 @@
 require "../models/endpoint"
+require "./rust_callee_extractor_ts"
 
 module Noir::RustCalleeExtractor
   extend self
 
   alias Entry = Tuple(String, String, Int32)
 
-  RESERVED = Set{
-    "as", "async", "await", "break", "const", "continue", "crate",
-    "dyn", "else", "enum", "extern", "false", "fn", "for", "if",
-    "impl", "in", "let", "loop", "match", "mod", "move", "mut",
-    "pub", "ref", "return", "self", "Self", "static", "struct",
-    "super", "trait", "true", "type", "unsafe", "use", "where",
-    "while", "Ok", "Err", "Some", "None", "format", "format!",
-    "vec", "vec!", "println", "println!",
-  }
+  # Kept as a public constant for any external caller that still
+  # consults the reserved set; the active implementation lives on
+  # `Noir::RustCalleeExtractorTS::RESERVED` (same contents).
+  RESERVED = Noir::RustCalleeExtractorTS::RESERVED
 
-  PATH_CALL_REGEX     = /((?:[A-Za-z_]\w*::)+[A-Za-z_]\w*[!?]?)\s*(?:\(|!)/
-  RECEIVER_CALL_REGEX = /([A-Za-z_]\w*(?:\.[A-Za-z_]\w*[!?]?)+)\s*\(/
-  BARE_CALL_REGEX     = /(?<![.\w:])([A-Za-z_]\w*[!?]?)(?:\s*\(|!)/
-
+  # Walk `body` (a function body extracted as raw text by the engine)
+  # and return every callee. Internally delegates to the tree-sitter
+  # extractor which walks the parsed AST instead of running per-line
+  # regexes. The public signature stays identical so existing
+  # analyzers don't need to change.
   def callees_for_body(body : String, file_path : String, start_line : Int32) : Array(Entry)
-    entries = [] of Entry
-    in_block_comment = false
-
-    body.lines.each_with_index do |line, index|
-      stripped, in_block_comment = strip_comment_with_state(line, in_block_comment)
-      scan_line(stripped, file_path, start_line + index, entries)
-    end
-
-    dedup_entries(entries)
+    Noir::RustCalleeExtractorTS.callees_for_body_text(body, file_path, start_line)
   end
 
   def attach_to(endpoint : Endpoint, callees : Array(Entry))
@@ -81,48 +70,5 @@ module Noir::RustCalleeExtractor
     end
 
     {stripped.to_s, in_block_comment}
-  end
-
-  private def scan_line(line : String, file_path : String, line_number : Int32, entries : Array(Entry))
-    line.scan(PATH_CALL_REGEX) do |match|
-      name = match[1]
-      next if skip_callee?(name)
-
-      entries << {name, file_path, line_number}
-    end
-
-    line.scan(RECEIVER_CALL_REGEX) do |match|
-      name = match[1]
-      next if skip_callee?(name)
-
-      entries << {name, file_path, line_number}
-    end
-
-    line.scan(BARE_CALL_REGEX) do |match|
-      name = match[1]
-      next if skip_callee?(name)
-
-      entries << {name, file_path, line_number}
-    end
-  end
-
-  private def skip_callee?(name : String) : Bool
-    return true if name.empty?
-
-    last = name.split('.').last.split("::").last
-    RESERVED.includes?(last) && (!name.includes?("::") || last.includes?('!'))
-  end
-
-  private def dedup_entries(entries : Array(Entry)) : Array(Entry)
-    seen = Set(String).new
-    entries.select do |name, path, line|
-      key = "#{name}\0#{path}\0#{line}"
-      if seen.includes?(key)
-        false
-      else
-        seen.add(key)
-        true
-      end
-    end
   end
 end
