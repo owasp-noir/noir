@@ -45,15 +45,22 @@ module NoirPassiveScan
         active_matchers = matchers.select { |matcher| match_content?(file_content, matcher) }
         next if active_matchers.empty?
 
-        active_matchers.each do |matcher|
-          index = 0
-          file_content.each_line do |line|
+        # Single pass over the file's lines, checking every surviving
+        # matcher per line. The previous shape ran `each_line` once
+        # per active matcher, which re-parsed line boundaries and
+        # allocated a fresh substring for every line × matcher pair —
+        # the dominant cost on large files in monorepo scans where a
+        # single rule can have multiple matchers and a single file can
+        # have hundreds of thousands of lines.
+        index = 0
+        file_content.each_line do |line|
+          active_matchers.each do |matcher|
             if match_content?(line, matcher)
               logger.sub "└── Detected: #{rule.info.name}"
               results << PassiveScanResult.new(rule, file_path, index + 1, line)
             end
-            index += 1
           end
+          index += 1
         end
       end
     end
