@@ -17,7 +17,7 @@ module Analyzer::Crystal
         end
       end
 
-      include_callee = any_to_bool(@options["include_callee"]?)
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       last_endpoint = Endpoint.new("", "")
 
       lines.each_with_index do |line, index|

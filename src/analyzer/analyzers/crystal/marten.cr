@@ -56,7 +56,7 @@ module Analyzer::Crystal
     end
 
     private def include_callee? : Bool
-      any_to_bool(@options["include_callee"]?)
+      any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
     end
 
     private def read_source_lines(path : String) : Array(String)

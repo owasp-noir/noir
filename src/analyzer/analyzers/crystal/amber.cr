@@ -21,7 +21,7 @@ module Analyzer::Crystal
         end
       end
 
-      include_callee = any_to_bool(@options["include_callee"]?)
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       actions = include_callee ? collect_controller_actions(lines, path) : Hash(String, Array(Noir::CrystalCalleeExtractor::Entry)).new
       last_endpoint = Endpoint.new("", "")
 
