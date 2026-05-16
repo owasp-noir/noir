@@ -73,11 +73,13 @@ module Noir
     end
 
     def extract_routes(source : String,
-                       dto_index : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)) = {} of String => Array(TreeSitterJavaParameterExtractor::FieldInfo)) : Array(Route)
+                       dto_index : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)) = {} of String => Array(TreeSitterJavaParameterExtractor::FieldInfo),
+                       *,
+                       include_callees : Bool = false) : Array(Route)
       routes = [] of Route
       Noir::TreeSitter.parse_java(source) do |root|
         walk_classes(root) do |decl|
-          collect_class_routes(decl, source, dto_index, routes)
+          collect_class_routes(decl, source, dto_index, routes, include_callees)
         end
       end
       routes
@@ -120,7 +122,8 @@ module Noir
     private def collect_class_routes(decl : LibTreeSitter::TSNode,
                                      source : String,
                                      dto_index : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)),
-                                     routes : Array(Route))
+                                     routes : Array(Route),
+                                     include_callees : Bool = false)
       class_name = type_identifier_text(decl, source)
 
       # Need a class-level `@Controller` annotation to consider this
@@ -155,7 +158,7 @@ module Noir
         method_consumes = consumes_format(member, source) || class_consumes
 
         params = collect_method_params(member, source, method_consumes, dto_index)
-        callees = collect_method_callees(member, source)
+        callees = include_callees ? collect_method_callees(member, source) : [] of Tuple(String, Int32)
         line = Noir::TreeSitter.node_start_row(verb_node)
 
         controller_paths.each do |class_path|

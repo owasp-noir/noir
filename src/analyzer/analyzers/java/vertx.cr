@@ -14,6 +14,7 @@ module Analyzer::Java
 
     def analyze
       # Source Analysis
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
       begin
@@ -35,7 +36,7 @@ module Analyzer::Java
                     # Skip if no Vert.x related content
                     next unless content.includes?("Router") || content.includes?("vertx")
 
-                    callees_by_route = extract_method_reference_callees(content, path)
+                    callees_by_route = include_callee ? extract_method_reference_callees(content, path) : {} of String => Array(Callee)
 
                     # Find direct router method calls like router.get("/path", handler)
                     content.scan(REGEX_ROUTER_ROUTE) do |match|

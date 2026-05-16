@@ -81,46 +81,46 @@ module Noir
       end
     end
 
-    def extract_routes(source : String) : Array(Route)
+    def extract_routes(source : String, *, include_callees : Bool = false) : Array(Route)
       routes = [] of Route
       Noir::TreeSitter.parse_kotlin(source) do |root|
-        walk(root, source, "", routes, 0)
+        walk(root, source, "", routes, 0, include_callees)
       end
       routes
     end
 
     # ---- traversal ----------------------------------------------------
 
-    private def walk(node : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32)
+    private def walk(node : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32, include_callees : Bool)
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
 
       if Noir::TreeSitter.node_type(node) == "call_expression"
         name = call_name(node, source)
         case
         when HTTP_VERB_NAMES.has_key?(name)
-          emit_route(node, source, name, prefix, routes)
+          emit_route(node, source, name, prefix, routes, include_callees)
           return
         when name == "route"
           path_arg = call_string_argument(node, source)
           new_prefix = path_arg ? prefix + path_arg : prefix
           if body = call_lambda_body(node)
-            walk(body, source, new_prefix, routes, depth + 1)
+            walk(body, source, new_prefix, routes, depth + 1, include_callees)
           end
           return
         when PASSTHROUGH_NAMES.includes?(name)
           if body = call_lambda_body(node)
-            walk(body, source, prefix, routes, depth + 1)
+            walk(body, source, prefix, routes, depth + 1, include_callees)
           end
           return
         end
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, source, prefix, routes, depth + 1)
+        walk(child, source, prefix, routes, depth + 1, include_callees)
       end
     end
 
-    private def emit_route(node : LibTreeSitter::TSNode, source : String, name : String, prefix : String, routes : Array(Route))
+    private def emit_route(node : LibTreeSitter::TSNode, source : String, name : String, prefix : String, routes : Array(Route), include_callees : Bool)
       path_arg = call_string_argument(node, source)
       return unless path_arg
 
@@ -142,9 +142,11 @@ module Noir
         # doesn't carry the file path — drop the placeholder here and
         # let the analyzer attach the real path when it builds the
         # endpoint.
-        Noir::KotlinCalleeExtractor.callees_in_lambda(body, source, "").each do |entry|
-          name, _path, line_no = entry
-          callees << {name, line_no}
+        if include_callees
+          Noir::KotlinCalleeExtractor.callees_in_lambda(body, source, "").each do |entry|
+            name, _path, line_no = entry
+            callees << {name, line_no}
+          end
         end
       end
 

@@ -37,6 +37,7 @@ module Analyzer::Java
     )
 
     def analyze
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       file_list = all_files()
       file_list.each do |path|
         next unless File.exists?(path)
@@ -45,7 +46,7 @@ module Analyzer::Java
         content = read_file_content(path)
         next unless JAVALIN_MARKERS.any? { |m| content.includes?(m) }
 
-        Noir::TreeSitterJvmLambdaDslExtractor.extract_routes(content, CONFIG).each do |route|
+        Noir::TreeSitterJvmLambdaDslExtractor.extract_routes(content, CONFIG, include_callees: include_callee).each do |route|
           @result << build_endpoint(route, path)
         end
       end

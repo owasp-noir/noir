@@ -7,6 +7,7 @@ module Analyzer::Java
     JAVA_EXTENSION = "java"
 
     def analyze
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       dto_builder = Noir::TreeSitterJavaDtoIndex.new
       bean_cache = Hash(String, Hash(String, Array(Param))).new
 
@@ -33,7 +34,7 @@ module Analyzer::Java
         dto_index = dto_builder.build_for(path, content)
         bean_index = bean_index_for(path, content, package_name, bean_cache)
 
-        Noir::TreeSitterJaxRsExtractor.extract_routes(content, dto_index, bean_index).each do |route|
+        Noir::TreeSitterJaxRsExtractor.extract_routes(content, dto_index, bean_index, include_callees: include_callee).each do |route|
           line = route.line + 1
           details = Details.new(PathInfo.new(path, line))
           endpoint = Endpoint.new(route.path, route.verb, route.params, details)

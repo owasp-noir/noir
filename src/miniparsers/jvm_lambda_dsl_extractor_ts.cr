@@ -83,17 +83,17 @@ module Noir
       end
     end
 
-    def extract_routes(source : String, config : Config) : Array(Route)
+    def extract_routes(source : String, config : Config, *, include_callees : Bool = false) : Array(Route)
       routes = [] of Route
       Noir::TreeSitter.parse_java(source) do |root|
-        walk(root, source, "", config, routes, 0)
+        walk(root, source, "", config, routes, 0, include_callees)
       end
       routes
     end
 
     # ---- traversal ---------------------------------------------------
 
-    private def walk(node : LibTreeSitter::TSNode, source : String, prefix : String, config : Config, routes : Array(Route), depth : Int32)
+    private def walk(node : LibTreeSitter::TSNode, source : String, prefix : String, config : Config, routes : Array(Route), depth : Int32, include_callees : Bool)
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
 
       ty = Noir::TreeSitter.node_type(node)
@@ -102,25 +102,25 @@ module Noir
         name = method_invocation_method_name(node, source)
         case
         when verb = config.verb_methods[name]?
-          emit_route(node, source, verb, prefix, config, routes)
+          emit_route(node, source, verb, prefix, config, routes, include_callees)
           return
         when config.nest_methods.includes?(name)
           path_arg = first_string_argument(node, source)
           new_prefix = path_arg ? join_paths(prefix, path_arg) : prefix
           if body = lambda_body_in_args(node)
-            walk(body, source, new_prefix, config, routes, depth + 1)
+            walk(body, source, new_prefix, config, routes, depth + 1, include_callees)
           end
           return
         when config.transparent_methods.includes?(name)
           if body = lambda_body_in_args(node)
-            walk(body, source, prefix, config, routes, depth + 1)
+            walk(body, source, prefix, config, routes, depth + 1, include_callees)
           end
           return
         end
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, source, prefix, config, routes, depth + 1)
+        walk(child, source, prefix, config, routes, depth + 1, include_callees)
       end
     end
 
@@ -129,7 +129,8 @@ module Noir
                            verb : String,
                            prefix : String,
                            config : Config,
-                           routes : Array(Route))
+                           routes : Array(Route),
+                           include_callees : Bool)
       path_arg = first_string_argument(call, source)
       return unless path_arg
 
@@ -161,9 +162,11 @@ module Noir
         # extractor doesn't carry the file path, so drop the placeholder
         # here and let the analyzer attach the real path when it builds
         # the endpoint.
-        Noir::JavaCalleeExtractor.callees_in_lambda(body, source, "").each do |entry|
-          name, _path, line_no = entry
-          callees << {name, line_no}
+        if include_callees
+          Noir::JavaCalleeExtractor.callees_in_lambda(body, source, "").each do |entry|
+            name, _path, line_no = entry
+            callees << {name, line_no}
+          end
         end
       end
 

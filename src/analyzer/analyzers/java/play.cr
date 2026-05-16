@@ -37,6 +37,7 @@ module Analyzer::Java
     # Parse Java controller files to extract header, cookie, and body parameters
     private def parse_controller_files(java_files : Array(String)) : Hash(String, ControllerMethod)
       controller_methods = Hash(String, ControllerMethod).new
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
       java_files.each do |path|
         content = read_file_content(path)
@@ -96,9 +97,13 @@ module Analyzer::Java
                 body_type = "body"
               end
 
-              callees = Noir::JavaCalleeExtractor.callees_in_body(method_body_node, content, path).map do |(name, callee_path, callee_line)|
-                Callee.new(name, path: callee_path, line: callee_line)
-              end
+              callees = if include_callee
+                          Noir::JavaCalleeExtractor.callees_in_body(method_body_node, content, path).map do |(name, callee_path, callee_line)|
+                            Callee.new(name, path: callee_path, line: callee_line)
+                          end
+                        else
+                          [] of Callee
+                        end
 
               controller_methods[full_method_name] = {headers: headers, cookies: cookies, body_type: body_type, callees: callees}
             end

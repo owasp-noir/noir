@@ -54,4 +54,6 @@ expected_endpoints = [
 FunctionalTester.new("fixtures/kotlin/ktor_callees/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
+}, expected_endpoints, {
+  "include_callee" => YAML::Any.new(true),
+}).perform_tests
