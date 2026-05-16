@@ -181,6 +181,18 @@ module Analyzer::Python
     end
 
     private def extract_routes_from_lines(lines : Array(::String), start_index : Int32, file_path : ::String)
+      # Two-pass on the URLPatterns block:
+      #   1. The legacy per-line scan below handles single-line
+      #      `(r"/x", Handler)` tuples and the "handler on next
+      #      line" variant.
+      #   2. After tracking bracket depth identifies the block's
+      #      end, run a second scan on the joined block text so
+      #      fully wrapped tuples (`(\n  r"/x",\n  Handler,\n)`)
+      #      that the per-line regex skipped still surface. New
+      #      entries are deduplicated by `(route_path, handler)`
+      #      against the existing per-line results.
+      block_pieces = [] of ::String
+
       bracket_depth = 0
       found_opening = false
       in_string = false
@@ -190,6 +202,7 @@ module Analyzer::Python
       i = start_index
       while i < lines.size
         line = lines[i].strip
+        block_pieces << line
 
         # Track bracket depth, skipping characters inside string literals and comments
         in_comment = false
@@ -263,6 +276,22 @@ module Analyzer::Python
         # Stop when bracket depth returns to 0 (end of the list)
         break if found_opening && bracket_depth <= 0
         i += 1
+      end
+
+      # Second pass: scan the joined block for tuples whose `(` and
+      # path/handler sit on different lines. The per-line scan above
+      # only catches single-line and "handler on next line" shapes.
+      block_text = block_pieces.join(" ")
+      existing_routes = (@routes[file_path]? || [] of Tuple(Int32, ::String, ::String, ::String))
+        .map { |info| {info[2], info[3]} }
+        .to_set
+      block_text.scan(/\(\s*r?["']([^"']*)["']\s*,\s*([a-zA-Z_][a-zA-Z0-9_.]*)/) do |match|
+        next unless match.size >= 3
+        route_path = match[1]
+        handler_class = match[2]
+        next if existing_routes.includes?({route_path, handler_class})
+        @routes[file_path] << {start_index, "ALL", route_path, handler_class}
+        existing_routes << {route_path, handler_class}
       end
     end
 
