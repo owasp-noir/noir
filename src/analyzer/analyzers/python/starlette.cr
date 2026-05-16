@@ -48,12 +48,29 @@ module Analyzer::Python
       paren_depth = 0
 
       lines.each_with_index do |line, line_index|
-        line.scan(MOUNT_REGEX) do |match|
+        # Route(...) and Mount(...) calls commonly span multiple
+        # lines in real Starlette code. The line-level scan above
+        # captures only the call header (`Route(`) on the first
+        # line; the path string sits on a continuation line and
+        # never matches the body regex. Coalesce continuation lines
+        # into one logical string when the opening paren isn't
+        # balanced on this line so the body capture sees the path.
+        effective_line = if line.includes?("Route") && python_paren_delta(line) > 0
+                           join_until_python_call_closes(lines, line_index, line)
+                         else
+                           line
+                         end
+        # Lift `path=` keyword to the first positional slot so the
+        # existing ROUTE_REGEX (which expects a string right after
+        # `Route(`) matches `Route(path="/x", endpoint=h)`.
+        effective_line = effective_line.gsub(/(Route\s*\()\s*path\s*=\s*([rf]?['"][^'"]*['"])/, "\\1\\2,")
+
+        effective_line.scan(MOUNT_REGEX) do |match|
           next if match.size < 2
           mount_stack << {match[1], paren_depth + 1}
         end
 
-        line.scan(ROUTE_REGEX) do |match|
+        effective_line.scan(ROUTE_REGEX) do |match|
           next if match.size < 3
           route_path = match[1]
           tail = match[2]

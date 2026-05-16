@@ -503,5 +503,65 @@ module Analyzer::Python
         @params << param
       end
     end
+
+    # Net `(` − `)` count on a single Python source line, ignoring
+    # parens that fall inside single- or double-quoted strings on the
+    # same line. Sufficient for decorator / function-call headers,
+    # which never carry triple-quoted strings on the call line.
+    #
+    # Used by analyzers that walk source line-by-line and need to
+    # join continuation lines into one logical call (e.g. multi-line
+    # decorators in FastAPI / Litestar / Sanic / Bottle, multi-line
+    # `Route(...)` entries in Starlette).
+    def python_paren_delta(line : ::String) : Int32
+      depth = 0
+      in_quote = nil
+      escaped = false
+      line.each_char do |ch|
+        if in_quote
+          if escaped
+            escaped = false
+          elsif ch == '\\'
+            escaped = true
+          elsif ch == in_quote
+            in_quote = nil
+          end
+          next
+        end
+        case ch
+        when '\'', '"'
+          in_quote = ch
+        when '('
+          depth += 1
+        when ')'
+          depth -= 1
+        end
+      end
+      depth
+    end
+
+    # Given a 0-based `index` into `lines` whose content `line` is
+    # known to open a Python call whose `(` is unbalanced, join
+    # continuation lines until the running paren delta drops to ≤ 0.
+    # Returns the joined string with newlines collapsed to single
+    # spaces so analyzer-side regexes don't need a multi-line flag.
+    # The caller is expected to short-circuit (`return line`) when
+    # the call already balances on the same line — this method
+    # always walks forward at least once.
+    def join_until_python_call_closes(lines : Array(::String),
+                                      index : Int32,
+                                      line : ::String) : ::String
+      pieces = [line]
+      delta = python_paren_delta(line)
+      i = index + 1
+      while i < lines.size && delta > 0
+        nxt = lines[i]
+        pieces << nxt
+        delta += python_paren_delta(nxt)
+        break if delta <= 0
+        i += 1
+      end
+      pieces.join(' ')
+    end
   end
 end

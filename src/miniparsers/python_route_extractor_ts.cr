@@ -253,12 +253,19 @@ module Noir
           name = Noir::TreeSitter.field(arg, "name")
           value = Noir::TreeSitter.field(arg, "value")
           next unless name && value
-          # Accept both `methods=` (Flask / Sanic) and the singular
-          # `method=` (Bottle). decode_method_list handles a list or a
-          # bare string value.
           key = Noir::TreeSitter.node_text(name, source)
+          # `methods=` (Flask / Sanic) / `method=` (Bottle).
+          # `decode_method_list` handles a list or a bare string.
           if key == "methods" || key == "method"
             methods = decode_method_list(value, source)
+          elsif (key == "path" || key == "rule" || key == "uri") && path.empty? &&
+                Noir::TreeSitter.node_type(value) == "string"
+            # `path=`/`rule=`/`uri=` keyword forms — FastAPI's
+            # `@app.get(path="/x")`, Bottle's `@app.route(path="/x")`,
+            # Sanic / aiohttp variants. Only accept the keyword if no
+            # positional path has been seen, so a stray `path=` kwarg
+            # later in the call can't overwrite a real positional.
+            path = decode_string(value, source)
           end
         end
       end
