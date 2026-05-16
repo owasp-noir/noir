@@ -236,6 +236,30 @@ module Analyzer::Python
                   end
                 end
               end
+
+              # Programmatic registration:
+              # `app.add_api_route("/x", get_handler, methods=["GET"])`
+              # / `app.add_api_websocket_route(...)`. Coalesce the
+              # call's continuation lines (same way as the decorator
+              # form above), parse path + methods, and emit endpoints
+              # without trying to find a handler def — the handler is
+              # passed by reference as the 2nd positional argument.
+              prog_line = coalesce_programmatic_call(codelines, index, line, instance_name)
+              prog_line.scan(/\b#{instance_name}\.(add_api_route|add_api_websocket_route)\s*\(\s*[rf]?['"]([^'"]*)['"](.*)/) do |prog_match|
+                next if prog_match.size < 4
+                prog_attr = prog_match[1]
+                prog_path = prog_match[2]
+                prog_tail = prog_match[3]
+                prog_methods = extract_declared_methods(prog_tail)
+                if prog_methods.empty?
+                  prog_methods = prog_attr.includes?("websocket") ? ["GET"] : ["GET"]
+                end
+                prog_full = router_class.join(prog_path)
+                prog_details = Details.new(PathInfo.new(path, index + 1))
+                prog_methods.each do |m|
+                  result << Endpoint.new(prog_full, m, [] of Param, prog_details)
+                end
+              end
             end
           end
         rescue e : Exception
@@ -372,6 +396,30 @@ module Analyzer::Python
       end
 
       new_params
+    end
+
+    # Like `coalesce_decorator_call`, but for the programmatic
+    # `<instance>.add_api_route(...)` / `add_api_websocket_route(...)`
+    # registration form. The opening shape doesn't have `@` so it
+    # needs a different regex to detect the call start.
+    private def coalesce_programmatic_call(codelines : Array(::String),
+                                           index : Int32,
+                                           line : ::String,
+                                           instance_name : ::String) : ::String
+      return line unless line.matches?(/\b#{instance_name}\.(add_api_route|add_api_websocket_route)\s*\(/)
+      return line if python_call_balanced?(line)
+
+      pieces = [line]
+      depth = python_paren_delta(line)
+      i = index + 1
+      while i < codelines.size && depth > 0
+        nxt = codelines[i]
+        pieces << nxt
+        depth += python_paren_delta(nxt)
+        break if depth <= 0
+        i += 1
+      end
+      pieces.join(' ')
     end
 
     # Extract `methods=[...]` / `methods=("...")` from a FastAPI
