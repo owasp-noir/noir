@@ -329,6 +329,32 @@ module Analyzer::Python
                   )
                   @class_views[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String))
                   @class_views[router_name] << class_view_info
+                else
+                  # Function-view registration:
+                  #   app.add_url_rule("/x", "name", view_func=fn)
+                  #   app.add_url_rule("/x", "name", view_func=fn, methods=["GET", "POST"])
+                  # The class-view branch above only fires for
+                  # `.as_view(...)` shapes; bare function refs fell
+                  # through. Emit endpoints directly with `route_path`
+                  # and the declared methods (defaulting to GET).
+                  fn_methods = [] of ::String
+                  fn_methods_match = args_str.match /methods=[\[\(](.*?)[\]\)]/
+                  if fn_methods_match
+                    fn_methods_match[1].scan(/['"]([A-Z]+)['"]/) do |method_match|
+                      fn_methods << method_match[1]
+                    end
+                  end
+                  fn_methods << "GET" if fn_methods.empty?
+
+                  api_instances_for_fn = path_api_instances[path]?
+                  fn_prefix = (api_instances_for_fn && api_instances_for_fn.has_key?(router_name)) ? api_instances_for_fn[router_name] : ""
+                  fn_full_path = "#{fn_prefix}#{route_path}"
+                  fn_full_path = "/#{fn_full_path}" unless fn_full_path.starts_with?("/")
+
+                  fn_methods.each do |m|
+                    fn_details = Details.new(PathInfo.new(path, line_index + 1))
+                    result << Endpoint.new(fn_full_path, m, fn_details)
+                  end
                 end
               end
             end
@@ -713,16 +739,36 @@ module Analyzer::Python
     def extract_params_from_decorator(path : ::String, lines : Array(::String), line_index : Int32, direction : Symbol = :down) : Tuple(Array(Param), Int32)
       params = [] of Param
       codeline_index = (direction == :down) ? line_index + 1 : line_index - 1
+      # Carry the decorator line's paren delta forward when walking
+      # downward so multi-line decorator headers
+      # (`@app.route(\n  "/x",\n  methods=[...],\n)`) don't cause
+      # the loop to bail on the first continuation line — without
+      # this, `@app.route(` ate everything up to the matching `)`
+      # was treated as "not a decorator and not a def", skipping
+      # the whole route. `find_def_line` got the same fix earlier.
+      paren_depth = direction == :down && (deco_line = lines[line_index]?) ? flask_line_paren_delta(deco_line) : 0
 
       # Iterate through the lines until the decorator ends
       while (direction == :down && codeline_index < lines.size) || (direction == :up && codeline_index >= 0)
+        current_line = lines[codeline_index]
         # Skip empty/blank lines
-        if lines[codeline_index].strip.empty?
+        if current_line.strip.empty?
           codeline_index += (direction == :down ? 1 : -1)
           next
         end
-        decorator_match = lines[codeline_index].match /\s*@/
+        # Still inside the decorator's continuation parens — accept
+        # the line as decorator content and keep walking without
+        # checking the `\s*@` prefix.
+        if direction == :down && paren_depth > 0
+          paren_depth += flask_line_paren_delta(current_line)
+          codeline_index += 1
+          next
+        end
+        decorator_match = current_line.match /\s*@/
         break if decorator_match.nil?
+        if direction == :down
+          paren_depth += flask_line_paren_delta(current_line)
+        end
 
         # Extract parameters from the expect decorator
         # https://flask-restx.readthedocs.io/en/latest/swagger.html#the-api-expect-decorator
@@ -806,6 +852,38 @@ module Analyzer::Python
         end
       end
       _prefix
+    end
+
+    # Net `(` − `)` count for a single line, ignoring parens that
+    # fall inside single- or double-quoted strings. Used by
+    # `extract_params_from_decorator` to walk through multi-line
+    # decorator headers without breaking the loop on continuation
+    # tokens.
+    private def flask_line_paren_delta(line : ::String) : Int32
+      depth = 0
+      in_quote = nil
+      escaped = false
+      line.each_char do |ch|
+        if in_quote
+          if escaped
+            escaped = false
+          elsif ch == '\\'
+            escaped = true
+          elsif ch == in_quote
+            in_quote = nil
+          end
+          next
+        end
+        case ch
+        when '\'', '"'
+          in_quote = ch
+        when '('
+          depth += 1
+        when ')'
+          depth -= 1
+        end
+      end
+      depth
     end
   end
 end
