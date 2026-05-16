@@ -84,7 +84,16 @@ module Analyzer::Python
             end
 
             # config.add_view(view_func, route_name="name", request_method="POST")
-            if av = line.match(/\.add_view\s*\((.+)\)/)
+            # Coalesce continuation lines so the args regex picks up
+            # multi-line add_view calls (the path/method kwargs live
+            # on continuation lines in fixtures wrapped to column
+            # limits).
+            add_view_line = if line.includes?(".add_view") && python_paren_delta(line) > 0
+                              join_until_python_call_closes(lines, line_index, line)
+                            else
+                              line
+                            end
+            if av = add_view_line.match(/\.add_view\s*\((.+)\)/)
               args = av[1]
               rn_match = args.match(/route_name\s*=\s*[rf]?['"]([^'"]+)['"]/)
               next if rn_match.nil?
