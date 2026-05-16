@@ -624,6 +624,12 @@ module Noir
     def self.extract_static_paths(content : String) : Array(Hash(String, String))
       static_paths = [] of Hash(String, String)
 
+      # Cheap pre-filter: every static-mount shape (Express
+      # `express.static`, Koa `serve`/`mount`, fastify-static) is a
+      # `.use(` call. Files without `.use(` cannot host one — skip
+      # the four regex scans on the vast majority of JS/TS files.
+      return static_paths unless content.includes?(".use(") || content.includes?(".use (")
+
       # Express patterns:
       # app.use('/static', express.static('public'))
       # app.use(express.static('public'))
