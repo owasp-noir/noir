@@ -44,7 +44,13 @@ module Analyzer::Python
       handler_routers = collect_handler_to_router(source, router_prefixes)
 
       lines.each_with_index do |line, line_index|
-        line.scan(DECORATOR_REGEX) do |match|
+        # Coalesce multi-line decorator calls so paths on
+        # continuation lines (`@post(\n  "/items",\n  tags=...,\n)`)
+        # still feed the same single-line regex below. `line_index`
+        # remains the decorator line so handler discovery / code_paths
+        # stay aligned with the source.
+        effective_line = coalesce_litestar_decorator(lines, line_index, line)
+        effective_line.scan(DECORATOR_REGEX) do |match|
           next if match.size < 3
           decorator = match[1].downcase
           body = match[2]
@@ -267,6 +273,62 @@ module Analyzer::Python
     private def add_unique(params : Array(Param), param : Param)
       return if params.any? { |p| p.name == param.name && p.param_type == param.param_type }
       params << param
+    end
+
+    # When `line` is the start of a Litestar route decorator with an
+    # unbalanced opening paren, join continuation lines until the
+    # matching `)` so the `[^)]*` body capture in `DECORATOR_REGEX`
+    # actually sees the path string. No-op for the common single-line
+    # form. Newlines in the join are collapsed to spaces so the
+    # body-side path/method scans don't have to special-case them.
+    private def coalesce_litestar_decorator(lines : Array(::String),
+                                            index : Int32,
+                                            line : ::String) : ::String
+      return line unless line.matches?(/@(?:get|post|put|patch|delete|head|options|route)\s*\(/)
+      delta = python_decorator_paren_delta(line)
+      return line if delta <= 0
+
+      pieces = [line]
+      i = index + 1
+      while i < lines.size && delta > 0
+        nxt = lines[i]
+        pieces << nxt
+        delta += python_decorator_paren_delta(nxt)
+        break if delta <= 0
+        i += 1
+      end
+      pieces.join(' ')
+    end
+
+    # Net `(` − `)` count, ignoring parens inside string literals on
+    # the same line. Single-quote / double-quote with backslash escape
+    # are recognized; triple-quoted strings on decorator lines are
+    # vanishingly rare in real code.
+    private def python_decorator_paren_delta(line : ::String) : Int32
+      depth = 0
+      in_quote = nil
+      escaped = false
+      line.each_char do |ch|
+        if in_quote
+          if escaped
+            escaped = false
+          elsif ch == '\\'
+            escaped = true
+          elsif ch == in_quote
+            in_quote = nil
+          end
+          next
+        end
+        case ch
+        when '\'', '"'
+          in_quote = ch
+        when '('
+          depth += 1
+        when ')'
+          depth -= 1
+        end
+      end
+      depth
     end
   end
 end
