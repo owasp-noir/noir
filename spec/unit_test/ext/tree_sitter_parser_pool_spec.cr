@@ -8,11 +8,16 @@ require "../../../src/ext/tree_sitter/tree_sitter"
 # allocating a fresh one.
 describe "Noir::TreeSitter parser pool" do
   it "keeps an idle parser in the pool after a parse call returns" do
+    # The pool is module-level state and other specs in the same
+    # run may have warmed it (e.g., any spec that exercises a
+    # Python miniparser). When the pool already has a parser, the
+    # `parse` call below pops it on checkout and pushes it back on
+    # checkin, leaving the size unchanged — so the meaningful
+    # contract is "at least one idle parser exists after parse
+    # returns", not strictly `before + 1`.
     language = LibTreeSitter.tree_sitter_python
-    before = Noir::TreeSitter.parser_pool_size(language)
     Noir::TreeSitter.parse_python("x = 1") { |_| }
-    after = Noir::TreeSitter.parser_pool_size(language)
-    after.should eq(before + 1)
+    Noir::TreeSitter.parser_pool_size(language).should be >= 1
   end
 
   it "reuses the pooled parser on the next parse call" do
