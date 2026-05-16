@@ -44,6 +44,12 @@ module Noir
           STDERR.puts "Warning: Maximum iterations reached in JS parser, parsing may be incomplete"
         end
 
+        # No route patterns means the rest of this method has nothing
+        # to emit — every downstream step (function_ranges build,
+        # internal-mount scan, prefix propagation) exists to attribute
+        # prefixes to routes the parser already found.
+        return [] of Endpoint if route_patterns.empty?
+
         # Check if this file has a router prefix from cross-file mounting
         locator = CodeLocator.instance
 
