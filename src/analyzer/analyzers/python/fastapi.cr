@@ -26,12 +26,20 @@ module Analyzer::Python
               if !match.nil?
                 fastapi_instance_name = match[1]
                 unless include_router_map.has_key?(fastapi_instance_name)
-                  include_router_map[path] = {match[1] => Router.new("")}
+                  if include_router_map.has_key?(path)
+                    include_router_map[path][fastapi_instance_name] ||= Router.new("")
+                  else
+                    include_router_map[path] = {fastapi_instance_name => Router.new("")}
+                  end
 
                   # base path
                   fastapi_base_file = path
                   @fastapi_base_path = Path.new(File.dirname(path)).parent.to_s
-                  break
+                  # Don't `break` — a single file can declare both
+                  # `app = FastAPI()` and one or more
+                  # `router = APIRouter(prefix="/api")` instances,
+                  # and the APIRouter detection further down must
+                  # still run on the remaining lines.
                 end
               end
 
@@ -91,7 +99,7 @@ module Analyzer::Python
               # positional argument so the downstream regex matches.
               effective_line = lift_path_keyword(effective_line, instance_name)
 
-              effective_line.scan(/@#{instance_name}\.([a-zA-Z]+)\s*\(\s*[rf]?['"]([^'"]*)['"](.*)/) do |match|
+              effective_line.scan(/@#{instance_name}\.([a-zA-Z_]+)\s*\(\s*[rf]?['"]([^'"]*)['"](.*)/) do |match|
                 if match.size > 0
                   http_method_name = match[1].downcase
                   if http_method_name.in?(%w[websocket route api_route])
@@ -189,14 +197,25 @@ module Analyzer::Python
                     end
                   end
 
+                  # Honor `methods=[...]` on `@router.route(...)` /
+                  # `@router.api_route(...)` decorators by emitting
+                  # one endpoint per declared method. Without this
+                  # the decorator's method-list was discarded and a
+                  # single GET endpoint was produced for what may be
+                  # a multi-verb handler.
+                  declared_methods = extract_declared_methods(_extra_params)
+                  emit_methods = declared_methods.empty? ? [http_method_name] : declared_methods
+
                   details = Details.new(PathInfo.new(path, index + 1))
-                  endpoint = Endpoint.new(router_class.join(http_route_path), http_method_name, params, details)
+                  full_path = router_class.join(http_route_path)
+                  base_endpoint = Endpoint.new(full_path, emit_methods.first, params, details)
 
                   # `parse_code_block(codelines[def_line..])` keeps the
                   # def line, so body row 0 lives at file line `def_line`.
-                  if handler_codeblock = parse_code_block(codelines[def_line..])
+                  handler_codeblock = parse_code_block(codelines[def_line..])
+                  if handler_codeblock
                     push_callees_from(
-                      endpoint,
+                      base_endpoint,
                       handler_codeblock,
                       def_line,
                       path,
@@ -205,7 +224,16 @@ module Analyzer::Python
                     )
                   end
 
-                  result << endpoint
+                  emit_methods.each do |method|
+                    endpoint_to_add = if method == emit_methods.first
+                                        base_endpoint
+                                      else
+                                        Endpoint.new(full_path, method, params, details).tap do |dup_ep|
+                                          base_endpoint.callees.each { |c| dup_ep.push_callee(c) }
+                                        end
+                                      end
+                    result << endpoint_to_add
+                  end
                 end
               end
             end
@@ -344,6 +372,22 @@ module Analyzer::Python
       end
 
       new_params
+    end
+
+    # Extract `methods=[...]` / `methods=("...")` from a FastAPI
+    # `@router.api_route(...)` / `@router.route(...)` decorator tail.
+    # Returns the upper-cased verbs in declaration order; empty list
+    # means the decorator didn't declare any methods (caller falls
+    # back to the verb implied by the attribute name).
+    private def extract_declared_methods(extra_params : ::String) : Array(::String)
+      methods = [] of ::String
+      list_match = extra_params.match(/methods\s*=\s*[\[(]([^\])]*)[\])]/)
+      if list_match
+        list_match[1].scan(/['"]([A-Za-z]+)['"]/) do |m|
+          methods << m[1].upcase
+        end
+      end
+      methods
     end
 
     # If `line` is the start of an `@instance.method(...)` decorator
