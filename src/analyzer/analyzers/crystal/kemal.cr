@@ -19,7 +19,7 @@ module Analyzer::Crystal
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       lines = File.read_lines(path)
-      include_callee = any_to_bool(@options["include_callee"]?)
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
       # Pre-scan: build mount_map (variable_name => mount_path)
       mount_map = {} of String => String
