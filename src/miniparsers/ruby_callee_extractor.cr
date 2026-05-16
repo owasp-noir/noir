@@ -61,7 +61,7 @@ module Noir::RubyCalleeExtractor
     escaped = false
     quote = '\0'
 
-    line.each_char_with_index do |char, index|
+    line.each_char do |char|
       if in_string
         if escaped
           stripped << (preserve_strings ? char : ' ')

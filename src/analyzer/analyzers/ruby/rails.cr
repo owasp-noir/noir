@@ -380,7 +380,6 @@ module Analyzer::Ruby
 
       data = extract_controller_data(path)
       defined_actions = data.defined_actions
-      params_method = data.params_method
 
       methods = [] of String
       {"index", "show", "create", "update", "destroy"}.each do |name|

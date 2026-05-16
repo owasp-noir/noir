@@ -527,7 +527,7 @@ module NoirAIContext
     end
 
     private def identifier_like?(name : String) : Bool
-      return true if matches_any?(name, PARAM_PATTERNS.find { |pattern| pattern.kind == "identifier_input" }.not_nil!.name_patterns)
+      return true if matches_any?(name, PARAM_PATTERNS.find! { |pattern| pattern.kind == "identifier_input" }.name_patterns)
       return true if identifier_suffix_like?(name)
 
       false

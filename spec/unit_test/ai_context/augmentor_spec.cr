@@ -1,7 +1,7 @@
 require "../../spec_helper"
 require "../../../src/ai_context/augmentor"
 
-def with_temp_ai_context_source(content : String, &block : String ->)
+def with_temp_ai_context_source(content : String, & : String ->)
   path = "/tmp/noir-ai-context-#{Random.rand(1_000_000)}.txt"
   File.write(path, content)
   begin
@@ -46,9 +46,8 @@ describe "NoirAIContext" do
 
       context.guards.size.should eq(1)
       context.guards[0].source.should eq("express_auth")
-      guard_snippet = context.guards[0].snippet
-      guard_snippet.should_not be_nil
-      guard_snippet.not_nil!.should contain("app.post")
+      guard_snippet = context.guards[0].snippet.should_not be_nil
+      guard_snippet.should contain("app.post")
 
       context.callees.map(&.name).should contain("User.find_by_sql")
       context.callees.first.snippet.should_not be_nil
