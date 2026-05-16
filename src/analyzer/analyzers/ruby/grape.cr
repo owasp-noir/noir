@@ -5,7 +5,7 @@ module Analyzer::Ruby
     GRAPE_VERBS = ["get", "post", "put", "delete", "patch", "head", "options"]
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?)
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
       parallel_file_scan do |path|
         next unless path.ends_with?(".rb")
