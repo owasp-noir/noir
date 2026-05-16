@@ -69,7 +69,29 @@ module Analyzer::Python
           codelines = source.split("\n")
           router_map.each do |instance_name, router_class|
             codelines.each_with_index do |line, index|
-              line.scan(/@#{instance_name}\.([a-zA-Z]+)\([rf]?['"]([^'"]*)['"](.*)/) do |match|
+              # FastAPI route decorators routinely span multiple
+              # lines:
+              #
+              #   @app.post(
+              #     "/items",
+              #     response_model=Item,
+              #     tags=["items"],
+              #   )
+              #
+              # Join continuation lines onto the decorator line so the
+              # single-line regex below sees the full call shape. The
+              # `index` still points at the original decorator line so
+              # `find_def_line` / `parse_function_def` / `code_paths`
+              # stay aligned with the source.
+              effective_line = coalesce_decorator_call(codelines, index, line, instance_name)
+
+              # Some FastAPI declarations pass the path via the
+              # `path=` keyword argument (`@app.get(path="/foo")`).
+              # Rewrite the call to put the path as the first
+              # positional argument so the downstream regex matches.
+              effective_line = lift_path_keyword(effective_line, instance_name)
+
+              effective_line.scan(/@#{instance_name}\.([a-zA-Z]+)\s*\(\s*[rf]?['"]([^'"]*)['"](.*)/) do |match|
                 if match.size > 0
                   http_method_name = match[1].downcase
                   if http_method_name.in?(%w[websocket route api_route])
@@ -322,6 +344,85 @@ module Analyzer::Python
       end
 
       new_params
+    end
+
+    # If `line` is the start of an `@instance.method(...)` decorator
+    # call whose opening paren isn't balanced on the same line, fold
+    # the continuation lines into one logical string. Returns `line`
+    # unchanged when the call is single-line or doesn't match an
+    # `@instance.<method>(` shape. The decorator's `(` and `)` are
+    # joined with the continuation content via single-space separators
+    # so the downstream regex sees a familiar single-line shape.
+    private def coalesce_decorator_call(codelines : Array(::String),
+                                        index : Int32,
+                                        line : ::String,
+                                        instance_name : ::String) : ::String
+      return line unless line.matches?(/^\s*@#{instance_name}\.[a-zA-Z_]+\s*\(/)
+      return line if python_call_balanced?(line)
+
+      pieces = [line]
+      depth = python_paren_delta(line)
+      i = index + 1
+      while i < codelines.size && depth > 0
+        nxt = codelines[i]
+        pieces << nxt
+        depth += python_paren_delta(nxt)
+        break if depth <= 0
+        i += 1
+      end
+
+      pieces.join(' ')
+    end
+
+    # Rewrite `@instance.method(..., path="X", ...)` so `"X"` is the
+    # first positional argument. Lets the main scan regex (which
+    # expects `(<string>` right after the open paren) catch FastAPI
+    # declarations that pass the path via the `path=` keyword. No-op
+    # when no `path=` keyword is present.
+    private def lift_path_keyword(line : ::String, instance_name : ::String) : ::String
+      return line unless line.includes?("path=") || line.includes?("path =")
+      return line if line =~ /@#{instance_name}\.[a-zA-Z_]+\s*\(\s*[rf]?['"]/
+      match = line.match(/^(?<lead>.*@#{instance_name}\.[a-zA-Z_]+\s*\()(?<rest>.*\bpath\s*=\s*[rf]?['"](?<path>[^'"]*)['"].*)$/m)
+      return line unless match
+      "#{match["lead"]}\"#{match["path"]}\", #{match["rest"]}"
+    end
+
+    # Net `(` − `)` paren count for `line`, ignoring parens inside
+    # single- or double-quoted strings. Sufficient for FastAPI
+    # decorator headers, which don't carry triple-quoted strings or
+    # raw f-strings on the call line itself.
+    private def python_paren_delta(line : ::String) : Int32
+      depth = 0
+      in_quote = nil
+      escaped = false
+      line.each_char do |ch|
+        if in_quote
+          if escaped
+            escaped = false
+          elsif ch == '\\'
+            escaped = true
+          elsif ch == in_quote
+            in_quote = nil
+          end
+          next
+        end
+        case ch
+        when '\'', '"'
+          in_quote = ch
+        when '('
+          depth += 1
+        when ')'
+          depth -= 1
+        end
+      end
+      depth
+    end
+
+    # Whether `line`'s paren count is balanced (delta == 0). Used to
+    # short-circuit the multi-line join when the call already closes
+    # on the same line.
+    private def python_call_balanced?(line : ::String) : Bool
+      python_paren_delta(line) == 0
     end
   end
 
