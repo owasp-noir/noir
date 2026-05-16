@@ -54,6 +54,15 @@ module Analyzer::Javascript
     )
       content = CodeLocator.instance.content_for(main_file) || File.read(main_file, encoding: "utf-8", invalid: :skip)
 
+      # Cheap pre-filter: every code path in this scanner is downstream
+      # of a `.use(...)` call (literal mount, no-prefix mount, or the
+      # `defaultRoutes.forEach(... router.use(...))` config-array form,
+      # which also contains `.use(`). Substring-checking once skips the
+      # imports parse + three full-content regex scans on the vast
+      # majority of files in a large codebase (tests, helpers, UI
+      # components, fixtures), which contain no router mounts at all.
+      return unless content.includes?(".use(") || content.includes?(".use (")
+
       # Parse imports
       imports = parse_imports(content, main_file)
       require_map = imports[:require_map]
