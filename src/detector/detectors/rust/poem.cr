@@ -11,6 +11,10 @@ module Detector::Rust
       check
     end
 
+    def applicable?(filename : String) : Bool
+      filename.ends_with?(".rs") || File.basename(filename) == "Cargo.toml" || File.basename(filename) == "Cargo.lock"
+    end
+
     def set_name
       @name = "rust_poem"
     end

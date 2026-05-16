@@ -20,6 +20,10 @@ module Detector::Clojure
       false
     end
 
+    def applicable?(filename : String) : Bool
+      filename.ends_with?(".clj") || filename.ends_with?(".cljs") || filename.ends_with?(".cljc") || filename.ends_with?(".edn") || File.basename(filename) == "project.clj" || File.basename(filename) == "deps.edn"
+    end
+
     def set_name
       @name = "clojure_compojure"
     end

@@ -28,6 +28,10 @@ module Detector::Lua
       false
     end
 
+    def applicable?(filename : String) : Bool
+      filename.ends_with?(".lua") || filename.ends_with?(".moon") || filename.ends_with?(".rockspec")
+    end
+
     def set_name
       @name = "lua_lapis"
     end

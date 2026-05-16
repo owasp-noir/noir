@@ -10,6 +10,10 @@ module Detector::Go
       end
     end
 
+    def applicable?(filename : String) : Bool
+      filename.includes?("go.mod") || filename.ends_with?(".go")
+    end
+
     def set_name
       @name = "go_gin"
     end

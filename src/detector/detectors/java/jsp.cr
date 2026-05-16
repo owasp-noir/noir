@@ -21,6 +21,10 @@ module Detector::Java
       false
     end
 
+    def applicable?(filename : String) : Bool
+      filename.ends_with?(".jsp") || filename.ends_with?(".java") || filename.ends_with?(".xml")
+    end
+
     def set_name
       @name = "java_jsp"
     end

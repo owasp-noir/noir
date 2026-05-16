@@ -12,6 +12,10 @@ module Detector::Python
       !!(has_from_import || has_import)
     end
 
+    def applicable?(filename : String) : Bool
+      filename.ends_with?(".py")
+    end
+
     def set_name
       @name = "python_flask"
     end

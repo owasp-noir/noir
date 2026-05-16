@@ -16,6 +16,10 @@ module Detector::Javascript
       end
     end
 
+    def applicable?(filename : String) : Bool
+      filename.ends_with?(".js") || filename.ends_with?(".mjs") || filename.ends_with?(".cjs") || filename.ends_with?(".jsx") || filename.ends_with?(".ts") || filename.ends_with?(".tsx") || File.basename(filename) == "package.json"
+    end
+
     def set_name
       @name = "js_koa"
     end

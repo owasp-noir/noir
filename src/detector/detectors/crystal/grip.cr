@@ -8,6 +8,10 @@ module Detector::Crystal
       file_contents.includes?("grip-framework/grip")
     end
 
+    def applicable?(filename : String) : Bool
+      filename.ends_with?(".cr") || File.basename(filename) == "shard.yml" || File.basename(filename) == "shard.lock"
+    end
+
     def set_name
       @name = "crystal_grip"
     end

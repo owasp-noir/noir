@@ -22,6 +22,10 @@ module Detector::Elixir
       false
     end
 
+    def applicable?(filename : String) : Bool
+      filename.ends_with?(".ex") || filename.ends_with?(".exs") || File.basename(filename) == "mix.exs"
+    end
+
     def set_name
       @name = "elixir_plug"
     end

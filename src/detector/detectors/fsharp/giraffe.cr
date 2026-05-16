@@ -26,6 +26,10 @@ module Detector::Fsharp
       false
     end
 
+    def applicable?(filename : String) : Bool
+      filename.ends_with?(".fs") || filename.ends_with?(".fsx") || filename.ends_with?(".fsproj") || filename.ends_with?(".csproj") || File.basename(filename) == "paket.dependencies"
+    end
+
     def set_name
       @name = "fs_giraffe"
     end

@@ -29,6 +29,22 @@ class Detector
     false
   end
 
+  # Cheap filename-only filter the detector pass uses to skip
+  # `detect` on files the detector cannot possibly match. The
+  # default `true` preserves prior behavior (every detector runs on
+  # every file). Override with the same predicate the body of
+  # `detect` starts with — e.g., `filename.ends_with?(".py")` for a
+  # Python framework detector — so the detector loop avoids the
+  # `detect` dispatch on files outside the detector's language.
+  #
+  # On large codebases (saleor's 4255 `.py` files) this lifts ~100
+  # virtual `detect` calls per file out of the hot loop because
+  # most detectors' inner first-line is exactly this kind of cheap
+  # filename check.
+  def applicable?(filename : String) : Bool
+    true
+  end
+
   # Whether the detector can be skipped on subsequent files once it
   # has matched. Defaults to `true` (idempotent — the detector only
   # signals tech presence). Detectors that perform side effects in

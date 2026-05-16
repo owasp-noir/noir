@@ -22,6 +22,10 @@ module Detector::Haskell
       false
     end
 
+    def applicable?(filename : String) : Bool
+      filename.ends_with?(".hs") || filename.ends_with?(".cabal") || filename.ends_with?(".dhall") || File.basename(filename) == "stack.yaml" || File.basename(filename) == "package.yaml"
+    end
+
     def set_name
       @name = "haskell_yesod"
     end

@@ -358,6 +358,13 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
               # `detect` (`idempotent? == false`) — see
               # `Detector#idempotent?` for the contract.
               next if detector.idempotent? && detected_flags[idx].get
+              # Cheap filename precheck: most detectors gate on a
+              # fixed extension or path component. Skipping the
+              # `detect` dispatch (and the regex / `includes?`
+              # work inside it) for non-applicable files cuts the
+              # detector pass on language-heavy trees by an order
+              # of magnitude.
+              next unless detector.applicable?(file)
               if detector.detect(file, content)
                 detected_flags[idx].set
                 newly_added = false
