@@ -13,7 +13,7 @@ module Analyzer::Haskell
 
     def analyze
       type_aliases = {} of String => TypeAlias
-      include_callee = any_to_bool(@options["include_callee"]?)
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       handler_bodies = include_callee ? build_handler_bodies : HandlerBodies.new
       server_bindings = include_callee ? build_server_bindings : ServerBindings.new
 

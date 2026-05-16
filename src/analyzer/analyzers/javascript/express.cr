@@ -16,7 +16,7 @@ module Analyzer::Javascript
     def analyze
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
-      include_callee = any_to_bool(@options["include_callee"]?)
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
       # Phase 1: Pre-scan to build router mount map
       scan_for_router_mounts

@@ -9,7 +9,7 @@ module Analyzer::Haskell
 
     def analyze
       processed_route_files = Set(String).new
-      include_callee = any_to_bool(@options["include_callee"]?)
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       handler_bodies = include_callee ? build_handler_bodies : {} of String => HandlerBody
 
       all_files.each do |path|

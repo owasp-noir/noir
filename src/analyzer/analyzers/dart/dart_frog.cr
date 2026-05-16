@@ -34,7 +34,7 @@ module Analyzer::Dart
     FALLBACK_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"]
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?)
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       result = [] of Endpoint
       mutex = Mutex.new
 

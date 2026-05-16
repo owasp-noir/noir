@@ -11,7 +11,7 @@ module Analyzer::Perl
     FULL_ROUTE_RE = /->\s*route\s*\(\s*['"]([^'"]+)['"]\s*\)(?:\s*->\s*via\s*\(\s*([^)]+)\))?/
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?)
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       controller_callees = include_callee ? index_controller_callees : {} of String => Array(Noir::PerlCalleeExtractor::Entry)
 
       parallel_file_scan do |path|

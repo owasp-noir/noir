@@ -20,7 +20,7 @@ module Analyzer::Dart
     alias MethodParam = NamedTuple(name: String, type: String)
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?)
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       all_files.each do |path|
         next if File.directory?(path)
         next unless path.ends_with?(".dart")

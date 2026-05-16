@@ -6,7 +6,7 @@ module Analyzer::Scala
 
     def analyze_file(path : String) : Array(Endpoint)
       content = File.read(path)
-      extract_routes_from_content(path, content, any_to_bool(@options["include_callee"]?))
+      extract_routes_from_content(path, content, any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?))
     end
 
     # Extract routes from Scalatra DSL

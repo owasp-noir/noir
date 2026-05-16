@@ -49,7 +49,7 @@ module Analyzer::Javascript
     def analyze
       result = [] of Endpoint
       mutex = Mutex.new
-      include_callee = any_to_bool(@options["include_callee"]?)
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
       parallel_file_scan(EXTENSIONS) do |path|
         idx = path.index("/app/routes/")
