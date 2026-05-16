@@ -26,6 +26,35 @@ module Noir
       "ANY", "Any", "All",
     }
 
+    # Common non-router identifiers in Go code that expose `.Get(string)`
+    # or `.Post(...)` style methods but emit *values*, not routes. The
+    # selector-expression walk emits a verb route on every match of
+    # `<operand>.<HttpVerb>(stringLit, ...)`, so without this guard
+    # patterns like `gjson.Get(json, "Files.0.UID")`,
+    # `header.Get("Content-Type")`, or `params.Get("user")` become
+    # bogus `/Files.0.UID`, `/Content-Type`, `/user` endpoints.
+    #
+    # Keep this list conservative — it only rejects names that are
+    # almost never used to hold a real router instance. Generic names
+    # like `r`, `c`, `app`, `mux`, `engine` are intentionally not
+    # included.
+    NON_ROUTER_OPERANDS = Set{
+      "gjson", "result", "results",
+      "header", "headers", "Header", "Headers",
+      "cookie", "cookies", "Cookie", "Cookies",
+      "params", "Params", "values", "Values",
+      "vars", "Vars",
+      "url", "URL", "uri", "URI",
+      "cache", "Cache",
+      "db", "DB", "tx", "Tx", "conn", "Conn",
+      "config", "cfg", "conf", "Config",
+      "logger", "log",
+      "client", "Client",
+      "request", "Request", "req", "Req",
+      "response", "Response", "resp", "Resp",
+      "fixtures", "Fixtures",
+    }
+
     # A static-file route: URL `url_prefix` serves files from disk
     # location `disk_path`.
     struct StaticPath
@@ -453,6 +482,7 @@ module Noir
       return unless raw_path
 
       router_name = Noir::TreeSitter.node_text(operand, source)
+      return if NON_ROUTER_OPERANDS.includes?(router_name)
       base_prefix = local_groups[router_name]? || prefix_stack.join
       resolved = base_prefix.empty? ? raw_path : "#{base_prefix}#{raw_path}"
 
@@ -571,6 +601,7 @@ module Noir
 
       return unless Noir::TreeSitter.node_type(operand) == "identifier"
       router_name = Noir::TreeSitter.node_text(operand, source)
+      return if NON_ROUTER_OPERANDS.includes?(router_name)
 
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
@@ -735,6 +766,12 @@ module Noir
       verb = Noir::TreeSitter.node_text(field, source)
       return unless HTTP_VERB_METHODS.includes?(verb) || extra_verbs.includes?(verb)
 
+      router_name = Noir::TreeSitter.node_text(operand, source)
+      # Reject known non-router operands so call shapes like
+      # `gjson.Get(json, path)`, `header.Get("Content-Type")`, or
+      # `params.Get("user")` don't surface as endpoints.
+      return if NON_ROUTER_OPERANDS.includes?(router_name)
+
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
 
@@ -757,7 +794,6 @@ module Noir
 
       return unless raw_path
 
-      router_name = Noir::TreeSitter.node_text(operand, source)
       resolved = if prefix = groups[router_name]?
                    join_paths(prefix, raw_path)
                  else
@@ -815,6 +851,7 @@ module Noir
       return if method_lit.empty? || path_lit.empty?
 
       router_name = Noir::TreeSitter.node_text(operand, source)
+      return if NON_ROUTER_OPERANDS.includes?(router_name)
       resolved = if prefix = groups[router_name]?
                    join_paths(prefix, path_lit)
                  else
@@ -931,6 +968,7 @@ module Noir
       verbs << "GET" if verbs.empty?
 
       router_name = Noir::TreeSitter.node_text(router_node, source)
+      return [] of Route if NON_ROUTER_OPERANDS.includes?(router_name)
       resolved = if prefix = groups[router_name]?
                    join_paths(prefix, raw_path)
                  else
