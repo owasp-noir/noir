@@ -58,15 +58,48 @@ module Analyzer::Python
         end
 
         # `xxx.add_route('/path', ResourceClass(), suffix='item')`
-        # Path argument preserves original spacing (we match the raw line).
-        if route_match = line.match(/\.add_route\s*\(\s*[rf]?['"]([^'"]*)['"]\s*,\s*([a-zA-Z_][a-zA-Z0-9_]*)/)
-          route_path = route_match[1]
-          class_name = route_match[2]
-          suffix = ""
-          if suffix_match = line.match(/suffix\s*=\s*['"]([^'"]*)['"]/)
-            suffix = suffix_match[1]
+        #
+        # Multi-line variants:
+        #   app.add_route(
+        #     "/path",
+        #     ResourceClass(),
+        #   )
+        #
+        # Keyword variants (Falcon 2/3+):
+        #   app.add_route(uri_template="/path", resource=ResourceClass())
+        #
+        # Coalesce continuation lines so the path/class regex sees
+        # them on the same logical line, then run the existing
+        # positional regex *and* a keyword-form regex.
+        if line.includes?(".add_route") && line.includes?("(")
+          effective_line = python_paren_delta(line) > 0 ? join_until_python_call_closes(lines, line_index, line) : line
+
+          route_match = effective_line.match(/\.add_route\s*\(\s*[rf]?['"]([^'"]*)['"]\s*,\s*([a-zA-Z_][a-zA-Z0-9_]*)/)
+          if route_match
+            route_path = route_match[1]
+            class_name = route_match[2]
+            suffix = ""
+            if suffix_match = effective_line.match(/suffix\s*=\s*['"]([^'"]*)['"]/)
+              suffix = suffix_match[1]
+            end
+            routes << {line_index, route_path, class_name, suffix}
+          else
+            # Keyword form. `uri_template=` / `path=` for the path
+            # (`path=` accepted because some Falcon helper APIs and
+            # older docs use it interchangeably); `resource=` for the
+            # responder.
+            kw_path_match = effective_line.match(/(?:uri_template|path)\s*=\s*[rf]?['"]([^'"]*)['"]/)
+            kw_resource_match = effective_line.match(/resource\s*=\s*([a-zA-Z_][a-zA-Z0-9_]*)/)
+            if kw_path_match && kw_resource_match
+              route_path = kw_path_match[1]
+              class_name = kw_resource_match[1]
+              suffix = ""
+              if suffix_match = effective_line.match(/suffix\s*=\s*['"]([^'"]*)['"]/)
+                suffix = suffix_match[1]
+              end
+              routes << {line_index, route_path, class_name, suffix}
+            end
           end
-          routes << {line_index, route_path, class_name, suffix}
         end
       end
 
