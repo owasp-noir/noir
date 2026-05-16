@@ -7,7 +7,7 @@ module Analyzer::Ruby
     alias PrefixEntry = NamedTuple(depth: Int32, segments: Array(String), path_params: Array(String))
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?)
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
       parallel_file_scan do |path|
         next unless path.ends_with?(".rb")

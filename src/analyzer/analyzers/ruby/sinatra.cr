@@ -3,7 +3,7 @@ require "../../engines/ruby_engine"
 module Analyzer::Ruby
   class Sinatra < RubyEngine
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?)
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
       parallel_file_scan do |path|
         next unless path.ends_with?(".rb") || path.ends_with?(".ru")
