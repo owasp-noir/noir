@@ -56,6 +56,14 @@ class Analyzer
     File.read(path, encoding: "utf-8", invalid: :skip)
   end
 
+  # Callees feed `--include-callee` (direct output) and `--ai-context`
+  # (aggregated review context). Analyzers should consult this before
+  # running their callee extractor so the work is skipped on default
+  # scans where neither flag is set.
+  def callees_needed? : Bool
+    any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+  end
+
   def parallel_analyze(channel : Channel(String), &block : String -> Nil)
     WaitGroup.wait do |wg|
       worker_count = @options["concurrency"].to_s.to_i

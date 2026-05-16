@@ -78,6 +78,15 @@ module Noir::GoCalleeExtractor
     bodies
   end
 
+  # Like `package_function_bodies`, but returns an empty map immediately
+  # when `enabled` is false. Module-level twin of the
+  # `GoEngine#collect_package_function_bodies` gate for analyzers that
+  # don't inherit from `GoEngine`.
+  def package_function_bodies_if(enabled : Bool, file_contents : Hash(String, String)) : Hash(String, Hash(String, FunctionBody))
+    return Hash(String, Hash(String, FunctionBody)).new unless enabled
+    package_function_bodies(file_contents)
+  end
+
   # Returns the cross-file function-body map for the given directory,
   # or an empty map. Mirrors `GoEngine#ts_function_bodies_for_directory`.
   def function_bodies_for_directory(package_bodies : Hash(String, Hash(String, FunctionBody)), dir : String) : Hash(String, FunctionBody)
@@ -103,6 +112,18 @@ module Noir::GoCalleeExtractor
       end
     end
     bodies
+  end
+
+  # Like `callees_for_routes`, but returns an empty map immediately when
+  # `enabled` is false. Lets analyzers skip the tree-sitter walk on
+  # default scans where callees won't be observed.
+  def callees_for_routes_if(enabled : Bool,
+                            source : String,
+                            file_path : String,
+                            route_rows : Set(Int32),
+                            external_functions : Hash(String, FunctionBody))
+    return Hash(Int32, Array(Tuple(String, String, Int32))).new unless enabled
+    callees_for_routes(source, file_path, route_rows, external_functions)
   end
 
   # For each call_expression at a row in `route_rows`, find the handler

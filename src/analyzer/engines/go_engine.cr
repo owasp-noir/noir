@@ -77,6 +77,7 @@ module Analyzer::Go
     # worry about cross-package leakage.
     def collect_package_function_bodies(file_contents : Hash(String, String)) : Hash(String, Hash(String, Noir::GoCalleeExtractor::FunctionBody))
       result = Hash(String, Hash(String, Noir::GoCalleeExtractor::FunctionBody)).new
+      return result unless callees_needed?
       file_contents.each do |path, content|
         dir = File.dirname(path)
         fns = Noir::GoCalleeExtractor.collect_function_bodies(content, path)

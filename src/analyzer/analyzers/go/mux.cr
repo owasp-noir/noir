@@ -48,7 +48,7 @@ module Analyzer::Go
                     route_rows = Set(Int32).new
                     routes_by_line.each_key { |row| route_rows << row }
                     external_fns = ts_function_bodies_for_directory(package_function_bodies, File.dirname(path))
-                    callees_by_route = Noir::GoCalleeExtractor.callees_for_routes(content, path, route_rows, external_fns)
+                    callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
 
                     # Mux static-file: `r.PathPrefix("/x/").Handler(... http.Dir("./x/") ...)`
                     Noir::TreeSitterGoRouteExtractor.extract_mux_statics(content).each do |sp|

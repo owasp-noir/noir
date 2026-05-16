@@ -56,7 +56,7 @@ module Analyzer::Go
       # isolated route walk and would need separate wiring. Tracking
       # that as a follow-up; for now Mount endpoints keep an empty
       # callees list.
-      package_function_bodies = Noir::GoCalleeExtractor.package_function_bodies(file_contents_cache)
+      package_function_bodies = Noir::GoCalleeExtractor.package_function_bodies_if(callees_needed?, file_contents_cache)
 
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       begin
@@ -96,7 +96,7 @@ module Analyzer::Go
                   route_rows = Set(Int32).new
                   routes_by_line.each_key { |row| route_rows << row }
                   external_fns = Noir::GoCalleeExtractor.function_bodies_for_directory(package_function_bodies, dir)
-                  callees_by_route = Noir::GoCalleeExtractor.callees_for_routes(content, path, route_rows, external_fns)
+                  callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
 
                   state = ChiRouteState.new
                   last_endpoint = Endpoint.new("", "")
