@@ -23,6 +23,15 @@ module Noir
 
       begin
         content = content || File.read(file_path, encoding: "utf-8", invalid: :skip)
+
+        # Cheap pre-filter: every shape the JSParser knows about ends
+        # in a verb call (`x.get(`, `.post(`, ...), a Fastify/Restify
+        # `.route(` registration, or an Express-style mount (`.use(`).
+        # Skip the lex+parse pass entirely for files that contain none
+        # of these — UI components, fixtures, helpers, third-party JS
+        # bundles — so a large frontend tree doesn't pay parser cost
+        # for files that can't host an endpoint.
+        return [] of Endpoint unless route_call_candidate?(content)
         parser = JSParser.new(content)
         route_patterns = parser.parse_routes
         callees_by_route = if include_callees
@@ -234,6 +243,25 @@ module Noir
         # If parser fails, return empty array
         [] of Endpoint
       end
+    end
+
+    # Pre-filter for `extract_routes`: returns false when `content`
+    # contains no shape the JS parser knows how to emit (any verb
+    # invocation pattern like `.get(`/`.post(`/... or Fastify/Restify
+    # `.route(`, plus Express-style mounts `.use(` which feed into the
+    # cross-file router prefix table). Substring-checking is millions
+    # of times cheaper than tokenizing the file.
+    PARSER_ROUTE_CALL_HINTS = [
+      ".get(", ".post(", ".put(", ".delete(", ".patch(",
+      ".options(", ".head(", ".all(",
+      ".route(", ".register(", ".use(",
+      ".get (", ".post (", ".put (", ".delete (", ".patch (",
+      ".options (", ".head (", ".all (",
+      ".route (", ".register (", ".use (",
+    ]
+
+    def self.route_call_candidate?(content : String) : Bool
+      PARSER_ROUTE_CALL_HINTS.any? { |hint| content.includes?(hint) }
     end
 
     def self.attach_callees(endpoint : Endpoint,
