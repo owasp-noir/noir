@@ -9,6 +9,7 @@ module Analyzer::Java
     REGEX_ROUTE_CODE_LINE   = /((?:andRoute|route)\s*\(|\.)\s*(GET|POST|DELETE|PUT)\(\s*"([^"]*)/
 
     def analyze
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       webflux_base_path_map = Hash(String, String).new
       dto_builder = Noir::TreeSitterJavaDtoIndex.new
 
@@ -111,7 +112,7 @@ module Analyzer::Java
                 # definition resolution is intentionally out of scope —
                 # `Callee#path` points at the call site, matching every
                 # other analyzer's first-cut honest scope.
-                unless route.class_name.empty? || route.method_name.empty?
+                if include_callee && !(route.class_name.empty? || route.method_name.empty?)
                   Noir::JavaCalleeExtractor.callees_in_method(
                     root, content, path, route.class_name, route.method_name
                   ).each do |entry|

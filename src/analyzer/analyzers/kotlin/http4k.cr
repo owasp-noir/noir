@@ -7,6 +7,7 @@ module Analyzer::Kotlin
     HTTP4K_MARKER    = "org.http4k"
 
     def analyze
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       file_list = all_files()
       file_list.each do |path|
         next unless File.exists?(path)
@@ -15,7 +16,7 @@ module Analyzer::Kotlin
         content = read_file_content(path)
         next unless content.includes?(HTTP4K_MARKER)
 
-        Noir::TreeSitterHttp4kExtractor.extract_routes(content).each do |route|
+        Noir::TreeSitterHttp4kExtractor.extract_routes(content, include_callees: include_callee).each do |route|
           @result << build_endpoint(route, path)
         end
       end

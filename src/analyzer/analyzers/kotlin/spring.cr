@@ -148,6 +148,7 @@ module Analyzer::Kotlin
                                     dto_builder : Noir::TreeSitterKotlinDtoIndex,
                                     webflux_base_path_map : Hash(String, String),
                                     string_constants : Hash(String, String))
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       content = read_file_content(path)
 
       # Single tree-sitter parse for the whole file — every
@@ -213,7 +214,7 @@ module Analyzer::Kotlin
           # definition resolution is intentionally out of scope —
           # `Callee#path` points at the call site, matching every
           # other analyzer's first-cut honest scope.
-          unless route.class_name.empty? || route.method_name.empty?
+          if include_callee && !(route.class_name.empty? || route.method_name.empty?)
             Noir::KotlinCalleeExtractor.callees_in_method(
               root, content, path, route.class_name, route.method_name
             ).each do |entry|

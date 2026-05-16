@@ -6,6 +6,7 @@ module Analyzer::Kotlin
     KOTLIN_EXTENSION = "kt"
 
     def analyze
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       file_list = all_files()
       file_list.each do |path|
         next unless File.exists?(path)
@@ -14,7 +15,7 @@ module Analyzer::Kotlin
         content = read_file_content(path)
         next unless content.includes?("routing")
 
-        Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(content).each do |route|
+        Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(content, include_callees: include_callee).each do |route|
           @result << build_endpoint(route, path)
         end
       end

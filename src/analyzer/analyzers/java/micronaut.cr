@@ -7,6 +7,7 @@ module Analyzer::Java
     MICRONAUT_MARKERS = ["io.micronaut", "micronaut.io"]
 
     def analyze
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       dto_builder = Noir::TreeSitterJavaDtoIndex.new
 
       file_list = all_files()
@@ -22,7 +23,7 @@ module Analyzer::Java
 
         dto_index = dto_builder.build_for(path, content)
 
-        Noir::TreeSitterMicronautExtractor.extract_routes(content, dto_index).each do |route|
+        Noir::TreeSitterMicronautExtractor.extract_routes(content, dto_index, include_callees: include_callee).each do |route|
           line = route.line + 1
           details = Details.new(PathInfo.new(path, line))
           endpoint = Endpoint.new(route.path, route.verb, route.params, details)

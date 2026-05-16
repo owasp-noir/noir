@@ -94,10 +94,12 @@ module Noir
     # expansion (typically built via `TreeSitterJavaDtoIndex`).
     def extract_routes(source : String,
                        dto_index : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)) = {} of String => Array(TreeSitterJavaParameterExtractor::FieldInfo),
-                       bean_index : Hash(String, Array(Param)) = {} of String => Array(Param)) : Array(Route)
+                       bean_index : Hash(String, Array(Param)) = {} of String => Array(Param),
+                       *,
+                       include_callees : Bool = false) : Array(Route)
       routes = [] of Route
       Noir::TreeSitter.parse_java(source) do |root|
-        routes.concat(extract_routes_from(root, source, dto_index, bean_index))
+        routes.concat(extract_routes_from(root, source, dto_index, bean_index, include_callees: include_callees))
       end
       routes
     end
@@ -108,10 +110,12 @@ module Noir
     def extract_routes_from(root : LibTreeSitter::TSNode,
                             source : String,
                             dto_index : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)) = {} of String => Array(TreeSitterJavaParameterExtractor::FieldInfo),
-                            bean_index : Hash(String, Array(Param)) = {} of String => Array(Param)) : Array(Route)
+                            bean_index : Hash(String, Array(Param)) = {} of String => Array(Param),
+                            *,
+                            include_callees : Bool = false) : Array(Route)
       routes = [] of Route
       walk_classes(root) do |decl|
-        collect_class_routes(decl, source, dto_index, bean_index, routes)
+        collect_class_routes(decl, source, dto_index, bean_index, routes, include_callees)
       end
       routes
     end
@@ -155,7 +159,8 @@ module Noir
                                      source : String,
                                      dto_index : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)),
                                      bean_index : Hash(String, Array(Param)),
-                                     routes : Array(Route))
+                                     routes : Array(Route),
+                                     include_callees : Bool = false)
       class_name = type_identifier_text(decl, source)
       class_path = annotation_string_value(decl, "Path", source) || ""
       class_consumes = consumes_format(decl, source)
@@ -188,7 +193,7 @@ module Noir
           dto_index, bean_index)
 
         line = Noir::TreeSitter.node_start_row(verb_node)
-        callees = collect_method_callees(member, source)
+        callees = include_callees ? collect_method_callees(member, source) : [] of Tuple(String, Int32)
         routes << Route.new(verb, full_path, class_name, method_name, line,
           method_consumes, params, callees)
       end

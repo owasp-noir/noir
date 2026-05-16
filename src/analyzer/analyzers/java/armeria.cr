@@ -146,6 +146,7 @@ module Analyzer::Java
     private def collect_method_callees(method : LibTreeSitter::TSNode,
                                        content : String,
                                        path : String) : Array(Tuple(String, String, Int32))
+      return [] of Tuple(String, String, Int32) unless any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       body = Noir::TreeSitter.field(method, "body")
       return [] of Tuple(String, String, Int32) unless body
 
