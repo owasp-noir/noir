@@ -18,7 +18,7 @@ module Analyzer::Elixir
 
     def analyze_content(content : String, file_path : String) : Array(Endpoint)
       endpoints = Array(Endpoint).new
-      include_callee = any_to_bool(@options["include_callee"]?)
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
       # Find all route blocks and extract params
       lines = content.lines
