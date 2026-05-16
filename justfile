@@ -1,4 +1,5 @@
 alias b := build
+alias br := build-release
 alias ds := docs-serve
 alias dsup := docs-supported
 alias vc := version-check
@@ -8,10 +9,15 @@ alias vu := version-update
 default:
     @just --list
 
-# Build noir binary.
+# Build noir binary (debug; fast incremental compile, slower runtime).
 [group('build')]
 build:
     shards build
+
+# Build noir binary with --release (slower compile, 2–3x faster runtime; use for benchmarks).
+[group('build')]
+build-release:
+    shards build --release
 
 # Update shards.nix.
 [group('build')]
