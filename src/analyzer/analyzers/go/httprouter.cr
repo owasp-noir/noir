@@ -27,7 +27,7 @@ module Analyzer::Go
           # skip
         end
       end
-      package_function_bodies = Noir::GoCalleeExtractor.package_function_bodies(file_contents)
+      package_function_bodies = Noir::GoCalleeExtractor.package_function_bodies_if(callees_needed?, file_contents)
 
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       begin
@@ -69,7 +69,7 @@ module Analyzer::Go
                     route_rows = Set(Int32).new
                     routes_by_line.each_key { |row| route_rows << row }
                     external_fns = Noir::GoCalleeExtractor.function_bodies_for_directory(package_function_bodies, File.dirname(path))
-                    callees_by_route = Noir::GoCalleeExtractor.callees_for_routes(content, path, route_rows, external_fns)
+                    callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
 
                     lines.each_with_index do |line, index|
                       details = Details.new(PathInfo.new(path, index + 1))
