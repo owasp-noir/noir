@@ -25,6 +25,10 @@ module Detector::Specification
       check
     end
 
+    def applicable?(filename : String) : Bool
+      filename.ends_with?(".json")
+    end
+
     def set_name
       @name = "postman"
     end
