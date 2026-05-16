@@ -66,7 +66,7 @@ module Analyzer::Elixir
 
     def extract_params_from_controller(content : String, controller_name : String, controller_path : String)
       lines = content.lines
-      include_callee = any_to_bool(@options["include_callee"]?)
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
       # Find all function definitions and extract parameters
       lines.each_with_index do |line, index|
