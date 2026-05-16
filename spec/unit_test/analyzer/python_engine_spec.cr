@@ -19,7 +19,9 @@ end
 
 describe Analyzer::Python::PythonEngine do
   it "keeps call-site coordinates when a Python callee definition is unreachable" do
-    harness = PythonEngineSpecHarness.new(create_test_options)
+    options = create_test_options
+    options["include_callee"] = YAML::Any.new(true)
+    harness = PythonEngineSpecHarness.new(options)
     source = <<-PY
       def handler():
           unknown_call()

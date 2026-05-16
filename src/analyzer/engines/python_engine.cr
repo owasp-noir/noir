@@ -298,6 +298,7 @@ module Analyzer::Python
                            *,
                            definition_base_path : ::String? = nil,
                            source : ::String? = nil) : Array(Callee)
+      return [] of Callee unless callees_needed?
       return [] of Callee if body.empty?
       callees = Noir::PythonCalleeExtractor.calls_in(body).map do |entry|
         name, row = entry
@@ -307,6 +308,14 @@ module Analyzer::Python
       return callees unless base_path = definition_base_path
 
       resolve_python_callee_definitions(callees, base_path, path, source)
+    end
+
+    # Callees feed both `--include-callee` (direct output) and `--ai-context`
+    # (aggregated review context). Skip the tree-sitter walk and import-graph
+    # resolution when neither flag is set so default Python scans avoid the
+    # per-handler callee build.
+    private def callees_needed? : Bool
+      any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
     end
 
     # Convenience wrapper around `build_callees_from`: parse + push in
