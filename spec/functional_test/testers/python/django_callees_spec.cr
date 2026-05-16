@@ -59,7 +59,9 @@ expected_endpoints = [
 tester = FunctionalTester.new("fixtures/python/django_callees/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
-}, expected_endpoints)
+}, expected_endpoints, {
+  "include_callee" => YAML::Any.new(true),
+})
 tester.perform_tests
 
 it "keeps Django class-based view callees scoped to each HTTP method" do
