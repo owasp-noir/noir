@@ -118,12 +118,44 @@ module Analyzer::Python
                 end
                 handler_routes[path] << {route_path, method, line_index, handler_name}
               end
+
+              # Style C: `web.<method>("/path", handler)` route entries that
+              # live inside `app.add_routes([...])` lists or in a
+              # standalone `routes = [...]` literal passed to
+              # `app.add_routes(routes)`. The list itself doesn't need
+              # tracking — every `web.<method>(...)` call only exists as a
+              # route declaration in real aiohttp code. Multi-line entries
+              # are coalesced by `join_until_python_call_closes` so the
+              # path/handler regex sees the full call.
+              if stripped.match(/\bweb\.(?:#{methods_re})\s*\(/)
+                effective_line = python_paren_delta(line) > 0 ? join_until_python_call_closes(lines, line_index, line) : line
+                effective_line.scan(/\bweb\.(#{methods_re})\s*\(\s*[rf]?['"]([^'"]*)['"]\s*,\s*(?:handler\s*=\s*)?(#{DOT_NATION})/) do |web_match|
+                  next if web_match.size < 4
+                  method_name = web_match[1]
+                  route_path = web_match[2]
+                  handler_name = web_match[3]
+                  handler_routes[path] << {route_path, method_name.upcase, line_index, handler_name}
+                end
+              end
             end
 
             # Resolve add_X handler references by finding their def lines.
             handler_routes[path].each do |route_path, method, line_index, handler_name|
               def_index = find_handler_def(lines, handler_name)
-              next if def_index.nil?
+              if def_index.nil?
+                # Handler is defined in another module (common with
+                # `app.add_routes([web.get("/x", handler_from_other_file)])`).
+                # Emit the endpoint anyway with path params parsed from
+                # the route literal; the body-side param extraction is
+                # skipped because there's no local def to walk.
+                details = Details.new(PathInfo.new(path, line_index + 1))
+                endpoint = Endpoint.new(route_path, method, details)
+                route_path.scan(/\{(\w+)(?::[^}]+)?\}/) do |path_match|
+                  endpoint.push_param(Param.new(path_match[1], "", "path"))
+                end
+                result << endpoint
+                next
+              end
               emit_endpoint(
                 path,
                 lines,
