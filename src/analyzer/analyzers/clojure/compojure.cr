@@ -17,7 +17,7 @@ module Analyzer::Clojure
     CLOJURE_EXTENSIONS = {".clj", ".cljc", ".cljs"}
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?)
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       all_files.each do |path|
         next unless clojure_file?(path)
 
