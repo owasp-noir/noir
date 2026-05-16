@@ -471,7 +471,7 @@ module Analyzer::Ruby
       File.open(path, "r", encoding: "utf-8", invalid: :skip) do |controller_file|
         controller_content = controller_file.gets_to_end
         param_type = "json" if controller_content.includes?("render json:")
-        callees_by_action = extract_action_callees(controller_content, path)
+        callees_by_action = extract_action_callees(controller_content, path) if callees_needed?
 
         controller_file.rewind
         this_method = ""
@@ -700,14 +700,17 @@ module Analyzer::Ruby
     end
 
     private def attach_callees_for_action(endpoint : Endpoint, data : ControllerData, action : String)
-      return unless include_callee?
+      return unless callees_needed?
       if callees = data.callees_by_action[action]?
         attach_ruby_callees(endpoint, callees)
       end
     end
 
-    private def include_callee? : Bool
-      any_to_bool(@options["include_callee"]?)
+    # Callees feed both `--include-callee` (direct output) and `--ai-context`
+    # (aggregated review context). Extraction is skipped when neither flag is
+    # set so default scans avoid the controller-body walk per action.
+    private def callees_needed? : Bool
+      any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
     end
 
     private def parent_resources_frame(stack : Array(Frame)) : Frame?
