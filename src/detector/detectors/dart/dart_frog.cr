@@ -28,6 +28,10 @@ module Detector::Dart
       false
     end
 
+    def applicable?(filename : String) : Bool
+      filename.ends_with?(".dart") || File.basename(filename) == "pubspec.yaml" || File.basename(filename) == "pubspec.lock"
+    end
+
     def set_name
       @name = "dart_frog"
     end

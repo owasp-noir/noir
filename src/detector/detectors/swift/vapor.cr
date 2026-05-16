@@ -16,6 +16,10 @@ module Detector::Swift
       check
     end
 
+    def applicable?(filename : String) : Bool
+      filename.ends_with?(".swift") || File.basename(filename) == "Package.swift"
+    end
+
     def set_name
       @name = "swift_vapor"
     end

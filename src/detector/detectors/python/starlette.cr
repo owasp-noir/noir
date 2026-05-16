@@ -10,6 +10,10 @@ module Detector::Python
       end
     end
 
+    def applicable?(filename : String) : Bool
+      filename.ends_with?(".py")
+    end
+
     def set_name
       @name = "python_starlette"
     end

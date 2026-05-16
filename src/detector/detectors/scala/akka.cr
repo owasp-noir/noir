@@ -10,6 +10,10 @@ module Detector::Scala
       false
     end
 
+    def applicable?(filename : String) : Bool
+      filename.ends_with?(".scala") || filename.ends_with?(".sbt") || File.basename(filename) == "build.sbt"
+    end
+
     def set_name
       @name = "scala_akka"
     end

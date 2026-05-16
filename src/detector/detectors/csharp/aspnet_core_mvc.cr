@@ -33,6 +33,10 @@ module Detector::CSharp
       detected
     end
 
+    def applicable?(filename : String) : Bool
+      filename.ends_with?(".cs") || filename.ends_with?(".csproj") || filename.ends_with?(".vbproj") || filename.ends_with?(".sln") || filename.ends_with?(".json") || filename.ends_with?(".config")
+    end
+
     def set_name
       @name = "cs_aspnet_core_mvc"
     end

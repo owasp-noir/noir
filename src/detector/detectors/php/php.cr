@@ -11,6 +11,10 @@ module Detector::Php
       check
     end
 
+    def applicable?(filename : String) : Bool
+      filename.ends_with?(".php") || filename.ends_with?(".phtml") || File.basename(filename) == "composer.json" || File.basename(filename) == "composer.lock"
+    end
+
     def set_name
       @name = "php_pure"
     end

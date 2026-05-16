@@ -6,6 +6,10 @@ module Detector::Go
       (filename.includes? "go.mod") && (file_contents.includes? "github.com/gogf/gf")
     end
 
+    def applicable?(filename : String) : Bool
+      filename.includes?("go.mod") || filename.ends_with?(".go")
+    end
+
     def set_name
       @name = "go_gf"
     end

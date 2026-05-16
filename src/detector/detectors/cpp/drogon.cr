@@ -20,6 +20,10 @@ module Detector::Cpp
       false
     end
 
+    def applicable?(filename : String) : Bool
+      filename.ends_with?(".cpp") || filename.ends_with?(".cc") || filename.ends_with?(".cxx") || filename.ends_with?(".c") || filename.ends_with?(".h") || filename.ends_with?(".hpp") || filename.ends_with?(".hxx")
+    end
+
     def set_name
       @name = "cpp_drogon"
     end
