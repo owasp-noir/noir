@@ -32,6 +32,10 @@ module Detector::Specification
       check
     end
 
+    def applicable?(filename : String) : Bool
+      filename.ends_with?(".json") || filename.ends_with?(".yaml") || filename.ends_with?(".yml")
+    end
+
     def set_name
       @name = "oas3"
     end

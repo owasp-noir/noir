@@ -22,6 +22,10 @@ module Detector::Specification
       check
     end
 
+    def applicable?(filename : String) : Bool
+      filename.ends_with?(".yaml") || filename.ends_with?(".yml")
+    end
+
     def set_name
       @name = "zap_sites_tree"
     end

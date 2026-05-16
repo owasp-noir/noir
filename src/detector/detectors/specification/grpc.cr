@@ -15,6 +15,10 @@ module Detector::Specification
       false
     end
 
+    def applicable?(filename : String) : Bool
+      filename.ends_with?(".proto")
+    end
+
     def set_name
       @name = "grpc"
     end
