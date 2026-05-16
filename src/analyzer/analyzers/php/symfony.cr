@@ -4,7 +4,7 @@ module Analyzer::Php
   class Symfony < PhpEngine
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      include_callee = any_to_bool(@options["include_callee"]?)
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
       # Analyze PHP controller files
       if path.ends_with?(".php")

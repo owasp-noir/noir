@@ -11,7 +11,7 @@ module Analyzer::Javascript
     protected def analyze_with_extensions(extensions : Array(String)) : Array(Endpoint)
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
-      include_callee = any_to_bool(@options["include_callee"]?)
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
       parallel_file_scan(extensions) do |path|
         analyze_nestjs_file(path, result, static_dirs, include_callee)

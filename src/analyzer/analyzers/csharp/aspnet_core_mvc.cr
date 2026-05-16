@@ -8,7 +8,7 @@ module Analyzer::CSharp
     DEFAULT_ROUTE = "{controller=Home}/{action=Index}/{id?}"
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?)
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       route_patterns = load_route_patterns
       analyze_controllers(route_patterns, include_callee)
       analyze_route_builder_endpoints(include_callee)

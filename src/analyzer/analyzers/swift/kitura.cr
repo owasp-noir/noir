@@ -17,7 +17,7 @@ module Analyzer::Swift
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
-      include_callee = any_to_bool(@options["include_callee"]?)
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       handler_bodies = include_callee ? named_handler_bodies(lines) : {} of String => Tuple(String, Int32)
 
       lines.each_with_index do |line, index|

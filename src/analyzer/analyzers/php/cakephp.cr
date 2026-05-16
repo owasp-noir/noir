@@ -15,7 +15,7 @@ module Analyzer::Php
 
     private def analyze_routes_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      include_callee = any_to_bool(@options["include_callee"]?)
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       begin
         File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
           content = file.gets_to_end

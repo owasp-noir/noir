@@ -19,7 +19,7 @@ module Analyzer::Cpp
     BODY_ACCESS      = /\b(req|request)\s*\.\s*body\b/
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?)
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
       begin

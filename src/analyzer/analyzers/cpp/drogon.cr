@@ -26,7 +26,7 @@ module Analyzer::Cpp
     REGEX_ADD_METHOD       = /ADD_METHOD_TO\s*\(\s*([^,]+)\s*,\s*"([^"]+)"\s*,\s*([^)]+)\)/
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?)
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
       begin
