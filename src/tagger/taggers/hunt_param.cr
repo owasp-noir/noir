@@ -2,7 +2,7 @@ require "../../models/tagger"
 require "../../models/endpoint"
 
 class HuntParamTagger < Tagger
-  PATH_ALLOWED_TAGS = Set{"idor", "file-inclusion"}
+  PATH_ALLOWED_TAGS     = Set{"idor", "file-inclusion"}
   BODY_LIKE_PARAM_TYPES = Set{"json", "form"}
 
   TAG_DEFINITIONS = {

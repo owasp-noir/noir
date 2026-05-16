@@ -46,7 +46,7 @@ describe "--ai-context on Rails auth fixtures" do
     create_context = create_context.should_not be_nil
     create_context.guards.size.should eq(1)
     create_context.guards[0].source.should eq("ruby_auth")
-    create_endpoint.params.map(&.name).sort.should eq(["body", "title"])
+    create_endpoint.params.map(&.name).sort!.should eq(["body", "title"])
     create_context.signals.map(&.kind).should contain("state_change")
     create_context.signals.map(&.kind).should_not contain("identifier_input")
     create_context.signals.map(&.kind).should_not contain("idor")

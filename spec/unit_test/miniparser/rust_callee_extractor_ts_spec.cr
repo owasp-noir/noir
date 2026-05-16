@@ -91,10 +91,10 @@ describe Noir::RustCalleeExtractorTS do
         Noir::TreeSitter.each_named_child(root) do |c|
           fn_node = c if Noir::TreeSitter.node_type(c) == "function_item"
         end
-        fn_node.should_not be_nil
-        body = Noir::TreeSitter.field(fn_node.not_nil!, "body")
-        body.should_not be_nil
-        Noir::RustCalleeExtractorTS.callees_in_body(body.not_nil!, source, "handler.rs").each do |name, _, line|
+        fn_node_unwrapped = fn_node.should_not be_nil
+        body = Noir::TreeSitter.field(fn_node_unwrapped, "body")
+        body_unwrapped = body.should_not be_nil
+        Noir::RustCalleeExtractorTS.callees_in_body(body_unwrapped, source, "handler.rs").each do |name, _, line|
           found << {name, line}
         end
       end
