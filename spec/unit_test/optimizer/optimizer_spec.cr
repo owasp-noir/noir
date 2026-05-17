@@ -67,6 +67,28 @@ describe "EndpointOptimizer" do
       result[1].url.should eq("/files/{path}")
       result[2].url.should eq("/a/{x}/b/{y}")
     end
+
+    it "normalizes Django re_path named groups even when the body contains \\d / \\w classes" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/(?P<organization_slug>[^/]+)/issues/(?P<group_id>\\d+)/", "GET"),
+        Endpoint.new("/api/0/(?P<event_id>[A-Fa-f0-9-]{32,36})/", "GET"),
+      ]
+
+      result = optimizer.normalize_url_shapes(endpoints)
+      result[0].url.should eq("/{organization_slug}/issues/{group_id}/")
+      result[1].url.should eq("/api/0/{event_id}/")
+    end
+
+    it "still skips verbatim Express regex-literal routes" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/^\\/api\\/(\\d+)$/", "GET"),
+      ]
+
+      result = optimizer.normalize_url_shapes(endpoints)
+      result[0].url.should eq("/^\\/api\\/(\\d+)$/")
+    end
   end
 
   describe "combine_url_and_endpoints" do
