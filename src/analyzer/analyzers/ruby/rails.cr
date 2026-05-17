@@ -265,10 +265,61 @@ module Analyzer::Ruby
             next
           end
 
+          # `match` — Rails legacy multi-verb route. Requires `via:`
+          # (or, on older codebases, defaults to ANY). Emits one
+          # endpoint per verb listed under via, all sharing the
+          # same path/controller#action.
+          if line.starts_with?("match ") || line.starts_with?("match\t") || line.starts_with?("match'") || line.starts_with?("match\"")
+            rest = line.lchop("match")
+            if sm = rest.match(/^\s*['"]([^'"]+)['"]/)
+              path = sm[1]
+              prefix = current_path_prefix(stack)
+              path_part = path.starts_with?("/") ? path : "/#{path}"
+              url = prefix.empty? ? path_part : "/#{prefix}#{path_part}"
+
+              match_verbs = parse_match_verbs(rest)
+              ctrl_action = parse_controller_action(rest)
+
+              ctrl_path = nil.as(String?)
+              action_name = nil.as(String?)
+              if ctrl_action
+                ctrl_name, action = ctrl_action
+                ctrl_path = find_controller_file(framework_root, ctrl_name, stack)
+                action_name = action
+              end
+
+              match_verbs.each do |match_verb|
+                action_params = if name = action_name
+                                  params_for_action(ctrl_path, name, match_verb)
+                                else
+                                  [] of Param
+                                end
+                endpoint = Endpoint.new(url, match_verb, action_params, details)
+                attach_callees_for_action(endpoint, ctrl_path, action_name) if action_name
+                @result << endpoint
+              end
+            end
+            next
+          end
+
           # Unknown DSL line that still opens a block (e.g. `constraints ... do`).
           stack << Frame.new(:neutral) if opens_block
         end
       end
+    end
+
+    # Pull the verb list out of a `match ... :via => :get` or
+    # `match ... via: [:get, :post]` declaration. Returns the
+    # single-element `["ANY"]` when `via:` is missing or empty —
+    # modern Rails raises in that case but the older Redmine
+    # idiom is permissive.
+    private def parse_match_verbs(rest : String) : Array(String)
+      via_match = rest.match(/:?via\s*(?:=>|:)\s*(\[[^\]]+\]|:\w+)/)
+      return ["ANY"] unless via_match
+      tail = via_match[1]
+      verbs = [] of String
+      tail.scan(/:(\w+)/) { |sm| verbs << sm[1].upcase }
+      verbs.empty? ? ["ANY"] : verbs.uniq
     end
 
     private def strip_inline_comment(line : String) : String
