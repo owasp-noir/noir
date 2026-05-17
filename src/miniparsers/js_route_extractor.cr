@@ -32,6 +32,13 @@ module Noir
         # bundles — so a large frontend tree doesn't pay parser cost
         # for files that can't host an endpoint.
         return [] of Endpoint unless route_call_candidate?(content)
+        # Skip mock-server fixtures (pretender/mirage/MSW/nock).
+        # Their `server.get(...)` / handler-builder calls match the
+        # parser's route shape but are not real registrations; on
+        # Ember-based projects (Discourse, etc.) these files account
+        # for the bulk of analysis time and produce only false
+        # positives.
+        return [] of Endpoint if test_stub_only?(file_path, content)
         parser = JSParser.new(content)
         route_patterns = parser.parse_routes
         callees_by_route = if include_callees
@@ -268,6 +275,75 @@ module Noir
 
     def self.route_call_candidate?(content : String) : Bool
       PARSER_ROUTE_CALL_HINTS.any? { |hint| content.includes?(hint) }
+    end
+
+    # Test-fixture libraries whose API mimics route registration:
+    # `pretender`/`miragejs` expose `server.get("/x", ...)`, MSW and
+    # nock expose handler builders, sinon-via-faker likewise. When
+    # these libraries are imported, virtually every route-shaped call
+    # in the file is a stub, not a real registration. Substring match
+    # is enough — these tokens never appear in production HTTP server
+    # source under normal circumstances.
+    TEST_STUB_LIBRARY_MARKERS = [
+      "pretender",
+      "miragejs",
+      "ember-cli-mirage",
+      "from \"msw\"", "from 'msw'",
+      "from \"msw/", "from 'msw/",
+      "require(\"msw\")", "require('msw')",
+      "from \"nock\"", "from 'nock'",
+      "require(\"nock\")", "require('nock')",
+      "setupApplicationTest",
+      "setupRenderingTest",
+    ]
+
+    # Real HTTP-server library imports. When any of these is present
+    # alongside a test-stub marker, the file is doing legitimate
+    # server work (e.g., spinning up a test instance of an Express
+    # app) and we still want to extract its routes.
+    HTTP_SERVER_LIBRARY_MARKERS = [
+      "from \"express\"", "from 'express'",
+      "require(\"express\")", "require('express')",
+      "from \"fastify\"", "from 'fastify'",
+      "require(\"fastify\")", "require('fastify')",
+      "from \"koa\"", "from 'koa'",
+      "require(\"koa\")", "require('koa')",
+      "from \"hono\"", "from 'hono'",
+      "require(\"hono\")", "require('hono')",
+      "from \"restify\"", "from 'restify'",
+      "require(\"restify\")", "require('restify')",
+      "from \"polka\"", "from 'polka'",
+      "from \"h3\"", "from 'h3'",
+      "from \"@nestjs/", "from '@nestjs/",
+    ]
+
+    # Path-level evidence that a file is a mock-server fixture.
+    # Pretender helpers in particular get a `helper`/`this` arg and
+    # call `this.get(...)` / `this.post(...)` directly, so they have
+    # no library-name imports the content filter can hook on — fall
+    # back to the convention-based filename match.
+    TEST_STUB_PATH_MARKERS = [
+      "-pretender.",  # *-pretender.js / *-pretender.ts
+      "-pretenders.", # *-pretenders.js
+      ".pretender.",  # *.pretender.js
+      "-mirage.",     # *-mirage.js
+      ".mirage.",
+      "/tests/helpers/", # Ember convention (Discourse)
+      "/test/helpers/",
+    ]
+
+    # True when the file's route-shaped calls are almost certainly
+    # mock-server stubs (Ember pretender, MSW, nock, ...) rather than
+    # real route registrations. Used as a follow-up filter after the
+    # cheap `route_call_candidate?` gate. Either a library import or
+    # a naming-convention path marker is enough; both routes exempt
+    # the file when it also imports a real HTTP server lib so unit
+    # tests that spin up an Express app keep working.
+    def self.test_stub_only?(file_path : String, content : String) : Bool
+      has_library = TEST_STUB_LIBRARY_MARKERS.any? { |m| content.includes?(m) }
+      has_path_marker = TEST_STUB_PATH_MARKERS.any? { |m| file_path.includes?(m) }
+      return false unless has_library || has_path_marker
+      HTTP_SERVER_LIBRARY_MARKERS.none? { |m| content.includes?(m) }
     end
 
     def self.attach_callees(endpoint : Endpoint,
