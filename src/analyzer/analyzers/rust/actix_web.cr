@@ -33,9 +33,174 @@ module Analyzer::Rust
 
           endpoints << endpoint
         end
+
+        # Second pass: `App::new().route("/path", web::<verb>().to(handler))`
+        # and `web::resource("/path").route(web::<verb>().to(handler))`
+        # registrations. The attribute walk above only catches the
+        # `#[get(...)]` macro form, so manual builder-style routes
+        # were silently dropped.
+        walk_calls(root) do |call|
+          builder_route = extract_builder_route(call, source)
+          next unless builder_route
+          route_path, methods = builder_route
+          details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(call) + 1))
+          methods.each do |verb|
+            endpoint = Endpoint.new(route_path, verb, details)
+            extract_path_params(route_path, endpoint)
+            endpoints << endpoint
+          end
+        end
       end
 
       endpoints
+    end
+
+    # Walks `call_expression` nodes whose receiver chain looks like
+    # `<owner>.route(<path_lit>, web::<verb>().to(<handler>))` (i.e.,
+    # `App::new().route(...)`, `web::scope("/x").route(...)`,
+    # `web::resource("/y").route(...)`) and returns
+    # `{path, [verbs]}`. Returns `nil` when the shape doesn't match.
+    # Scope-prefix application is intentionally out of scope here —
+    # it requires walking the parent chain.
+    private def extract_builder_route(call : LibTreeSitter::TSNode, source : String) : Tuple(String, Array(String))?
+      function = Noir::TreeSitter.field(call, "function")
+      return unless function
+      return unless Noir::TreeSitter.node_type(function) == "field_expression"
+      field = Noir::TreeSitter.field(function, "field")
+      return unless field
+      return unless Noir::TreeSitter.node_text(field, source) == "route"
+
+      args = Noir::TreeSitter.field(call, "arguments")
+      return unless args
+
+      named = [] of LibTreeSitter::TSNode
+      Noir::TreeSitter.each_named_child(args) { |c| named << c }
+      return if named.empty?
+
+      # Two argument shapes:
+      #   1. `.route("/path", web::verb().to(handler))` — path is
+      #      positional[0], verb-call is positional[1].
+      #   2. `.route(web::verb().to(handler))` (resource builder) —
+      #      path is on the parent `web::resource("/x")` call which
+      #      sits as the receiver of this field_expression.
+      if named.size == 1
+        receiver = Noir::TreeSitter.field(function, "value")
+        return unless receiver
+        path_lit = extract_resource_path(receiver, source)
+        return unless path_lit
+        methods = extract_web_verbs(named[0], source)
+        return if methods.empty?
+        return {path_lit, methods}
+      end
+
+      path_lit = first_string_literal_text(named[0], source)
+      return unless path_lit
+
+      methods = extract_web_verbs(named[1], source)
+      return if methods.empty?
+
+      # If the receiver chain contains a `web::scope("/x")` call,
+      # prepend that prefix to the route path. Same idea as Axum's
+      # `.nest(...)` (still out of scope here) but easier because
+      # actix puts scope and route on the same builder chain.
+      receiver = Noir::TreeSitter.field(function, "value")
+      if receiver
+        scope_prefix = extract_scope_prefix(receiver, source)
+        if scope_prefix
+          combined = "#{scope_prefix.rstrip('/')}/#{path_lit.lstrip('/')}"
+          path_lit = combined
+        end
+      end
+
+      {path_lit, methods}
+    end
+
+    # Walks the receiver chain looking for the nearest enclosing
+    # `web::scope("/x")` call and returns its path argument.
+    private def extract_scope_prefix(node : LibTreeSitter::TSNode, source : String) : String?
+      cursor = node
+      while Noir::TreeSitter.node_type(cursor) == "call_expression"
+        fn = Noir::TreeSitter.field(cursor, "function")
+        return unless fn
+        case Noir::TreeSitter.node_type(fn)
+        when "scoped_identifier"
+          text = Noir::TreeSitter.node_text(fn, source)
+          if text.ends_with?("::scope")
+            args = Noir::TreeSitter.field(cursor, "arguments")
+            return unless args
+            named = [] of LibTreeSitter::TSNode
+            Noir::TreeSitter.each_named_child(args) { |c| named << c }
+            return if named.empty?
+            return first_string_literal_text(named[0], source)
+          end
+          return
+        when "field_expression"
+          inner = Noir::TreeSitter.field(fn, "value")
+          return unless inner
+          cursor = inner
+        else
+          return
+        end
+      end
+      nil
+    end
+
+    # Find the path string carried by a `web::resource(<path>)` call.
+    # Walks downward in case the receiver itself is a chain of method
+    # calls layered on top of the resource builder (e.g.
+    # `web::resource("/x").guard(...)`).
+    private def extract_resource_path(node : LibTreeSitter::TSNode, source : String) : String?
+      cursor = node
+      while Noir::TreeSitter.node_type(cursor) == "call_expression"
+        fn = Noir::TreeSitter.field(cursor, "function")
+        return unless fn
+        case Noir::TreeSitter.node_type(fn)
+        when "scoped_identifier"
+          text = Noir::TreeSitter.node_text(fn, source)
+          return unless text.ends_with?("::resource")
+          args = Noir::TreeSitter.field(cursor, "arguments")
+          return unless args
+          named = [] of LibTreeSitter::TSNode
+          Noir::TreeSitter.each_named_child(args) { |c| named << c }
+          return if named.empty?
+          return first_string_literal_text(named[0], source)
+        when "field_expression"
+          inner = Noir::TreeSitter.field(fn, "value")
+          return unless inner
+          cursor = inner
+        else
+          return
+        end
+      end
+      nil
+    end
+
+    # Pulls every `web::<verb>()` call from a chain like
+    # `web::get().to(handler)` or
+    # `web::get().or(web::post()).to(handler)`. Walks downward
+    # through `call_expression` / `field_expression` until exhausted.
+    private def extract_web_verbs(node : LibTreeSitter::TSNode, source : String) : Array(String)
+      verbs = [] of String
+      walk_calls(node) do |call|
+        function = Noir::TreeSitter.field(call, "function")
+        next unless function
+        # `web::get()` is a `call_expression` whose function is a
+        # `scoped_identifier` ending in a verb.
+        if Noir::TreeSitter.node_type(function) == "scoped_identifier"
+          text = Noir::TreeSitter.node_text(function, source)
+          if (last = text.split("::").last?) && HTTP_VERBS.includes?(last)
+            verbs << last.upcase
+          end
+        end
+      end
+      verbs.uniq
+    end
+
+    private def walk_calls(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
+      block.call(node) if Noir::TreeSitter.node_type(node) == "call_expression"
+      Noir::TreeSitter.each_named_child(node) do |child|
+        walk_calls(child, &block)
+      end
     end
 
     # `#[get("/x")]` → `{"/x", "GET", attr_row_1based}`. Returns `nil`
