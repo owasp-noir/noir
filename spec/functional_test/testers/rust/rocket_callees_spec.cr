@@ -5,7 +5,7 @@ index = Endpoint.new("/", "GET").tap do |ep|
   ep.push_callee(Callee.new("render_home", line: 18))
 end
 
-get_user = Endpoint.new("/users/<id>?<verbose>", "GET", [
+get_user = Endpoint.new("/users/{id}", "GET", [
   Param.new("id", "", "path"),
   Param.new("verbose", "", "query"),
   Param.new("x-trace-id", "", "header"),

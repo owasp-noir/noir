@@ -26,7 +26,16 @@ module Analyzer::Rust
 
           details = Details.new(PathInfo.new(path, attr_row))
           params = extract_params(route_path, data_param)
-          endpoint = Endpoint.new(route_path, method, params, details)
+          # Rocket route attributes carry their query params inline
+          # (`/path?<q>&<limit>`) and bracket their path params
+          # (`/with-param/<id>`). The query spec gets parsed into
+          # actual params in `extract_params` above, but the URL we
+          # ship out should be the canonical bare path with `{name}`
+          # placeholders — strip the `?...` suffix and convert
+          # `<name>` → `{name}` so output matches every other
+          # framework's path shape.
+          canonical_path = canonicalize_rocket_path(route_path)
+          endpoint = Endpoint.new(canonical_path, method, params, details)
 
           extract_function_extras(function, source, endpoint)
           attach_handler_callees(function, source, path, endpoint) if include_callee
@@ -106,6 +115,20 @@ module Analyzer::Rust
     # `/users/<id>` / `/search?<q>&<limit>` / `data = "<body>"` get
     # rolled together here so the legacy spec's param ordering stays
     # stable.
+    # `/path/<id>?<q>&<limit>` → `/path/{id}`. Strips the inline
+    # query-spec suffix Rocket attributes use to declare query
+    # params and converts the `<name>` path bracket form to the
+    # canonical `{name}` placeholder. Trailing `..` segments
+    # (`<page..>`) drop the trailing dots so the placeholder is
+    # the bare identifier.
+    private def canonicalize_rocket_path(route : String) : String
+      path_part = route.split("?", 2)[0]
+      path_part.gsub(/<([^>]+)>/) do |_|
+        name = $1.split("..").first.strip
+        "{#{name}}"
+      end
+    end
+
     private def extract_params(route : String, data_param : String?) : Array(Param)
       params = [] of Param
 
