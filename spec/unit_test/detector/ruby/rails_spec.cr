@@ -11,4 +11,13 @@ describe "Detect Ruby Rails" do
   it "gemfile/double_quot" do
     instance.detect("Gemfile", "gem \"rails\"").should be_true
   end
+  it "gemfile/railties_single_quot" do
+    instance.detect("Gemfile", "gem 'railties', '~> 8.0.0'").should be_true
+  end
+  it "gemfile/railties_double_quot" do
+    instance.detect("Gemfile", "gem \"railties\", \"~> 8.0.0\"").should be_true
+  end
+  it "gemfile/no_rails_components" do
+    instance.detect("Gemfile", "gem 'sinatra'\ngem 'rack'").should be_false
+  end
 end
