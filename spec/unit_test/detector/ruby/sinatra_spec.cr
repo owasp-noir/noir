@@ -11,4 +11,28 @@ describe "Detect Ruby Sinatra" do
   it "gemfile/double_quot" do
     instance.detect("Gemfile", "gem \"sinatra\"").should be_true
   end
+  it "gemspec/add_dependency" do
+    contents = <<-RUBY
+      Gem::Specification.new do |s|
+        s.add_dependency 'sinatra', '~> 4.0'
+      end
+      RUBY
+    instance.detect("gollum.gemspec", contents).should be_true
+  end
+  it "gemspec/add_runtime_dependency" do
+    contents = <<-RUBY
+      Gem::Specification.new do |spec|
+        spec.add_runtime_dependency "sinatra", ">= 2.0"
+      end
+      RUBY
+    instance.detect("foo.gemspec", contents).should be_true
+  end
+  it "gemspec/no_sinatra_dep" do
+    contents = <<-RUBY
+      Gem::Specification.new do |s|
+        s.add_dependency 'rails'
+      end
+      RUBY
+    instance.detect("foo.gemspec", contents).should be_false
+  end
 end
