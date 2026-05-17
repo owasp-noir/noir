@@ -53,6 +53,20 @@ describe "EndpointOptimizer" do
       result[0].url.should eq("/api/users")
       result[1].url.should eq("/api/data")
     end
+
+    it "strips Spring inline regex constraints from path variables" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/users/{id:[0-9]+}", "GET"),
+        Endpoint.new("/files/{path:.*}", "GET"),
+        Endpoint.new("/a/{x:[^/]+}/b/{y}", "GET"),
+      ]
+
+      result = optimizer.normalize_url_shapes(endpoints)
+      result[0].url.should eq("/users/{id}")
+      result[1].url.should eq("/files/{path}")
+      result[2].url.should eq("/a/{x}/b/{y}")
+    end
   end
 
   describe "combine_url_and_endpoints" do

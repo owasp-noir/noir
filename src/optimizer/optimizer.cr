@@ -50,6 +50,8 @@ class EndpointOptimizer
   #     `re_path` patterns commonly include these.
   #   - Python regex backslash-escaped dots `\.` — rewrite to plain
   #     `.` for the visible URL.
+  #   - Spring `{name:regex}` — strip the inline regex constraint so
+  #     the placeholder is `{name}` regardless of framework dialect.
   def normalize_url_shapes(endpoints : Array(Endpoint)) : Array(Endpoint)
     # `Endpoint` is a value-type struct in Crystal, so mutating
     # through the block-local binding only edits a copy. Rewrite
@@ -70,6 +72,15 @@ class EndpointOptimizer
       # can contain its own balanced parens / brackets) is consumed
       # correctly without writing a recursive regex.
       url = strip_python_named_groups(url)
+
+      # Spring `{name:regex}` path variables — strip the inline regex
+      # constraint so downstream consumers see the canonical `{name}`
+      # placeholder. Spring accepts `{id:[0-9]+}`, `{path:.*}`, etc.;
+      # the regex body matters to the framework but is noise in the
+      # endpoint surface.
+      url = url.gsub(/\{([A-Za-z_][A-Za-z0-9_]*):[^{}]+\}/) do |_match|
+        "{#{$1}}"
+      end
 
       # JS/TS template-literal interpolations the parser couldn't
       # resolve. Pick the rightmost identifier token in the
