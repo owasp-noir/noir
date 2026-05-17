@@ -7,21 +7,47 @@ module Detector::Ruby
     # actionpack + activerecord + ...). Treat `railties` as a unique
     # marker — it has no standalone use outside Rails — so those apps
     # are still detected.
-    RAILS_GEM_MARKERS = [
+    RAILS_GEMFILE_MARKERS = [
       "gem 'rails'",
       "gem \"rails\"",
       "gem 'railties'",
       "gem \"railties\"",
     ]
 
-    def detect(filename : String, file_contents : String) : Bool
-      return false unless filename.includes?("Gemfile")
+    # Multi-engine Rails projects (Spree, Solidus, larger Solidus
+    # forks) push their Gemfile to just `gemspec` and declare
+    # `s.add_dependency 'rails'` / `s.add_dependency 'railties'`
+    # inside `<gem>.gemspec` files. Match both common DSL accessor
+    # names (`s`, `spec`) and the runtime-dependency variant.
+    RAILS_GEMSPEC_MARKERS = [
+      "add_dependency 'rails'",
+      "add_dependency \"rails\"",
+      "add_dependency 'railties'",
+      "add_dependency \"railties\"",
+      "add_runtime_dependency 'rails'",
+      "add_runtime_dependency \"rails\"",
+      "add_runtime_dependency 'railties'",
+      "add_runtime_dependency \"railties\"",
+    ]
 
-      RAILS_GEM_MARKERS.any? { |marker| file_contents.includes?(marker) }
+    def detect(filename : String, file_contents : String) : Bool
+      if filename.includes?("Gemfile")
+        return RAILS_GEMFILE_MARKERS.any? { |marker| file_contents.includes?(marker) }
+      end
+
+      if filename.ends_with?(".gemspec")
+        return RAILS_GEMSPEC_MARKERS.any? { |marker| file_contents.includes?(marker) }
+      end
+
+      false
     end
 
     def applicable?(filename : String) : Bool
-      filename.ends_with?(".rb") || filename.ends_with?(".ru") || File.basename(filename) == "Gemfile" || File.basename(filename) == "Gemfile.lock"
+      filename.ends_with?(".rb") ||
+        filename.ends_with?(".ru") ||
+        filename.ends_with?(".gemspec") ||
+        File.basename(filename) == "Gemfile" ||
+        File.basename(filename) == "Gemfile.lock"
     end
 
     def set_name
