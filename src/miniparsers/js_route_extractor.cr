@@ -345,7 +345,7 @@ module Noir
       # like Strapi's `*.test.api.ts`.
       ".test.",
       ".spec.",
-      "/tests/api/", # Strapi-style integration test bundles
+      "/tests/api/",        # Strapi-style integration test bundles
       "/__tests__/",        # Jest convention (n8n, many TS projects)
       "/test/integration/", # supertest-style integration suites
       "/tests/integration/",
