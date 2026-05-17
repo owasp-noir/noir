@@ -800,9 +800,16 @@ module Noir
                    raw_path
                  end
 
+      # Fiber's `app.All(...)` is the same "match any method" intent
+      # as Gin's `r.Any(...)` and Echo's `e.Any(...)`. Normalize so
+      # output is consistent across frameworks and the optimizer's
+      # `allowed_methods` filter (which knows `ANY` but not `ALL`)
+      # doesn't quietly demote it to GET.
+      normalized_verb = verb.upcase == "ALL" ? "ANY" : verb.upcase
+
       Route.new(
         router_name,
-        verb.upcase,
+        normalized_verb,
         resolved,
         raw_path,
         handler_text,
