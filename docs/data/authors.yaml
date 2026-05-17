@@ -1,0 +1,48 @@
+# Author registry for the Noir blog.
+#
+# Each entry is keyed by the slug used in post front matter:
+#     authors = ["<slug>"]
+#
+# The full profile renders on /authors/<slug>/ once the author
+# has at least one post. Without posts the author still appears
+# on the /authors/ index card grid.
+#
+# Fields:
+#   name   — display name
+#   role   — one-line role / title (shown under name)
+#   bio    — short prose paragraph for the profile page
+#   image  — avatar URL (GitHub avatars work well)
+#   team   — true for official Noir team members (renders a
+#            "Team" badge and groups them ahead of guest writers)
+#   links  — array of { kind, handle | label, url }. `kind`
+#            picks the icon. Supported: github, twitter, x,
+#            mastodon, bluesky, linkedin, email, website (the
+#            fallback for anything else).
+
+hahwul:
+  name: HAHWUL
+  role: "Noir Co-Lead, Creator"
+  bio: "OWASP Noir co-lead and creator. Builds offensive security tooling for fun and OSS."
+  image: https://github.com/hahwul.png
+  team: true
+  links:
+    - kind: github
+      handle: hahwul
+      url: https://github.com/hahwul
+    - kind: x
+      handle: hahwul
+      url: https://x.com/hahwul
+    - kind: website
+      label: hahwul.com
+      url: https://www.hahwul.com
+
+ksg:
+  name: KSG
+  role: Noir Co-Lead
+  bio: "OWASP Noir co-lead. Security researcher and tool builder."
+  image: https://github.com/ksg97031.png
+  team: true
+  links:
+    - kind: github
+      handle: ksg97031
+      url: https://github.com/ksg97031
