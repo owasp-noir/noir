@@ -295,6 +295,16 @@ module Noir
       "require(\"nock\")", "require('nock')",
       "setupApplicationTest",
       "setupRenderingTest",
+      # Cypress: e2e suites use `cy.request(...)` / `cy.get(...)`
+      # shaped calls that match the parser's route hint but are
+      # test invocations, not registrations.
+      "/// <reference types=\"cypress\" />",
+      "from \"cypress\"", "from 'cypress'",
+      "require(\"cypress\")", "require('cypress')",
+      # Playwright: e2e suites use `request.get(...)` / `page.goto`
+      # in the same shape.
+      "from \"@playwright/test\"", "from '@playwright/test'",
+      "from \"playwright\"", "from 'playwright'",
     ]
 
     # Real HTTP-server library imports. When any of these is present
@@ -330,6 +340,30 @@ module Noir
       ".mirage.",
       "/tests/helpers/", # Ember convention (Discourse)
       "/test/helpers/",
+      ".test.ts", ".test.tsx", ".test.js", ".test.jsx",
+      ".test.mjs", ".test.cjs",
+      ".spec.ts", ".spec.tsx", ".spec.js", ".spec.jsx",
+      ".spec.mjs", ".spec.cjs",
+      "/__tests__/",        # Jest convention (n8n, many TS projects)
+      "/test/integration/", # supertest-style integration suites
+      "/tests/integration/",
+      "/test/e2e/",
+      "/tests/e2e/",
+      "/cypress/", # Cypress e2e tree (Mattermost: e2e-tests/cypress/)
+      "/playwright/",
+      "/e2e-tests/",
+      # Bundled output: GitHub Action `dist/` blobs, Next.js
+      # `.next`, Nuxt `.nuxt`/`.output`, generic `dist/`, `build/`,
+      # `coverage/`, `vendor/`. These contain webpacked third-party
+      # code where every `.get(`/`.post(` is library noise, not an
+      # app route.
+      "/dist/",
+      "/build/",
+      "/.next/",
+      "/.nuxt/",
+      "/.output/",
+      "/coverage/",
+      "/vendor/",
     ]
 
     # True when the file's route-shaped calls are almost certainly
