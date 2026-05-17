@@ -61,7 +61,7 @@
         {% set keep = (page.language == "ko" and is_ko) or (page.language != "ko" and not is_ko) %}
         {% if keep %}
         <li class="blog-post-card">
-          <a class="blog-post-card-link" href="{{ post.url }}">
+          <a class="blog-post-card-link" href="{{ base_url }}{{ post.url }}">
             <div class="blog-post-card-meta">
               <time datetime="{{ post.date }}">{{ post.date }}</time>
             </div>

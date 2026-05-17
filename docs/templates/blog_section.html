@@ -25,7 +25,7 @@
     <ul class="blog-post-list">
       {% for post in section.pages %}
       <li class="blog-post-card">
-        <a class="blog-post-card-link" href="{{ post.url }}">
+        <a class="blog-post-card-link" href="{{ base_url }}{{ post.url }}">
           <div class="blog-post-card-meta">
             <time datetime="{{ post.date }}">{{ post.date }}</time>
             {% if post.authors %}
