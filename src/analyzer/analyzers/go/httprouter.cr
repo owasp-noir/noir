@@ -4,6 +4,8 @@ require "../../../miniparsers/go_route_extractor_ts"
 
 module Analyzer::Go
   class Httprouter < Analyzer
+    IMPORT_MARKER = "github.com/julienschmidt/httprouter"
+
     PARAM_PATTERNS = [
       {"ByName(", /ByName\s*\(\s*[\"']([^\"']+)[\"']\s*\)/, "path"},
       {"Query().Get(", /Query\(\)\s*\.\s*Get\s*\(\s*[\"']([^\"']+)[\"']\s*\)/, "query"},
@@ -43,6 +45,7 @@ module Analyzer::Go
                   next if File.directory?(path)
                   if File.exists?(path)
                     content = read_file_content(path)
+                    next unless content.includes?(IMPORT_MARKER)
                     lines = content.lines
                     last_endpoint = Endpoint.new("", "")
 

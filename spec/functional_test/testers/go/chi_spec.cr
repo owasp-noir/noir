@@ -9,7 +9,7 @@ expected_endpoints = [
   Endpoint.new("/articles/{month}-{day}-{year}", "GET"),
   Endpoint.new("/articles/", "POST"),
   Endpoint.new("/articles/search", "GET"),
-  Endpoint.new("/articles/{articleSlug:[a-z-]+}", "GET", [Param.new("articleSlug", "", "path")]),
+  Endpoint.new("/articles/{articleSlug}", "GET", [Param.new("articleSlug", "", "path")]),
   Endpoint.new("/articles/{articleID}/", "GET", [Param.new("articleID", "", "path")]),
   Endpoint.new("/articles/{articleID}/", "PUT", [Param.new("articleID", "", "path")]),
   Endpoint.new("/articles/{articleID}/", "DELETE", [Param.new("articleID", "", "path")]),

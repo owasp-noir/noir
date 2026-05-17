@@ -10,6 +10,14 @@ module Analyzer::Go
   end
 
   class Chi < Analyzer
+    # Go enforces per-file imports, so any file using chi's router
+    # types must mention the package path. Filter on this marker
+    # to avoid touching the bulk of files in projects whose
+    # detection matched on a single dummy/fixture file (the chi
+    # extractor is loose enough that another framework's verb
+    # calls would otherwise surface as chi routes).
+    IMPORT_MARKER = "github.com/go-chi/chi"
+
     def analyze
       result = [] of Endpoint
 
@@ -28,6 +36,12 @@ module Analyzer::Go
           package_files[dir] << scan_path
 
           content = read_file_content(scan_path)
+          # Cache contents for every Go file in the package — the
+          # cross-file callee map and Mount-expansion walker both
+          # need handler/helper functions that live in non-chi
+          # source files (`handlers.go`, `helpers.go`). The
+          # IMPORT_MARKER gate fires later, in the per-file route
+          # extraction loop, where the savings actually matter.
           file_contents_cache[scan_path] = content
           file_lines_cache[scan_path] = content.lines
 
@@ -35,6 +49,7 @@ module Analyzer::Go
           # in `r.Mount("/admin", adminRouter())` is a *symbol*, not a
           # route, and it determines which function bodies to exclude from
           # the free-floating TS extraction pass below.
+          next unless content.includes?(".Mount(")
           content.each_line do |scan_line|
             if scan_line.includes?(".Mount(")
               if scan_match = scan_line.match(/[a-zA-Z]\w*\.Mount\(\s*"([^"]+)"\s*,\s*([^(]+)\(\)/)
@@ -71,6 +86,7 @@ module Analyzer::Go
                 next if File.directory?(path)
                 if File.exists?(path)
                   content = file_contents_cache[path]? || read_file_content(path)
+                  next unless content.includes?(IMPORT_MARKER)
                   lines = file_lines_cache[path]? || content.lines
 
                   dir = File.dirname(path)

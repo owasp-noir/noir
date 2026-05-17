@@ -3,6 +3,8 @@ require "../../../miniparsers/go_route_extractor_ts"
 
 module Analyzer::Go
   class GoZero < GoEngine
+    IMPORT_MARKER = "github.com/zeromicro/go-zero"
+
     def analyze
       # Source Analysis
       public_dirs = [] of (Hash(String, String))
@@ -31,6 +33,9 @@ module Analyzer::Go
                   # Handle both .go files and .api files
                   if File.exists?(path) && (File.extname(path) == ".go" || File.extname(path) == ".api")
                     content = read_file_content(path)
+                    # `.api` files are gozero's DSL (no Go imports);
+                    # only gate `.go` files on the import marker.
+                    next if File.extname(path) == ".go" && !content.includes?(IMPORT_MARKER)
                     lines = content.lines
                     last_endpoint = Endpoint.new("", "")
 

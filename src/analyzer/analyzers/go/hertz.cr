@@ -10,6 +10,7 @@ module Analyzer::Go
     # and uses the same parameter accessors on the RequestContext:
     #   ctx.Query / DefaultQuery / PostForm / DefaultPostForm / GetHeader / Cookie
     HTTP_METHODS_EXPANDED = %w[GET POST PUT DELETE PATCH OPTIONS HEAD]
+    IMPORT_MARKER         = "github.com/cloudwego/hertz"
 
     def analyze
       public_dirs = [] of (Hash(String, String))
@@ -30,6 +31,7 @@ module Analyzer::Go
                   next if File.directory?(path)
                   if File.exists?(path)
                     content = file_contents[path]? || read_file_content(path)
+                    next unless content.includes?(IMPORT_MARKER)
                     lines = content.lines
                     last_endpoint = Endpoint.new("", "")
 
