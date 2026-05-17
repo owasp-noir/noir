@@ -247,4 +247,46 @@ describe Noir::JSRouteExtractor do
       routes.size.should eq(0)
     end
   end
+
+  describe "test_stub_only?" do
+    it "skips files importing pretender without an HTTP server lib" do
+      content = <<-JS
+        import Pretender from "pretender";
+        const server = new Pretender();
+        server.get("/api/users", () => [200, {}, "[]"]);
+        JS
+      Noir::JSRouteExtractor.test_stub_only?("/app/tests/user-test.js", content).should be_true
+    end
+
+    it "keeps the file when express is also imported" do
+      content = <<-JS
+        import express from "express";
+        import Pretender from "pretender";
+        const app = express();
+        app.get("/api/users", (req, res) => res.json([]));
+        JS
+      Noir::JSRouteExtractor.test_stub_only?("/app/tests/user-test.js", content).should be_false
+    end
+
+    it "skips pretender helpers by path even without import markers" do
+      content = <<-JS
+        export default function (helper) {
+          this.post("/presence/update", () => helper.response(200, {}));
+        }
+        JS
+      Noir::JSRouteExtractor.test_stub_only?(
+        "/app/frontend/tests/helpers/presence-pretender.js",
+        content
+      ).should be_true
+    end
+
+    it "leaves non-test files untouched" do
+      content = <<-JS
+        const express = require("express");
+        const app = express();
+        app.get("/api/users", (req, res) => res.json([]));
+        JS
+      Noir::JSRouteExtractor.test_stub_only?("/app/src/server.js", content).should be_false
+    end
+  end
 end
