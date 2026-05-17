@@ -86,6 +86,34 @@ noir -b . -f markdown-table
 | GET /1.html | http     |                                                                     |
 | GET /2.html | http     |                                                                     |
 
+## TOML
+
+```bash
+noir -b . -f toml
+```
+
+```toml
+[[endpoints]]
+url = "/users"
+method = "GET"
+
+[[endpoints.params]]
+name = "page"
+type = "query"
+value = ""
+
+[[endpoints]]
+url = "/users"
+method = "POST"
+
+[[endpoints.params]]
+name = "name"
+type = "json"
+value = ""
+```
+
+Configuration-style output that's easy to skim in a terminal or paste into a project config when you want to track endpoints alongside other declarative settings. The TOML serializer carries the full endpoint model — including `--include-callee` and `--ai-context` fields when those flags are enabled — and is also the format used by `--diff-path` output when combined with `-f toml`.
+
 ## JSON Lines (JSONL)
 
 ```bash

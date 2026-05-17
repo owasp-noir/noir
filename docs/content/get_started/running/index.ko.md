@@ -139,12 +139,18 @@ noir -b . --ai-context
 | `--techs` | 디텍터는 건너뛰고 결과에 기술 태그만 강제 추가 |
 | `--exclude-techs` | 이 프레임워크 건너뛰기 |
 | `--exclude-path` | 쉼표 구분 glob 패턴에 매치되는 파일 제외 |
+| `--status-codes` | 각 엔드포인트를 호출해 응답 HTTP 상태 코드를 첨부 |
+| `--exclude-codes` | 응답 상태가 매치되는 엔드포인트 제외 (쉼표 구분, `--status-codes` 와 함께) |
 | `--config-file <경로>` | YAML 설정 파일에서 기본 옵션 로드 |
+| `--concurrency <N>` | 워커 수 (기본값: CPU 코어 수) |
+| `--cache-disable` | 이번 실행에 한해 LLM 응답 캐시 비활성화 |
+| `--cache-clear` | 실행 전에 LLM 응답 캐시 초기화 |
 | `--verbose` | 상세 로깅 |
 | `--no-log` | 모든 로그 억제 |
 | `--no-color` | plain 출력의 ANSI 색상 비활성화 |
 | `--build-info` | noir / Crystal / LLVM 버전과 타깃 트리플 출력 |
 | `--help` | 전체 도움말 |
+| `--help-all` | 예제 및 환경 변수까지 포함된 전체 도움말 |
 
 ---
 
