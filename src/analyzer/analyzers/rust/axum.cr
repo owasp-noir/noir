@@ -31,16 +31,18 @@ module Analyzer::Rust
           route = extract_route(node, source)
           next unless route
 
-          path_str, verb, handler_name = route
-          details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
-          endpoint = Endpoint.new(path_str, verb, details)
+          path_str, methods, handler_name = route
+          methods.each do |verb|
+            details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
+            endpoint = Endpoint.new(path_str, verb, details)
 
-          if include_callee && handler_name && (body_node = function_index[handler_name]?)
-            entries = Noir::RustCalleeExtractorTS.callees_in_body(body_node, source, path)
-            attach_rust_callees(endpoint, entries)
+            if include_callee && handler_name && (body_node = function_index[handler_name]?)
+              entries = Noir::RustCalleeExtractorTS.callees_in_body(body_node, source, path)
+              attach_rust_callees(endpoint, entries)
+            end
+
+            endpoints << endpoint
           end
-
-          endpoints << endpoint
         end
       end
 
@@ -60,8 +62,10 @@ module Analyzer::Rust
 
     # Returns `{path, http_method, handler_name?}` for a valid
     # `.route(path, verb(handler))` call, or `nil` when the shape
-    # doesn't match.
-    private def extract_route(call : LibTreeSitter::TSNode, source : String) : Tuple(String, String, String?)?
+    # doesn't match. Returns a list of methods because Axum allows
+    # chaining (`get(handler).post(handler)`); each verb in the
+    # chain emits a separate endpoint.
+    private def extract_route(call : LibTreeSitter::TSNode, source : String) : Tuple(String, Array(String), String?)?
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
 
@@ -72,23 +76,53 @@ module Analyzer::Rust
       path = string_literal_text(named[0], source)
       return unless path
 
-      method, handler = decode_handler(named[1], source)
-      {path, method, handler}
+      methods, handler = decode_handler(named[1], source)
+      {path, methods, handler}
     end
 
-    # `get(handler)` → `{"GET", "handler"}`. Defaults to `GET` when
-    # the verb is unrecognised, matching the legacy fallback.
-    private def decode_handler(node : LibTreeSitter::TSNode, source : String) : Tuple(String, String?)
-      if Noir::TreeSitter.node_type(node) == "call_expression"
-        fn_node = Noir::TreeSitter.field(node, "function")
-        if fn_node && Noir::TreeSitter.node_type(fn_node) == "identifier"
+    # `get(handler)` → `{["GET"], "handler"}`.
+    # `get(handler).post(other)` → `{["GET", "POST"], "handler"}`.
+    # The chain is left-folded by tree-sitter, so we walk back from
+    # the outermost call to the innermost `get(...)` collecting verbs
+    # in declaration order. The handler captured is the FIRST
+    # handler in the chain — every verb routes to *its own* handler
+    # in real Axum code, but the legacy regex analyzer only tracked
+    # one and we keep that behaviour for callee attribution. Falls
+    # back to a single GET endpoint when the shape doesn't match.
+    private def decode_handler(node : LibTreeSitter::TSNode, source : String) : Tuple(Array(String), String?)
+      methods = [] of String
+      handler : String? = nil
+
+      cursor = node
+      while Noir::TreeSitter.node_type(cursor) == "call_expression"
+        fn_node = Noir::TreeSitter.field(cursor, "function")
+        break unless fn_node
+        case Noir::TreeSitter.node_type(fn_node)
+        when "identifier"
+          # Innermost: `get(handler)`.
           verb = Noir::TreeSitter.node_text(fn_node, source).downcase
-          method = HTTP_VERBS.includes?(verb) ? verb.upcase : "GET"
-          handler = first_identifier_argument(node, source)
-          return {method, handler}
+          if HTTP_VERBS.includes?(verb)
+            methods.unshift(verb.upcase)
+          end
+          handler ||= first_identifier_argument(cursor, source)
+          break
+        when "field_expression"
+          # Chained: `<inner>.post(...)`. Field is the verb.
+          field = Noir::TreeSitter.field(fn_node, "field")
+          if field
+            verb = Noir::TreeSitter.node_text(field, source).downcase
+            methods.unshift(verb.upcase) if HTTP_VERBS.includes?(verb)
+          end
+          inner = Noir::TreeSitter.field(fn_node, "value")
+          break unless inner
+          cursor = inner
+        else
+          break
         end
       end
-      {"GET", nil}
+
+      methods << "GET" if methods.empty?
+      {methods, handler}
     end
 
     private def first_identifier_argument(call : LibTreeSitter::TSNode, source : String) : String?
