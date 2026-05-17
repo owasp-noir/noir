@@ -60,6 +60,14 @@ shards install
 shards build
 ```
 
+벤치마크나 릴리스 비교 시에는 `--release` 옵션을 함께 사용해 프로덕션 빌드를 만드세요(컴파일은 느리지만 런타임이 2–3배 빠릅니다). 디버그 빌드는 눈에 띄게 느려서 정상적인 빌드가 성능 회귀처럼 보일 수 있습니다.
+
+```sh
+shards build --release
+# 또는 just 레시피 (alias: `just br`)
+just build-release
+```
+
 Crystal 내장 테스트 러너로 테스트를 실행합니다.
 
 ```sh

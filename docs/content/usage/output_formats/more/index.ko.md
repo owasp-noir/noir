@@ -86,6 +86,34 @@ noir -b . -f markdown-table
 | GET /1.html | http     |                                                                     |
 | GET /2.html | http     |                                                                     |
 
+## TOML
+
+```bash
+noir -b . -f toml
+```
+
+```toml
+[[endpoints]]
+url = "/users"
+method = "GET"
+
+[[endpoints.params]]
+name = "page"
+type = "query"
+value = ""
+
+[[endpoints]]
+url = "/users"
+method = "POST"
+
+[[endpoints.params]]
+name = "name"
+type = "json"
+value = ""
+```
+
+설정 파일과 같은 형식이라 터미널에서 훑어보기 좋고, 엔드포인트를 다른 선언적 설정과 함께 프로젝트 설정에 붙여넣기에도 적합합니다. TOML 직렬화는 전체 엔드포인트 모델을 그대로 담으며 `--include-callee` 와 `--ai-context` 플래그가 켜져 있을 때 그 필드도 포함합니다. `--diff-path` 와 함께 `-f toml` 을 쓰면 diff 결과도 같은 형식으로 출력됩니다.
+
 ## JSON Lines (JSONL)
 
 ```bash

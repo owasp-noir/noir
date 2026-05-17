@@ -139,12 +139,18 @@ See [Callee Coverage](@/usage/supported/callee_coverage/index.md) and [AI Contex
 | `--techs` | Force-tag these techs without running their detectors |
 | `--exclude-techs` | Skip these frameworks |
 | `--exclude-path` | Skip files matching a comma-separated glob list |
+| `--status-codes` | Probe each endpoint and attach the observed HTTP status code |
+| `--exclude-codes` | Drop endpoints whose probed status matches (comma-separated; pairs with `--status-codes`) |
 | `--config-file <path>` | Load default options from a YAML config file |
+| `--concurrency <N>` | Worker count (default: CPU cores) |
+| `--cache-disable` | Disable the LLM response cache for this run |
+| `--cache-clear` | Clear the LLM response cache before running |
 | `--verbose` | Detailed logging |
 | `--no-log` | Suppress all logs |
 | `--no-color` | Disable ANSI colors in plain output |
 | `--build-info` | Print noir / Crystal / LLVM versions and target triple |
 | `--help` | Full help |
+| `--help-all` | Full help with examples and environment variables |
 
 ---
 
