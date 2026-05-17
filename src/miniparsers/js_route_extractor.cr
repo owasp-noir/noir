@@ -340,11 +340,6 @@ module Noir
       ".mirage.",
       "/tests/helpers/", # Ember convention (Discourse)
       "/test/helpers/",
-      # `.test.` / `.spec.` anywhere in the filename — covers
-      # `*.test.ts`, `*.spec.tsx`, and project-specific variants
-      # like Strapi's `*.test.api.ts`.
-      ".test.",
-      ".spec.",
       "/tests/api/",        # Strapi-style integration test bundles
       "/__tests__/",        # Jest convention (n8n, many TS projects)
       "/test/integration/", # supertest-style integration suites
@@ -368,14 +363,34 @@ module Noir
       "/vendor/",
     ]
 
+    # Hard test-file markers: when the filename itself follows a
+    # ubiquitous test convention, the file practically never
+    # defines real routes. Skip these even when the file imports
+    # a real HTTP server lib — NestJS e2e tests routinely import
+    # `@nestjs/platform-express` for type-only references, and
+    # supertest harnesses import the same modules they exercise.
+    # The supertest `request(app).get(...)` shape would otherwise
+    # ride the HTTP-server-import exemption straight back into the
+    # parser.
+    TEST_STUB_FILENAME_MARKERS = [
+      ".test.",
+      ".spec.",
+      "-spec.",
+      "-test.",
+    ]
+
     # True when the file's route-shaped calls are almost certainly
-    # mock-server stubs (Ember pretender, MSW, nock, ...) rather than
-    # real route registrations. Used as a follow-up filter after the
-    # cheap `route_call_candidate?` gate. Either a library import or
-    # a naming-convention path marker is enough; both routes exempt
-    # the file when it also imports a real HTTP server lib so unit
-    # tests that spin up an Express app keep working.
+    # mock-server stubs (Ember pretender, MSW, nock, ...) rather
+    # than real route registrations. Two routes:
+    #
+    #   * Filename markers fire unconditionally — `foo.test.ts` is
+    #     a test no matter what it imports.
+    #   * Library + directory markers honor an exemption — if the
+    #     file also imports a real HTTP server lib (express,
+    #     fastify, ...), keep it so legit test-server harnesses
+    #     (e.g. mattermost's `webhook_serve.js`) keep their routes.
     def self.test_stub_only?(file_path : String, content : String) : Bool
+      return true if TEST_STUB_FILENAME_MARKERS.any? { |m| file_path.includes?(m) }
       has_library = TEST_STUB_LIBRARY_MARKERS.any? { |m| content.includes?(m) }
       has_path_marker = TEST_STUB_PATH_MARKERS.any? { |m| file_path.includes?(m) }
       return false unless has_library || has_path_marker

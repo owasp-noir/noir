@@ -258,14 +258,37 @@ describe Noir::JSRouteExtractor do
       Noir::JSRouteExtractor.test_stub_only?("/app/tests/user-test.js", content).should be_true
     end
 
-    it "keeps the file when express is also imported" do
+    it "keeps the file when express is also imported (path-marker route only)" do
+      # Library + directory markers honor an HTTP-server-import
+      # exemption so legit test-server harnesses keep their
+      # routes. The path here triggers TEST_STUB_PATH_MARKERS via
+      # `/cypress/` (without the strict filename markers) so the
+      # exemption code path is the one under test.
       content = <<-JS
         import express from "express";
         import Pretender from "pretender";
         const app = express();
         app.get("/api/users", (req, res) => res.json([]));
         JS
-      Noir::JSRouteExtractor.test_stub_only?("/app/tests/user-test.js", content).should be_false
+      Noir::JSRouteExtractor.test_stub_only?(
+        "/app/cypress/helpers/api-server.js",
+        content
+      ).should be_false
+    end
+
+    it "skips strict-filename test markers unconditionally" do
+      # Filenames like `foo.test.ts` / `bar.e2e-spec.ts` never
+      # define real routes — even when the file imports an HTTP
+      # server lib for type-only references (NestJS e2e style).
+      content = <<-JS
+        import { NestExpressApplication } from "@nestjs/platform-express";
+        import request from "supertest";
+        await request(app).get("/api/users");
+        JS
+      Noir::JSRouteExtractor.test_stub_only?(
+        "/app/src/users/users.controller.e2e-spec.ts",
+        content
+      ).should be_true
     end
 
     it "skips pretender helpers by path even without import markers" do
