@@ -19,10 +19,17 @@ module Detector::Javascript
         return true
       end
 
-      # Check for server/api or server/routes directory patterns
+      # Nuxt 3 server routes live under `/server/api/` or
+      # `/server/routes/`, but those paths are also used by
+      # several Koa/Express projects (Outline, etc.) for plain
+      # routers. Require the `defineEventHandler` call before
+      # claiming the file for Nuxt — the strong import signals
+      # above (defineNuxtConfig, @nuxt/..., bare `nuxt` import)
+      # still catch projects that lack the directory layout.
       if (filename.includes?("/server/api/") || filename.includes?("/server/routes/")) &&
          (filename.ends_with?(".js") || filename.ends_with?(".ts") ||
-         filename.ends_with?(".mjs") || filename.ends_with?(".mts"))
+         filename.ends_with?(".mjs") || filename.ends_with?(".mts")) &&
+         file_contents.includes?("defineEventHandler")
         return true
       end
 

@@ -10,6 +10,9 @@ module Analyzer::Javascript
       parallel_file_scan([".js", ".ts", ".mjs", ".mts"]) do |path|
         # Focus on server/api and server/routes directories for Nuxt 3
         next unless path.includes?("/server/api/") || path.includes?("/server/routes/")
+        # Skip `*.test.ts` / `*.spec.ts` siblings — they don't
+        # define Nuxt event handlers, just exercise neighbors.
+        next if path.includes?(".test.") || path.includes?(".spec.")
         analyze_nuxt_file(path, result, mutex, include_callee)
       end
 
@@ -73,8 +76,13 @@ module Analyzer::Javascript
       url = url.gsub(/\/index$/, "")
       url = "/" if url.empty?
 
-      # Determine HTTP methods
-      methods = specific_method ? [specific_method] : ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
+      # Determine HTTP methods. With a method-suffixed file name
+      # (`users.get.ts`) Nuxt only handles that verb. Without one
+      # the file's `defineEventHandler` runs for any incoming
+      # method, so emit a single `ANY` endpoint instead of seven
+      # near-duplicate rows — matching how Echo/Mux/etc. surface
+      # method-agnostic registrations.
+      methods = specific_method ? [specific_method] : ["ANY"]
 
       # Read file content to extract parameters
       begin

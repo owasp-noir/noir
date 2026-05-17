@@ -13,13 +13,13 @@ auth_callees = [
   Callee.new("authorizeUser", line: 5),
 ]
 
-expected_endpoints = [orders_endpoint] + ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"].map do |method|
-  Endpoint.new("/auth", method, [
-    Param.new("session", "", "cookie"),
-  ]).tap do |ep|
-    auth_callees.each { |callee| ep.push_callee(callee) }
-  end
+auth_endpoint = Endpoint.new("/auth", "ANY", [
+  Param.new("session", "", "cookie"),
+]).tap do |ep|
+  auth_callees.each { |callee| ep.push_callee(callee) }
 end
+
+expected_endpoints = [orders_endpoint, auth_endpoint]
 
 FunctionalTester.new("fixtures/javascript/nuxtjs_callees/", {
   :techs     => 1,
