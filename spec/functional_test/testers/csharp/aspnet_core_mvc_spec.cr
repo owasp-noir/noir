@@ -22,7 +22,7 @@ expected_endpoints = [
   Endpoint.new("/api/Users", "GET", [
     Param.new("traceId", "", "header"),
   ]),
-  Endpoint.new("/api/Users/{id:int}", "GET", [
+  Endpoint.new("/api/Users/{id}", "GET", [
     Param.new("id", "", "path"),
   ]),
   Endpoint.new("/api/Users", "POST", [
@@ -37,7 +37,7 @@ expected_endpoints = [
     Param.new("soft", "", "query"),
   ]),
   Endpoint.new("/admin/Dashboard", "GET"),
-  Endpoint.new("/admin/reports/{year:int}/{month:int}", "GET", [
+  Endpoint.new("/admin/reports/{year}/{month}", "GET", [
     Param.new("year", "", "path"),
     Param.new("month", "", "path"),
   ]),
