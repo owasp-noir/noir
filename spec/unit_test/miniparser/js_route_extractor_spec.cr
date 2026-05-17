@@ -288,5 +288,67 @@ describe Noir::JSRouteExtractor do
         JS
       Noir::JSRouteExtractor.test_stub_only?("/app/src/server.js", content).should be_false
     end
+
+    it "skips Jest-style test files by name" do
+      content = <<-JS
+        import request from "supertest";
+        describe("users", () => {
+          it("works", async () => {
+            await request(app).get("/api/users").expect(200);
+          });
+        });
+        JS
+      Noir::JSRouteExtractor.test_stub_only?(
+        "/app/packages/cli/test/integration/users.controller.test.ts",
+        content
+      ).should be_true
+    end
+
+    it "skips files under /__tests__/ directories" do
+      content = <<-JS
+        await client.get("/foo");
+        JS
+      Noir::JSRouteExtractor.test_stub_only?(
+        "/app/src/modules/data-table/__tests__/data-table.controller.test.ts",
+        content
+      ).should be_true
+    end
+
+    it "skips Cypress e2e specs" do
+      content = <<-JS
+        /// <reference types="cypress" />
+        describe("login", () => {
+          cy.request("POST", "/api/login");
+        });
+        JS
+      Noir::JSRouteExtractor.test_stub_only?(
+        "/app/e2e-tests/cypress/tests/login_spec.ts",
+        content
+      ).should be_true
+    end
+
+    it "skips Playwright e2e specs" do
+      content = <<-JS
+        import { test, expect } from "@playwright/test";
+        test("ping", async ({ request }) => {
+          await request.get("/api/health");
+        });
+        JS
+      Noir::JSRouteExtractor.test_stub_only?(
+        "/app/tests/e2e/health.spec.ts",
+        content
+      ).should be_true
+    end
+
+    it "skips bundled dist/ output files" do
+      content = <<-JS
+        // webpack bundle output with thousands of .get( / .post( noise
+        app.get("/x");
+        JS
+      Noir::JSRouteExtractor.test_stub_only?(
+        "/app/.github/actions/check-results/dist/index.js",
+        content
+      ).should be_true
+    end
   end
 end
