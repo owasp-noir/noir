@@ -5,18 +5,18 @@ expected_endpoints = [
   Endpoint.new("/customer", "POST", [
     Param.new("input", "", "body"),
   ]),
-  Endpoint.new("/users/<id>", "GET", [
+  Endpoint.new("/users/{id}", "GET", [
     Param.new("id", "", "path"),
   ]),
-  Endpoint.new("/posts/<category>/<id>", "GET", [
+  Endpoint.new("/posts/{category}/{id}", "GET", [
     Param.new("category", "", "path"),
     Param.new("id", "", "path"),
   ]),
-  Endpoint.new("/search?<query>&<limit>", "GET", [
+  Endpoint.new("/search", "GET", [
     Param.new("query", "", "query"),
     Param.new("limit", "", "query"),
   ]),
-  Endpoint.new("/filter?<name>&<age>&<active>", "GET", [
+  Endpoint.new("/filter", "GET", [
     Param.new("name", "", "query"),
     Param.new("age", "", "query"),
     Param.new("active", "", "query"),
@@ -24,14 +24,14 @@ expected_endpoints = [
   Endpoint.new("/users", "POST", [
     Param.new("user", "", "body"),
   ]),
-  Endpoint.new("/products/<id>", "PUT", [
+  Endpoint.new("/products/{id}", "PUT", [
     Param.new("id", "", "path"),
     Param.new("product", "", "body"),
   ]),
   Endpoint.new("/login", "POST", [
     Param.new("credentials", "", "body"),
   ]),
-  Endpoint.new("/items/<id>?<version>", "POST", [
+  Endpoint.new("/items/{id}", "POST", [
     Param.new("id", "", "path"),
     Param.new("version", "", "query"),
     Param.new("item", "", "body"),
