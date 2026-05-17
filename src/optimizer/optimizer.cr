@@ -62,10 +62,12 @@ class EndpointOptimizer
 
       # Skip URLs that look like a verbatim regex literal — Express
       # accepts `app.get(/^\/api\/(\d+)$/, handler)` and the route
-      # extractor preserves the literal as the URL. Detect via
-      # escaped slashes (`\/`) or regex character classes (`\d`/`\w`/
-      # `\s`/`\D`/`\W`/`\S`/`(\d+)` etc.) the path forms never carry.
-      next if url.includes?("\\/") || url.matches?(/\\[dswDSW]/)
+      # extractor preserves the literal as the URL. The unique
+      # signal is escaped slashes (`\/`); plain `\d`/`\w` classes
+      # are also legal inside Django/Pyramid `re_path` named
+      # groups (`(?P<id>\d+)`), so checking those alone would
+      # over-shoot and leave Django patterns un-normalized.
+      next if url.includes?("\\/")
 
       # Python `re_path` named groups: `(?P<name>...)` → `{name}`.
       # Use a hand-walked replacement so the inner regex body (which
