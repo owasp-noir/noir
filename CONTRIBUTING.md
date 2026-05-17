@@ -124,3 +124,70 @@ just ds
 ```
 
 This will start a local server, and you can view the documentation by navigating to http://localhost:3000 in your web browser.
+
+## ✍️ Writing for the Blog
+
+Noir runs a small experimental blog under [`/blog/`](https://owasp-noir.github.io/noir/blog/) — a space for release deep dives, performance write-ups, framework coverage notes, design rationale, and tips that don't fit in a changelog. **Guest posts from the community are welcome** — case studies, CI integrations, framework analyses, debugging stories.
+
+### Post layout
+
+Each post is a page bundle under `docs/content/blog/`:
+
+```
+docs/content/blog/<post-slug>/
+├── index.md           # English version
+└── index.ko.md        # Korean version (optional)
+```
+
+The slug becomes the URL (`/blog/<post-slug>/`). Use lowercase, hyphen-separated words.
+
+### Front matter
+
+```toml
++++
+title = "Your post title"
+description = "One-line summary used in OG cards and the post card on /blog/."
+date = "2026-05-17"
+tags = ["release", "performance"]
+authors = ["<your-slug>"]
+template = "blog_post"
++++
+
+Your markdown content starts here.
+```
+
+- `authors` is the taxonomy field — each string must match a key in [`docs/data/authors.yaml`](docs/data/authors.yaml). Multiple authors are allowed (`authors = ["a", "b"]`).
+- `template = "blog_post"` is required so the post uses the blog layout instead of the default docs page.
+- `tags` are optional but help discoverability.
+
+### Registering yourself as an author
+
+Add an entry to `docs/data/authors.yaml`:
+
+```yaml
+<your-slug>:
+  name: Your Display Name
+  role: "Guest Writer"                 # any short role / title you like
+  bio: "One sentence about you."
+  image: https://github.com/<gh-handle>.png
+  links:
+    - kind: github
+      handle: <gh-handle>
+      url: https://github.com/<gh-handle>
+    # Add as many as you want — twitter, x, mastodon, bluesky,
+    # linkedin, email, website (fallback for any other URL).
+```
+
+The `team: true` flag is reserved for official Noir maintainers and renders a "Team" badge — leave it off for guest entries. The same registry powers `/authors/<slug>/` (your profile page) and the author card on every post you write.
+
+### Preview locally
+
+```sh
+just docs-serve  # or: just ds
+```
+
+Then open http://localhost:3000/blog/ and `http://localhost:3000/authors/<your-slug>/` to see your post and profile.
+
+### Submit
+
+Open a PR with your post + author entry — same flow as any other change. The `📝 blog` label gets attached automatically.
