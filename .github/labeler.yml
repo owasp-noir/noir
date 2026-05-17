@@ -40,6 +40,9 @@
           - CONTRIBUTING.md
           - LICENSE.md
           - SECURITY.md
+📝 blog:
+  - changed-files:
+      - any-glob-to-any-file: docs/content/blog/**
 ⚙️ options:
   - changed-files:
       - any-glob-to-any-file: src/options.cr
