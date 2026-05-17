@@ -340,10 +340,12 @@ module Noir
       ".mirage.",
       "/tests/helpers/", # Ember convention (Discourse)
       "/test/helpers/",
-      ".test.ts", ".test.tsx", ".test.js", ".test.jsx",
-      ".test.mjs", ".test.cjs",
-      ".spec.ts", ".spec.tsx", ".spec.js", ".spec.jsx",
-      ".spec.mjs", ".spec.cjs",
+      # `.test.` / `.spec.` anywhere in the filename — covers
+      # `*.test.ts`, `*.spec.tsx`, and project-specific variants
+      # like Strapi's `*.test.api.ts`.
+      ".test.",
+      ".spec.",
+      "/tests/api/", # Strapi-style integration test bundles
       "/__tests__/",        # Jest convention (n8n, many TS projects)
       "/test/integration/", # supertest-style integration suites
       "/tests/integration/",
