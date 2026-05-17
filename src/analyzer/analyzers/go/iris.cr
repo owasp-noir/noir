@@ -2,7 +2,8 @@ require "../../engines/go_engine"
 
 module Analyzer::Go
   class Iris < GoEngine
-    HTTP_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"]
+    HTTP_METHODS  = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"]
+    IMPORT_MARKER = "github.com/kataras/iris"
 
     def analyze
       # Iris uses `.Party(...)` for route groups; pass that into both the
@@ -25,6 +26,7 @@ module Analyzer::Go
                   next if File.directory?(path)
                   if File.exists?(path)
                     content = file_contents[path]? || read_file_content(path)
+                    next unless content.includes?(IMPORT_MARKER)
                     lines = content.lines
                     last_endpoint = Endpoint.new("", "")
 

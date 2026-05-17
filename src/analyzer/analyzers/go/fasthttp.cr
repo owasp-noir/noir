@@ -4,6 +4,8 @@ require "../../../miniparsers/go_route_extractor_ts"
 
 module Analyzer::Go
   class Fasthttp < Analyzer
+    IMPORT_MARKER = "github.com/valyala/fasthttp"
+
     def analyze
       # Source Analysis
       begin
@@ -32,6 +34,7 @@ module Analyzer::Go
             next unless path.starts_with?(base_dir_prefix) || path == current_base_path
             if File.exists?(path)
               content = read_file_content(path)
+              next unless content.includes?(IMPORT_MARKER)
               last_endpoint = Endpoint.new("", "")
 
               # Tree-sitter pre-pass: fasthttp has no groups, so we just

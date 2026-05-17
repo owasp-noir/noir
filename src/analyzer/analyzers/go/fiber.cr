@@ -2,6 +2,8 @@ require "../../engines/go_engine"
 
 module Analyzer::Go
   class Fiber < GoEngine
+    IMPORT_MARKER = "github.com/gofiber/fiber"
+
     def analyze
       # Source Analysis
       public_dirs = [] of (Hash(String, String))
@@ -23,6 +25,7 @@ module Analyzer::Go
                   next if File.directory?(path)
                   if File.exists?(path)
                     content = file_contents[path]? || read_file_content(path)
+                    next unless content.includes?(IMPORT_MARKER)
                     lines = content.lines
                     last_endpoint = Endpoint.new("", "")
 
