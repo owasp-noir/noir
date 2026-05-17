@@ -165,7 +165,7 @@ Your markdown content starts here.
 Add an entry to `docs/data/authors.yaml`:
 
 ```yaml
-your-slug:
+<your-slug>:
   name: Your Display Name
   role: "Guest Writer"                 # any short role / title you like
   bio: "One sentence about you."
@@ -186,7 +186,7 @@ The `team: true` flag is reserved for official Noir maintainers and renders a "T
 just docs-serve  # or: just ds
 ```
 
-Then open http://localhost:3000/blog/ and http://localhost:3000/authors/&lt;your-slug&gt;/ to see your post and profile.
+Then open http://localhost:3000/blog/ and `http://localhost:3000/authors/<your-slug>/` to see your post and profile.
 
 ### Submit
 
