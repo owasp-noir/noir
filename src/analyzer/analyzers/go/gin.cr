@@ -34,7 +34,11 @@ module Analyzer::Go
                     # /GetHeader/Cookie) to the most recently declared route —
                     # matching the legacy `last_endpoint` semantics.
                     cross_file_groups = ts_groups_for_directory(package_groups, File.dirname(path))
-                    ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(content, cross_file_groups)
+                    # Gin also accepts `r.Handle(method, path, handler)`
+                    # alongside the verb shortcuts (`r.GET`, etc.),
+                    # so opt into the method-first decoder so those
+                    # registrations surface as endpoints too.
+                    ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(content, cross_file_groups, handle_method: "Handle")
                     routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
                     ts_routes.each do |r|
                       routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route

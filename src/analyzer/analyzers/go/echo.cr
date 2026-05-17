@@ -32,7 +32,7 @@ module Analyzer::Go
                     # Tree-sitter pre-pass: every Echo verb route
                     # (`e.GET`, `g.POST`, …) with its group prefix applied.
                     cross_file_groups = ts_groups_for_directory(package_groups, File.dirname(path))
-                    ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(content, cross_file_groups)
+                    ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(content, cross_file_groups, handle_method: "Add")
                     routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
                     ts_routes.each do |r|
                       routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
