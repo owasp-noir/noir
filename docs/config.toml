@@ -72,6 +72,19 @@ enabled = false
 per_page = 10
 
 # =============================================================================
+# Taxonomies
+# =============================================================================
+# `authors` powers the blog per-author profile pages at
+# /authors/<slug>/. Rich profile metadata (display name, role,
+# GitHub handle, avatar) lives in the author registry block at the
+# top of the blog templates — front matter references authors by
+# their registry key.
+
+[[taxonomies]]
+name = "authors"
+feed = true
+
+# =============================================================================
 # SEO: Sitemap
 # =============================================================================
 
@@ -107,7 +120,12 @@ full_filename = "llms-full.txt"
 # =============================================================================
 
 [feeds]
-enabled = false
+enabled = true
+type = "rss"                  # rss | atom
+sections = ["blog"]           # only blog posts in the feed
+limit = 20
+full_content = true           # full HTML body inline
+default_language_only = true  # /rss.xml = EN-only, KO gets /ko/rss.xml automatically
 
 # =============================================================================
 # Markdown Configuration

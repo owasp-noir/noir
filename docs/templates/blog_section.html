@@ -1,0 +1,92 @@
+{% include "header.html" %}
+  <header class="blog-hero">
+    <div class="blog-hero-aurora" aria-hidden="true"></div>
+    <div class="blog-hero-inner">
+      <h1 class="blog-hero-title">
+        <span class="blog-hero-title-line">{% if page.language == "ko" %}Noir{% else %}The Noir{% endif %}</span>
+        <span class="blog-hero-title-line blog-hero-title-accent">{% if page.language == "ko" %}블로그{% else %}Blog{% endif %}</span>
+      </h1>
+      {% if page.description %}
+        <p class="blog-hero-desc">{{ page.description }}</p>
+      {% endif %}
+      <div class="blog-hero-intro">
+        {{ content }}
+      </div>
+      <div class="blog-hero-actions">
+        <a class="blog-hero-rss" href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/rss.xml">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6.18 15.64a2.18 2.18 0 0 1 2.18 2.18C8.36 19 7.38 20 6.18 20A2.18 2.18 0 0 1 4 17.82a2.18 2.18 0 0 1 2.18-2.18M4 4.44A15.56 15.56 0 0 1 19.56 20h-2.83A12.73 12.73 0 0 0 4 7.27V4.44m0 5.66a9.9 9.9 0 0 1 9.9 9.9h-2.83A7.07 7.07 0 0 0 4 12.93V10.1z"/></svg>
+          <span>{% if page.language == "ko" %}RSS 구독{% else %}Subscribe via RSS{% endif %}</span>
+        </a>
+      </div>
+    </div>
+  </header>
+  <main class="blog-main">
+    {% if section.pages %}
+    <ul class="blog-post-list">
+      {% for post in section.pages %}
+      <li class="blog-post-card">
+        <a class="blog-post-card-link" href="{{ post.url }}">
+          <div class="blog-post-card-meta">
+            <time datetime="{{ post.date }}">{{ post.date }}</time>
+            {% if post.authors %}
+              <span class="blog-post-card-dot">·</span>
+              <span class="blog-post-card-authors">
+                {% for slug in post.authors %}{{ site.data.authors[slug].name | default(slug) }}{% if not loop.last %}, {% endif %}{% endfor %}
+              </span>
+            {% endif %}
+          </div>
+          <h2 class="blog-post-card-title">{{ post.title }}</h2>
+          {% if post.description %}
+            <p class="blog-post-card-desc">{{ post.description }}</p>
+          {% endif %}
+          {% if post.tags %}
+          <div class="blog-post-card-tags">
+            {% for tag in post.tags %}
+              <span class="blog-post-card-tag">#{{ tag }}</span>
+            {% endfor %}
+          </div>
+          {% endif %}
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="blog-empty">
+      {% if page.language == "ko" %}
+        아직 글이 없습니다. 곧 첫 글을 올릴게요.
+      {% else %}
+        No posts yet — the first one is on its way.
+      {% endif %}
+    </p>
+    {% endif %}
+  </main>
+  <div class="search-modal" id="search-modal">
+    <div class="search-modal-overlay"></div>
+    <div class="search-modal-content">
+      <div class="search-input-wrap">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <input type="text" id="search-input" placeholder="{% if page.language == "ko" %}문서 검색...{% else %}Search documentation...{% endif %}" autocomplete="off">
+        <kbd class="search-esc">Esc</kbd>
+      </div>
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <div class="footer-branding">
+        <span>Copyright &copy; 2026 by <a href="https://github.com/owasp-noir">Noir team</a></span>
+        <span>Documentation built with <a href="https://hwaro.hahwul.com" target="_blank" rel="noopener noreferrer">Hwaro</a></span>
+      </div>
+      <div class="footer-links">
+        <a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/get_started/overview/">{% if page.language == "ko" %}문서{% else %}Docs{% endif %}</a>
+        <a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/blog/">{% if page.language == "ko" %}블로그{% else %}Blog{% endif %}</a>
+        <a href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer">GitHub</a>
+        <a href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}/resources/contact/">{% if page.language == "ko" %}연락처{% else %}Contact{% endif %}</a>
+      </div>
+    </div>
+  </footer>
+  <script src="{{ base_url }}/js/search.js" defer></script>
+  {{ highlight_js }}
+  {{ auto_includes_js }}
+</body>
+</html>

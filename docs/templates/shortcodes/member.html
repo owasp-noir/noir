@@ -7,11 +7,15 @@
     <p class="member-role">{{ role }}</p>
     {% if links %}
     <div class="member-links">
+      {#
+        Each entry is `label|url`. Crinja rejects bracket indexing
+        on a parenthesized filter expression (`(... | split())[0]`),
+        and `set` inside a `for` does not survive an inner `if`
+        boundary — so we lean on `first` / `last` to pull the two
+        ends without naming intermediate variables.
+      #}
       {% for link in links | split(pat=",") %}
-        {% set parts = link | trim | split(pat="|") %}
-        {% if parts | length >= 2 %}
-          <a href="{{ parts[1] | trim }}" target="_blank" rel="noopener noreferrer">{{ parts[0] | trim }}</a>
-        {% endif %}
+        <a href="{{ link | trim | split(pat="|") | last | trim }}" target="_blank" rel="noopener noreferrer">{{ link | trim | split(pat="|") | first | trim }}</a>
       {% endfor %}
     </div>
     {% endif %}
