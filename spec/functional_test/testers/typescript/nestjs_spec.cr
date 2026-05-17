@@ -25,6 +25,18 @@ expected_endpoints = [
   Endpoint.new("/protected", "GET", [
     Param.new("authorization", "", "header"),
   ]),
+  # `@Controller()` (empty) — method path used as-is.
+  Endpoint.new("/health", "GET", [] of Param),
+  # `@Controller({ path: 'tasks', version: '1' })` (object).
+  Endpoint.new("/tasks", "GET", [] of Param),
+  Endpoint.new("/tasks", "POST", [
+    Param.new("body", "", "body"),
+  ]),
+  # Multi-line `@Controller({ path: 'webhooks', ... })`.
+  Endpoint.new("/webhooks/:provider", "POST", [
+    Param.new("provider", "", "path"),
+    Param.new("body", "", "body"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/typescript/nestjs/", {

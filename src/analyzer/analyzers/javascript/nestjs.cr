@@ -81,16 +81,28 @@ module Analyzer::Javascript
       current_controller : Hash(Symbol, String)? = nil
       brace_count = 0
       in_class = false
+      skip_until = -1
 
       lines.each_with_index do |line, index|
-        # Check for @Controller decorator
-        if line =~ /@Controller\s*\(\s*['"`]([^'"`]*?)['"`]\s*\)/
-          controller_path = $1
-          current_controller = {
-            :base_path  => controller_path,
-            :content    => "",
-            :start_line => "1",
-          }
+        next if index <= skip_until
+
+        # Detect any of NestJS's `@Controller` shapes. The
+        # decorator header can span multiple lines (e.g.
+        # `@Controller({\n  path: '...',\n  version: ...\n})`),
+        # so coalesce continuation lines until the parens close
+        # before parsing.
+        if line.includes?("@Controller")
+          joined = join_decorator_header(lines, index)
+          base = parse_controller_decorator(joined[:text])
+          if !base.nil?
+            current_controller = {
+              :base_path  => base,
+              :content    => "",
+              :start_line => "1",
+            }
+            skip_until = joined[:last_line]
+            next if joined[:last_line] > index
+          end
         end
 
         # Check for class start after @Controller
@@ -117,6 +129,58 @@ module Analyzer::Javascript
       end
 
       controllers
+    end
+
+    # Coalesce a multi-line decorator header into a single string.
+    # Starts at `start_idx`, advances until the running open-paren
+    # count returns to zero. Returns the joined text plus the
+    # index of the last consumed line.
+    private def join_decorator_header(lines : Array(String), start_idx : Int32) : NamedTuple(text: String, last_line: Int32)
+      text = lines[start_idx]
+      depth = text.count('(') - text.count(')')
+      idx = start_idx
+      while depth > 0 && idx + 1 < lines.size
+        idx += 1
+        text += "\n" + lines[idx]
+        depth += lines[idx].count('(') - lines[idx].count(')')
+      end
+      {text: text, last_line: idx}
+    end
+
+    # Parse `@Controller(...)` and return the base path for the
+    # routes it scopes. Recognized shapes:
+    #
+    #   @Controller()                              -> ""
+    #   @Controller('users')                       -> "users"
+    #   @Controller(`v1/users`)                    -> "v1/users"
+    #   @Controller({ path: 'users' })             -> "users"
+    #   @Controller({ path: 'users', version: 1 }) -> "users"
+    #   @Controller({ version: 1, path: 'users' }) -> "users"
+    #   @Controller(SOME_CONST)                    -> ""  (best-effort
+    #     fallback: register the controller without a prefix rather
+    #     than miss every route inside it.)
+    #
+    # Returns nil when `text` isn't a `@Controller(...)` decorator.
+    private def parse_controller_decorator(text : String) : String?
+      return unless text.includes?("@Controller")
+      # Allow `(...)` to span newlines; the caller (`extract_controllers`)
+      # already joined the multi-line header for us.
+      match = text.match(/@Controller\s*\(([\s\S]*?)\)/m)
+      return unless match
+      inner = match[1].strip
+      return "" if inner.empty?
+
+      if str = inner.match(/^['"`]([^'"`]*)['"`]\s*$/)
+        return str[1]
+      end
+
+      if inner.starts_with?("{")
+        if obj = inner.match(/path\s*:\s*['"`]([^'"`]+)['"`]/)
+          return obj[1]
+        end
+      end
+
+      ""
     end
 
     private def process_http_methods(class_content : String, base_path : String, file_path : String, result : Array(Endpoint), include_callee : Bool, controller_start_line : Int32)
