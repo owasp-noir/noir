@@ -12,7 +12,7 @@ defmodule ElixirPlug.Router do
   Same regression, for the alternate triple-single heredoc delimiter
   Phoenix uses in `verified_routes.ex`.
 
-      get "/should-not-appear-tripple-single", do: nil
+      get "/should-not-appear-triple-single", do: nil
   '''
   def docs, do: :ok
 

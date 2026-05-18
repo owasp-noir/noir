@@ -23,6 +23,7 @@ module Analyzer::CSharp::Common
     return true if base.ends_with?("Tests.cs")
     base.ends_with?("Test.cs")
   end
+
   protected def build_signature(lines : Array(String), start_index : Int32) : Tuple(String, Int32)
     signature = lines[start_index]
     paren_count = signature.count('(') - signature.count(')')

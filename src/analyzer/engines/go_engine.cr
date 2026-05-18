@@ -20,8 +20,9 @@ module Analyzer::Go
     # routes the framework ships.
     def self.go_test_file?(path : String) : Bool
       return true if path.ends_with?("_test.go")
-      path.split("/").any? { |seg| seg.starts_with?("_") }
+      path.split("/").any?(&.starts_with?("_"))
     end
+
     # --- Tree-sitter group/route pre-pass --------------------------------
     #
     # Does a cross-file fixpoint over every `.go` file in each package
