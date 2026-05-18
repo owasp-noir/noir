@@ -56,20 +56,6 @@ module Analyzer::Python
       endpoints
     end
 
-    # True for files that follow Python/Django test-suite conventions
-    # and therefore should never serve real traffic:
-    #   * anything under a `/tests/` directory (Django, pytest, and
-    #     packaging defaults all agree on this layout)
-    #   * `tests.py` at any level (the legacy Django per-app test file)
-    #   * `test_*.py` / `*_test.py` (unittest/pytest discovery patterns)
-    private def django_test_path?(file : String) : Bool
-      return true if file.includes?("/tests/")
-      base = File.basename(file)
-      return true if base == "tests.py"
-      return true if base.starts_with?("test_") && base.ends_with?(".py")
-      base.ends_with?("_test.py")
-    end
-
     # Find all root Django URLs
     def find_root_django_urls : Array(DjangoUrls)
       root_django_urls_list = [] of DjangoUrls
@@ -94,7 +80,7 @@ module Analyzer::Python
                 # such phantom endpoints. Standard test conventions
                 # (`tests/` dir, `tests.py`, `test_*.py`, `*_test.py`)
                 # are unambiguous in Python codebases.
-                next if django_test_path?(file)
+                next if PythonEngine.python_test_path?(file)
                 if file.ends_with? ".py"
                   content = read_file_content(file)
                   content.scan(REGEX_ROOT_URLCONF) do |match|

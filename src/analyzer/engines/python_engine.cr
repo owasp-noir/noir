@@ -14,6 +14,26 @@ module Analyzer::Python
     # Regex for valid Python module names
     DOT_NATION = /[a-zA-Z_][a-zA-Z0-9_.]*/
 
+    # Standard Python/pytest/unittest test-file conventions. A file
+    # under any of these patterns ships with `python -m pytest` or
+    # `python -m unittest` and never serves real traffic in
+    # production. Centralized so every analyzer can opt in via
+    # `next if PythonEngine.python_test_path?(path)`.
+    #
+    #   * `/tests/`          — pytest discovery default (Django,
+    #                          Litestar, FastAPI all use it)
+    #   * `tests.py`         — the legacy Django per-app test module
+    #   * `test_*.py`        — unittest / pytest default discovery
+    #   * `*_test.py`        — pytest-go style suffix (rare in Python,
+    #                          but cheap to include)
+    def self.python_test_path?(path : String) : Bool
+      return true if path.includes?("/tests/")
+      base = File.basename(path)
+      return true if base == "tests.py"
+      return true if base.starts_with?("test_") && base.ends_with?(".py")
+      base.ends_with?("_test.py")
+    end
+
     # Parses the definition of a function from the source lines starting at a given index
     def parse_function_def(source_lines : Array(::String), start_index : Int32) : FunctionDefinition?
       parameters = [] of FunctionParameter
