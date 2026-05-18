@@ -21,12 +21,18 @@ module Analyzer::Rust
       endpoints = [] of Endpoint
       source = read_file_content(path)
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      # `crates/core/src/routing.rs`-style `#[cfg(test)] mod tests
+      # { Router::with_path(...).get(...) }` blocks would otherwise
+      # leak into the endpoint set. See `RustEngine.collect_cfg_test_regions`
+      # for the shared helper's rationale.
+      test_regions = RustEngine.collect_cfg_test_regions(source)
 
       Noir::TreeSitter.parse_rust(source) do |root|
         function_index = build_function_index(root, source)
 
         walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
+          next if RustEngine.inside_test_region?(node, test_regions)
           chain = decode_router_chain(node, source)
           next unless chain
           route_path, method, handler_name = chain
@@ -44,6 +50,7 @@ module Analyzer::Rust
         end
 
         each_routing_pair(root) do |attr_item, function|
+          next if RustEngine.inside_test_region?(attr_item, test_regions)
           route = decode_endpoint_macro(attr_item, source)
           next unless route
           route_path, method, attr_row = route

@@ -53,6 +53,136 @@ module Analyzer::Rust
       base.ends_with?("_test.rs") || base.ends_with?("_tests.rs")
     end
 
+    # Scan the source for `#[cfg(test)]` annotations, then capture
+    # the byte range of the following `mod`/`fn`/`impl` block via
+    # simple brace counting. String/char literals are skipped so a
+    # `{` inside `"foo {"` doesn't shift the depth. Rust lifetimes
+    # like `'a` look like char literals to a naive quote scanner
+    # and would otherwise drop the close-brace search into oblivion
+    # — see `skip_char_or_lifetime`.
+    #
+    # Shared with all Rust analyzers: axum's `extract/path/mod.rs`,
+    # salvo's `crates/core/src/routing.rs`, and similar framework
+    # source files mix production routes with `#[cfg(test)] mod
+    # tests { ... }` blocks. Each analyzer that uses tree-sitter
+    # can call this once per file, then drop any route call whose
+    # `ts_node_start_byte` falls in one of the returned ranges.
+    def self.collect_cfg_test_regions(source : String) : Array(Tuple(Int32, Int32))
+      regions = [] of Tuple(Int32, Int32)
+      bytes = source.to_slice
+      pattern = /\#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]/
+      source.scan(pattern) do |match|
+        attr_start = match.begin || next
+        brace_idx = find_block_open_brace(bytes, attr_start + 1)
+        next unless brace_idx
+        close_idx = find_matching_close_brace(bytes, brace_idx)
+        next unless close_idx
+        regions << {attr_start, close_idx + 1}
+      end
+      regions
+    end
+
+    def self.inside_test_region?(node : LibTreeSitter::TSNode, regions : Array(Tuple(Int32, Int32))) : Bool
+      return false if regions.empty?
+      start_byte = LibTreeSitter.ts_node_start_byte(node).to_i
+      regions.any? { |s, e| start_byte >= s && start_byte < e }
+    end
+
+    private def self.find_block_open_brace(bytes : Slice(UInt8), from : Int32) : Int32?
+      i = from
+      while i < bytes.size
+        c = bytes[i]
+        case c
+        when '"'.ord then i = skip_string_literal(bytes, i)
+        when '\''.ord then i = skip_char_or_lifetime(bytes, i)
+        when '/'.ord
+          if i + 1 < bytes.size && bytes[i + 1] == '/'.ord
+            i = skip_line_comment(bytes, i)
+          elsif i + 1 < bytes.size && bytes[i + 1] == '*'.ord
+            i = skip_block_comment(bytes, i)
+          else
+            i += 1
+          end
+        when '{'.ord then return i
+        else i += 1
+        end
+      end
+      nil
+    end
+
+    private def self.find_matching_close_brace(bytes : Slice(UInt8), open_idx : Int32) : Int32?
+      depth = 1
+      i = open_idx + 1
+      while i < bytes.size && depth > 0
+        c = bytes[i]
+        case c
+        when '"'.ord then i = skip_string_literal(bytes, i); next
+        when '\''.ord then i = skip_char_or_lifetime(bytes, i); next
+        when '/'.ord
+          if i + 1 < bytes.size && bytes[i + 1] == '/'.ord
+            i = skip_line_comment(bytes, i); next
+          elsif i + 1 < bytes.size && bytes[i + 1] == '*'.ord
+            i = skip_block_comment(bytes, i); next
+          end
+        when '{'.ord then depth += 1
+        when '}'.ord then depth -= 1
+        end
+        i += 1
+      end
+      depth == 0 ? i - 1 : nil
+    end
+
+    private def self.skip_string_literal(bytes : Slice(UInt8), from : Int32) : Int32
+      i = from + 1
+      while i < bytes.size
+        c = bytes[i]
+        if c == '\\'.ord
+          i += 2
+          next
+        end
+        return i + 1 if c == '"'.ord
+        i += 1
+      end
+      i
+    end
+
+    private def self.skip_char_or_lifetime(bytes : Slice(UInt8), from : Int32) : Int32
+      if from + 2 < bytes.size && bytes[from + 2] == '\''.ord
+        return from + 3
+      end
+      if from + 1 < bytes.size && bytes[from + 1] == '\\'.ord
+        i = from + 2
+        while i < bytes.size
+          c = bytes[i]
+          if c == '\\'.ord
+            i += 2
+            next
+          end
+          return i + 1 if c == '\''.ord
+          i += 1
+        end
+        return i
+      end
+      from + 1
+    end
+
+    private def self.skip_line_comment(bytes : Slice(UInt8), from : Int32) : Int32
+      i = from
+      while i < bytes.size && bytes[i] != '\n'.ord
+        i += 1
+      end
+      i
+    end
+
+    private def self.skip_block_comment(bytes : Slice(UInt8), from : Int32) : Int32
+      i = from + 2
+      while i + 1 < bytes.size
+        return i + 2 if bytes[i] == '*'.ord && bytes[i + 1] == '/'.ord
+        i += 1
+      end
+      bytes.size
+    end
+
     protected def attach_rust_callees(endpoint : Endpoint, callees : Array(Noir::RustCalleeExtractor::Entry))
       Noir::RustCalleeExtractor.attach_to(endpoint, callees)
     end
