@@ -198,9 +198,23 @@ module Analyzer::Javascript
           # Construct full URL path
           full_path = combine_paths(base_path, route_path)
 
+          # Resolve the decorator's line number inside the original
+          # file: walk newlines from the class start to the
+          # `class_content` offset where the regex matched. Falls
+          # back to the class start line when `match.begin` is nil
+          # (very early Crystal versions). Without this, every
+          # NestJS endpoint pointed at line 1 of the file and
+          # dedup against the same method+url-from-other-files
+          # collapsed the per-file attribution.
+          decorator_line = if pos = match.begin
+                             controller_start_line + class_content[0...pos].count('\n')
+                           else
+                             controller_start_line
+                           end
+
           # Create endpoint
           endpoint = Endpoint.new(full_path, method.upcase)
-          endpoint.details = Details.new(PathInfo.new(file_path, 1))
+          endpoint.details = Details.new(PathInfo.new(file_path, decorator_line))
 
           # Extract path parameters from URL
           extract_path_parameters(full_path, endpoint)
