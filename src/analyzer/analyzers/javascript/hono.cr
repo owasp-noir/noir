@@ -23,8 +23,14 @@ module Analyzer::Javascript
             result << endpoint
           end
 
-          # Extract app.on() patterns not handled by JSRouteExtractor
-          extract_on_routes(path, content, result, callees_by_route)
+          # Extract app.on() patterns not handled by JSRouteExtractor.
+          # The primary extractor already gates on `test_stub_only?`;
+          # this auxiliary pass has its own regex walk, so it has to
+          # repeat the same gate — without it, `app.on('GET', '/x10',
+          # ...)` from hono's own `*.test.ts` suites slips through.
+          unless Noir::JSRouteExtractor.test_stub_only?(path, content)
+            extract_on_routes(path, content, result, callees_by_route)
+          end
 
           Noir::JSRouteExtractor.extract_static_paths(content).each do |static_path|
             static_dirs << static_path unless static_dirs.any? { |s| s["static_path"] == static_path["static_path"] && s["file_path"] == static_path["file_path"] }
