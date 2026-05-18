@@ -9,12 +9,11 @@ import (
 func main() {
 	e := echo.New()
 
-	// Commented-out route - should NOT be detected (currently a false positive)
+	// Regression guard: commented routes must not be detected.
 	// e.GET("/old-route", func(c echo.Context) error {
 	//     return c.String(http.StatusOK, "old")
 	// })
 
-	// Route with path param - c.Param() detected as "json" type instead of "path"
 	e.GET("/users/:id", func(c echo.Context) error {
 		_ = c.Param("id")
 		return c.String(http.StatusOK, "user")
