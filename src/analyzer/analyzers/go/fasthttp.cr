@@ -1,6 +1,7 @@
 require "../../../models/analyzer"
 require "../../../miniparsers/go_callee_extractor"
 require "../../../miniparsers/go_route_extractor_ts"
+require "../../engines/go_engine"
 
 module Analyzer::Go
   class Fasthttp < Analyzer
@@ -20,6 +21,7 @@ module Analyzer::Go
         file_contents = Hash(String, String).new
         go_files.each do |fp|
           next if File.directory?(fp)
+          next if GoEngine.go_test_file?(fp)
           begin
             file_contents[fp] = read_file_content(fp)
           rescue File::NotFoundError
@@ -32,6 +34,7 @@ module Analyzer::Go
           base_dir_prefix = current_base_path.ends_with?("/") ? current_base_path : "#{current_base_path}/"
           go_files.each do |path|
             next unless path.starts_with?(base_dir_prefix) || path == current_base_path
+            next if GoEngine.go_test_file?(path)
             if File.exists?(path)
               content = read_file_content(path)
               next unless content.includes?(IMPORT_MARKER)
