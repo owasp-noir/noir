@@ -7,11 +7,23 @@ module Analyzer::Ruby
 
       parallel_file_scan do |path|
         next unless path.ends_with?(".rb") || path.ends_with?(".ru")
+        # Minitest (`*_test.rb`) and RSpec (`*_spec.rb`) suites both
+        # register Sinatra routes from inline test apps purely to
+        # exercise the framework. Sinatra's own repo accounts for
+        # ~145 such routes; production code never adopts either
+        # filename convention so the suffix check is safe.
+        next if test_only_path?(path)
         File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
           lines = file.each_line.to_a
           last_endpoint = Endpoint.new("", "")
           lines.each_with_index do |line, index|
             next unless line.valid_encoding?
+            # Skip Ruby comment lines — `sinatra-contrib/lib/sinatra/
+            # namespace.rb` and similar library sources keep DSL
+            # examples (`#     get '/dashboard' do`) inside RDoc
+            # comments. They look identical to real route
+            # registrations to the line-based matcher.
+            next if line.lstrip.starts_with?('#')
             endpoint = line_to_endpoint(line)
             if endpoint.method != ""
               details = Details.new(PathInfo.new(path, index + 1))
@@ -32,6 +44,11 @@ module Analyzer::Ruby
       end
 
       @result
+    end
+
+    private def test_only_path?(path : String) : Bool
+      base = File.basename(path)
+      base.ends_with?("_test.rb") || base.ends_with?("_spec.rb")
     end
 
     private def attach_route_callees(endpoint : Endpoint, lines : Array(String), index : Int32, path : String)

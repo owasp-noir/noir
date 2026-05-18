@@ -10,7 +10,14 @@ module Analyzer::Ruby
     # and Sinatra (Rails uses a different per-line-multi-match shape).
     def line_to_endpoint(content : String, details : Details? = nil) : Endpoint
       HTTP_VERBS.each do |verb|
-        content.scan(/#{verb}\s+['"](.+?)['"]/) do |match|
+        # Reject method calls (`headers.delete 'content-length'`,
+        # `obj.get(:foo)`, …) that share a name with a DSL verb. The
+        # Sinatra route DSL always invokes the verb at a fresh
+        # statement boundary, never via a receiver. A negative
+        # lookbehind on `.` and word chars covers both
+        # `headers.delete` and `xdelete` (some unrelated identifier
+        # ending in the verb).
+        content.scan(/(?<![.\w])#{verb}\s+['"](.+?)['"]/) do |match|
           if match.size > 1
             if details
               return Endpoint.new(match[1], verb.upcase, details)
