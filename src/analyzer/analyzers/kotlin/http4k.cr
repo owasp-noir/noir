@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "../../../miniparsers/http4k_extractor_ts"
+require "../../engines/kotlin_engine"
 
 module Analyzer::Kotlin
   class Http4k < Analyzer
@@ -12,6 +13,7 @@ module Analyzer::Kotlin
       file_list.each do |path|
         next unless File.exists?(path)
         next unless path.ends_with?(".#{KOTLIN_EXTENSION}")
+        next if KotlinEngine.test_path?(path)
 
         content = read_file_content(path)
         next unless content.includes?(HTTP4K_MARKER)
