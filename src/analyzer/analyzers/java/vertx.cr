@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../engines/java_engine"
 require "../../../miniparsers/java_callee_extractor"
 require "wait_group"
 
@@ -28,6 +29,7 @@ module Analyzer::Java
                   path = channel.receive?
                   break if path.nil?
                   next if File.directory?(path)
+                  next if JavaEngine.test_path?(path)
 
                   if File.exists?(path) && (path.ends_with?(".java") || path.ends_with?(".kt"))
                     details = Details.new(PathInfo.new(path))

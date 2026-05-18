@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../engines/java_engine"
 require "../../../ext/tree_sitter/tree_sitter"
 require "../../../miniparsers/java_callee_extractor"
 
@@ -29,6 +30,7 @@ module Analyzer::Java
                   path = channel.receive?
                   break if path.nil?
                   next if File.directory?(path)
+                  next if JavaEngine.test_path?(path)
 
                   if File.exists?(path) && (path.ends_with?(".java") || path.ends_with?(".kt"))
                     content = read_file_content(path)

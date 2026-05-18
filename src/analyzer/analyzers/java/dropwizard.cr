@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../engines/java_engine"
 require "../../../miniparsers/jaxrs_extractor_ts"
 require "../../../miniparsers/import_graph"
 
@@ -19,6 +20,7 @@ module Analyzer::Java
 
       file_list = all_files()
       file_list.each do |path|
+        next if JavaEngine.test_path?(path)
         next unless File.exists?(path)
         next unless path.ends_with?(".#{JAVA_EXTENSION}")
 
