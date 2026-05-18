@@ -406,6 +406,25 @@ describe Noir::JSRouteExtractor do
       ).should be_false
     end
 
+    it "skips .test-d.ts type-only test files" do
+      # Regression: fastify/fastify's `test/types/*.test-d.ts` files
+      # register sample routes purely to assert their inferred typings.
+      # The `.test.`/`.spec.`/`-test.`/`-spec.` markers don't catch the
+      # `.test-d.` suffix that tsd / expect-type use for type-test
+      # files, so the JSParser was happy to emit every shape as a
+      # route.
+      content = <<-TS
+        import fastify from "fastify";
+        const app = fastify();
+        app.get("/typed", { schema: {} }, (req, reply) => reply.send({}));
+        app.post("/typed", (req, reply) => reply.send({}));
+        TS
+      Noir::JSRouteExtractor.test_stub_only?(
+        "/app/test/types/schema.test-d.ts",
+        content
+      ).should be_true
+    end
+
     it "skips bundled dist/ output files" do
       content = <<-JS
         // webpack bundle output with thousands of .get( / .post( noise
