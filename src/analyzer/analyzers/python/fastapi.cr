@@ -290,11 +290,22 @@ module Analyzer::Python
             if params.size != 1
               select_params = params.select(&.strip.starts_with?("prefix"))
               if select_params.size != 0
-                prefix = select_params.first.split("=")[1]
-                if prefix.count("\"") == 2
-                  prefix = prefix.split("\"")[1].split("\"")[0]
-                elsif prefix.count("'") == 2
-                  prefix = prefix.split("'")[1].split("'")[0]
+                raw_value = select_params.first.split("=", 2)[1]?.try(&.strip) || ""
+                # Only set prefix when the value is a quoted string
+                # literal. Anything else — `prefix=settings.API_V1_STR`,
+                # `prefix=f"{base}/v1"`, `prefix=API_PREFIX` — is a
+                # cross-file reference we can't resolve from the call
+                # site alone. Letting the raw expression flow through
+                # to `router_class.join` used to surface garbage URLs
+                # like `/settings.API_V1_STR/me` (regression seen on
+                # full-stack-fastapi-template). Try one more rescue
+                # path before falling back to empty: when the value
+                # is a bare top-level constant (`API_V1_STR`) imported
+                # via `from … import …`, look up its definition.
+                if lit = raw_value.match(/^['"]([^'"]*)['"]/)
+                  prefix = lit[1]
+                elsif resolved = resolve_constant_value(raw_value, import_modules)
+                  prefix = resolved
                 end
               end
             end
@@ -318,6 +329,56 @@ module Analyzer::Python
           end
         end
       end
+    end
+
+    # Best-effort resolver for a non-literal `prefix=` expression in
+    # `include_router(...)`. Handles two shapes the wild produces:
+    #
+    #   * `prefix=API_V1_STR` — a top-level constant imported via
+    #     `from app.core.config import API_V1_STR`. We look up the
+    #     constant's defining module via `import_modules` and search
+    #     it for `NAME = "literal"`.
+    #   * `prefix=settings.API_V1_STR` — class-attribute access on an
+    #     imported instance. We look up `settings`'s module and search
+    #     it for `API_V1_STR: str = "literal"` (the BaseSettings shape
+    #     full-stack-fastapi-template uses) or `API_V1_STR = "literal"`.
+    #
+    # Returns nil when the expression doesn't match either shape or
+    # we can't find the underlying file — the caller then falls back
+    # to an empty prefix so we never surface raw Python expressions
+    # in URLs.
+    def resolve_constant_value(expression : ::String,
+                               import_modules : Hash(::String, Tuple(::String, Int32))) : ::String?
+      expr = expression.strip
+      module_path = nil
+      const_name = nil
+
+      if attr_match = expr.match(/^([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)$/)
+        module_alias, attr_name = attr_match[1], attr_match[2]
+        return nil unless import_modules.has_key?(module_alias)
+        module_path = import_modules[module_alias].first
+        const_name = attr_name
+      elsif name_match = expr.match(/^([A-Za-z_][A-Za-z0-9_]*)$/)
+        bare_name = name_match[1]
+        return nil unless import_modules.has_key?(bare_name)
+        module_path = import_modules[bare_name].first
+        const_name = bare_name
+      end
+
+      return nil unless module_path && const_name
+      return nil unless File.exists?(module_path)
+
+      module_source = read_file_content(module_path)
+      # Match either a typed assignment (`NAME: str = "..."`) or a
+      # bare assignment (`NAME = "..."`). Indented assignments are
+      # accepted because BaseSettings-style configs nest the
+      # constant inside a class body.
+      pattern = /^\s*#{Regex.escape(const_name)}\s*(?::[^=]+)?=\s*['"]([^'"]*)['"]/m
+      if match = module_source.match(pattern)
+        return match[1]
+      end
+
+      nil
     end
 
     # Infers the type of the parameter based on its default value or type annotation
