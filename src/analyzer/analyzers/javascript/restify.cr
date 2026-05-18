@@ -11,6 +11,7 @@ module Analyzer::Javascript
       parallel_file_scan do |path|
         begin
           content = read_file_content(path)
+          next if client_library_file?(content)
           parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
             include_callees: include_callee)
           parser_endpoints.each do |endpoint|
@@ -47,6 +48,13 @@ module Analyzer::Javascript
       process_static_dirs(static_dirs, result)
 
       result
+    end
+
+    private def client_library_file?(content : String) : Bool
+      content.includes?("restify-clients") ||
+        content.includes?("createJSONClient(") ||
+        content.includes?("createStringClient(") ||
+        content.includes?("createHttpClient(")
     end
 
     # Process static directories and add endpoints for each file

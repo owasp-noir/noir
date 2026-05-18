@@ -284,7 +284,7 @@ module Analyzer::Javascript
       method_params.scan(/@Query\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/) do |param_match|
         if param_match.size > 0
           param_name = param_match[1]
-          endpoint.push_param(Param.new(param_name, "", "query"))
+          push_unique_param(endpoint, Param.new(param_name, "", "query"))
         end
       end
 
@@ -292,20 +292,20 @@ module Analyzer::Javascript
       method_params.scan(/@Param\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/) do |param_match|
         if param_match.size > 0
           param_name = param_match[1]
-          endpoint.push_param(Param.new(param_name, "", "path"))
+          push_unique_param(endpoint, Param.new(param_name, "", "path"))
         end
       end
 
       # Extract @Body() - indicates request body
       if method_params.includes?("@Body()")
-        endpoint.push_param(Param.new("body", "", "body"))
+        push_unique_param(endpoint, Param.new("body", "", "body"))
       end
 
       # Extract @Headers parameters
       method_params.scan(/@Headers\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/) do |param_match|
         if param_match.size > 0
           param_name = param_match[1]
-          endpoint.push_param(Param.new(param_name, "", "header"))
+          push_unique_param(endpoint, Param.new(param_name, "", "header"))
         end
       end
     end
@@ -331,6 +331,11 @@ module Analyzer::Javascript
           end
         end
       end
+    end
+
+    private def push_unique_param(endpoint : Endpoint, param : Param)
+      return if endpoint.params.any? { |existing| existing.name == param.name && existing.param_type == param.param_type }
+      endpoint.push_param(param)
     end
   end
 end
