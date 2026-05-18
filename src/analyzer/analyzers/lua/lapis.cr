@@ -28,12 +28,38 @@ module Analyzer::Lua
       all_files.each do |path|
         next if File.directory?(path)
         next unless path.ends_with?(".lua") || path.ends_with?(".moon")
+        # Skip Busted / OpenResty spec files. Lapis's own
+        # `spec/**/*_spec.moon` and `spec_openresty/`/`spec_cqueues/`
+        # trees define ~143 phantom routes against inline test
+        # apps. Production Lua never adopts the `_spec` filename
+        # or the `spec*/` directory layout.
+        next if lapis_test_path?(path)
 
         content = read_file_content(path)
         process_file(path, content, include_callee)
       end
 
       @result
+    end
+
+    # Busted convention: `<name>_spec.lua` / `<name>_spec.moon`,
+    # plus `spec/` / `spec_<variant>/` (e.g. `spec_openresty/`,
+    # `spec_cqueues/`) directories at the project root. The
+    # filename suffix is unambiguous anywhere in the tree; the
+    # directory match is anchored against the configured
+    # `base_paths` so our own fixture tree under
+    # `spec/functional_test/fixtures/lua/...` doesn't accidentally
+    # match.
+    private def lapis_test_path?(path : String) : Bool
+      base = File.basename(path)
+      return true if base.ends_with?("_spec.lua") || base.ends_with?("_spec.moon")
+      base_paths.any? do |root|
+        normalized = root.ends_with?("/") ? root : "#{root}/"
+        tail = path.lchop?(normalized)
+        next false unless tail
+        first_segment = tail.split("/", 2).first
+        first_segment == "spec" || first_segment.starts_with?("spec_")
+      end
     end
 
     private def process_file(path : String, content : String, include_callee : Bool)
