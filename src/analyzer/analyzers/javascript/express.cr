@@ -49,6 +49,15 @@ module Analyzer::Javascript
           Noir::JSRouteExtractor.extract_static_paths(content).each do |static_path|
             static_dirs << static_path unless static_dirs.any? { |s| s["static_path"] == static_path["static_path"] && s["file_path"] == static_path["file_path"] }
           end
+
+          # Parse Server style `this.route('METHOD', '/path', ...)`
+          # declarations. The framework's PromiseRouter base class
+          # exposes a `route(method, path, ...handlers)` shape that
+          # the standard verb-DSL extractor doesn't recognise.
+          # parse-community/parse-server alone parks ~51 routes in
+          # `src/Routers/*.js` (AudiencesRouter, GlobalConfigRouter,
+          # UsersRouter, ...) via this pattern.
+          extract_parse_server_routes(path, content, result)
         rescue e
           logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
 
@@ -61,6 +70,37 @@ module Analyzer::Javascript
       process_static_dirs(static_dirs, result)
 
       result
+    end
+
+    # Recognise the Parse Server `this.route(<method>, <path>, ...)`
+    # idiom. The receiver is `this` because the call sites live
+    # inside a `class FooRouter extends PromiseRouter` method (or
+    # an indirect subclass like `ClassesRouter`). Match on
+    # `this.route('VERB', '/path', ...)` with a quoted method
+    # literal so non-PromiseRouter `this.route(...)` shapes (e.g.
+    # routing-controllers' `this.route` builder) don't accidentally
+    # fire — the latter takes no quoted-method first argument.
+    private def extract_parse_server_routes(path : String, content : String, result : Array(Endpoint))
+      pattern = /(^|[^.\w])this\.route\(\s*['"]([A-Z]+)['"]\s*,\s*['"]([^'"]+)['"]/m
+      seen = Set(Tuple(String, String)).new
+      content.scan(pattern) do |m|
+        next unless m.size >= 4
+        method = m[2].upcase
+        next unless ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"].includes?(method)
+        url = m[3]
+        key = {method, url}
+        next if seen.includes?(key)
+        seen << key
+
+        line = m.begin ? content[0...m.begin].count('\n') + 1 : 1
+        details = Details.new(PathInfo.new(path, line))
+        endpoint = Endpoint.new(url, method, details)
+        url.scan(/:(\w+)/) do |pm|
+          next unless pm.size > 0
+          endpoint.push_param(Param.new(pm[1], "", "path"))
+        end
+        result << endpoint
+      end
     end
 
     # Process static directories and add endpoints for each file

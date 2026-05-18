@@ -72,6 +72,14 @@ expected_endpoints = [
   Endpoint.new("/api/admin", "PATCH"),
   Endpoint.new("/api/admin", "HEAD"),
   Endpoint.new("/api/admin", "OPTIONS"),
+  # Parse Server `this.route('METHOD', '/path', ...)` shape. The
+  # `PromiseRouter` base class is used widely across
+  # parse-community/parse-server's Routers/* tree.
+  Endpoint.new("/push_audiences", "GET"),
+  Endpoint.new("/push_audiences/:objectId", "GET", [Param.new("objectId", "", "path")]),
+  Endpoint.new("/push_audiences", "POST"),
+  Endpoint.new("/push_audiences/:objectId", "PUT", [Param.new("objectId", "", "path")]),
+  Endpoint.new("/push_audiences/:objectId", "DELETE", [Param.new("objectId", "", "path")]),
 ]
 
 FunctionalTester.new("fixtures/javascript/express/", {
