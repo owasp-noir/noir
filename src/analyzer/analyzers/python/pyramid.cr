@@ -45,6 +45,7 @@ module Analyzer::Python
         python_files.each do |path|
           next unless path.starts_with?(base_dir_prefix) || path == current_base_path
           next if path.includes?("/site-packages/")
+          next if PythonEngine.python_test_path?(path)
 
           content = read_file_content(path)
           next unless content.includes?("pyramid")
@@ -62,6 +63,7 @@ module Analyzer::Python
         python_files.each do |path|
           next unless path.starts_with?(base_dir_prefix) || path == current_base_path
           next if path.includes?("/site-packages/")
+          next if PythonEngine.python_test_path?(path)
           @logger.debug "Analyzing #{path}"
 
           content = read_file_content(path)
