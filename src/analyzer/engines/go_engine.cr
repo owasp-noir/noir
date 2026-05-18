@@ -4,6 +4,16 @@ require "../../miniparsers/go_route_extractor_ts"
 
 module Analyzer::Go
   class GoEngine < Analyzer
+    # `*_test.go` is Go's hard-wired build-tag for test-only source.
+    # `go build` excludes these files entirely; only `go test` pulls
+    # them in. Real route handlers never live there, but framework
+    # repos (echo, chi, gin) park hundreds of `e.GET("/...", ...)`
+    # calls in `*_test.go` to exercise the router. Skip both in the
+    # cross-file pre-passes (so test-file groups don't pollute the
+    # production group map) and in each analyzer's per-file loop.
+    def self.go_test_file?(path : String) : Bool
+      path.ends_with?("_test.go")
+    end
     # --- Tree-sitter group/route pre-pass --------------------------------
     #
     # Does a cross-file fixpoint over every `.go` file in each package
@@ -27,6 +37,7 @@ module Analyzer::Go
 
       get_files_by_extension(".go").each do |path|
         next if File.directory?(path)
+        next if GoEngine.go_test_file?(path)
         dir = File.dirname(path)
         files_by_dir[dir] ||= [] of String
         files_by_dir[dir] << path
@@ -102,6 +113,7 @@ module Analyzer::Go
       file_contents = Hash(String, String).new
       get_files_by_extension(".go").each do |path|
         next if File.directory?(path)
+        next if GoEngine.go_test_file?(path)
         begin
           file_contents[path] = read_file_content(path)
         rescue File::NotFoundError

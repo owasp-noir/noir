@@ -29,6 +29,7 @@ module Analyzer::Go
                   path = channel.receive?
                   break if path.nil?
                   next if File.directory?(path)
+                  next if GoEngine.go_test_file?(path)
 
                   # Handle both .go files and .api files
                   if File.exists?(path) && (File.extname(path) == ".go" || File.extname(path) == ".api")

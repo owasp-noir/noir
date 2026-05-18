@@ -84,6 +84,7 @@ module Analyzer::Go
                 path = channel.receive?
                 break if path.nil?
                 next if File.directory?(path)
+                next if GoEngine.go_test_file?(path)
                 if File.exists?(path)
                   content = file_contents_cache[path]? || read_file_content(path)
                   next unless content.includes?(IMPORT_MARKER)
