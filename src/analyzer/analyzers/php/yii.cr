@@ -111,11 +111,31 @@ module Analyzer::Php
       normalized
     end
 
+    # A Yii controller is a console (CLI) controller when it extends
+    # any class under `yii\console\Controller` — directly via
+    # `extends \yii\console\Controller` / `extends yii\console\Controller`,
+    # or via a `use yii\console\Controller` import paired with
+    # `extends Controller`. Production code uses the same hierarchy
+    # for built-in `migrate`, `fixture`, `cache`, etc. commands.
+    private def console_controller?(content : String) : Bool
+      return true if content.matches?(/extends\s+\\?yii\\console\\Controller/)
+      return true if content.includes?("yii\\console\\Controller") &&
+                     content.matches?(/extends\s+(?:Console)?Controller\b/)
+      false
+    end
+
     private def analyze_controller(path : String, content : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
 
       controller_name = extract_controller_name(path, content)
       return endpoints if controller_name.empty?
+
+      # Skip console (CLI) controllers — they expose CLI commands
+      # like `migrate/up`, `fixture/load`, never HTTP routes. The
+      # framework repo's `framework/console/controllers/*` parks 25
+      # phantom HTTP endpoints when they're really `yii migrate up`
+      # style invocations.
+      return endpoints if console_controller?(content)
 
       # Detect REST (ActiveController / rest\Controller) — exposes standard CRUD verbs.
       # Match both fully-qualified names and `use`-imported short names.
