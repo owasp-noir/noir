@@ -93,7 +93,7 @@ module Analyzer::Rust
       while i < bytes.size
         c = bytes[i]
         case c
-        when '"'.ord then i = skip_string_literal(bytes, i)
+        when '"'.ord  then i = skip_string_literal(bytes, i)
         when '\''.ord then i = skip_char_or_lifetime(bytes, i)
         when '/'.ord
           if i + 1 < bytes.size && bytes[i + 1] == '/'.ord
@@ -104,7 +104,7 @@ module Analyzer::Rust
             i += 1
           end
         when '{'.ord then return i
-        else i += 1
+        else              i += 1
         end
       end
       nil
@@ -116,7 +116,7 @@ module Analyzer::Rust
       while i < bytes.size && depth > 0
         c = bytes[i]
         case c
-        when '"'.ord then i = skip_string_literal(bytes, i); next
+        when '"'.ord  then i = skip_string_literal(bytes, i); next
         when '\''.ord then i = skip_char_or_lifetime(bytes, i); next
         when '/'.ord
           if i + 1 < bytes.size && bytes[i + 1] == '/'.ord

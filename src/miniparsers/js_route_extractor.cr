@@ -447,12 +447,12 @@ module Noir
       "/cypress/", # Cypress e2e tree (Mattermost: e2e-tests/cypress/)
       "/playwright/",
       "/e2e-tests/",
-      "/e2e/",     # Ghost's `e2e/helpers/services/*` mock servers,
-                   # Cypress's plain `e2e/` layout
-      "/mirage/",  # Ember mirage stub-server config trees (Ghost,
-                   # Discourse legacy admin)
+      "/e2e/", # Ghost's `e2e/helpers/services/*` mock servers,
+      # Cypress's plain `e2e/` layout
+      "/mirage/", # Ember mirage stub-server config trees (Ghost,
+      # Discourse legacy admin)
       "/__mocks__/", # Jest manual-mock convention used across the
-                     # TS ecosystem
+      # TS ecosystem
       # Bundled output: GitHub Action `dist/` blobs, Next.js
       # `.next`, Nuxt `.nuxt`/`.output`, generic `dist/`, `build/`,
       # `coverage/`, `vendor/`. These contain webpacked third-party

@@ -382,18 +382,18 @@ module Analyzer::Python
 
       if attr_match = expr.match(/^([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)$/)
         module_alias, attr_name = attr_match[1], attr_match[2]
-        return nil unless import_modules.has_key?(module_alias)
+        return unless import_modules.has_key?(module_alias)
         module_path = import_modules[module_alias].first
         const_name = attr_name
       elsif name_match = expr.match(/^([A-Za-z_][A-Za-z0-9_]*)$/)
         bare_name = name_match[1]
-        return nil unless import_modules.has_key?(bare_name)
+        return unless import_modules.has_key?(bare_name)
         module_path = import_modules[bare_name].first
         const_name = bare_name
       end
 
-      return nil unless module_path && const_name
-      return nil unless File.exists?(module_path)
+      return unless module_path && const_name
+      return unless File.exists?(module_path)
 
       module_source = read_file_content(module_path)
       # Match either a typed assignment (`NAME: str = "..."`) or a
