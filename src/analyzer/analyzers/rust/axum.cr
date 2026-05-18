@@ -18,8 +18,22 @@ module Analyzer::Rust
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
+      # Rust's `tests/` directory at the crate root holds integration
+      # tests that never ship as production endpoints; `*_test.rs` /
+      # `*_tests.rs` follow the same convention for unit-test files.
+      # Skip them up-front so axum's own `axum-macros/tests/...` (full
+      # `fn main()` files exercising the macros) and similarly-named
+      # files in user projects don't pollute the endpoint set.
+      return endpoints if test_only_path?(path)
       source = read_file_content(path)
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+
+      # `#[cfg(test)] mod tests { ... let app = Router::new().route(...); }`
+      # is the canonical place doctests-as-unit-tests register routes in
+      # Rust source — axum-extra exercises this heavily. Find each
+      # cfg(test)-gated block's byte range up-front; routes whose call
+      # node starts inside one are unit-test fixtures, not endpoints.
+      test_regions = collect_cfg_test_regions(source)
 
       Noir::TreeSitter.parse_rust(source) do |root|
         function_index = include_callee ? build_function_index(root, source) : Hash(String, LibTreeSitter::TSNode).new
@@ -27,6 +41,7 @@ module Analyzer::Rust
         walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
           next unless route_call?(node, source)
+          next if inside_test_region?(node, test_regions)
 
           route = extract_route(node, source)
           next unless route
@@ -47,6 +62,154 @@ module Analyzer::Rust
       end
 
       endpoints
+    end
+
+    # Cargo convention: every `.rs` immediately under a crate's `tests/`
+    # directory is an integration test binary, never a production
+    # endpoint. We accept the slightly broader `**/tests/**/*.rs` match
+    # because real Rust apps almost never park production code in a
+    # directory named `tests`; the rare false negative is preferable to
+    # leaking framework internals like axum-extra's mod-test fixtures.
+    private def test_only_path?(path : String) : Bool
+      return true if path.includes?("/tests/")
+      base = File.basename(path)
+      base.ends_with?("_test.rs") || base.ends_with?("_tests.rs")
+    end
+
+    # Scan the source for `#[cfg(test)]` annotations, then capture the
+    # byte range of the following `mod`/`fn`/`impl` block via simple
+    # brace counting. String/char literals are skipped so a `{` inside
+    # `"foo {"` doesn't shift the depth. The annotated item is always
+    # one of these — axum's pattern never gates a `const`/`static` —
+    # so we don't try to handle non-block items.
+    private def collect_cfg_test_regions(source : String) : Array(Tuple(Int32, Int32))
+      regions = [] of Tuple(Int32, Int32)
+      bytes = source.to_slice
+      pattern = /\#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]/
+      source.scan(pattern) do |match|
+        attr_start = match.begin || next
+        brace_idx = find_block_open_brace(bytes, attr_start + 1)
+        next unless brace_idx
+        close_idx = find_matching_close_brace(bytes, brace_idx)
+        next unless close_idx
+        regions << {attr_start, close_idx + 1}
+      end
+      regions
+    end
+
+    private def find_block_open_brace(bytes : Slice(UInt8), from : Int32) : Int32?
+      i = from
+      while i < bytes.size
+        c = bytes[i]
+        case c
+        when '"'.ord then i = skip_string_literal(bytes, i)
+        when '\''.ord then i = skip_char_or_lifetime(bytes, i)
+        when '/'.ord
+          if i + 1 < bytes.size && bytes[i + 1] == '/'.ord
+            i = skip_line_comment(bytes, i)
+          elsif i + 1 < bytes.size && bytes[i + 1] == '*'.ord
+            i = skip_block_comment(bytes, i)
+          else
+            i += 1
+          end
+        when '{'.ord then return i
+        else i += 1
+        end
+      end
+      nil
+    end
+
+    private def find_matching_close_brace(bytes : Slice(UInt8), open_idx : Int32) : Int32?
+      depth = 1
+      i = open_idx + 1
+      while i < bytes.size && depth > 0
+        c = bytes[i]
+        case c
+        when '"'.ord then i = skip_string_literal(bytes, i); next
+        when '\''.ord then i = skip_char_or_lifetime(bytes, i); next
+        when '/'.ord
+          if i + 1 < bytes.size && bytes[i + 1] == '/'.ord
+            i = skip_line_comment(bytes, i); next
+          elsif i + 1 < bytes.size && bytes[i + 1] == '*'.ord
+            i = skip_block_comment(bytes, i); next
+          end
+        when '{'.ord then depth += 1
+        when '}'.ord then depth -= 1
+        end
+        i += 1
+      end
+      depth == 0 ? i - 1 : nil
+    end
+
+    private def skip_string_literal(bytes : Slice(UInt8), from : Int32) : Int32
+      i = from + 1
+      while i < bytes.size
+        c = bytes[i]
+        if c == '\\'.ord
+          i += 2
+          next
+        end
+        if c == '"'.ord
+          return i + 1
+        end
+        i += 1
+      end
+      i
+    end
+
+    # Distinguish Rust char literals (`'x'`, `'\n'`, `'\u{...}'`) from
+    # lifetime annotations (`'a`, `'static`). A lifetime starts with
+    # `'` followed by an identifier-start char and is NOT immediately
+    # closed by another quote — most importantly, it never contains
+    # `{`/`}` so we can just step past the leading quote and keep
+    # scanning. A char literal does contain interior bytes we want to
+    # skip so a `'{'` doesn't perturb brace depth.
+    private def skip_char_or_lifetime(bytes : Slice(UInt8), from : Int32) : Int32
+      # `'x'` (3 bytes): bytes[from+2] is `'`.
+      if from + 2 < bytes.size && bytes[from + 2] == '\''.ord
+        return from + 3
+      end
+      # `'\<esc>'`: bytes[from+1] is `\`, scan for matching `'`.
+      if from + 1 < bytes.size && bytes[from + 1] == '\\'.ord
+        i = from + 2
+        while i < bytes.size
+          c = bytes[i]
+          if c == '\\'.ord
+            i += 2
+            next
+          end
+          return i + 1 if c == '\''.ord
+          i += 1
+        end
+        return i
+      end
+      # Otherwise treat as lifetime: only consume the apostrophe.
+      from + 1
+    end
+
+    private def skip_line_comment(bytes : Slice(UInt8), from : Int32) : Int32
+      i = from
+      while i < bytes.size && bytes[i] != '\n'.ord
+        i += 1
+      end
+      i
+    end
+
+    private def skip_block_comment(bytes : Slice(UInt8), from : Int32) : Int32
+      i = from + 2
+      while i + 1 < bytes.size
+        if bytes[i] == '*'.ord && bytes[i + 1] == '/'.ord
+          return i + 2
+        end
+        i += 1
+      end
+      bytes.size
+    end
+
+    private def inside_test_region?(node : LibTreeSitter::TSNode, regions : Array(Tuple(Int32, Int32))) : Bool
+      return false if regions.empty?
+      start_byte = LibTreeSitter.ts_node_start_byte(node).to_i
+      regions.any? { |s, e| start_byte >= s && start_byte < e }
     end
 
     # `.route("...", get(handler))` — the chain is rooted on
