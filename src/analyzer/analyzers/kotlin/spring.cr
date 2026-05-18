@@ -2,6 +2,7 @@ require "../../../models/analyzer"
 require "../../../miniparsers/kotlin_route_extractor_ts"
 require "../../../miniparsers/kotlin_parameter_extractor_ts"
 require "../../../miniparsers/kotlin_callee_extractor"
+require "../../engines/kotlin_engine"
 require "../../../utils/utils.cr"
 
 module Analyzer::Kotlin
@@ -18,6 +19,7 @@ module Analyzer::Kotlin
         next unless File.exists?(path)
         next if File.directory?(path)
         next unless path.ends_with?(".#{KOTLIN_EXTENSION}")
+        next if KotlinEngine.test_path?(path)
 
         content = read_file_content(path)
         Noir::TreeSitterKotlinRouteExtractor.extract_string_constants(content).each do |name, value|
@@ -31,6 +33,7 @@ module Analyzer::Kotlin
         if File.directory?(path)
           process_directory(path, webflux_base_path_map)
         elsif path.ends_with?(".#{KOTLIN_EXTENSION}")
+          next if KotlinEngine.test_path?(path)
           process_kotlin_file(path, dto_builder, webflux_base_path_map, string_constants)
         end
       end
