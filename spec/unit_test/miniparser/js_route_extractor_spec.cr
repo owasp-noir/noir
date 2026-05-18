@@ -406,6 +406,59 @@ describe Noir::JSRouteExtractor do
       ).should be_false
     end
 
+    it "skips axios-only HTTP-client files" do
+      # Regression: mastodon `app/javascript/entrypoints/public.tsx`
+      # chains `axios.get('/api/v1/accounts/lookup', { params: ... })`
+      # — a browser-side AJAX call, not an Express route. axios is
+      # almost exclusively used to make outbound HTTP calls, so its
+      # presence alongside `.get(`/`.post(` shapes is a strong signal
+      # the file isn't a server.
+      content = <<-TS
+        import axios from "axios";
+        axios.get("/api/v1/foo", { params: { x: 1 } });
+        TS
+      Noir::JSRouteExtractor.test_stub_only?(
+        "/app/src/api/client.ts",
+        content
+      ).should be_true
+    end
+
+    it "keeps axios files that also import a real HTTP server lib" do
+      # Exemption guard: a real backend that uses axios internally for
+      # outbound calls should still scan when it also imports
+      # express/fastify/...
+      content = <<-JS
+        import express from "express";
+        import axios from "axios";
+        const app = express();
+        app.get("/proxy", async (req, res) => {
+          const data = await axios.get("https://upstream");
+          res.json(data.data);
+        });
+        JS
+      Noir::JSRouteExtractor.test_stub_only?(
+        "/app/src/server.js",
+        content
+      ).should be_false
+    end
+
+    it "skips files under Rails Webpacker app/javascript/" do
+      # Regression: Mastodon's redux action modules under
+      # `app/javascript/mastodon/actions/*.js` use `api().get('/url')`
+      # via a local axios wrapper. The `axios` filename hint doesn't
+      # fire because the wrapper hides the import, but the
+      # `app/javascript/` path marker is unambiguous on Rails-with-
+      # Webpacker layouts.
+      content = <<-JS
+        import api from "../api";
+        api().get("/api/v1/accounts/lookup");
+        JS
+      Noir::JSRouteExtractor.test_stub_only?(
+        "/app/javascript/mastodon/actions/accounts.js",
+        content
+      ).should be_true
+    end
+
     it "skips .test-d.ts type-only test files" do
       # Regression: fastify/fastify's `test/types/*.test-d.ts` files
       # register sample routes purely to assert their inferred typings.

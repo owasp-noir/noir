@@ -368,6 +368,18 @@ module Noir
       # HTTP requests against an app under test, not registrations.
       "from \"supertest\"", "from 'supertest'",
       "require(\"supertest\")", "require('supertest')",
+      # axios: the dominant HTTP-client lib for both browser and Node.
+      # Files that import axios but don't also import an HTTP-server
+      # lib are almost always making outbound calls (`axios.get(url,
+      # config)`), not registering routes. Mastodon's
+      # `app/javascript/**/*.{ts,tsx,js}` tree alone accounts for ~72
+      # phantom Express endpoints from chains like
+      # `axios.get('/api/v1/accounts/lookup', { params: {...} })`.
+      # The HTTP-server-import exemption (below) keeps real backend
+      # files alive — production servers that internally call axios
+      # still scan because they also import express/fastify/...
+      "from \"axios\"", "from 'axios'",
+      "require(\"axios\")", "require('axios')",
     ]
 
     # Real HTTP-server library imports. When any of these is present
@@ -424,6 +436,15 @@ module Noir
       "/.output/",
       "/coverage/",
       "/vendor/",
+      # Rails Webpacker / esbuild / Vite source root. Anything under
+      # `app/javascript/` in a Rails app is browser-side code that
+      # calls into the backend (`api().get('/x')`, `axios.get('/y')`),
+      # never a route registration. Mastodon's repo alone parks ~68
+      # phantom Express endpoints across
+      # `app/javascript/mastodon/actions/*.js` redux modules. The
+      # HTTP-server-import exemption keeps the rare case of a SSR
+      # entrypoint that genuinely runs express alive.
+      "/app/javascript/",
     ]
 
     # Hard test-file markers: when the filename itself follows a
