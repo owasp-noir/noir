@@ -1,6 +1,28 @@
 require "../../../miniparsers/csharp_callee_extractor"
 
 module Analyzer::CSharp::Common
+  # Standard .NET test-source conventions:
+  #
+  #   * `/test/` and `/tests/` parent directories — Microsoft's
+  #     own repos park unit + integration tests under
+  #     `src/<Project>/test/...` (aspnetcore) or `tests/...`
+  #     (smaller solutions).
+  #   * `/testassets/` — aspnetcore's helper-controller convention
+  #     for spinning up a real server inside the test harness.
+  #   * `Tests.cs` / `Test.cs` filename — xUnit / NUnit / MSTest
+  #     suffix convention.
+  #
+  # dotnet/aspnetcore alone parks ~3,600 phantom endpoints under
+  # `src/Mvc/test/...` and similar trees. Production code never
+  # adopts any of these.
+  def self.csharp_test_path?(path : String) : Bool
+    return true if path.includes?("/test/")
+    return true if path.includes?("/tests/")
+    return true if path.includes?("/testassets/")
+    base = File.basename(path)
+    return true if base.ends_with?("Tests.cs")
+    base.ends_with?("Test.cs")
+  end
   protected def build_signature(lines : Array(String), start_index : Int32) : Tuple(String, Int32)
     signature = lines[start_index]
     paren_count = signature.count('(') - signature.count(')')

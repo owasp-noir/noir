@@ -55,6 +55,7 @@ module Analyzer::CSharp
 
     private def analyze_controllers(include_callee : Bool)
       controller_files = get_files_by_extension(".cs").select do |file|
+        next false if Common.csharp_test_path?(file)
         file.includes?("Controller") && !file.includes?("RouteConfig")
       end
 
