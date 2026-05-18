@@ -11,8 +11,16 @@ module Analyzer::Go
     # calls in `*_test.go` to exercise the router. Skip both in the
     # cross-file pre-passes (so test-file groups don't pollute the
     # production group map) and in each analyzer's per-file loop.
+    #
+    # Also skip Go's toolchain-ignored directory prefixes: any
+    # path component starting with `_` (`_examples/`, `_assets/`,
+    # `_testdata/`) is excluded by `go build`/`go list` outright.
+    # `kataras/iris` alone parks 392 phantom endpoints under
+    # `_examples/...`; they're documented apps, not production
+    # routes the framework ships.
     def self.go_test_file?(path : String) : Bool
-      path.ends_with?("_test.go")
+      return true if path.ends_with?("_test.go")
+      path.split("/").any? { |seg| seg.starts_with?("_") }
     end
     # --- Tree-sitter group/route pre-pass --------------------------------
     #
