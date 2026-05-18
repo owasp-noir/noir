@@ -447,6 +447,12 @@ module Noir
       "/cypress/", # Cypress e2e tree (Mattermost: e2e-tests/cypress/)
       "/playwright/",
       "/e2e-tests/",
+      "/e2e/",     # Ghost's `e2e/helpers/services/*` mock servers,
+                   # Cypress's plain `e2e/` layout
+      "/mirage/",  # Ember mirage stub-server config trees (Ghost,
+                   # Discourse legacy admin)
+      "/__mocks__/", # Jest manual-mock convention used across the
+                     # TS ecosystem
       # Bundled output: GitHub Action `dist/` blobs, Next.js
       # `.next`, Nuxt `.nuxt`/`.output`, generic `dist/`, `build/`,
       # `coverage/`, `vendor/`. These contain webpacked third-party
@@ -496,14 +502,39 @@ module Noir
     # mock-server stubs (Ember pretender, MSW, nock, ...) rather
     # than real route registrations. Two routes:
     #
+    # Path markers strict enough that the HTTP-server-import
+    # exemption shouldn't apply: `/e2e/`, `/cypress/`, `/playwright/`,
+    # `/__mocks__/`, `/__tests__/`, `/e2e-tests/`, `/mirage/`. Real
+    # apps never park production handlers under any of these — even
+    # when the harness file imports express to spin up a faked
+    # service (Ghost's `e2e/helpers/services/stripe/fake-stripe-server.ts`
+    # is the canonical example). Keeping the exemption out of these
+    # paths catches the harness fakes without affecting legit
+    # backend code.
+    STRICT_TEST_PATH_MARKERS = [
+      "/e2e/",
+      "/cypress/",
+      "/playwright/",
+      "/__mocks__/",
+      "/__tests__/",
+      "/e2e-tests/",
+      "/mirage/",
+    ]
+
     #   * Filename markers fire unconditionally — `foo.test.ts` is
     #     a test no matter what it imports.
-    #   * Library + directory markers honor an exemption — if the
-    #     file also imports a real HTTP server lib (express,
-    #     fastify, ...), keep it so legit test-server harnesses
-    #     (e.g. mattermost's `webhook_serve.js`) keep their routes.
+    #   * Strict path markers also fire unconditionally — `e2e/`,
+    #     `cypress/`, etc. are dedicated test/mock trees that never
+    #     contain production handlers, even when the harness file
+    #     imports a server lib.
+    #   * Library + the remaining directory markers honor an
+    #     exemption — if the file also imports a real HTTP server
+    #     lib (express, fastify, ...), keep it so legit test-server
+    #     harnesses (e.g. mattermost's `webhook_serve.js`) keep
+    #     their routes.
     def self.test_stub_only?(file_path : String, content : String) : Bool
       return true if TEST_STUB_FILENAME_MARKERS.any? { |m| file_path.includes?(m) }
+      return true if STRICT_TEST_PATH_MARKERS.any? { |m| file_path.includes?(m) }
       has_library = TEST_STUB_LIBRARY_MARKERS.any? { |m| content.includes?(m) }
       has_path_marker = TEST_STUB_PATH_MARKERS.any? { |m| file_path.includes?(m) }
       return false unless has_library || has_path_marker
