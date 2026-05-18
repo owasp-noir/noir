@@ -440,6 +440,12 @@ module Noir
       ".spec.",
       "-spec.",
       "-test.",
+      # tsd / expect-type style type-only test files. fastify's
+      # `test/types/*.test-d.ts` suites register sample routes purely
+      # to assert their inferred typings — no production endpoints,
+      # but the JSParser pre-filter sees the same `app.get(`/`.post(`
+      # shapes.
+      ".test-d.",
     ]
 
     # True when the file's route-shaped calls are almost certainly
