@@ -7,7 +7,7 @@ expected_endpoints = [
   Endpoint.new("/data", "POST"),
 ]
 
-FunctionalTester.new("fixtures/go/gin_bindings/", {
+UncoveredFunctionalTester.new("fixtures/go/gin/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests

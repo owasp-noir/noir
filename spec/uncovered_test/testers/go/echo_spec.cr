@@ -4,10 +4,9 @@ expected_endpoints = [
   Endpoint.new("/users/:id", "GET", [
     Param.new("id", "", "path"),
   ]),
-  Endpoint.new("/data", "POST"),
 ]
 
-FunctionalTester.new("fixtures/go/fiber_bindings/", {
+UncoveredFunctionalTester.new("fixtures/go/echo/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests
