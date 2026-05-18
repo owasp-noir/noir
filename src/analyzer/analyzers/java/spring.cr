@@ -52,6 +52,16 @@ module Analyzer::Java
             end
           end
         elsif File.exists?(path) && path.ends_with?(".java")
+          # Skip Maven/Gradle test sources: every Spring Boot project
+          # parks unit and integration tests under
+          # `src/test/java/...`. Those files routinely declare
+          # `@RestController` / `@GetMapping("/...")` against inline
+          # controllers purely to exercise MockMvc / WebTestClient,
+          # but they never serve real traffic. spring-projects/
+          # spring-boot's own repo contributed ~28 such phantom
+          # endpoints. The path layout is part of the build tools'
+          # contract so the heuristic is unambiguous.
+          next if path.includes?("/src/test/java/")
           webflux_base_path = find_base_path(path, webflux_base_path_map)
           content = read_file_content(path)
 
