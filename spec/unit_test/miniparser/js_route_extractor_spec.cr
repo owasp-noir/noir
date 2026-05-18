@@ -258,12 +258,14 @@ describe Noir::JSRouteExtractor do
       Noir::JSRouteExtractor.test_stub_only?("/app/tests/user-test.js", content).should be_true
     end
 
-    it "keeps the file when express is also imported (path-marker route only)" do
-      # Library + directory markers honor an HTTP-server-import
-      # exemption so legit test-server harnesses keep their
-      # routes. The path here triggers TEST_STUB_PATH_MARKERS via
-      # `/cypress/` (without the strict filename markers) so the
-      # exemption code path is the one under test.
+    it "keeps the file when express is also imported (lenient path-marker route)" do
+      # Library + the lenient TEST_STUB_PATH_MARKERS honor an
+      # HTTP-server-import exemption so legit test-server harnesses
+      # keep their routes. `/dist/` is part of the lenient set
+      # (bundled output paths) — it triggers the path-marker code
+      # path but the exemption keeps it scanned when an HTTP server
+      # lib is imported. Strict markers like `/cypress/` and `/e2e/`
+      # skip unconditionally and are covered by separate specs.
       content = <<-JS
         import express from "express";
         import Pretender from "pretender";
@@ -271,7 +273,7 @@ describe Noir::JSRouteExtractor do
         app.get("/api/users", (req, res) => res.json([]));
         JS
       Noir::JSRouteExtractor.test_stub_only?(
-        "/app/cypress/helpers/api-server.js",
+        "/app/dist/server-bundle.js",
         content
       ).should be_false
     end
@@ -404,6 +406,37 @@ describe Noir::JSRouteExtractor do
         "/app/src/server.js",
         content
       ).should be_false
+    end
+
+    it "skips Ember mirage stub-server configs by /mirage/ path" do
+      # Regression: TryGhost/Ghost's `ghost/admin/mirage/config/*.js`
+      # files configure an Ember mirage stub server. `server.get(...)`
+      # / `server.post(...)` are mock-server handlers, not real
+      # Express routes — Ghost alone parks ~53 phantom endpoints
+      # here.
+      content = <<-JS
+        import {paginatedResponse} from '../utils';
+        export default function mockOffers(server) {
+          server.post('/offers/');
+          server.get('/offers/', paginatedResponse('offers'));
+        }
+        JS
+      Noir::JSRouteExtractor.test_stub_only?(
+        "/app/ghost/admin/mirage/config/offers.js",
+        content
+      ).should be_true
+    end
+
+    it "skips e2e helper mock servers by /e2e/ path" do
+      content = <<-TS
+        import express from "express";
+        const app = express();
+        app.get("/v1/products/:id", (req, res) => res.json({}));
+        TS
+      Noir::JSRouteExtractor.test_stub_only?(
+        "/app/e2e/helpers/services/stripe/fake-stripe-server.ts",
+        content
+      ).should be_true
     end
 
     it "skips files using other HTTP-client libs (got, purest, ky, ...)" do
