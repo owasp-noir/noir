@@ -362,6 +362,12 @@ module Noir
       # in the same shape.
       "from \"@playwright/test\"", "from '@playwright/test'",
       "from \"playwright\"", "from 'playwright'",
+      # supertest: the canonical `request(app).get(...)` test client.
+      # Production code never depends on supertest, so its presence is
+      # a strong signal the surrounding `.get(`/`.post(` calls are
+      # HTTP requests against an app under test, not registrations.
+      "from \"supertest\"", "from 'supertest'",
+      "require(\"supertest\")", "require('supertest')",
     ]
 
     # Real HTTP-server library imports. When any of these is present
