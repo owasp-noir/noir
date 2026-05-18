@@ -296,7 +296,7 @@ class EndpointOptimizer
       end
 
       # Handle /:param patterns
-      scans = endpoint.url.scan(/\/:([^\/]+)/).flatten
+      scans = endpoint.url.scan(/\/:([^\/{}]+)/).flatten
       scans.each do |match|
         new_value = apply_pvalue("path", match[1], "")
         if new_value != ""

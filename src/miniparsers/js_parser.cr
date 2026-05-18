@@ -92,6 +92,7 @@ module Noir
       # 1. Variables assigned from express.Router()
       # 2. Variables that have route methods called on them (.get, .post, etc.)
       identify_router_variables(router_variables)
+      scan_router_constructor_prefixes(router_prefixes, router_variables)
 
       # First pass: scan for router.use("/prefix", ..., routerVariable) patterns
       # Handles middleware chains like app.use('/api', auth, router)
@@ -254,6 +255,63 @@ module Noir
       end
 
       result.empty? ? prefixes : result
+    end
+
+    # Koa/@koa-router commonly attaches route prefixes in the constructor:
+    #   const router = new Router({ prefix: '/api/v1' })
+    # Seed those prefixes before the generic route scan so later
+    # `router.get(...)` calls emit their full paths.
+    private def scan_router_constructor_prefixes(router_prefixes : Hash(String, Array(String)), router_variables : Set(String))
+      idx = 0
+      while idx < @tokens.size - 6
+        if @tokens[idx].type == :identifier &&
+           idx + 1 < @tokens.size &&
+           @tokens[idx + 1].value == "="
+          router_var = @tokens[idx].value
+          scan_idx = idx + 2
+          scan_idx += 1 if scan_idx < @tokens.size && @tokens[scan_idx].value == "new"
+          next unless scan_idx < @tokens.size
+
+          constructor = @tokens[scan_idx]
+          if (constructor.type == :identifier || constructor.type == :keyword) &&
+             (constructor.value == "Router" || constructor.value.ends_with?("Router") || router_variables.includes?(router_var))
+            while scan_idx < @tokens.size &&
+                  @tokens[scan_idx].type != :lparen &&
+                  @tokens[scan_idx].value != ";"
+              scan_idx += 1
+            end
+
+            if scan_idx < @tokens.size && @tokens[scan_idx].type == :lparen
+              paren_depth = 1
+              inner_idx = scan_idx + 1
+              prefix = ""
+
+              while inner_idx < @tokens.size && paren_depth > 0
+                token = @tokens[inner_idx]
+                if token.type == :lparen
+                  paren_depth += 1
+                elsif token.type == :rparen
+                  paren_depth -= 1
+                elsif paren_depth == 1 &&
+                      token.value == "prefix" &&
+                      inner_idx + 2 < @tokens.size &&
+                      @tokens[inner_idx + 1].type == :colon &&
+                      @tokens[inner_idx + 2].type == :string
+                  prefix = @tokens[inner_idx + 2].value
+                  break
+                end
+                inner_idx += 1
+              end
+
+              unless prefix.empty?
+                router_prefixes[router_var] << prefix unless router_prefixes[router_var].includes?(prefix)
+                router_variables.add(router_var)
+              end
+            end
+          end
+        end
+        idx += 1
+      end
     end
 
     # Format a regex token value into a path string.

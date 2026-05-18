@@ -7,7 +7,7 @@ expected_endpoints = [
     Param.new("id", "", "path"),
   ]),
   Endpoint.new("/info", "GET"),
-  Endpoint.new("/settings", "GET"),
+  Endpoint.new("/admin/settings", "GET"),
   Endpoint.new("/status", "GET"),
   Endpoint.new("/simple", "GET"),
   Endpoint.new("/items/:itemId", "DELETE", [

@@ -126,6 +126,50 @@ module Noir
           end
         end
 
+        # Track inline anonymous Fastify plugins:
+        #   fastify.register(function (instance, options, done) { ... }, { prefix: '/x' })
+        #   fastify.register((instance, options) => { ... }, { prefix: '/x' })
+        #
+        # These callbacks have no stable function name, so they can't reuse the
+        # function-scoped CodeLocator path. Keep their body ranges local and apply
+        # the prefix directly to routes whose start position falls inside.
+        anonymous_register_ranges = [] of Tuple(Int32, Int32, String)
+        anonymous_register_patterns = [
+          /\b\w+\.register\s*\(\s*(?:async\s+)?function\s*\([^)]*\)\s*\{/,
+          /\b\w+\.register\s*\(\s*(?:async\s+)?\([^)]*\)\s*=>\s*\{/,
+          /\b\w+\.register\s*\(\s*(?:async\s+)?\w+\s*=>\s*\{/,
+        ]
+        seen_anonymous_registers = Set(String).new
+
+        anonymous_register_patterns.each do |register_pattern|
+          content.scan(register_pattern) do |m|
+            match_start = m.begin(0)
+            next unless match_start
+
+            register_paren_idx = content.index("(", match_start)
+            open_brace_idx = content.index("{", match_start)
+            next unless register_paren_idx && open_brace_idx
+
+            close_brace_idx = find_matching_brace(content, open_brace_idx)
+            close_paren_idx = find_matching_paren(content, register_paren_idx)
+            next unless close_brace_idx && close_paren_idx
+            next if close_brace_idx >= close_paren_idx
+
+            trailer = content[(close_brace_idx + 1)...close_paren_idx]
+            next unless trailer
+
+            prefix_match = trailer.match(/prefix\s*:\s*['"]([^'"]+)['"]/)
+            next unless prefix_match
+
+            prefix = prefix_match[1]
+            key = "#{open_brace_idx}:#{close_brace_idx}:#{prefix}"
+            next if seen_anonymous_registers.includes?(key)
+
+            anonymous_register_ranges << {open_brace_idx, close_brace_idx, prefix}
+            seen_anonymous_registers.add(key)
+          end
+        end
+
         # Seed function-specific prefixes from CodeLocator
         prefixes_by_function = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
         function_names.each do |func_name|
@@ -196,6 +240,19 @@ module Noir
                 prefixes = func_prefixes
                 break
               end
+            end
+          end
+          if prefixes.empty? && pattern.start_pos >= 0
+            containing_registers = [] of Tuple(String, Int32)
+            anonymous_register_ranges.each do |start_idx, end_idx, prefix|
+              if start_idx <= pattern.start_pos && pattern.start_pos <= end_idx
+                containing_registers << {prefix, end_idx - start_idx}
+              end
+            end
+            unless containing_registers.empty?
+              containing_registers.sort_by! { |_, span| span }
+              anonymous_prefix = containing_registers.first[0]
+              prefixes = [anonymous_prefix]
             end
           end
           if prefixes.empty? && !file_prefixes.empty?
