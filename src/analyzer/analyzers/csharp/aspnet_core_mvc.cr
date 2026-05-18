@@ -21,6 +21,7 @@ module Analyzer::CSharp
 
       get_files_by_extension(".cs").each do |file|
         next unless File.exists?(file)
+        next if Common.csharp_test_path?(file)
 
         lines = read_file_content(file).lines
         lines.each_with_index do |line, index|
@@ -199,6 +200,7 @@ module Analyzer::CSharp
     private def analyze_controllers(route_patterns : Array(String), include_callee : Bool)
       controller_files = get_files_by_extension(".cs").select do |file|
         base = File.basename(file)
+        next false if Common.csharp_test_path?(file)
         base.includes?("Controller") && !base.ends_with?("RouteConfig.cs") && base != "Program.cs" && base != "Startup.cs"
       end
 
