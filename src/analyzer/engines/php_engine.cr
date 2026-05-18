@@ -30,6 +30,7 @@ module Analyzer::Php
         parallel_analyze(channel) do |path|
           next if File.directory?(path)
           next unless File.exists?(path)
+          next if PhpEngine.test_path?(path)
 
           begin
             block.call(path)
@@ -40,6 +41,26 @@ module Analyzer::Php
       rescue e
         logger.debug e
       end
+    end
+
+    # Standard PHP test-source conventions:
+    #
+    #   * `/Tests/`               — PSR-4 / Symfony convention
+    #     (`src/Symfony/Bundle/FrameworkBundle/Tests/...`)
+    #   * `/tests/`               — Laravel / CakePHP / PHPUnit default
+    #   * `*Test.php` filename    — PHPUnit suffix convention
+    #   * `*Tests.php` filename   — pluralized variant (rare)
+    #
+    # symfony/symfony's own repo accounts for ~63 phantom endpoints
+    # under `src/Symfony/Bundle/FrameworkBundle/Tests/...`. The
+    # conventions are unambiguous — production routing never adopts
+    # any of them.
+    def self.test_path?(path : String) : Bool
+      return true if path.includes?("/Tests/")
+      return true if path.includes?("/tests/")
+      base = File.basename(path)
+      return true if base.ends_with?("Test.php")
+      base.ends_with?("Tests.php")
     end
 
     # Route composition helper. Will migrate to a PHP route extractor when that
