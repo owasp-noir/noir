@@ -55,13 +55,15 @@ module Analyzer::Javascript
       content = CodeLocator.instance.content_for(main_file) || File.read(main_file, encoding: "utf-8", invalid: :skip)
 
       # Cheap pre-filter: every code path in this scanner is downstream
-      # of a `.use(...)` call (literal mount, no-prefix mount, or the
-      # `defaultRoutes.forEach(... router.use(...))` config-array form,
-      # which also contains `.use(`). Substring-checking once skips the
-      # imports parse + three full-content regex scans on the vast
-      # majority of files in a large codebase (tests, helpers, UI
-      # components, fixtures), which contain no router mounts at all.
-      return unless content.includes?(".use(") || content.includes?(".use (")
+      # of a `.use(...)` or `.route(...)` call (literal mount, no-prefix
+      # mount, the `defaultRoutes.forEach(... router.use(...))`
+      # config-array form, plus Hono-style `app.route('/api', child)`
+      # mounts). Substring-checking once skips the imports parse + three
+      # full-content regex scans on the vast majority of files in a large
+      # codebase (tests, helpers, UI components, fixtures), which contain
+      # no router mounts at all.
+      return unless content.includes?(".use(") || content.includes?(".use (") ||
+                    content.includes?(".route(") || content.includes?(".route (")
 
       # Parse imports
       imports = parse_imports(content, main_file)
@@ -72,17 +74,13 @@ module Analyzer::Javascript
       # Store arrays of prefixes per router variable to support multi-mount scenarios
       var_prefix = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
 
-      # Scan for .use('/prefix', ...) patterns with explicit path prefix
-      content.scan(/(\w+)\.use\s*\(\s*['"]([^'"]+)['"]\s*,\s*/) do |m|
-        next unless m.size >= 3
-
-        caller = m[1]
-        prefix = m[2]
-        match_end = m.end(0) || 0
-
-        process_use_call(content, match_end, caller, prefix, main_file, locator,
-          require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
-      end
+      # Scan for mount calls with explicit path prefixes. Express-style
+      # `.use('/prefix', router)` and Hono-style `.route('/prefix', childApp)`
+      # both contribute cross-file prefixes to the same locator table.
+      scan_literal_mount_calls(content, "use", main_file, locator,
+        require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
+      scan_literal_mount_calls(content, "route", main_file, locator,
+        require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
 
       # Scan for .use(router) patterns where prefix is omitted (defaults to '/')
       # The negative lookahead `(?!\s*['"])` prevents matching calls that have a
@@ -160,6 +158,29 @@ module Analyzer::Javascript
           deferred_key = router_file_direct || router_var || ""
           global_deferred_mounts << {main_file, caller, prefix, deferred_key} unless deferred_key.empty?
         end
+      end
+    end
+
+    private def scan_literal_mount_calls(
+      content : String,
+      call_name : String,
+      main_file : String,
+      locator : CodeLocator,
+      require_map : Hash(String, String),
+      function_map : Hash(String, String),
+      var_to_function : Hash(String, String),
+      var_prefix : Hash(String, Array(String)),
+      global_deferred_mounts : Array(Tuple(String, String, String, String)),
+    )
+      content.scan(/(\w+)\.#{call_name}\s*\(\s*['"]([^'"]+)['"]\s*,\s*/) do |m|
+        next unless m.size >= 3
+
+        caller = m[1]
+        prefix = m[2]
+        match_end = m.end(0) || 0
+
+        process_use_call(content, match_end, caller, prefix, main_file, locator,
+          require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
       end
     end
 

@@ -1,12 +1,15 @@
 require "../../engines/javascript_engine"
 require "../../../miniparsers/js_callee_extractor"
 require "../../../miniparsers/js_route_extractor"
+require "./express/router_mount_scanner"
 
 module Analyzer::Javascript
   class Hono < JavascriptEngine
     def analyze
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
+
+      scan_for_router_mounts
 
       parallel_file_scan do |path|
         begin
@@ -192,6 +195,11 @@ module Analyzer::Javascript
       end
 
       [] of Endpoint
+    end
+
+    private def scan_for_router_mounts
+      scanner = RouterMountScanner.new(all_files, @base_paths, base_path, logger)
+      scanner.scan
     end
   end
 end
