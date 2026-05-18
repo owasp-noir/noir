@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "../../../miniparsers/adonisjs_extractor_ts"
+require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Javascript
   class Adonisjs < Analyzer
@@ -17,6 +18,11 @@ module Analyzer::Javascript
 
         content = read_file_content(path)
         next unless ADONIS_MARKERS.any? { |m| content.includes?(m) }
+        # Reuse the shared JS test-stub gate so `*.spec.ts` /
+        # `*.test.ts` (japa, vitest, jest) AdonisJS test scaffolds
+        # don't leak. adonisjs/core's own repo parks ~19 phantom
+        # endpoints in `tests/providers.spec.ts` alone.
+        next if Noir::JSRouteExtractor.test_stub_only?(path, content)
 
         Noir::TreeSitterAdonisJsExtractor.extract_routes(content).each do |route|
           @result << build_endpoint(route, path)
