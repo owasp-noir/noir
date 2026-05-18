@@ -1,4 +1,21 @@
 defmodule ElixirPlug.Router do
+  @moduledoc """
+  Regression guard: any route DSL snippet inside a `\"\"\"` heredoc
+  (`@moduledoc` / `@doc` / `~S\"\"\"`) is documentation, not a real
+  registration. None of the URLs below should surface as endpoints.
+
+      get "/should-not-appear-doc", do: nil
+      post "/should-not-appear-doc-post", do: nil
+  """
+
+  @doc ~S'''
+  Same regression, for the alternate triple-single heredoc delimiter
+  Phoenix uses in `verified_routes.ex`.
+
+      get "/should-not-appear-tripple-single", do: nil
+  '''
+  def docs, do: :ok
+
   use Plug.Router
 
   plug :match
