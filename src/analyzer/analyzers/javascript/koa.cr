@@ -32,6 +32,15 @@ module Analyzer::Javascript
           Noir::JSRouteExtractor.extract_static_paths(content).each do |static_path|
             static_dirs << static_path unless static_dirs.any? { |s| s["static_path"] == static_path["static_path"] && s["file_path"] == static_path["file_path"] }
           end
+
+          # Strapi-style declarative routes: `{ method: 'GET',
+          # path: '/foo', handler: '...' }` object literals,
+          # typically exported as an array from
+          # `<plugin>/server/routes/**/*.js`. The verb DSL (`app.get`,
+          # `router.post`) doesn't fire on these — strapi/strapi
+          # parks ~38 such routes per plugin that the shared
+          # JSRouteExtractor would otherwise miss.
+          extract_strapi_routes(path, content, result)
         rescue e
           logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
           analyze_with_regex(path, result, static_dirs)
@@ -42,6 +51,49 @@ module Analyzer::Javascript
       process_static_dirs(static_dirs, result)
 
       result
+    end
+
+    # Match Strapi's declarative route entries: object literals
+    # whose `method:` and `path:` keys sit on adjacent lines. Both
+    # keys are bare identifiers (Strapi never quotes them) and the
+    # values are single-quoted strings (the convention across every
+    # `@strapi/plugin-*` route file).
+    private def extract_strapi_routes(path : String, content : String, result : Array(Endpoint))
+      seen = Set(Tuple(String, String, Int32)).new
+      lines = content.lines
+      lines.each_with_index do |line, index|
+        next unless m = line.match(/^\s*method:\s*['"]([A-Z]+)['"]\s*,?/)
+        method = m[1].upcase
+        next unless ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"].includes?(method)
+        # Strapi parks `path:` either on the same line (rare) or
+        # the very next line; lookahead at most four lines so
+        # interleaved comments / type declarations don't desync.
+        path_str = nil.as(String?)
+        (1..4).each do |off|
+          next unless idx = index + off
+          next unless idx < lines.size
+          break if path_str
+          if pm = lines[idx].match(/^\s*path:\s*['"]([^'"]+)['"]/)
+            path_str = pm[1]
+            break
+          end
+        end
+        next unless route_path = path_str
+        # Skip duplicate (same triple already emitted for this file).
+        key = {method, route_path, index + 1}
+        next if seen.includes?(key)
+        seen << key
+
+        details = Details.new(PathInfo.new(path, index + 1))
+        endpoint = Endpoint.new(route_path, method, details)
+        if route_path.includes?(":")
+          route_path.scan(/:(\w+)/) do |pm|
+            next unless pm.size > 0
+            endpoint.push_param(Param.new(pm[1], "", "path"))
+          end
+        end
+        result << endpoint
+      end
     end
 
     # Process static directories and add endpoints for each file

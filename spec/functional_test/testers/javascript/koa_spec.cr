@@ -20,6 +20,14 @@ expected_endpoints = [
   Endpoint.new("/everything", "PATCH"),
   Endpoint.new("/everything", "HEAD"),
   Endpoint.new("/everything", "OPTIONS"),
+  # Strapi-style declarative `{method, path, handler}` route
+  # entries. Plugins under `@strapi/plugin-*` export these from
+  # `server/routes/**/*.js` and the standard verb DSL never fires.
+  Endpoint.new("/strapi/items", "GET"),
+  Endpoint.new("/strapi/items", "POST"),
+  Endpoint.new("/strapi/items/:id", "PUT", [
+    Param.new("id", "", "path"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/javascript/koa/", {
