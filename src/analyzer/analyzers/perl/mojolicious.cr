@@ -30,6 +30,12 @@ module Analyzer::Perl
       ext = File.extname(path)
       return [] of Endpoint unless ext == ".pl" || ext == ".pm" ||
                                    ext == ".psgi" || ext == ".t"
+      # Skip standard Perl test conventions: anything under `/t/`
+      # (CPAN convention for test scripts) or with a `.t` filename
+      # (which is also a test script — accepted above so analyzers
+      # *could* opt in, but Mojolicious's own `t/mojolicious/*.t`
+      # accounts for ~1100 phantom endpoints).
+      return [] of Endpoint if perl_test_path?(path, ext)
 
       endpoints = [] of Endpoint
       File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
@@ -37,6 +43,12 @@ module Analyzer::Perl
         endpoints.concat(analyze_content(content, path, include_callee, controller_callees))
       end
       endpoints
+    end
+
+    private def perl_test_path?(path : String, ext : String) : Bool
+      return true if ext == ".t"
+      return true if path.includes?("/t/")
+      false
     end
 
     def analyze_content(content : String,
