@@ -5,6 +5,13 @@ module Analyzer::Elixir
     def analyze_file(path : String) : Array(Endpoint)
       ext = File.extname(path)
       return [] of Endpoint unless ext == ".ex" || ext == ".exs"
+      # Elixir convention: `*_test.exs` files are ExUnit test
+      # modules. They register routes (often via inline
+      # `Plug.Router`-using modules or `defmodule TestRouter do ... use
+      # Phoenix.Router`) purely to exercise the framework; the routes
+      # never serve real traffic. Phoenix's own repo and any
+      # `phx.gen.auth` scaffold's tests trip this hard.
+      return [] of Endpoint if test_only_path?(path)
 
       endpoints = [] of Endpoint
       File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
@@ -22,7 +29,26 @@ module Analyzer::Elixir
 
       # Find all route blocks and extract params
       lines = content.lines
+      # Elixir lets `@moduledoc` / `@doc` / `~S` / `~s` use either
+      # triple-double (`\"\"\"`) or triple-single (`'''`) delimiters.
+      # Phoenix's `verified_routes.ex` opens the module doc with
+      # `~S'''` and embeds Phoenix.Router examples (`get \"/...\",
+      # Ctrl, :show`) inside it — those would otherwise leak. Track
+      # both delimiters independently so a `~H\"\"\"` template inside
+      # a `~S'''` outer doc doesn't pop the outer state.
+      in_triple_double = false
+      in_triple_single = false
       lines.each_with_index do |line, index|
+        if line.includes?("\"\"\"")
+          line.scan(/"""/).size.times { in_triple_double = !in_triple_double }
+          next
+        end
+        if line.includes?("'''")
+          line.scan(/'''/).size.times { in_triple_single = !in_triple_single }
+          next
+        end
+        next if in_triple_double || in_triple_single
+
         line_endpoints = line_to_endpoint(line.strip)
         line_endpoints.each do |endpoint|
           if endpoint.method != ""
@@ -42,6 +68,14 @@ module Analyzer::Elixir
       end
 
       endpoints
+    end
+
+    # ExUnit's filename convention is rigid: every test module sits in
+    # a file named `*_test.exs`, and `mix test` ignores anything else.
+    # Skipping by suffix is safe because production code never adopts
+    # that name.
+    private def test_only_path?(path : String) : Bool
+      File.basename(path).ends_with?("_test.exs")
     end
 
     def extract_params_from_block(lines : Array(String), start_index : Int32, method : String, block_end : Int32? = nil) : Array(Param)
