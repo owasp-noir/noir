@@ -84,4 +84,45 @@ describe Noir::TreeSitterGoRouteExtractor do
     routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
     routes.map(&.path).should eq(["/real"])
   end
+
+  it "rejects net/http client calls that share the GET/POST method names" do
+    # Regression: `http.Get("http://localhost:8080/")` from
+    # gin-gonic/examples/otel emitted a bogus `/http://localhost:8080/`
+    # route. Real router paths are relative and never carry a scheme,
+    # so reject absolute URLs to keep the net/http client API out.
+    source = <<-GO
+      package main
+      func main() {
+          r := gin.Default()
+          r.GET("/legit", handler)
+          http.Get("http://localhost:8080/")
+          http.Post("https://example.com/api", "application/json", nil)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
+    routes.map(&.path).should eq(["/legit"])
+  end
+
+  it "rejects single-arg verb calls like gin.Context.Get value lookups" do
+    # Regression: `c.Get("clientChan")` from
+    # gin-gonic/examples/server-sent-event emitted a bogus `/clientChan`
+    # route. Real route registrations always pass a handler argument
+    # after the path; value-lookup helpers take a single string.
+    source = <<-GO
+      package main
+      func handler(c *gin.Context) {
+          v, ok := c.Get("clientChan")
+          _ = v
+          _ = ok
+      }
+      func main() {
+          r := gin.Default()
+          r.GET("/legit", handler)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
+    routes.map(&.path).should eq(["/legit"])
+  end
 end
