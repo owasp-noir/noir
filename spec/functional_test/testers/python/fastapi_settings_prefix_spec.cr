@@ -10,6 +10,11 @@ require "../../func_spec.cr"
 expected_endpoints = [
   Endpoint.new("/api/v1/login/access-token", "POST"),
   Endpoint.new("/api/v1/login/test-token", "POST"),
+  # `APIRouter(prefix="/items")` — the router's own prefix must
+  # be preserved when the parent (api_router) layers `/api/v1`
+  # via `settings.API_V1_STR` on top, yielding `/api/v1/items/`.
+  Endpoint.new("/api/v1/items/", "GET"),
+  Endpoint.new("/api/v1/items/{id}", "GET", [Param.new("id", "", "path")]),
 ]
 
 FunctionalTester.new("fixtures/python/fastapi_settings_prefix/", {

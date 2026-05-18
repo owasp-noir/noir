@@ -272,6 +272,22 @@ module Analyzer::Python
       result
     end
 
+    # Concatenate two URL-prefix segments, normalising the
+    # boundary so `combine_router_prefixes("/api/v1", "/users")`
+    # gives `/api/v1/users` and `combine_router_prefixes("",
+    # "/users")` gives `/users`. Trailing slashes are dropped on
+    # the parent so we don't end up with `/api/v1//users`.
+    private def combine_router_prefixes(parent : ::String, own : ::String) : ::String
+      return own if parent.empty?
+      return parent if own.empty?
+      normalized_parent = parent.ends_with?("/") ? parent[0..-2] : parent
+      if own.starts_with?("/")
+        "#{normalized_parent}#{own}"
+      else
+        "#{normalized_parent}/#{own}"
+      end
+    end
+
     # Configures the prefix for each router
     def configure_router_prefix(file : ::String, include_router_map : Hash(::String, Hash(::String, Router)), router_prefix : ::String = "")
       return if file.empty? || !File.exists?(file)
@@ -280,7 +296,17 @@ module Analyzer::Python
       source = read_file_content(file)
       import_modules = find_imported_modules(@fastapi_base_path, file, source)
       include_router_map[file].each do |instance_name, router_class|
-        router_class.prefix = router_prefix
+        # PREPEND the inherited prefix to the router's own. The
+        # initial pass captures `APIRouter(prefix="/users")`, so
+        # `router_class.prefix` may already be `/users`; if we
+        # overwrite it here with `router_prefix`, the constructor
+        # prefix is silently dropped and routes inside the router
+        # collapse to the parent's prefix only. Regression on
+        # full-stack-fastapi-template: `users.router` and
+        # `items.router` both declare `prefix=...` at construction
+        # time, but their routes were surfacing without the
+        # `/users` / `/items` segment.
+        router_class.prefix = combine_router_prefixes(router_prefix, router_class.prefix)
 
         # Parse '{app}.include_router({item}.router, prefix="{prefix}")' code
         source.scan(/#{instance_name}\.include_router\(([^\)]*)\)/).each do |match|
