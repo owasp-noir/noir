@@ -1,0 +1,6 @@
+# Regression guard: routes files under `src/sbt-test/...` are
+# sbt-plugin test fixtures. Production traffic never reaches them.
+# Neither URL below should appear in the fixture's
+# expected-endpoints list.
+GET     /should-not-appear-sbt-test     controllers.HomeController.index
+POST    /should-not-appear-sbt-test     controllers.HomeController.create
