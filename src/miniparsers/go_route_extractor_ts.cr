@@ -53,6 +53,11 @@ module Noir
       "request", "Request", "req", "Req",
       "response", "Response", "resp", "Resp",
       "fixtures", "Fixtures",
+      # Go's structured-logging package exposes `slog.Any("key",
+      # value)` (and `Group`, `Attr`, etc.) which the verb-decoder
+      # would otherwise read as `Any /key`. Pocketbase parks
+      # several `slog.Any("subscriptions", ...)` calls per file.
+      "slog",
     }
 
     # A static-file route: URL `url_prefix` serves files from disk
