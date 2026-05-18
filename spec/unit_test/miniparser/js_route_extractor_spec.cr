@@ -363,6 +363,49 @@ describe Noir::JSRouteExtractor do
       ).should be_true
     end
 
+    it "skips supertest harnesses that don't otherwise look like tests" do
+      # Regression: expressjs/express keeps its supertest suites under
+      # `test/`/`test/acceptance/` with plain `*.js` filenames (e.g.
+      # `app.router.js`, `acceptance/web-service.js`). None match the
+      # `.test.`/`.spec.` filename convention or a TEST_STUB_PATH_MARKER,
+      # and they `require('../')` instead of literal `'express'`, so
+      # without a supertest marker the test client's
+      # `request(app).get('/api/users?api-key=foo')` chain leaks through
+      # as a route.
+      content = <<-JS
+        var request = require('supertest')
+          , app = require('../../examples/web-service');
+
+        describe('web-service', function(){
+          it('responds', function(done){
+            request(app).get('/api/users?api-key=foo').expect(200, done);
+          })
+        })
+        JS
+      Noir::JSRouteExtractor.test_stub_only?(
+        "/app/test/acceptance/web-service.js",
+        content
+      ).should be_true
+    end
+
+    it "keeps supertest-using files that also import the real server lib" do
+      # Exemption guard: a regular project file that imports both
+      # supertest and express should still scan — the `app.get(...)`
+      # registrations are real, and the supertest call sits next to
+      # them only because the file boots its own test harness.
+      content = <<-JS
+        import express from "express";
+        import request from "supertest";
+        const app = express();
+        app.get("/api/users", (req, res) => res.json([]));
+        request(app).get("/api/users").expect(200);
+        JS
+      Noir::JSRouteExtractor.test_stub_only?(
+        "/app/src/server.js",
+        content
+      ).should be_false
+    end
+
     it "skips bundled dist/ output files" do
       content = <<-JS
         // webpack bundle output with thousands of .get( / .post( noise
