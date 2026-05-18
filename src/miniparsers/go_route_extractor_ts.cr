@@ -794,6 +794,16 @@ module Noir
 
       return unless raw_path
 
+      # Filter out non-router method calls that masquerade as verb routes:
+      #   * `http.Get("http://...")` — net/http client call. Real route
+      #     paths are relative to the router and never carry a scheme.
+      #   * `c.Get("clientChan")` — `gin.Context.Get` value lookup. Real
+      #     route registrations always pass a handler argument after the
+      #     path; the lookup helpers take a single string and nothing
+      #     else.
+      return if raw_path.includes?("://")
+      return if handler_text.empty?
+
       resolved = if prefix = groups[router_name]?
                    join_paths(prefix, raw_path)
                  else
