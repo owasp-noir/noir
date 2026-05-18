@@ -13,6 +13,10 @@ expected_endpoints = [
   Endpoint.new("/echo", "POST"),
   Endpoint.new("/quotes", "GET"),
   Endpoint.new("/quotes/0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-_.~", "GET"),
+  # ProductRouter.java — WebMvc.fn `nest(path("/product"), ...)`
+  # adds `/product` to every verb call inside the lambda body.
+  Endpoint.new("/product/name/{name}", "GET", [Param.new("name", "", "path")]),
+  Endpoint.new("/product/id/{id}", "GET", [Param.new("id", "", "path")]),
   # ItemController.java
   Endpoint.new("/items/{id}", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/items/json/{id}", "GET", [Param.new("id", "", "path")]),
