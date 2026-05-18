@@ -11,6 +11,10 @@ module Analyzer::Ruby
 
       parallel_file_scan do |path|
         next unless path.ends_with?(".rb")
+        # Skip Minitest / RSpec test files — Roda's own
+        # `spec/plugin/*_spec.rb` parks ~46 phantom routes that
+        # exercise the routing tree via `Roda` subclasses.
+        next if RubyEngine.ruby_test_path?(path)
         analyze_file(path, include_callee)
       end
 
