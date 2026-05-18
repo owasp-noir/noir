@@ -26,6 +26,15 @@ module Analyzer::Crystal
           next if File.directory?(path)
           next unless File.exists?(path) && File.extname(path) == ".cr"
           next if path.includes?("lib")
+          # Crystal's standard test directory is `spec/`, and test
+          # files always end in `_spec.cr`. Crystal framework repos
+          # (lucky, marten, amber, kemal) park hundreds of route
+          # declarations there to exercise the framework. Production
+          # code never adopts either convention. The `spec/` dir
+          # is checked relative to the project root so nested
+          # fixtures under noir's own `spec/functional_test/...`
+          # tree don't accidentally trip the filter.
+          next if crystal_spec_path?(path)
 
           begin
             block.call(path)
@@ -35,6 +44,19 @@ module Analyzer::Crystal
         end
       rescue e
         logger.debug e
+      end
+    end
+
+    # `*_spec.cr` is Crystal's official spec filename — unambiguous
+    # at any depth. The `spec/` directory is only treated as test
+    # when it sits at the project root (or the immediate child of
+    # one of the configured `base_paths`); inside our fixture tree
+    # the framework apps themselves live under a `spec/` ancestor.
+    private def crystal_spec_path?(path : String) : Bool
+      return true if File.basename(path).ends_with?("_spec.cr")
+      base_paths.any? do |root|
+        normalized = root.ends_with?("/") ? root : "#{root}/"
+        path.starts_with?("#{normalized}spec/")
       end
     end
 
