@@ -12,7 +12,7 @@ module Analyzer::Ruby
         # exercise the framework. Sinatra's own repo accounts for
         # ~145 such routes; production code never adopts either
         # filename convention so the suffix check is safe.
-        next if test_only_path?(path)
+        next if RubyEngine.ruby_test_path?(path)
         File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
           lines = file.each_line.to_a
           last_endpoint = Endpoint.new("", "")
@@ -44,11 +44,6 @@ module Analyzer::Ruby
       end
 
       @result
-    end
-
-    private def test_only_path?(path : String) : Bool
-      base = File.basename(path)
-      base.ends_with?("_test.rb") || base.ends_with?("_spec.rb")
     end
 
     private def attach_route_callees(endpoint : Endpoint, lines : Array(String), index : Int32, path : String)

@@ -5,6 +5,18 @@ module Analyzer::Ruby
   abstract class RubyEngine < Analyzer
     HTTP_VERBS = ["get", "post", "put", "delete", "patch", "head", "options"]
 
+    # Minitest's `*_test.rb` and RSpec's `*_spec.rb` conventions are
+    # rigid in Ruby — `rake test` / `mri test` only run files matching
+    # the first, and `rspec` discovers the second. Production Ruby
+    # never adopts either filename, so the suffix check is safe for
+    # every Ruby analyzer (sinatra, grape, roda, hanami). Promoted
+    # from `Analyzer::Ruby::Sinatra` (#1571) so the rest of the
+    # family stays in sync.
+    def self.ruby_test_path?(path : String) : Bool
+      base = File.basename(path)
+      base.ends_with?("_test.rb") || base.ends_with?("_spec.rb")
+    end
+
     # Match the `<verb> "<path>"` idiom on a single line and return the first
     # endpoint found, or an empty endpoint if none match. Shared by Hanami
     # and Sinatra (Rails uses a different per-line-multi-match shape).
