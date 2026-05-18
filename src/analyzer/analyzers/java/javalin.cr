@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../engines/java_engine"
 require "../../../miniparsers/jvm_lambda_dsl_extractor_ts"
 
 module Analyzer::Java
@@ -40,6 +41,7 @@ module Analyzer::Java
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       file_list = all_files()
       file_list.each do |path|
+        next if JavaEngine.test_path?(path)
         next unless File.exists?(path)
         next unless path.ends_with?(".#{JAVA_EXTENSION}")
 
