@@ -13,6 +13,14 @@ module Analyzer::Scala
       # First pass: find all routes files and Scala controller files
       file_list.each do |path|
         next unless File.exists?(path)
+        # Skip test sources: Play's own repo parks ~300 phantom
+        # endpoints in `dev-mode/sbt-plugin/src/sbt-test/.../conf/routes`
+        # (sbt-plugin test fixtures) and `dev-mode/play-routes-compiler/
+        # src/test/resources/*.routes`. Both `/src/test/` (Maven/Gradle
+        # convention) and `/src/sbt-test/` (sbt-plugin's per-fixture
+        # test trees) are unambiguous — production code never adopts
+        # either.
+        next if path.includes?("/src/test/") || path.includes?("/src/sbt-test/")
 
         if path.ends_with?("routes") || path.ends_with?("routes.conf") || path.includes?("/conf/routes")
           routes_files << path
