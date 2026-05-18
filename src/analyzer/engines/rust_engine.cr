@@ -25,6 +25,7 @@ module Analyzer::Rust
         parallel_analyze(channel) do |path|
           next if File.directory?(path)
           next unless File.exists?(path) && File.extname(path) == ".rs"
+          next if RustEngine.test_path?(path)
 
           begin
             block.call(path)
@@ -35,6 +36,21 @@ module Analyzer::Rust
       rescue e
         logger.debug e
       end
+    end
+
+    # Cargo convention: every `.rs` immediately under a crate's
+    # `tests/` directory is an integration-test binary, never a
+    # production endpoint. The `_test.rs` / `_tests.rs` suffix is
+    # equally rigid for unit tests in sibling files. Framework
+    # repos (rocket/Rocket's `core/codegen/tests/`, actix-web's
+    # `actix-web-codegen/tests/`, poem's `poem-openapi/tests/`)
+    # all park hundreds of route registrations under one of these
+    # patterns. Promoted from `axum.cr#test_only_path?` (#1569) to
+    # the shared engine so the rest of the Rust family benefits.
+    def self.test_path?(path : String) : Bool
+      return true if path.includes?("/tests/")
+      base = File.basename(path)
+      base.ends_with?("_test.rs") || base.ends_with?("_tests.rs")
     end
 
     protected def attach_rust_callees(endpoint : Endpoint, callees : Array(Noir::RustCalleeExtractor::Entry))

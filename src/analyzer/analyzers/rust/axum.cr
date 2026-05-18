@@ -18,13 +18,12 @@ module Analyzer::Rust
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      # Rust's `tests/` directory at the crate root holds integration
-      # tests that never ship as production endpoints; `*_test.rs` /
-      # `*_tests.rs` follow the same convention for unit-test files.
-      # Skip them up-front so axum's own `axum-macros/tests/...` (full
-      # `fn main()` files exercising the macros) and similarly-named
-      # files in user projects don't pollute the endpoint set.
-      return endpoints if test_only_path?(path)
+      # Path-based test filtering now lives in
+      # `RustEngine#parallel_file_scan` (see #1569 history). The
+      # remaining `analyze_file` work is the cfg(test) region pass —
+      # axum's source files mix production routes with
+      # `#[cfg(test)] mod tests { ... }` blocks, which a path filter
+      # alone can't tell apart.
       source = read_file_content(path)
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
@@ -62,18 +61,6 @@ module Analyzer::Rust
       end
 
       endpoints
-    end
-
-    # Cargo convention: every `.rs` immediately under a crate's `tests/`
-    # directory is an integration test binary, never a production
-    # endpoint. We accept the slightly broader `**/tests/**/*.rs` match
-    # because real Rust apps almost never park production code in a
-    # directory named `tests`; the rare false negative is preferable to
-    # leaking framework internals like axum-extra's mod-test fixtures.
-    private def test_only_path?(path : String) : Bool
-      return true if path.includes?("/tests/")
-      base = File.basename(path)
-      base.ends_with?("_test.rs") || base.ends_with?("_tests.rs")
     end
 
     # Scan the source for `#[cfg(test)]` annotations, then capture the

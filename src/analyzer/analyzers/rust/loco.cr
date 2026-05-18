@@ -15,6 +15,17 @@ module Analyzer::Rust
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       source = read_file_content(path)
+      # Loco user apps consume the framework via `use loco_rs::...`;
+      # the framework's own crate uses `use crate::...` internally
+      # and never imports `loco_rs`. Without this gate the analyzer
+      # was happily inferring routes from every `pub async fn` in any
+      # Rust file, surfacing ~120 phantom endpoints in loco-rs/loco's
+      # own `src/boot.rs`, `src/db.rs`, `src/storage/`, etc. — framework
+      # infrastructure the user never installs. The content marker is
+      # cheaper and broader than a path anchor: real Loco apps put
+      # controllers under `src/controllers/` *and* import `loco_rs`,
+      # so the content check alone is sufficient.
+      return endpoints unless source.includes?("use loco_rs")
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
       Noir::TreeSitter.parse_rust(source) do |root|
