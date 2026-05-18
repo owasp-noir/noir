@@ -37,12 +37,26 @@ module Analyzer::Fsharp
       all_files.each do |path|
         next if File.directory?(path)
         next unless path.ends_with?(".fs") || path.ends_with?(".fsx")
+        # Skip .NET test conventions: `/tests/` and `/test/`
+        # parent dirs, and `*Tests.fs` filenames. Giraffe's own
+        # `tests/Giraffe.Tests/*.fs` accounts for ~218 phantom
+        # endpoints — full `webApp` HttpHandler trees built only
+        # to exercise the routing combinators.
+        next if fsharp_test_path?(path)
 
         content = read_file_content(path)
         process_file(path, content, include_callee)
       end
 
       @result
+    end
+
+    private def fsharp_test_path?(path : String) : Bool
+      return true if path.includes?("/tests/")
+      return true if path.includes?("/test/")
+      base = File.basename(path)
+      return true if base.ends_with?("Tests.fs")
+      base.ends_with?("Test.fs")
     end
 
     alias SubRouteScope = NamedTuple(prefix: String, end_pos: Int32, params: Array(Param))
