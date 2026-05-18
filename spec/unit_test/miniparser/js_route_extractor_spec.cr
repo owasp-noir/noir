@@ -406,6 +406,24 @@ describe Noir::JSRouteExtractor do
       ).should be_false
     end
 
+    it "skips files using other HTTP-client libs (got, purest, ky, ...)" do
+      # Regression: Strapi's `providers-registry.js` uses `purest`
+      # for OAuth provider calls — `discord.get('users/@me')` is an
+      # outbound API call, not a Koa route. The same pattern shows
+      # up across the Node ecosystem with got, ky, superagent,
+      # node-fetch, ofetch, undici, request — none of these libs
+      # are ever used to register routes.
+      content = <<-JS
+        const purest = require('purest');
+        const discord = purest({ provider: 'discord' });
+        discord.get('users/@me');
+        JS
+      Noir::JSRouteExtractor.test_stub_only?(
+        "/app/src/providers.js",
+        content
+      ).should be_true
+    end
+
     it "skips axios-only HTTP-client files" do
       # Regression: mastodon `app/javascript/entrypoints/public.tsx`
       # chains `axios.get('/api/v1/accounts/lookup', { params: ... })`

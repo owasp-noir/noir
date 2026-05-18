@@ -380,6 +380,29 @@ module Noir
       # still scan because they also import express/fastify/...
       "from \"axios\"", "from 'axios'",
       "require(\"axios\")", "require('axios')",
+      # The rest of the Node.js HTTP-client family. Each is almost
+      # exclusively used for outbound calls and never to register
+      # routes. Strapi's `purest`-based OAuth provider registry
+      # accounts for 6 phantom Koa endpoints (`discord.get('users/
+      # @me')` etc.); the others (got, ky, superagent, node-fetch,
+      # ofetch, undici, request) crop up in similar shapes across
+      # most Node backends.
+      "from \"purest\"", "from 'purest'",
+      "require(\"purest\")", "require('purest')",
+      "from \"got\"", "from 'got'",
+      "require(\"got\")", "require('got')",
+      "from \"ky\"", "from 'ky'",
+      "require(\"ky\")", "require('ky')",
+      "from \"superagent\"", "from 'superagent'",
+      "require(\"superagent\")", "require('superagent')",
+      "from \"node-fetch\"", "from 'node-fetch'",
+      "require(\"node-fetch\")", "require('node-fetch')",
+      "from \"ofetch\"", "from 'ofetch'",
+      "require(\"ofetch\")", "require('ofetch')",
+      "from \"undici\"", "from 'undici'",
+      "require(\"undici\")", "require('undici')",
+      "from \"request\"", "from 'request'",
+      "require(\"request\")", "require('request')",
     ]
 
     # Real HTTP-server library imports. When any of these is present
