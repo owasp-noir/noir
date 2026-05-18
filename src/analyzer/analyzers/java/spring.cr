@@ -136,12 +136,32 @@ module Analyzer::Java
             # worth a dedicated tree-sitter walk yet.
             content.scan(REGEX_ROUTER_CODE_BLOCK) do |route_code|
               method_code = route_code[0]
+              # Pick up `nest(RequestPredicates.path("/prefix"), ...)`
+              # / `nest(path("/prefix"), ...)` byte ranges so verb
+              # calls inside the nested lambda get the prefix added.
+              # Servlet-fn and WebFlux both use this idiom heavily;
+              # without prefix awareness routes like
+              # `route().nest(path("/product"), builder ->
+              # builder.GET("/name/{name}", ...))` surfaced as
+              # `GET /name/{name}` instead of `GET /product/name/{name}`.
+              nest_prefixes = collect_nest_prefixes(method_code)
+
               method_code.scan(REGEX_ROUTE_CODE_LINE) do |match|
                 next if match.size != 4
                 method = match[2]
                 endpoint = match[3].gsub(/\n/, "")
+                nest_prefix = ""
+                if pos = match.begin
+                  nest_prefixes.each do |start_b, end_b, prefix|
+                    if pos >= start_b && pos < end_b
+                      nest_prefix = prefix
+                      break
+                    end
+                  end
+                end
+                composed = nest_prefix.empty? ? endpoint : join_paths(nest_prefix, endpoint)
                 details = Details.new(PathInfo.new(path))
-                @result << Endpoint.new(join_paths(url, endpoint), method, details)
+                @result << Endpoint.new(join_paths(url, composed), method, details)
               end
             end
           end
@@ -150,6 +170,62 @@ module Analyzer::Java
       Fiber.yield
 
       @result
+    end
+
+    # Collect every `nest(<predicate-with-path>, ...)` block in the
+    # router code along with the path prefix it carries and the
+    # byte range of its parenthesised argument list. Returns
+    # `[{start_byte, end_byte, prefix}, ...]`. Inner verb calls
+    # whose match position falls inside `[start, end)` should have
+    # `prefix` prepended.
+    private def collect_nest_prefixes(code : String) : Array(Tuple(Int32, Int32, String))
+      regions = [] of Tuple(Int32, Int32, String)
+      pattern = /\.nest\s*\(\s*(?:RequestPredicates\.)?path\s*\(\s*"([^"]+)"\s*\)\s*,/
+      code.scan(pattern) do |match|
+        next unless match.size >= 2 && match.begin
+        prefix = match[1]
+        # Find the `(` that opens the `.nest(` call: the first
+        # `(` after `.nest`. We look for it from the match offset
+        # forward up to the `,` we matched.
+        nest_marker = code.index(".nest", match.begin)
+        next unless nest_marker
+        open_idx = code.index('(', nest_marker)
+        next unless open_idx
+        close_idx = find_matching_paren(code, open_idx)
+        next unless close_idx
+        regions << {open_idx, close_idx, prefix}
+      end
+      regions
+    end
+
+    # Find the matching `)` for the `(` at `open_idx`, skipping
+    # string literals so `"(foo)"` doesn't perturb depth.
+    private def find_matching_paren(code : String, open_idx : Int32) : Int32?
+      depth = 1
+      i = open_idx + 1
+      bytes = code.to_slice
+      in_string = false
+      escape = false
+      while i < bytes.size && depth > 0
+        c = bytes[i]
+        if in_string
+          if escape
+            escape = false
+          elsif c == '\\'.ord
+            escape = true
+          elsif c == '"'.ord
+            in_string = false
+          end
+        else
+          case c
+          when '"'.ord then in_string = true
+          when '('.ord then depth += 1
+          when ')'.ord then depth -= 1
+          end
+        end
+        i += 1
+      end
+      depth == 0 ? i - 1 : nil
     end
 
     def find_base_path(current_path : String, base_paths : Hash(String, String))
