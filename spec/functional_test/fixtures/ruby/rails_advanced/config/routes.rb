@@ -1,6 +1,13 @@
 Rails.application.routes.draw do
   root "home#index"
 
+  # Regression guard: a local string variable + `#{var}` interpolation
+  # should resolve to the literal value. Both routes below should end
+  # up with `/c/:channel_title/:channel_id` substituted into the URL.
+  base_c_route = "/c/:channel_title/:channel_id"
+  get "#{base_c_route}/:message_id" => "chat#respond"
+  post "#{base_c_route}/messages" => "chat#create"
+
   namespace :admin do
     resources :reports
     resources :refunds do

@@ -9,6 +9,14 @@ expected_endpoints = [
   # root "home#index"
   Endpoint.new("/", "GET"),
 
+  # Local string variable + `#{var}` interpolation: the analyzer
+  # captures `base_c_route = "..."` and substitutes the literal in
+  # subsequent route declarations. Discourse's chat plugin
+  # depends on this resolution to avoid phantom `/#{base_c_route}/...`
+  # entries.
+  Endpoint.new("/c/:channel_title/:channel_id/:message_id", "GET"),
+  Endpoint.new("/c/:channel_title/:channel_id/messages", "POST"),
+
   # namespace :admin do resources :reports end
   Endpoint.new("/admin/reports", "GET"),
   Endpoint.new("/admin/reports/1", "GET"),
@@ -91,6 +99,7 @@ expected_endpoints = [
 # endpoints (e.g. no POST /api/items, no DELETE /internal/statements, no
 # /scans/1) and devise_for emits its full route set.
 total_endpoints = 1 +  # root
+                  2 +  # `#{base_c_route}` interpolation resolved to 2 routes
                   5 +  # admin/reports
                   4 +  # admin/refunds member (change_status, purge, update_metadata) + collection (new_list)
                   1 +  # admin/monitor/heartbeat (namespaced `to:`)

@@ -80,11 +80,40 @@ module Analyzer::Ruby
     private def parse_routes_file(routes_path : String, framework_root : String)
       details = Details.new(PathInfo.new(routes_path))
       stack = [] of Frame
+      # Routes files routinely DRY repeated prefixes into local
+      # string vars (`base_c_route = "/c/:channel_title/:channel_id"`)
+      # then use them with Ruby interpolation
+      # (`get "#{base_c_route}/:message_id" => "ctrl#act"`). The
+      # line-based parser saw the literal `#{base_c_route}` survive
+      # into URLs. discourse/discourse alone parked ~153 phantom
+      # routes with `#{...}` in them. Track the assignments as we
+      # walk the file and expand interpolations before route
+      # matching.
+      local_string_vars = Hash(String, String).new
 
       File.open(routes_path, "r", encoding: "utf-8", invalid: :skip) do |file|
         file.each_line do |raw_line|
           line = strip_inline_comment(raw_line).strip
           next if line.empty?
+
+          # Capture `name = "literal"` assignments at any nesting.
+          # We only resolve simple string-literal RHS; anything more
+          # complex (method calls, concatenation) stays opaque and
+          # the original `#{...}` falls through unchanged.
+          if assign = line.match(/^([a-z_][a-z0-9_]*)\s*=\s*["']([^"']+)["']\s*$/)
+            local_string_vars[assign[1]] = assign[2]
+          end
+
+          # Expand interpolations in-place so downstream regexes
+          # see the resolved path. We only substitute names we've
+          # actually seen — unresolved `#{...}` survives, which is
+          # better than producing an empty `/` placeholder.
+          unless local_string_vars.empty?
+            line = line.gsub(/\#\{([a-z_][a-z0-9_]*)\}/) do |match|
+              name = $~[1]
+              local_string_vars[name]? || match
+            end
+          end
 
           # Handle `end` (top of stack pops one).
           if line == "end" || line.starts_with?("end ") || line.starts_with?("end;") || line.starts_with?("end#")
