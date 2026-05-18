@@ -13,6 +13,12 @@ module Analyzer::Javascript
         # Skip `*.test.ts` / `*.spec.ts` siblings — they don't
         # define Nuxt event handlers, just exercise neighbors.
         next if path.includes?(".test.") || path.includes?(".spec.")
+        # Skip mini-Nuxt fixtures used to test the framework itself.
+        # nuxt/nuxt parks 18 phantom endpoints under
+        # `test/fixtures/<scenario>/server/api/` — each fixture is a
+        # full Nuxt project the test suite spins up, but none of the
+        # routes serve real traffic.
+        next if path.includes?("/test/fixtures/") || path.includes?("/tests/fixtures/")
         analyze_nuxt_file(path, result, mutex, include_callee)
       end
 
