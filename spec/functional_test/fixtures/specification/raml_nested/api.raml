@@ -1,0 +1,39 @@
+#%RAML 1.0
+title: Pet Store
+version: v1
+baseUri: https://api.example.com/v1
+mediaType: application/json
+
+types:
+  NewPet:
+    properties:
+      name: string
+      breed: string
+
+/pets:
+  get:
+    queryParameters:
+      filter:
+        type: string
+      limit:
+        type: integer
+  post:
+    body:
+      type: NewPet
+  /{petId}:
+    uriParameters:
+      petId:
+        type: integer
+    get:
+      headers:
+        X-Trace-Id:
+          type: string
+    /avatar:
+      post:
+        body:
+          multipart/form-data:
+            properties:
+              file:
+                type: file
+              caption:
+                type: string
