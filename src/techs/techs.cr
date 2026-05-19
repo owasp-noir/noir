@@ -10,7 +10,7 @@ module NoirTechs
     "elixir_phoenix", "elixir_plug",
     "fs_giraffe",
     "go_beego", "go_chi", "go_echo", "go_fasthttp", "go_fiber", "go_gf", "go_gin",
-    "go_gozero", "go_goyave", "go_hertz", "go_httprouter", "go_iris", "go_mux",
+    "go_gozero", "go_goyave", "go_hertz", "go_httprouter", "go_iris", "go_mux", "go_pocketbase",
     "groovy_grails",
     "haskell_servant", "haskell_yesod",
     "java_armeria", "java_dropwizard", "java_jaxrs", "java_javalin", "java_micronaut",

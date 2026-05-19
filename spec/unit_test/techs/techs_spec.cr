@@ -30,6 +30,7 @@ end
 describe "Context support metadata" do
   it "marks functional callee coverage separately from generic AI context buckets" do
     NoirTechs.context_supported?("js_express", "callee").should be_true
+    NoirTechs.context_supported?("go_pocketbase", "callee").should be_true
     NoirTechs.context_supported?("js_express", "guards").should be_true
     NoirTechs.context_supported?("js_express", "sinks").should be_true
     NoirTechs.context_supported?("js_express", "validators").should be_true
