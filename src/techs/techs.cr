@@ -1,6 +1,53 @@
 require "json"
 
 module NoirTechs
+  CALLEE_SUPPORTED_TECHS = [
+    "cpp_crow", "cpp_drogon",
+    "clojure_compojure",
+    "crystal_amber", "crystal_grip", "crystal_kemal", "crystal_lucky", "crystal_marten",
+    "cs_aspnet_core_mvc", "cs_aspnet_mvc",
+    "dart_frog", "dart_serverpod",
+    "elixir_phoenix", "elixir_plug",
+    "fs_giraffe",
+    "go_beego", "go_chi", "go_echo", "go_fasthttp", "go_fiber", "go_gf", "go_gin",
+    "go_gozero", "go_goyave", "go_hertz", "go_httprouter", "go_iris", "go_mux",
+    "groovy_grails",
+    "haskell_servant", "haskell_yesod",
+    "java_armeria", "java_dropwizard", "java_jaxrs", "java_javalin", "java_micronaut",
+    "java_play", "java_quarkus", "java_spark", "java_spring", "java_vertx",
+    "js_express", "js_fastify", "js_hono", "js_koa", "js_nestjs", "js_nextjs",
+    "js_nitro", "js_nuxtjs", "js_remix", "js_restify", "js_sveltekit",
+    "kotlin_http4k", "kotlin_ktor", "kotlin_spring",
+    "lua_lapis",
+    "perl_mojolicious",
+    "php_cakephp", "php_codeigniter", "php_laravel", "php_pure", "php_slim", "php_symfony", "php_yii",
+    "python_aiohttp", "python_bottle", "python_django", "python_falcon", "python_fastapi",
+    "python_flask", "python_litestar", "python_pyramid", "python_sanic", "python_starlette", "python_tornado",
+    "ruby_grape", "ruby_hanami", "ruby_rails", "ruby_roda", "ruby_sinatra",
+    "rust_actix_web", "rust_axum", "rust_gotham", "rust_loco", "rust_poem",
+    "rust_rocket", "rust_rwf", "rust_salvo", "rust_tide", "rust_warp",
+    "scala_akka", "scala_scalatra",
+    "swift_hummingbird", "swift_kitura", "swift_vapor",
+    "ts_nestjs",
+  ]
+
+  AI_CONTEXT_GUARD_SUPPORTED_TECHS = [
+    "crystal_amber", "crystal_grip", "crystal_kemal", "crystal_lucky", "crystal_marten",
+    "cs_aspnet_core_mvc", "cs_aspnet_mvc",
+    "elixir_phoenix", "elixir_plug",
+    "go_beego", "go_chi", "go_echo", "go_fasthttp", "go_fiber", "go_gin", "go_gozero", "go_goyave", "go_mux",
+    "java_armeria", "java_jsp", "java_play", "java_spring", "java_vertx",
+    "js_express", "js_fastify", "js_koa", "js_nestjs", "js_nuxtjs", "js_restify",
+    "kotlin_ktor", "kotlin_spring",
+    "php_cakephp", "php_laravel", "php_pure", "php_symfony",
+    "python_django", "python_fastapi", "python_flask", "python_sanic", "python_tornado",
+    "ruby_hanami", "ruby_rails", "ruby_sinatra",
+    "rust_actix_web", "rust_axum", "rust_gotham", "rust_loco", "rust_rocket", "rust_rwf", "rust_tide", "rust_warp",
+    "scala_akka", "scala_play", "scala_scalatra",
+    "swift_hummingbird", "swift_kitura", "swift_vapor",
+    "ts_nestjs",
+  ]
+
   TECHS = {
     :cpp_drogon => {
       :framework => "Drogon",
@@ -2013,6 +2060,28 @@ module NoirTechs
     end
 
     ""
+  end
+
+  def self.context_supported?(tech : String, feature : String) : Bool
+    case feature
+    when "callee"
+      CALLEE_SUPPORTED_TECHS.includes?(tech)
+    when "guards"
+      AI_CONTEXT_GUARD_SUPPORTED_TECHS.includes?(tech)
+    when "sinks", "validators", "signals"
+      language_tech?(tech)
+    else
+      false
+    end
+  end
+
+  def self.language_tech?(tech : String) : Bool
+    TECHS.each do |key, info|
+      next unless key.to_s == tech
+      return info.has_key?(:language)
+    end
+
+    false
   end
 end
 
