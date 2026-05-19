@@ -39,9 +39,24 @@ def check(b : Bool) : String
   b ? "☑️" : "✗"
 end
 
-FEATURE_COLUMNS = [
-  "endpoint", "method", "query", "path", "body", "header", "cookie",
-  "static_path", "websocket", "callee", "ai_guards", "ai_sinks", "ai_validators", "ai_signals",
+ROUTE_FEATURES = [
+  {key: "endpoint", label: "endpoint"},
+  {key: "method", label: "method"},
+  {key: "query", label: "query"},
+  {key: "path", label: "path"},
+  {key: "body", label: "body"},
+  {key: "header", label: "header"},
+  {key: "cookie", label: "cookie"},
+  {key: "static_path", label: "static"},
+  {key: "websocket", label: "websocket"},
+  {key: "callee", label: "callee"},
+]
+
+AI_FEATURES = [
+  {key: "guards", label: "guards"},
+  {key: "sinks", label: "sinks"},
+  {key: "validators", label: "validators"},
+  {key: "signals", label: "signals"},
 ]
 
 def project_root : String
@@ -54,38 +69,64 @@ def ensure_parent_dir(path : String)
   Dir.mkdir_p(dir) unless Dir.exists?(dir)
 end
 
-# Render supported features as markdown table cells
-def feature_cells(tech : String, supported : JSON::Any) : String
+# Extract per-feature support map from a tech's supported JSON.
+def feature_flags(tech : String, supported : JSON::Any) : Hash(String, Bool)
   h = supported.as_h
   params = h["params"]?.try(&.as_h) || {} of String => JSON::Any
-
-  [
-    h["endpoint"]?.try(&.as_bool) || false,
-    h["method"]?.try(&.as_bool) || false,
-    params["query"]?.try(&.as_bool) || false,
-    params["path"]?.try(&.as_bool) || false,
-    params["body"]?.try(&.as_bool) || false,
-    params["header"]?.try(&.as_bool) || false,
-    params["cookie"]?.try(&.as_bool) || false,
-    h["static_path"]?.try(&.as_bool) || false,
-    h["websocket"]?.try(&.as_bool) || false,
-    NoirTechs.context_supported?(tech, "callee"),
-    NoirTechs.context_supported?(tech, "guards"),
-    NoirTechs.context_supported?(tech, "sinks"),
-    NoirTechs.context_supported?(tech, "validators"),
-    NoirTechs.context_supported?(tech, "signals"),
-  ].map { |v| check(v) }.join(" | ")
+  {
+    "endpoint"    => h["endpoint"]?.try(&.as_bool) || false,
+    "method"      => h["method"]?.try(&.as_bool) || false,
+    "query"       => params["query"]?.try(&.as_bool) || false,
+    "path"        => params["path"]?.try(&.as_bool) || false,
+    "body"        => params["body"]?.try(&.as_bool) || false,
+    "header"      => params["header"]?.try(&.as_bool) || false,
+    "cookie"      => params["cookie"]?.try(&.as_bool) || false,
+    "static_path" => h["static_path"]?.try(&.as_bool) || false,
+    "websocket"   => h["websocket"]?.try(&.as_bool) || false,
+    "callee"      => NoirTechs.context_supported?(tech, "callee"),
+    "guards"      => NoirTechs.context_supported?(tech, "guards"),
+    "sinks"       => NoirTechs.context_supported?(tech, "sinks"),
+    "validators"  => NoirTechs.context_supported?(tech, "validators"),
+    "signals"     => NoirTechs.context_supported?(tech, "signals"),
+  }
 end
 
-def table_header(prefix : Array(String)) : String
-  columns = prefix + FEATURE_COLUMNS
-  separator = columns.map { "---" }
-  "| #{columns.join(" | ")} |\n|#{separator.join("|")}|"
+# Render a chip row for a feature group.
+def chip_row(flags : Hash(String, Bool), features : Array(NamedTuple(key: String, label: String)), label : String) : String
+  io = IO::Memory.new
+  io << %(    <div class="tech-card-row">\n)
+  io << %(      <span class="tech-card-label">#{label}</span>\n)
+  io << %(      <div class="tech-card-chips">\n)
+  features.each do |f|
+    state = flags[f[:key]] ? "on" : "off"
+    io << %(        <span class="tech-chip #{state}">#{f[:label]}</span>\n)
+  end
+  io << %(      </div>\n)
+  io << %(    </div>\n)
+  io.to_s
 end
 
-# Generate language/framework tables grouped by language
+# Render a single framework card.
+def framework_card(name : String, flags : Hash(String, Bool)) : String
+  io = IO::Memory.new
+  io << %(  <article class="tech-card">\n)
+  io << %(    <h3 class="tech-card-title">#{name}</h3>\n)
+  io << chip_row(flags, ROUTE_FEATURES, "Route")
+  io << chip_row(flags, AI_FEATURES, "AI Context")
+  io << %(  </article>\n)
+  io.to_s
+end
+
+LEGEND_HTML = <<-HTML
+<div class="tech-legend">
+  <span class="tech-legend-item"><span class="tech-chip on">supported</span> available out of the box</span>
+  <span class="tech-legend-item"><span class="tech-chip off">supported</span> not yet implemented</span>
+</div>
+HTML
+
+# Generate language/framework card grids grouped by language.
 def generate_language_tables(data : JSON::Any) : String
-  by_language = Hash(String, Array({name: String, cells: String})).new { |h, k| h[k] = [] of {name: String, cells: String} }
+  by_language = Hash(String, Array({name: String, flags: Hash(String, Bool)})).new { |h, k| h[k] = [] of {name: String, flags: Hash(String, Bool)} }
 
   data.as_h.each do |_key, info|
     h = info.as_h
@@ -94,22 +135,43 @@ def generate_language_tables(data : JSON::Any) : String
     language = h["language"].as_s
     framework = h["framework"]?.try(&.as_s) || ""
     framework = "Pure" if framework.empty?
-    by_language[language] << {name: framework, cells: feature_cells(_key, h["supported"])}
+    by_language[language] << {name: framework, flags: feature_flags(_key, h["supported"])}
   end
 
   io = IO::Memory.new
+  io << LEGEND_HTML
+  io << "\n\n"
   by_language.keys.sort!.each do |lang|
     entries = by_language[lang].sort_by { |e| e[:name] }
     io << "## #{lang}\n\n"
-    io << table_header(["Framework"])
-    io << "\n"
+    io << %(<div class="tech-grid">\n)
     entries.each do |e|
-      io << "| #{e[:name]} | #{e[:cells]} |\n"
+      io << framework_card(e[:name], e[:flags])
     end
-    io << "\n"
+    io << %(</div>\n\n)
   end
 
   io.to_s
+end
+
+SPEC_COLUMNS = ["endpoint", "method", "query", "path", "body", "header", "cookie"]
+
+# Render supported feature cells for the spec table — only the columns that
+# specifications can meaningfully support (source-analysis-only columns are
+# always unsupported and dropped to keep the table narrow).
+def spec_feature_cells(supported : JSON::Any) : String
+  h = supported.as_h
+  params = h["params"]?.try(&.as_h) || {} of String => JSON::Any
+  values = {
+    "endpoint" => h["endpoint"]?.try(&.as_bool) || false,
+    "method"   => h["method"]?.try(&.as_bool) || false,
+    "query"    => params["query"]?.try(&.as_bool) || false,
+    "path"     => params["path"]?.try(&.as_bool) || false,
+    "body"     => params["body"]?.try(&.as_bool) || false,
+    "header"   => params["header"]?.try(&.as_bool) || false,
+    "cookie"   => params["cookie"]?.try(&.as_bool) || false,
+  }
+  SPEC_COLUMNS.map { |c| check(values[c]) }.join(" | ")
 end
 
 # Generate specification table
@@ -123,7 +185,7 @@ def generate_spec_table(data : JSON::Any) : String
 
     name = SPEC_FRIENDLY_NAMES[key]? || key.gsub("_", " ").split.map(&.capitalize).join(" ")
     formats = h["format"].as_a.map(&.as_s)
-    cells = feature_cells(key, h["supported"])
+    cells = spec_feature_cells(h["supported"])
 
     formats.each do |fmt|
       specs << {name: name, format: fmt, cells: cells}
@@ -132,9 +194,12 @@ def generate_spec_table(data : JSON::Any) : String
 
   specs.sort_by! { |e| e[:name] }
 
+  columns = ["Specification", "Format"] + SPEC_COLUMNS
+  separator = columns.map { "---" }
+
   io = IO::Memory.new
-  io << table_header(["Specification", "Format"])
-  io << "\n"
+  io << "| #{columns.join(" | ")} |\n"
+  io << "|#{separator.join("|")}|\n"
   specs.each do |e|
     io << "| #{e[:name]} | #{e[:format]} | #{e[:cells]} |\n"
   end
