@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>OWASP Noir</title>
+    <link>https://owasp-noir.github.io/noir</link>
+    <description>Attack surface detector that identifies endpoints by static analysis.</description>
+    <atom:link href="https://owasp-noir.github.io/noir/rss.xml" rel="self" type="application/rss+xml" />
+    <item>
+      <title>Welcome to the Noir blog</title>
+      <link>https://owasp-noir.github.io/noir/blog/welcome-to-the-noir-blog/</link>
+      <guid>https://owasp-noir.github.io/noir/blog/welcome-to-the-noir-blog/</guid>
+      <description>A new space for release deep dives, performance notes, design rationale, and the writing that doesn&apos;t fit in a changelog.</description>
+      <content:encoded><![CDATA[<p>Hi, this is hahwul. I've been writing Noir tips and notes on my personal blog for a while, but it felt better to have an official channel for it, so we're opening a blog space inside the project docs.</p>
+<p>It's a small experimental section sitting alongside the documentation, meant to collect the kinds of writing that don't quite fit into release notes or reference pages. Better here than scattered across PR descriptions.</p>
+<h2 id="what-youll-find-here">What you'll find here</h2>
+<ul>
+<li><strong>Release deep dives.</strong> What landed in the last few versions, why it matters, and the trade-offs we picked along the way.</li>
+<li><strong>Performance and accuracy investigations.</strong> When a benchmark or a false-positive sweep produces a story worth telling, we'll write it up.</li>
+<li><strong>Framework coverage notes.</strong> Adding support for a new Rust/Python/JVM framework usually surfaces interesting parsing edge cases; those go here.</li>
+<li><strong>Design rationale.</strong> Decisions about the analyzer pipeline, optimizer passes, AI context shape, and so on.</li>
+<li><strong>Tips.</strong> Practical know-how for getting more out of Noir in everyday use.</li>
+</ul>
+<h2 id="how-it-fits-the-rest-of-the-docs">How it fits the rest of the docs</h2>
+<ul>
+<li>The <a href="/noir/get_started/">Get Started</a> guide stays the canonical place to learn the tool.</li>
+<li>The <a href="/noir/usage/">Usage</a> section keeps reference material: flags, supported frameworks, output formats.</li>
+<li>The blog supplements both with narrative content. If a topic graduates into something every user should know, it migrates into the docs.</li>
+</ul>
+<h2 id="cadence">Cadence</h2>
+<p>There's no schedule. Posts land when there's something worth saying. Follow the steady drumbeat through the GitHub <a href="https://github.com/owasp-noir/noir/releases">release feed</a>, and check back here for the longer reads.</p>
+<p>If you'd like to contribute a post (write about how you use Noir, share a CI integration, or unpack a framework's routing model), open a PR with a draft. Authors get a card next to the post.</p>
+]]></content:encoded>
+      <pubDate>Sun, 17 May 2026 00:00:00 +0000</pubDate>
+      <category>meta</category>
+      <category>announcements</category>
+    </item>
+  </channel>
+</rss>

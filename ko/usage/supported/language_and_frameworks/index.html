@@ -1,0 +1,3549 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Noir가 지원하는 프로그래밍 언어 및 프레임워크와 기능 호환성 정보입니다.">
+  <title>지원되는 언어 및 프레임워크 - OWASP Noir</title>
+  <meta property="og:title" content="지원되는 언어 및 프레임워크">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://owasp-noir.github.io/noir/ko/usage/supported/language_and_frameworks/">
+  <meta property="og:description" content="Noir가 지원하는 프로그래밍 언어 및 프레임워크와 기능 호환성 정보입니다.">
+  <meta property="og:image" content="https://owasp-noir.github.io/noir/og-images/ko-usage-supported-language_and_frameworks.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="지원되는 언어 및 프레임워크">
+  <meta name="twitter:description" content="Noir가 지원하는 프로그래밍 언어 및 프레임워크와 기능 호환성 정보입니다.">
+  <meta name="twitter:image" content="https://owasp-noir.github.io/noir/og-images/ko-usage-supported-language_and_frameworks.png">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/favicon.ico" sizes="any">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/favicon-96x96.png" type="image/png" sizes="96x96">
+  <link rel="apple-touch-icon" href="https://owasp-noir.github.io/noir/apple-touch-icon.png">
+  <link rel="manifest" href="https://owasp-noir.github.io/noir/site.webmanifest">
+  <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog" href="https://owasp-noir.github.io/noir/rss.xml">
+  <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog (한국어)" href="https://owasp-noir.github.io/noir/ko/rss.xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/css/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="header-left">
+        <button class="hamburger" id="hamburger-toggle" aria-label="Toggle navigation">
+          <span></span><span></span><span></span>
+        </button>
+        <a href="https://owasp-noir.github.io/noir/" class="header-logo">
+          <img src="https://owasp-noir.github.io/noir/images/logo.webp" alt="OWASP Noir" class="header-logo-img">
+        </a>
+      </div>
+      <nav class="header-nav">
+        <a href="https://owasp-noir.github.io/noir/ko/get_started/overview/">시작하기</a>
+        <a href="https://owasp-noir.github.io/noir/ko/usage/supported/language_and_frameworks/">사용 가이드</a>
+        <a href="https://owasp-noir.github.io/noir/ko/development/how_to_build/">개발</a>
+        <a href="https://owasp-noir.github.io/noir/ko/blog/">블로그</a>
+        <a href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer">GitHub</a>
+      </nav>
+      <div class="header-right">
+        <button class="search-trigger" id="search-trigger" aria-label="Search">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <span class="search-shortcut">Ctrl+K</span>
+        </button>
+        <div class="lang-switcher" id="lang-switcher">
+          <a href="#" class="lang-link" data-lang="en">EN</a>
+          <a href="#" class="lang-link" data-lang="ko">KO</a>
+        </div>
+        <script>
+        (function(){
+          var basePath = new URL('https://owasp-noir.github.io/noir').pathname.replace(/\/+$/, '');
+          var path = window.location.pathname;
+          var rel = path.substring(basePath.length) || '/';
+          var isKo = rel.startsWith('/ko/') || rel === '/ko';
+          var switcher = document.getElementById('lang-switcher');
+          var links = switcher.querySelectorAll('.lang-link');
+          for (var i = 0; i < links.length; i++) {
+            var lang = links[i].getAttribute('data-lang');
+            if ((lang === 'ko' && isKo) || (lang === 'en' && !isKo)) {
+              links[i].classList.add('active');
+            }
+            if (lang === 'ko') {
+              links[i].href = isKo ? path : basePath + '/ko' + rel;
+            } else {
+              links[i].href = isKo ? basePath + rel.replace(/^\/ko/, '') : path;
+            }
+          }
+        })();
+        </script>
+      </div>
+    </div>
+  </header>
+  <div class="site-overlay" id="site-overlay"></div>
+  <div class="docs-layout">
+    <aside class="docs-sidebar" id="docs-sidebar">
+    <nav class="sidebar-nav">
+        <div class="sidebar-section" data-section="get_started">
+            <button class="sidebar-heading">
+                <span
+                    ><svg
+                        class="sidebar-icon"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <path
+                            d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"
+                        />
+                        <path
+                            d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"
+                        />
+                        <path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0" />
+                        <path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5" />
+                    </svg>
+                    시작하기</span
+                >
+                <svg
+                    class="sidebar-chevron"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                >
+                    <polyline points="6 9 12 15 18 9" />
+                </svg>
+            </button>
+            <ul class="sidebar-links">
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/ko/get_started/overview/">Noir란?</a>
+                </li>
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/ko/get_started/installation/"
+                        >Noir 설치</a
+                    >
+                </li>
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/ko/get_started/running/">첫 번째 스캔</a>
+                </li>
+            </ul>
+        </div>
+        <div class="sidebar-section" data-section="usage">
+            <button class="sidebar-heading">
+                <span
+                    ><svg
+                        class="sidebar-icon"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <polyline points="4 17 10 11 4 5" />
+                        <line x1="12" x2="20" y1="19" y2="19" />
+                    </svg>
+                    사용 가이드</span
+                >
+                <svg
+                    class="sidebar-chevron"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                >
+                    <polyline points="6 9 12 15 18 9" />
+                </svg>
+            </button>
+            <ul class="sidebar-links">
+                <li class="sidebar-subsection">
+                    <button class="sidebar-subheading">
+                        <span>지원되는 기술</span>
+                        <svg
+                            class="sidebar-chevron"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                    </button>
+                    <ul class="sidebar-sublinks">
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/ko/usage/supported/language_and_frameworks/"
+                                >언어 및 프레임워크</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/ko/usage/supported/specification/"
+                                >명세</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/ko/usage/supported/callee_coverage/"
+                                >Callee 커버리지</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/ko/usage/supported/tech-commands/"
+                                >기술 명령어</a
+                            >
+                        </li>
+                    </ul>
+                </li>
+                <li class="sidebar-subsection">
+                    <button class="sidebar-subheading">
+                        <span>구성</span>
+                        <svg
+                            class="sidebar-chevron"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                    </button>
+                    <ul class="sidebar-sublinks">
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/ko/usage/configurations/configuration_file/"
+                                >구성 파일</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/ko/usage/configurations/shell-completion/"
+                                >셸 자동완성</a
+                            >
+                        </li>
+                    </ul>
+                </li>
+                <li class="sidebar-subsection">
+                    <button class="sidebar-subheading">
+                        <span>출력 형식</span>
+                        <svg
+                            class="sidebar-chevron"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                    </button>
+                    <ul class="sidebar-sublinks">
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/json/"
+                                >JSON</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/yaml/"
+                                >YAML</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/curl/"
+                                >cURL</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/ko/usage/output_formats/openapi/"
+                                >OpenAPI</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/sarif/"
+                                >SARIF</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/html/"
+                                >HTML</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/ko/usage/output_formats/mermaid/"
+                                >Mermaid</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/more/"
+                                >추가 출력 형식</a
+                            >
+                        </li>
+                    </ul>
+                </li>
+                <li class="sidebar-subsection">
+                    <button class="sidebar-subheading">
+                        <span>패시브 스캔</span>
+                        <svg
+                            class="sidebar-chevron"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                    </button>
+                    <ul class="sidebar-sublinks">
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/ko/usage/passive_scan/rule/"
+                                >규칙</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/ko/usage/passive_scan/default_rules/"
+                                >기본 규칙</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/ko/usage/passive_scan/community_rules/"
+                                >커뮤니티 규칙</a
+                            >
+                        </li>
+                    </ul>
+                </li>
+                <li>
+                    <a
+                        href="https://owasp-noir.github.io/noir/ko/usage/github_action/"
+                        class="sidebar-direct-link"
+                        >GitHub Action</a
+                    >
+                </li>
+                <li class="sidebar-subsection">
+                    <button class="sidebar-subheading">
+                        <span>추가 기능</span>
+                        <svg
+                            class="sidebar-chevron"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                    </button>
+                    <ul class="sidebar-sublinks">
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/ko/usage/more_features/deliver/"
+                                >Deliver</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/ko/usage/more_features/diff/"
+                                >Diff</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/ko/usage/more_features/pipeline-for-dast/"
+                                >DAST 파이프라인</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/ko/usage/more_features/tagger/"
+                                >Tagger</a
+                            >
+                        </li>
+                    </ul>
+                </li>
+                <li>
+                    <a
+                        href="https://owasp-noir.github.io/noir/ko/get_started/ai_power/"
+                        class="sidebar-direct-link"
+                        >AI 기반 분석</a
+                    >
+                </li>
+                <li class="sidebar-subsection">
+                    <button class="sidebar-subheading">
+                        <span>AI 제공업체</span>
+                        <svg
+                            class="sidebar-chevron"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                    </button>
+                    <ul class="sidebar-sublinks">
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/openai/"
+                                >OpenAI</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/ollama/"
+                                >Ollama</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/lmstudio/"
+                                >LM Studio</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/azure/"
+                                >Azure</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/github_marketplace/"
+                                >GitHub Marketplace</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/openrouter/"
+                                >OpenRouter</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/vllm/"
+                                >vLLM</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/xai/"
+                                >xAI</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/acp/"
+                                >ACP</a
+                            >
+                        </li>
+                    </ul>
+                </li>
+            </ul>
+        </div>
+        <div class="sidebar-section" data-section="development">
+            <button class="sidebar-heading">
+                <span
+                    ><svg
+                        class="sidebar-icon"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <polyline points="16 18 22 12 16 6" />
+                        <polyline points="8 6 2 12 8 18" />
+                    </svg>
+                    개발</span
+                >
+                <svg
+                    class="sidebar-chevron"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                >
+                    <polyline points="6 9 12 15 18 9" />
+                </svg>
+            </button>
+            <ul class="sidebar-links">
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/ko/development/how_to_build/"
+                        >빌드 방법</a
+                    >
+                </li>
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/ko/development/analyzer_architecture/"
+                        >분석기 아키텍처</a
+                    >
+                </li>
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/ko/development/how_to_release/"
+                        >릴리스 방법</a
+                    >
+                </li>
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/ko/development/debug_flags/"
+                        >디버그 플래그</a
+                    >
+                </li>
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/ko/development/nix_environment/"
+                        >Nix 환경</a
+                    >
+                </li>
+            </ul>
+        </div>
+        <div class="sidebar-section" data-section="community">
+            <button class="sidebar-heading">
+                <span
+                    ><svg
+                        class="sidebar-icon"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                        <circle cx="9" cy="7" r="4" />
+                        <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+                        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                    </svg>
+                    커뮤니티</span
+                >
+                <svg
+                    class="sidebar-chevron"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                >
+                    <polyline points="6 9 12 15 18 9" />
+                </svg>
+            </button>
+            <ul class="sidebar-links">
+                <li><a href="https://owasp-noir.github.io/noir/ko/community/media/">미디어</a></li>
+            </ul>
+        </div>
+        <div class="sidebar-section" data-section="resources">
+            <button class="sidebar-heading">
+                <span
+                    ><svg
+                        class="sidebar-icon"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <path
+                            d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"
+                        />
+                    </svg>
+                    리소스</span
+                >
+                <svg
+                    class="sidebar-chevron"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                >
+                    <polyline points="6 9 12 15 18 9" />
+                </svg>
+            </button>
+            <ul class="sidebar-links">
+                <li><a href="https://owasp-noir.github.io/noir/ko/resources/faq/">FAQ</a></li>
+                <li><a href="https://owasp-noir.github.io/noir/ko/resources/troubleshooting/">문제 해결</a></li>
+                <li><a href="https://owasp-noir.github.io/noir/ko/resources/contact/">연락처</a></li>
+                <li><a href="https://owasp-noir.github.io/noir/ko/resources/artwork/">아트워크</a></li>
+            </ul>
+        </div>
+    </nav>
+</aside>
+    <main class="docs-main">
+      <article class="docs-article">
+        <h1>지원되는 언어 및 프레임워크</h1>
+        <p>아래 카드는 프레임워크별 지원 기능을 보여줍니다. <strong>Route</strong>는 endpoint·method·query·path·body·header·cookie·static·websocket과 <code>--include-callee</code> callee 추출을 포함하며, <strong>AI Context</strong>는 <code>--ai-context</code> 버킷(guards·sinks·validators·signals)을 다룹니다. 채워진 칩은 지원, 취소선이 그어진 칩은 아직 미구현입니다.</p>
+<!-- AUTOGENERATED-->
+<div class="tech-legend">
+  <span class="tech-legend-item"><span class="tech-chip on">supported</span> available out of the box</span>
+  <span class="tech-legend-item"><span class="tech-chip off">supported</span> not yet implemented</span>
+</div>
+<h2 id="c">C#</h2>
+<div class="tech-grid">
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="aspnet-core-mvc">ASP.NET Core MVC</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="aspnet-mvc">ASP.NET MVC</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+</div>
+<h2 id="c-1">C++</h2>
+<div class="tech-grid">
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="crow">Crow</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip on">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="drogon">Drogon</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+</div>
+<h2 id="clojure">Clojure</h2>
+<div class="tech-grid">
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="compojure">Compojure</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip off">body</span>
+        <span class="tech-chip off">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+</div>
+<h2 id="crystal">Crystal</h2>
+<div class="tech-grid">
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="amber">Amber</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip on">static</span>
+        <span class="tech-chip on">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="grip">Grip</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip on">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="kemal">Kemal</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip on">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="lucky">Lucky</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip on">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="marten">Marten</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip on">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+</div>
+<h2 id="dart">Dart</h2>
+<div class="tech-grid">
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="dart-frog">Dart Frog</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip off">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip off">body</span>
+        <span class="tech-chip off">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="serverpod">Serverpod</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip off">query</span>
+        <span class="tech-chip off">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip off">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+</div>
+<h2 id="elixir">Elixir</h2>
+<div class="tech-grid">
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="phoenix">Phoenix</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip on">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="plug">Plug</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+</div>
+<h2 id="f">F#</h2>
+<div class="tech-grid">
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="giraffe">Giraffe</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip off">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip off">body</span>
+        <span class="tech-chip off">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+</div>
+<h2 id="go">Go</h2>
+<div class="tech-grid">
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="beego">Beego</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="chi">Chi</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip off">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="echo">Echo</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip on">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="fiber">Fiber</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip on">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="gin">Gin</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="goframe">GoFrame</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip on">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="gorilla-mux">Gorilla Mux</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip on">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="goyave">Goyave</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip on">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="hertz">Hertz</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="iris">Iris</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="pocketbase">PocketBase</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="fasthttp">fasthttp</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="go-zero">go-zero</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip on">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="httprouter">httprouter</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+</div>
+<h2 id="groovy">Groovy</h2>
+<div class="tech-grid">
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="grails">Grails</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip off">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip off">body</span>
+        <span class="tech-chip off">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+</div>
+<h2 id="haskell">Haskell</h2>
+<div class="tech-grid">
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="servant">Servant</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="yesod">Yesod</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip off">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip off">body</span>
+        <span class="tech-chip off">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+</div>
+<h2 id="java">Java</h2>
+<div class="tech-grid">
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="armeria">Armeria</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="dropwizard">Dropwizard</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="jax-rs">JAX-RS</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="jsp">JSP</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip off">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip on">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip off">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="javalin">Javalin</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="micronaut">Micronaut</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="play-framework">Play Framework</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="quarkus">Quarkus</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="spark-java">Spark Java</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="spring">Spring</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="vertx">Vert.x</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip off">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip off">body</span>
+        <span class="tech-chip off">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+</div>
+<h2 id="javascript">JavaScript</h2>
+<div class="tech-grid">
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="adonisjs">AdonisJS</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip off">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip off">body</span>
+        <span class="tech-chip off">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip off">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="astro">Astro</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip off">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip off">body</span>
+        <span class="tech-chip off">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip off">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="elysia">Elysia</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip off">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="express">Express</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip on">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="fastify">Fastify</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip on">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="fresh">Fresh</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip off">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip off">body</span>
+        <span class="tech-chip off">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip off">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="hapi">Hapi</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip off">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="hono">Hono</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip on">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="koa">Koa</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip on">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="nestjs">NestJS</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip on">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="nextjs">Next.js</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="nitro">Nitro</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="nuxtjs">NuxtJS</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="remix">Remix</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip off">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip off">body</span>
+        <span class="tech-chip off">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="restify">Restify</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip on">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="sveltekit">SvelteKit</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip off">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip off">body</span>
+        <span class="tech-chip off">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+</div>
+<h2 id="kotlin">Kotlin</h2>
+<div class="tech-grid">
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="ktor">Ktor</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="spring-1">Spring</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="http4k">http4k</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+</div>
+<h2 id="lua">Lua</h2>
+<div class="tech-grid">
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="lapis">Lapis</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip off">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip off">body</span>
+        <span class="tech-chip off">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+</div>
+<h2 id="php">PHP</h2>
+<div class="tech-grid">
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="cakephp">CakePHP</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip on">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="codeigniter">CodeIgniter</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="laravel">Laravel</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="pure">Pure</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip on">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="slim">Slim</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="symfony">Symfony</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="yii2">Yii2</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+</div>
+<h2 id="perl">Perl</h2>
+<div class="tech-grid">
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="mojolicious">Mojolicious</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip on">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+</div>
+<h2 id="python">Python</h2>
+<div class="tech-grid">
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="bottle">Bottle</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="django">Django</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip on">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="falcon">Falcon</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="fastapi">FastAPI</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="flask">Flask</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="litestar">Litestar</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip on">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="pyramid">Pyramid</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="sanic">Sanic</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip on">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="starlette">Starlette</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="tornado">Tornado</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip on">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="aiohttp">aiohttp</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip on">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+</div>
+<h2 id="ruby">Ruby</h2>
+<div class="tech-grid">
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="grape">Grape</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="hanami">Hanami</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="rails">Rails</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip on">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="roda">Roda</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip off">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="sinatra">Sinatra</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip on">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+</div>
+<h2 id="rust">Rust</h2>
+<div class="tech-grid">
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="actix-web">Actix Web</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="axum">Axum</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="gotham">Gotham</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip off">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="loco">Loco</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="poem">Poem</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="rwf">RWF</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="rocket">Rocket</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip off">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="salvo">Salvo</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="tide">Tide</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="warp">Warp</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+</div>
+<h2 id="scala">Scala</h2>
+<div class="tech-grid">
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="akka-http">Akka HTTP</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="play-framework-1">Play Framework</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip off">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="scalatra">Scalatra</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+</div>
+<h2 id="swift">Swift</h2>
+<div class="tech-grid">
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="hummingbird">Hummingbird</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="kitura">Kitura</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="vapor">Vapor</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+</div>
+<h2 id="typescript">TypeScript</h2>
+<div class="tech-grid">
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="nestjs-1">NestJS</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip on">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title" id="tanstack-router">TanStack Router</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip on">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip off">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+</div>
+
+      </article>
+    </main>
+      <aside class="docs-toc" id="docs-toc">
+    <div class="toc-inner">
+      <div class="toc-title">On this page</div>
+      <nav class="toc-nav" id="toc-nav">
+      </nav>
+    </div>
+  </aside>
+  </div>
+  <div class="search-modal" id="search-modal">
+    <div class="search-modal-overlay"></div>
+    <div class="search-modal-content">
+      <div class="search-input-wrap">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <input type="text" id="search-input" placeholder="문서 검색..." autocomplete="off">
+        <kbd class="search-esc">Esc</kbd>
+      </div>
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <div class="footer-branding">
+        <span>Copyright &copy; 2026 by <a href="https://github.com/owasp-noir">Noir team</a></span>
+        <span>Documentation built with <a href="https://hwaro.hahwul.com" target="_blank" rel="noopener noreferrer">Hwaro</a></span>
+      </div>
+      <div class="footer-links">
+        <a href="https://owasp-noir.github.io/noir/ko/get_started/overview/">문서</a>
+        <a href="https://owasp-noir.github.io/noir/ko/blog/">블로그</a>
+        <a href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer">GitHub</a>
+        <a href="https://owasp-noir.github.io/noir/ko/resources/contact/">연락처</a>
+      </div>
+    </div>
+  </footer>
+  <script src="https://owasp-noir.github.io/noir/js/sidebar.js"></script>
+  <script src="https://owasp-noir.github.io/noir/js/toc.js"></script>
+  <script src="https://owasp-noir.github.io/noir/js/search.js" defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>hljs.highlightAll();</script>
+  <script src="https://owasp-noir.github.io/noir/js/codeblock.js"></script>
+  
+</body>
+</html>

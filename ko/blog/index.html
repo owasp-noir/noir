@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Noir 팀의 릴리스 딥다이브, 성능 개선기, 프레임워크 커버리지 노트, 설계 결정 배경. 게스트 글도 환영합니다.">
+  <title>블로그 - OWASP Noir</title>
+  <meta property="og:title" content="블로그">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://owasp-noir.github.io/noir/ko/blog/">
+  <meta property="og:description" content="Noir 팀의 릴리스 딥다이브, 성능 개선기, 프레임워크 커버리지 노트, 설계 결정 배경. 게스트 글도 환영합니다.">
+  <meta property="og:image" content="https://owasp-noir.github.io/noir/og-images/ko-blog.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="블로그">
+  <meta name="twitter:description" content="Noir 팀의 릴리스 딥다이브, 성능 개선기, 프레임워크 커버리지 노트, 설계 결정 배경. 게스트 글도 환영합니다.">
+  <meta name="twitter:image" content="https://owasp-noir.github.io/noir/og-images/ko-blog.png">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/favicon.ico" sizes="any">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/favicon-96x96.png" type="image/png" sizes="96x96">
+  <link rel="apple-touch-icon" href="https://owasp-noir.github.io/noir/apple-touch-icon.png">
+  <link rel="manifest" href="https://owasp-noir.github.io/noir/site.webmanifest">
+  <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog" href="https://owasp-noir.github.io/noir/rss.xml">
+  <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog (한국어)" href="https://owasp-noir.github.io/noir/ko/rss.xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/css/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="header-left">
+        <button class="hamburger" id="hamburger-toggle" aria-label="Toggle navigation">
+          <span></span><span></span><span></span>
+        </button>
+        <a href="https://owasp-noir.github.io/noir/" class="header-logo">
+          <img src="https://owasp-noir.github.io/noir/images/logo.webp" alt="OWASP Noir" class="header-logo-img">
+        </a>
+      </div>
+      <nav class="header-nav">
+        <a href="https://owasp-noir.github.io/noir/ko/get_started/overview/">시작하기</a>
+        <a href="https://owasp-noir.github.io/noir/ko/usage/supported/language_and_frameworks/">사용 가이드</a>
+        <a href="https://owasp-noir.github.io/noir/ko/development/how_to_build/">개발</a>
+        <a href="https://owasp-noir.github.io/noir/ko/blog/">블로그</a>
+        <a href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer">GitHub</a>
+      </nav>
+      <div class="header-right">
+        <button class="search-trigger" id="search-trigger" aria-label="Search">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <span class="search-shortcut">Ctrl+K</span>
+        </button>
+        <div class="lang-switcher" id="lang-switcher">
+          <a href="#" class="lang-link" data-lang="en">EN</a>
+          <a href="#" class="lang-link" data-lang="ko">KO</a>
+        </div>
+        <script>
+        (function(){
+          var basePath = new URL('https://owasp-noir.github.io/noir').pathname.replace(/\/+$/, '');
+          var path = window.location.pathname;
+          var rel = path.substring(basePath.length) || '/';
+          var isKo = rel.startsWith('/ko/') || rel === '/ko';
+          var switcher = document.getElementById('lang-switcher');
+          var links = switcher.querySelectorAll('.lang-link');
+          for (var i = 0; i < links.length; i++) {
+            var lang = links[i].getAttribute('data-lang');
+            if ((lang === 'ko' && isKo) || (lang === 'en' && !isKo)) {
+              links[i].classList.add('active');
+            }
+            if (lang === 'ko') {
+              links[i].href = isKo ? path : basePath + '/ko' + rel;
+            } else {
+              links[i].href = isKo ? basePath + rel.replace(/^\/ko/, '') : path;
+            }
+          }
+        })();
+        </script>
+      </div>
+    </div>
+  </header>
+  <div class="site-overlay" id="site-overlay"></div>
+  <header class="blog-hero">
+    <div class="blog-hero-aurora" aria-hidden="true"></div>
+    <div class="blog-hero-inner">
+      <h1 class="blog-hero-title">
+        <span class="blog-hero-title-line">Noir</span>
+        <span class="blog-hero-title-line blog-hero-title-accent">블로그</span>
+      </h1>
+      
+        <p class="blog-hero-desc">Noir 팀의 릴리스 딥다이브, 성능 개선기, 프레임워크 커버리지 노트, 설계 결정 배경. 게스트 글도 환영합니다.</p>
+      
+      <div class="blog-hero-intro">
+        <p>릴리스 노트만으론 담기 어려운 이야기들이 모이는 공간입니다. 릴리스 딥다이브, 성능 개선기, 프레임워크 커버리지 확장 노트, 설계 결정의 배경 같은 글들을 다룹니다.</p>
+<p>커뮤니티의 <strong>게스트 글</strong>도 환영합니다. Noir로 CI 파이프라인을 꾸린 경험, 특이한 프레임워크에 맞춰 분석기를 확장한 이야기, 보안 리뷰 사례, 풀어볼 만한 디버깅기 같은 글의 초안과 함께 PR을 열어주시면 함께 다듬어 게재합니다. 글 옆에 작성자 카드가 함께 표시됩니다.</p>
+
+      </div>
+      <div class="blog-hero-actions">
+        <a class="blog-hero-rss" href="https://owasp-noir.github.io/noir/ko/rss.xml">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6.18 15.64a2.18 2.18 0 0 1 2.18 2.18C8.36 19 7.38 20 6.18 20A2.18 2.18 0 0 1 4 17.82a2.18 2.18 0 0 1 2.18-2.18M4 4.44A15.56 15.56 0 0 1 19.56 20h-2.83A12.73 12.73 0 0 0 4 7.27V4.44m0 5.66a9.9 9.9 0 0 1 9.9 9.9h-2.83A7.07 7.07 0 0 0 4 12.93V10.1z"/></svg>
+          <span>RSS 구독</span>
+        </a>
+      </div>
+    </div>
+  </header>
+  <main class="blog-main">
+    
+    <ul class="blog-post-list">
+      
+      <li class="blog-post-card">
+        <a class="blog-post-card-link" href="https://owasp-noir.github.io/noir/ko/blog/welcome-to-the-noir-blog/">
+          <div class="blog-post-card-meta">
+            <time datetime="2026-05-17">2026-05-17</time>
+            
+              <span class="blog-post-card-dot">·</span>
+              <span class="blog-post-card-authors">
+                HAHWUL
+              </span>
+            
+          </div>
+          <h2 class="blog-post-card-title">Noir 블로그를 시작합니다</h2>
+          
+            <p class="blog-post-card-desc">릴리스 딥다이브, 성능 개선기, 설계 결정의 배경 그리고 릴리스 노트에 담기 어려운 이야기들을 위한 공간.</p>
+          
+          
+          <div class="blog-post-card-tags">
+            
+              <span class="blog-post-card-tag">#meta</span>
+            
+              <span class="blog-post-card-tag">#announcements</span>
+            
+          </div>
+          
+        </a>
+      </li>
+      
+    </ul>
+    
+  </main>
+  <div class="search-modal" id="search-modal">
+    <div class="search-modal-overlay"></div>
+    <div class="search-modal-content">
+      <div class="search-input-wrap">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <input type="text" id="search-input" placeholder="문서 검색..." autocomplete="off">
+        <kbd class="search-esc">Esc</kbd>
+      </div>
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <div class="footer-branding">
+        <span>Copyright &copy; 2026 by <a href="https://github.com/owasp-noir">Noir team</a></span>
+        <span>Documentation built with <a href="https://hwaro.hahwul.com" target="_blank" rel="noopener noreferrer">Hwaro</a></span>
+      </div>
+      <div class="footer-links">
+        <a href="https://owasp-noir.github.io/noir/ko/get_started/overview/">문서</a>
+        <a href="https://owasp-noir.github.io/noir/ko/blog/">블로그</a>
+        <a href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer">GitHub</a>
+        <a href="https://owasp-noir.github.io/noir/ko/resources/contact/">연락처</a>
+      </div>
+    </div>
+  </footer>
+  <script src="https://owasp-noir.github.io/noir/js/search.js" defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>hljs.highlightAll();</script>
+  
+</body>
+</html>

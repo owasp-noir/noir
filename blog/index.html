@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Release deep dives, performance investigations, framework coverage notes, and the occasional design rationale from the Noir team. Guest posts welcome.">
+  <title>Blog - OWASP Noir</title>
+  <meta property="og:title" content="Blog">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://owasp-noir.github.io/noir/blog/">
+  <meta property="og:description" content="Release deep dives, performance investigations, framework coverage notes, and the occasional design rationale from the Noir team. Guest posts welcome.">
+  <meta property="og:image" content="https://owasp-noir.github.io/noir/og-images/blog.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Blog">
+  <meta name="twitter:description" content="Release deep dives, performance investigations, framework coverage notes, and the occasional design rationale from the Noir team. Guest posts welcome.">
+  <meta name="twitter:image" content="https://owasp-noir.github.io/noir/og-images/blog.png">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/favicon.ico" sizes="any">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/favicon-96x96.png" type="image/png" sizes="96x96">
+  <link rel="apple-touch-icon" href="https://owasp-noir.github.io/noir/apple-touch-icon.png">
+  <link rel="manifest" href="https://owasp-noir.github.io/noir/site.webmanifest">
+  <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog" href="https://owasp-noir.github.io/noir/rss.xml">
+  <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog (한국어)" href="https://owasp-noir.github.io/noir/ko/rss.xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/css/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="header-left">
+        <button class="hamburger" id="hamburger-toggle" aria-label="Toggle navigation">
+          <span></span><span></span><span></span>
+        </button>
+        <a href="https://owasp-noir.github.io/noir/" class="header-logo">
+          <img src="https://owasp-noir.github.io/noir/images/logo.webp" alt="OWASP Noir" class="header-logo-img">
+        </a>
+      </div>
+      <nav class="header-nav">
+        <a href="https://owasp-noir.github.io/noir/get_started/overview/">Get Started</a>
+        <a href="https://owasp-noir.github.io/noir/usage/supported/language_and_frameworks/">Usage</a>
+        <a href="https://owasp-noir.github.io/noir/development/how_to_build/">Development</a>
+        <a href="https://owasp-noir.github.io/noir/blog/">Blog</a>
+        <a href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer">GitHub</a>
+      </nav>
+      <div class="header-right">
+        <button class="search-trigger" id="search-trigger" aria-label="Search">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <span class="search-shortcut">Ctrl+K</span>
+        </button>
+        <div class="lang-switcher" id="lang-switcher">
+          <a href="#" class="lang-link" data-lang="en">EN</a>
+          <a href="#" class="lang-link" data-lang="ko">KO</a>
+        </div>
+        <script>
+        (function(){
+          var basePath = new URL('https://owasp-noir.github.io/noir').pathname.replace(/\/+$/, '');
+          var path = window.location.pathname;
+          var rel = path.substring(basePath.length) || '/';
+          var isKo = rel.startsWith('/ko/') || rel === '/ko';
+          var switcher = document.getElementById('lang-switcher');
+          var links = switcher.querySelectorAll('.lang-link');
+          for (var i = 0; i < links.length; i++) {
+            var lang = links[i].getAttribute('data-lang');
+            if ((lang === 'ko' && isKo) || (lang === 'en' && !isKo)) {
+              links[i].classList.add('active');
+            }
+            if (lang === 'ko') {
+              links[i].href = isKo ? path : basePath + '/ko' + rel;
+            } else {
+              links[i].href = isKo ? basePath + rel.replace(/^\/ko/, '') : path;
+            }
+          }
+        })();
+        </script>
+      </div>
+    </div>
+  </header>
+  <div class="site-overlay" id="site-overlay"></div>
+  <header class="blog-hero">
+    <div class="blog-hero-aurora" aria-hidden="true"></div>
+    <div class="blog-hero-inner">
+      <h1 class="blog-hero-title">
+        <span class="blog-hero-title-line">The Noir</span>
+        <span class="blog-hero-title-line blog-hero-title-accent">Blog</span>
+      </h1>
+      
+        <p class="blog-hero-desc">Release deep dives, performance investigations, framework coverage notes, and the occasional design rationale from the Noir team. Guest posts welcome.</p>
+      
+      <div class="blog-hero-intro">
+        <p>Long-form writing from the Noir team: release deep dives, performance investigations, framework coverage updates, and the occasional design rationale that doesn't fit into a CHANGELOG line.</p>
+<p>We also welcome <strong>guest posts</strong> from the community: how you use Noir in a CI pipeline, an unusual framework you wired up, a case study from a security review, a debugging story worth telling. Open a PR with a draft and we'll work it through together. Authors get a card next to the post.</p>
+
+      </div>
+      <div class="blog-hero-actions">
+        <a class="blog-hero-rss" href="https://owasp-noir.github.io/noir/rss.xml">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6.18 15.64a2.18 2.18 0 0 1 2.18 2.18C8.36 19 7.38 20 6.18 20A2.18 2.18 0 0 1 4 17.82a2.18 2.18 0 0 1 2.18-2.18M4 4.44A15.56 15.56 0 0 1 19.56 20h-2.83A12.73 12.73 0 0 0 4 7.27V4.44m0 5.66a9.9 9.9 0 0 1 9.9 9.9h-2.83A7.07 7.07 0 0 0 4 12.93V10.1z"/></svg>
+          <span>Subscribe via RSS</span>
+        </a>
+      </div>
+    </div>
+  </header>
+  <main class="blog-main">
+    
+    <ul class="blog-post-list">
+      
+      <li class="blog-post-card">
+        <a class="blog-post-card-link" href="https://owasp-noir.github.io/noir/blog/welcome-to-the-noir-blog/">
+          <div class="blog-post-card-meta">
+            <time datetime="2026-05-17">2026-05-17</time>
+            
+              <span class="blog-post-card-dot">·</span>
+              <span class="blog-post-card-authors">
+                HAHWUL
+              </span>
+            
+          </div>
+          <h2 class="blog-post-card-title">Welcome to the Noir blog</h2>
+          
+            <p class="blog-post-card-desc">A new space for release deep dives, performance notes, design rationale, and the writing that doesn't fit in a changelog.</p>
+          
+          
+          <div class="blog-post-card-tags">
+            
+              <span class="blog-post-card-tag">#meta</span>
+            
+              <span class="blog-post-card-tag">#announcements</span>
+            
+          </div>
+          
+        </a>
+      </li>
+      
+    </ul>
+    
+  </main>
+  <div class="search-modal" id="search-modal">
+    <div class="search-modal-overlay"></div>
+    <div class="search-modal-content">
+      <div class="search-input-wrap">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <input type="text" id="search-input" placeholder="Search documentation..." autocomplete="off">
+        <kbd class="search-esc">Esc</kbd>
+      </div>
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <div class="footer-branding">
+        <span>Copyright &copy; 2026 by <a href="https://github.com/owasp-noir">Noir team</a></span>
+        <span>Documentation built with <a href="https://hwaro.hahwul.com" target="_blank" rel="noopener noreferrer">Hwaro</a></span>
+      </div>
+      <div class="footer-links">
+        <a href="https://owasp-noir.github.io/noir/get_started/overview/">Docs</a>
+        <a href="https://owasp-noir.github.io/noir/blog/">Blog</a>
+        <a href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer">GitHub</a>
+        <a href="https://owasp-noir.github.io/noir/resources/contact/">Contact</a>
+      </div>
+    </div>
+  </footer>
+  <script src="https://owasp-noir.github.io/noir/js/search.js" defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>hljs.highlightAll();</script>
+  
+</body>
+</html>

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>OWASP Noir (한국어)</title>
+    <link>https://owasp-noir.github.io/noir</link>
+    <description>Attack surface detector that identifies endpoints by static analysis.</description>
+    <language>ko</language>
+    <atom:link href="https://owasp-noir.github.io/noir/ko/rss.xml" rel="self" type="application/rss+xml" />
+    <item>
+      <title>Noir 블로그를 시작합니다</title>
+      <link>https://owasp-noir.github.io/noir/ko/blog/welcome-to-the-noir-blog/</link>
+      <guid>https://owasp-noir.github.io/noir/ko/blog/welcome-to-the-noir-blog/</guid>
+      <description>릴리스 딥다이브, 성능 개선기, 설계 결정의 배경 그리고 릴리스 노트에 담기 어려운 이야기들을 위한 공간.</description>
+      <content:encoded><![CDATA[<p>안녕하세요, 하훌입니다. 종종 Noir에 대한 팁이나 정보 등을 개인 블로그에 작성했었는데요. 개인 채널보단 공식적인 채널을 가지는게 좋을 것 같아. 문서 내 블로그 공간을 마련했습니다.</p>
+<p>문서와 나란히 두는 작은 실험적인 공간으로, 릴리스 노트나 레퍼런스에 담기 애매한 글들을 한곳에 모으려고 만들었습니다. 흩어진 PR 설명에서 잃어버리는 것보단 여기에 적어두는 편이 낫겠다는 판단입니다.</p>
+<h2 id="어떤-글이-올라오나요">어떤 글이 올라오나요</h2>
+<ul>
+<li><strong>릴리스 딥다이브.</strong> 최근 버전들에서 들어간 변경사항과 그 배경, 선택한 트레이드오프.</li>
+<li><strong>성능·정확도 개선기.</strong> 벤치마크나 오탐 정리 작업 중 이야기로 풀어낼 만한 게 나오면 정리해서 올립니다.</li>
+<li><strong>프레임워크 커버리지 노트.</strong> 새 Rust/Python/JVM 프레임워크를 지원할 때 만나는 파싱 엣지 케이스들.</li>
+<li><strong>설계 결정의 배경.</strong> 분석기 파이프라인, 옵티마이저 패스, AI 컨텍스트 구조 같은 결정들의 이유.</li>
+<li><strong>Tip</strong> 여러가지 사용 팁들</li>
+</ul>
+<h2 id="다른-문서와의-관계">다른 문서와의 관계</h2>
+<ul>
+<li><a href="/noir/ko/get_started/">시작하기</a> 가이드는 그대로 도구 학습의 정식 경로입니다.</li>
+<li><a href="/noir/ko/usage/">사용 가이드</a> 섹션은 플래그·지원 프레임워크·출력 형식 같은 레퍼런스를 담습니다.</li>
+<li>블로그는 두 가지를 보충하는 서사형 콘텐츠 공간입니다. 모든 사용자가 알면 좋은 주제로 발전하면 그때 정식 문서로 옮깁니다.</li>
+</ul>
+<h2 id="발행-주기">발행 주기</h2>
+<p>정해진 일정은 없습니다. 쓸 만한 이야깃거리가 생기면 올라옵니다. 정기적인 흐름은 Github Repository의 <a href="https://github.com/owasp-noir/noir/releases">릴리스</a>에서 따라갈 수 있고, 긴 글은 여기를 가끔 들러주세요.</p>
+<p>Noir 사용기, CI 통합 사례, 특정 프레임워크의 라우팅 모델 분석 같은 글을 기고하고 싶다면 초안과 함께 PR을 열어주세요. 글 옆에 작성자 카드가 함께 표시됩니다.</p>
+]]></content:encoded>
+      <pubDate>Sun, 17 May 2026 00:00:00 +0000</pubDate>
+      <category>meta</category>
+      <category>announcements</category>
+    </item>
+  </channel>
+</rss>
