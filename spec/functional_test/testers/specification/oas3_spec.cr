@@ -37,6 +37,23 @@ FunctionalTester.new("fixtures/specification/oas3/nil_cast/", {
   :endpoints => 0,
 }, nil).perform_tests
 
+FunctionalTester.new("fixtures/specification/oas3/refs_multipart/", {
+  :techs     => 1,
+  :endpoints => 2,
+}, [
+  Endpoint.new("/users/{userId}/avatar", "POST", [
+    Param.new("userId", "", "path"),
+    Param.new("X-Trace-Id", "", "header"),
+    Param.new("avatar", "", "form"),
+    Param.new("caption", "", "form"),
+  ]),
+  Endpoint.new("/users", "POST", [
+    Param.new("email", "", "json"),
+    Param.new("name", "", "json"),
+    Param.new("password", "", "json"),
+  ]),
+]).perform_tests
+
 FunctionalTester.new("fixtures/specification/oas3/param_in_path/", {
   :techs     => 1,
   :endpoints => 4,
