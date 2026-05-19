@@ -1,0 +1,64 @@
+openapi: 3.0.0
+info:
+  title: Refs and Multipart Coverage
+  version: 1.0.0
+paths:
+  /users/{userId}/avatar:
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: X-Trace-Id
+        in: header
+        schema:
+          type: string
+    post:
+      summary: Upload avatar (multipart) referenced via component
+      requestBody:
+        $ref: '#/components/requestBodies/AvatarUpload'
+      responses:
+        '201':
+          description: Uploaded
+  /users:
+    post:
+      summary: Create user (JSON body via $ref)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewUser'
+      responses:
+        '201':
+          description: Created
+components:
+  requestBodies:
+    AvatarUpload:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            properties:
+              avatar:
+                type: string
+                format: binary
+              caption:
+                type: string
+  schemas:
+    NewUser:
+      allOf:
+        - $ref: '#/components/schemas/UserBase'
+        - type: object
+          properties:
+            password:
+              type: string
+    UserBase:
+      type: object
+      properties:
+        email:
+          type: string
+        name:
+          type: string

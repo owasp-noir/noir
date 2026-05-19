@@ -2,7 +2,9 @@ require "../../func_spec.cr"
 
 expected_endpoints = [
   Endpoint.new("/v1/pets", "GET"),
-  Endpoint.new("/v1/pets", "POST"),
+  Endpoint.new("/v1/pets", "POST", [
+    Param.new("name", "", "json"),
+  ]),
   Endpoint.new("/v1/pets/search", "GET", [
     Param.new("name", "", "query"),
     Param.new("X-Request-Id", "", "header"),
@@ -15,7 +17,11 @@ expected_endpoints = [
     Param.new("pet_name", "", "form"),
   ]),
   Endpoint.new("/v1/pets/{petId}", "GET", [Param.new("petId", "", "path")]),
-  Endpoint.new("/v1/pets/{petId}", "PUT", [Param.new("petId", "", "path")]),
+  Endpoint.new("/v1/pets/{petId}", "PUT", [
+    Param.new("petId", "", "path"),
+    Param.new("name", "", "json"),
+    Param.new("breed", "", "json"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/specification/oas2/", {
