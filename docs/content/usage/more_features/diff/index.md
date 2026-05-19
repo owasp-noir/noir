@@ -38,4 +38,4 @@ Use `-f json` or `-f yaml` for structured output. Results are grouped into three
 }
 ```
 
-Especially useful in CI/CD — feed only the `added` and `changed` endpoints into a DAST scanner to focus on modified attack surface.
+Especially useful in CI/CD: feed only the `added` and `changed` endpoints into a DAST scanner to focus on modified attack surface.

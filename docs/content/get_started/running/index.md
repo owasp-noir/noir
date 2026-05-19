@@ -7,7 +7,7 @@ sort_by = "weight"
 +++
 
 {% mascot(mood="walk") %}
-Noir is installed — let's take it for a spin! Point it at a project, see what it finds, and learn how to shape the output.
+Noir is installed. Let's take it for a spin! Point it at a project, see what it finds, and learn how to shape the output.
 {% end %}
 
 ## Run a Scan
@@ -26,7 +26,7 @@ noir -b .
 
 ![](./running.png)
 
-Noir reads the source files, detects which frameworks are in use, and prints every endpoint it finds — methods, paths, parameters, headers, and cookies.
+Noir reads the source files, detects which frameworks are in use, and prints every endpoint it finds: methods, paths, parameters, headers, and cookies.
 
 ## Check What Was Detected
 
@@ -55,7 +55,7 @@ noir -b . -f json
 # YAML for easy reading and config-friendly workflows
 noir -b . -f yaml
 
-# OpenAPI spec — useful for generating API docs or feeding into tools
+# OpenAPI spec, useful for generating API docs or feeding into tools
 noir -b . -f oas3
 
 # cURL commands you can run immediately against a live target
@@ -102,7 +102,7 @@ noir -b . --techs rails,django
 # Scan everything except Express
 noir -b . --exclude-techs express
 
-# Skip files by glob (useful in monorepos — comma-separated)
+# Skip files by glob (useful in monorepos, comma-separated)
 noir -b . --exclude-path "*_test.go,vendor/*,**/node_modules/**"
 ```
 
@@ -156,7 +156,7 @@ See [Callee Coverage](@/usage/supported/callee_coverage/index.md) and [AI Contex
 
 You've completed the Getting Started guide! Here's what to explore next:
 
-- **[Configurations](@/usage/configurations/configuration_file/index.md)** — Set default options so you don't repeat flags every time
-- **[Output Formats](@/usage/output_formats/_index.md)** — Dive deeper into all output formats
-- **[Passive Scan](@/usage/passive_scan/_index.md)** — Scan for security issues like hardcoded secrets and misconfigurations
-- **[AI Power](@/get_started/ai_power/index.md)** — Use AI to detect endpoints in unsupported frameworks
+- **[Configurations](@/usage/configurations/configuration_file/index.md)**: Set default options so you don't repeat flags every time
+- **[Output Formats](@/usage/output_formats/_index.md)**: Dive deeper into all output formats
+- **[Passive Scan](@/usage/passive_scan/_index.md)**: Scan for security issues like hardcoded secrets and misconfigurations
+- **[AI Power](@/get_started/ai_power/index.md)**: Use AI to detect endpoints in unsupported frameworks

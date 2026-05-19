@@ -55,4 +55,4 @@ noir --generate-completion fish > ~/.config/fish/completions/noir.fish
 
 ## Homebrew Users
 
-If you installed Noir via Homebrew, completions are already set up — nothing to do here.
+If you installed Noir via Homebrew, completions are already set up; nothing to do here.

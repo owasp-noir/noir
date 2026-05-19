@@ -10,7 +10,7 @@ sort_by = "weight"
 Hi! I'm Hak, the Noir mascot. Let me show you what Noir can do for you.
 {% end %}
 
-Noir is an open-source attack surface detector. It reads your source code and discovers all API endpoints — including shadow APIs and undocumented routes that may not appear in your documentation.
+Noir is an open-source attack surface detector. It reads your source code and discovers all API endpoints, including shadow APIs and undocumented routes that may not appear in your documentation.
 
 Security teams use Noir to surface what attackers would look for: forgotten endpoints, exposed parameters, and hidden routes that slip past code review. Developers use it to keep API documentation accurate, hand endpoint data to DAST pipelines, and point LLM-based SAST and code auditors at the attacker-reachable code they should actually be reviewing.
 
@@ -18,7 +18,7 @@ Security teams use Noir to surface what attackers would look for: forgotten endp
 
 ## What Can Noir Do?
 
-**Find what's hidden.** Noir statically analyzes source code to extract every endpoint, parameter, header, and cookie — even the ones nobody documented.
+**Find what's hidden.** Noir statically analyzes source code to extract every endpoint, parameter, header, and cookie, even the ones nobody documented.
 
 **Work with any stack.** A single binary supports 50+ frameworks across Crystal, Go, Java, JavaScript, Kotlin, PHP, Python, Ruby, Rust, Swift, and more. No plugins or per-language setup needed.
 
@@ -26,9 +26,9 @@ Security teams use Noir to surface what attackers would look for: forgotten endp
 
 **Feed DAST tools.** Noir maps endpoints from source code and pipes them straight into ZAP, Burp Suite, or Caido. The crawler stops missing routes that were never linked from a page.
 
-**Point AI SAST at the real attack surface.** Noir's endpoint inventory — entrypoints, source files, parameters, tags, and (with `--include-callee`) the 1-hop functions each handler invokes — is exactly the context an LLM-based SAST tool, code auditor, or security agent needs to find attacker-reachable bugs. Hand it the surface Noir already mapped instead of asking the model to scan the whole repository.
+**Point AI SAST at the real attack surface.** Noir's endpoint inventory (entrypoints, source files, parameters, tags, and, with `--include-callee`, the 1-hop functions each handler invokes) is exactly the context an LLM-based SAST tool, code auditor, or security agent needs to find attacker-reachable bugs. Hand it the surface Noir already mapped instead of asking the model to scan the whole repository.
 
-**Export in any format.** Results come out as JSON, YAML, OpenAPI specs, SARIF for CI/CD, cURL commands, HTML reports, or Postman collections — whatever your workflow needs.
+**Export in any format.** Results come out as JSON, YAML, OpenAPI specs, SARIF for CI/CD, cURL commands, HTML reports, or Postman collections, whatever your workflow needs.
 
 ## How Does It Work?
 

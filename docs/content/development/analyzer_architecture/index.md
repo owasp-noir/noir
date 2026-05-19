@@ -27,7 +27,7 @@ A detector does a cheap match (usually on a manifest file like `go.mod`, `packag
 
 ## The 3-layer analyzer
 
-Every analyzer is composed of three layers. Keeping them separate is a hard rule — a framework adapter should not open files or re-implement parsing.
+Every analyzer is composed of three layers. Keeping them separate is a hard rule: a framework adapter should not open files or re-implement parsing.
 
 | Layer | Lives in | Responsibility |
 |---|---|---|
@@ -42,13 +42,13 @@ Every analyzer is composed of three layers. Keeping them separate is a hard rule
 - **Language engines** (in `engines/`): PHP, Ruby, Rust, Elixir, Swift, Crystal, Scala, JavaScript/TypeScript, Python, Go.
 - **Route extractors** (in `miniparsers/`): JavaScript (used by Hono, Express, Fastify, Koa, NestJS, Restify, TypeScript NestJS) and Go (used by eight analyzers).
 - **Deliberately outside the engine stack**: CSharp's two orchestrators and Scala Play (multi-phase flows that don't fit a per-file scan), plus Go's Chi/Httprouter/Fasthttp (self-contained extraction). These inherit from `Analyzer` directly.
-- Python, Kotlin, Java have full parsers (in `miniparsers/`) but no dedicated route extractor yet — it's a known follow-up.
+- Python, Kotlin, Java have full parsers (in `miniparsers/`) but no dedicated route extractor yet (a known follow-up).
 
 ## Two engine shapes
 
 Every engine exposes `parallel_file_scan(&block)` as a protected helper. A framework adapter picks one of two shapes:
 
-**Shape A — `analyze_file`** (simpler, pure per-file):
+**Shape A: `analyze_file`** (simpler, pure per-file):
 
 ```crystal
 class MyFramework < PhpEngine
@@ -61,7 +61,7 @@ end
 
 The engine's default `analyze` drives the walk and concats returned endpoints. Used by most Php / Rust / Swift / Crystal / Elixir / Scala analyzers.
 
-**Shape B — custom `analyze`** (for closure state, pre-/post-phases):
+**Shape B: custom `analyze`** (for closure state, pre-/post-phases):
 
 ```crystal
 class MyFramework < JavascriptEngine
@@ -157,7 +157,7 @@ end
 Key points:
 
 - **Inherit from the language engine** (`GoEngine` here). You get `get_route_path`, `add_param_to_endpoint`, `collect_package_groups`, `resolve_public_dirs` for free.
-- **Override overridable methods** if your framework's parsing differs (`get_static_path`, `get_route_path` — see Mux or GoZero for examples).
+- **Override overridable methods** if your framework's parsing differs (`get_static_path`, `get_route_path`; see Mux or GoZero for examples).
 - **Use `parallel_file_scan`** for the file walk; don't re-implement the channel + worker pool.
 
 ### 3. Register in three places
@@ -194,7 +194,7 @@ spec/functional_test/fixtures/go/hertz/
     └── index.html
 ```
 
-The fixture should exercise realistic patterns: path params, query/form/header/cookie, route groups, static serving, and any framework-specific idioms (Hertz's `.Any` expands to all HTTP methods, Flask's blueprints, etc.). Don't try to be exhaustive — add cases as real-world bugs surface.
+The fixture should exercise realistic patterns: path params, query/form/header/cookie, route groups, static serving, and any framework-specific idioms (Hertz's `.Any` expands to all HTTP methods, Flask's blueprints, etc.). Don't try to be exhaustive; add cases as real-world bugs surface.
 
 ### 5. Spec
 
@@ -312,7 +312,7 @@ See [#1243](https://github.com/owasp-noir/noir/pull/1243) (Go `common.cr` split)
 
 ## Execution model note
 
-Noir is built **single-threaded** (no `preview_mt`). `parallel_analyze` spawns cooperative Crystal fibers, not OS threads — so `result << endpoint` and `result.concat(...)` from multiple fibers are safe because `Array#<<` and `#concat` have no yield points. You'll notice that no per-file analyzer uses a `Mutex` around the result array; that's by design and matches the whole codebase. If noir ever enables MT mode, synchronization belongs at the `parallel_analyze` layer, not scattered across analyzers.
+Noir is built **single-threaded** (no `preview_mt`). `parallel_analyze` spawns cooperative Crystal fibers, not OS threads, so `result << endpoint` and `result.concat(...)` from multiple fibers are safe because `Array#<<` and `#concat` have no yield points. You'll notice that no per-file analyzer uses a `Mutex` around the result array; that's by design and matches the whole codebase. If noir ever enables MT mode, synchronization belongs at the `parallel_analyze` layer, not scattered across analyzers.
 
 ## Where to look next
 

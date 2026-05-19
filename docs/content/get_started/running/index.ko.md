@@ -102,7 +102,7 @@ noir -b . --techs rails,django
 # Express를 제외한 모든 것 스캔
 noir -b . --exclude-techs express
 
-# glob으로 파일 단위 제외 (모노레포에서 유용 — 쉼표 구분)
+# glob으로 파일 단위 제외 (모노레포에서 유용, 쉼표 구분)
 noir -b . --exclude-path "*_test.go,vendor/*,**/node_modules/**"
 ```
 

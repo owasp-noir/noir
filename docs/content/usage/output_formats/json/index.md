@@ -9,7 +9,7 @@ sort_by = "weight"
 Noir supports two JSON-flavored output modes:
 
 *   **JSON**: Single JSON object containing all results
-*   **JSONL**: One JSON object per line — good for streaming and large datasets
+*   **JSONL**: One JSON object per line, good for streaming and large datasets
 
 ## JSON Output
 

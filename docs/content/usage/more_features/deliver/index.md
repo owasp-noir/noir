@@ -12,12 +12,12 @@ Send discovered endpoints directly to security tools like Burp Suite, ZAP, or El
 
 Relevant flags:
 
-*   `--send-req` — Send as web request
-*   `--send-proxy http://proxy...` — Send through HTTP proxy
-*   `--send-es http://es...` — Send to Elasticsearch
-*   `--with-headers X-Header:Value` — Add custom headers
-*   `--use-matchers string` — Only send matching endpoints (URL, method, or method:URL)
-*   `--use-filters string` — Exclude matching endpoints (URL, method, or method:URL)
+*   `--send-req`: Send as web request
+*   `--send-proxy http://proxy...`: Send through HTTP proxy
+*   `--send-es http://es...`: Send to Elasticsearch
+*   `--with-headers X-Header:Value`: Add custom headers
+*   `--use-matchers string`: Only send matching endpoints (URL, method, or method:URL)
+*   `--use-filters string`: Exclude matching endpoints (URL, method, or method:URL)
 
 ### Sending to a Proxy
 

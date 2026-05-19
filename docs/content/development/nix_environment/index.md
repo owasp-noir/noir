@@ -10,7 +10,7 @@ Nix provides a reproducible development environment with consistent dependencies
 
 ## Installing Nix
 
-The multi-user (daemon) install is recommended — it supports concurrent builds and better isolation. The single-user option is simpler but skips the background daemon.
+The multi-user (daemon) install is recommended; it supports concurrent builds and better isolation. The single-user option is simpler but skips the background daemon.
 
 ```sh
 # Multi-user installation (recommended for Linux/macOS)

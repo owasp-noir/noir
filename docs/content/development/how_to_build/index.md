@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-All contributions are welcome — bug fixes, features, and documentation improvements.
+All contributions are welcome: bug fixes, features, and documentation improvements.
 
 ## How to Contribute
 
@@ -60,7 +60,7 @@ Build the project. The compiled binary ends up at `./bin/noir`.
 shards build
 ```
 
-For a production-grade build (slower compile, 2–3× faster runtime), pass `--release`. Use this when running benchmarks or comparing against a published release — debug builds are noticeably slower and can make a healthy build look like a regression.
+For a production-grade build (slower compile, 2–3× faster runtime), pass `--release`. Use this when running benchmarks or comparing against a published release; debug builds are noticeably slower and can make a healthy build look like a regression.
 
 ```sh
 shards build --release

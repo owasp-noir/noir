@@ -28,8 +28,8 @@ Repository: https://github.com/owasp-noir/noir-passive-rules
 
 ## CLI Options
 
-- `--passive-scan-auto-update` — Auto-update rules on startup
-- `--passive-scan-no-update-check` — Skip update checks (useful for air-gapped environments)
+- `--passive-scan-auto-update`: Auto-update rules on startup
+- `--passive-scan-no-update-check`: Skip update checks (useful for air-gapped environments)
 
 Both options are also configurable via `~/.config/noir/config.yaml`.
 

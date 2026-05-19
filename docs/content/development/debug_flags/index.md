@@ -10,10 +10,10 @@ Developer-only flags that do not appear in `--help` output. Names, behavior, and
 
 Available flags
 
-- `--override-analyze-prompt` — Overrides the internal ANALYZE_PROMPT for individual file analysis.
-- `--override-llm-optimize-prompt` — Overrides the internal LLM_OPTIMIZE_PROMPT for endpoint optimization.
-- `--override-bundle-analyze-prompt` — Overrides the internal BUNDLE_ANALYZE_PROMPT for bundled (multi-file) analysis.
-- `--override-filter-prompt` — Overrides the internal FILTER_PROMPT for file filtering.
+- `--override-analyze-prompt`: Overrides the internal ANALYZE_PROMPT for individual file analysis.
+- `--override-llm-optimize-prompt`: Overrides the internal LLM_OPTIMIZE_PROMPT for endpoint optimization.
+- `--override-bundle-analyze-prompt`: Overrides the internal BUNDLE_ANALYZE_PROMPT for bundled (multi-file) analysis.
+- `--override-filter-prompt`: Overrides the internal FILTER_PROMPT for file filtering.
 
 When to use these flags
 

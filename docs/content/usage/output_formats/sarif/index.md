@@ -31,7 +31,7 @@ noir -b . -f sarif -o results.sarif --no-log
 
 ## Example Output
 
-A SARIF file has a `runs` array. Each run describes the tool (`driver` with name and version), the analysis rules, and the `results` — one entry per discovered endpoint with its source file location and line number.
+A SARIF file has a `runs` array. Each run describes the tool (`driver` with name and version), the analysis rules, and the `results`: one entry per discovered endpoint with its source file location and line number.
 
 ```json
 {

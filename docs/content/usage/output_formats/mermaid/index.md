@@ -112,7 +112,7 @@ mindmap
 
 </details>
 
-Paste the raw output into the [Mermaid live editor](https://mermaid.live/) to render it interactively, or embed it directly in Markdown files — GitHub, GitLab, and Notion all render Mermaid natively.
+Paste the raw output into the [Mermaid live editor](https://mermaid.live/) to render it interactively, or embed it directly in Markdown files (GitHub, GitLab, and Notion all render Mermaid natively).
 
 {% mermaid() %}
 mindmap

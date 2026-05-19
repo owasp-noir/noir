@@ -40,7 +40,7 @@ http GET https://www.example.com/token "client_id=&redirect_url=&grant_type="
 
 ## PowerShell
 
-For Windows environments — generates [Invoke-WebRequest](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/invoke-webrequest) commands that work natively without extra tools.
+For Windows environments. Generates [Invoke-WebRequest](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/invoke-webrequest) commands that work natively without extra tools.
 
 ```bash
 noir -b . -f powershell -u https://www.example.com
@@ -55,7 +55,7 @@ Invoke-WebRequest -Method GET -Uri "https://www.example.com/token" -Body "client
 
 ## Filling Parameter Values
 
-By default Noir leaves parameter values empty (`x-api-key=`, `query=`, …) so the commands work as templates. Pre-populate values with the `--set-pvalue` family — handy when you want a script you can run as-is, or when you want to seed fuzzing input.
+By default Noir leaves parameter values empty (`x-api-key=`, `query=`, …) so the commands work as templates. Pre-populate values with the `--set-pvalue` family, handy when you want a script you can run as-is, or when you want to seed fuzzing input.
 
 | Flag | Scope |
 |---|---|

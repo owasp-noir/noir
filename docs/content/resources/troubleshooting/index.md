@@ -21,7 +21,7 @@ sort_by = "weight"
 
 - Use `--techs` to limit scanning to specific frameworks: `noir -b . --techs rails`
 - Use `--exclude-techs` to skip known irrelevant frameworks
-- AI-powered analysis caches responses — subsequent runs on the same codebase will be faster
+- AI-powered analysis caches responses; subsequent runs on the same codebase will be faster
 
 ## AI Provider Connection Errors
 
