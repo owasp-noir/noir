@@ -98,15 +98,19 @@ module Analyzer::Specification
       name = param_obj["name"]?.try(&.to_s) || ""
       location = param_obj["in"]?.try(&.to_s) || ""
       case location
-      when "query"
-        params << Param.new(name, "", "query")
-      when "header"
-        params << Param.new(name, "", "header")
-      when "form", "formData"
-        params << Param.new(name, "", "form")
       when "body"
         if schema = param_obj["schema"]?
           collect_body_props_json(root, schema, param_type_for_body(consumes), params)
+        end
+      else
+        return if name.empty?
+        case location
+        when "query"
+          params << Param.new(name, "", "query")
+        when "header"
+          params << Param.new(name, "", "header")
+        when "form", "formData"
+          params << Param.new(name, "", "form")
         end
       end
     end
@@ -124,15 +128,19 @@ module Analyzer::Specification
       name = param_obj[YAML::Any.new("name")]?.try(&.to_s) || ""
       location = param_obj[YAML::Any.new("in")]?.try(&.to_s) || ""
       case location
-      when "query"
-        params << Param.new(name, "", "query")
-      when "header"
-        params << Param.new(name, "", "header")
-      when "form", "formData"
-        params << Param.new(name, "", "form")
       when "body"
         if schema = param_obj[YAML::Any.new("schema")]?
           collect_body_props_yaml(root, schema, param_type_for_body(consumes), params)
+        end
+      else
+        return if name.empty?
+        case location
+        when "query"
+          params << Param.new(name, "", "query")
+        when "header"
+          params << Param.new(name, "", "header")
+        when "form", "formData"
+          params << Param.new(name, "", "form")
         end
       end
     end

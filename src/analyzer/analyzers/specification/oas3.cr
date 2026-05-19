@@ -23,11 +23,11 @@ module Analyzer::Specification
     # Maps an OAS3 request-body content type to a Noir param type.
     private def param_type_for_content(content_type : String) : String?
       case content_type
-      when "application/json", .starts_with?("application/json")
+      when .starts_with?("application/json")
         "json"
       when "application/x-www-form-urlencoded"
         "form"
-      when "multipart/form-data", .starts_with?("multipart/form-data")
+      when .starts_with?("multipart/form-data")
         "form"
       end
     end
@@ -118,6 +118,7 @@ module Analyzer::Specification
 
       name = param_obj["name"]?.try(&.to_s) || ""
       location = param_obj["in"]?.try(&.to_s) || ""
+      return if name.empty?
       case location
       when "query"
         params << Param.new(name, "", "query")
@@ -140,6 +141,7 @@ module Analyzer::Specification
 
       name = param_obj[YAML::Any.new("name")]?.try(&.to_s) || ""
       location = param_obj[YAML::Any.new("in")]?.try(&.to_s) || ""
+      return if name.empty?
       case location
       when "query"
         params << Param.new(name, "", "query")
@@ -190,7 +192,6 @@ module Analyzer::Specification
       locator = CodeLocator.instance
       oas3_jsons = locator.all("oas3-json")
       oas3_yamls = locator.all("oas3-yaml")
-      base_path = @url
 
       if oas3_jsons.is_a?(Array(String))
         oas3_jsons.each do |oas3_json|
@@ -199,6 +200,7 @@ module Analyzer::Specification
             content = File.read(oas3_json, encoding: "utf-8", invalid: :skip)
             json_obj = JSON.parse(content)
 
+            base_path = @url
             begin
               base_path = get_base_path json_obj["servers"]
             rescue e
@@ -218,6 +220,7 @@ module Analyzer::Specification
             content = File.read(oas3_yaml, encoding: "utf-8", invalid: :skip)
             yaml_obj = YAML.parse(content)
 
+            base_path = @url
             begin
               base_path = get_base_path yaml_obj["servers"]
             rescue e
