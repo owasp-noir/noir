@@ -23,6 +23,14 @@ private def process_override_flag(
   end
 end
 
+private def print_context_support(tech : String)
+  puts "     #{"callee".colorize(:cyan)}: #{NoirTechs.context_supported?(tech, "callee")}"
+  puts "     #{"ai_context".colorize(:cyan)}:"
+  ["guards", "sinks", "validators", "signals"].each do |feature|
+    puts "       #{feature.colorize(:cyan)}: #{NoirTechs.context_supported?(tech, feature)}"
+  end
+end
+
 def extract_hidden_prompt_flags(noir_options : Hash(String, YAML::Any)) : Array(String)
   args = ARGV.dup
   filtered = [] of String
@@ -333,6 +341,7 @@ def run_options_parser
           if v.is_a?(Hash)
             puts "   #{k.to_s.colorize(:blue)}:"
             v.each { |sk, sv| puts "     #{sk.to_s.colorize(:cyan)}: #{sv}" }
+            print_context_support(tech.to_s) if k.to_s == "supported"
           else
             puts "   #{k.to_s.colorize(:blue)}: #{v}"
           end

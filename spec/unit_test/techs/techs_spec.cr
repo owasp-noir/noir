@@ -26,3 +26,20 @@ describe "Get Techs" do
     end
   end
 end
+
+describe "Context support metadata" do
+  it "marks functional callee coverage separately from generic AI context buckets" do
+    NoirTechs.context_supported?("js_express", "callee").should be_true
+    NoirTechs.context_supported?("go_pocketbase", "callee").should be_true
+    NoirTechs.context_supported?("js_express", "guards").should be_true
+    NoirTechs.context_supported?("js_express", "sinks").should be_true
+    NoirTechs.context_supported?("js_express", "validators").should be_true
+    NoirTechs.context_supported?("js_express", "signals").should be_true
+  end
+
+  it "keeps specification imports out of source-analysis context support" do
+    NoirTechs.context_supported?("oas3", "callee").should be_false
+    NoirTechs.context_supported?("oas3", "sinks").should be_false
+    NoirTechs.context_supported?("oas3", "signals").should be_false
+  end
+end

@@ -39,6 +39,11 @@ def check(b : Bool) : String
   b ? "☑️" : "✗"
 end
 
+FEATURE_COLUMNS = [
+  "endpoint", "method", "query", "path", "body", "header", "cookie",
+  "static_path", "websocket", "callee", "ai_guards", "ai_sinks", "ai_validators", "ai_signals",
+]
+
 def project_root : String
   script_dir = File.dirname(File.expand_path(__FILE__))
   File.basename(script_dir) == "scripts" ? File.expand_path("..", script_dir) : script_dir
@@ -50,7 +55,7 @@ def ensure_parent_dir(path : String)
 end
 
 # Render supported features as markdown table cells
-def feature_cells(supported : JSON::Any) : String
+def feature_cells(tech : String, supported : JSON::Any) : String
   h = supported.as_h
   params = h["params"]?.try(&.as_h) || {} of String => JSON::Any
 
@@ -64,7 +69,18 @@ def feature_cells(supported : JSON::Any) : String
     params["cookie"]?.try(&.as_bool) || false,
     h["static_path"]?.try(&.as_bool) || false,
     h["websocket"]?.try(&.as_bool) || false,
+    NoirTechs.context_supported?(tech, "callee"),
+    NoirTechs.context_supported?(tech, "guards"),
+    NoirTechs.context_supported?(tech, "sinks"),
+    NoirTechs.context_supported?(tech, "validators"),
+    NoirTechs.context_supported?(tech, "signals"),
   ].map { |v| check(v) }.join(" | ")
+end
+
+def table_header(prefix : Array(String)) : String
+  columns = prefix + FEATURE_COLUMNS
+  separator = columns.map { "---" }
+  "| #{columns.join(" | ")} |\n|#{separator.join("|")}|"
 end
 
 # Generate language/framework tables grouped by language
@@ -78,15 +94,14 @@ def generate_language_tables(data : JSON::Any) : String
     language = h["language"].as_s
     framework = h["framework"]?.try(&.as_s) || ""
     framework = "Pure" if framework.empty?
-    by_language[language] << {name: framework, cells: feature_cells(h["supported"])}
+    by_language[language] << {name: framework, cells: feature_cells(_key, h["supported"])}
   end
 
   io = IO::Memory.new
   by_language.keys.sort!.each do |lang|
     entries = by_language[lang].sort_by { |e| e[:name] }
     io << "## #{lang}\n\n"
-    io << "| Framework | endpoint | method | query | path | body | header | cookie | static_path | websocket |\n"
-    io << "|-----------|----------|--------|-------|------|------|--------|--------|-------------|-----------|"
+    io << table_header(["Framework"])
     io << "\n"
     entries.each do |e|
       io << "| #{e[:name]} | #{e[:cells]} |\n"
@@ -108,7 +123,7 @@ def generate_spec_table(data : JSON::Any) : String
 
     name = SPEC_FRIENDLY_NAMES[key]? || key.gsub("_", " ").split.map(&.capitalize).join(" ")
     formats = h["format"].as_a.map(&.as_s)
-    cells = feature_cells(h["supported"])
+    cells = feature_cells(key, h["supported"])
 
     formats.each do |fmt|
       specs << {name: name, format: fmt, cells: cells}
@@ -118,8 +133,8 @@ def generate_spec_table(data : JSON::Any) : String
   specs.sort_by! { |e| e[:name] }
 
   io = IO::Memory.new
-  io << "| Specification | Format | endpoint | method | query | path | body | header | cookie | static_path | websocket |\n"
-  io << "|---|---|---|---|---|---|---|---|---|---|---|\n"
+  io << table_header(["Specification", "Format"])
+  io << "\n"
   specs.each do |e|
     io << "| #{e[:name]} | #{e[:format]} | #{e[:cells]} |\n"
   end
