@@ -118,11 +118,11 @@ def framework_card(name : String, flags : Hash(String, Bool)) : String
 end
 
 LEGEND_HTML = <<-HTML
-<div class="tech-legend">
-  <span class="tech-legend-item"><span class="tech-chip on">supported</span> available out of the box</span>
-  <span class="tech-legend-item"><span class="tech-chip off">supported</span> not yet implemented</span>
-</div>
-HTML
+  <div class="tech-legend">
+    <span class="tech-legend-item"><span class="tech-chip on">supported</span> available out of the box</span>
+    <span class="tech-legend-item"><span class="tech-chip off">supported</span> not yet implemented</span>
+  </div>
+  HTML
 
 # Generate language/framework card grids grouped by language.
 def generate_language_tables(data : JSON::Any) : String
