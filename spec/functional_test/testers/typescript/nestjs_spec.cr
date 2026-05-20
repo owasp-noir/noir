@@ -27,13 +27,14 @@ expected_endpoints = [
   ]),
   # `@Controller()` (empty) — method path used as-is.
   Endpoint.new("/health", "GET", [] of Param),
-  # `@Controller({ path: 'tasks', version: '1' })` (object).
-  Endpoint.new("/tasks", "GET", [] of Param),
-  Endpoint.new("/tasks", "POST", [
+  # `@Controller({ path: 'tasks', version: '1' })` — versioned
+  # controllers route under `/v<version>` per Nest URI versioning.
+  Endpoint.new("/v1/tasks", "GET", [] of Param),
+  Endpoint.new("/v1/tasks", "POST", [
     Param.new("body", "", "body"),
   ]),
-  # Multi-line `@Controller({ path: 'webhooks', ... })`.
-  Endpoint.new("/webhooks/:provider", "POST", [
+  # Multi-line `@Controller({ path: 'webhooks', version: '1' })`.
+  Endpoint.new("/v1/webhooks/:provider", "POST", [
     Param.new("provider", "", "path"),
     Param.new("body", "", "body"),
   ]),

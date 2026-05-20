@@ -12,15 +12,41 @@ module Analyzer::Javascript
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      global_prefix_holder = [] of String
+      global_prefix_mutex = Mutex.new
 
       parallel_file_scan(extensions) do |path|
-        analyze_nestjs_file(path, result, static_dirs, include_callee)
+        analyze_nestjs_file(path, result, static_dirs, include_callee, global_prefix_holder, global_prefix_mutex)
       end
 
       # Process static directories to create endpoints for static files
       process_static_dirs(static_dirs, result)
 
+      # Apply discovered global prefix (`app.setGlobalPrefix('api')`)
+      # — the bootstrap call mounts every controller under that prefix.
+      apply_global_prefix(result, global_prefix_holder.first?)
+
       result
+    end
+
+    # Prepend the discovered `app.setGlobalPrefix('api')` value to
+    # every endpoint URL. Endpoints whose URL already starts with the
+    # normalized prefix (e.g. controllers that hard-coded `/api/...`)
+    # are left untouched so we don't double-prefix.
+    private def apply_global_prefix(result : Array(Endpoint), prefix : String?)
+      return if prefix.nil? || prefix.empty?
+      normalized = prefix.starts_with?("/") ? prefix : "/#{prefix}"
+      normalized = normalized.chomp("/")
+      return if normalized.empty?
+
+      # `Endpoint` is a struct (value type), so the block-local
+      # binding is a copy — write back through the index to make the
+      # URL change visible to callers.
+      result.each_with_index do |endpoint, idx|
+        next if endpoint.url.starts_with?(normalized + "/") || endpoint.url == normalized
+        endpoint.url = endpoint.url.starts_with?("/") ? "#{normalized}#{endpoint.url}" : "#{normalized}/#{endpoint.url}"
+        result[idx] = endpoint
+      end
     end
 
     # Process static directories and add endpoints for each file
@@ -45,7 +71,7 @@ module Analyzer::Javascript
       end
     end
 
-    private def analyze_nestjs_file(path : String, result : Array(Endpoint), static_dirs : Array(Hash(String, String)), include_callee : Bool)
+    private def analyze_nestjs_file(path : String, result : Array(Endpoint), static_dirs : Array(Hash(String, String)), include_callee : Bool, global_prefix_holder : Array(String), global_prefix_mutex : Mutex)
       File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
         content = file.gets_to_end
 
@@ -54,10 +80,34 @@ module Analyzer::Javascript
           static_dirs << static_path unless static_dirs.any? { |s| s["static_path"] == static_path["static_path"] && s["file_path"] == static_path["file_path"] }
         end
 
-        analyze_nestjs_controllers(content, path, result, include_callee)
+        # Strip JS/TS comments so commented-out decorators
+        # (e.g. `// @Get('/old')`) don't generate phantom routes.
+        sanitized = Noir::JSRouteExtractor.strip_js_comments(content)
+
+        # `app.setGlobalPrefix('api')` in a bootstrap file scopes
+        # every controller below it. Record it now; apply once after
+        # all files have been parsed.
+        if prefix = extract_global_prefix(sanitized)
+          global_prefix_mutex.synchronize do
+            global_prefix_holder << prefix if global_prefix_holder.empty?
+          end
+        end
+
+        analyze_nestjs_controllers(sanitized, path, result, include_callee)
       end
     rescue e : Exception
       logger.debug "Error analyzing NestJS file #{path}: #{e.message}"
+    end
+
+    # Detect `app.setGlobalPrefix('api')` (single string-literal arg).
+    # Returns the prefix or nil. Constants and dynamic expressions
+    # are ignored conservatively — false-positive prefixing would
+    # mis-route everything.
+    private def extract_global_prefix(content : String) : String?
+      content.scan(/\.setGlobalPrefix\s*\(\s*(['"`])([^'"`]+)\1\s*[,)]/) do |match|
+        return match[2] if match.size > 2 && !match[2].empty?
+      end
+      nil
     end
 
     private def analyze_nestjs_controllers(content : String, path : String, result : Array(Endpoint), include_callee : Bool)
@@ -394,10 +444,13 @@ module Analyzer::Javascript
         "Patch"   => ["PATCH"],
         "Options" => ["OPTIONS"],
         "Head"    => ["HEAD"],
+        # `@Sse` opens a Server-Sent Events stream — HTTP GET under
+        # the hood, so it counts as a real route.
+        "Sse"     => ["GET"],
         "All"     => ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
       }
 
-      class_content.scan(/@(Get|Post|Put|Delete|Patch|Options|Head|All)\s*\(/) do |match|
+      class_content.scan(/@(Get|Post|Put|Delete|Patch|Options|Head|Sse|All)\s*\(/) do |match|
         decorator_start = match.begin(0)
         next unless decorator_start
 
@@ -534,6 +587,29 @@ module Analyzer::Javascript
           param_name = param_match[1]
           push_unique_param(endpoint, Param.new(param_name, "", "header"))
         end
+      end
+
+      # `@HostParam('account')` — subdomain capture when the controller
+      # uses `@Controller({ host: ':account.example.com' })`.
+      method_params.scan(/@HostParam\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
+        push_unique_param(endpoint, Param.new(param_match[1], "", "path")) if param_match.size > 0
+      end
+
+      # `@UploadedFile('field')` / `@UploadedFiles('field')` — multer
+      # integration. Unnamed forms get a generic 'file' / 'files' body
+      # param so consumers still see the upload surface.
+      method_params.scan(/@UploadedFile\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
+        push_unique_param(endpoint, Param.new(param_match[1], "", "body")) if param_match.size > 0
+      end
+      if method_params =~ /@UploadedFile\s*\(\s*\)/
+        push_unique_param(endpoint, Param.new("file", "", "body"))
+      end
+
+      method_params.scan(/@UploadedFiles\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
+        push_unique_param(endpoint, Param.new(param_match[1], "", "body")) if param_match.size > 0
+      end
+      if method_params =~ /@UploadedFiles\s*\(\s*\)/
+        push_unique_param(endpoint, Param.new("files", "", "body"))
       end
     end
 

@@ -26,7 +26,10 @@ module Analyzer::Typescript
 
     private def analyze_tanstack_file(path : String, result : Array(Endpoint))
       File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        content = file.gets_to_end
+        raw = file.gets_to_end
+        # Comments can hold stale routes; drop them so a commented-out
+        # `createFileRoute('/old')` doesn't get reported.
+        content = Noir::JSRouteExtractor.strip_js_comments(raw)
 
         # Extract routes from createFileRoute
         analyze_file_routes(content, path, result)
@@ -142,8 +145,15 @@ module Analyzer::Typescript
     end
 
     private def extract_parent_route(block : String) : String?
-      match = block.match(/getParentRoute\s*:\s*\(\s*\)\s*=>\s*([A-Za-z_$][\w$]*)/)
-      match.try(&.[1])
+      # Tolerate parens around the identifier, e.g. `() => (rootRoute)`,
+      # and arrow-body bracing like `() => { return rootRoute }`, which
+      # both show up in real-world TanStack apps when teams add an
+      # explicit `return` for clarity.
+      arrow_match = block.match(/getParentRoute\s*:\s*\(\s*\)\s*=>\s*\(?\s*([A-Za-z_$][\w$]*)\s*\)?/)
+      return arrow_match[1] if arrow_match
+
+      body_match = block.match(/getParentRoute\s*\(\s*\)\s*\{\s*return\s+([A-Za-z_$][\w$]*)/)
+      body_match.try(&.[1])
     end
 
     private def resolve_code_route_path(route : CodeRoute, route_map : Hash(String, CodeRoute), resolving = Set(String).new) : String
@@ -250,9 +260,14 @@ module Analyzer::Typescript
         end
       end
 
-      # Look for useSearch hook usage
-      # Example: const { page, filter } = Route.useSearch()
-      use_search_pattern = /(?:const|let|var)\s*\{([^}]+)\}\s*=\s*(?:Route\.)?useSearch\s*\(/
+      # Look for useSearch hook usage. Three call shapes show up
+      # across TanStack v1 apps:
+      #   - Route.useSearch()                       (file-route scope)
+      #   - useSearch({ from: '/posts' })           (component-level)
+      #   - getRouteApi('/posts').useSearch()       (extracted API)
+      # All three should map search-destructured names back to query
+      # params on the corresponding route.
+      use_search_pattern = /(?:const|let|var)\s*\{([^}]+)\}\s*=\s*(?:Route\.|[\w$]+\.)?useSearch\s*\(/
       content.scan(use_search_pattern) do |match|
         if match.size > 0
           params_str = match[1]
@@ -264,6 +279,12 @@ module Analyzer::Typescript
           end
         end
       end
+
+      # `getRouteApi('/path').useSearch()` produces a `search` value
+      # that's typically used field-by-field afterwards. Treat any
+      # destructured names from the search return value the same as
+      # the Route.useSearch case above. Pattern handled by the unified
+      # regex already.
     end
 
     private def extract_search_params_from_route_block(route_block : String, endpoint : Endpoint)

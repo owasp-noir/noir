@@ -706,6 +706,80 @@ module Noir
       JSLiteralScanner.find_matching_paren(content, open_paren_idx)
     end
 
+    # Replace JS/TS comments with whitespace of the same shape.
+    # Preserves newlines and column offsets so downstream line/column
+    # math (`controller_start_line`, regex `.begin(0)`, etc.) stays
+    # accurate. Comment bodies are blanked to spaces so a commented-
+    # out decorator like `// @Get('/old')` never matches the route
+    # regex.
+    def self.strip_js_comments(content : String) : String
+      builder = String::Builder.new(content.bytesize)
+      state = :code
+      escaped = false
+      chars = content.chars
+      i = 0
+      len = chars.size
+
+      while i < len
+        char = chars[i]
+        case state
+        when :code
+          if char == '/' && i + 1 < len
+            nxt = chars[i + 1]
+            if nxt == '/'
+              state = :line_comment
+              builder << "  "
+              i += 2
+              next
+            elsif nxt == '*'
+              state = :block_comment
+              builder << "  "
+              i += 2
+              next
+            end
+          end
+          case char
+          when '\''
+            state = :single
+          when '"'
+            state = :double
+          when '`'
+            state = :template
+          end
+          builder << char
+        when :single, :double, :template
+          builder << char
+          if escaped
+            escaped = false
+          elsif char == '\\'
+            escaped = true
+          elsif (state == :single && char == '\'') ||
+                (state == :double && char == '"') ||
+                (state == :template && char == '`')
+            state = :code
+          end
+        when :line_comment
+          if char == '\n'
+            state = :code
+            builder << '\n'
+          else
+            builder << ' '
+          end
+        when :block_comment
+          if char == '*' && i + 1 < len && chars[i + 1] == '/'
+            state = :code
+            builder << "  "
+            i += 2
+            next
+          end
+          builder << (char == '\n' ? '\n' : ' ')
+        end
+        i += 1
+      end
+
+      builder.to_s
+    end
+
     def self.extract_body_params(handler_body : String, endpoint : Endpoint)
       # Look for req.body.X or const/let/var { X } = req.body
       # First check the destructuring pattern
