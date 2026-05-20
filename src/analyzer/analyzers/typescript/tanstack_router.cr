@@ -80,21 +80,21 @@ module Analyzer::Typescript
 
     private def analyze_create_routes(content : String, path : String, result : Array(Endpoint))
       routes = extract_code_routes(content)
-      return if routes.empty?
+      unless routes.empty?
+        route_map = Hash(String, CodeRoute).new
+        routes.each { |route| route_map[route.name] = route }
 
-      route_map = Hash(String, CodeRoute).new
-      routes.each { |route| route_map[route.name] = route }
+        routes.each do |route|
+          next if pathless_segment?(route.path)
 
-      routes.each do |route|
-        next if pathless_segment?(route.path)
+          resolved_path = resolve_code_route_path(route, route_map)
+          next if resolved_path.empty?
 
-        resolved_path = resolve_code_route_path(route, route_map)
-        next if resolved_path.empty?
-
-        endpoint = create_endpoint(resolved_path, "GET", path, route.start_pos, content)
-        extract_path_parameters(resolved_path, endpoint)
-        extract_search_params_from_route_block(route.block, endpoint)
-        result << endpoint
+          endpoint = create_endpoint(resolved_path, "GET", path, route.start_pos, content)
+          extract_path_parameters(resolved_path, endpoint)
+          extract_search_params_from_route_block(route.block, endpoint)
+          result << endpoint
+        end
       end
 
       # Also handle createRootRoute with path

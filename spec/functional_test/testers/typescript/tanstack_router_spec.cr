@@ -29,6 +29,9 @@ expected_endpoints = [
   ]),
   # Pathless layout routes (leading underscore) should not add a URL segment.
   Endpoint.new("/login", "GET", [] of Param),
+  # Root-route files with a path should still be scanned even when
+  # they do not contain createRoute() code-route assignments.
+  Endpoint.new("/docs", "GET", [] of Param),
 ]
 
 FunctionalTester.new("fixtures/typescript/tanstack_router/", {
