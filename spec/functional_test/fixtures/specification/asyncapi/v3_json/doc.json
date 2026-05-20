@@ -1,0 +1,32 @@
+{
+  "asyncapi": "3.0.0",
+  "info": { "title": "Notifications", "version": "1.0.0" },
+  "servers": {
+    "amqp": { "host": "rabbit.example.com:5672", "protocol": "amqp" }
+  },
+  "channels": {
+    "notify": {
+      "address": "notifications/inbox",
+      "messages": {
+        "newNotification": {
+          "payload": {
+            "type": "object",
+            "properties": {
+              "title": { "type": "string" },
+              "body": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  },
+  "operations": {
+    "sendNotification": {
+      "action": "send",
+      "channel": { "$ref": "#/channels/notify" },
+      "messages": [
+        { "$ref": "#/channels/notify/messages/newNotification" }
+      ]
+    }
+  }
+}

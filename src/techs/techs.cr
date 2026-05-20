@@ -1258,6 +1258,21 @@ module NoirTechs
         },
       },
     },
+    :asyncapi => {
+      :format    => ["JSON", "YAML"],
+      :similar   => ["asyncapi", "async-api", "async_api"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => true,
+          :header => false,
+          :cookie => false,
+        },
+      },
+    },
     :grpc => {
       :format    => ["PROTOBUF"],
       :similar   => ["grpc", "protobuf", "proto", "grpc-gateway"],
