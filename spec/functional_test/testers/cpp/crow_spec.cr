@@ -14,9 +14,12 @@ expected_endpoints = [
   Endpoint.new("/search", "GET", [
     Param.new("q", "", "query"),
   ]),
+  Endpoint.new("/enum", "POST", [
+    Param.new("v", "", "query"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/cpp/crow/", {
   :techs     => 1,
-  :endpoints => 4,
+  :endpoints => 5,
 }, expected_endpoints).perform_tests

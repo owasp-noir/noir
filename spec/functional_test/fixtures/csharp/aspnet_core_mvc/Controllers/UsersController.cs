@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Demo.Controllers
@@ -25,6 +26,18 @@ namespace Demo.Controllers
             return Created("", name);
         }
 
+        [HttpGet("raw")]
+        public Task<IEnumerable<string>> Raw([FromQuery] string filter, [FromServices] IUserRepository repository)
+        {
+            return repository.List(filter);
+        }
+
+        [NonAction]
+        public Task<UserDto> LoadUser([FromQuery] string id)
+        {
+            return Task.FromResult(new UserDto());
+        }
+
         [HttpPut("{id}")]
         public IActionResult Update([FromRoute] int id, [FromBody] string name)
         {
@@ -36,5 +49,14 @@ namespace Demo.Controllers
         {
             return NoContent();
         }
+    }
+
+    public interface IUserRepository
+    {
+        Task<IEnumerable<string>> List(string filter);
+    }
+
+    public class UserDto
+    {
     }
 }

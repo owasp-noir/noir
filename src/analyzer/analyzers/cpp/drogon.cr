@@ -92,11 +92,12 @@ module Analyzer::Cpp
         line_number = find_line_number(lines, "registerHandler", match[1])
         match_start = match.begin(0) || 0
         callees = include_callee ? callees_for_block_after(content, path, match_start) : [] of Noir::CppCalleeExtractor::Entry
+        route_params = params_for_register_handler(content, match_start)
 
         methods.each do |m|
           details = Details.new(PathInfo.new(path, line_number))
           endpoint = Endpoint.new(route, m, details)
-          file_params.each { |p| endpoint.push_param(p) }
+          route_params.each { |p| endpoint.push_param(p) }
           Noir::CppCalleeExtractor.attach_to(endpoint, callees) if include_callee
           endpoints << endpoint
         end
@@ -184,6 +185,106 @@ module Analyzer::Cpp
 
       body, start_line = block
       Noir::CppCalleeExtractor.callees_for_body(body, path, start_line)
+    end
+
+    private def params_for_register_handler(content : String, search_start : Int32) : Array(Param)
+      if params = params_for_inline_register_handler(content, search_start)
+        return params unless params.empty?
+      end
+
+      handler_target = handler_target_for_register_handler(content, search_start)
+      return [] of Param unless handler_target
+
+      params_for_handler(content, handler_target)
+    end
+
+    private def params_for_inline_register_handler(content : String, search_start : Int32) : Array(Param)?
+      block = Noir::CppCalleeExtractor.extract_block_after(content, search_start)
+      return unless block
+
+      body, _ = block
+      extract_params(body.lines)
+    end
+
+    private def params_for_handler(content : String, handler_target : HandlerTarget) : Array(Param)
+      block = extract_method_body(content, handler_target)
+      return [] of Param unless block
+
+      body, _ = block
+      extract_params(body.lines)
+    end
+
+    private def handler_target_for_register_handler(content : String, search_start : Int32) : HandlerTarget?
+      handler_index = content.index("registerHandler", search_start)
+      return unless handler_index
+
+      open_paren = Noir::CppCalleeExtractor.find_next_code_char(content, '(', handler_index)
+      return unless open_paren
+
+      close_paren = Noir::CppCalleeExtractor.find_matching_delimiter(content, open_paren, '(', ')')
+      return unless close_paren
+
+      args = split_top_level_args(content[(open_paren + 1)...close_paren])
+      return if args.size < 2
+
+      raw_handler = args[1].strip
+      return if raw_handler.empty?
+      return if raw_handler.includes?("[]") || raw_handler.includes?("lambda")
+
+      normalize_handler_target(raw_handler)
+    end
+
+    private def split_top_level_args(raw : String) : Array(String)
+      args = [] of String
+      current = String::Builder.new
+      paren_depth = 0
+      brace_depth = 0
+      bracket_depth = 0
+      in_string = false
+      escaped = false
+
+      raw.each_char do |char|
+        if in_string
+          current << char
+          if escaped
+            escaped = false
+          elsif char == '\\'
+            escaped = true
+          elsif char == '"'
+            in_string = false
+          end
+          next
+        end
+
+        case char
+        when '"'
+          in_string = true
+        when '('
+          paren_depth += 1
+        when ')'
+          paren_depth -= 1 if paren_depth > 0
+        when '{'
+          brace_depth += 1
+        when '}'
+          brace_depth -= 1 if brace_depth > 0
+        when '['
+          bracket_depth += 1
+        when ']'
+          bracket_depth -= 1 if bracket_depth > 0
+        when ','
+          if paren_depth == 0 && brace_depth == 0 && bracket_depth == 0
+            args << current.to_s.strip
+            current = String::Builder.new
+            next
+          end
+        end
+
+        current << char
+      end
+
+      tail = current.to_s.strip
+      args << tail unless tail.empty?
+      args
     end
 
     private def callees_for_handler(content : String, path : String, handler_target : HandlerTarget) : Array(Noir::CppCalleeExtractor::Entry)
@@ -289,7 +390,12 @@ module Analyzer::Cpp
     private def parse_methods(raw : String) : Array(String)
       methods = [] of String
       raw.split(",").each do |token|
-        name = token.strip.gsub(/^drogon::/, "").gsub(/^Http/, "").gsub(/Method$/, "")
+        name = token.strip
+          .gsub(/^drogon::/, "")
+          .gsub(/^HttpMethod::/, "")
+          .gsub(/^Http/, "")
+          .gsub(/Method$/, "")
+          .downcase.capitalize
         next if name.empty?
         if mapped = HTTP_METHODS[name]?
           methods << mapped unless methods.includes?(mapped)

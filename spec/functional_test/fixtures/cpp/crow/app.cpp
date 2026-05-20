@@ -25,6 +25,11 @@ int main() {
         return crow::response(200);
     });
 
+    CROW_ROUTE(app, "/enum").methods(crow::HTTPMethod::Post)([](const crow::request& req) {
+        auto v = req.url_params.get("v");
+        return crow::response(200);
+    });
+
     app.port(18080).multithreaded().run();
     return 0;
 }

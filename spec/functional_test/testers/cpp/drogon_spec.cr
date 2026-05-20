@@ -18,6 +18,9 @@ expected_endpoints = [
     Param.new("Authorization", "", "header"),
     Param.new("session", "", "cookie"),
   ]),
+  Endpoint.new("/named", "GET", [
+    Param.new("q", "", "query"),
+  ]),
   # controllers/UsersController.cpp — PATH_LIST_BEGIN with PATH_ADD
   Endpoint.new("/api/users", "GET", [
     Param.new("search", "", "query"),
@@ -34,7 +37,18 @@ expected_endpoints = [
   ]),
 ]
 
-FunctionalTester.new("fixtures/cpp/drogon/", {
+tester = FunctionalTester.new("fixtures/cpp/drogon/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
+}, expected_endpoints)
+
+tester.perform_tests
+
+describe "Drogon analyzer edge cases" do
+  it "does not leak registerHandler params across sibling lambdas" do
+    ping = tester.app.endpoints.find { |e| e.url == "/ping" && e.method == "GET" }
+    ping.should_not be_nil
+    ping.as(Endpoint).params.any? { |p| p.name == "body" }.should be_false
+    ping.as(Endpoint).params.any? { |p| p.name == "Authorization" }.should be_false
+  end
+end

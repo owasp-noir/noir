@@ -38,6 +38,43 @@ module Analyzer::CSharp::Common
     {signature, index - 1}
   end
 
+  protected def split_csharp_parameters(param_list : String) : Array(String)
+    params = [] of String
+    current = String::Builder.new
+    generic_depth = 0
+    paren_depth = 0
+    bracket_depth = 0
+
+    param_list.each_char do |char|
+      case char
+      when '<'
+        generic_depth += 1
+      when '>'
+        generic_depth -= 1 if generic_depth > 0
+      when '('
+        paren_depth += 1
+      when ')'
+        paren_depth -= 1 if paren_depth > 0
+      when '['
+        bracket_depth += 1
+      when ']'
+        bracket_depth -= 1 if bracket_depth > 0
+      when ','
+        if generic_depth == 0 && paren_depth == 0 && bracket_depth == 0
+          params << current.to_s.strip
+          current = String::Builder.new
+          next
+        end
+      end
+
+      current << char
+    end
+
+    tail = current.to_s.strip
+    params << tail unless tail.empty?
+    params
+  end
+
   protected def extract_method_block(lines : Array(String), start_index : Int32) : String
     io = String::Builder.new
     brace = 0
