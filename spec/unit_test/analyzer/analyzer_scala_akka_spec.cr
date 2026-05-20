@@ -50,3 +50,55 @@ describe "scala akka callee extraction" do
     Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
   end
 end
+
+describe "scala akka route extraction" do
+  it "tracks composite path prefixes, matcher names, and pathEnd routes" do
+    options = create_test_options
+    instance = Analyzer::Scala::Akka.new(options)
+
+    temp_dir = File.tempname("scala_akka_routes_test")
+    Dir.mkdir_p(temp_dir)
+    temp_file = File.join(temp_dir, "Routes.scala")
+
+    File.write(temp_file, <<-SCALA)
+      import akka.http.scaladsl.server.Directives._
+
+      object Routes {
+        val route =
+          pathPrefix("api" / "v1" / Segment) { tenantId =>
+            concat(
+              pathEndOrSingleSlash {
+                get {
+                  complete("tenant root")
+                }
+              },
+              path("users" / JavaUUID) { userId =>
+                get {
+                  complete(userId.toString)
+                }
+              }
+            )
+          }
+      }
+      SCALA
+
+    endpoints = instance.analyze_file(temp_file)
+    root_endpoint = endpoints.find { |e| e.method == "GET" && e.url == "/api/v1/{tenantId}" }
+    user_endpoint = endpoints.find { |e| e.method == "GET" && e.url == "/api/v1/{tenantId}/users/{userId}" }
+
+    root_endpoint.should_not be_nil
+    user_endpoint.should_not be_nil
+
+    if root_endpoint
+      root_endpoint.params.map { |p| {p.name, p.param_type} }.should contain({"tenantId", "path"})
+    end
+
+    if user_endpoint
+      user_endpoint.params.map { |p| {p.name, p.param_type} }.should contain({"tenantId", "path"})
+      user_endpoint.params.map { |p| {p.name, p.param_type} }.should contain({"userId", "path"})
+    end
+  ensure
+    File.delete(temp_file) if temp_file && File.exists?(temp_file)
+    Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
+  end
+end
