@@ -56,4 +56,31 @@ describe "swift vapor analyzer" do
     File.delete(temp_file) if temp_file && File.exists?(temp_file)
     Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
   end
+
+  it "does not read one-line closure string literals as route segments" do
+    options = create_test_options
+    instance = Analyzer::Swift::Vapor.new(options)
+
+    temp_dir = File.tempname("swift_vapor_inline_test")
+    Dir.mkdir_p(temp_dir)
+    temp_file = File.join(temp_dir, "routes.swift")
+
+    File.write(temp_file, <<-SWIFT)
+      import Vapor
+
+      func routes(_ app: Application) throws {
+          app.get("hello") { req in Foo.make(req, "bar") }
+          app.on(.POST, "submit", body: .collect(maxSize: "1mb")) { req in Foo.make(req, "baz") }
+      }
+      SWIFT
+
+    endpoints = instance.analyze_file(temp_file)
+    endpoints.map(&.url).should contain("/hello")
+    endpoints.map(&.url).should contain("/submit")
+    endpoints.map(&.url).should_not contain("/hello/bar")
+    endpoints.map(&.url).should_not contain("/submit/1mb/baz")
+  ensure
+    File.delete(temp_file) if temp_file && File.exists?(temp_file)
+    Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
+  end
 end

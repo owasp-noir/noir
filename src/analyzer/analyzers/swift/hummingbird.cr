@@ -9,10 +9,10 @@ module Analyzer::Swift
     # Patterns for route definitions in Hummingbird:
     # router.get("path") { ... }
     # router.post("path") { ... }
-    ROUTE_PATTERN              = /([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.(get|post|put|delete|patch)\s*\((.*)\)/
+    ROUTE_PATTERN              = /([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.(get|post|put|delete|patch)\s*\(/
     ROUTE_BODY_LOOKAHEAD_LIMIT = 5
-    GROUP_ASSIGN_PATTERN       = /\b(?:let|var)\s+([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\.group\s*\((.*)\)/
-    GROUP_CLOSURE_PATTERN      = /([A-Za-z_]\w*)\.group\s*\((.*)\)\s*\{\s*([A-Za-z_]\w*)\s+in/
+    GROUP_ASSIGN_PATTERN       = /\b(?:let|var)\s+([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\.group\s*\(/
+    GROUP_CLOSURE_PATTERN      = /([A-Za-z_]\w*)\.group\s*\(/
     FUNCTION_SIGNATURE_PATTERN = /\bfunc\s+([A-Za-z_]\w*)\s*\(/
 
     def analyze_file(path : String) : Array(Endpoint)
@@ -38,7 +38,10 @@ module Analyzer::Swift
         begin
           receiver = match[1]
           method = match[2].upcase
-          route_args = match[3]
+          args = call_arguments(stripped_line, match.end(0) || 0)
+          next unless args
+
+          route_args = args[0]
           route_path = join_paths(prefix_for_receiver(receiver, prefix_by_receiver), parse_route_path(route_args))
 
           details = Details.new(PathInfo.new(path, index + 1))
@@ -219,7 +222,10 @@ module Analyzer::Swift
 
       variable = match[1]
       base = match[2]
-      prefix_by_receiver[variable] = join_paths(prefix_for_receiver(base, prefix_by_receiver), parse_route_path(match[3]))
+      args = call_arguments(line, match.end(0) || 0)
+      return unless args
+
+      prefix_by_receiver[variable] = join_paths(prefix_for_receiver(base, prefix_by_receiver), parse_route_path(args[0]))
     end
 
     private def register_group_closure(line : String,
@@ -230,9 +236,52 @@ module Analyzer::Swift
       return unless match
 
       base = match[1]
-      variable = match[3]
-      prefix_by_receiver[variable] = join_paths(prefix_for_receiver(base, prefix_by_receiver), parse_route_path(match[2]))
+      args = call_arguments(line, match.end(0) || 0)
+      return unless args
+
+      after_call = line[(args[1] + 1)..]? || ""
+      closure_match = after_call.match(/^\s*\{\s*([A-Za-z_]\w*)\s+in/)
+      return unless closure_match
+
+      variable = closure_match[1]
+      prefix_by_receiver[variable] = join_paths(prefix_for_receiver(base, prefix_by_receiver), parse_route_path(args[0]))
       group_prefix_stack << {variable, brace_depth + 1}
+    end
+
+    private def call_arguments(line : String, args_start : Int32) : Tuple(String, Int32)?
+      depth = 1
+      in_string = false
+      escaped = false
+      quote = '"'
+      index = args_start
+
+      while index < line.size
+        char = line[index]
+
+        if in_string
+          if escaped
+            escaped = false
+          elsif char == '\\'
+            escaped = true
+          elsif char == quote
+            in_string = false
+          end
+        elsif char == '"' || char == '\''
+          in_string = true
+          quote = char
+        elsif char == '('
+          depth += 1
+        elsif char == ')'
+          depth -= 1
+          if depth == 0
+            return {line[args_start...index], index}
+          end
+        end
+
+        index += 1
+      end
+
+      nil
     end
 
     private def update_group_depth(line : String,

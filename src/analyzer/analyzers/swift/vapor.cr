@@ -10,10 +10,10 @@ module Analyzer::Swift
     # app.get("path") { ... }
     # app.post("path", "segment") { ... }
     # routes.get("path", ":param") { ... }
-    ROUTE_PATTERN              = /([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.(get|post|put|delete|patch)\s*\((.*)\)/
-    ON_ROUTE_PATTERN           = /([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.on\s*\(\s*\.(GET|POST|PUT|DELETE|PATCH)\s*,(.*)\)/
-    GROUP_ASSIGN_PATTERN       = /\b(?:let|var)\s+([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\.grouped\s*\((.*)\)/
-    GROUP_CLOSURE_PATTERN      = /([A-Za-z_]\w*)\.group(?:ed)?\s*\((.*)\)\s*\{\s*([A-Za-z_]\w*)\s+in/
+    ROUTE_PATTERN              = /([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.(get|post|put|delete|patch)\s*\(/
+    ON_ROUTE_PATTERN           = /([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.on\s*\(/
+    GROUP_ASSIGN_PATTERN       = /\b(?:let|var)\s+([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\.grouped\s*\(/
+    GROUP_CLOSURE_PATTERN      = /([A-Za-z_]\w*)\.group(?:ed)?\s*\(/
     FUNCTION_SIGNATURE_PATTERN = /\bfunc\s+([A-Za-z_]\w*)\s*\(/
 
     def analyze_file(path : String) : Array(Endpoint)
@@ -211,11 +211,21 @@ module Analyzer::Swift
       return unless route_definition_line?(line)
 
       if match = line.match(ON_ROUTE_PATTERN)
-        return {match[1], match[2], match[3]}
+        args = call_arguments(line, match.end(0) || 0)
+        return unless args
+
+        route_args = args[0]
+        method_match = route_args.match(/^\s*\.(GET|POST|PUT|DELETE|PATCH)\s*,(.*)$/)
+        return unless method_match
+
+        return {match[1], method_match[1], method_match[2]}
       end
 
       if match = line.match(ROUTE_PATTERN)
-        return {match[1], match[2].upcase, match[3]}
+        args = call_arguments(line, match.end(0) || 0)
+        return unless args
+
+        return {match[1], match[2].upcase, args[0]}
       end
 
       nil
@@ -227,7 +237,10 @@ module Analyzer::Swift
 
       variable = match[1]
       base = match[2]
-      prefix = parse_route_path(match[3])
+      args = call_arguments(line, match.end(0) || 0)
+      return unless args
+
+      prefix = parse_route_path(args[0])
       prefix_by_receiver[variable] = join_paths(prefix_for_receiver(base, prefix_by_receiver), prefix)
     end
 
@@ -239,10 +252,52 @@ module Analyzer::Swift
       return unless match
 
       base = match[1]
-      args = match[2]
-      variable = match[3]
-      prefix_by_receiver[variable] = join_paths(prefix_for_receiver(base, prefix_by_receiver), parse_route_path(args))
+      args = call_arguments(line, match.end(0) || 0)
+      return unless args
+
+      after_call = line[(args[1] + 1)..]? || ""
+      closure_match = after_call.match(/^\s*\{\s*([A-Za-z_]\w*)\s+in/)
+      return unless closure_match
+
+      variable = closure_match[1]
+      prefix_by_receiver[variable] = join_paths(prefix_for_receiver(base, prefix_by_receiver), parse_route_path(args[0]))
       group_prefix_stack << {variable, brace_depth + 1}
+    end
+
+    private def call_arguments(line : String, args_start : Int32) : Tuple(String, Int32)?
+      depth = 1
+      in_string = false
+      escaped = false
+      quote = '"'
+      index = args_start
+
+      while index < line.size
+        char = line[index]
+
+        if in_string
+          if escaped
+            escaped = false
+          elsif char == '\\'
+            escaped = true
+          elsif char == quote
+            in_string = false
+          end
+        elsif char == '"' || char == '\''
+          in_string = true
+          quote = char
+        elsif char == '('
+          depth += 1
+        elsif char == ')'
+          depth -= 1
+          if depth == 0
+            return {line[args_start...index], index}
+          end
+        end
+
+        index += 1
+      end
+
+      nil
     end
 
     private def update_group_depth(line : String,
