@@ -12,8 +12,19 @@ func healthHandler(c *gin.Context) {
 }
 
 func setupAdditionalRoutes(r *gin.Engine) {
-	// PATCH method test
+	// PATCH method test — also exercises `c.Param("id")` path accessor
+	// so the Param-extraction regression stays covered.
 	r.PATCH("/items/:id", func(c *gin.Context) {
+		_ = c.Param("id")
+		c.JSON(http.StatusOK, nil)
+	})
+
+	// JSON body binding via `c.ShouldBindJSON` — the analyzer surfaces
+	// a single "body" indicator since the bound struct's field set
+	// isn't statically resolvable.
+	r.POST("/inventory", func(c *gin.Context) {
+		var body map[string]interface{}
+		_ = c.ShouldBindJSON(&body)
 		c.JSON(http.StatusOK, nil)
 	})
 

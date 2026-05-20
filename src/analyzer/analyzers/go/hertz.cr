@@ -100,6 +100,15 @@ module Analyzer::Go
                           add_param_to_endpoint(Param.new(cookie_match[1], "", "cookie"), last_endpoint)
                         end
                       end
+
+                      # Hertz body-binding helpers populate the request
+                      # body from JSON/form/etc. Surface a single "body"
+                      # indicator — the bound struct's fields are not
+                      # statically resolvable here.
+                      if line.matches?(/\.Bind(?:JSON|Query|Header|Form|Protobuf|And\w+)?\s*\(/) ||
+                         line.includes?(".BindAndValidate(")
+                        add_param_to_endpoint(Param.new("body", "", "json"), last_endpoint)
+                      end
                     end
                   end
                 rescue File::NotFoundError

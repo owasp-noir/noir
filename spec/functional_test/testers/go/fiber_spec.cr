@@ -38,6 +38,10 @@ expected_endpoints = [
     Param.new("file_name", "", "form"),
     Param.new("Content-Length", "", "header"),
   ]),
+  # handlers.go: JSON body binding via c.BodyParser
+  Endpoint.new("/inventory", "POST", [
+    Param.new("body", "", "json"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/go/fiber/", {
