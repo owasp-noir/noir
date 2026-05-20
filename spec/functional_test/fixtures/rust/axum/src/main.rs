@@ -1,4 +1,5 @@
-use axum::{response::Html, routing::get, Router};
+use axum::{response::Html, routing::{any, get, post}, Router};
+use tower_http::services::ServeDir;
 
 #[tokio::main]
 async fn main() {
@@ -6,13 +7,24 @@ async fn main() {
         .route("/", get(handler))
         .route("/foo", get(handler))
         .route("/bar", post(handler))
+        // Verb-agnostic registration — typically used for WebSocket
+        // upgrade endpoints. axum 0.7 exports `routing::any`.
+        .route("/ws", any(handler))
+        // Service-shaped registration mounts a tower service at a
+        // single path. Common for one-off file responders.
+        .route_service("/favicon.ico", ServeDir::new("assets"))
+        // Sub-tree service mount — the static-files idiom.
+        .nest_service("/assets", ServeDir::new("static"))
+        // Catch-all fallback handler, often used to serve an SPA's
+        // index.html for unknown paths.
+        .fallback(handler)
         .nest(
             "/api",
             Router::new()
                 .route("/users", get(handler))
                 .route("/admin", post(handler)),
         );
-        
+
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
         .await
         .unwrap();
@@ -36,6 +48,9 @@ mod tests {
     async fn test_app_routes() {
         let _app = Router::new()
             .route("/should-not-appear-get", get(handler))
-            .route("/should-not-appear-post", post(handler));
+            .route("/should-not-appear-post", post(handler))
+            .route_service("/should-not-appear-service", ServeDir::new("x"))
+            .nest_service("/should-not-appear-nest-service", ServeDir::new("y"))
+            .fallback(handler);
     }
 }
