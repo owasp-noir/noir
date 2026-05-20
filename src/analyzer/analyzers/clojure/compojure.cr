@@ -106,7 +106,7 @@ module Analyzer::Clojure
       body_start = route_body_start(source, args_start, form_end)
       return if body_start >= form_end
 
-      body = source[body_start...form_end]
+      body = source.byte_slice(body_start, form_end - body_start)
       start_line = line_number_for(source, body_start)
       callees = Noir::ClojureCalleeExtractor.callees_for_body(body, path, start_line)
       Noir::ClojureCalleeExtractor.attach_to(endpoint, callees)
@@ -140,20 +140,82 @@ module Analyzer::Clojure
     end
 
     private def extract_query_param_names(binding : String, path_param_names : Array(String)) : Array(String)
-      return [] of String if !binding.starts_with?('[') || binding.includes?('{')
+      # `{:keys [...]}` style request-map destructuring — extract keys directly.
+      return extract_keys_from_map(binding, path_param_names) if binding.starts_with?('{')
+      return [] of String if !binding.starts_with?('[')
 
       names = [] of String
       path_param_set = path_param_names.to_set
       inner = binding[1...binding.size - 1]
 
-      inner.scan(/[A-Za-z_][\w\-!?]*/) do |match|
+      # Vector binding may carry destructuring sub-maps like
+      # `[foo {:keys [bar]}]`. Capture inline `:keys`/`:strs`/`:syms`
+      # before stripping the embedded maps from token scanning.
+      embedded_keys = extract_destructured_keys(inner)
+
+      # Strip embedded `{...}` blocks so we don't catch token names
+      # *inside* destructuring shapes via the loose word scanner.
+      inner_no_maps = inner.gsub(/\{[^{}]*\}/, " ")
+
+      skip_next = false
+      inner_no_maps.scan(/:?[A-Za-z_][\w\-!?*]*/) do |match|
         token = match[0]
+
+        # `:as` / `:or` bind the whole request map / supply defaults —
+        # the following symbol is not a query param.
+        if token == ":as" || token == ":or"
+          skip_next = true
+          next
+        end
+
+        # Skip Clojure-style keywords (`:foo`) entirely.
+        next if token.starts_with?(':')
+
+        if skip_next
+          skip_next = false
+          next
+        end
+
         next if path_param_set.includes?(token)
         next if names.includes?(token)
         names << token
       end
 
+      # Drop `&` rest-bindings: the symbol immediately after `&` collects
+      # remaining args, not a query param. Detect by scanning original `inner`.
+      rest_match = inner.match(/&\s+([A-Za-z_][\w\-!?*]*)/)
+      if rest_match
+        names.delete(rest_match[1])
+      end
+
+      embedded_keys.each do |key|
+        next if path_param_set.includes?(key)
+        next if names.includes?(key)
+        names << key
+      end
+
       names
+    end
+
+    private def extract_keys_from_map(binding : String, path_param_names : Array(String)) : Array(String)
+      names = [] of String
+      path_param_set = path_param_names.to_set
+      extract_destructured_keys(binding).each do |key|
+        next if path_param_set.includes?(key)
+        next if names.includes?(key)
+        names << key
+      end
+      names
+    end
+
+    private def extract_destructured_keys(text : String) : Array(String)
+      keys = [] of String
+      text.scan(/:(?:keys|strs|syms)\s+\[([^\]]+)\]/) do |match|
+        match[1].scan(/[A-Za-z_][\w\-!?*]*/) do |inner|
+          keys << inner[0]
+        end
+      end
+      keys
     end
 
     private def extract_binding(source : String, index : Int32, limit : Int32) : String?
@@ -163,8 +225,11 @@ module Analyzer::Clojure
       case source.byte_at(i).unsafe_chr
       when '['
         binding_end = find_matching_delimiter(source, i, '[', ']', limit)
-        binding_end > i ? source[i..binding_end] : nil
-      when '(', '{'
+        binding_end > i ? source.byte_slice(i, binding_end - i + 1) : nil
+      when '{'
+        binding_end = find_matching_delimiter(source, i, '{', '}', limit)
+        binding_end > i ? source.byte_slice(i, binding_end - i + 1) : nil
+      when '('
         nil
       else
         token, _ = read_symbol(source, i, limit)
@@ -180,7 +245,7 @@ module Analyzer::Clojure
           i = skip_comment(source, i, limit)
         when '"'
           literal_end = skip_string(source, i, limit)
-          return {decode_string_literal(source[i..literal_end]), literal_end}
+          return {decode_string_literal(source.byte_slice(i, literal_end - i + 1)), literal_end}
         when '(', '[', '{'
           break
         else
@@ -211,7 +276,7 @@ module Analyzer::Clojure
         i += 1
       end
 
-      {source[index...i], i}
+      {source.byte_slice(index, i - index), i}
     end
 
     private def skip_ws_and_comments(source : String, index : Int32, limit : Int32) : Int32
@@ -280,7 +345,7 @@ module Analyzer::Clojure
     end
 
     private def line_number_for(source : String, index : Int32) : Int32
-      source[0...index].count('\n') + 1
+      source.byte_slice(0, index).count('\n') + 1
     end
 
     private def whitespace?(char : Char) : Bool

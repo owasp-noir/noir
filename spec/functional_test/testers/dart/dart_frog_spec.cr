@@ -25,6 +25,8 @@ expected_endpoints = [
   Endpoint.new("/api/health", "PUT"),
   Endpoint.new("/api/health", "DELETE"),
   Endpoint.new("/api/health", "PATCH"),
+  # `posts/[...slug].dart` — catch-all wildcard collapses to a path param.
+  Endpoint.new("/posts/{slug}", "GET", [Param.new("slug", "", "path")]),
 ]
 
 FunctionalTester.new("fixtures/dart/dart_frog/", {
