@@ -81,6 +81,14 @@ expected_endpoints = [
     Param.new("file", "", "form"),
     Param.new("description", "", "form"),
   ]),
+  # ---- App Router: method-local params in the same route.ts ----
+  Endpoint.new("/api/scoped", "GET", [
+    Param.new("q", "", "query"),
+    Param.new("page", "", "query"),
+  ]),
+  Endpoint.new("/api/scoped", "POST", [
+    Param.new("username", "", "json"),
+  ]),
 
   # ---- Server Actions (app/actions/user.ts with "use server") ----
   Endpoint.new("/createUser", "POST", [
@@ -96,3 +104,20 @@ FunctionalTester.new("fixtures/javascript/nextjs/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests
+
+describe "Next.js App Router method-local params" do
+  it "does not leak GET query params onto POST handlers in the same route file" do
+    options = ConfigInitializer.new.default_options
+    options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/javascript/nextjs/")])
+    options["nolog"] = YAML::Any.new(true)
+
+    app = NoirRunner.new(options)
+    app.detect
+    app.analyze
+
+    post = app.endpoints.find! { |endpoint| endpoint.method == "POST" && endpoint.url == "/api/scoped" }
+    post.params.any? { |param| param.name == "q" && param.param_type == "query" }.should be_false
+    post.params.any? { |param| param.name == "page" && param.param_type == "query" }.should be_false
+    post.params.any? { |param| param.name == "username" && param.param_type == "json" }.should be_true
+  end
+end

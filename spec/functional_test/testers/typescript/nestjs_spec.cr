@@ -37,6 +37,34 @@ expected_endpoints = [
     Param.new("provider", "", "path"),
     Param.new("body", "", "body"),
   ]),
+  # Constant / enum / object-member route names and pipe-bearing params.
+  Endpoint.new("/api/users/:id", "GET", [
+    Param.new("id", "", "path"),
+    Param.new("includeInactive", "", "query"),
+    Param.new("x-tenant-id", "", "header"),
+  ]),
+  # Method-level path arrays.
+  Endpoint.new("/api/users/bulk", "POST", [
+    Param.new("name", "", "body"),
+  ]),
+  Endpoint.new("/api/users/import", "POST", [
+    Param.new("name", "", "body"),
+  ]),
+  # @Body(pipe) still marks the whole request body.
+  Endpoint.new("/api/users/profile", "PATCH", [
+    Param.new("body", "", "body"),
+  ]),
+  # Controller-level path arrays and non-exported controller classes.
+  Endpoint.new("/public/health", "GET", [] of Param),
+  Endpoint.new("/internal/health", "GET", [] of Param),
+  # export default class plus @All expansion.
+  Endpoint.new("/admin/status", "GET", [] of Param),
+  Endpoint.new("/admin/status", "POST", [] of Param),
+  Endpoint.new("/admin/status", "PUT", [] of Param),
+  Endpoint.new("/admin/status", "DELETE", [] of Param),
+  Endpoint.new("/admin/status", "PATCH", [] of Param),
+  Endpoint.new("/admin/status", "HEAD", [] of Param),
+  Endpoint.new("/admin/status", "OPTIONS", [] of Param),
 ]
 
 FunctionalTester.new("fixtures/typescript/nestjs/", {

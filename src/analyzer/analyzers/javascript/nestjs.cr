@@ -62,23 +62,26 @@ module Analyzer::Javascript
 
     private def analyze_nestjs_controllers(content : String, path : String, result : Array(Endpoint), include_callee : Bool)
       # Split content by controllers and process each separately
-      controllers = extract_controllers(content)
+      literal_values = extract_literal_values(content)
+      controllers = extract_controllers(content, literal_values)
 
       controllers.each do |controller_info|
-        base_path = controller_info[:base_path]
+        base_paths = controller_info[:base_paths]
         controller_content = controller_info[:content]
-        controller_start_line = controller_info[:start_line]?.try(&.to_i) || 1
+        controller_start_line = controller_info[:start_line]
 
-        process_http_methods(controller_content, base_path, path, result, include_callee, controller_start_line)
+        process_http_methods(controller_content, base_paths, path, result, include_callee, controller_start_line, literal_values)
       end
     end
 
-    private def extract_controllers(content : String)
-      controllers = [] of Hash(Symbol, String)
+    private def extract_controllers(content : String, literal_values : Hash(String, Array(String)))
+      controllers = [] of NamedTuple(base_paths: Array(String), content: String, start_line: Int32)
 
       # Find all @Controller decorators and their associated class content
       lines = content.split("\n")
-      current_controller : Hash(Symbol, String)? = nil
+      current_base_paths : Array(String)? = nil
+      current_content = [] of String
+      controller_start_line = 1
       brace_count = 0
       in_class = false
       skip_until = -1
@@ -93,36 +96,39 @@ module Analyzer::Javascript
         # before parsing.
         if line.includes?("@Controller")
           joined = join_decorator_header(lines, index)
-          base = parse_controller_decorator(joined[:text])
-          if !base.nil?
-            current_controller = {
-              :base_path  => base,
-              :content    => "",
-              :start_line => "1",
-            }
+          base_paths = parse_controller_decorator(joined[:text], literal_values)
+          if !base_paths.nil?
+            current_base_paths = base_paths
+            current_content.clear
+            controller_start_line = 1
             skip_until = joined[:last_line]
             next if joined[:last_line] > index
           end
         end
 
         # Check for class start after @Controller
-        if current_controller && line =~ /export\s+class\s+\w+/
+        if current_base_paths && line =~ /(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+\w+/
           in_class = true
           brace_count = 0
-          current_controller[:start_line] = (index + 1).to_s
+          controller_start_line = index + 1
         end
 
         # Count braces to find class end
-        if in_class && current_controller
+        if in_class && current_base_paths
           brace_count += line.count('{')
           brace_count -= line.count('}')
 
-          current_controller[:content] = current_controller[:content] + line + "\n"
+          current_content << line
 
           # End of class
           if brace_count == 0 && line.includes?('}')
-            controllers << current_controller
-            current_controller = nil
+            controllers << {
+              base_paths: current_base_paths,
+              content:    current_content.join("\n") + "\n",
+              start_line: controller_start_line,
+            }
+            current_base_paths = nil
+            current_content.clear
             in_class = false
           end
         end
@@ -147,85 +153,213 @@ module Analyzer::Javascript
       {text: text, last_line: idx}
     end
 
-    # Parse `@Controller(...)` and return the base path for the
+    # Parse `@Controller(...)` and return the base paths for the
     # routes it scopes. Recognized shapes:
     #
-    #   @Controller()                              -> ""
-    #   @Controller('users')                       -> "users"
-    #   @Controller(`v1/users`)                    -> "v1/users"
-    #   @Controller({ path: 'users' })             -> "users"
-    #   @Controller({ path: 'users', version: 1 }) -> "users"
-    #   @Controller({ version: 1, path: 'users' }) -> "users"
-    #   @Controller(SOME_CONST)                    -> ""  (best-effort
+    #   @Controller()                              -> [""]
+    #   @Controller('users')                       -> ["users"]
+    #   @Controller(['users', 'admins'])           -> ["users", "admins"]
+    #   @Controller({ path: 'users' })             -> ["users"]
+    #   @Controller({ path: API.USERS })           -> ["users"]
+    #   @Controller(SOME_CONST)                    -> [""]  (best-effort
     #     fallback: register the controller without a prefix rather
     #     than miss every route inside it.)
     #
     # Returns nil when `text` isn't a `@Controller(...)` decorator.
-    private def parse_controller_decorator(text : String) : String?
+    private def parse_controller_decorator(text : String, literal_values : Hash(String, Array(String))) : Array(String)?
       return unless text.includes?("@Controller")
       # Allow `(...)` to span newlines; the caller (`extract_controllers`)
       # already joined the multi-line header for us.
-      match = text.match(/@Controller\s*\(([\s\S]*?)\)/m)
-      return unless match
-      inner = match[1].strip
-      return "" if inner.empty?
+      inner = decorator_inner(text, "Controller")
+      return unless inner
+      return [""] if inner.empty?
 
-      if str = inner.match(/^['"`]([^'"`]*)['"`]\s*$/)
-        return str[1]
+      literal_paths_from_expression(inner, literal_values) || [""]
+    end
+
+    private def decorator_inner(text : String, name : String) : String?
+      decorator_idx = text.index("@#{name}")
+      return unless decorator_idx
+
+      open_paren = text.index("(", decorator_idx)
+      return unless open_paren
+
+      close_paren = Noir::JSRouteExtractor.find_matching_paren(text, open_paren)
+      return unless close_paren
+
+      text[(open_paren + 1)...close_paren].strip
+    end
+
+    private def extract_literal_values(content : String) : Hash(String, Array(String))
+      literal_values = Hash(String, Array(String)).new
+
+      content.scan(/\b(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(['"`])([^'"`]*?)\2/) do |match|
+        next unless match.size >= 4
+        literal_values[match[1]] = [match[3]]
       end
 
-      if inner.starts_with?("{")
-        if obj = inner.match(/path\s*:\s*['"`]([^'"`]+)['"`]/)
-          return obj[1]
+      content.scan(/\benum\s+(\w+)\s*\{([\s\S]*?)\}/m) do |match|
+        next unless match.size >= 3
+        enum_name = match[1]
+        body = match[2]
+        body.scan(/(\w+)\s*=\s*(['"`])([^'"`]*?)\2/) do |member|
+          next unless member.size >= 4
+          literal_values["#{enum_name}.#{member[1]}"] = [member[3]]
         end
       end
 
-      ""
+      content.scan(/\b(?:export\s+)?const\s+(\w+)\s*=\s*\{([\s\S]*?)\}\s*(?:as\s+const)?/m) do |match|
+        next unless match.size >= 3
+        object_name = match[1]
+        body = match[2]
+        body.scan(/(?:['"`]?(\w+)['"`]?)\s*:\s*(['"`])([^'"`]*?)\2/) do |property|
+          next unless property.size >= 4
+          literal_values["#{object_name}.#{property[1]}"] = [property[3]]
+        end
+      end
+
+      literal_values
     end
 
-    private def process_http_methods(class_content : String, base_path : String, file_path : String, result : Array(Endpoint), include_callee : Bool, controller_start_line : Int32)
-      http_methods = ["Get", "Post", "Put", "Delete", "Patch", "Options", "Head"]
+    private def literal_paths_from_expression(expression : String, literal_values : Hash(String, Array(String))) : Array(String)?
+      expr = expression.strip
+      return [""] if expr.empty?
 
-      http_methods.each do |method|
-        method_pattern = /@#{method}\s*\(\s*(?:['"`]([^'"`]*?)['"`]\s*)?\)/
+      expr = expr.sub(/\s+as\s+const\s*$/, "").strip
 
-        class_content.scan(method_pattern) do |match|
-          route_path = ""
-          if match.size > 1 && match[1]?
-            route_path = match[1]
+      if str = expr.match(/^(['"`])([^'"`]*)\1$/)
+        return [str[2]]
+      end
+
+      if expr.starts_with?("[") && expr.ends_with?("]")
+        paths = [] of String
+        split_top_level(expr[1...-1], ',').each do |part|
+          resolved = literal_paths_from_expression(part, literal_values)
+          resolved.try { |values| paths.concat(values) }
+        end
+        return paths unless paths.empty?
+        return
+      end
+
+      if expr.starts_with?("{")
+        if path_match = expr.match(/(?:^|[,{]\s*)path\s*:\s*([\s\S]*?)(?:,\s*\w+\s*:|\}\s*$)/m)
+          path_expr = path_match[1].strip
+          path_expr = path_expr[0...-1].strip if path_expr.ends_with?("}")
+          return literal_paths_from_expression(path_expr, literal_values)
+        end
+        return
+      end
+
+      plus_parts = split_top_level(expr, '+')
+      if plus_parts.size > 1
+        pieces = [] of String
+        plus_parts.each do |part|
+          values = literal_paths_from_expression(part, literal_values)
+          return unless values && values.size == 1
+          pieces << values[0]
+        end
+        return [pieces.join]
+      end
+
+      literal_values[expr]?
+    end
+
+    private def split_top_level(text : String, delimiter : Char) : Array(String)
+      parts = [] of String
+      start = 0
+      paren_depth = 0
+      bracket_depth = 0
+      brace_depth = 0
+      quote : Char? = nil
+      escaped = false
+
+      text.each_char_with_index do |char, index|
+        if quote
+          if escaped
+            escaped = false
+          elsif char == '\\'
+            escaped = true
+          elsif char == quote
+            quote = nil
           end
+          next
+        end
 
-          # Construct full URL path
-          full_path = combine_paths(base_path, route_path)
-
-          # Resolve the decorator's line number inside the original
-          # file: walk newlines from the class start to the
-          # `class_content` offset where the regex matched. Falls
-          # back to the class start line when `match.begin` is nil
-          # (very early Crystal versions). Without this, every
-          # NestJS endpoint pointed at line 1 of the file and
-          # dedup against the same method+url-from-other-files
-          # collapsed the per-file attribution.
-          decorator_line = if pos = match.begin
-                             controller_start_line + class_content[0...pos].count('\n')
-                           else
-                             controller_start_line
-                           end
-
-          # Create endpoint
-          endpoint = Endpoint.new(full_path, method.upcase)
-          endpoint.details = Details.new(PathInfo.new(file_path, decorator_line))
-
-          # Extract path parameters from URL
-          extract_path_parameters(full_path, endpoint)
-
-          # Extract parameters from the method area
-          if match.begin
-            extract_method_parameters(class_content, match.begin + match[0].size, endpoint)
-            attach_method_callees(class_content, match.begin + match[0].size, file_path, endpoint, controller_start_line) if include_callee
+        case char
+        when '\'', '"', '`'
+          quote = char
+        when '('
+          paren_depth += 1
+        when ')'
+          paren_depth -= 1 if paren_depth > 0
+        when '['
+          bracket_depth += 1
+        when ']'
+          bracket_depth -= 1 if bracket_depth > 0
+        when '{'
+          brace_depth += 1
+        when '}'
+          brace_depth -= 1 if brace_depth > 0
+        else
+          if char == delimiter && paren_depth == 0 && bracket_depth == 0 && brace_depth == 0
+            parts << text[start...index].strip
+            start = index + 1
           end
+        end
+      end
 
-          result << endpoint
+      parts << text[start..-1].strip
+      parts.reject(&.empty?)
+    end
+
+    private def process_http_methods(class_content : String, base_paths : Array(String), file_path : String, result : Array(Endpoint), include_callee : Bool, controller_start_line : Int32, literal_values : Hash(String, Array(String)))
+      method_map = {
+        "Get"     => ["GET"],
+        "Post"    => ["POST"],
+        "Put"     => ["PUT"],
+        "Delete"  => ["DELETE"],
+        "Patch"   => ["PATCH"],
+        "Options" => ["OPTIONS"],
+        "Head"    => ["HEAD"],
+        "All"     => ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+      }
+
+      class_content.scan(/@(Get|Post|Put|Delete|Patch|Options|Head|All)\s*\(/) do |match|
+        decorator_start = match.begin(0)
+        next unless decorator_start
+
+        method_name = match[1]
+        methods = method_map[method_name]? || [] of String
+        next if methods.empty?
+
+        open_paren = class_content.index("(", decorator_start)
+        next unless open_paren
+
+        close_paren = Noir::JSRouteExtractor.find_matching_paren(class_content, open_paren)
+        next unless close_paren
+
+        route_paths = literal_paths_from_expression(class_content[(open_paren + 1)...close_paren].strip, literal_values)
+        next unless route_paths
+
+        # Resolve the decorator's line number inside the original
+        # file: walk newlines from the class start to the
+        # `class_content` offset where the decorator matched.
+        decorator_line = controller_start_line + class_content[0...decorator_start].count('\n')
+
+        base_paths.each do |base_path|
+          route_paths.each do |route_path|
+            full_path = combine_paths(base_path, route_path)
+            methods.each do |method|
+              endpoint = Endpoint.new(full_path, method)
+              endpoint.details = Details.new(PathInfo.new(file_path, decorator_line))
+
+              extract_path_parameters(full_path, endpoint)
+              extract_method_parameters(class_content, close_paren + 1, endpoint)
+              attach_method_callees(class_content, close_paren + 1, file_path, endpoint, controller_start_line) if include_callee
+
+              result << endpoint
+            end
+          end
         end
       end
     end
@@ -295,7 +429,7 @@ module Analyzer::Javascript
 
     private def extract_decorator_parameters(method_params : String, endpoint : Endpoint)
       # Extract @Query parameters
-      method_params.scan(/@Query\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/) do |param_match|
+      method_params.scan(/@Query\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
         if param_match.size > 0
           param_name = param_match[1]
           push_unique_param(endpoint, Param.new(param_name, "", "query"))
@@ -303,20 +437,26 @@ module Analyzer::Javascript
       end
 
       # Extract @Param parameters (path parameters)
-      method_params.scan(/@Param\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/) do |param_match|
+      method_params.scan(/@Param\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
         if param_match.size > 0
           param_name = param_match[1]
           push_unique_param(endpoint, Param.new(param_name, "", "path"))
         end
       end
 
-      # Extract @Body() - indicates request body
-      if method_params.includes?("@Body()")
+      # Extract @Body('field') and @Body() / @Body(pipe)
+      method_params.scan(/@Body\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |body_match|
+        if body_match.size > 0
+          push_unique_param(endpoint, Param.new(body_match[1], "", "body"))
+        end
+      end
+
+      if method_params =~ /@Body\s*\(\s*(?:\)|[^'"`][\s\S]*?\))/
         push_unique_param(endpoint, Param.new("body", "", "body"))
       end
 
       # Extract @Headers parameters
-      method_params.scan(/@Headers\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/) do |param_match|
+      method_params.scan(/@Headers\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
         if param_match.size > 0
           param_name = param_match[1]
           push_unique_param(endpoint, Param.new(param_name, "", "header"))
