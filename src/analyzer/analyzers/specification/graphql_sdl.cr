@@ -180,6 +180,7 @@ module Analyzer::Specification
 
       endpoint.add_tag(Tag.new("graphql", "#{root_kind}.#{field_name}", "graphql_sdl_analyzer"))
       endpoint.add_tag(Tag.new("graphql-root", type_name, "graphql_sdl_analyzer")) if type_name != root_kind
+      endpoint.add_tag(Tag.new("graphql-return", return_type, "graphql_sdl_analyzer")) unless return_type.empty?
 
       directives.each do |dir|
         endpoint.add_tag(Tag.new("graphql-directive", "@#{dir[:name]}#{dir[:args]}", "graphql_sdl_analyzer"))
@@ -366,7 +367,7 @@ module Analyzer::Specification
       pos
     end
 
-    # Reads a GraphQL type reference: `Foo`, `[Foo!]!`, `[[Foo]]`.
+    # Reads a GraphQL type reference: `Foo`, `[Foo!]!`, `[[Foo]]!`.
     private def read_type_reference(content : String, pos : Int32) : Tuple(String, Int32)
       start = pos
       depth = 0
@@ -378,7 +379,11 @@ module Analyzer::Specification
         elsif ch == ']'
           depth -= 1
           pos += 1
-          break if depth <= 0
+          if depth <= 0
+            # Consume an outer non-null marker, e.g. the trailing `!` in `[Foo!]!`.
+            pos += 1 if pos < content.size && content[pos] == '!'
+            break
+          end
         elsif ch == '!' || ch == '_' || ch.ascii_alphanumeric?
           pos += 1
         elsif depth > 0 && (ch == ' ' || ch == '\t')
