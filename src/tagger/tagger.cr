@@ -159,7 +159,30 @@ module NoirTaggers
     HasFrameworkTaggers
   end
 
+  def self.available_tagger_names : Array(String)
+    names = [] of String
+    HasTaggers.each_key { |name| names << name.to_s }
+    HasFrameworkTaggers.each_key { |name| names << name.to_s }
+    names << "all"
+    names.sort
+  end
+
+  def self.unknown_tagger_names(use_taggers : String) : Array(String)
+    requested = use_taggers.split(",").map(&.strip).reject(&.empty?)
+    valid_names = available_tagger_names
+    requested.reject { |name| valid_names.includes?(name) }
+  end
+
+  def self.validate_tagger_names!(use_taggers : String)
+    unknown = unknown_tagger_names(use_taggers)
+    return if unknown.empty?
+
+    raise ArgumentError.new("Unknown tagger(s): #{unknown.join(", ")}")
+  end
+
   def self.run_tagger(endpoints : Array(Endpoint), options : Hash(String, YAML::Any), use_taggers : String)
+    validate_tagger_names!(use_taggers)
+
     tagger_list = [] of Tagger
 
     HasTaggers.each_value do |tagger|

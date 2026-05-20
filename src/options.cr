@@ -355,7 +355,13 @@ def run_options_parser
       noir_options["config_file"] = YAML::Any.new(v)
     end
     parser.on "--concurrency N", "Concurrency level" do |v|
-      noir_options["concurrency"] = YAML::Any.new(v.to_i)
+      value = v.to_i?
+      if value.nil? || value < 1
+        STDERR.puts "ERROR: Invalid concurrency '#{v}'. Concurrency must be an integer greater than or equal to 1.".colorize(:yellow)
+        exit(1)
+      end
+
+      noir_options["concurrency"] = YAML::Any.new(value)
     end
     parser.on "--generate-completion SHELL", "Generate completion script (zsh|bash|fish)" do |shell|
       case shell

@@ -1,5 +1,6 @@
 require "../../spec_helper"
 require "../../../src/models/output_builder.cr"
+require "../../../src/output_builder/*"
 
 describe "Initialize" do
   options = create_test_options
@@ -65,6 +66,25 @@ describe "Initialize" do
   it "OutputBuilderJsonl" do
     object = OutputBuilderJsonl.new options
     object.output_file.should eq("output.json")
+  end
+
+  it "truncates an output file on first write and appends later writes" do
+    output_file = File.tempname("noir-output-builder")
+    File.write(output_file, "old\n")
+
+    begin
+      options = create_test_options
+      options["output"] = YAML::Any.new(output_file)
+
+      object = OutputBuilder.new options
+      object.io = IO::Memory.new
+      object.ob_puts "new"
+      object.ob_puts "next"
+
+      File.read(output_file).should eq("new\nnext\n")
+    ensure
+      File.delete(output_file) if File.exists?(output_file)
+    end
   end
 end
 

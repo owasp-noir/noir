@@ -3,6 +3,7 @@ require "colorize"
 require "./models/noir.cr"
 require "./banner.cr"
 require "./options.cr"
+require "./cli_validation.cr"
 require "./techs/techs.cr"
 require "./llm/cache"
 require "./llm/prompt_overrides"
@@ -40,14 +41,6 @@ if noir_options.has_key?("override_llm_optimize_prompt")
   LLM::PromptOverrides.llm_optimize_prompt = noir_options["override_llm_optimize_prompt"].to_s
 end
 
-# Check base path
-if noir_options["base"].as_a.empty?
-  STDERR.puts "ERROR: Base path is required.".colorize(:yellow)
-  STDERR.puts "Please use -b or --base-path to set base path."
-  STDERR.puts "If you need help, use -h or --help."
-  exit(1)
-end
-
 if noir_options["url"] != "" && !noir_options["url"].to_s.includes?("://")
   STDERR.puts "WARNING: The protocol (http or https) is missing in the URL '#{noir_options["url"]}'. Defaulting to 'https://'.".colorize(Colorize::Color256.new(208))
   noir_options["url"] = YAML::Any.new("https://#{noir_options["url"]}")
@@ -79,6 +72,12 @@ if noir_options["exclude_codes"] != ""
       exit(1)
     end
   end
+end
+
+begin
+  Noir::CliValidation.validate!(noir_options)
+rescue e : Noir::CliValidation::Error
+  Noir::CliValidation.exit_with_error(e.message || "Invalid options.")
 end
 
 # Run Noir
