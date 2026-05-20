@@ -5,6 +5,15 @@ get "/" do
   "Hello World!"
 end
 
+# get "/commented" do
+#   env.params.query["ghost"]
+# end
+
+get("/paren") do |env|
+  env.params.query["kind"]
+  "parenthesized"
+end
+
 post "/query" do
   env.request.cookies["my_auth"].as(String)
   env.params.body["query"].as(String)

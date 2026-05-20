@@ -43,10 +43,14 @@ defmodule ElixirPhoenixWeb.Router do
     resources "/comments", CommentController, only: [:index, :show]
   end
 
-  # Other scopes may use custom stacks.
-  # scope "/api", ElixirPhoenixWeb do
-  #   pipe_through :api
-  # end
+  scope "/api", ElixirPhoenixWeb do
+    pipe_through :api
+
+    get "/accounts/:id", Api.UserController, :show
+    post("/page", PageController, :home)
+    match :post, "/hooks", PageController, :home
+    match :put, "/hooks", PageController, :home
+  end
 
   # Enable LiveDashboard and Swoosh mailbox preview in development
   if Application.compile_env(:elixir_phoenix, :dev_routes) do

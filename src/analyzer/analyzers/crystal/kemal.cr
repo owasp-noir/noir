@@ -175,6 +175,8 @@ module Analyzer::Crystal
     end
 
     def line_to_param(content : String) : Param
+      content = Noir::CrystalCalleeExtractor.strip_comment(content)
+
       if content.includes? "env.params.query["
         param = content.split("env.params.query[")[1].split("]")[0].gsub("\"", "").gsub("'", "")
         return Param.new(param, "", "query")
@@ -209,49 +211,51 @@ module Analyzer::Crystal
     end
 
     def line_to_endpoint(content : String) : Endpoint
-      content.scan(/get\s+['"](.+?)['"]/) do |match|
+      content = Noir::CrystalCalleeExtractor.strip_comment(content)
+
+      content.scan(/(?:^|[^.\w])get\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
         if match.size > 1
           return Endpoint.new("#{match[1]}", "GET")
         end
       end
 
-      content.scan(/post\s+['"](.+?)['"]/) do |match|
+      content.scan(/(?:^|[^.\w])post\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
         if match.size > 1
           return Endpoint.new("#{match[1]}", "POST")
         end
       end
 
-      content.scan(/put\s+['"](.+?)['"]/) do |match|
+      content.scan(/(?:^|[^.\w])put\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
         if match.size > 1
           return Endpoint.new("#{match[1]}", "PUT")
         end
       end
 
-      content.scan(/delete\s+['"](.+?)['"]/) do |match|
+      content.scan(/(?:^|[^.\w])delete\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
         if match.size > 1
           return Endpoint.new("#{match[1]}", "DELETE")
         end
       end
 
-      content.scan(/patch\s+['"](.+?)['"]/) do |match|
+      content.scan(/(?:^|[^.\w])patch\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
         if match.size > 1
           return Endpoint.new("#{match[1]}", "PATCH")
         end
       end
 
-      content.scan(/head\s+['"](.+?)['"]/) do |match|
+      content.scan(/(?:^|[^.\w])head\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
         if match.size > 1
           return Endpoint.new("#{match[1]}", "HEAD")
         end
       end
 
-      content.scan(/options\s+['"](.+?)['"]/) do |match|
+      content.scan(/(?:^|[^.\w])options\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
         if match.size > 1
           return Endpoint.new("#{match[1]}", "OPTIONS")
         end
       end
 
-      content.scan(/ws\s+['"](.+?)['"]/) do |match|
+      content.scan(/(?:^|[^.\w])ws\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
         if match.size > 1
           endpoint = Endpoint.new("#{match[1]}", "GET")
           endpoint.protocol = "ws"

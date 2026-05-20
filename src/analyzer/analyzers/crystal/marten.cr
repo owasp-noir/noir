@@ -167,6 +167,8 @@ module Analyzer::Crystal
     end
 
     def line_to_param(content : String) : Param
+      content = Noir::CrystalCalleeExtractor.strip_comment(content)
+
       # Query parameters: request.query_params["param"]
       if content.includes? "request.query_params["
         param = content.split("request.query_params[")[1].split("]")[0].gsub("\"", "").gsub("'", "")
@@ -201,8 +203,10 @@ module Analyzer::Crystal
     end
 
     def line_to_endpoint(content : String) : Endpoint
+      content = Noir::CrystalCalleeExtractor.strip_comment(content)
+
       # Parse Marten route definitions: path "/route", Handler
-      content.scan(/path\s+['"](.+?)['"]/) do |match|
+      content.scan(/(?:^|[^.\w])path\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
         if match.size > 1
           route = match[1].to_s
 
@@ -213,7 +217,7 @@ module Analyzer::Crystal
       end
 
       # Parse handler method definitions for specific HTTP methods
-      content.scan(/def\s+(get|post|put|delete|patch|head|options)\s*/) do |match|
+      content.scan(/\bdef\s+(get|post|put|delete|patch|head|options)\s*/) do |match|
         if match.size > 1
           method = match[1].to_s.upcase
           # Note: For handler methods, we'd need to associate them with routes
