@@ -232,7 +232,6 @@ module Analyzer::Specification
     end
 
     private def process_v3_yaml(root : YAML::Any, protocol : String?, details : Details, source : String)
-      channels_node = root[YAML::Any.new("channels")]?
       operations_node = root[YAML::Any.new("operations")]?
       return unless operations_node
       operations = operations_node.as_h?

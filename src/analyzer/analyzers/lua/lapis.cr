@@ -393,14 +393,14 @@ module Analyzer::Lua
     # `index` — `[[` returns 0, `[=[` returns 1, `[==[` returns 2,
     # etc. Returns `nil` if `index` isn't an opener.
     private def lua_long_bracket_open?(chars : Array(Char), index : Int32) : Int32?
-      return nil if chars[index]? != '['
+      return if chars[index]? != '['
       level = 0
       cursor = index + 1
       while cursor < chars.size && chars[cursor] == '='
         level += 1
         cursor += 1
       end
-      return nil if cursor >= chars.size || chars[cursor] != '['
+      return if cursor >= chars.size || chars[cursor] != '['
       level
     end
 

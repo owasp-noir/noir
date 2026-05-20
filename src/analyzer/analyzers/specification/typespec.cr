@@ -179,7 +179,6 @@ module Analyzer::Specification
 
       private def parse_namespace(pos : Int32, stop : Int32, decorators : Array(Decorator)) : Int32
         pos = skip_ws(pos, stop)
-        name_start = pos
         while pos < stop && (@text[pos].ascii_alphanumeric? || @text[pos] == '_' || @text[pos] == '.')
           pos += 1
         end
@@ -192,14 +191,14 @@ module Analyzer::Specification
           body_end = find_matching(pos, stop, '{', '}')
           parse_block(pos + 1, body_end - 1, in_interface: false)
           @route_stack.pop
-          return body_end
+          body_end
         elsif pos < stop && @text[pos] == ';'
           # file-scoped namespace: everything after stays under this route, so
           # we intentionally do not pop @route_stack.
-          return pos + 1
+          pos + 1
         else
           @route_stack.pop
-          return pos
+          pos
         end
       end
 
@@ -223,11 +222,11 @@ module Analyzer::Specification
           parse_block(pos + 1, body_end - 1, in_interface: true)
           @route_stack.pop
           @interface_method = prior_method
-          return body_end
+          body_end
         end
         @route_stack.pop
         @interface_method = prior_method
-        return pos + (pos < stop ? 1 : 0)
+        pos + (pos < stop ? 1 : 0)
       end
 
       # `op` keyword consumed; expect `name(...) : Type;` or `name is Other;`.
@@ -300,7 +299,7 @@ module Analyzer::Specification
 
       private def parse_param(raw : String, route_path : String, method : String) : Param?
         s = raw.strip
-        return nil if s.empty?
+        return if s.empty?
 
         explicit_type = nil.as(String?)
         # For `@header("X-Trace-Id") name: T`, TypeSpec lets the decorator's
@@ -329,12 +328,12 @@ module Analyzer::Specification
           explicit_type ||= classify_decorator(dec_name)
         end
 
-        return nil if s.empty?
+        return if s.empty?
 
         # Backtick-quoted identifiers (e.g. `` `X-Trace-Id` ``) — read literal name.
         if s.starts_with?('`')
           close = s.index('`', 1)
-          return nil unless close
+          return unless close
           name = s[1...close]
         else
           name_end = 0
@@ -343,7 +342,7 @@ module Analyzer::Specification
           end
           name = s[0...name_end]
         end
-        return nil if name.empty?
+        return if name.empty?
 
         final_name = decorator_name_override || name
         param_type = explicit_type || infer_param_type(name, route_path, method)
@@ -411,7 +410,7 @@ module Analyzer::Specification
         return parent if segment.empty?
         parent_clean = parent.rstrip('/')
         seg_clean = segment.starts_with?('/') ? segment[1..] : segment
-        return seg_clean.empty? ? parent_clean : "#{parent_clean}/#{seg_clean}"
+        seg_clean.empty? ? parent_clean : "#{parent_clean}/#{seg_clean}"
       end
 
       private def read_decorator(pos : Int32, stop : Int32) : {Int32, Decorator}

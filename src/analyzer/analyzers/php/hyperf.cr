@@ -128,9 +128,7 @@ module Analyzer::Php
         return extract_attribute_path(attr_match[1]) || ""
       end
 
-      if attr_match = prelude.match(/#\[\s*(?:AutoController|Controller)\s*\]\s*$/m)
-        return ""
-      end
+      return "" if prelude.match(/#\[\s*(?:AutoController|Controller)\s*\]\s*$/m)
 
       nil
     end

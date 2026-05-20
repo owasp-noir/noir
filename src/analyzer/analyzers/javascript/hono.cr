@@ -106,13 +106,13 @@ module Analyzer::Javascript
           end
         end
 
-        methods.each do |method|
-          next if result.any? { |e| e.url == url && e.method == method.upcase }
+        methods.each do |http_method|
+          next if result.any? { |e| e.url == url && e.method == http_method.upcase }
 
-          endpoint = Endpoint.new(url, method.upcase)
+          endpoint = Endpoint.new(url, http_method.upcase)
           details = Details.new(PathInfo.new(path, index + 1))
           endpoint.details = details
-          Noir::JSRouteExtractor.attach_callees(endpoint, callees_by_route, method.upcase, url, index + 1)
+          Noir::JSRouteExtractor.attach_callees(endpoint, callees_by_route, http_method.upcase, url, index + 1)
 
           body_params.each { |param| endpoint.push_param(param) }
           extract_path_params(endpoint)

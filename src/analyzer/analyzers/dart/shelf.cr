@@ -266,16 +266,16 @@ module Analyzer::Dart
       cleaned = cleaned.sub(/\.\s*call\b.*$/, "")
       cleaned = cleaned.sub(/\(.*$/, "")
       cleaned = cleaned.strip
-      return nil if cleaned.empty?
-      return nil unless cleaned.matches?(/\A[A-Za-z_]\w*\z/)
+      return if cleaned.empty?
+      return unless cleaned.matches?(/\A[A-Za-z_]\w*\z/)
       cleaned
     end
 
     private def extract_string_literal(text : String) : String?
       stripped = text.strip
-      return nil if stripped.empty?
+      return if stripped.empty?
       first = stripped[0]
-      return nil unless first == '"' || first == '\''
+      return unless first == '"' || first == '\''
       i = 1
       while i < stripped.size
         c = stripped[i]
