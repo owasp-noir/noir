@@ -6,6 +6,17 @@ expected_endpoints = [
     Param.new("X-API-KEY", "", "header"),
     Param.new("param1", "", "query"),
   ]),
+  Endpoint.new("/modern.php", "GET", [
+    Param.new("id", "", "query"),
+    Param.new("session_id", "", "cookie"),
+    Param.new("AUTHORIZATION", "", "header"),
+  ]),
+  Endpoint.new("/modern.php", "POST", [
+    Param.new("name", "", "form"),
+    Param.new("avatar", "", "file"),
+    Param.new("AUTHORIZATION", "", "header"),
+    Param.new("session_id", "", "cookie"),
+  ]),
   Endpoint.new("/post.php", "GET"),
   Endpoint.new("/post.php", "POST", [
     Param.new("param1", "", "form"),

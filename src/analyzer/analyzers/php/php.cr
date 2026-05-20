@@ -17,28 +17,14 @@ module Analyzer::Php
 
         content.each_line do |line|
           if allow_patterns.any? { |pattern| line.includes? pattern }
-            match = line.strip.match(/\$_(.*?)\['(.*?)'\]/)
+            superglobal_matches = line.scan(/\$_(GET|POST|REQUEST|SERVER|COOKIE|FILES)\s*\[\s*['"]([^'"]+)['"]\s*\]/)
+            superglobal_matches.each do |match|
+              apply_param_reference(match[1], match[2], params_query, params_body, methods)
+            end
 
-            if match
-              method = match[1]
-              param_name = match[2]
-
-              if method == "GET"
-                params_query << Param.new(param_name, "", "query")
-              elsif method == "POST"
-                params_body << Param.new(param_name, "", "form")
-                methods << "POST"
-              elsif method == "REQUEST"
-                params_query << Param.new(param_name, "", "query")
-                params_body << Param.new(param_name, "", "form")
-                methods << "POST"
-              elsif method == "SERVER"
-                if param_name.includes? "HTTP_"
-                  param_name = param_name.sub("HTTP_", "").gsub("_", "-")
-                  params_query << Param.new(param_name, "", "header")
-                  params_body << Param.new(param_name, "", "header")
-                end
-              end
+            filter_input_matches = line.scan(/filter_input\s*\(\s*INPUT_(GET|POST|REQUEST|SERVER|COOKIE)\s*,\s*['"]([^'"]+)['"]/)
+            filter_input_matches.each do |match|
+              apply_param_reference(match[1], match[2], params_query, params_body, methods)
             end
           end
         rescue
@@ -54,6 +40,35 @@ module Analyzer::Php
       end
 
       endpoints
+    end
+
+    private def apply_param_reference(method : String,
+                                      param_name : String,
+                                      params_query : Array(Param),
+                                      params_body : Array(Param),
+                                      methods : Array(String))
+      if method == "GET"
+        params_query << Param.new(param_name, "", "query")
+      elsif method == "POST"
+        params_body << Param.new(param_name, "", "form")
+        methods << "POST"
+      elsif method == "REQUEST"
+        params_query << Param.new(param_name, "", "query")
+        params_body << Param.new(param_name, "", "form")
+        methods << "POST"
+      elsif method == "SERVER"
+        if param_name.includes? "HTTP_"
+          header_name = param_name.sub("HTTP_", "").gsub("_", "-")
+          params_query << Param.new(header_name, "", "header")
+          params_body << Param.new(header_name, "", "header")
+        end
+      elsif method == "COOKIE"
+        params_query << Param.new(param_name, "", "cookie")
+        params_body << Param.new(param_name, "", "cookie")
+      elsif method == "FILES"
+        params_body << Param.new(param_name, "", "file")
+        methods << "POST"
+      end
     end
 
     private def attach_file_callees(endpoints : Array(Endpoint), content : String, path : String)
@@ -109,7 +124,7 @@ module Analyzer::Php
     end
 
     def allow_patterns
-      ["$_GET", "$_POST", "$_REQUEST", "$_SERVER"]
+      ["$_GET", "$_POST", "$_REQUEST", "$_SERVER", "$_COOKIE", "$_FILES", "filter_input"]
     end
   end
 end

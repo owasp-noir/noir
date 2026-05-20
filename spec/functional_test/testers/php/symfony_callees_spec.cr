@@ -61,17 +61,29 @@ products_update = Endpoint.new("/api/products/{slug}", "PATCH", [
   ep.push_callee(Callee.new("$this->json", line: 41))
 end
 
+admin_stats = Endpoint.new("/api/admin/stats", "GET").tap do |ep|
+  ep.push_callee(Callee.new("$this->json", line: 15))
+end
+
+admin_report = Endpoint.new("/api/admin/reports/{id}", "POST", [
+  Param.new("id", "", "path"),
+]).tap do |ep|
+  ep.push_callee(Callee.new("$this->json", line: 23))
+end
+
 expected_endpoints = [
   users_index,
   users_create,
   users_update,
   products_create,
   products_update,
+  admin_stats,
+  admin_report,
 ]
 
 FunctionalTester.new("fixtures/php/symfony/", {
   :techs     => 2,
-  :endpoints => 18,
+  :endpoints => 20,
 }, expected_endpoints, {
   "include_callee" => YAML::Any.new(true),
 }).perform_tests

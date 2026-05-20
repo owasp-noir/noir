@@ -18,9 +18,19 @@ expected_endpoints = [
   Endpoint.new("/webhook", "POST"),
   Endpoint.new("/products", "GET"),
   Endpoint.new("/products", "POST"),
+  Endpoint.new("/user", "GET"),
+  Endpoint.new("/admin/settings", "GET"),
+  Endpoint.new("/admin/settings", "POST"),
+  Endpoint.new("/me", "GET"),
+  Endpoint.new("/api/v1/profile", "GET"),
+  Endpoint.new("/api/v1/profile", "POST"),
+  Endpoint.new("/api/v1/tokens", "GET"),
+  Endpoint.new("/api/v1/tokens/{id}", "DELETE", [Param.new("id", "", "path")]),
+  Endpoint.new("/api/v1/reports/daily", "GET"),
+  Endpoint.new("/tenant/{tenant}/dashboard", "GET", [Param.new("tenant", "", "path")]),
 ]
 
 FunctionalTester.new("fixtures/php/laravel/", {
   :techs     => 2,  # Detection still sees both php_laravel and php_pure
-  :endpoints => 45, # Analysis suppresses redundant php_pure endpoints
+  :endpoints => 53, # Analysis suppresses redundant php_pure and unprefixed group endpoints
 }, expected_endpoints).perform_tests

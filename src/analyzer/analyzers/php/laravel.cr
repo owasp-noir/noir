@@ -2,6 +2,13 @@ require "../../engines/php_engine"
 
 module Analyzer::Php
   class Laravel < PhpEngine
+    private struct RouteGroup
+      getter prefix, body, body_start, body_end
+
+      def initialize(@prefix : String, @body : String, @body_start : Int32, @body_end : Int32)
+      end
+    end
+
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
 
@@ -82,68 +89,107 @@ module Analyzer::Php
                                        include_callee : Bool,
                                        base_line : Int32 = 1) : Array(Endpoint)
       endpoints = [] of Endpoint
+      route_groups = extract_route_groups(content)
 
       # 1. Simple routes: Route::get, Route::post, etc.
       verb_regex = /Route::(get|post|put|patch|delete|options|head)\s*\(\s*['"]([^'"]+)['"]\s*,/mi
       pos = 0
       while route_match = content.match(verb_regex, pos)
-        methods = [route_match[1].upcase]
-        route_path = route_match[2]
-        full_path = build_full_path(prefix, route_path)
-        route_line = base_line + newline_count_before(content, route_match.begin(0))
-        handler_body, next_pos, body_start_line = extract_inline_closure_body(content, route_match.end(0), base_line)
-        params = extract_brace_path_params(full_path)
+        if inside_laravel_group_body?(route_match.begin(0), route_groups)
+          pos = route_match.end(0)
+        else
+          methods = [route_match[1].upcase]
+          route_path = route_match[2]
+          full_path = build_full_path(prefix, route_path)
+          route_line = base_line + newline_count_before(content, route_match.begin(0))
+          handler_body, next_pos, body_start_line = extract_inline_closure_body(content, route_match.end(0), base_line)
+          params = extract_brace_path_params(full_path)
 
-        methods.each do |http_method|
-          details = Details.new(PathInfo.new(file_path, route_line))
-          endpoint = Endpoint.new(full_path, http_method, params, details.dup)
-          attach_route_callees(endpoint, handler_body, file_path, body_start_line) if include_callee
-          endpoints << endpoint
+          methods.each do |http_method|
+            details = Details.new(PathInfo.new(file_path, route_line))
+            endpoint = Endpoint.new(full_path, http_method, params, details.dup)
+            attach_route_callees(endpoint, handler_body, file_path, body_start_line) if include_callee
+            endpoints << endpoint
+          end
+          pos = next_pos
         end
-        pos = next_pos
+      end
+
+      chained_verb_regex = /Route::((?:\w+\s*\([^;]*?\)\s*->\s*)+)(get|post|put|patch|delete|options|head)\s*\(\s*['"]([^'"]+)['"]\s*,/mi
+      pos = 0
+      while route_match = content.match(chained_verb_regex, pos)
+        if inside_laravel_group_body?(route_match.begin(0), route_groups)
+          pos = route_match.end(0)
+        else
+          route_prefix = extract_group_prefix("Route::#{route_match[1]}")
+          methods = [route_match[2].upcase]
+          route_path = route_match[3]
+          full_path = build_full_path(build_full_path(prefix, route_prefix), route_path)
+          route_line = base_line + newline_count_before(content, route_match.begin(0))
+          handler_body, next_pos, body_start_line = extract_inline_closure_body(content, route_match.end(0), base_line)
+          params = extract_brace_path_params(full_path)
+
+          methods.each do |http_method|
+            details = Details.new(PathInfo.new(file_path, route_line))
+            endpoint = Endpoint.new(full_path, http_method, params, details.dup)
+            attach_route_callees(endpoint, handler_body, file_path, body_start_line) if include_callee
+            endpoints << endpoint
+          end
+          pos = next_pos
+        end
       end
 
       match_regex = /Route::match\s*\(\s*\[([^\]]+)\]\s*,\s*['"]([^'"]+)['"]\s*,/mi
       pos = 0
       while route_match = content.match(match_regex, pos)
-        methods = extract_methods_from_array(route_match[1])
-        route_path = route_match[2]
-        full_path = build_full_path(prefix, route_path)
-        route_line = base_line + newline_count_before(content, route_match.begin(0))
-        handler_body, next_pos, body_start_line = extract_inline_closure_body(content, route_match.end(0), base_line)
-        params = extract_brace_path_params(full_path)
+        if inside_laravel_group_body?(route_match.begin(0), route_groups)
+          pos = route_match.end(0)
+        else
+          methods = extract_methods_from_array(route_match[1])
+          route_path = route_match[2]
+          full_path = build_full_path(prefix, route_path)
+          route_line = base_line + newline_count_before(content, route_match.begin(0))
+          handler_body, next_pos, body_start_line = extract_inline_closure_body(content, route_match.end(0), base_line)
+          params = extract_brace_path_params(full_path)
 
-        methods.each do |http_method|
-          details = Details.new(PathInfo.new(file_path, route_line))
-          endpoint = Endpoint.new(full_path, http_method, params, details.dup)
-          attach_route_callees(endpoint, handler_body, file_path, body_start_line) if include_callee
-          endpoints << endpoint
+          methods.each do |http_method|
+            details = Details.new(PathInfo.new(file_path, route_line))
+            endpoint = Endpoint.new(full_path, http_method, params, details.dup)
+            attach_route_callees(endpoint, handler_body, file_path, body_start_line) if include_callee
+            endpoints << endpoint
+          end
+          pos = next_pos
         end
-        pos = next_pos
       end
 
       any_regex = /Route::any\s*\(\s*['"]([^'"]+)['"]\s*,/mi
       pos = 0
       while route_match = content.match(any_regex, pos)
-        methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
-        route_path = route_match[1]
-        full_path = build_full_path(prefix, route_path)
-        route_line = base_line + newline_count_before(content, route_match.begin(0))
-        handler_body, next_pos, body_start_line = extract_inline_closure_body(content, route_match.end(0), base_line)
-        params = extract_brace_path_params(full_path)
+        if inside_laravel_group_body?(route_match.begin(0), route_groups)
+          pos = route_match.end(0)
+        else
+          methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
+          route_path = route_match[1]
+          full_path = build_full_path(prefix, route_path)
+          route_line = base_line + newline_count_before(content, route_match.begin(0))
+          handler_body, next_pos, body_start_line = extract_inline_closure_body(content, route_match.end(0), base_line)
+          params = extract_brace_path_params(full_path)
 
-        methods.each do |http_method|
-          details = Details.new(PathInfo.new(file_path, route_line))
-          endpoint = Endpoint.new(full_path, http_method, params, details.dup)
-          attach_route_callees(endpoint, handler_body, file_path, body_start_line) if include_callee
-          endpoints << endpoint
+          methods.each do |http_method|
+            details = Details.new(PathInfo.new(file_path, route_line))
+            endpoint = Endpoint.new(full_path, http_method, params, details.dup)
+            attach_route_callees(endpoint, handler_body, file_path, body_start_line) if include_callee
+            endpoints << endpoint
+          end
+          pos = next_pos
         end
-        pos = next_pos
       end
 
       # 2. Resource routes
       resource_matches = content.scan(/Route::resource\s*\(\s*['"]([^'"]+)['"][^)]*\)/mi)
       resource_matches.each do |match|
+        next if inside_laravel_group_body?(match.begin(0), route_groups)
+
         resource_name = match[1]
         full_resource_path = build_full_path(prefix, resource_name)
         route_line = base_line + newline_count_before(content, match.begin(0))
@@ -152,44 +198,20 @@ module Analyzer::Php
 
       api_resource_matches = content.scan(/Route::apiResource\s*\(\s*['"]([^'"]+)['"][^)]*\)/mi)
       api_resource_matches.each do |match|
+        next if inside_laravel_group_body?(match.begin(0), route_groups)
+
         resource_name = match[1]
         full_resource_path = build_full_path(prefix, resource_name)
         route_line = base_line + newline_count_before(content, match.begin(0))
         endpoints.concat(create_api_resource_endpoints(full_resource_path.lstrip('/'), file_path, route_line))
       end
 
-      # 3. Group routes (recursive)
-      # Route::prefix(...)->group(...)
-      fluent_group_matches = content.scan(/Route::prefix\s*\(\s*['"]([^'"]+)['"]\s*\)->group\s*\(\s*function\s*\([^)]*\)\s*\{((?:[^{}]|{[^{}]*})*)\}/mi)
-      fluent_group_matches.each do |match|
-        group_prefix = match[1]
-        group_content = match[2]
-        group_base_line = base_line + newline_count_before(content, match.begin(2))
-        new_prefix = build_full_path(prefix, group_prefix)
-        endpoints.concat(analyze_routes_content(group_content, new_prefix, file_path, include_callee, group_base_line))
-      end
-
-      # Route::group with array options
-      group_matches = content.scan(/Route::group\s*\(\s*\[(.*?)\]\s*,\s*function\s*\([^)]*\)\s*\{((?:[^{}]|{[^{}]*})*)\}/mi)
-      group_matches.each do |match|
-        options_str = match[1]
-        group_content = match[2]
-
-        new_prefix = prefix
-        if prefix_match = options_str.match(/['"]prefix['"]\s*=>\s*['"]([^'"]+)['"]/)
-          new_prefix = build_full_path(prefix, prefix_match[1])
-        end
-
-        group_base_line = base_line + newline_count_before(content, match.begin(2))
-        endpoints.concat(analyze_routes_content(group_content, new_prefix, file_path, include_callee, group_base_line))
-      end
-
-      # Simple group with no prefix: Route::group(function() { ... })
-      simple_group_matches = content.scan(/Route::group\s*\(\s*function\s*\([^)]*\)\s*\{((?:[^{}]|{[^{}]*})*)\}/mi)
-      simple_group_matches.each do |match|
-        group_content = match[1]
-        group_base_line = base_line + newline_count_before(content, match.begin(1))
-        endpoints.concat(analyze_routes_content(group_content, prefix, file_path, include_callee, group_base_line))
+      # 3. Group routes (recursive). Extract group bodies before scanning nested
+      # routes so prefixed groups do not also emit unprefixed endpoints.
+      route_groups.each do |group|
+        new_prefix = group.prefix.empty? ? prefix : build_full_path(prefix, group.prefix)
+        group_base_line = base_line + newline_count_before(content, group.body_start)
+        endpoints.concat(analyze_routes_content(group.body, new_prefix, file_path, include_callee, group_base_line))
       end
 
       endpoints
@@ -309,6 +331,61 @@ module Analyzer::Php
       return 0 if pos <= 0
 
       content[0...pos].count('\n')
+    end
+
+    private def extract_route_groups(content : String) : Array(RouteGroup)
+      groups = [] of RouteGroup
+      group_regex = /Route::(?:\w+\s*\([^;]*?\)\s*->\s*)*group\s*\(/mi
+      pos = 0
+
+      while group_match = content.match(group_regex, pos)
+        group_start = group_match.begin(0)
+        body_info = extract_group_closure_body_after(content, group_match.end(0))
+        if body_info
+          body, body_start, body_end = body_info
+          prelude = content[group_start...body_start]
+          groups << RouteGroup.new(extract_group_prefix(prelude), body, body_start, body_end)
+          pos = body_end + 1
+        else
+          pos = group_match.end(0)
+        end
+      end
+
+      groups
+    end
+
+    private def extract_group_closure_body_after(content : String, pos : Int32) : Tuple(String, Int32, Int32)?
+      return unless pos < content.size
+
+      context = content[pos..]
+      function_match = context.match(/function\s*\([^)]*\)\s*\{/mi)
+      return unless function_match
+
+      function_start = function_match.begin(0)
+      pre_function = context[0...function_start]
+      return if pre_function.includes?(";")
+
+      brace_pos = pos + function_match.end(0) - 1
+      body_end = find_matching_php_close_brace(content, brace_pos)
+      return unless body_end
+
+      {content[(brace_pos + 1)...body_end], brace_pos + 1, body_end}
+    end
+
+    private def extract_group_prefix(prelude : String) : String
+      if prefix_match = prelude.match(/(?:->|::)prefix\s*\(\s*['"]([^'"]+)['"]\s*\)/i)
+        return prefix_match[1]
+      end
+
+      if prefix_match = prelude.match(/['"]prefix['"]\s*=>\s*['"]([^'"]+)['"]/i)
+        return prefix_match[1]
+      end
+
+      ""
+    end
+
+    private def inside_laravel_group_body?(pos : Int32, groups : Array(RouteGroup)) : Bool
+      groups.any? { |group| pos >= group.body_start && pos < group.body_end }
     end
 
     private def create_resource_endpoints(resource : String, file_path : String, line : Int32? = nil) : Array(Endpoint)
