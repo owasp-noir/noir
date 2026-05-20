@@ -73,31 +73,51 @@ module Analyzer::Javascript
       http_methods = %w[get post put delete patch options head]
       lines = content.lines
       lines.each_with_index do |line, index|
-        # app.on('GET', '/path', ...) or app.on("GET", "/path", ...)
+        methods = [] of String
+        url = ""
+
+        # app.on('GET', '/path', ...) - single method string
         if line =~ /\b(?:app|router|hono)\s*\.\s*on\s*\(\s*['"](\w+)['"]\s*,\s*['"]([^'"]+)['"]/
           method = $1.downcase
-          url = $2
           if http_methods.includes?(method)
-            unless result.any? { |e| e.url == url && e.method == method.upcase }
-              endpoint = Endpoint.new(url, method.upcase)
-              details = Details.new(PathInfo.new(path, index + 1))
-              endpoint.details = details
-              Noir::JSRouteExtractor.attach_callees(endpoint, callees_by_route, method.upcase, url, index + 1)
-
-              # Extract params from subsequent lines in the handler body
-              ((index + 1)...lines.size).each do |i|
-                handler_line = lines[i]
-                break if handler_line =~ /^\s*\}\s*\)\s*$/
-                line_to_params(handler_line).each do |param|
-                  endpoint.push_param(param)
-                end
-              end
-
-              extract_path_params(endpoint)
-
-              result << endpoint
-            end
+            methods << method
+            url = $2
           end
+        # app.on(['GET', 'POST'], '/path', ...) - array of methods
+        elsif line =~ /\b(?:app|router|hono)\s*\.\s*on\s*\(\s*\[([^\]]+)\]\s*,\s*['"]([^'"]+)['"]/
+          methods_str = $1
+          url = $2
+          methods_str.scan(/['"](\w+)['"]/) do |m|
+            method = m[1].downcase
+            methods << method if http_methods.includes?(method) && !methods.includes?(method)
+          end
+        end
+
+        next if methods.empty? || url.empty?
+
+        # Pre-extract handler-body params once so each method-variant
+        # endpoint gets the same params without re-walking lines.
+        body_params = [] of Param
+        ((index + 1)...lines.size).each do |i|
+          handler_line = lines[i]
+          break if handler_line =~ /^\s*\}\s*\)\s*$/
+          line_to_params(handler_line).each do |param|
+            body_params << param
+          end
+        end
+
+        methods.each do |method|
+          next if result.any? { |e| e.url == url && e.method == method.upcase }
+
+          endpoint = Endpoint.new(url, method.upcase)
+          details = Details.new(PathInfo.new(path, index + 1))
+          endpoint.details = details
+          Noir::JSRouteExtractor.attach_callees(endpoint, callees_by_route, method.upcase, url, index + 1)
+
+          body_params.each { |param| endpoint.push_param(param) }
+          extract_path_params(endpoint)
+
+          result << endpoint
         end
       end
     end
@@ -191,13 +211,27 @@ module Analyzer::Javascript
         return http_methods.map { |m| Endpoint.new(path, m.upcase) }
       end
 
-      # app.on('GET', '/path', ...) or app.on(['GET', 'POST'], '/path', ...)
+      # app.on('GET', '/path', ...) - single method string
       if line =~ /\b(?:app|router|hono)\s*\.\s*on\s*\(\s*['"](\w+)['"]\s*,\s*['"]([^'"]+)['"]/
         method = $1.downcase
         path = $2
         if http_methods.includes?(method)
           return [Endpoint.new(path, method.upcase)]
         end
+      end
+
+      # app.on(['GET', 'POST'], '/path', ...) - array of methods
+      if line =~ /\b(?:app|router|hono)\s*\.\s*on\s*\(\s*\[([^\]]+)\]\s*,\s*['"]([^'"]+)['"]/
+        methods_str = $1
+        path = $2
+        endpoints = [] of Endpoint
+        methods_str.scan(/['"](\w+)['"]/) do |m|
+          method = m[1].downcase
+          if http_methods.includes?(method) && !endpoints.any? { |e| e.method == method.upcase }
+            endpoints << Endpoint.new(path, method.upcase)
+          end
+        end
+        return endpoints unless endpoints.empty?
       end
 
       [] of Endpoint

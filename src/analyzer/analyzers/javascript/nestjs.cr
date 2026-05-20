@@ -70,16 +70,49 @@ module Analyzer::Javascript
         controller_content = controller_info[:content]
         controller_start_line = controller_info[:start_line]
 
+        # Apply controller-level URI versioning. NestJS's default
+        # `VersioningType.URI` prepends `v<n>` to the route, so
+        # `@Controller({ path: 'cats', version: '1' })` becomes
+        # `/v1/cats/...`. Header/Media-Type versioning leaves the URL
+        # untouched — we conservatively emit the v-prefixed variant
+        # since URI is the most common shape in OSS Nest apps.
+        versions = controller_info[:versions]
+        if !versions.empty?
+          base_paths = expand_versions(base_paths, versions)
+        end
+
         process_http_methods(controller_content, base_paths, path, result, include_callee, controller_start_line, literal_values)
       end
     end
 
+    # Combine the controller's base paths with each version into a
+    # set of `v<version>/<base>` paths. `'VERSION_NEUTRAL'` (Nest's
+    # sentinel) is rendered as no prefix.
+    private def expand_versions(base_paths : Array(String), versions : Array(String)) : Array(String)
+      expanded = [] of String
+      versions.each do |v|
+        prefix = v == "VERSION_NEUTRAL" ? "" : "v#{v}"
+        base_paths.each do |bp|
+          if prefix.empty?
+            expanded << bp
+          elsif bp.empty?
+            expanded << prefix
+          else
+            normalized = bp.starts_with?("/") ? bp[1..] : bp
+            expanded << "#{prefix}/#{normalized}"
+          end
+        end
+      end
+      expanded.uniq
+    end
+
     private def extract_controllers(content : String, literal_values : Hash(String, Array(String)))
-      controllers = [] of NamedTuple(base_paths: Array(String), content: String, start_line: Int32)
+      controllers = [] of NamedTuple(base_paths: Array(String), versions: Array(String), content: String, start_line: Int32)
 
       # Find all @Controller decorators and their associated class content
       lines = content.split("\n")
       current_base_paths : Array(String)? = nil
+      current_versions : Array(String) = [] of String
       current_content = [] of String
       controller_start_line = 1
       brace_count = 0
@@ -99,6 +132,7 @@ module Analyzer::Javascript
           base_paths = parse_controller_decorator(joined[:text], literal_values)
           if !base_paths.nil?
             current_base_paths = base_paths
+            current_versions = parse_controller_versions(joined[:text])
             current_content.clear
             controller_start_line = 1
             skip_until = joined[:last_line]
@@ -124,10 +158,12 @@ module Analyzer::Javascript
           if brace_count == 0 && line.includes?('}')
             controllers << {
               base_paths: current_base_paths,
+              versions:   current_versions,
               content:    current_content.join("\n") + "\n",
               start_line: controller_start_line,
             }
             current_base_paths = nil
+            current_versions = [] of String
             current_content.clear
             in_class = false
           end
@@ -135,6 +171,43 @@ module Analyzer::Javascript
       end
 
       controllers
+    end
+
+    # Pull versions out of a `@Controller({ ..., version: ... })`
+    # decorator. Recognized shapes:
+    #   version: '1'                 -> ["1"]
+    #   version: 1                   -> ["1"]
+    #   version: ['1', '2']          -> ["1", "2"]
+    #   version: VERSION_NEUTRAL     -> ["VERSION_NEUTRAL"]
+    # When no `version:` key is present, returns an empty array
+    # (meaning: leave the route URL untouched).
+    private def parse_controller_versions(text : String) : Array(String)
+      inner = decorator_inner(text, "Controller")
+      return [] of String unless inner
+      return [] of String unless inner.starts_with?("{")
+
+      versions = [] of String
+
+      # version: ['1', '2']
+      if am = inner.match(/\bversion\s*:\s*\[([^\]]+)\]/)
+        am[1].scan(/['"]([^'"]+)['"]/) do |m|
+          versions << m[1] unless versions.includes?(m[1])
+        end
+        return versions unless versions.empty?
+      end
+
+      # version: '1' or version: "1"
+      if sm = inner.match(/\bversion\s*:\s*['"]([^'"]+)['"]/)
+        versions << sm[1]
+        return versions
+      end
+
+      # version: 1 (numeric literal) or version: VERSION_NEUTRAL (identifier)
+      if im = inner.match(/\bversion\s*:\s*([A-Za-z_][\w.]*|\d+)/)
+        versions << im[1]
+      end
+
+      versions
     end
 
     # Coalesce a multi-line decorator header into a single string.

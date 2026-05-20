@@ -34,6 +34,13 @@ module Analyzer::Javascript
             result << endpoint
           end
 
+          # Auxiliary pass for `fastify.route({ method, url })` shapes
+          # the parser doesn't yet handle (multi-line config objects
+          # and the `methods: ['GET','POST']` array form).
+          unless Noir::JSRouteExtractor.test_stub_only?(path, content)
+            extract_route_configs(path, content, result)
+          end
+
           # Extract static path declarations
           Noir::JSRouteExtractor.extract_static_paths(content).each do |static_path|
             static_dirs << static_path unless static_dirs.any? { |s| s["static_path"] == static_path["static_path"] && s["file_path"] == static_path["file_path"] }
@@ -70,6 +77,77 @@ module Analyzer::Javascript
             endpoint = Endpoint.new(url, "GET", details)
             result << endpoint unless result.any? { |e| e.url == url && e.method == "GET" }
           end
+        end
+      end
+    end
+
+    # Walks a file for `fastify.route({ ... })` registrations that the
+    # shared parser misses: the config object may span multiple lines,
+    # and `methods` may be an array. For each block, decode the method
+    # (or methods) and the url/path and emit one endpoint per method.
+    private def extract_route_configs(path : String, content : String, result : Array(Endpoint))
+      http_methods = %w[get post put delete patch options head]
+
+      # Match the call site `instance.route(` and walk the balanced
+      # parens to capture the whole config object — line-by-line regex
+      # would clip multi-line objects.
+      content.scan(/\b(?:fastify|app|server|instance)\s*\.\s*route\s*\(/) do |m|
+        call_start = m.begin(0)
+        next unless call_start
+
+        paren_open = content.index("(", call_start)
+        next unless paren_open
+
+        paren_close = Noir::JSRouteExtractor.find_matching_paren(content, paren_open)
+        next unless paren_close && paren_close > paren_open
+
+        config = content[(paren_open + 1)...paren_close]
+        # Only treat this as an object-literal route() call. Bare
+        # references like `route(handler)` aren't config objects and
+        # would just produce noise.
+        next unless config.lstrip.starts_with?("{")
+
+        methods = [] of String
+        url = ""
+
+        # Single-method form: `method: 'GET'`
+        if mm = config.match(/method\s*:\s*['"](\w+)['"]/)
+          method = mm[1].downcase
+          methods << method if http_methods.includes?(method)
+        end
+
+        # Array form: `method: ['GET', 'POST']` or `methods: [...]`.
+        # Fastify accepts both keys depending on version, so cover both.
+        if am = config.match(/methods?\s*:\s*\[([^\]]+)\]/)
+          am[1].scan(/['"](\w+)['"]/) do |entry|
+            method = entry[1].downcase
+            methods << method if http_methods.includes?(method) && !methods.includes?(method)
+          end
+        end
+
+        if um = config.match(/(?:url|path)\s*:\s*['"]([^'"]+)['"]/)
+          url = um[1]
+        end
+
+        next if methods.empty? || url.empty?
+
+        # Compute line number from the call site offset.
+        line_no = content[0...call_start].count('\n') + 1
+
+        methods.each do |method|
+          method_up = method.upcase
+          next if result.any? { |e| e.url == url && e.method == method_up }
+
+          endpoint = Endpoint.new(url, method_up)
+          endpoint.details = Details.new(PathInfo.new(path, line_no))
+
+          url.scan(/:(\w+)/) do |pm|
+            next unless pm.size > 0
+            param = Param.new(pm[1], "", "path")
+            endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == pm[1] && p.param_type == "path" }
+          end
+
+          result << endpoint
         end
       end
     end
