@@ -112,14 +112,16 @@ module Noir
       routes = [] of Route
       group_prefixes = external_groups.dup
       Noir::TreeSitter.parse_go(source) do |root|
+        string_values = collect_string_values(root, source)
+
         walk(root) do |node|
-          next unless Noir::TreeSitter.node_type(node) == "short_var_declaration"
-          collect_group(node, source, group_prefixes, group_method, group_aliases)
+          next unless group_assignment_node?(node)
+          collect_group(node, source, group_prefixes, group_method, group_aliases, string_values)
         end
 
         walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
-          if route = decode_verb_call(node, source, group_prefixes, extra_verbs)
+          if route = decode_verb_call(node, source, group_prefixes, extra_verbs, group_method, group_aliases, string_values)
             routes << route
           elsif handle_method && (route = decode_handle_call(node, source, group_prefixes, handle_method))
             routes << route
@@ -146,9 +148,11 @@ module Noir
                        group_aliases : Array(String) = [] of String) : Hash(String, String)
       group_prefixes = external_groups.dup
       Noir::TreeSitter.parse_go(source) do |root|
+        string_values = collect_string_values(root, source)
+
         walk(root) do |node|
-          next unless Noir::TreeSitter.node_type(node) == "short_var_declaration"
-          collect_group(node, source, group_prefixes, group_method, group_aliases)
+          next unless group_assignment_node?(node)
+          collect_group(node, source, group_prefixes, group_method, group_aliases, string_values)
         end
       end
       group_prefixes
@@ -651,6 +655,68 @@ module Noir
       end
     end
 
+    private def group_assignment_node?(node : LibTreeSitter::TSNode) : Bool
+      case Noir::TreeSitter.node_type(node)
+      when "short_var_declaration", "assignment_statement", "var_spec"
+        true
+      else
+        false
+      end
+    end
+
+    private def collect_string_values(root : LibTreeSitter::TSNode, source : String) : Hash(String, String)
+      values = Hash(String, String).new
+      ambiguous = Set(String).new
+      loop do
+        changed = false
+        walk(root) do |node|
+          name_value = string_assignment(node, source, values)
+          next unless name_value
+          name, value = name_value
+          next if ambiguous.includes?(name)
+          if old_value = values[name]?
+            next if old_value == value
+            values.delete(name)
+            ambiguous.add(name)
+          else
+            values[name] = value
+          end
+          changed = true
+        end
+        break unless changed
+      end
+      values
+    end
+
+    private def string_assignment(node : LibTreeSitter::TSNode,
+                                  source : String,
+                                  values : Hash(String, String)) : Tuple(String, String)?
+      case Noir::TreeSitter.node_type(node)
+      when "const_spec", "var_spec"
+        name = Noir::TreeSitter.field(node, "name")
+        value = Noir::TreeSitter.field(node, "value")
+        return unless name && value
+        return unless Noir::TreeSitter.node_type(name) == "identifier"
+        expr = first_named_child(value)
+        return unless expr
+        text = string_expr_text(expr, source, values)
+        return unless text
+        {Noir::TreeSitter.node_text(name, source), text}
+      else
+        return unless group_assignment_node?(node)
+        left = Noir::TreeSitter.field(node, "left")
+        right = Noir::TreeSitter.field(node, "right")
+        return unless left && right
+        name = first_named_child(left)
+        expr = first_named_child(right)
+        return unless name && expr
+        return unless Noir::TreeSitter.node_type(name) == "identifier"
+        text = string_expr_text(expr, source, values)
+        return unless text
+        {Noir::TreeSitter.node_text(name, source), text}
+      end
+    end
+
     # Record `<name> := <parent>.Group("/prefix")`. Also accepts
     # `<name> = <parent>.Group(...)` (assignment) as a fallback, which
     # some codebases use for package-level groups. Resolves the prefix by
@@ -659,14 +725,19 @@ module Noir
                               source : String,
                               groups : Hash(String, String),
                               group_method : String,
-                              group_aliases : Array(String) = [] of String)
+                              group_aliases : Array(String) = [] of String,
+                              string_values : Hash(String, String) = Hash(String, String).new)
       left = Noir::TreeSitter.field(decl, "left")
       right = Noir::TreeSitter.field(decl, "right")
+      if Noir::TreeSitter.node_type(decl) == "var_spec"
+        left = Noir::TreeSitter.field(decl, "name")
+        right = Noir::TreeSitter.field(decl, "value")
+      end
       return unless left && right
 
       # `expression_list` wraps both sides; the single-variable case has
       # one named child on each side.
-      var_name_node = first_named_child(left)
+      var_name_node = identifier_or_first_child(left)
       rhs_node = first_named_child(right)
       return unless var_name_node && rhs_node
       return unless Noir::TreeSitter.node_type(var_name_node) == "identifier"
@@ -711,8 +782,8 @@ module Noir
             if inner_args
               prefix = nil
               Noir::TreeSitter.each_named_child(inner_args) do |arg|
-                next unless Noir::TreeSitter.node_type(arg) == "interpreted_string_literal"
-                prefix = decode_string_literal(arg, source)
+                prefix = string_expr_text(arg, source, string_values)
+                next unless prefix
                 break
               end
               return unless prefix
@@ -736,8 +807,8 @@ module Noir
 
       prefix = nil
       Noir::TreeSitter.each_named_child(args) do |arg|
-        next unless Noir::TreeSitter.node_type(arg) == "interpreted_string_literal"
-        prefix = decode_string_literal(arg, source)
+        prefix = string_expr_text(arg, source, string_values)
+        next unless prefix
         break
       end
       return unless prefix
@@ -758,7 +829,10 @@ module Noir
     private def decode_verb_call(call : LibTreeSitter::TSNode,
                                  source : String,
                                  groups : Hash(String, String),
-                                 extra_verbs : Array(String) = [] of String) : Route?
+                                 extra_verbs : Array(String) = [] of String,
+                                 group_method : String = "Group",
+                                 group_aliases : Array(String) = [] of String,
+                                 string_values : Hash(String, String) = Hash(String, String).new) : Route?
       function = Noir::TreeSitter.field(call, "function")
       return unless function
       return unless Noir::TreeSitter.node_type(function) == "selector_expression"
@@ -766,12 +840,13 @@ module Noir
       operand = Noir::TreeSitter.field(function, "operand")
       field = Noir::TreeSitter.field(function, "field")
       return unless operand && field
-      return unless Noir::TreeSitter.node_type(operand) == "identifier"
 
       verb = Noir::TreeSitter.node_text(field, source)
       return unless HTTP_VERB_METHODS.includes?(verb) || extra_verbs.includes?(verb)
 
-      router_name = Noir::TreeSitter.node_text(operand, source)
+      router_info = router_operand_info(operand, source, groups, group_method, group_aliases, string_values)
+      return unless router_info
+      router_name, chain_prefix = router_info
       # Reject known non-router operands so call shapes like
       # `gjson.Get(json, path)`, `header.Get("Content-Type")`, or
       # `params.Get("user")` don't surface as endpoints.
@@ -782,19 +857,14 @@ module Noir
 
       raw_path = nil
       handler_text = ""
-      index = 0
       Noir::TreeSitter.each_named_child(args) do |arg|
-        case Noir::TreeSitter.node_type(arg)
-        when "interpreted_string_literal", "raw_string_literal"
-          if raw_path.nil?
-            raw_path = decode_string_literal(arg, source)
-          end
+        if raw_path.nil?
+          raw_path = string_expr_text(arg, source, string_values)
         else
           # First non-string positional arg after the path is treated as
           # the handler — matches Gin/Echo/Fiber calling conventions.
           handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty? && !raw_path.nil?
         end
-        index += 1
       end
 
       return unless raw_path
@@ -809,11 +879,9 @@ module Noir
       return if raw_path.includes?("://")
       return if handler_text.empty?
 
-      resolved = if prefix = groups[router_name]?
-                   join_paths(prefix, raw_path)
-                 else
-                   raw_path
-                 end
+      base_prefix = groups[router_name]? || ""
+      base_prefix = join_paths(base_prefix, chain_prefix) unless chain_prefix.empty?
+      resolved = base_prefix.empty? ? raw_path : join_paths(base_prefix, raw_path)
 
       # Fiber's `app.All(...)` is the same "match any method" intent
       # as Gin's `r.Any(...)` and Echo's `e.Any(...)`. Normalize so
@@ -830,6 +898,54 @@ module Noir
         handler_text,
         Noir::TreeSitter.node_start_row(call),
       )
+    end
+
+    private def router_operand_info(operand : LibTreeSitter::TSNode,
+                                    source : String,
+                                    groups : Hash(String, String),
+                                    group_method : String,
+                                    group_aliases : Array(String),
+                                    string_values : Hash(String, String)) : Tuple(String, String)?
+      case Noir::TreeSitter.node_type(operand)
+      when "identifier"
+        {Noir::TreeSitter.node_text(operand, source), ""}
+      when "call_expression"
+        group_chain_operand_info(operand, source, groups, group_method, group_aliases, string_values)
+      end
+    end
+
+    private def group_chain_operand_info(call : LibTreeSitter::TSNode,
+                                         source : String,
+                                         groups : Hash(String, String),
+                                         group_method : String,
+                                         group_aliases : Array(String),
+                                         string_values : Hash(String, String)) : Tuple(String, String)?
+      function = Noir::TreeSitter.field(call, "function")
+      return unless function
+      return unless Noir::TreeSitter.node_type(function) == "selector_expression"
+      field = Noir::TreeSitter.field(function, "field")
+      parent = Noir::TreeSitter.field(function, "operand")
+      return unless field && parent
+
+      method_name = Noir::TreeSitter.node_text(field, source)
+      return unless method_name == group_method || group_aliases.includes?(method_name)
+
+      prefix = ""
+      if method_name == group_method
+        args = Noir::TreeSitter.field(call, "arguments")
+        return unless args
+        Noir::TreeSitter.each_named_child(args) do |arg|
+          prefix = string_expr_text(arg, source, string_values) || ""
+          break unless prefix.empty?
+        end
+        return if prefix.empty?
+      end
+
+      parent_info = router_operand_info(parent, source, groups, group_method, group_aliases, string_values)
+      return unless parent_info
+      router_name, parent_prefix = parent_info
+      chain_prefix = prefix.empty? ? parent_prefix : join_paths(parent_prefix, prefix)
+      {router_name, chain_prefix}
     end
 
     # Decode `<router>.<handle_method>("METHOD", "/path", handler)` —
@@ -1008,6 +1124,33 @@ module Noir
       count = LibTreeSitter.ts_node_named_child_count(node)
       return if count == 0
       LibTreeSitter.ts_node_named_child(node, 0_u32)
+    end
+
+    private def identifier_or_first_child(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+      return node if Noir::TreeSitter.node_type(node) == "identifier"
+      first_named_child(node)
+    end
+
+    private def string_expr_text(node : LibTreeSitter::TSNode,
+                                 source : String,
+                                 values : Hash(String, String)) : String?
+      case Noir::TreeSitter.node_type(node)
+      when "interpreted_string_literal", "raw_string_literal"
+        decode_string_literal(node, source)
+      when "identifier"
+        values[Noir::TreeSitter.node_text(node, source)]?
+      when "binary_expression"
+        left = Noir::TreeSitter.field(node, "left")
+        right = Noir::TreeSitter.field(node, "right")
+        return unless left && right
+        left_text = string_expr_text(left, source, values)
+        right_text = string_expr_text(right, source, values)
+        return unless left_text && right_text
+        "#{left_text}#{right_text}"
+      when "parenthesized_expression"
+        child = first_named_child(node)
+        child ? string_expr_text(child, source, values) : nil
+      end
     end
 
     # Decode a Go string literal node's text content. Interpreted

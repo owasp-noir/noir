@@ -125,4 +125,73 @@ describe Noir::TreeSitterGoRouteExtractor do
     routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
     routes.map(&.path).should eq(["/legit"])
   end
+
+  it "resolves string constants and concatenations used as paths" do
+    source = <<-GO
+      package main
+      const api = "/api"
+      const users = "/users"
+
+      func main() {
+          r := gin.Default()
+          group := r.Group(api)
+          group.GET(users + "/:id", handler)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/api/users/:id"}])
+  end
+
+  it "extracts routes registered on inline group chains" do
+    source = <<-GO
+      package main
+
+      func main() {
+          r := gin.Default()
+          r.Group("/api").GET("/users", handler)
+          r.Group("/api").Group("/v1").POST("/teams", handler)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/api/users"},
+      {"POST", "/api/v1/teams"},
+    ])
+  end
+
+  it "collects group assignments from var declarations and later assignments" do
+    source = <<-GO
+      package main
+
+      func main() {
+          r := gin.Default()
+          var api = r.Group("/api")
+          var v1 *gin.RouterGroup
+          v1 = api.Group("/v1")
+          v1.GET("/users", handler)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/api/v1/users"}])
+  end
+
+  it "does not loop on reassigned string identifiers" do
+    source = <<-GO
+      package main
+
+      func main() {
+          r := gin.Default()
+          path := "/first"
+          path = "/second"
+          r.GET(path, handler)
+          r.GET("/legit", handler)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/legit"}])
+  end
 end
