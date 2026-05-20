@@ -3,6 +3,24 @@ require "../../../src/utils/*"
 require "../../../src/tagger/tagger"
 
 describe "Tagger" do
+  it "lists regular and framework tagger names for validation" do
+    NoirTaggers.available_tagger_names.should contain("hunt")
+    NoirTaggers.available_tagger_names.should contain("django_auth")
+    NoirTaggers.available_tagger_names.should contain("all")
+  end
+
+  it "detects unknown tagger names" do
+    NoirTaggers.unknown_tagger_names("hunt,madeup,django_auth").should eq(["madeup"])
+  end
+
+  it "rejects unknown tagger names before running" do
+    noir_options = create_test_options
+
+    expect_raises(ArgumentError, /Unknown tagger/) do
+      NoirTaggers.run_tagger([] of Endpoint, noir_options, "madeup")
+    end
+  end
+
   it "hunt_tagger" do
     noir_options = create_test_options
     expected_endpoints = [

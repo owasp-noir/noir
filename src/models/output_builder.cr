@@ -1,7 +1,11 @@
 require "./logger"
 require "./endpoint"
+require "../utils/*"
+require "colorize"
 
 class OutputBuilder
+  @@prepared_output_files = Set(String).new
+
   @logger : NoirLogger
   @options : Hash(String, YAML::Any)
   @is_debug : Bool
@@ -27,10 +31,22 @@ class OutputBuilder
   def ob_puts(message)
     @io.puts message
     if @output_file != ""
-      File.open(@output_file, "a") do |file|
-        file.puts message
+      begin
+        File.open(@output_file, output_file_mode) do |file|
+          file.puts message
+        end
+      rescue e : File::Error
+        STDERR.puts "ERROR: Could not write output file '#{@output_file}': #{e.message}".colorize(:yellow)
+        exit(1)
       end
     end
+  end
+
+  private def output_file_mode : String
+    return "a" if @@prepared_output_files.includes?(@output_file)
+
+    @@prepared_output_files << @output_file
+    "w"
   end
 
   def print
