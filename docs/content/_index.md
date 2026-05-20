@@ -18,7 +18,7 @@ template = "landing"
         <span class="hero-title-line hero-title-accent">Map the</span>
         <span class="hero-title-line hero-title-accent">Attack Surface.</span>
       </h1>
-      <p class="hero-desc">Source code to attack surface in seconds. Static analysis for endpoints, parameters, and hidden routes across 50+ frameworks &mdash; ready to feed DAST tools and AI SAST.</p>
+      <p class="hero-desc">SAST tool that reads source and extracts endpoints, parameters, and hidden routes across 50+ frameworks. The inventory feeds two consumers: code auditors (human or LLM) reviewing the source, and DAST tools that need a real list of routes to scan.</p>
       <div class="hero-actions">
         <a href="./get_started/overview" class="hero-btn hero-btn-primary">
           <span>Get Started</span>
@@ -82,32 +82,32 @@ template = "landing"
 <section class="features-section">
   <div class="features-inner">
     <p class="features-label">Capabilities</p>
-    <h2 class="features-title">Source code to attack surface in seconds</h2>
+    <h2 class="features-title">What it does</h2>
     <div class="features-grid">
       <div class="feature-cell feature-wide">
         <div class="feature-number">01</div>
-        <h3>Attack Surface Discovery</h3>
-        <p>Analyzes source code to uncover the complete attack surface &mdash; hidden endpoints, shadow APIs, undocumented routes, and security blind spots that manual review misses.</p>
+        <h3>Endpoint Extraction</h3>
+        <p>Static analysis pulls endpoints, parameters, headers, and cookies out of source. Shadow APIs, deprecated routes, and undocumented handlers come out of the same pass &mdash; not a separate mode.</p>
       </div>
       <div class="feature-cell">
         <div class="feature-number">02</div>
         <h3>Multi-Language</h3>
-        <p>Crystal, Ruby, Python, Go, Java, Kotlin, JS/TS, PHP, C#, and more. One tool for your entire stack.</p>
+        <p>Crystal, Ruby, Python, Go, Java, Kotlin, JS/TS, PHP, C#, and more &mdash; 50+ frameworks in a single binary. No plugins or per-language setup.</p>
       </div>
       <div class="feature-cell">
         <div class="feature-number">03</div>
-        <h3>AI-Powered</h3>
-        <p>LLM integration detects endpoints even in unsupported frameworks. Nothing escapes.</p>
+        <h3>LLM Fallback</h3>
+        <p>Frameworks Noir doesn't natively support fall back to an LLM (OpenAI, Ollama, etc.). Point it at the codebase and let the model fill the gap.</p>
       </div>
       <div class="feature-cell">
         <div class="feature-number">04</div>
-        <h3>DevSecOps Ready</h3>
-        <p>CI/CD native. GitHub Actions, JSON/YAML/SARIF output. Plug into ZAP, Burp, Caido.</p>
+        <h3>CI/CD Friendly</h3>
+        <p>GitHub Action, SARIF output, exit codes. Fits the pipeline you already have.</p>
       </div>
       <div class="feature-cell">
         <div class="feature-number">05</div>
         <h3>Feeds DAST &amp; AI SAST</h3>
-        <p>One endpoint inventory drives ZAP/Burp/Caido on the dynamic side and points LLM-based SAST and code auditors at the entrypoints worth reviewing on the static side.</p>
+        <p>The endpoint inventory is the input both sides need: DAST scanners (ZAP, Burp, Caido) get routes they wouldn't have crawled; LLM-based code auditors get a focused list of attacker-reachable entrypoints instead of the whole repo.</p>
       </div>
       <div class="feature-cell feature-full">
         <div class="feature-number">06</div>
@@ -123,28 +123,28 @@ template = "landing"
 <section class="how-section">
   <div class="how-inner">
     <p class="how-label">Workflow</p>
-    <h2 class="how-title">Three steps to full visibility</h2>
+    <h2 class="how-title">How it runs</h2>
     <div class="how-steps">
       <div class="how-step">
         <div class="how-step-num">01</div>
         <div class="how-step-content">
-          <h3>Point to your codebase</h3>
-          <p>Noir auto-detects the language, framework, and routing patterns. No config needed.</p>
+          <h3>Point it at a codebase</h3>
+          <p>Noir detects language, framework, and routing patterns on its own. No config to write.</p>
           <div class="how-step-code">$ noir -b ./your-project</div>
         </div>
       </div>
       <div class="how-step">
         <div class="how-step-num">02</div>
         <div class="how-step-content">
-          <h3>Discover every endpoint</h3>
-          <p>Static analysis maps all routes, parameters, and headers. AI fills in the gaps for unknown frameworks.</p>
+          <h3>Extract endpoints</h3>
+          <p>Static analyzers pull out routes, parameters, and headers. An LLM fallback handles frameworks the static rules don't cover.</p>
         </div>
       </div>
       <div class="how-step">
         <div class="how-step-num">03</div>
         <div class="how-step-content">
           <h3>Feed DAST &mdash; or AI SAST</h3>
-          <p>Export to JSON, OpenAPI, or SARIF; pipe straight into ZAP/Burp/Caido; or hand the inventory to an LLM-based SAST or code auditor as focused entrypoint context.</p>
+          <p>Export JSON, OpenAPI, or SARIF; pipe straight into ZAP, Burp, or Caido as a proxy target; or hand the inventory to an LLM-based code auditor as focused entrypoint context.</p>
           <div class="how-step-code">$ noir -b . -f oas3 --send-proxy http://localhost:8090</div>
         </div>
       </div>

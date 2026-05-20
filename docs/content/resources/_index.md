@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-This section provides additional resources to help you get the most out of OWASP Noir.
+Supplementary references for OWASP Noir: FAQ, troubleshooting, artwork, and how to get in touch.
 
 *   **[FAQ](faq/)**: Find answers to frequently asked questions.
 *   **[Troubleshooting](troubleshooting/)**: Solutions for common issues when using Noir.
