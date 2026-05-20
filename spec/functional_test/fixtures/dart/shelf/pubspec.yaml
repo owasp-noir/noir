@@ -1,0 +1,11 @@
+name: example
+description: A Shelf example.
+version: 1.0.0+1
+publish_to: none
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  shelf: ^1.4.0
+  shelf_router: ^1.1.0
