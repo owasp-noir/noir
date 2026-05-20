@@ -18,6 +18,9 @@ expected_endpoints = [
     Param.new("Authorization", "", "header"),
     Param.new("session", "", "cookie"),
   ]),
+  Endpoint.new("/named", "GET", [
+    Param.new("q", "", "query"),
+  ]),
   # controllers/UsersController.cpp — PATH_LIST_BEGIN with PATH_ADD
   Endpoint.new("/api/users", "GET", [
     Param.new("search", "", "query"),

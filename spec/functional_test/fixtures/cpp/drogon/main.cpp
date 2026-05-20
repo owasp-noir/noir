@@ -2,6 +2,13 @@
 
 using namespace drogon;
 
+void namedSearchHandler(const HttpRequestPtr &req,
+                        std::function<void(const HttpResponsePtr &)> &&callback) {
+    auto q = req->getParameter("q");
+    auto resp = HttpResponse::newHttpResponse();
+    callback(resp);
+}
+
 int main() {
     app().registerHandler(
         "/ping",
@@ -35,6 +42,8 @@ int main() {
             callback(resp);
         },
         {Get, Delete});
+
+    app().registerHandler("/named", &namedSearchHandler, {Get});
 
     app().run();
     return 0;

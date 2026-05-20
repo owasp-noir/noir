@@ -32,6 +32,12 @@ namespace Demo.Controllers
             return repository.List(filter);
         }
 
+        [NonAction]
+        public Task<UserDto> LoadUser([FromQuery] string id)
+        {
+            return Task.FromResult(new UserDto());
+        }
+
         [HttpPut("{id}")]
         public IActionResult Update([FromRoute] int id, [FromBody] string name)
         {
@@ -48,5 +54,9 @@ namespace Demo.Controllers
     public interface IUserRepository
     {
         Task<IEnumerable<string>> List(string filter);
+    }
+
+    public class UserDto
+    {
     }
 }

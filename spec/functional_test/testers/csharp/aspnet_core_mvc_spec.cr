@@ -133,4 +133,8 @@ describe "ASP.NET Core MVC analyzer edge cases" do
     raw.should_not be_nil
     raw.as(Endpoint).params.any? { |p| p.name == "repository" }.should be_false
   end
+
+  it "does not report NonAction task-returning helpers as endpoints" do
+    tester.app.endpoints.any?(&.url.includes?("LoadUser")).should be_false
+  end
 end

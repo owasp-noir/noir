@@ -286,6 +286,7 @@ module Analyzer::CSharp
       http_method = "GET"
       action_route = ""
       explicit_endpoint_attribute = false
+      non_action_attribute = false
       in_class = false
 
       i = 0
@@ -296,11 +297,12 @@ module Analyzer::CSharp
         if in_class
           http_method, action_route, found_attribute = update_http_context(line, http_method, action_route)
           explicit_endpoint_attribute ||= found_attribute
+          non_action_attribute = true if line.includes?("[NonAction")
         end
 
         if in_class && potential_action_signature?(line)
           signature, end_index = build_signature(lines, i)
-          if action_method?(signature, explicit_endpoint_attribute)
+          if !non_action_attribute && action_method?(signature, explicit_endpoint_attribute)
             action_name = extract_action_name(signature)
             unless action_name.empty?
               parameters = extract_parameters(signature, http_method)
@@ -328,8 +330,15 @@ module Analyzer::CSharp
               http_method = "GET"
               action_route = ""
               explicit_endpoint_attribute = false
+              non_action_attribute = false
             end
           end
+          if non_action_attribute
+            http_method = "GET"
+            action_route = ""
+            explicit_endpoint_attribute = false
+          end
+          non_action_attribute = false
           i = end_index
         end
 
