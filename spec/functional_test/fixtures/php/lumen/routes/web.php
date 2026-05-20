@@ -33,6 +33,11 @@ $router->group(['prefix' => 'api/v1', 'middleware' => 'auth'], function () use (
 
     $router->group(['prefix' => 'admin'], function () use ($router) {
         $router->get('/stats', 'AdminController@stats');
+
+        $router->addRoute(['PUT', 'PATCH'], '/settings', function () {
+            $value = $request->input('value');
+            return response()->json(['value' => $value]);
+        });
     });
 });
 
