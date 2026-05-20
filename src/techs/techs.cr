@@ -1672,6 +1672,21 @@ module NoirTechs
         },
       },
     },
+    :typespec => {
+      :format    => ["TYPESPEC"],
+      :similar   => ["typespec", "tsp", "cadl"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+      },
+    },
     :ruby_grape => {
       :framework => "Grape",
       :language  => "Ruby",
