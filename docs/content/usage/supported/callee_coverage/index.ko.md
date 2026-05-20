@@ -33,7 +33,7 @@ JSON, JSONL, YAML, TOML 같은 모델 기반 포맷과 plain 모델 직렬화는
 | F# | Giraffe |
 | Go | Beego, Chi, Echo, fasthttp, Fiber, Gin, GoFrame, Goyave, go-zero, Hertz, httprouter, Iris, Gorilla Mux |
 | Groovy | Grails |
-| Haskell | Servant, Yesod |
+| Haskell | Scotty, Servant, Yesod |
 | Java | Armeria, Dropwizard, Javalin, JAX-RS, Micronaut, Play, Quarkus, Spark, Spring, Vert.x |
 | JavaScript | Express, Fastify, Hono, Koa, NestJS, Next.js, Nitro, Nuxt, Remix, Restify, SvelteKit |
 | Kotlin | http4k, Ktor, Spring |
