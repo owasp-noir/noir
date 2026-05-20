@@ -28,6 +28,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"crystal_marten", Crystal::Marten},
     {"dart_frog", Dart::DartFrog},
     {"dart_serverpod", Dart::Serverpod},
+    {"dart_shelf", Dart::Shelf},
     {"elixir_phoenix", Elixir::Phoenix},
     {"elixir_plug", Elixir::Plug},
     {"fs_giraffe", Fsharp::Giraffe},

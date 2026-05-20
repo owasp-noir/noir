@@ -28,7 +28,7 @@ JSON, JSONL, YAML, TOML 같은 모델 기반 포맷과 plain 모델 직렬화는
 | Clojure | Compojure |
 | C++ | Crow, Drogon |
 | Crystal | Amber, Grip, Kemal, Lucky, Marten |
-| Dart | Dart Frog, Serverpod |
+| Dart | Dart Frog, Serverpod, Shelf |
 | Elixir | Phoenix, Plug |
 | F# | Giraffe |
 | Go | Beego, Chi, Echo, fasthttp, Fiber, Gin, GoFrame, Goyave, go-zero, Hertz, httprouter, Iris, Gorilla Mux |

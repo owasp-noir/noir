@@ -28,7 +28,7 @@ This matrix lists frameworks with functional test coverage for callee extraction
 | Clojure | Compojure |
 | C++ | Crow, Drogon |
 | Crystal | Amber, Grip, Kemal, Lucky, Marten |
-| Dart | Dart Frog, Serverpod |
+| Dart | Dart Frog, Serverpod, Shelf |
 | Elixir | Phoenix, Plug |
 | F# | Giraffe |
 | Go | Beego, Chi, Echo, fasthttp, Fiber, Gin, GoFrame, Goyave, go-zero, Hertz, httprouter, Iris, Gorilla Mux |
