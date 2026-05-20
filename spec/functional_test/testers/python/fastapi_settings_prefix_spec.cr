@@ -1,12 +1,9 @@
 require "../../func_spec.cr"
 
-# Regression: full-stack-fastapi-template style `prefix=settings.API_V1_STR`.
-# The expression is an attribute reference on an imported BaseSettings
-# instance — not a string literal. Before fix #1568 the analyzer used the
-# raw expression text as the prefix and emitted garbage URLs like
-# `/settings.API_V1_STR/login/access-token`. The resolver now follows the
-# import edge into `app/core/config.py`, finds `API_V1_STR: str = "/api/v1"`,
-# and prefixes routes with the literal value.
+# Regression: full-stack-fastapi-template style `prefix=API_PREFIX` where
+# the local alias points at `settings.API_V1_STR`. The resolver follows the
+# local assignment, then the imported BaseSettings instance, and prefixes
+# routes with the literal value instead of emitting garbage expression URLs.
 expected_endpoints = [
   Endpoint.new("/api/v1/login/access-token", "POST"),
   Endpoint.new("/api/v1/login/test-token", "POST"),

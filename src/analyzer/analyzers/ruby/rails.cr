@@ -49,6 +49,11 @@ module Analyzer::Ruby
       callees_by_action : Hash(String, Array(Noir::RubyCalleeExtractor::Entry)),
       action_lines : Hash(String, Int32)
 
+    record ConcernResource,
+      kind_kw : String,
+      name : String,
+      options : Hash(String, String)
+
     @controller_data_cache = Hash(String, ControllerData).new
 
     def analyze
@@ -90,6 +95,7 @@ module Analyzer::Ruby
       # walk the file and expand interpolations before route
       # matching.
       local_string_vars = Hash(String, String).new
+      concern_resources = Hash(String, Array(ConcernResource)).new
 
       File.open(routes_path, "r", encoding: "utf-8", invalid: :skip) do |file|
         file.each_line do |raw_line|
@@ -126,6 +132,14 @@ module Analyzer::Ruby
           # Outermost: Rails.application.routes.draw do ... end
           if line.starts_with?("Rails.application.routes.draw")
             stack << Frame.new(:neutral) if opens_block
+            next
+          end
+
+          # concern :commentable do
+          if m = line.match(/^concern\s+:(\w+)/)
+            name = m[1]
+            concern_resources[name] ||= [] of ConcernResource
+            stack << Frame.new(:concern, resource_name: name) if opens_block
             next
           end
 
@@ -188,47 +202,39 @@ module Analyzer::Ruby
             next
           end
 
+          # concerns :commentable / concerns [:commentable, :taggable]
+          if m = line.match(/^concerns\s+(.*)/)
+            emit_concern_resources(parse_symbol_list(m[1]), concern_resources, framework_root, stack)
+            next
+          end
+
           # resources :foo / resource :foo
           if m = line.match(/^(resources?)\s+:(\w+)/)
             kind_kw = m[1]
             name = m[2]
-            singular = (kind_kw == "resource")
             options = parse_options(line)
 
-            controller_subdir = current_controller_subdir(stack)
-            ctrl_override = options["controller"]?
-            file_base = if ctrl_override
-                          ctrl_override.includes?('/') ? ctrl_override : (controller_subdir.empty? ? ctrl_override : "#{controller_subdir}/#{ctrl_override}")
-                        else
-                          controller_subdir.empty? ? name : "#{controller_subdir}/#{name}"
-                        end
-
-            only_list = parse_symbol_list(options["only"]?)
-            except_list = parse_symbol_list(options["except"]?)
-
-            url_segment = options["path"]? || name
-            path_prefix = current_path_prefix(stack)
-
-            candidates = [] of String
-            candidates << "#{framework_root}/app/controllers/#{file_base}_controller.rb"
-            unless ctrl_override
-              candidates << "#{framework_root}/app/controllers/#{file_base}s_controller.rb"
-              candidates << "#{framework_root}/app/controllers/#{file_base}es_controller.rb"
+            if concern_name = current_concern_definition(stack)
+              concern_resources[concern_name] ||= [] of ConcernResource
+              concern_resources[concern_name] << ConcernResource.new(kind_kw, name, options)
+              stack << Frame.new(:neutral) if opens_block
+              next
             end
 
-            existing_controller_path = candidates.find { |c| File.exists?(c) }
+            existing_controller_path = emit_resource_routes(framework_root, stack, kind_kw, name, options)
 
-            candidates.each do |ctrl_path|
-              @result += controller_to_endpoint(
-                ctrl_path, @url, url_segment,
-                path_prefix: path_prefix,
-                only: only_list,
-                except: except_list,
-                singular: singular,
-              )
+            concern_names = parse_symbol_list(options["concerns"]?)
+            unless concern_names.empty?
+              url_segment = options["path"]? || name
+              virtual_stack = stack.dup
+              virtual_stack << Frame.new(:resources, path: (kind_kw == "resource" ? url_segment : "#{url_segment}/1"),
+                resource_name: name, controller_path: existing_controller_path)
+              emit_concern_resources(concern_names, concern_resources, framework_root, virtual_stack)
             end
 
             if opens_block
+              url_segment = options["path"]? || name
+              singular = (kind_kw == "resource")
               child_path = singular ? url_segment : "#{url_segment}/1"
               stack << Frame.new(:resources, path: child_path, resource_name: name,
                 controller_path: existing_controller_path)
@@ -337,6 +343,65 @@ module Analyzer::Ruby
       end
     end
 
+    private def current_concern_definition(stack : Array(Frame)) : String?
+      if frame = stack.reverse.find { |f| f.kind == :concern }
+        return frame.resource_name
+      end
+      nil
+    end
+
+    private def emit_concern_resources(names : Array(String),
+                                       concern_resources : Hash(String, Array(ConcernResource)),
+                                       framework_root : String,
+                                       stack : Array(Frame))
+      names.each do |name|
+        next unless resources = concern_resources[name]?
+        resources.each do |resource|
+          emit_resource_routes(framework_root, stack, resource.kind_kw, resource.name, resource.options)
+        end
+      end
+    end
+
+    private def emit_resource_routes(framework_root : String,
+                                     stack : Array(Frame),
+                                     kind_kw : String,
+                                     name : String,
+                                     options : Hash(String, String)) : String?
+      singular = (kind_kw == "resource")
+      controller_subdir = current_controller_subdir(stack)
+      ctrl_override = options["controller"]?
+      file_base = if ctrl_override
+                    ctrl_override.includes?('/') ? ctrl_override : (controller_subdir.empty? ? ctrl_override : "#{controller_subdir}/#{ctrl_override}")
+                  else
+                    controller_subdir.empty? ? name : "#{controller_subdir}/#{name}"
+                  end
+
+      only_list = parse_symbol_list(options["only"]?)
+      except_list = parse_symbol_list(options["except"]?)
+      url_segment = options["path"]? || name
+      path_prefix = current_path_prefix(stack)
+
+      candidates = [] of String
+      candidates << "#{framework_root}/app/controllers/#{file_base}_controller.rb"
+      unless ctrl_override
+        candidates << "#{framework_root}/app/controllers/#{file_base}s_controller.rb"
+        candidates << "#{framework_root}/app/controllers/#{file_base}es_controller.rb"
+      end
+
+      existing_controller_path = candidates.find { |c| File.exists?(c) }
+      candidates.each do |ctrl_path|
+        @result += controller_to_endpoint(
+          ctrl_path, @url, url_segment,
+          path_prefix: path_prefix,
+          only: only_list,
+          except: except_list,
+          singular: singular,
+        )
+      end
+
+      existing_controller_path
+    end
+
     # Pull the verb list out of a `match ... :via => :get` or
     # `match ... via: [:get, :post]` declaration. Returns the
     # single-element `["ANY"]` when `via:` is missing or empty —
@@ -400,7 +465,7 @@ module Analyzer::Ruby
 
     private def parse_symbol_list(raw : String?) : Array(String)
       return [] of String if raw.nil?
-      raw.split(',').map(&.strip.lchop(':').strip).reject(&.empty?)
+      raw.gsub(/[\[\]]/, "").split(',').map(&.strip.lchop(':').strip).reject(&.empty?)
     end
 
     private def current_path_prefix(stack : Array(Frame)) : String

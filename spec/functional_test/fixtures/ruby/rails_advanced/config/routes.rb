@@ -34,9 +34,11 @@ Rails.application.routes.draw do
 
   resources :scans, controller: "billing/scans", only: [:index]
 
-  resources :posts do
-    resources :comments
+  concern :commentable do
+    resources :comments, only: [:index, :show]
   end
+
+  resources :posts, concerns: :commentable
 
   get "up" => "rails/health#show"
   get "ping", to: "monitor#ping"

@@ -65,7 +65,10 @@ expected_endpoints = [
   # resources :scans, controller: "billing/scans", only: [:index]
   Endpoint.new("/scans", "GET"),
 
-  # nested resources :posts do resources :comments end
+  # Rails concerns: `concern :commentable do resources :comments end`
+  # should not emit top-level `/comments` routes, and applying the concern
+  # with `resources :posts, concerns: :commentable` should emit the nested
+  # comment routes.
   Endpoint.new("/posts", "GET"),
   Endpoint.new("/posts/1", "GET"),
   Endpoint.new("/posts", "POST"),

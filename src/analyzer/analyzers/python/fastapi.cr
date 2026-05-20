@@ -21,8 +21,11 @@ module Analyzer::Python
             next if PythonEngine.python_test_path?(path)
             source = read_file_content(path)
 
-            source.each_line do |line|
-              line = line.gsub(" ", "")
+            import_modules = find_imported_modules(current_base_path, path, source)
+            codelines = source.split("\n")
+            codelines.each_with_index do |original_line, index|
+              effective_line = coalesce_constructor_call(codelines, index, original_line, "APIRouter")
+              line = effective_line.gsub(" ", "")
               match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:fastapi\.)?FastAPI\(/
               if !match.nil?
                 fastapi_instance_name = match[1]
@@ -49,10 +52,10 @@ module Analyzer::Python
               if !match.nil?
                 prefix = ""
                 router_instance_name = match[1]
-                param_codes = line.split("APIRouter", 2)[1]
-                prefix_match = param_codes.match /prefix\s*=\s*['"]([^'"]*)['"]/
-                if !prefix_match.nil? && prefix_match.size == 2
-                  prefix = prefix_match[1]
+                if param_codes = effective_line.split("APIRouter", 2)[1]?
+                  if raw_prefix = extract_python_keyword_expression(param_codes, "prefix")
+                    prefix = resolve_string_expression(raw_prefix, source, import_modules) || ""
+                  end
                 end
 
                 if include_router_map.has_key?(path)
@@ -331,7 +334,7 @@ module Analyzer::Python
                 # via `from … import …`, look up its definition.
                 if lit = raw_value.match(/^['"]([^'"]*)['"]/)
                   prefix = lit[1]
-                elsif resolved = resolve_constant_value(raw_value, import_modules)
+                elsif resolved = resolve_string_expression(raw_value, source, import_modules)
                   prefix = resolved
                 end
               end
@@ -406,6 +409,85 @@ module Analyzer::Python
       end
 
       nil
+    end
+
+    private def resolve_string_expression(expression : ::String,
+                                          source : ::String,
+                                          import_modules : Hash(::String, Tuple(::String, Int32)),
+                                          depth : Int32 = 0) : ::String?
+      return if depth > 3
+
+      expr = expression.strip
+      if lit = expr.match(/^[rf]?['"]([^'"]*)['"]/)
+        return lit[1]
+      end
+
+      if local = resolve_constant_in_source(expr, source, import_modules, depth)
+        return local
+      end
+
+      resolve_constant_value(expr, import_modules)
+    end
+
+    private def resolve_constant_in_source(expression : ::String,
+                                           source : ::String,
+                                           import_modules : Hash(::String, Tuple(::String, Int32)),
+                                           depth : Int32) : ::String?
+      return unless expression.matches?(/^[A-Za-z_][A-Za-z0-9_]*$/)
+      pattern = /^\s*#{Regex.escape(expression)}\s*(?::[^=]+)?=\s*([^#]+)/
+      source.each_line do |line|
+        next unless match = line.match(pattern)
+        raw_value = match[1].strip
+        next if raw_value.empty?
+        return resolve_string_expression(raw_value, source, import_modules, depth + 1)
+      end
+      nil
+    end
+
+    private def extract_python_keyword_expression(call_tail : ::String, keyword : ::String) : ::String?
+      match = call_tail.match(/\b#{Regex.escape(keyword)}\s*=/)
+      return unless match
+
+      index = match.end
+      expression = String.build do |io|
+        depth = 0
+        in_quote = nil
+        escaped = false
+        while index < call_tail.size
+          ch = call_tail[index]
+          if in_quote
+            io << ch
+            if escaped
+              escaped = false
+            elsif ch == '\\'
+              escaped = true
+            elsif ch == in_quote
+              in_quote = nil
+            end
+          else
+            case ch
+            when '\'', '"'
+              in_quote = ch
+              io << ch
+            when '(', '[', '{'
+              depth += 1
+              io << ch
+            when ')', ']', '}'
+              break if depth <= 0 && ch == ')'
+              depth -= 1 if depth > 0
+              io << ch
+            when ','
+              break if depth == 0
+              io << ch
+            else
+              io << ch
+            end
+          end
+          index += 1
+        end
+      end.strip
+
+      expression.empty? ? nil : expression
     end
 
     # Infers the type of the parameter based on its default value or type annotation
@@ -495,6 +577,26 @@ module Analyzer::Python
                                            line : ::String,
                                            instance_name : ::String) : ::String
       return line unless line.matches?(/\b#{instance_name}\.(add_api_route|add_api_websocket_route)\s*\(/)
+      return line if python_call_balanced?(line)
+
+      pieces = [line]
+      depth = python_paren_delta(line)
+      i = index + 1
+      while i < codelines.size && depth > 0
+        nxt = codelines[i]
+        pieces << nxt
+        depth += python_paren_delta(nxt)
+        break if depth <= 0
+        i += 1
+      end
+      pieces.join(' ')
+    end
+
+    private def coalesce_constructor_call(codelines : Array(::String),
+                                          index : Int32,
+                                          line : ::String,
+                                          constructor_name : ::String) : ::String
+      return line unless line.matches?(/\b#{Regex.escape(constructor_name)}\s*\(/)
       return line if python_call_balanced?(line)
 
       pieces = [line]
