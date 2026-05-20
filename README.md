@@ -28,9 +28,10 @@
 
 Noir is a SAST tool that reads source code and extracts the endpoints an application exposes — paths, methods, parameters, headers, cookies, and the source files behind them. Shadow APIs, deprecated routes, and undocumented handlers come out as part of the same inventory; they aren't a separate mode.
 
-That inventory has two consumers:
+The inventory feeds three audiences:
 
-- **Code auditors — human or AI.** Reviewers and LLM-based SAST agents get a focused list of attacker-reachable entrypoints and the files, parameters, and tags around them, instead of skimming the whole repository.
+- **Human reviewers.** Security engineers and code auditors get a focused list of attacker-reachable entrypoints — paths, parameters, source files, tags — instead of skimming the whole repo.
+- **AI auditors.** LLM-based SAST agents get the same focused list, plus per-endpoint review context (`--include-callee` for 1-hop callees, `--ai-context` for guards, sinks, validators, and signals).
 - **DAST tools.** ZAP, Burp Suite, and Caido get a real route list to scan, including paths they would never have reached by crawling.
 
 ## What Noir does

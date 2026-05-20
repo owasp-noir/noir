@@ -18,7 +18,7 @@ template = "landing"
         <span class="hero-title-line hero-title-accent">Map the</span>
         <span class="hero-title-line hero-title-accent">Attack Surface.</span>
       </h1>
-      <p class="hero-desc">SAST tool that reads source and extracts endpoints, parameters, and hidden routes across 50+ frameworks. The inventory feeds two consumers: code auditors (human or LLM) reviewing the source, and DAST tools that need a real list of routes to scan.</p>
+      <p class="hero-desc">SAST tool that reads source and extracts endpoints, parameters, and hidden routes across 50+ frameworks. The inventory feeds three audiences: human reviewers, AI auditors, and DAST tools that need a real list of routes to scan.</p>
       <div class="hero-actions">
         <a href="./get_started/overview" class="hero-btn hero-btn-primary">
           <span>Get Started</span>
@@ -106,8 +106,8 @@ template = "landing"
       </div>
       <div class="feature-cell">
         <div class="feature-number">05</div>
-        <h3>Feeds DAST &amp; AI SAST</h3>
-        <p>The endpoint inventory is the input both sides need: DAST scanners (ZAP, Burp, Caido) get routes they wouldn't have crawled; LLM-based code auditors get a focused list of attacker-reachable entrypoints instead of the whole repo.</p>
+        <h3>For Humans, AI, and DAST</h3>
+        <p>The same endpoint inventory serves all three: human reviewers and LLM-based code auditors get a focused list of attacker-reachable entrypoints; DAST scanners (ZAP, Burp, Caido) get routes they wouldn't have crawled.</p>
       </div>
       <div class="feature-cell feature-full">
         <div class="feature-number">06</div>
@@ -143,8 +143,8 @@ template = "landing"
       <div class="how-step">
         <div class="how-step-num">03</div>
         <div class="how-step-content">
-          <h3>Feed DAST &mdash; or AI SAST</h3>
-          <p>Export JSON, OpenAPI, or SARIF; pipe straight into ZAP, Burp, or Caido as a proxy target; or hand the inventory to an LLM-based code auditor as focused entrypoint context.</p>
+          <h3>Hand off to humans, AI, or DAST</h3>
+          <p>Export JSON, OpenAPI, or SARIF for human reviewers; pipe straight into ZAP, Burp, or Caido as a proxy target; or hand the inventory to an LLM-based code auditor as focused entrypoint context.</p>
           <div class="how-step-code">$ noir -b . -f oas3 --send-proxy http://localhost:8090</div>
         </div>
       </div>
