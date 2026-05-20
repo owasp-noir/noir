@@ -1,7 +1,19 @@
 require "../../engines/javascript_engine"
+require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Typescript
   class TanstackRouter < Analyzer::Javascript::JavascriptEngine
+    private struct CodeRoute
+      getter name : String
+      getter path : String
+      getter parent : String?
+      getter block : String
+      getter start_pos : Int32
+
+      def initialize(@name : String, @path : String, @parent : String?, @block : String, @start_pos : Int32)
+      end
+    end
+
     def analyze
       result = [] of Endpoint
 
@@ -19,7 +31,7 @@ module Analyzer::Typescript
         # Extract routes from createFileRoute
         analyze_file_routes(content, path, result)
 
-        # Extract routes from createRoute
+        # Extract code-based route trees from createRoute
         analyze_create_routes(content, path, result)
 
         # Extract routes from createLazyFileRoute
@@ -67,35 +79,110 @@ module Analyzer::Typescript
     end
 
     private def analyze_create_routes(content : String, path : String, result : Array(Endpoint))
-      # Pattern for createRoute({ path: '/path', ... })
-      # Example: const postsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/posts' })
-      create_route_pattern = /createRoute\s*\(\s*\{[^}]*path\s*:\s*['"`]([^'"`]+)['"`][^}]*\}/
+      routes = extract_code_routes(content)
+      unless routes.empty?
+        route_map = Hash(String, CodeRoute).new
+        routes.each { |route| route_map[route.name] = route }
 
-      content.scan(create_route_pattern) do |match|
-        if match.size > 0
-          route_path = match[1]
-          normalized_path = normalize_path(route_path)
+        routes.each do |route|
+          next if pathless_segment?(route.path)
 
-          endpoint = create_endpoint(normalized_path, "GET", path)
-          extract_path_parameters(normalized_path, endpoint)
-          extract_search_params_from_route_block(content, match[0], endpoint)
+          resolved_path = resolve_code_route_path(route, route_map)
+          next if resolved_path.empty?
+
+          endpoint = create_endpoint(resolved_path, "GET", path, route.start_pos, content)
+          extract_path_parameters(resolved_path, endpoint)
+          extract_search_params_from_route_block(route.block, endpoint)
           result << endpoint
         end
       end
 
       # Also handle createRootRoute with path
-      root_route_pattern = /createRootRoute\s*\(\s*\{[^}]*path\s*:\s*['"`]([^'"`]+)['"`][^}]*\}/
+      root_route_pattern = /createRootRoute(?:WithContext(?:\s*<[^>]+>)?\s*\(\s*\))?\s*\(\s*\{[^}]*path\s*:\s*['"`]([^'"`]+)['"`][^}]*\}/
 
       content.scan(root_route_pattern) do |match|
         if match.size > 0
           route_path = match[1]
           normalized_path = normalize_path(route_path)
 
-          endpoint = create_endpoint(normalized_path, "GET", path)
+          endpoint = create_endpoint(normalized_path, "GET", path, match.begin(0) || 0, content)
           extract_path_parameters(normalized_path, endpoint)
           result << endpoint
         end
       end
+    end
+
+    private def extract_code_routes(content : String) : Array(CodeRoute)
+      routes = [] of CodeRoute
+      assignment_pattern = /\b(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*createRoute\s*\(/
+
+      content.scan(assignment_pattern) do |match|
+        start_pos = match.begin(0)
+        open_paren = match.end(0).try { |idx| content.rindex('(', idx - 1) }
+        next unless start_pos && open_paren
+
+        close_paren = Noir::JSRouteExtractor.find_matching_paren(content, open_paren)
+        next unless close_paren
+
+        block = content[(open_paren + 1)...close_paren]
+        route_path = extract_string_property(block, "path")
+        next unless route_path
+
+        parent = extract_parent_route(block)
+        routes << CodeRoute.new(match[1], route_path, parent, block, start_pos)
+      end
+
+      routes
+    end
+
+    private def extract_string_property(block : String, property : String) : String?
+      escaped_property = Regex.escape(property)
+      match = block.match(/(?:^|[,{]\s*)#{escaped_property}\s*:\s*['"`]([^'"`]+)['"`]/m)
+      match.try(&.[1])
+    end
+
+    private def extract_parent_route(block : String) : String?
+      match = block.match(/getParentRoute\s*:\s*\(\s*\)\s*=>\s*([A-Za-z_$][\w$]*)/)
+      match.try(&.[1])
+    end
+
+    private def resolve_code_route_path(route : CodeRoute, route_map : Hash(String, CodeRoute), resolving = Set(String).new) : String
+      return "/" if resolving.includes?(route.name)
+
+      resolving.add(route.name)
+
+      parent_path = ""
+      if parent = route.parent
+        if parent_route = route_map[parent]?
+          parent_path = resolve_code_route_path(parent_route, route_map, resolving)
+        end
+      end
+
+      resolving.delete(route.name)
+      combine_route_paths(parent_path, route.path)
+    end
+
+    private def combine_route_paths(parent : String, child : String) : String
+      normalized_child = normalize_path(child)
+
+      return normalize_url_path(parent) if normalized_child == "/" || pathless_segment?(child)
+      return normalize_url_path(normalized_child) if parent.empty? || parent == "/"
+
+      parent = parent.chomp("/")
+      child_part = normalized_child.starts_with?("/") ? normalized_child[1..-1] : normalized_child
+      normalize_url_path("#{parent}/#{child_part}")
+    end
+
+    private def normalize_url_path(path : String) : String
+      normalized = path.gsub_repeatedly("//", "/")
+      normalized = "/#{normalized}" unless normalized.starts_with?("/")
+      normalized = normalized.chomp("/") unless normalized == "/"
+      normalized
+    end
+
+    private def pathless_segment?(path : String) : Bool
+      stripped = path.strip.lstrip('/').rstrip('/')
+      stripped.starts_with?("_") && !stripped.empty?
     end
 
     private def normalize_path(path : String) : String
@@ -104,9 +191,10 @@ module Analyzer::Typescript
       path.gsub(/\$(\w+)/, ":\\1")
     end
 
-    private def create_endpoint(url : String, method : String, file_path : String) : Endpoint
+    private def create_endpoint(url : String, method : String, file_path : String, start_pos : Int32 = 0, content : String = "") : Endpoint
       endpoint = Endpoint.new(url, method)
-      endpoint.details = Details.new(PathInfo.new(file_path, 1))
+      line = content.empty? ? 1 : content.to_slice[0, start_pos].count('\n'.ord.to_u8) + 1
+      endpoint.details = Details.new(PathInfo.new(file_path, line))
       endpoint
     end
 
@@ -178,7 +266,7 @@ module Analyzer::Typescript
       end
     end
 
-    private def extract_search_params_from_route_block(content : String, route_block : String, endpoint : Endpoint)
+    private def extract_search_params_from_route_block(route_block : String, endpoint : Endpoint)
       # Extract search params from the route definition block
       extract_search_params(route_block, endpoint)
     end

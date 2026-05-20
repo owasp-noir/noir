@@ -110,11 +110,12 @@ module Analyzer::Javascript
       methods.each do |method|
         endpoint = Endpoint.new(url, method)
         endpoint.details = Details.new(PathInfo.new(path, 1))
+        body_info = extract_exported_method_body(content, method)
+        param_source = body_info.try(&.[0]) || content
 
         extract_path_params(url, endpoint)
-        extract_app_router_params(content, endpoint)
+        extract_app_router_params(param_source, endpoint)
         if include_callee
-          body_info = extract_exported_method_body(content, method)
           attach_callees(endpoint, path, body_info) if body_info
         end
 
