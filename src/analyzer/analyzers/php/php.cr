@@ -64,6 +64,7 @@ module Analyzer::Php
         end
       elsif method == "COOKIE"
         params_query << Param.new(param_name, "", "cookie")
+        params_body << Param.new(param_name, "", "cookie")
       elsif method == "FILES"
         params_body << Param.new(param_name, "", "file")
         methods << "POST"

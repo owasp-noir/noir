@@ -15,6 +15,7 @@ expected_endpoints = [
     Param.new("name", "", "form"),
     Param.new("avatar", "", "file"),
     Param.new("AUTHORIZATION", "", "header"),
+    Param.new("session_id", "", "cookie"),
   ]),
   Endpoint.new("/post.php", "GET"),
   Endpoint.new("/post.php", "POST", [
