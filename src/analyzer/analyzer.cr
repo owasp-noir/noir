@@ -97,6 +97,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"php_codeigniter", Php::CodeIgniter},
     {"php_hyperf", Php::Hyperf},
     {"php_laravel", Php::Laravel},
+    {"php_lumen", Php::Lumen},
     {"php_slim", Php::Slim},
     {"php_symfony", Php::Symfony},
     {"php_yii", Php::Yii},
@@ -150,6 +151,7 @@ def filter_redundant_generic_techs(techs : Array(String)) : Array(String)
 
   php_frameworks = Set{
     "php_laravel",
+    "php_lumen",
     "php_symfony",
     "php_cakephp",
     "php_codeigniter",
@@ -160,6 +162,13 @@ def filter_redundant_generic_techs(techs : Array(String)) : Array(String)
 
   if filtered.includes?("php_pure") && filtered.any? { |tech| php_frameworks.includes?(tech) }
     filtered.reject!("php_pure")
+  end
+
+  # Lumen and Laravel share enough surface (Illuminate namespaces, the `routes/`
+  # convention) that the Laravel detector also fires on Lumen projects. When
+  # Lumen is the actual framework, the Laravel signal is just noise.
+  if filtered.includes?("php_lumen") && filtered.includes?("php_laravel")
+    filtered.reject!("php_laravel")
   end
 
   filtered

@@ -20,7 +20,7 @@ module NoirTechs
     "kotlin_http4k", "kotlin_ktor", "kotlin_spring",
     "lua_lapis",
     "perl_mojolicious",
-    "php_cakephp", "php_codeigniter", "php_hyperf", "php_laravel", "php_pure", "php_slim", "php_symfony", "php_yii",
+    "php_cakephp", "php_codeigniter", "php_hyperf", "php_laravel", "php_lumen", "php_pure", "php_slim", "php_symfony", "php_yii",
     "python_aiohttp", "python_bottle", "python_django", "python_falcon", "python_fastapi",
     "python_flask", "python_litestar", "python_pyramid", "python_sanic", "python_starlette", "python_tornado",
     "ruby_grape", "ruby_hanami", "ruby_rails", "ruby_roda", "ruby_sinatra",
@@ -1361,6 +1361,24 @@ module NoirTechs
       :framework => "Laravel",
       :language  => "PHP",
       :similar   => ["laravel", "php-laravel", "php_laravel"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
+    :php_lumen => {
+      :framework => "Lumen",
+      :language  => "PHP",
+      :similar   => ["lumen", "php-lumen", "php_lumen", "laravel/lumen", "laravel-lumen", "lumen-framework"],
       :supported => {
         :endpoint => true,
         :method   => true,
