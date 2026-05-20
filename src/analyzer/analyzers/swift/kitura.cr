@@ -18,7 +18,7 @@ module Analyzer::Swift
       endpoints = [] of Endpoint
       lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
-      handler_bodies = include_callee ? named_handler_bodies(lines) : {} of String => Tuple(String, Int32)
+      handler_bodies = named_handler_bodies(lines)
 
       lines.each_with_index do |line, index|
         next unless route_definition_line?(line)
@@ -37,6 +37,7 @@ module Analyzer::Swift
 
           extract_path_params(route_path, endpoint)
           extract_function_params(lines, index + 1, endpoint)
+          extract_named_handler_params(lines[index], handler_bodies, endpoint)
           attach_route_callees(lines, index, path, endpoint, handler_bodies) if include_callee
 
           endpoints << endpoint
@@ -96,49 +97,7 @@ module Analyzer::Swift
         end
         brace_count -= line.count('}')
 
-        # Extract query parameters from request.queryParameters
-        if line.includes?("request.queryParameters[")
-          match = line.match(/request\.queryParameters\[["']([^"']+)["']\]/)
-          if match
-            query_name = match[1]
-            endpoint.push_param(Param.new(query_name, "", "query"))
-          end
-        end
-
-        # Extract body parameters from request.body or try? request.read
-        if line.includes?("request.body") || line.includes?("request.read")
-          endpoint.push_param(Param.new("body", "", "json"))
-        end
-
-        # Extract headers from request.headers
-        if line.includes?("request.headers[")
-          match = line.match(/request\.headers\[["']([^"']+)["']\]/)
-          if match
-            header_name = match[1]
-            endpoint.push_param(Param.new(header_name, "", "header"))
-          end
-        end
-
-        # Extract cookies from request.cookies
-        if line.includes?("request.cookies[")
-          match = line.match(/request\.cookies\[["']([^"']+)["']\]/)
-          if match
-            cookie_name = match[1]
-            endpoint.push_param(Param.new(cookie_name, "", "cookie"))
-          end
-        end
-
-        # Extract path parameters from request.parameters
-        if line.includes?("request.parameters[")
-          match = line.match(/request\.parameters\[["']([^"']+)["']\]/)
-          if match
-            param_name = match[1]
-            if !existing_path_params.includes?(param_name)
-              endpoint.push_param(Param.new(param_name, "", "path"))
-              existing_path_params.add(param_name)
-            end
-          end
-        end
+        extract_params_from_line(line, endpoint, existing_path_params)
 
         if in_function && seen_opening_brace && brace_count == 0 && i > start_index
           break
@@ -268,6 +227,71 @@ module Analyzer::Swift
       end
 
       nil
+    end
+
+    private def extract_named_handler_params(route_line : String,
+                                             handler_bodies : Hash(String, Tuple(String, Int32)),
+                                             endpoint : Endpoint)
+      handler_name = route_handler_name(route_line)
+      return unless handler_name
+
+      body = handler_bodies[handler_name]?
+      return unless body
+
+      existing_path_params = Set(String).new
+      endpoint.params.each do |p|
+        existing_path_params.add(p.name) if p.param_type == "path"
+      end
+
+      body[0].each_line do |line|
+        extract_params_from_line(line, endpoint, existing_path_params)
+      end
+    end
+
+    private def extract_params_from_line(line : String, endpoint : Endpoint, existing_path_params : Set(String))
+      # Extract query parameters from request.queryParameters
+      if line.includes?("request.queryParameters[")
+        match = line.match(/request\.queryParameters\[["']([^"']+)["']\]/)
+        if match
+          query_name = match[1]
+          endpoint.push_param(Param.new(query_name, "", "query"))
+        end
+      end
+
+      # Extract body parameters from request.body or try? request.read
+      if line.includes?("request.body") || line.includes?("request.read")
+        endpoint.push_param(Param.new("body", "", "json"))
+      end
+
+      # Extract headers from request.headers
+      if line.includes?("request.headers[")
+        match = line.match(/request\.headers\[["']([^"']+)["']\]/)
+        if match
+          header_name = match[1]
+          endpoint.push_param(Param.new(header_name, "", "header"))
+        end
+      end
+
+      # Extract cookies from request.cookies
+      if line.includes?("request.cookies[")
+        match = line.match(/request\.cookies\[["']([^"']+)["']\]/)
+        if match
+          cookie_name = match[1]
+          endpoint.push_param(Param.new(cookie_name, "", "cookie"))
+        end
+      end
+
+      # Extract path parameters from request.parameters
+      if line.includes?("request.parameters[")
+        match = line.match(/request\.parameters\[["']([^"']+)["']\]/)
+        if match
+          param_name = match[1]
+          if !existing_path_params.includes?(param_name)
+            endpoint.push_param(Param.new(param_name, "", "path"))
+            existing_path_params.add(param_name)
+          end
+        end
+      end
     end
 
     private def body_after_opening_brace(lines : Array(String), opening_index : Int32, opening_brace : Int32) : Tuple(String, Int32)

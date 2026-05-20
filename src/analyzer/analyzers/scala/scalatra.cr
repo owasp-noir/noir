@@ -19,9 +19,9 @@ module Analyzer::Scala
 
         # Match Scalatra route definitions: get("/path") { ... }
         HTTP_METHODS.each do |method|
-          # Match: get("/users/:id") { ... }
+          # Match: get("/users/:id") { ... } and get("/users", operation(...)) { ... }
           # Ensure it's not a method call on an object (e.g., cookies.get)
-          if route_match = stripped_line.match(/(?<!\.)#{method}\s*\(\s*"([^"]+)"\s*\)/)
+          if route_match = stripped_line.match(/(?<![.\w])#{method}\s*\(\s*"([^"]+)"/)
             route_path = route_match[1]
             # Only process if it looks like a URL path (starts with /)
             next unless route_path.starts_with?("/")

@@ -4,6 +4,7 @@ module Analyzer::Scala
   class Play < Analyzer
     # Stores parsed controller methods with their parameters
     alias ControllerMethod = NamedTuple(headers: Array(String), cookies: Array(String), body_type: String?)
+    alias MethodBody = NamedTuple(signature: String, body: String)
 
     def analyze
       file_list = all_files()
@@ -54,8 +55,9 @@ module Analyzer::Scala
           package_name = pkg_match[1]
         end
 
-        # Find all classes/objects in the file
-        class_regex = /(?:class|object)\s+(\w+)(?:\s+extends\s+[\w\s,]+)?\s*\{/
+        # Find all classes/objects in the file. Play controllers commonly carry
+        # constructor injection before `extends`.
+        class_regex = /(?:class|object)\s+(\w+)[^{}]*\{/
         class_matches = content.scan(class_regex)
 
         class_matches.each do |class_match|
@@ -77,8 +79,11 @@ module Analyzer::Scala
             full_method_name = package_name.empty? ? "#{class_name}.#{method_name}" : "#{package_name}.#{class_name}.#{method_name}"
 
             # Find the method body (from def to the matching closing brace)
-            method_body = extract_method_body(class_content, method_name)
-            next if method_body.empty?
+            method = extract_method_body(class_content, method_name)
+            next unless method
+
+            method_body = method[:body]
+            method_signature = method[:signature]
 
             headers = [] of String
             cookies = [] of String
@@ -105,13 +110,14 @@ module Analyzer::Scala
             end
 
             # Extract body type: request.body.asJson, request.body.asFormUrlEncoded, parse.json, parse.form
-            if method_body.match(/request\s*\.\s*body\s*\.\s*asJson|parse\s*\.\s*json|Json\s*\.\s*parse|\.body\s*\.\s*asJson/)
+            body_source = "#{method_signature}\n#{method_body}"
+            if body_source.match(/request\s*\.\s*body\s*\.\s*asJson|parse\s*\.\s*json|Json\s*\.\s*parse|\.body\s*\.\s*asJson/)
               body_type = "json"
-            elsif method_body.match(/request\s*\.\s*body\s*\.\s*as(?:FormUrlEncoded|MultipartFormData)|parse\s*\.\s*form/)
+            elsif body_source.match(/request\s*\.\s*body\s*\.\s*as(?:FormUrlEncoded|MultipartFormData)|parse\s*\.\s*form/)
               body_type = "form"
-            elsif method_body.match(/request\s*\.\s*body\s*\.\s*asXml/)
+            elsif body_source.match(/request\s*\.\s*body\s*\.\s*asXml/)
               body_type = "xml"
-            elsif method_body.match(/request\s*\.\s*body\s*\.\s*as(?:Text|Raw|Bytes)|parse\s*\.\s*text/)
+            elsif body_source.match(/request\s*\.\s*body\s*\.\s*as(?:Text|Raw|Bytes)|parse\s*\.\s*text/)
               body_type = "body"
             end
 
@@ -124,15 +130,15 @@ module Analyzer::Scala
     end
 
     # Extract method body from content
-    private def extract_method_body(content : String, method_name : String) : String
+    private def extract_method_body(content : String, method_name : String) : MethodBody?
       # Find method start - Scala methods with Action
       # Handles: Action { ... }, Action { request => ... }, Action.async { ... }, Action(parse.json) { ... }
-      method_start_regex = /def\s+#{Regex.escape(method_name)}(?:\s*\([^)]*\))?\s*=\s*Action(?:\s*(?:\([^)]*\)|\.async))?\s*\{\s*(?:\w+\s*=>\s*)?/
+      method_start_regex = /def\s+#{Regex.escape(method_name)}(?:\s*\([^)]*\))?\s*=\s*Action(?:\s*\.async)?(?:\s*\([^)]*\))?(?:\s*\.async)?\s*\{\s*(?:\w+\s*=>\s*)?/
       match = content.match(method_start_regex)
-      return "" unless match
+      return unless match
 
       start_index = match.end
-      return "" unless start_index
+      return unless start_index
 
       # Find matching closing brace
       brace_count = 1
@@ -147,7 +153,9 @@ module Analyzer::Scala
         end_index += 1
       end
 
-      content[start_index...end_index - 1]
+      signature = match[0]
+      body = content[start_index...end_index - 1]
+      {signature: signature, body: body}
     end
 
     # Process a Play routes file

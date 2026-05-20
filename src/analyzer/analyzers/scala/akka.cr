@@ -21,35 +21,20 @@ module Analyzer::Scala
         stripped_line = scala_code_line(line).strip
         structural_line = scala_structural_line(line).strip
 
-        # Handle pathPrefix: pathPrefix("api") { ... }
-        if path_prefix_match = stripped_line.match(/pathPrefix\s*\(\s*"([^"]+)"\s*\)/)
-          prefix = path_prefix_match[1]
-          prefix = "/#{prefix}" unless prefix.starts_with?("/")
+        # Handle pathPrefix: pathPrefix("api" / "v1") { ... }
+        if path_prefix_args = directive_args(stripped_line, "pathPrefix")
+          prefix = akka_path_from_args(path_prefix_args, path_param_names(stripped_line))
           prefix_stack.push(prefix)
           # Record the depth at which this prefix was added (after we count the opening brace)
           prefix_depths.push(brace_depth + 1)
         end
 
         # Handle path with potential matchers: path("users" / IntNumber) { userId => ... }
-        if path_match = stripped_line.match(/path\s*\(\s*"([^"]+)"/)
-          route_path = path_match[1]
-          route_path = "/#{route_path}" unless route_path.starts_with?("/")
-
-          # Check for path parameter matchers and extract parameter name
-          param_name = "id"
-          has_param = false
-
-          if stripped_line =~ /\/\s*(IntNumber|LongNumber|Segment|Remaining|JavaUUID)/
-            has_param = true
-            # Try to extract parameter name from pattern like: { userId => or { (userId) =>
-            if param_var_match = stripped_line.match(/\{\s*\(?\s*(\w+)\s*\)?\s*=>/)
-              param_name = param_var_match[1]
-            end
-            route_path = "#{route_path}/{#{param_name}}"
-          end
+        if path_args = directive_args(stripped_line, "path")
+          route_path = akka_path_from_args(path_args, path_param_names(stripped_line))
 
           # Build full path with prefix
-          full_path = prefix_stack.empty? ? route_path : "#{prefix_stack.join("")}#{route_path}"
+          full_path = join_paths(prefix_stack, route_path)
 
           # Find HTTP methods in the following lines within the same block
           block = extract_block_from_index(lines, index)
@@ -62,15 +47,31 @@ module Analyzer::Scala
             if block_content =~ /\b#{method}\s*\{/
               endpoint = create_endpoint(full_path, method.upcase, path)
 
-              # Add path parameter if detected
-              if has_param
-                endpoint.push_param(Param.new(param_name, "", "path"))
-              end
+              extract_path_params(endpoint, full_path)
 
               # Extract additional parameters from the block
               extract_params_from_block(endpoint, block_content)
               attach_method_callees(endpoint, lines, index, block_end, method, path) if include_callee
 
+              endpoints << endpoint
+            end
+          end
+        end
+
+        if stripped_line.includes?("pathEnd") || stripped_line.includes?("pathEndOrSingleSlash")
+          full_path = prefix_stack.empty? ? "/" : prefix_stack.join("")
+          block = extract_block_from_index(lines, index)
+          next unless block
+
+          block_content = block[0]
+          block_end = block[2]
+
+          HTTP_METHODS.each do |method|
+            if block_content =~ /\b#{method}\s*\{/
+              endpoint = create_endpoint(full_path, method.upcase, path)
+              extract_path_params(endpoint, full_path)
+              extract_params_from_block(endpoint, block_content)
+              attach_method_callees(endpoint, lines, index, block_end, method, path) if include_callee
               endpoints << endpoint
             end
           end
@@ -170,6 +171,59 @@ module Analyzer::Scala
       # Extract optional headers: optionalHeaderValueByName("X-API-Key") { ... }
       block.scan(/optionalHeaderValueByName\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
         endpoint.push_param(Param.new(match[1], "", "header"))
+      end
+    end
+
+    private def directive_args(line : String, directive : String) : String?
+      match = line.match(/(?<![.\w])#{Regex.escape(directive)}\s*\(([^)]*)\)/)
+      return unless match
+
+      match[1]
+    end
+
+    private def akka_path_from_args(args : String, param_names : Array(String)) : String
+      segments = [] of String
+      param_index = 0
+
+      args.scan(/"([^"]+)"|(IntNumber|LongNumber|Segment|Remaining|JavaUUID)/) do |match|
+        if literal = match[1]?
+          segments.concat(literal.split('/').reject(&.empty?))
+        elsif match[2]?
+          param_name = param_names[param_index]? || default_param_name(param_index)
+          segments << "{#{param_name}}"
+          param_index += 1
+        end
+      end
+
+      return "/" if segments.empty?
+
+      "/#{segments.join("/")}"
+    end
+
+    private def default_param_name(index : Int32) : String
+      index == 0 ? "id" : "id#{index + 1}"
+    end
+
+    private def path_param_names(line : String) : Array(String)
+      match = line.match(/\{\s*\(?\s*([^=]+?)\s*\)?\s*=>/)
+      return [] of String unless match
+
+      match[1].split(',').map(&.strip).reject(&.empty?)
+    end
+
+    private def join_paths(prefix_stack : Array(String), route_path : String) : String
+      parts = prefix_stack + [route_path]
+      normalized = parts.join("").gsub(%r{/+}, "/")
+      normalized = "/#{normalized}" unless normalized.starts_with?("/")
+      normalized
+    end
+
+    private def extract_path_params(endpoint : Endpoint, route_path : String)
+      route_path.scan(/\{(\w+)\}/) do |match|
+        param_name = match[1]
+        unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
+          endpoint.push_param(Param.new(param_name, "", "path"))
+        end
       end
     end
 
