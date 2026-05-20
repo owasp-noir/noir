@@ -446,8 +446,8 @@ module Analyzer::Javascript
         "Head"    => ["HEAD"],
         # `@Sse` opens a Server-Sent Events stream — HTTP GET under
         # the hood, so it counts as a real route.
-        "Sse"     => ["GET"],
-        "All"     => ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+        "Sse" => ["GET"],
+        "All" => ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
       }
 
       class_content.scan(/@(Get|Post|Put|Delete|Patch|Options|Head|Sse|All)\s*\(/) do |match|
