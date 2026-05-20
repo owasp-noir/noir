@@ -3,12 +3,16 @@ require "../../../miniparsers/perl_callee_extractor"
 
 module Analyzer::Perl
   class Mojolicious < PerlEngine
-    HTTP_VERBS    = %w[get post put delete patch options head]
-    LITE_VERB_RE  = /^\s*(get|post|put|patch|delete|del|options|head|websocket)\s+['"]([^'"]+)['"]/
-    LITE_ANY_RE   = /^\s*any\s+(?:\[([^\]]+)\]\s*=>\s*)?['"]([^'"]+)['"]/
-    FULL_VERB_RE  = /->\s*(get|post|put|patch|delete|del|options|head|websocket)\s*\(\s*['"]([^'"]+)['"]/
-    FULL_ANY_RE   = /->\s*any\s*\(\s*(?:\[([^\]]+)\]\s*,?\s*=?>?\s*)?['"]([^'"]+)['"]/
-    FULL_ROUTE_RE = /->\s*route\s*\(\s*['"]([^'"]+)['"]\s*\)(?:\s*->\s*via\s*\(\s*([^)]+)\))?/
+    HTTP_VERBS         = %w[get post put delete patch options head]
+    LITE_VERB_RE       = /^\s*(get|post|put|patch|delete|del|options|head|websocket)\s+['"]([^'"]+)['"]/
+    LITE_ANY_RE        = /^\s*any\s+(?:\[([^\]]+)\]\s*=>\s*)?['"]([^'"]+)['"]/
+    FULL_VERB_RE       = /->\s*(get|post|put|patch|delete|del|options|head|websocket)\s*\(\s*['"]([^'"]+)['"]/
+    FULL_ANY_RE        = /->\s*any\s*\(\s*(?:\[([^\]]+)\]\s*,?\s*=?>?\s*)?['"]([^'"]+)['"]/
+    FULL_ROUTE_RE      = /->\s*route\s*\(\s*['"]([^'"]+)['"]\s*\)(?:\s*->\s*via\s*\(\s*([^)]+)\))?/
+    PREFIX_SEGMENT_RE  = /->\s*(?:under|any|route)\s*\(\s*(?:\[[^\]]+\]\s*,?\s*=?>?\s*)?['"]([^'"]+)['"]/
+    ASSIGNMENT_HEAD_RE = /^\s*(?:my|our|local)?\s*\$([A-Za-z_]\w*)\s*=\s*(.+)$/
+    CHAIN_RECEIVER_RE  = /\$([A-Za-z_]\w*)\s*->/
+    PRELUDE_VAR_RE     = /\$([A-Za-z_]\w*)/
 
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
@@ -56,19 +60,23 @@ module Analyzer::Perl
                         include_callee : Bool = false,
                         controller_callees : Hash(String, Array(Noir::PerlCalleeExtractor::Entry)) = {} of String => Array(Noir::PerlCalleeExtractor::Entry)) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = content.lines
+      raw_lines = content.lines
+      sanitized_lines = sanitize_perl_lines(raw_lines)
       offsets = line_offsets(content)
       last_endpoint : Endpoint? = nil
+      var_prefix = {} of String => String
 
-      lines.each_with_index do |line, index|
+      sanitized_lines.each_with_index do |line, index|
         stripped = line.strip
         next if stripped.empty? || stripped.starts_with?('#')
 
-        line_endpoints = line_to_endpoints(line)
+        update_var_prefix(line, var_prefix)
+
+        line_endpoints = line_to_endpoints(line, var_prefix)
         line_endpoints.each do |endpoint|
           endpoint.details = Details.new(PathInfo.new(file_path, index + 1))
           extract_path_params(endpoint).each { |p| push_unique_param(endpoint, p) }
-          attach_route_callees(endpoint, content, line, offsets[index], controller_callees) if include_callee
+          attach_route_callees(endpoint, content, raw_lines[index], offsets[index], controller_callees) if include_callee
           endpoints << endpoint
         end
 
@@ -94,6 +102,38 @@ module Analyzer::Perl
       endpoints
     end
 
+    # POD blocks (`=head1` ... `=cut`) and `__END__`/`__DATA__` sections
+    # are documentation/data, not code. Real-world Mojolicious modules
+    # (e.g. `Mojolicious::Plugin::Minion::Admin`) ship example
+    # `app->routes->any('/...')` calls inside their POD, which would
+    # otherwise be picked up as live routes. We blank those lines while
+    # preserving the original line count so endpoint line numbers stay
+    # aligned with the source file.
+    private def sanitize_perl_lines(lines : Array(String)) : Array(String)
+      in_pod = false
+      ended = false
+      lines.map do |line|
+        stripped = line.lstrip
+        if ended
+          ""
+        elsif stripped.starts_with?("__END__") || stripped.starts_with?("__DATA__")
+          ended = true
+          ""
+        elsif in_pod
+          if stripped.starts_with?("=cut")
+            in_pod = false
+          end
+          ""
+        elsif stripped.size >= 2 && stripped[0] == '=' && stripped[1].ascii_letter?
+          # POD directives: =head1, =head2, =item, =over, =pod, =for, =begin, =encoding ...
+          in_pod = true
+          ""
+        else
+          line
+        end
+      end
+    end
+
     private def index_controller_callees : Hash(String, Array(Noir::PerlCalleeExtractor::Entry))
       callees = {} of String => Array(Noir::PerlCalleeExtractor::Entry)
 
@@ -112,51 +152,146 @@ module Analyzer::Perl
     end
 
     def line_to_endpoints(line : String) : Array(Endpoint)
+      line_to_endpoints(line, {} of String => String)
+    end
+
+    def line_to_endpoints(line : String, var_prefix : Hash(String, String)) : Array(Endpoint)
       result = [] of Endpoint
 
       # Mojolicious::Lite: `get '/path' => ...`
       if m = line.match(LITE_VERB_RE)
-        result << build_endpoint(m[2], m[1])
+        url = m[2]
+        result << build_endpoint(url, m[1]) unless disallowed_route_url?(url)
       end
 
       # Mojolicious::Lite: `any '/path'` or `any [GET => 'POST'] => '/path'`
       if m = line.match(LITE_ANY_RE)
-        methods_str = m[1]?
-        path = m[2]
-        methods_for_any(methods_str).each do |verb|
-          result << Endpoint.new(path, verb)
+        url = m[2]
+        unless disallowed_route_url?(url)
+          methods_str = m[1]?
+          methods_for_any(methods_str).each do |verb|
+            result << Endpoint.new(url, verb)
+          end
         end
       end
 
       # Full app: `$r->get('/path')` etc.
       if m = line.match(FULL_VERB_RE)
-        result << build_endpoint(m[2], m[1])
+        leaf = m[2]
+        unless disallowed_route_url?(leaf)
+          prefix = compute_chain_prefix(line, m.begin(0) || 0, var_prefix)
+          result << build_endpoint(join_url(prefix, leaf), m[1])
+        end
       end
 
       # Full app: `$r->any(['GET','POST'] => '/path')` or `$r->any('/path')`
       if m = line.match(FULL_ANY_RE)
-        methods_str = m[1]?
-        path = m[2]
-        methods_for_any(methods_str).each do |verb|
-          result << Endpoint.new(path, verb)
+        leaf = m[2]
+        unless disallowed_route_url?(leaf)
+          methods_str = m[1]?
+          prefix = compute_chain_prefix(line, m.begin(0) || 0, var_prefix)
+          full = join_url(prefix, leaf)
+          methods_for_any(methods_str).each do |verb|
+            result << Endpoint.new(full, verb)
+          end
         end
       end
 
       # Full app: `$r->route('/path')->via('GET')` or `via(qw(GET POST))`
       if m = line.match(FULL_ROUTE_RE)
-        path = m[1]
-        via_str = m[2]?
-        if via_str
-          methods_from_via(via_str).each do |verb|
-            result << Endpoint.new(path, verb)
+        leaf = m[1]
+        unless disallowed_route_url?(leaf)
+          via_str = m[2]?
+          prefix = compute_chain_prefix(line, m.begin(0) || 0, var_prefix)
+          full = join_url(prefix, leaf)
+          if via_str
+            methods_from_via(via_str).each do |verb|
+              result << Endpoint.new(full, verb)
+            end
+          else
+            # `route` without `via` defaults to any method; treat as GET
+            result << Endpoint.new(full, "GET")
           end
-        else
-          # `route` without `via` defaults to any method; treat as GET
-          result << Endpoint.new(path, "GET")
         end
       end
 
       result
+    end
+
+    # `$ua->get('http://example.com/foo')` is a `Mojo::UserAgent` HTTP
+    # client call, not a route — and `Mojolicious::Lite`'s `get '/foo'`
+    # never names a fully-qualified URL with a scheme. Skip any route
+    # whose declared path contains `://` to suppress these UA-call FPs.
+    private def disallowed_route_url?(url : String) : Bool
+      url.includes?("://")
+    end
+
+    # Record `my $V = ANYTHING->{under,any,route}('/PREFIX' ...)` so
+    # subsequent calls like `$V->get('/leaf')` resolve to
+    # `/PREFIX/leaf`. Real-world Mojolicious plugins (e.g.
+    # `Mojolicious::Plugin::Minion::Admin`) lean heavily on this
+    # pattern — without it the admin endpoints all look like
+    # top-level `/stats`, `/jobs`, etc. instead of `/minion/stats`.
+    private def update_var_prefix(line : String, var_prefix : Hash(String, String))
+      return unless m = line.match(ASSIGNMENT_HEAD_RE)
+      var = m[1]
+      rhs = m[2]
+
+      segments = [] of String
+      rhs.scan(PREFIX_SEGMENT_RE) do |seg_match|
+        segments << seg_match[1]
+      end
+      return if segments.empty?
+
+      receiver_prefix = ""
+      if rm = rhs.match(CHAIN_RECEIVER_RE)
+        if existing = var_prefix[rm[1]]?
+          receiver_prefix = existing
+        end
+      end
+
+      combined = segments.reduce(receiver_prefix) { |acc, seg| join_url(acc, seg) }
+      var_prefix[var] = combined unless combined.empty?
+    end
+
+    # Compute the URL prefix to prepend to a leaf route appearing at
+    # `leaf_start` on `line`. Considers two sources:
+    #   * Inline chains — `$r->under('/a')->get('/leaf')` → `/a` prefix
+    #     even when nothing is assigned to a variable.
+    #   * Variable receiver — `$V->get('/leaf')` where `$V` was
+    #     previously assigned a tracked prefix.
+    private def compute_chain_prefix(line : String, leaf_start : Int32, var_prefix : Hash(String, String)) : String
+      prelude = leaf_start > 0 ? line[0, leaf_start] : ""
+      prefix = ""
+
+      # Find the chain receiver: the `$var` token directly to the left of
+      # the leaf call. In `$prefix->get('/x')` the prelude is `$prefix`;
+      # in `$r->under('/a')->get('/x')` the prelude is `$r->under('/a')`.
+      # The variable immediately preceding the leaf `->` is the last
+      # `$var` token in the prelude — `$prefix` and `$r` respectively.
+      last_var : String? = nil
+      prelude.scan(PRELUDE_VAR_RE) { |m| last_var = m[1] }
+      if name = last_var
+        if vp = var_prefix[name]?
+          prefix = vp
+        end
+      end
+
+      prelude.scan(PREFIX_SEGMENT_RE) do |seg_match|
+        prefix = join_url(prefix, seg_match[1])
+      end
+
+      prefix
+    end
+
+    private def join_url(prefix : String, leaf : String) : String
+      return leaf if prefix.empty?
+      return prefix if leaf.empty?
+
+      base = prefix.size > 1 ? prefix.chomp('/') : prefix
+      tail = leaf.starts_with?('/') ? leaf : "/#{leaf}"
+      joined = "#{base}#{tail}"
+      joined.size > 1 && joined.ends_with?('/') ? joined.rchop : joined
     end
 
     private def build_endpoint(path : String, verb : String) : Endpoint
