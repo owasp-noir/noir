@@ -222,7 +222,7 @@ module Analyzer::Specification
           parse_block(pos + 1, body_end - 1, in_interface: true)
           @route_stack.pop
           @interface_method = prior_method
-          body_end
+          return body_end
         end
         @route_stack.pop
         @interface_method = prior_method
