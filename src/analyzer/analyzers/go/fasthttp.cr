@@ -171,6 +171,16 @@ module Analyzer::Go
         params << Param.new(param_name, "", "path")
       end
 
+      # Body access: fasthttp exposes the raw body via `ctx.PostBody()`
+      # or `ctx.Request.Body()`. A handler that reads either is consuming
+      # a request body — surface a single body indicator (the body is
+      # usually subsequently passed to json.Unmarshal which we can't
+      # always pin to a specific field set).
+      if line.includes?("ctx.PostBody(") || line.includes?(".Request.Body(") ||
+         line.matches?(/json\.Unmarshal\([^)]*\.PostBody\(\)/)
+        params << Param.new("body", "", "json")
+      end
+
       params
     end
   end

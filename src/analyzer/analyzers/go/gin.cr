@@ -87,10 +87,20 @@ module Analyzer::Go
                         end
                       end
 
-                      ["Query", "PostForm", "GetHeader"].each do |pattern|
+                      ["Query", "PostForm", "GetHeader", "Param"].each do |pattern|
                         if line.includes?("#{pattern}(")
                           add_param_to_endpoint(get_param(line), last_endpoint)
                         end
+                      end
+
+                      # Body bindings: `c.BindJSON`, `c.ShouldBindJSON`,
+                      # `c.BindXML`, `c.ShouldBindXML`, `c.BindYAML`, etc.
+                      # all populate the request body. Emit a single "body"
+                      # indicator so downstream consumers know a body is
+                      # expected; the bound struct's fields stay opaque
+                      # without a deeper static-type pass.
+                      if line.matches?(/\.(?:Should)?Bind(?:JSON|XML|YAML|TOML|Query|Header|Uri|With)?\s*\(/)
+                        add_param_to_endpoint(Param.new("body", "", "json"), last_endpoint)
                       end
 
                       if line.includes?("Cookie(") &&
@@ -129,6 +139,14 @@ module Analyzer::Go
       end
       if line.includes?("GetHeader(")
         param_type = "header"
+      end
+      # `c.Param("id")` — Gin path variable accessor. The optimizer
+      # also derives `:id` path params from the URL pattern, but
+      # surfacing the accessor lets us catch handlers whose route
+      # path was resolved cross-file and avoids depending on the
+      # optimizer pass for direct-analyzer consumers.
+      if line.includes?(".Param(")
+        param_type = "path"
       end
 
       first = line.strip.split("(")

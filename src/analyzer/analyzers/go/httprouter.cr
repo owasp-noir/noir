@@ -100,6 +100,16 @@ module Analyzer::Go
                           extract_param(line, regex, param_type, last_endpoint)
                         end
                       end
+
+                      # Stdlib body-decoding idioms used by raw httprouter
+                      # handlers. Captures both the JSON-decoder pattern
+                      # and `io.ReadAll(r.Body)` raw-byte access.
+                      if !last_endpoint.url.empty? &&
+                         (line.matches?(/json\.NewDecoder\([^)]*\.Body\)\s*\.\s*Decode/) ||
+                          line.matches?(/(?:io|ioutil)\.ReadAll\([^)]*\.Body\)/))
+                        body_param = Param.new("body", "", "json")
+                        last_endpoint.params << body_param unless last_endpoint.params.includes?(body_param)
+                      end
                     end
                   end
                 rescue File::NotFoundError

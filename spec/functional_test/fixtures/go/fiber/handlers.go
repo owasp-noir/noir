@@ -10,9 +10,17 @@ func healthCheck(c *fiber.Ctx) error {
 }
 
 func setupAdditionalRoutes(app *fiber.App) {
-	// PATCH method test
+	// PATCH method test — exercises `c.Params("id")` path accessor.
 	app.Patch("/items/:id", func(c *fiber.Ctx) error {
+		_ = c.Params("id")
 		return c.SendString("updated")
+	})
+
+	// JSON body binding via `c.BodyParser`.
+	app.Post("/inventory", func(c *fiber.Ctx) error {
+		var body map[string]interface{}
+		_ = c.BodyParser(&body)
+		return c.JSON(nil)
 	})
 
 	// Multiple query params

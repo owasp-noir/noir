@@ -233,6 +233,17 @@ module Analyzer::Go
         param = get_param(line, pattern)
         last_endpoint.params << param unless param.name.empty?
       end
+
+      # Body-binding helpers that consume `r.Body` directly. Chi
+      # apps commonly pair the stdlib `json.NewDecoder(r.Body).Decode`
+      # idiom with go-chi/render's `render.DecodeJSON` / `render.Bind`.
+      # All three indicate the handler reads a request body.
+      if line.matches?(/json\.NewDecoder\([^)]*\.Body\)\s*\.\s*Decode/) ||
+         line.includes?("render.DecodeJSON(") ||
+         line.includes?("render.Bind(")
+        body_param = Param.new("body", "", "json")
+        last_endpoint.params << body_param unless last_endpoint.params.includes?(body_param)
+      end
     end
 
     def get_param(line : String, pattern : String) : Param

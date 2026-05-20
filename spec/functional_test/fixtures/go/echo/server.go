@@ -18,7 +18,8 @@ func main() {
 		return c.String(http.StatusOK, "Hello, Pet!")
 	})
 	e.POST("/pet", func(c echo.Context) error {
-		_ = c.Param("name")
+		var pet map[string]interface{}
+		_ = c.Bind(&pet)
 		return c.String(http.StatusOK, "Hello, Pet!")
 	})
 	e.POST("/pet_form", func(c echo.Context) error {

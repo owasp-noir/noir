@@ -84,7 +84,11 @@ module Analyzer::Go
                         end
                       end
 
-                      if line.includes?("ReadJSON(")
+                      # Iris exposes a family of body readers — JSON is
+                      # most common, but the framework also accepts XML,
+                      # YAML, MsgPack, Protobuf, plain Body, and Form
+                      # readers. All consume the request body.
+                      if line.matches?(/\.Read(?:JSON|XML|YAML|MsgPack|Protobuf|Body|Form)\s*\(/)
                         add_param_to_endpoint(Param.new("body", "", "json"), last_endpoint)
                       end
                     end

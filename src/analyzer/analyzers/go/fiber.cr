@@ -71,8 +71,20 @@ module Analyzer::Go
                         end
                       end
 
-                      if line.includes?(".Query(") || line.includes?(".FormValue(")
+                      if line.includes?(".Query(") || line.includes?(".FormValue(") ||
+                         line.includes?(".Params(") || line.includes?(".ParamsInt(")
                         add_param_to_endpoint(get_param(line), last_endpoint)
+                      end
+
+                      # Fiber's body-binding helpers: `c.BodyParser(&v)`
+                      # for arbitrary content negotiation, plus the
+                      # explicit `c.QueryParser` / `c.ReqHeaderParser`
+                      # /`c.CookieParser` /`c.ParamsParser` variants that
+                      # parse into a struct. `BodyParser` is the one
+                      # that signals a request body is expected; the
+                      # others duplicate accessors we already surface.
+                      if line.includes?(".BodyParser(")
+                        add_param_to_endpoint(Param.new("body", "", "json"), last_endpoint)
                       end
 
                       if line.includes?("GetRespHeader(")
@@ -124,6 +136,12 @@ module Analyzer::Go
       end
       if line.includes?("FormValue")
         param_type = "form"
+      end
+      # `c.Params("id")` — Fiber path-variable accessor (also
+      # `.ParamsInt("id")`). Distinct from `c.Query`/`c.FormValue`;
+      # was previously falling through to the `json` default.
+      if line.includes?(".Params(") || line.includes?(".ParamsInt(")
+        param_type = "path"
       end
 
       first = line.strip.split("(")

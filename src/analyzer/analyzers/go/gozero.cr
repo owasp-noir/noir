@@ -94,8 +94,17 @@ module Analyzer::Go
 
                         ["Query", "PostForm", "GetHeader", "PathParam", "FormValue"].each do |pattern|
                           if line.includes?("#{pattern}(")
-                            add_param_to_endpoint(get_param(line), last_endpoint)
+                            add_param_to_endpoint(get_param(line, pattern), last_endpoint)
                           end
+                        end
+
+                        # gozero's canonical body-binding entrypoint is
+                        # `httpx.Parse(r, &req)` / `httpx.ParseJsonBody`;
+                        # both populate the request body. `json.NewDecoder`
+                        # is also common in raw handlers.
+                        if line.includes?("httpx.Parse(") || line.includes?("httpx.ParseJsonBody(") ||
+                           line.includes?("httpx.ParseForm(") || line.matches?(/json\.NewDecoder\(.+\.Body\)/)
+                          add_param_to_endpoint(Param.new("body", "", "json"), last_endpoint)
                         end
                       end
                     end
@@ -117,14 +126,25 @@ module Analyzer::Go
       result
     end
 
-    def get_param(line : String) : Param
-      # Extract parameter name from various go-zero parameter patterns
-      # e.g., c.Query("param"), c.PostForm("param"), etc.
-      if match = line.match(/\w+\(\"([^"]+)\"\)/)
-        param_name = match[1]
-        return Param.new(param_name, "", "query")
-      end
+    # Type the param by the actual accessor name. The previous
+    # version always returned `"query"` regardless of accessor, so
+    # `r.PathParam("id")` and `r.GetHeader("X-Token")` surfaced as
+    # query params — a mis-classification that broke downstream
+    # consumers (auth taggers, OpenAPI export) that key off
+    # `param_type`.
+    def get_param(line : String, pattern : String) : Param
+      param_type = case pattern
+                   when "Query"     then "query"
+                   when "PostForm"  then "form"
+                   when "FormValue" then "form"
+                   when "GetHeader" then "header"
+                   when "PathParam" then "path"
+                   else                  "query"
+                   end
 
+      if match = line.match(/#{Regex.escape(pattern)}\(\s*"([^"]+)"/)
+        return Param.new(match[1], "", param_type)
+      end
       Param.new("", "", "")
     end
   end

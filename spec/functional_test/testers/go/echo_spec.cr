@@ -9,7 +9,7 @@ expected_endpoints = [
     Param.new("X-API-Key", "", "header"),
   ]),
   Endpoint.new("/pet", "POST", [
-    Param.new("name", "", "json"),
+    Param.new("body", "", "json"),
   ]),
   Endpoint.new("/pet_form", "POST", [
     Param.new("name", "", "form"),

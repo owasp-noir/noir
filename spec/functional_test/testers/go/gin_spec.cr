@@ -54,6 +54,10 @@ expected_endpoints = [
     Param.new("session_id", "", "cookie"),
     Param.new("tab", "", "query"),
   ]),
+  # handlers.go: JSON body binding via c.ShouldBindJSON
+  Endpoint.new("/inventory", "POST", [
+    Param.new("body", "", "json"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/go/gin/", {

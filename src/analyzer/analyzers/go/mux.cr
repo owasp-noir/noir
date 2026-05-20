@@ -95,6 +95,18 @@ module Analyzer::Go
                       elsif line.includes?("Cookie(")
                         add_param_to_endpoint(get_param(line, "Cookie"), last_endpoint)
                       end
+
+                      # Stdlib-style body reads. Gorilla/mux apps almost
+                      # always use `json.NewDecoder(r.Body).Decode(&v)`
+                      # or `io.ReadAll(r.Body)` (the modern replacement
+                      # for `ioutil.ReadAll`) to parse request bodies —
+                      # neither was previously surfaced.
+                      if !last_endpoint.url.empty? &&
+                         (line.matches?(/json\.NewDecoder\([^)]*\.Body\)\s*\.\s*Decode/) ||
+                          line.matches?(/(?:io|ioutil)\.ReadAll\([^)]*\.Body\)/))
+                        body_param = Param.new("body", "", "json")
+                        last_endpoint.params << body_param unless last_endpoint.params.includes?(body_param)
+                      end
                     end
                   end
                 rescue

@@ -78,6 +78,17 @@ module Analyzer::Go
                         add_param_to_endpoint(get_param(line), last_endpoint)
                       end
 
+                      # `c.Bind(&v)` / `c.BindBody(...)` populate the
+                      # request body. Echo also exposes `BindJSON`-style
+                      # helpers via the echo-contrib package. Emit a
+                      # single "body" indicator without trying to decode
+                      # the bound struct's shape (would need static-type
+                      # resolution we don't have).
+                      if line.matches?(/\.Bind(?:Body|JSON|XML|YAML|Headers|Query|Path)?\s*\(/) &&
+                         !line.includes?("// ")
+                        add_param_to_endpoint(Param.new("body", "", "json"), last_endpoint)
+                      end
+
                       if line.includes?("Request().Header.Get(")
                         match = line.match(/Request\(\)\.Header\.Get\(\"(.*)\"\)/)
                         if match
@@ -120,6 +131,13 @@ module Analyzer::Go
       end
       if line.includes?("FormValue")
         param_type = "form"
+      end
+      # `c.Param("id")` is Echo's path-variable accessor — `:id` URL
+      # segments. Without this branch the helper defaulted to `json`,
+      # which surfaced phantom JSON params (FP) alongside the
+      # URL-derived path param for the same name.
+      if line.includes?(".Param(") && !line.includes?("QueryParam")
+        param_type = "path"
       end
 
       first = line.strip.split("(")
