@@ -10,9 +10,11 @@ expected_endpoints = [
   ]),
   Endpoint.new("/users/:userId", "PUT", [
     Param.new("userId", "", "path"),
+    Param.new("email", "", "json"),
   ]),
   Endpoint.new("/users/:userId", "PATCH", [
     Param.new("userId", "", "path"),
+    Param.new("email", "", "json"),
   ]),
   Endpoint.new("/regression", "GET"),
 ]

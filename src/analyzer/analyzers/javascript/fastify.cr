@@ -91,7 +91,7 @@ module Analyzer::Javascript
       # Match the call site `instance.route(` and walk the balanced
       # parens to capture the whole config object — line-by-line regex
       # would clip multi-line objects.
-      content.scan(/\b(?:fastify|app|server|instance)\s*\.\s*route\s*\(/) do |m|
+      content.scan(/\b(?:fastify|app|server)\s*\.\s*route\s*\(/) do |m|
         call_start = m.begin(0)
         next unless call_start
 
@@ -134,6 +134,16 @@ module Analyzer::Javascript
         # Compute line number from the call site offset.
         line_no = content[0...call_start].count('\n') + 1
 
+        # Pre-scan the config body for handler params (request.body.x,
+        # request.query.x, ...). The shorthand `.get(url, handler)`
+        # path uses the same `line_to_param` helper, so reusing it
+        # here keeps param coverage at parity.
+        body_params = [] of Param
+        config.each_line do |handler_line|
+          p = line_to_param(handler_line)
+          body_params << p if p.name != "" && !body_params.any? { |bp| bp.name == p.name && bp.param_type == p.param_type }
+        end
+
         methods.each do |method|
           method_up = method.upcase
           next if result.any? { |e| e.url == url && e.method == method_up }
@@ -145,6 +155,10 @@ module Analyzer::Javascript
             next unless pm.size > 0
             param = Param.new(pm[1], "", "path")
             endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == pm[1] && p.param_type == "path" }
+          end
+
+          body_params.each do |bp|
+            endpoint.push_param(bp) unless endpoint.params.any? { |p| p.name == bp.name && p.param_type == bp.param_type }
           end
 
           result << endpoint

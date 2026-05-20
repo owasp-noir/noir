@@ -19,10 +19,12 @@ fastify.route({
 })
 
 // Plural `methods:` is also accepted by some Fastify versions.
+// Also exercises handler-body param extraction (request.body.*).
 fastify.route({
   methods: ['PUT', 'PATCH'],
   url: '/users/:userId',
   handler: async (request, reply) => {
+    const email = request.body.email
     return { ok: true }
   }
 })
