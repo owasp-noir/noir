@@ -65,7 +65,10 @@ expected_endpoints = [
   # resources :scans, controller: "billing/scans", only: [:index]
   Endpoint.new("/scans", "GET"),
 
-  # nested resources :posts do resources :comments end
+  # Rails concerns: `concern :commentable do resources :comments end`
+  # should not emit top-level `/comments` routes, and applying the concern
+  # with `resources :posts, concerns: :commentable` should emit nested
+  # comments and preserve nested resources inside the concern.
   Endpoint.new("/posts", "GET"),
   Endpoint.new("/posts/1", "GET"),
   Endpoint.new("/posts", "POST"),
@@ -73,6 +76,8 @@ expected_endpoints = [
   Endpoint.new("/posts/1", "DELETE"),
   Endpoint.new("/posts/1/comments", "GET"),
   Endpoint.new("/posts/1/comments/1", "GET"),
+  Endpoint.new("/posts/1/comments/1/likes", "GET"),
+  Endpoint.new("/posts/1/comments/1/likes/1", "GET"),
 
   # hash-rocket and to: forms. #1359: `=> "ctrl#action"` / `to: "ctrl#action"`
   # resolves the controller and attaches the action's params.
@@ -107,7 +112,7 @@ total_endpoints = 1 +  # root
                   4 +  # internal/statements except:[destroy]
                   1 +  # /scans only:[index] via controller override
                   5 +  # posts
-                  2 +  # posts/1/comments
+                  4 +  # posts/1/comments + nested likes from concern
                   2 +  # /up + /ping
                   20 + # devise_for :users
                   1    # mount sidekiq

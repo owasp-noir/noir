@@ -5,7 +5,12 @@
 # `/api/v1/...`.
 from fastapi import APIRouter
 
-router = APIRouter(prefix="/items", tags=["items"])
+ITEMS_PREFIX = "/items"
+
+router = APIRouter(
+    prefix=ITEMS_PREFIX,
+    tags=["items"],
+)
 
 
 @router.get("/")
