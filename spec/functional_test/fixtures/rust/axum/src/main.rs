@@ -5,7 +5,13 @@ async fn main() {
     let app = Router::new()
         .route("/", get(handler))
         .route("/foo", get(handler))
-        .route("/bar", post(handler));
+        .route("/bar", post(handler))
+        .nest(
+            "/api",
+            Router::new()
+                .route("/users", get(handler))
+                .route("/admin", post(handler)),
+        );
         
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
         .await

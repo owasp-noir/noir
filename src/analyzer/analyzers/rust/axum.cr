@@ -38,15 +38,12 @@ module Analyzer::Rust
       Noir::TreeSitter.parse_rust(source) do |root|
         function_index = include_callee ? build_function_index(root, source) : Hash(String, LibTreeSitter::TSNode).new
 
-        walk(root) do |node|
-          next unless Noir::TreeSitter.node_type(node) == "call_expression"
-          next unless route_call?(node, source)
-          next if RustEngine.inside_test_region?(node, test_regions)
-
+        walk_router_builders(root, source, "", test_regions) do |node, prefix|
           route = extract_route(node, source)
           next unless route
 
           path_str, methods, handler_name = route
+          path_str = join_paths(prefix, path_str) unless prefix.empty?
           methods.each do |verb|
             details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
             endpoint = Endpoint.new(path_str, verb, details)
@@ -75,6 +72,80 @@ module Analyzer::Rust
       Noir::TreeSitter.node_text(field, source) == "route"
     end
 
+    # Walks Axum router builder chains with an active path prefix.
+    # This keeps ordinary chained `.route(...)` behaviour while also
+    # applying `.nest("/api", Router::new().route(...))` prefixes to
+    # inline nested routers instead of emitting those inner routes at
+    # the root.
+    private def walk_router_builders(node : LibTreeSitter::TSNode,
+                                     source : String,
+                                     prefix : String,
+                                     test_regions : Array(Tuple(Int32, Int32)),
+                                     &block : LibTreeSitter::TSNode, String ->)
+      if Noir::TreeSitter.node_type(node) == "call_expression"
+        return if RustEngine.inside_test_region?(node, test_regions)
+
+        if route_call?(node, source)
+          block.call(node, prefix)
+          walk_receiver_chain(node, source, prefix, test_regions, &block)
+          return
+        end
+
+        if nest = extract_nest_call(node, source)
+          nest_prefix, nested_router = nest
+          walk_receiver_chain(node, source, prefix, test_regions, &block)
+          walk_router_builders(nested_router, source, join_paths(prefix, nest_prefix), test_regions, &block)
+          return
+        end
+
+        if merge_arg = extract_merge_call(node, source)
+          walk_receiver_chain(node, source, prefix, test_regions, &block)
+          walk_router_builders(merge_arg, source, prefix, test_regions, &block)
+          return
+        end
+      end
+
+      Noir::TreeSitter.each_named_child(node) do |child|
+        walk_router_builders(child, source, prefix, test_regions, &block)
+      end
+    end
+
+    private def walk_receiver_chain(call : LibTreeSitter::TSNode,
+                                    source : String,
+                                    prefix : String,
+                                    test_regions : Array(Tuple(Int32, Int32)),
+                                    &block : LibTreeSitter::TSNode, String ->)
+      function = Noir::TreeSitter.field(call, "function")
+      return unless function && Noir::TreeSitter.node_type(function) == "field_expression"
+      receiver = Noir::TreeSitter.field(function, "value")
+      return unless receiver
+      walk_router_builders(receiver, source, prefix, test_regions, &block)
+    end
+
+    private def extract_nest_call(call : LibTreeSitter::TSNode,
+                                  source : String) : Tuple(String, LibTreeSitter::TSNode)?
+      return unless field_call_name(call, source) == "nest"
+      args = named_arguments(call)
+      return unless args.size >= 2
+      prefix = string_literal_text(args[0], source)
+      return unless prefix
+      {prefix, args[1]}
+    end
+
+    private def extract_merge_call(call : LibTreeSitter::TSNode,
+                                   source : String) : LibTreeSitter::TSNode?
+      return unless field_call_name(call, source) == "merge"
+      args = named_arguments(call)
+      args.first?
+    end
+
+    private def field_call_name(call : LibTreeSitter::TSNode, source : String) : String?
+      fn_node = Noir::TreeSitter.field(call, "function")
+      return unless fn_node && Noir::TreeSitter.node_type(fn_node) == "field_expression"
+      field = Noir::TreeSitter.field(fn_node, "field")
+      field ? Noir::TreeSitter.node_text(field, source) : nil
+    end
+
     # Returns `{path, http_method, handler_name?}` for a valid
     # `.route(path, verb(handler))` call, or `nil` when the shape
     # doesn't match. Returns a list of methods because Axum allows
@@ -84,8 +155,7 @@ module Analyzer::Rust
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
 
-      named = [] of LibTreeSitter::TSNode
-      Noir::TreeSitter.each_named_child(args) { |c| named << c }
+      named = named_children(args)
       return if named.size < 2
 
       path = string_literal_text(named[0], source)
@@ -147,6 +217,22 @@ module Analyzer::Rust
         return Noir::TreeSitter.node_text(child, source) if Noir::TreeSitter.node_type(child) == "identifier"
       end
       nil
+    end
+
+    private def named_arguments(call : LibTreeSitter::TSNode) : Array(LibTreeSitter::TSNode)
+      args = Noir::TreeSitter.field(call, "arguments")
+      return [] of LibTreeSitter::TSNode unless args
+      named_children(args)
+    end
+
+    private def named_children(node : LibTreeSitter::TSNode) : Array(LibTreeSitter::TSNode)
+      named = [] of LibTreeSitter::TSNode
+      Noir::TreeSitter.each_named_child(node) { |c| named << c }
+      named
+    end
+
+    private def join_paths(prefix : String, path : String) : String
+      "#{prefix.rstrip('/')}/#{path.lstrip('/')}"
     end
 
     private def string_literal_text(node : LibTreeSitter::TSNode, source : String) : String?

@@ -17,9 +17,12 @@ module Analyzer::Rust
       endpoints = [] of Endpoint
       source = read_file_content(path)
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      test_regions = RustEngine.collect_cfg_test_regions(source)
 
       Noir::TreeSitter.parse_rust(source) do |root|
         each_routing_pair(root) do |attr, function|
+          next if RustEngine.inside_test_region?(attr, test_regions)
+
           route = extract_route(attr, source)
           next unless route
           route_path, method, attr_row = route
@@ -40,6 +43,8 @@ module Analyzer::Rust
         # `#[get(...)]` macro form, so manual builder-style routes
         # were silently dropped.
         walk_calls(root) do |call|
+          next if RustEngine.inside_test_region?(call, test_regions)
+
           builder_route = extract_builder_route(call, source)
           next unless builder_route
           route_path, methods = builder_route

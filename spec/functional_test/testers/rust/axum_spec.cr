@@ -4,6 +4,8 @@ expected_endpoints = [
   Endpoint.new("/", "GET"),
   Endpoint.new("/foo", "GET"),
   Endpoint.new("/bar", "POST"),
+  Endpoint.new("/api/users", "GET"),
+  Endpoint.new("/api/admin", "POST"),
 ]
 
 FunctionalTester.new("fixtures/rust/axum/", {

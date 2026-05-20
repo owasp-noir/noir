@@ -87,3 +87,22 @@ async fn update_article(
 async fn manual_hello() -> impl Responder {
     HttpResponse::Ok().body("Hey there!")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[get("/should-not-appear-attr")]
+    async fn test_attr_route() -> impl Responder {
+        HttpResponse::Ok().finish()
+    }
+
+    async fn test_manual() -> impl Responder {
+        HttpResponse::Ok().finish()
+    }
+
+    fn test_app() {
+        let _app = actix_web::App::new()
+            .route("/should-not-appear-builder", web::get().to(test_manual));
+    }
+}
