@@ -48,6 +48,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"go_mux", Go::Mux},
     {"go_pocketbase", Go::Pocketbase},
     {"groovy_grails", Groovy::Grails},
+    {"haskell_scotty", Haskell::Scotty},
     {"haskell_servant", Haskell::Servant},
     {"haskell_yesod", Haskell::Yesod},
     {"asyncapi", Specification::AsyncApi},
