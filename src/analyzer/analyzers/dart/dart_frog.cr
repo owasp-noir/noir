@@ -123,6 +123,13 @@ module Analyzer::Dart
     end
 
     private def convert_segment(seg : String) : String
+      # Catch-all segment, e.g. `[...slug]` matches one or more path
+      # segments. Surface as `{slug}` so the dynamic part is at least
+      # captured as a path param even though the framework binds it
+      # to a list.
+      if m = seg.match(/^\[\.\.\.(\w+)\]$/)
+        return "{#{m[1]}}"
+      end
       if m = seg.match(/^\[(\w+)\]$/)
         return "{#{m[1]}}"
       end
