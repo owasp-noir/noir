@@ -673,6 +673,21 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :bruno => {
+      :format    => ["BRU"],
+      :similar   => ["bruno", "bru"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => false,
+        },
+      },
+    },
     :har => {
       :format    => ["JSON"],
       :similar   => ["har"],
