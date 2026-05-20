@@ -85,6 +85,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"kotlin_http4k", Kotlin::Http4k},
     {"kotlin_spring", Kotlin::Spring},
     {"kotlin_ktor", Kotlin::Ktor},
+    {"graphql_sdl", Specification::GraphqlSdl},
     {"oas2", Specification::Oas2},
     {"oas3", Specification::Oas3},
     {"insomnia", Specification::Insomnia},

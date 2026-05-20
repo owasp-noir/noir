@@ -1,0 +1,16 @@
+"""
+Schema with custom root operation type names.
+"""
+schema {
+  query: MyQueryRoot
+  mutation: MyMutationRoot
+}
+
+type MyQueryRoot {
+  ping: String
+  echo(message: String!): String
+}
+
+type MyMutationRoot {
+  publish(channel: String!, body: String!): Boolean
+}
