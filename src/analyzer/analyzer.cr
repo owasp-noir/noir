@@ -92,6 +92,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"php_pure", Php::Php},
     {"php_cakephp", Php::CakePHP},
     {"php_codeigniter", Php::CodeIgniter},
+    {"php_hyperf", Php::Hyperf},
     {"php_laravel", Php::Laravel},
     {"php_slim", Php::Slim},
     {"php_symfony", Php::Symfony},
@@ -149,6 +150,7 @@ def filter_redundant_generic_techs(techs : Array(String)) : Array(String)
     "php_symfony",
     "php_cakephp",
     "php_codeigniter",
+    "php_hyperf",
     "php_slim",
     "php_yii",
   }
