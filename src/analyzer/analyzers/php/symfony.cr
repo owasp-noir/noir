@@ -2,6 +2,13 @@ require "../../engines/php_engine"
 
 module Analyzer::Php
   class Symfony < PhpEngine
+    private struct ClassRoutePrefix
+      getter path, body_start, body_end
+
+      def initialize(@path : String, @body_start : Int32, @body_end : Int32)
+      end
+    end
+
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
@@ -26,33 +33,38 @@ module Analyzer::Php
 
       File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
         content = file.gets_to_end
+        class_prefixes = extract_class_route_prefixes(content)
 
         # Look for route annotations (@Route) - more flexible pattern
         # Track offset to find each match correctly
         offset = 0
-        content.scan(/@Route\s*\(\s*["']([^"']+)["'][^)]*\)/m) do |match|
-          route_path = match[1]
+        content.scan(/@Route\s*\((.*?)\)/m) do |match|
+          route_path = extract_symfony_route_path(match[1])
+          next unless route_path
+
           full_match = match[0]
 
           # Find this specific match starting from current offset
           route_start = content.index(full_match, offset)
           if route_start
             offset = route_start + full_match.size
+            next if route_applies_to_class?(content, offset)
 
             # Extract methods from the annotation itself
-            methods = extract_methods_from_annotation_context(full_match)
+            methods = extract_methods_from_symfony_context(full_match)
             methods = ["GET"] if methods.empty?
 
             method_body = extract_php_method_body_after(content, route_start)
 
-            params = extract_brace_path_params(route_path)
+            full_path = build_full_path(class_prefix_for_position(class_prefixes, route_start), route_path)
+            params = extract_brace_path_params(full_path)
             # Extract additional parameters from method body
             params.concat(extract_method_params(method_body[0])) if method_body
 
             details = Details.new(PathInfo.new(path))
 
             methods.each do |method|
-              endpoint = Endpoint.new(route_path, method.upcase, params, details)
+              endpoint = Endpoint.new(full_path, method.upcase, params, details)
               attach_method_callees(endpoint, method_body, path) if include_callee
               endpoints << endpoint
             end
@@ -62,29 +74,33 @@ module Analyzer::Php
         # Look for route attributes (#[Route]) - PHP 8 style
         # Track offset to find each match correctly
         offset = 0
-        content.scan(/#\[Route\s*\(\s*['"]([^'"]+)['"][^)]*\)/m) do |match|
-          route_path = match[1]
+        content.scan(/#\[Route\s*\((.*?)\)\]/m) do |match|
+          route_path = extract_symfony_route_path(match[1])
+          next unless route_path
+
           full_match = match[0]
 
           # Find this specific match starting from current offset
           route_start = content.index(full_match, offset)
           if route_start
             offset = route_start + full_match.size
+            next if route_applies_to_class?(content, offset)
 
             # Extract methods from the attribute itself
-            methods = extract_methods_from_attribute_context(full_match)
+            methods = extract_methods_from_symfony_context(full_match)
             methods = ["GET"] if methods.empty?
 
             method_body = extract_php_method_body_after(content, route_start)
 
-            params = extract_brace_path_params(route_path)
+            full_path = build_full_path(class_prefix_for_position(class_prefixes, route_start), route_path)
+            params = extract_brace_path_params(full_path)
             # Extract additional parameters from method body
             params.concat(extract_method_params(method_body[0])) if method_body
 
             details = Details.new(PathInfo.new(path))
 
             methods.each do |method|
-              endpoint = Endpoint.new(route_path, method.upcase, params, details)
+              endpoint = Endpoint.new(full_path, method.upcase, params, details)
               attach_method_callees(endpoint, method_body, path) if include_callee
               endpoints << endpoint
             end
@@ -95,34 +111,92 @@ module Analyzer::Php
       endpoints
     end
 
-    private def extract_methods_from_annotation_context(context : String) : Array(String)
+    private def extract_class_route_prefixes(content : String) : Array(ClassRoutePrefix)
+      prefixes = [] of ClassRoutePrefix
+      class_regex = /\bclass\s+\w+[^{]*\{/m
+      offset = 0
+
+      while class_match = content.match(class_regex, offset)
+        class_start = class_match.begin(0)
+        brace_pos = class_match.end(0) - 1
+        class_end = find_matching_php_close_brace(content, brace_pos)
+        if class_end
+          prefix = route_prefix_before_class(content, class_start)
+          prefixes << ClassRoutePrefix.new(prefix, brace_pos + 1, class_end) if prefix
+          offset = class_end + 1
+        else
+          offset = class_match.end(0)
+        end
+      end
+
+      prefixes
+    end
+
+    private def route_prefix_before_class(content : String, class_start : Int32) : String?
+      lookbehind_start = Math.max(0, class_start - 600)
+      prelude = content[lookbehind_start...class_start]
+
+      if attribute_match = prelude.match(/#\[Route\s*\((.*?)\)\]\s*$/m)
+        return extract_symfony_route_path(attribute_match[1])
+      end
+
+      if annotation_match = prelude.match(/@Route\s*\((.*?)\).*?\*\/\s*$/m)
+        return extract_symfony_route_path(annotation_match[1])
+      end
+
+      nil
+    end
+
+    private def route_applies_to_class?(content : String, route_end : Int32) : Bool
+      next_target = content.match(/\b(class|function)\b/m, route_end)
+      return false unless next_target
+
+      next_target[1] == "class"
+    end
+
+    private def class_prefix_for_position(prefixes : Array(ClassRoutePrefix), pos : Int32) : String
+      prefix = prefixes.find { |class_prefix| pos >= class_prefix.body_start && pos < class_prefix.body_end }
+      prefix ? prefix.path : ""
+    end
+
+    private def extract_symfony_route_path(context : String) : String?
+      if path_match = context.match(/(?:^|[,(]\s*)path\s*[:=]\s*['"]([^'"]+)['"]/i)
+        return path_match[1]
+      end
+
+      if path_match = context.match(/^\s*['"]([^'"]+)['"]/)
+        return path_match[1]
+      end
+
+      nil
+    end
+
+    private def extract_methods_from_symfony_context(context : String) : Array(String)
       methods = [] of String
 
-      # Look for methods={"GET","POST"} or methods={"GET"}
-      if match = context.match(/methods\s*=\s*\{([^}]+)\}/)
+      if match = context.match(/methods\s*[:=]\s*\[([^\]]+)\]/)
         methods_str = match[1]
-        method_matches = methods_str.scan(/["']([^"']+)["']/)
-        method_matches.each do |method_match|
-          methods << method_match[1]
+        methods_str.scan(/['"]([^'"]+)['"]/).each do |method_match|
+          methods << method_match[1].upcase
         end
+      elsif match = context.match(/methods\s*=\s*\{([^}]+)\}/)
+        methods_str = match[1]
+        methods_str.scan(/["']([^"']+)["']/).each do |method_match|
+          methods << method_match[1].upcase
+        end
+      elsif match = context.match(/methods\s*[:=]\s*['"]([^'"]+)['"]/)
+        methods << match[1].upcase
       end
 
       methods
     end
 
+    private def extract_methods_from_annotation_context(context : String) : Array(String)
+      extract_methods_from_symfony_context(context)
+    end
+
     private def extract_methods_from_attribute_context(context : String) : Array(String)
-      methods = [] of String
-
-      # Look for methods: ['GET', 'POST'] or methods: ['GET']
-      if match = context.match(/methods\s*:\s*\[([^\]]+)\]/)
-        methods_str = match[1]
-        method_matches = methods_str.scan(/['"]([^'"]+)['"]/)
-        method_matches.each do |method_match|
-          methods << method_match[1]
-        end
-      end
-
-      methods
+      extract_methods_from_symfony_context(context)
     end
 
     private def analyze_yaml_routes(path : String) : Array(Endpoint)

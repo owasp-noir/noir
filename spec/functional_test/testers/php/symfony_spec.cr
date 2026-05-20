@@ -42,6 +42,11 @@ expected_endpoints = [
     Param.new("X-CSRF-Token", "", "header"),
     Param.new("preferences", "", "cookie"),
   ]),
+  # From AdminController class-level prefix and named path attributes
+  Endpoint.new("/api/admin/stats", "GET"),
+  Endpoint.new("/api/admin/reports/{id}", "POST", [
+    Param.new("id", "", "path"),
+  ]),
   # From routes.yaml
   Endpoint.new("/api/health", "GET"),
   Endpoint.new("/api/docs", "GET"),
@@ -64,5 +69,5 @@ expected_endpoints = [
 
 FunctionalTester.new("fixtures/php/symfony/", {
   :techs     => 2,  # Detection still sees php_symfony and php_pure
-  :endpoints => 18, # Analysis suppresses redundant php_pure file endpoints
+  :endpoints => 20, # Analysis suppresses redundant php_pure file endpoints
 }, expected_endpoints).perform_tests

@@ -45,3 +45,17 @@ Route::match(['get', 'post'], '/contact', function () {
 Route::any('/webhook', function () {
     return response()->json(['status' => 'ok']);
 });
+
+Route::middleware('auth:sanctum')->get('/me', [UserController::class, 'me']);
+
+Route::middleware(['auth'])->prefix('api/v1')->group(function () {
+    Route::get('/profile', [UserController::class, 'profile']);
+    Route::post('/profile', [UserController::class, 'updateProfile']);
+    Route::apiResource('tokens', ProductController::class);
+
+    Route::prefix('reports')->group(function () {
+        Route::get('/daily', [ProductController::class, 'dailyReport']);
+    });
+});
+
+Route::prefix('tenant/{tenant}')->middleware('auth')->get('/dashboard', [UserController::class, 'tenantDashboard']);
