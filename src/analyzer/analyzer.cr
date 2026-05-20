@@ -52,6 +52,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"haskell_servant", Haskell::Servant},
     {"haskell_yesod", Haskell::Yesod},
     {"asyncapi", Specification::AsyncApi},
+    {"bruno", Specification::Bruno},
     {"grpc", Specification::Grpc},
     {"har", Specification::Har},
     {"java_armeria", Java::Armeria},

@@ -1,0 +1,19 @@
+meta {
+  name: Update User
+  type: http
+  seq: 3
+}
+
+put {
+  url: https://api.example.com/users/:userId
+  body: form-urlencoded
+}
+
+params:path {
+  userId: 123
+}
+
+body:form-urlencoded {
+  name: Jane Doe
+  email: jane@example.com
+}

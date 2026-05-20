@@ -1,0 +1,20 @@
+meta {
+  name: List Users
+  type: http
+  seq: 1
+}
+
+get {
+  url: https://api.example.com/users?page=1&limit=10
+}
+
+query {
+  page: 1
+  limit: 10
+  ~debug: true
+}
+
+headers {
+  Authorization: Bearer token123
+  Content-Type: application/json
+}
