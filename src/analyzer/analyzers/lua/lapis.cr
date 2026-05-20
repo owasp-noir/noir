@@ -21,6 +21,7 @@ module Analyzer::Lua
   class Lapis < Analyzer
     HTTP_METHODS     = %w[GET POST PUT DELETE PATCH HEAD OPTIONS]
     FALLBACK_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"]
+    APP_VAR_RE       = /(?:^|[^A-Za-z0-9_])(?:local\s+)?([A-Za-z_]\w*)\s*=\s*lapis\.Application(?:\b|:extend|\s*\()/
 
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
@@ -44,12 +45,14 @@ module Analyzer::Lua
 
     # Busted convention: `<name>_spec.lua` / `<name>_spec.moon`,
     # plus `spec/` / `spec_<variant>/` (e.g. `spec_openresty/`,
-    # `spec_cqueues/`) directories at the project root. The
-    # filename suffix is unambiguous anywhere in the tree; the
-    # directory match is anchored against the configured
-    # `base_paths` so our own fixture tree under
+    # `spec_cqueues/`) directories anywhere in the path *below*
+    # the configured `base_paths` root. The filename suffix is
+    # unambiguous anywhere in the tree; the directory match is
+    # anchored against `base_paths` (so our own fixture tree under
     # `spec/functional_test/fixtures/lua/...` doesn't accidentally
-    # match.
+    # match) but otherwise walks every relative segment — vendored
+    # Lapis sources frequently live at `<project>/lapis/spec/...`
+    # and would slip past a top-segment-only check.
     private def lapis_test_path?(path : String) : Bool
       base = File.basename(path)
       return true if base.ends_with?("_spec.lua") || base.ends_with?("_spec.moon")
@@ -57,8 +60,7 @@ module Analyzer::Lua
         normalized = root.ends_with?("/") ? root : "#{root}/"
         tail = path.lchop?(normalized)
         next false unless tail
-        first_segment = tail.split("/", 2).first
-        first_segment == "spec" || first_segment.starts_with?("spec_")
+        tail.split('/').any? { |seg| seg == "spec" || seg.starts_with?("spec_") }
       end
     end
 
@@ -69,28 +71,72 @@ module Analyzer::Lua
                        else
                          {} of String => Noir::LuaCalleeExtractor::FunctionBody
                        end
+      app_vars = detect_app_vars(cleaned)
 
-      emit_method_calls(path, content, cleaned, include_callee, handler_bodies)
-      emit_match_calls(path, content, cleaned, include_callee, handler_bodies)
+      emit_method_calls(path, content, cleaned, include_callee, handler_bodies, app_vars)
+      emit_match_calls(path, content, cleaned, include_callee, handler_bodies, app_vars)
       emit_table_routes(path, content, cleaned, include_callee, handler_bodies)
       emit_moonscript_routes(path, content, cleaned, include_callee)
     end
 
+    # Lapis projects typically bind their application to a `local app`,
+    # but production code uses any variable name — `users_app`,
+    # `api_app`, `dashboard` — and Lapis's own README opens with
+    # `local app = lapis.Application()`. We surface every such
+    # binding and accept `<var>:<verb>(...)` route calls against
+    # them, falling back to the bare `app` identifier when no
+    # binding is detected so legacy files keep working.
+    private def detect_app_vars(cleaned : String) : Array(String)
+      vars = Set(String).new
+      vars << "app"
+      cleaned.scan(APP_VAR_RE) do |match|
+        name = match[1]
+        next if name == "local"
+        vars << name
+      end
+      vars.to_a
+    end
+
+    private def app_var_alternation(app_vars : Array(String)) : String
+      app_vars.map { |v| Regex.escape(v) }.join("|")
+    end
+
     # `app:get "/path"`, `app:post("/path", handler)`, etc.
+    # Also handles the named form `app:get("name", "/path", handler)`
+    # documented in Lapis's README — when the first string isn't a
+    # path, look for the second.
     private def emit_method_calls(path : String,
                                   content : String,
                                   cleaned : String,
                                   include_callee : Bool,
-                                  handler_bodies : Hash(String, Noir::LuaCalleeExtractor::FunctionBody))
-      pattern = /\bapp\s*[:.]\s*(get|post|put|delete|patch|head|options)\s*\(?\s*(['"])([^'"]+)\2/
+                                  handler_bodies : Hash(String, Noir::LuaCalleeExtractor::FunctionBody),
+                                  app_vars : Array(String))
+      alt = app_var_alternation(app_vars)
+      pattern = /\b(?:#{alt})\s*[:.]\s*(get|post|put|delete|patch|head|options)\s*\(?\s*(['"])([^'"]+)\2(?:\s*,\s*(['"])([^'"]+)\4)?/
       cleaned.scan(pattern) do |match|
         verb = match[1].upcase
         next unless HTTP_METHODS.includes?(verb)
-        url = match[3]
-        next unless url.starts_with?("/")
+        first = match[3]
+        second = match[5]?
+
+        url : String? = nil
+        after_url = match.begin(0) || 0
+        if first.starts_with?("/")
+          # Either `app:get("/path", handler)` or the
+          # `app:get("/path", "named_handler_name")` string-handler form.
+          # Stop the callee search just past the first string so the
+          # named handler lookup in `route_call_callees` still works.
+          url = first
+          after_url = (match.end(3) || 0) + 1
+        elsif second && second.starts_with?("/")
+          # Lapis's named-route form: `app:get("name", "/path", handler)`.
+          # The first arg is the route name, not the URL.
+          url = second
+          after_url = (match.end(5) || 0) + 1
+        end
+        next unless url
 
         route_offset = match.begin(0) || 0
-        after_url = match.end(0) || route_offset
         callees = include_callee ? route_call_callees(path, content, route_offset, after_url, handler_bodies) : [] of Noir::LuaCalleeExtractor::Entry
         emit_endpoint(path, content, route_offset, url, [verb], callees)
       end
@@ -102,8 +148,10 @@ module Analyzer::Lua
                                  content : String,
                                  cleaned : String,
                                  include_callee : Bool,
-                                 handler_bodies : Hash(String, Noir::LuaCalleeExtractor::FunctionBody))
-      pattern = /\bapp\s*[:.]\s*match\s*\(?\s*(['"])([^'"]+)\1(?:\s*,\s*(['"])([^'"]+)\3)?/
+                                 handler_bodies : Hash(String, Noir::LuaCalleeExtractor::FunctionBody),
+                                 app_vars : Array(String))
+      alt = app_var_alternation(app_vars)
+      pattern = /\b(?:#{alt})\s*[:.]\s*match\s*\(?\s*(['"])([^'"]+)\1(?:\s*,\s*(['"])([^'"]+)\3)?/
       cleaned.scan(pattern) do |match|
         first = match[2]
         second = match[4]?
@@ -341,6 +389,31 @@ module Analyzer::Lua
       char.ascii_alphanumeric? || char == '_'
     end
 
+    # Returns the equals-sign count for a Lua long-bracket opener at
+    # `index` — `[[` returns 0, `[=[` returns 1, `[==[` returns 2,
+    # etc. Returns `nil` if `index` isn't an opener.
+    private def lua_long_bracket_open?(chars : Array(Char), index : Int32) : Int32?
+      return nil if chars[index]? != '['
+      level = 0
+      cursor = index + 1
+      while cursor < chars.size && chars[cursor] == '='
+        level += 1
+        cursor += 1
+      end
+      return nil if cursor >= chars.size || chars[cursor] != '['
+      level
+    end
+
+    private def lua_long_bracket_close?(chars : Array(Char), index : Int32, level : Int32) : Bool
+      return false if chars[index]? != ']'
+      cursor = index + 1
+      level.times do
+        return false if cursor >= chars.size || chars[cursor] != '='
+        cursor += 1
+      end
+      cursor < chars.size && chars[cursor] == ']'
+    end
+
     private def extract_path_params(url : String) : Array(Param)
       params = [] of Param
       url.scan(/[:*]([A-Za-z_]\w*)/) do |match|
@@ -378,6 +451,29 @@ module Analyzer::Lua
           string_quote = c
           result << c
           i += 1
+          next
+        end
+
+        # Lua long-bracket string: `[[ ... ]]` or `[=[ ... ]=]`. Code
+        # generators such as `lapis.cmd.templates.application` ship
+        # MoonScript / Lua templates inside these here-strings, and
+        # patterns like `"/": =>` or `app:get("/", ...)` *inside the
+        # template* should not be surfaced as live endpoints in the
+        # generator script.
+        if c == '[' && (bracket_level = lua_long_bracket_open?(chars, i))
+          opener_size = bracket_level + 2
+          opener_size.times { result << ' ' }
+          i += opener_size
+          while i < chars.size
+            if chars[i] == ']' && lua_long_bracket_close?(chars, i, bracket_level)
+              closer_size = bracket_level + 2
+              closer_size.times { result << ' ' }
+              i += closer_size
+              break
+            end
+            result << (chars[i] == '\n' ? '\n' : ' ')
+            i += 1
+          end
           next
         end
 

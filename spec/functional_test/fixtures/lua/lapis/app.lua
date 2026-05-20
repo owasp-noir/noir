@@ -18,4 +18,20 @@ app:match("user_show", "/users/:id", function(self) return self.params.id end)
 -- Splat parameter.
 app:get("/files/*splat", function(self) return self.params.splat end)
 
+-- Lapis README opens with the named-route verb form
+-- `app:get(name, "/path", handler)`. The first arg is the route name,
+-- not the URL — the analyzer must reach the second string.
+app:get("index", "/named", function(self) return "named" end)
+app:post("create_user", "/named/users", function(self) return "create" end)
+
+-- Code generator templates ship MoonScript snippets inside
+-- Lua long-bracket strings. Patterns *inside* the here-string are
+-- template source, never live routes.
+local template = [[
+class extends lapis.Application
+  "/from-template": =>
+    "should not appear"
+  app:get("/also-template", function() end)
+]]
+
 return app

@@ -19,6 +19,15 @@ fallback_methods.each do |m|
   expected_endpoints << Endpoint.new("/users/:id", m, [Param.new("id", "", "path")])
 end
 
+# Named-route verb form — `app:get(name, "/path", handler)`.
+expected_endpoints << Endpoint.new("/named", "GET")
+expected_endpoints << Endpoint.new("/named/users", "POST")
+
+# Custom Application variable name — `local users_app = lapis.Application()`.
+expected_endpoints << Endpoint.new("/api/users", "GET")
+expected_endpoints << Endpoint.new("/api/users", "POST")
+expected_endpoints << Endpoint.new("/api/users/:id", "GET", [Param.new("id", "", "path")])
+
 # Application table style — `["/admin/..."] = ...` falls back to all verbs.
 fallback_methods.each { |m| expected_endpoints << Endpoint.new("/admin/dashboard", m) }
 fallback_methods.each { |m| expected_endpoints << Endpoint.new("/admin/users", m) }
