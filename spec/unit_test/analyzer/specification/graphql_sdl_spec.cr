@@ -44,7 +44,7 @@ describe "GraphQL SDL Analyzer" do
       "/graphql#Subscription.events",
     ]
     endpoints.all? { |e| e.method == "POST" }.should be_true
-    endpoints.find { |e| e.url.includes?("Subscription") }.not_nil!.protocol.should eq "ws"
+    endpoints.find!(&.url.includes?("Subscription")).protocol.should eq "ws"
   end
 
   it "extracts arguments as json params and embeds an operation document" do
@@ -55,11 +55,11 @@ describe "GraphQL SDL Analyzer" do
       SDL
 
     endpoint = endpoints.first
-    arg_params = endpoint.params.reject { |p| p.name.starts_with?("graphql_") }
+    arg_params = endpoint.params.reject(&.name.starts_with?("graphql_"))
     arg_params.map(&.name).should eq ["message", "times"]
     arg_params.all? { |p| p.param_type == "json" }.should be_true
 
-    doc_param = endpoint.params.find { |p| p.name == "graphql_query_echo" }.not_nil!
+    doc_param = endpoint.params.find! { |p| p.name == "graphql_query_echo" }
     doc_param.value.should contain "$message: String!"
     doc_param.value.should contain "$times: Int"
     doc_param.value.should contain "echo(message: $message, times: $times)"
@@ -87,10 +87,10 @@ describe "GraphQL SDL Analyzer" do
       }
       SDL
 
-    endpoints.map(&.url).sort.should eq [
+    endpoints.map(&.url).sort!.should eq [
       "/graphql#Query.ping",
       "/graphql#Query.searchProducts",
-    ].sort
+    ].sort!
   end
 
   it "resolves custom root names via the schema block" do
@@ -109,11 +109,11 @@ describe "GraphQL SDL Analyzer" do
       }
       SDL
 
-    endpoints.map(&.url).sort.should eq [
+    endpoints.map(&.url).sort!.should eq [
       "/graphql#Mutation.publish",
       "/graphql#Query.ping",
     ]
-    root_tags = endpoints.flat_map { |e| tag_descriptions(e, "graphql-root") }.sort
+    root_tags = endpoints.flat_map { |e| tag_descriptions(e, "graphql-root") }.sort!
     root_tags.should eq ["MyMutationRoot", "MyQueryRoot"]
   end
 
@@ -125,8 +125,8 @@ describe "GraphQL SDL Analyzer" do
       }
       SDL
 
-    legacy = endpoints.find { |e| e.url.ends_with?("legacy") }.not_nil!
-    auth = endpoints.find { |e| e.url.ends_with?("admin") }.not_nil!
+    legacy = endpoints.find!(&.url.ends_with?("legacy"))
+    auth = endpoints.find!(&.url.ends_with?("admin"))
 
     tag_descriptions(legacy, "graphql-directive").any?(&.starts_with?("@deprecated")).should be_true
     tag_descriptions(auth, "graphql-directive").any?(&.starts_with?("@auth")).should be_true

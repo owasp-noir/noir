@@ -79,7 +79,7 @@ module Analyzer::Specification
                                   root_names : Hash(String, String))
       # Build a regex that targets the configured root names. `extend type` is
       # also matched so federation/stitching schemas contribute their fields.
-      root_alternation = root_names.values.uniq.map { |n| Regex.escape(n) }.join("|")
+      root_alternation = root_names.values.uniq!.map { |n| Regex.escape(n) }.join("|")
       pattern = Regex.new("\\b(?:extend\\s+)?type\\s+(#{root_alternation})\\b(?:\\s+implements\\s+[^{]+)?\\s*(?:@[A-Za-z_][A-Za-z0-9_]*(?:\\([^)]*\\))?\\s*)*\\{")
 
       sanitized.scan(pattern) do |match|
@@ -469,7 +469,7 @@ module Analyzer::Specification
     # `sanitized` preserves newlines from the original content, so its byte
     # offsets line up with the source file for line-number reporting.
     private def line_number_at(sanitized : String, byte_pos : Int32) : Int32?
-      return nil if byte_pos < 0 || byte_pos > sanitized.size
+      return if byte_pos < 0 || byte_pos > sanitized.size
       sanitized[0, byte_pos].count('\n') + 1
     end
   end
