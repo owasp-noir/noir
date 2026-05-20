@@ -489,11 +489,22 @@ module Analyzer::Haskell
         when "ReqBody", "ReqBody'", "StreamBody", "StreamBody'"
           type = extract_type_arg(args)
           params << Param.new("body", type, "body")
+        when "MultipartForm", "MultipartForm'"
+          # `MultipartForm Mem (MultipartData Mem)` — second positional
+          # argument carries the data type; fall back to "Multipart" when
+          # not parseable.
+          type = extract_multipart_type(args)
+          params << Param.new("body", type, "body")
         else
           mapped = http_method_for(head)
           if mapped
             method = mapped
-          elsif head == "Verb"
+          elsif head == "Verb" || head == "UVerb"
+            verb = extract_verb_method(args)
+            method = verb if verb
+          elsif head == "Stream"
+            # `Stream 'GET 200 NewlineFraming JSON ...` — first positional
+            # token is the HTTP verb (optionally promoted with a leading `'`).
             verb = extract_verb_method(args)
             method = verb if verb
           end
@@ -511,21 +522,35 @@ module Analyzer::Haskell
 
     private def http_method_for(token : String) : String?
       case token
-      when "Get", "GetNoContent"
+      when "Get", "GetNoContent", "StreamGet"
         "GET"
-      when "Post", "PostNoContent", "PostCreated", "PostAccepted", "PostNonAuthoritative", "PostResetContent"
+      when "Post", "PostNoContent", "PostCreated", "PostAccepted",
+           "PostNonAuthoritative", "PostResetContent", "StreamPost"
         "POST"
-      when "Put", "PutNoContent", "PutCreated", "PutAccepted"
+      when "Put", "PutNoContent", "PutCreated", "PutAccepted", "StreamPut"
         "PUT"
-      when "Delete", "DeleteNoContent", "DeleteAccepted"
+      when "Delete", "DeleteNoContent", "DeleteAccepted", "StreamDelete"
         "DELETE"
-      when "Patch", "PatchNoContent"
+      when "Patch", "PatchNoContent", "StreamPatch"
         "PATCH"
       when "Head"
         "HEAD"
       when "Options"
         "OPTIONS"
       end
+    end
+
+    private def extract_multipart_type(args : String) : String
+      remaining = args.strip
+      # Skip the first positional argument (typically `Mem` or `Tmp`).
+      m = remaining.match(/\A[A-Za-z][A-Za-z0-9_']*\s*(.*)\z/m)
+      remaining = m[1] if m
+      remaining = remaining.strip
+      # The next token is either `(MultipartData Mem)` or a bare type
+      # constructor. Strip a leading paren if present.
+      remaining = remaining[1..].strip if remaining.starts_with?("(")
+      m = remaining.match(/\A([A-Za-z][A-Za-z0-9_']*)/)
+      m ? m[1] : "Multipart"
     end
 
     private def extract_verb_method(args : String) : String?

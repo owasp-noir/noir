@@ -45,6 +45,19 @@ expected_endpoints = [
   Endpoint.new("/v2/items", "GET"),
   # Closure-form mapping with `method = "POST"` assignment.
   Endpoint.new("/api/legacy", "POST"),
+  # `name <id>:` prefix on a verb-prefixed mapping is tolerated.
+  Endpoint.new("/api/reports", "GET"),
+  # `uri:` mapping — still an exposed endpoint despite no controller/action.
+  Endpoint.new("/api/legacy-alias", "GET"),
+  # Singular `resource:` shortcut — five REST verbs at the path itself.
+  Endpoint.new("/api/profile", "GET"),
+  Endpoint.new("/api/profile", "POST"),
+  Endpoint.new("/api/profile", "PUT"),
+  Endpoint.new("/api/profile", "PATCH"),
+  Endpoint.new("/api/profile", "DELETE"),
+  # `void`-return actions on `ReportController`.
+  Endpoint.new("/report/index", "GET"),
+  Endpoint.new("/report/show", "GET"),
   # Plugin-style `<Name>UrlMappings.groovy` is also processed.
   Endpoint.new("/plugin/status", "GET"),
 ]

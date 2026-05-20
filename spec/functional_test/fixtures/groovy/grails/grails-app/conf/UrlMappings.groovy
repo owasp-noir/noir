@@ -22,5 +22,18 @@ class UrlMappings {
             action = "handle"
             method = "POST"
         }
+
+        // Named URL mapping — Grails uses the `name <id>:` prefix for
+        // reverse URL generation. The mapping itself is otherwise the
+        // same verbless paren-form.
+        name reports: "/api/reports"(controller: "reports", action: "list")
+
+        // `uri:` mapping — a path that redirects to another internal URI
+        // (no controller/action pair). Still an exposed endpoint.
+        "/api/legacy-alias"(uri: "/api/legacy")
+
+        // Singular `resource:` shortcut — singleton REST resource
+        // exposing GET/POST/PUT/PATCH/DELETE on the path itself.
+        "/api/profile"(resource: "profile")
     }
 }

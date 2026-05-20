@@ -24,6 +24,14 @@ expected_endpoints = [
   Endpoint.new("/v1/secure", "GET", [
     Param.new("X-Token", "Text", "header"),
   ]),
+  # MultipartForm produces a body param, with the underlying data type.
+  Endpoint.new("/v1/upload", "POST", [
+    Param.new("body", "MultipartData", "body"),
+  ]),
+  # `StreamGet NewlineFraming JSON ...` resolves to a GET endpoint.
+  Endpoint.new("/v1/stream", "GET"),
+  # `UVerb 'PATCH ...` resolves to a PATCH endpoint.
+  Endpoint.new("/v1/uverb", "PATCH"),
   Endpoint.new("/health", "GET"),
 ]
 

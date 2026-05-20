@@ -59,7 +59,7 @@ module Analyzer::Fsharp
       base.ends_with?("Test.fs")
     end
 
-    alias SubRouteScope = NamedTuple(prefix: String, end_pos: Int32, params: Array(Param))
+    alias SubRouteScope = NamedTuple(prefix: String, end_pos: Int32, params: Array(Param), method: String?)
 
     private def process_file(path : String, content : String, include_callee : Bool)
       cleaned = strip_fsharp_comments(content)
@@ -75,15 +75,17 @@ module Analyzer::Fsharp
         rest = cleaned[i..]
 
         # subRoute / subRouteCi / subRoutef "/prefix" (handler)
-        sub_match = rest.match(/\A(subRoute(?:Ci|f)?)\s+"([^"]+)"\s*\(/)
+        # or the Giraffe 6+ Endpoint Routing form: `subRoute "/prefix" [ ... ]`.
+        sub_match = rest.match(/\A(subRoute(?:Ci|f)?)\s+"([^"]+)"\s*([\(\[])/)
         if sub_match
           combinator = sub_match[1]
           raw_prefix = sub_match[2]
+          opener = sub_match[3]
           match_end_local = sub_match.end(0)
           if match_end_local
-            open_paren_abs = i + match_end_local - 1
-            close_paren = find_matching_paren(cleaned, open_paren_abs)
-            if close_paren
+            open_abs = i + match_end_local - 1
+            close_pos = opener == "(" ? find_matching_paren(cleaned, open_abs) : find_matching_bracket(cleaned, open_abs)
+            if close_pos
               translated_prefix, prefix_params = if combinator == "subRoutef"
                                                    translate_routef(raw_prefix)
                                                  else
@@ -91,8 +93,33 @@ module Analyzer::Fsharp
                                                  end
               scope_stack << {
                 prefix:  translated_prefix,
-                end_pos: close_paren,
+                end_pos: close_pos,
                 params:  prefix_params,
+                method:  nil,
+              }
+              i += match_end_local
+              next
+            end
+          end
+        end
+
+        # Giraffe Endpoint Routing: `GET [ route "/" h; route "/x" h ]`.
+        # The verb token wraps a list of routes. When this form is used,
+        # the embedded `route` lines do not carry the verb on their own
+        # line, so we push a method-only scope until the matching `]`.
+        verb_list_match = rest.match(/\A(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*\[/)
+        if verb_list_match && verb_list_method_context?(cleaned, i)
+          verb = verb_list_match[1]
+          match_end_local = verb_list_match.end(0)
+          if match_end_local
+            open_bracket_abs = i + match_end_local - 1
+            close_bracket = find_matching_bracket(cleaned, open_bracket_abs)
+            if close_bracket
+              scope_stack << {
+                prefix:  "",
+                end_pos: close_bracket,
+                params:  [] of Param,
+                method:  verb,
               }
               i += match_end_local
               next
@@ -134,6 +161,30 @@ module Analyzer::Fsharp
       params
     end
 
+    # Innermost scope-supplied HTTP verb (Endpoint Routing wrapper), if any.
+    private def scope_method(scope_stack : Array(SubRouteScope)) : String?
+      scope_stack.reverse_each do |scope|
+        m = scope[:method]
+        return m if m
+      end
+      nil
+    end
+
+    # Distinguishes a Giraffe Endpoint-Routing `GET [...]` wrapper from
+    # an ordinary `GET >=> route ...` chain where `[` appears later on
+    # the same line in a literal context. We require the `[` to follow
+    # the verb after only whitespace AND for there to be no `>=>`
+    # between the verb and the bracket.
+    private def verb_list_method_context?(text : String, offset : Int32) : Bool
+      # Token-boundary check: must be preceded by start-of-string,
+      # whitespace, `[`, `;`, or `,`.
+      if offset > 0
+        prev = text[offset - 1]
+        return false unless prev.whitespace? || prev == '[' || prev == ';' || prev == ',' || prev == '('
+      end
+      true
+    end
+
     private def emit_route(path : String, content : String, cleaned : String,
                            offset : Int32, scope_stack : Array(SubRouteScope),
                            path_pattern : String, routef : Bool, include_callee : Bool)
@@ -145,7 +196,7 @@ module Analyzer::Fsharp
       full_url = current_prefix(scope_stack) + url
       full_params = current_prefix_params(scope_stack) + params
 
-      method = find_method_for_route(cleaned, offset)
+      method = find_method_for_route(cleaned, offset) || scope_method(scope_stack)
       methods = method ? [method] : FALLBACK_METHODS
 
       line = line_for_offset(content, offset)
@@ -357,7 +408,16 @@ module Analyzer::Fsharp
     end
 
     private def find_matching_paren(text : String, open_idx : Int32) : Int32?
-      return unless open_idx < text.size && text[open_idx] == '('
+      find_matching_delimiter(text, open_idx, '(', ')')
+    end
+
+    private def find_matching_bracket(text : String, open_idx : Int32) : Int32?
+      find_matching_delimiter(text, open_idx, '[', ']')
+    end
+
+    private def find_matching_delimiter(text : String, open_idx : Int32,
+                                        opener : Char, closer : Char) : Int32?
+      return unless open_idx < text.size && text[open_idx] == opener
       depth = 1
       i = open_idx + 1
       in_string = false
@@ -379,9 +439,9 @@ module Analyzer::Fsharp
         when '"', '\''
           in_string = true
           string_quote = c
-        when '('
+        when opener
           depth += 1
-        when ')'
+        when closer
           depth -= 1
           return i if depth == 0
         else

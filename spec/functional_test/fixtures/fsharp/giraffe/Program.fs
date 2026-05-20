@@ -40,3 +40,18 @@ let webApp =
         GET >=> routex "/foo(/?)" >=> handleFoo
         routeCi "/case" >=> text "case-insensitive"
     ]
+
+// Giraffe 6+ Endpoint Routing API — verb wraps a `[...]` list and the
+// route lines do not carry an explicit method on their own line.
+let endpoints =
+    [
+        GET [
+            route "/ping" handlerPing
+            route "/status" handlerStatus
+        ]
+        POST [ route "/submit" handlerSubmit ]
+        subRoute "/admin" [
+            GET [ route "/dashboard" handlerDashboard ]
+            DELETE [ routef "/sessions/%i" handlerKillSession ]
+        ]
+    ]
