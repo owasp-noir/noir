@@ -52,7 +52,8 @@ module Analyzer::Ruby
     record ConcernResource,
       kind_kw : String,
       name : String,
-      options : Hash(String, String)
+      options : Hash(String, String),
+      stack : Array(Frame)
 
     @controller_data_cache = Hash(String, ControllerData).new
 
@@ -216,8 +217,13 @@ module Analyzer::Ruby
 
             if concern_name = current_concern_definition(stack)
               concern_resources[concern_name] ||= [] of ConcernResource
-              concern_resources[concern_name] << ConcernResource.new(kind_kw, name, options)
-              stack << Frame.new(:neutral) if opens_block
+              concern_resources[concern_name] << ConcernResource.new(kind_kw, name, options, current_concern_relative_stack(stack))
+              if opens_block
+                url_segment = options["path"]? || name
+                singular = (kind_kw == "resource")
+                child_path = singular ? url_segment : "#{url_segment}/1"
+                stack << Frame.new(:resources, path: child_path, resource_name: name)
+              end
               next
             end
 
@@ -350,6 +356,18 @@ module Analyzer::Ruby
       nil
     end
 
+    private def current_concern_relative_stack(stack : Array(Frame)) : Array(Frame)
+      index = stack.size - 1
+      while index >= 0
+        if stack[index].kind == :concern
+          return [] of Frame if index == stack.size - 1
+          return stack[(index + 1)..].dup
+        end
+        index -= 1
+      end
+      [] of Frame
+    end
+
     private def emit_concern_resources(names : Array(String),
                                        concern_resources : Hash(String, Array(ConcernResource)),
                                        framework_root : String,
@@ -357,7 +375,7 @@ module Analyzer::Ruby
       names.each do |name|
         next unless resources = concern_resources[name]?
         resources.each do |resource|
-          emit_resource_routes(framework_root, stack, resource.kind_kw, resource.name, resource.options)
+          emit_resource_routes(framework_root, stack + resource.stack, resource.kind_kw, resource.name, resource.options)
         end
       end
     end

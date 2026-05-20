@@ -418,8 +418,11 @@ module Analyzer::Python
       return if depth > 3
 
       expr = expression.strip
-      if lit = expr.match(/^[rf]?['"]([^'"]*)['"]/)
-        return lit[1]
+      if lit = expr.match(/^([rRuUbBfF]*)['"]([^'"]*)['"]/)
+        prefixes = lit[1].downcase
+        value = lit[2]
+        return if prefixes.includes?("f") && value.includes?("{")
+        return value
       end
 
       if local = resolve_constant_in_source(expr, source, import_modules, depth)

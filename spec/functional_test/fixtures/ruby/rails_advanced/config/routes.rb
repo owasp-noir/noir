@@ -35,7 +35,9 @@ Rails.application.routes.draw do
   resources :scans, controller: "billing/scans", only: [:index]
 
   concern :commentable do
-    resources :comments, only: [:index, :show]
+    resources :comments, only: [:index, :show] do
+      resources :likes, only: [:index, :show]
+    end
   end
 
   resources :posts, concerns: :commentable
