@@ -148,14 +148,19 @@ module Analyzer::Clojure
       path_param_set = path_param_names.to_set
       inner = binding[1...binding.size - 1]
 
-      # Vector binding may carry destructuring sub-maps like
+      # `:as`/`:or` followed by a `{...}` block bind/default the whole
+      # request map — keys inside are existing symbols, not query params.
+      # Strip those maps before any further harvesting.
+      inner_clean = inner.gsub(/:(?:as|or)\s*\{[^{}]*\}/, " ")
+
+      # Vector binding may carry inline destructuring sub-maps like
       # `[foo {:keys [bar]}]`. Capture inline `:keys`/`:strs`/`:syms`
       # before stripping the embedded maps from token scanning.
-      embedded_keys = extract_destructured_keys(inner)
+      embedded_keys = extract_destructured_keys(inner_clean)
 
       # Strip embedded `{...}` blocks so we don't catch token names
       # *inside* destructuring shapes via the loose word scanner.
-      inner_no_maps = inner.gsub(/\{[^{}]*\}/, " ")
+      inner_no_maps = inner_clean.gsub(/\{[^{}]*\}/, " ")
 
       skip_next = false
       inner_no_maps.scan(/:?[A-Za-z_][\w\-!?*]*/) do |match|
@@ -182,8 +187,9 @@ module Analyzer::Clojure
       end
 
       # Drop `&` rest-bindings: the symbol immediately after `&` collects
-      # remaining args, not a query param. Detect by scanning original `inner`.
-      rest_match = inner.match(/&\s+([A-Za-z_][\w\-!?*]*)/)
+      # remaining args, not a query param. Detect by scanning the cleaned
+      # inner so the `:as`/`:or` strip doesn't interfere.
+      rest_match = inner_clean.match(/&\s+([A-Za-z_][\w\-!?*]*)/)
       if rest_match
         names.delete(rest_match[1])
       end
@@ -210,7 +216,9 @@ module Analyzer::Clojure
 
     private def extract_destructured_keys(text : String) : Array(String)
       keys = [] of String
-      text.scan(/:(?:keys|strs|syms)\s+\[([^\]]+)\]/) do |match|
+      # Match plain `:keys`/`:strs`/`:syms` and namespace-qualified forms
+      # like `:my.ns/keys` (the value half drops the namespace at bind time).
+      text.scan(/:(?:[A-Za-z_][\w\-.]*\/)?(?:keys|strs|syms)\s+\[([^\]]+)\]/) do |match|
         match[1].scan(/[A-Za-z_][\w\-!?*]*/) do |inner|
           keys << inner[0]
         end

@@ -19,6 +19,14 @@ expected_endpoints = [
     Param.new("title", "", "query"),
     Param.new("body", "", "query"),
   ]),
+  Endpoint.new("/comments", "POST", [
+    Param.new("author", "", "query"),
+    Param.new("message", "", "query"),
+  ]),
+  Endpoint.new("/profile/:id", "GET", [
+    Param.new("id", "", "path"),
+    Param.new("q", "", "query"),
+  ]),
   Endpoint.new("/api/users", "POST"),
   Endpoint.new("/api/admin/users/:id", "DELETE", [
     Param.new("id", "", "path"),

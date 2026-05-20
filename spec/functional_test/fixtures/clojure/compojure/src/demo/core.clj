@@ -23,6 +23,15 @@
   (POST "/notes" {:keys [title body]}
     {:title title :body body})
 
+  ; Namespace-qualified `:my.ns/keys` should still lift bound symbols.
+  (POST "/comments" {:my.ns/keys [author message]}
+    {:author author :message message})
+
+  ; `:as` followed by a destructuring map: keys inside bind the request map,
+  ; NOT query params. Only `id` and `q` should be lifted.
+  (GET "/profile/:id" [id q :as {:keys [headers]}]
+    {:id id :q q})
+
   (context "/api" []
     (POST "/users" request
       request)
