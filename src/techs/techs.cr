@@ -1705,6 +1705,21 @@ module NoirTechs
         },
       },
     },
+    :wsdl => {
+      :format    => ["XML"],
+      :similar   => ["wsdl", "soap"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => true,
+          :header => true,
+          :cookie => false,
+        },
+      },
+    },
     :ruby_grape => {
       :framework => "Grape",
       :language  => "Ruby",
