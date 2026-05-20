@@ -83,7 +83,7 @@ module Analyzer::Javascript
             methods << method
             url = $2
           end
-        # app.on(['GET', 'POST'], '/path', ...) - array of methods
+          # app.on(['GET', 'POST'], '/path', ...) - array of methods
         elsif line =~ /\b(?:app|router|hono)\s*\.\s*on\s*\(\s*\[([^\]]+)\]\s*,\s*['"]([^'"]+)['"]/
           methods_str = $1
           url = $2

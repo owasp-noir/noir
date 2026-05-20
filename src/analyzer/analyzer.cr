@@ -91,6 +91,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"insomnia", Specification::Insomnia},
     {"postman", Specification::Postman},
     {"raml", Specification::RAML},
+    {"smithy", Specification::Smithy},
     {"typespec", Specification::TypeSpec},
     {"wsdl", Specification::WSDL},
     {"zap_sites_tree", Specification::ZapSitesTree},

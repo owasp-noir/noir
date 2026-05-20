@@ -103,7 +103,7 @@ module Analyzer::Go
                       # neither was previously surfaced.
                       if !last_endpoint.url.empty? &&
                          (line.matches?(/json\.NewDecoder\([^)]*\.Body\)\s*\.\s*Decode/) ||
-                          line.matches?(/(?:io|ioutil)\.ReadAll\([^)]*\.Body\)/))
+                         line.matches?(/(?:io|ioutil)\.ReadAll\([^)]*\.Body\)/))
                         body_param = Param.new("body", "", "json")
                         last_endpoint.params << body_param unless last_endpoint.params.includes?(body_param)
                       end

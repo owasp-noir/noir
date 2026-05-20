@@ -1774,6 +1774,21 @@ module NoirTechs
         },
       },
     },
+    :smithy => {
+      :format    => ["SMITHY"],
+      :similar   => ["smithy", "smithy-idl"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => false,
+        },
+      },
+    },
     :typespec => {
       :format    => ["TYPESPEC"],
       :similar   => ["typespec", "tsp", "cadl"],
