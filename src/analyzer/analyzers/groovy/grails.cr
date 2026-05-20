@@ -268,6 +268,25 @@ module Analyzer::Groovy
             i = match_end ? i + match_end : i + 1
             next
           end
+
+          # Void / primitive-return method form: `void name(...) { ... }`,
+          # `int count(...) { ... }`. Distinct from the uppercase-return
+          # pattern above to avoid colliding with field declarations and
+          # `def` actions.
+          m3 = rest.match(/\A(public\s+|protected\s+)?(void|int|long|boolean|byte|short|float|double|char)\s+([a-z_][A-Za-z0-9_]*)\s*\([^)]*\)\s*(?:throws\s+[A-Za-z0-9_,\s.]+)?\s*\{/)
+          if m3
+            name = m3[3]
+            unless SKIP_ACTION_NAMES.includes?(name)
+              open_brace = i + (m3.end(0) || 1) - 1
+              if action_body = extract_braced_block(body, open_brace)
+                action_body_text, action_body_start = action_body
+                actions << {name: name, offset: i, body: action_body_text, body_start: action_body_start}
+              end
+            end
+            match_end = m3.end(0)
+            i = match_end ? i + match_end : i + 1
+            next
+          end
         end
 
         i += 1
@@ -371,8 +390,11 @@ module Analyzer::Groovy
                                        text : String, prefix : String)
       remaining = consume_groups(path, content, text, prefix)
 
-      # Verb-prefixed mappings: `get '/users'(controller: ..., action: ...)`
-      pattern = /\b(get|post|put|delete|patch|head|options)\s+(['"])([^'"]+)\2\s*\((.*?)\)/m
+      # Verb-prefixed mappings: `get '/users'(controller: ..., action: ...)`.
+      # An optional `name <id>:` prefix names the mapping for reverse URL
+      # lookup; it does not affect the URL itself but must be tolerated
+      # so we don't drop the endpoint.
+      pattern = /(?:\bname\s+[A-Za-z_][A-Za-z0-9_]*\s*:\s*)?\b(get|post|put|delete|patch|head|options)\s+(['"])([^'"]+)\2\s*\((.*?)\)/m
       remaining.scan(pattern) do |match|
         verb = match[1].upcase
         url_pattern = prefix + match[3]
@@ -383,8 +405,10 @@ module Analyzer::Groovy
       end
 
       # Verbless paren-form: `'/path'(controller: ..., action: ...,
-      # method: 'POST')` and the `(resources: 'name')` REST shortcut.
-      simple_pattern = /(?:^|\n)\s*(['"])([^'"]+)\1\s*\(([^)]*?)\)/m
+      # method: 'POST')`, the `(resources: 'name')` / `(resource: 'name')`
+      # REST shortcut, and `'/path'(uri: '/some/where')` redirect-style
+      # mappings.
+      simple_pattern = /(?:^|\n)\s*(?:name\s+[A-Za-z_][A-Za-z0-9_]*\s*:\s*)?(['"])([^'"]+)\1\s*\(([^)]*?)\)/m
       remaining.scan(simple_pattern) do |match|
         url_pattern = prefix + match[2]
         body_args = match[3]
@@ -400,7 +424,19 @@ module Analyzer::Groovy
           next
         end
 
-        next unless body_args.includes?("controller:") || body_args.includes?("action:") || body_args.includes?("view:")
+        # Singular `resource:` (single REST resource — no list endpoint,
+        # no `:id`-keyed entries). Common in Grails for singleton resources.
+        if body_args.match(/\bresource:\s*['"]/)
+          {"GET", "POST", "PUT", "PATCH", "DELETE"}.each do |verb|
+            @result << Endpoint.new(translate_pattern(url_pattern), verb,
+              extract_path_params(url_pattern),
+              Details.new(PathInfo.new(path, line)))
+          end
+          next
+        end
+
+        next unless body_args.includes?("controller:") || body_args.includes?("action:") ||
+                    body_args.includes?("view:") || body_args.includes?("uri:")
         verb = extract_method_arg(body_args) || "GET"
         @result << Endpoint.new(translate_pattern(url_pattern), verb,
           extract_path_params(url_pattern),

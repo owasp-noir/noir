@@ -52,6 +52,16 @@ expected_endpoints << Endpoint.new("/foo(/?)", "GET")
 # routeCi without explicit method filter.
 fallback_methods.each { |m| expected_endpoints << Endpoint.new("/case", m) }
 
+# Giraffe Endpoint Routing — `GET [...]` wraps routes that inherit the verb.
+expected_endpoints << Endpoint.new("/ping", "GET")
+expected_endpoints << Endpoint.new("/status", "GET")
+expected_endpoints << Endpoint.new("/submit", "POST")
+# `subRoute "/admin" [...]` with bracket-style children.
+expected_endpoints << Endpoint.new("/admin/dashboard", "GET")
+expected_endpoints << Endpoint.new("/admin/sessions/:int", "DELETE", [
+  Param.new("int", "int", "path"),
+])
+
 FunctionalTester.new("fixtures/fsharp/giraffe/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,

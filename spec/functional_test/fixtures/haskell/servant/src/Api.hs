@@ -21,6 +21,12 @@ type UserAPI =
   :<|> "files" :> CaptureAll "path" Text :> Get '[JSON] FileResponse
   :<|> Header "X-Token" Text :> "secure" :> Get '[JSON] Secret
 
+type UploadAPI =
+       "upload" :> MultipartForm Mem (MultipartData Mem) :> Post '[JSON] ()
+  :<|> "stream" :> StreamGet NewlineFraming JSON (SourceIO String)
+  :<|> "uverb"  :> UVerb 'PATCH '[200] '[User]
+
 type API =
        "v1" :> UserAPI
+  :<|> "v1" :> UploadAPI
   :<|> "health" :> Get '[JSON] Health
