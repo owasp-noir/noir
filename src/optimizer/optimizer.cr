@@ -428,8 +428,12 @@ class EndpointOptimizer
     parsed_rules
   end
 
-  # Get allowed HTTP methods
+  # Get allowed HTTP methods. AsyncAPI verbs (`PUBLISH`, `SUBSCRIBE`,
+  # `SEND`, `RECEIVE`) ride along so the optimizer leaves event-driven
+  # endpoints alone — DAST consumers route on these, and downgrading
+  # them to `GET` would collapse publish + subscribe into one row.
   private def get_allowed_methods : Array(String)
-    ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "TRACE", "CONNECT", "ANY"]
+    ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "TRACE", "CONNECT", "ANY",
+     "PUBLISH", "SUBSCRIBE", "SEND", "RECEIVE"]
   end
 end

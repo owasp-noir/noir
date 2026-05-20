@@ -1,0 +1,48 @@
+asyncapi: 3.0.0
+info:
+  title: Order Events
+  version: 1.0.0
+servers:
+  broker:
+    host: mqtt.example.com:1883
+    protocol: mqtt
+channels:
+  orderCreated:
+    address: order/created
+    messages:
+      orderCreated:
+        $ref: '#/components/messages/OrderCreated'
+  orderShipped:
+    address: order/shipped
+    messages:
+      orderShipped:
+        payload:
+          type: object
+          properties:
+            orderId:
+              type: string
+            trackingNumber:
+              type: string
+operations:
+  sendOrderCreated:
+    action: send
+    channel:
+      $ref: '#/channels/orderCreated'
+    messages:
+      - $ref: '#/channels/orderCreated/messages/orderCreated'
+  receiveOrderShipped:
+    action: receive
+    channel:
+      $ref: '#/channels/orderShipped'
+    messages:
+      - $ref: '#/channels/orderShipped/messages/orderShipped'
+components:
+  messages:
+    OrderCreated:
+      payload:
+        type: object
+        properties:
+          orderId:
+            type: string
+          total:
+            type: number

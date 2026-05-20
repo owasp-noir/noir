@@ -20,7 +20,7 @@ module NoirTechs
     "kotlin_http4k", "kotlin_ktor", "kotlin_spring",
     "lua_lapis",
     "perl_mojolicious",
-    "php_cakephp", "php_codeigniter", "php_laravel", "php_pure", "php_slim", "php_symfony", "php_yii",
+    "php_cakephp", "php_codeigniter", "php_hyperf", "php_laravel", "php_pure", "php_slim", "php_symfony", "php_yii",
     "python_aiohttp", "python_bottle", "python_django", "python_falcon", "python_fastapi",
     "python_flask", "python_litestar", "python_pyramid", "python_sanic", "python_starlette", "python_tornado",
     "ruby_grape", "ruby_hanami", "ruby_rails", "ruby_roda", "ruby_sinatra",
@@ -1258,6 +1258,21 @@ module NoirTechs
         },
       },
     },
+    :asyncapi => {
+      :format    => ["JSON", "YAML"],
+      :similar   => ["asyncapi", "async-api", "async_api"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => true,
+          :header => false,
+          :cookie => false,
+        },
+      },
+    },
     :grpc => {
       :format    => ["PROTOBUF"],
       :similar   => ["grpc", "protobuf", "proto", "grpc-gateway"],
@@ -1400,6 +1415,24 @@ module NoirTechs
       :framework => "CodeIgniter",
       :language  => "PHP",
       :similar   => ["codeigniter", "codeigniter4", "php-codeigniter", "php_codeigniter"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
+    :php_hyperf => {
+      :framework => "Hyperf",
+      :language  => "PHP",
+      :similar   => ["hyperf", "php-hyperf", "php_hyperf", "hyperf/hyperf"],
       :supported => {
         :endpoint => true,
         :method   => true,
@@ -1612,6 +1645,21 @@ module NoirTechs
         :websocket   => true,
       },
     },
+    :insomnia => {
+      :format    => ["JSON", "YAML"],
+      :similar   => ["insomnia", "insomnia collection", "insomnia export"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => false,
+        },
+      },
+    },
     :postman => {
       :format    => ["JSON"],
       :similar   => ["postman", "postman collection"],
@@ -1630,6 +1678,21 @@ module NoirTechs
     :raml => {
       :format    => ["YAML"],
       :similar   => ["raml"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+      },
+    },
+    :typespec => {
+      :format    => ["TYPESPEC"],
+      :similar   => ["typespec", "tsp", "cadl"],
       :supported => {
         :endpoint => true,
         :method   => true,

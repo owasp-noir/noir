@@ -1,0 +1,29 @@
+type: collection.insomnia.rest/5.0
+name: Sample API
+meta:
+  id: wrk_v5_1
+  created: 1716163200000
+environments:
+  data:
+    base_url: https://api.example.com
+collection:
+  - name: List users
+    method: GET
+    url: "{{ base_url }}/users"
+    parameters:
+      - name: page
+        value: "1"
+      - name: limit
+        value: "10"
+    headers:
+      - name: Authorization
+        value: Bearer token123
+  - name: Create user
+    method: POST
+    url: "{{ _.base_url }}/users"
+    headers:
+      - name: Content-Type
+        value: application/json
+    body:
+      mimeType: application/json
+      text: '{"name":"John Doe","email":"john@example.com"}'

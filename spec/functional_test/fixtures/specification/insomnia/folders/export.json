@@ -1,0 +1,35 @@
+{
+  "_type": "export",
+  "__export_format": 4,
+  "__export_date": "2026-05-20T00:00:00.000Z",
+  "__export_source": "insomnia.desktop.app:v2024.0.0",
+  "resources": [
+    {
+      "_id": "wrk_1",
+      "_type": "workspace",
+      "name": "Folders Demo"
+    },
+    {
+      "_id": "fld_1",
+      "_type": "request_group",
+      "parentId": "wrk_1",
+      "name": "Users"
+    },
+    {
+      "_id": "req_1",
+      "_type": "request",
+      "parentId": "fld_1",
+      "name": "List",
+      "method": "GET",
+      "url": "https://api.example.com/users"
+    },
+    {
+      "_id": "req_2",
+      "_type": "request",
+      "parentId": "fld_1",
+      "name": "Show",
+      "method": "GET",
+      "url": "https://api.example.com/users/:id"
+    }
+  ]
+}
