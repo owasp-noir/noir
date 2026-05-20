@@ -1,0 +1,28 @@
+# Sample SDL covering basic Query / Mutation / Subscription surface.
+
+type Query {
+  "Look up a single user by id."
+  user(id: ID!): User
+  users(limit: Int = 10, offset: Int = 0): [User!]!
+  health: String @deprecated(reason: "Use status instead")
+}
+
+type Mutation {
+  createUser(input: UserInput!): User
+  deleteUser(id: ID!): Boolean @auth(role: "admin")
+}
+
+type Subscription {
+  userAdded: User
+}
+
+input UserInput {
+  name: String!
+  email: String!
+}
+
+type User {
+  id: ID!
+  name: String
+  email: String
+}

@@ -1,0 +1,18 @@
+# Federation/stitching schemas often use `extend type Query` instead of redeclaring it.
+
+extend type Query {
+  searchProducts(q: String!): [Product!]!
+}
+
+extend type Mutation {
+  addToCart(productId: ID!, quantity: Int = 1): Cart
+}
+
+type Product {
+  id: ID!
+  name: String!
+}
+
+type Cart {
+  id: ID!
+}

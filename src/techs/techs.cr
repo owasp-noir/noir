@@ -1354,6 +1354,21 @@ module NoirTechs
         },
       },
     },
+    :graphql_sdl => {
+      :format    => ["GRAPHQL_SDL"],
+      :similar   => ["graphql_sdl", "graphql-sdl", "graphql_schema", ".graphqls"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => true,
+          :header => false,
+          :cookie => false,
+        },
+      },
+    },
     :php_pure => {
       :framework => "",
       :language  => "PHP",
