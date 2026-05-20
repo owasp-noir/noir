@@ -85,6 +85,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"oas3", Specification::Oas3},
     {"postman", Specification::Postman},
     {"raml", Specification::RAML},
+    {"typespec", Specification::TypeSpec},
     {"zap_sites_tree", Specification::ZapSitesTree},
     {"php_pure", Php::Php},
     {"php_cakephp", Php::CakePHP},
