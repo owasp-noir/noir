@@ -2,6 +2,7 @@ require "../../func_spec.cr"
 
 expected_endpoints = [
   Endpoint.new("/", "GET", [Param.new("x-api-key", "", "header")]),
+  Endpoint.new("/paren", "GET", [Param.new("kind", "", "query")]),
   Endpoint.new("/socket", "GET"),
   Endpoint.new("/query", "POST", [
     Param.new("query", "", "form"),

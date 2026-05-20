@@ -1,7 +1,10 @@
 require "../../engines/elixir_engine"
+require "../../../utils/url_path"
 
 module Analyzer::Elixir
   class Phoenix < ElixirEngine
+    alias ScopeEntry = NamedTuple(prefix: String, module_prefix: String, indent: Int32)
+
     # Store mapping of route -> controller/action for parameter extraction
     @route_map : Hash(String, ControllerAction) = Hash(String, ControllerAction).new
 
@@ -27,9 +30,43 @@ module Analyzer::Elixir
       return [] of Endpoint unless File.extname(path) == ".ex"
 
       endpoints = [] of Endpoint
+      scope_stack = [] of ScopeEntry
+      in_triple_double = false
+      in_triple_single = false
+
       File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
         file.each_line.with_index do |line, index|
-          line_to_endpoint(line, path).each do |endpoint|
+          if line.includes?("\"\"\"")
+            line.scan(/"""/).size.times { in_triple_double = !in_triple_double }
+            next
+          end
+          if line.includes?("'''")
+            line.scan(/'''/).size.times { in_triple_single = !in_triple_single }
+            next
+          end
+          next if in_triple_double || in_triple_single
+
+          stripped = line.strip
+          next if stripped.starts_with?("#")
+
+          if !scope_stack.empty?
+            if end_match = line.match(/^(\s*)end\b/)
+              end_indent = end_match[1].size
+              if end_indent == scope_stack.last[:indent]
+                scope_stack.pop
+                next
+              end
+            end
+          end
+
+          if match = line.match(/^(\s*)scope\s*(?:\(\s*)?["']([^"']+)["'](?:\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/)
+            scope_stack << {prefix: match[2], module_prefix: match[3]? || "", indent: match[1].size}
+            next
+          end
+
+          scope_prefix = current_scope_prefix(scope_stack)
+          scope_module = current_scope_module(scope_stack)
+          line_to_endpoint(line, path, scope_prefix, scope_module).each do |endpoint|
             next if endpoint.method == ""
             endpoint.details = Details.new(PathInfo.new(path, index + 1))
             endpoints << endpoint
@@ -55,9 +92,10 @@ module Analyzer::Elixir
         begin
           content = read_file_content(controller_path)
           controller_name = File.basename(controller_path, ".ex")
+          controller_module = extract_controller_module(content) || controller_name
 
           # Extract parameters from each action in the controller
-          extract_params_from_controller(content, controller_name, controller_path)
+          extract_params_from_controller(content, controller_module, controller_path)
         rescue e
           logger.debug "Error reading controller file #{controller_path}: #{e}"
         end
@@ -105,10 +143,14 @@ module Analyzer::Elixir
       route_key = "#{endpoint.method}::#{endpoint.url}"
       if @route_map.has_key?(route_key)
         mapping = @route_map[route_key]
-        # Normalize both controller names and check for exact match
-        normalized_controller = controller_name.downcase.gsub("_controller", "")
-        normalized_mapping = mapping.controller.downcase.gsub("controller", "")
-        return normalized_controller == normalized_mapping && mapping.action == action_name
+        normalized_controller = normalize_controller_ref(controller_name)
+        normalized_mapping = normalize_controller_ref(mapping.controller)
+        controller_matches = if mapping.controller.includes?(".")
+                               normalized_controller == normalized_mapping
+                             else
+                               normalized_controller.split('.').last == normalized_mapping
+                             end
+        return controller_matches && mapping.action == action_name
       end
 
       # Fallback: try to match by conventional naming
@@ -216,67 +258,111 @@ module Analyzer::Elixir
       Noir::ElixirCalleeExtractor.callees_for_lines(body_lines, controller_path, start_index + 2)
     end
 
-    def line_to_endpoint(line : String, file_path : String) : Array(Endpoint)
+    private def extract_controller_module(content : String) : String?
+      content.each_line do |line|
+        if match = line.match(/^\s*defmodule\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s+do\b/)
+          return match[1]
+        end
+      end
+    end
+
+    private def normalize_controller_ref(controller : String) : String
+      normalized = controller.downcase.gsub("_controller", "controller")
+      normalized.ends_with?("controller") ? normalized[0, normalized.size - "controller".size] : normalized
+    end
+
+    private def current_scope_prefix(scope_stack : Array(ScopeEntry)) : String
+      prefix = ""
+      scope_stack.each do |scope|
+        prefix = Noir::URLPath.join(prefix, scope[:prefix])
+      end
+      prefix
+    end
+
+    private def current_scope_module(scope_stack : Array(ScopeEntry)) : String
+      scope_module = ""
+      scope_stack.each do |scope|
+        module_prefix = scope[:module_prefix]
+        next if module_prefix.empty?
+
+        if scope_module.empty? || module_prefix.starts_with?("#{scope_module}.")
+          scope_module = module_prefix
+        else
+          scope_module = "#{scope_module}.#{module_prefix}"
+        end
+      end
+      scope_module
+    end
+
+    private def scoped_route_path(scope_prefix : String, route_path : String) : String
+      Noir::URLPath.join(scope_prefix, route_path)
+    end
+
+    private def scoped_controller(scope_module : String, controller : String) : String
+      return controller if scope_module.empty?
+      return controller if controller.starts_with?("#{scope_module}.")
+      "#{scope_module}.#{controller}"
+    end
+
+    def line_to_endpoint(line : String, file_path : String, scope_prefix : String = "", scope_module : String = "") : Array(Endpoint)
       endpoints = Array(Endpoint).new
 
       # Standard HTTP methods - extract controller and action info
-      line.scan(/get\s+['"](.+?)['"]\s*,\s*(\w+),\s*:(\w+)/) do |match|
-        endpoint = Endpoint.new("#{match[1]}", "GET")
-        controller = match[2]
-        action = match[3]
-        @route_map["GET::#{match[1]}"] = ControllerAction.new(controller, action)
-        endpoints << endpoint
-      end
-
-      line.scan(/post\s+['"](.+?)['"]\s*,\s*(\w+),\s*:(\w+)/) do |match|
-        endpoint = Endpoint.new("#{match[1]}", "POST")
-        controller = match[2]
-        action = match[3]
-        @route_map["POST::#{match[1]}"] = ControllerAction.new(controller, action)
-        endpoints << endpoint
-      end
-
-      line.scan(/patch\s+['"](.+?)['"]\s*,\s*(\w+),\s*:(\w+)/) do |match|
-        endpoint = Endpoint.new("#{match[1]}", "PATCH")
-        controller = match[2]
-        action = match[3]
-        @route_map["PATCH::#{match[1]}"] = ControllerAction.new(controller, action)
-        endpoints << endpoint
-      end
-
-      line.scan(/put\s+['"](.+?)['"]\s*,\s*(\w+),\s*:(\w+)/) do |match|
-        endpoint = Endpoint.new("#{match[1]}", "PUT")
-        controller = match[2]
-        action = match[3]
-        @route_map["PUT::#{match[1]}"] = ControllerAction.new(controller, action)
-        endpoints << endpoint
-      end
-
-      line.scan(/delete\s+['"](.+?)['"]\s*,\s*(\w+),\s*:(\w+)/) do |match|
-        endpoint = Endpoint.new("#{match[1]}", "DELETE")
-        controller = match[2]
-        action = match[3]
-        @route_map["DELETE::#{match[1]}"] = ControllerAction.new(controller, action)
-        endpoints << endpoint
-      end
+      add_standard_route(endpoints, line, "get", "GET", scope_prefix, scope_module)
+      add_standard_route(endpoints, line, "post", "POST", scope_prefix, scope_module)
+      add_standard_route(endpoints, line, "patch", "PATCH", scope_prefix, scope_module)
+      add_standard_route(endpoints, line, "put", "PUT", scope_prefix, scope_module)
+      add_standard_route(endpoints, line, "delete", "DELETE", scope_prefix, scope_module)
 
       # Socket routes
-      line.scan(/socket\s+['"](.+?)['"]\s*,\s*(.+?)\s*/) do |match|
-        tmp = Endpoint.new("#{match[1]}", "GET")
+      line.scan(/(?:^|[^.\w])socket\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*(.+?)\s*/) do |match|
+        tmp = Endpoint.new(scoped_route_path(scope_prefix, match[1]), "GET")
         tmp.protocol = "ws"
         endpoints << tmp
       end
 
       # LiveView routes
-      line.scan(/live\s+['"](.+?)['"]\s*,\s*(.+?)\s*/) do |match|
-        endpoints << Endpoint.new("#{match[1]}", "GET")
+      line.scan(/(?:^|[^.\w])live\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*(.+?)\s*/) do |match|
+        endpoints << Endpoint.new(scoped_route_path(scope_prefix, match[1]), "GET")
+      end
+
+      # Phoenix.LiveDashboard and forwarded plugs expose mounted HTTP surfaces.
+      line.scan(/(?:^|[^.\w])live_dashboard\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
+        endpoints << Endpoint.new(scoped_route_path(scope_prefix, match[1]), "GET")
+      end
+
+      line.scan(/(?:^|[^.\w])forward\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
+        endpoints << Endpoint.new(scoped_route_path(scope_prefix, match[1]), "FORWARD")
+      end
+
+      if via_match = line.match(/(?:^|[^.\w])match\s*(?:\(\s*)?['"]([^'"]+)['"]\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*,\s*:(\w+[!?]?)[^\]]*via:\s*\[([^\]]+)\]/)
+        path = scoped_route_path(scope_prefix, via_match[1])
+        controller = scoped_controller(scope_module, via_match[2])
+        controller_action = via_match[3]
+        via_match[4].scan(/:(\w+)/) do |method_match|
+          http_method = method_match[1].upcase
+          @route_map["#{http_method}::#{path}"] = ControllerAction.new(controller, controller_action)
+          endpoints << Endpoint.new(path, http_method)
+        end
+      end
+
+      if match = line.match(/(?:^|[^.\w])match\s*(?:\(\s*)?:(\w+|\*)\s*,\s*['"]([^'"]+)['"]\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*,\s*:(\w+[!?]?)/)
+        http_methods = match_route_methods(match[1])
+        path = scoped_route_path(scope_prefix, match[2])
+        controller = scoped_controller(scope_module, match[3])
+        controller_action = match[4]
+        http_methods.each do |http_method|
+          @route_map["#{http_method}::#{path}"] = ControllerAction.new(controller, controller_action)
+          endpoints << Endpoint.new(path, http_method)
+        end
       end
 
       # Resources macro - generates standard REST routes
-      if match = line.match(/resources\s+['"]([^'"]+)['"]\s*,\s*(\w+)(?:\s*,\s*only:\s*\[([^\]]+)\])?/)
-        base_path = match[1]
-        controller = match[2]
+      if match = line.match(/(?:^|[^.\w])resources\s*(?:\(\s*)?['"]([^'"]+)['"]\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)(?:\s*,\s*only:\s*\[([^\]]+)\])?(?:\s*,\s*except:\s*\[([^\]]+)\])?/)
+        base_path = scoped_route_path(scope_prefix, match[1])
+        controller = scoped_controller(scope_module, match[2])
         only_actions = match[3]?
+        except_actions = match[4]?
 
         if only_actions
           # Parse only: [:index, :show, :create, etc.]
@@ -284,6 +370,10 @@ module Analyzer::Elixir
         else
           # Default to all REST actions
           actions = ["index", "show", "create", "update", "delete", "new", "edit"]
+        end
+        if except_actions
+          excluded = except_actions.scan(/:(\w+)/).map { |m| m[1] }
+          actions = actions.reject { |action| excluded.includes?(action) }
         end
 
         actions.each do |action|
@@ -325,6 +415,26 @@ module Analyzer::Elixir
       end
 
       endpoints
+    end
+
+    private def add_standard_route(endpoints : Array(Endpoint),
+                                   line : String,
+                                   route_macro : String,
+                                   http_method : String,
+                                   scope_prefix : String,
+                                   scope_module : String)
+      pattern = Regex.new("(?:^|[^.\\w])#{route_macro}\\s*(?:\\(\\s*)?['\"]([^'\"]+)['\"]\\s*,\\s*([A-Za-z_]\\w*(?:\\.[A-Za-z_]\\w*)*)\\s*,\\s*:(\\w+[!?]?)")
+      line.scan(pattern) do |match|
+        full_path = scoped_route_path(scope_prefix, match[1])
+        endpoint = Endpoint.new(full_path, http_method)
+        @route_map["#{http_method}::#{full_path}"] = ControllerAction.new(scoped_controller(scope_module, match[2]), match[3])
+        endpoints << endpoint
+      end
+    end
+
+    private def match_route_methods(method : String) : Array(String)
+      return ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"] if method == "*"
+      [method.upcase]
     end
   end
 end
