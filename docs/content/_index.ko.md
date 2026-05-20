@@ -18,7 +18,7 @@ template = "landing"
         <span class="hero-title-line hero-title-accent">공격 표면을</span>
         <span class="hero-title-line hero-title-accent">매핑합니다.</span>
       </h1>
-      <p class="hero-desc">소스 코드에서 공격 표면까지, 몇 초 만에. 50개 이상의 프레임워크에서 엔드포인트, 파라미터, 숨겨진 라우트를 정적 분석해 DAST 도구와 AI SAST에 바로 연결합니다.</p>
+      <p class="hero-desc">소스 코드를 읽어 50개 이상의 프레임워크에서 엔드포인트, 파라미터, 숨겨진 라우트를 뽑아내는 SAST 도구입니다. 추출한 인벤토리는 두 소비자에게 흘러갑니다 — 소스를 검토하는 코드 감사자(사람·LLM)와, 실제 라우트 목록이 필요한 DAST 도구.</p>
       <div class="hero-actions">
         <a href="./get_started/overview" class="hero-btn hero-btn-primary">
           <span>시작하기</span>
@@ -82,32 +82,32 @@ template = "landing"
 <section class="features-section">
   <div class="features-inner">
     <p class="features-label">기능</p>
-    <h2 class="features-title">소스 코드에서 공격 표면까지, 몇 초 만에</h2>
+    <h2 class="features-title">하는 일</h2>
     <div class="features-grid">
       <div class="feature-cell feature-wide">
         <div class="feature-number">01</div>
-        <h3>공격 표면 발견</h3>
-        <p>소스 코드를 분석하여 숨겨진 엔드포인트, Shadow API, 문서화되지 않은 경로, 수동 검토에서 놓치는 보안 사각지대를 포함한 전체 공격 표면을 발견합니다.</p>
+        <h3>엔드포인트 추출</h3>
+        <p>정적 분석으로 소스에서 엔드포인트, 파라미터, 헤더, 쿠키를 끌어냅니다. Shadow API, 사장된 라우트, 문서화되지 않은 핸들러도 같은 패스에서 함께 나옵니다 &mdash; 별도의 모드가 아닙니다.</p>
       </div>
       <div class="feature-cell">
         <div class="feature-number">02</div>
         <h3>다중 언어</h3>
-        <p>Crystal, Ruby, Python, Go, Java, Kotlin, JS/TS, PHP, C# 등. 하나의 도구로 전체 스택을 커버합니다.</p>
+        <p>Crystal, Ruby, Python, Go, Java, Kotlin, JS/TS, PHP, C# 등 &mdash; 단일 바이너리로 50개 이상의 프레임워크 지원. 플러그인이나 언어별 설정은 필요 없습니다.</p>
       </div>
       <div class="feature-cell">
         <div class="feature-number">03</div>
-        <h3>AI 기반</h3>
-        <p>LLM 통합으로 미지원 프레임워크에서도 엔드포인트를 탐지합니다. 빠져나가는 것은 없습니다.</p>
+        <h3>LLM 폴백</h3>
+        <p>네이티브로 지원하지 않는 프레임워크는 LLM(OpenAI, Ollama 등)에 위임합니다. 코드베이스를 가리키면 모델이 빈 자리를 채웁니다.</p>
       </div>
       <div class="feature-cell">
         <div class="feature-number">04</div>
-        <h3>DevSecOps 지원</h3>
-        <p>CI/CD 네이티브. GitHub Actions, JSON/YAML/SARIF 출력. ZAP, Burp, Caido에 바로 연결.</p>
+        <h3>CI/CD 친화</h3>
+        <p>GitHub Action, SARIF 출력, exit code. 이미 쓰고 있는 파이프라인에 그대로 끼워 넣습니다.</p>
       </div>
       <div class="feature-cell">
         <div class="feature-number">05</div>
         <h3>DAST와 AI SAST에 공급</h3>
-        <p>하나의 엔드포인트 인벤토리가 동적 쪽에서는 ZAP·Burp·Caido를 돌리고, 정적 쪽에서는 LLM 기반 SAST와 코드 감사를 살펴봐야 할 진입점으로 안내합니다.</p>
+        <p>같은 엔드포인트 인벤토리가 양쪽에 필요한 입력입니다. DAST 스캐너(ZAP, Burp, Caido)는 크롤링으로는 닿지 못했을 라우트까지 받아 가고, LLM 기반 코드 감사자는 저장소 전체 대신 공격자 도달 가능한 진입점 목록에 집중할 수 있습니다.</p>
       </div>
       <div class="feature-cell feature-full">
         <div class="feature-number">06</div>
@@ -123,28 +123,28 @@ template = "landing"
 <section class="how-section">
   <div class="how-inner">
     <p class="how-label">워크플로</p>
-    <h2 class="how-title">세 단계로 완전한 가시성 확보</h2>
+    <h2 class="how-title">실행 방식</h2>
     <div class="how-steps">
       <div class="how-step">
         <div class="how-step-num">01</div>
         <div class="how-step-content">
-          <h3>코드베이스를 지정하세요</h3>
-          <p>Noir가 언어, 프레임워크, 라우팅 패턴을 자동 감지합니다. 별도의 설정이 필요하지 않습니다.</p>
+          <h3>코드베이스를 지정</h3>
+          <p>Noir가 언어, 프레임워크, 라우팅 패턴을 알아서 감지합니다. 작성할 설정은 없습니다.</p>
           <div class="how-step-code">$ noir -b ./your-project</div>
         </div>
       </div>
       <div class="how-step">
         <div class="how-step-num">02</div>
         <div class="how-step-content">
-          <h3>모든 엔드포인트를 발견하세요</h3>
-          <p>정적 분석으로 모든 라우트, 파라미터, 헤더를 매핑합니다. AI가 알려지지 않은 프레임워크의 빈틈을 채웁니다.</p>
+          <h3>엔드포인트 추출</h3>
+          <p>정적 분석기가 라우트, 파라미터, 헤더를 끌어냅니다. 정적 규칙으로 커버하지 못하는 프레임워크는 LLM 폴백이 처리합니다.</p>
         </div>
       </div>
       <div class="how-step">
         <div class="how-step-num">03</div>
         <div class="how-step-content">
-          <h3>DAST나 AI SAST에 연결하세요</h3>
-          <p>JSON, OpenAPI, SARIF로 내보내거나 ZAP/Burp/Caido에 바로 흘려보내세요. LLM 기반 SAST나 코드 감사에는 집중된 진입점 컨텍스트로 그대로 전달할 수 있습니다.</p>
+          <h3>DAST 또는 AI SAST에 공급</h3>
+          <p>JSON, OpenAPI, SARIF로 내보내거나, ZAP·Burp·Caido에 프록시 타깃으로 그대로 흘려보내거나, LLM 기반 코드 감사자에게 집중된 진입점 컨텍스트로 넘기면 됩니다.</p>
           <div class="how-step-code">$ noir -b . -f oas3 --send-proxy http://localhost:8090</div>
         </div>
       </div>

@@ -1,16 +1,12 @@
 +++
 title = "Additional Features"
-description = "Explore Noir's advanced features, including the Tagger for contextual analysis and the Deliver feature for sending results to other tools. This section will help you get the most out of Noir."
+description = "Tagger adds contextual tags to endpoints; Deliver pushes results to other tools (Burp Suite, ZAP, Elasticsearch, etc.)."
 weight = 10
 sort_by = "weight"
 
 +++
 
-Beyond its core functionality of endpoint discovery, Noir offers several advanced features that can help you streamline your workflow and gain deeper insights into your code.
+Beyond endpoint extraction, Noir ships two features that shape how the inventory is used downstream:
 
-This section covers:
-
-*   **Tagger**: Learn how to use the Tagger to automatically add contextual tags to your endpoints and parameters. This can help you quickly identify interesting or potentially vulnerable parts of your application.
-*   **Deliver**: Discover how to send Noir's findings to other tools like Burp Suite, ZAP, or Elasticsearch. This is a powerful way to integrate Noir into your existing security testing and analysis pipelines.
-
-By mastering these additional features, you can unlock the full potential of Noir and make it an even more valuable part of your development and security toolkit.
+*   **Tagger** — attaches contextual tags to endpoints and parameters (e.g. `shadow`, `websocket`, sink hints). Useful when you want a code auditor — human or LLM — to focus on the entries worth reviewing first.
+*   **Deliver** — pushes findings to Burp Suite, ZAP, Elasticsearch, and similar tools so Noir's output drops into a pipeline you already run.

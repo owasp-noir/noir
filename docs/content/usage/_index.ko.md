@@ -1,12 +1,12 @@
 +++
 title = "사용 가이드"
-description = "이 섹션은 지원되는 기술, 출력 형식, AI 통합 및 고급 기능에 대한 정보를 포함하여 Noir 사용에 대한 포괄적인 가이드를 제공합니다."
+description = "Noir 사용법 — 지원 기술, 출력 형식, AI 통합, 추가 기능."
 weight = 2
 sort_by = "weight"
 
 +++
 
-이 가이드는 Noir와 다양한 기능을 사용하는 방법에 대한 자세한 정보를 제공합니다. 초보 사용자든 숙련된 사용자든, 도구를 최대한 활용하는 데 도움이 되는 귀중한 정보를 찾을 수 있습니다.
+Noir를 실행하고 개별 기능을 설정하는 데 필요한 레퍼런스입니다.
 
 ## 주요 영역
 
@@ -16,5 +16,5 @@ sort_by = "weight"
 *   **[패시브 스캔](passive_scan/)**: Noir의 패시브 스캔 기능을 사용하여 코드에서 잠재적인 보안 취약점을 찾는 방법을 배우세요.
 *   **[GitHub Action](github_action/)**: 공식 GitHub Action으로 Noir를 CI/CD 파이프라인에 통합하세요.
 *   **[추가 기능](more_features/)**: 워크플로를 간소화하는 Tagger 및 Deliver와 같은 고급 기능을 탐색하세요.
-*   **[AI 기반 분석](../get_started/ai_power/)**: Noir의 AI 통합을 사용하여 코드에 대한 더 깊은 인사이트를 얻는 방법을 발견하세요.
-*   **[AI 제공업체](ai_providers/)**: Noir를 다양한 AI 제공업체에 연결하여 분석 기능을 향상시키는 방법을 알아보세요.
+*   **[AI 기반 분석](../get_started/ai_power/)**: Noir의 LLM 통합이 어떻게 작동하고 언제 활성화하는지.
+*   **[AI 제공업체](ai_providers/)**: LLM 폴백 경로를 위해 OpenAI, Ollama 등 제공업체와 연결하는 방법.

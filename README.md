@@ -26,17 +26,21 @@
   <a href="./CHANGELOG.md">Changelog</a>
 </p>
 
-Noir reads source code and extracts every endpoint your application exposes, including shadow APIs, deprecated routes, and hidden surfaces.
+Noir is a SAST tool that reads source code and extracts the endpoints an application exposes — paths, methods, parameters, headers, cookies, and the source files behind them. Shadow APIs, deprecated routes, and undocumented handlers come out as part of the same inventory; they aren't a separate mode.
 
-That inventory drives two downstream stacks. ZAP, Burp Suite, and Caido pick up endpoints they would never have crawled on their own. AI SAST (LLM-based code auditors and security agents) gets the entrypoints, files, parameters, and tags it needs to review attacker-reachable code, instead of skimming the whole repository.
+That inventory has two consumers:
 
-## Why Noir?
+- **Code auditors — human or AI.** Reviewers and LLM-based SAST agents get a focused list of attacker-reachable entrypoints and the files, parameters, and tags around them, instead of skimming the whole repository.
+- **DAST tools.** ZAP, Burp Suite, and Caido get a real route list to scan, including paths they would never have reached by crawling.
 
-- Attack Surface Discovery: Analyzes source code to identify your application's complete attack surface, including hidden endpoints, shadow APIs, and other security blind spots.
-- AI-Powered Analysis: Leverages Large Language Models (LLMs) to detect endpoints in any language or framework, even those not natively supported.
-- Feeds DAST & AI SAST: One endpoint inventory drives ZAP, Burp Suite, and Caido on the dynamic side, and points LLM-based SAST and code auditors at the entrypoints, files, and parameters worth reviewing on the static side.
-- DevSecOps Ready: Designed for seamless integration into security pipelines with support for tools like ZAP, Burp Suite, Caido, and more.
-- Multi-Format Output: Delivers results in JSON, YAML, TOML, OpenAPI Specification, SARIF, and other formats for easy integration with your existing workflow.
+## What Noir does
+
+- **Endpoint extraction.** Static analysis across 50+ frameworks. Returns endpoints, parameters, headers, cookies, and the source files they came from.
+- **LLM fallback.** Hand unsupported frameworks (or one-off custom routing) to OpenAI / Ollama / etc. when static rules don't apply.
+- **Output for the next stage.** JSON, YAML, OpenAPI, SARIF, cURL, Postman, HTML — whichever format the next tool in the pipeline reads.
+- **DAST integration.** Pipe directly into ZAP, Burp Suite, or Caido as a proxy target, or export OpenAPI for them to import.
+- **AI SAST context.** The endpoint inventory (and, with `--include-callee`, the 1-hop functions each handler invokes) is the focused context an LLM auditor needs to find attacker-reachable bugs.
+- **CI/CD.** GitHub Action, SARIF output, exit codes — fits the pipeline you already have.
 
 ## Usage
 
@@ -56,11 +60,14 @@ If you use it with Github Action, please refer to this [document](/github-action
 For more details, please visit our [documentation](https://owasp-noir.github.io/noir/) page.
 
 ## Roadmap
-We plan to expand the range of supported programming languages and frameworks, and to continuously increase accuracy. Furthermore, we will leverage AI and Large Language Models (LLMs) to significantly broaden our analysis capabilities.
 
-Initially conceived as a tool to assist with WhiteBox testing, our immediate goal remains to extract and provide endpoints from the source code within the DevSecOps Pipeline. This enables Dynamic Application Security Testing (DAST) tools to conduct more accurate and stable scans.
+Noir started as a WhiteBox testing aid: extract endpoints from source so DAST can scan them more accurately. That's still the core job.
 
-Looking ahead, our ambition is for Noir to become the canonical attack-surface layer for application security: the single inventory that DAST tools and AI SAST share, so every downstream consumer starts from the same view of what is actually exposed.
+From here:
+
+- Broaden language and framework coverage; keep accuracy honest with per-framework fixtures.
+- Lean harder on LLMs for the cases static analysis can't reach.
+- Make the endpoint inventory good enough that both DAST tools and AI SAST agents can use it as their shared view of what's actually exposed.
 
 ## News & Updates
 

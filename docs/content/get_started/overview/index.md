@@ -1,6 +1,6 @@
 +++
 title = "What is Noir?"
-description = "OWASP Noir is an attack surface detector that identifies endpoints by static analysis."
+description = "OWASP Noir is a SAST tool that extracts endpoints from source code to feed code auditors (human or AI) and DAST scanners."
 weight = 1
 sort_by = "weight"
 
@@ -10,25 +10,28 @@ sort_by = "weight"
 Hi! I'm Hak, the Noir mascot. Let me show you what Noir can do for you.
 {% end %}
 
-Noir is an open-source attack surface detector. It reads your source code and discovers all API endpoints, including shadow APIs and undocumented routes that may not appear in your documentation.
+Noir is an open-source SAST tool. It reads source code and extracts the endpoints an application exposes &mdash; paths, methods, parameters, headers, cookies, and the source files behind them. Shadow APIs and undocumented routes come out as part of the same inventory; they aren't a separate mode.
 
-Security teams use Noir to surface what attackers would look for: forgotten endpoints, exposed parameters, and hidden routes that slip past code review. Developers use it to keep API documentation accurate, hand endpoint data to DAST pipelines, and point LLM-based SAST and code auditors at the attacker-reachable code they should actually be reviewing.
+That inventory has two consumers:
+
+- **Code auditors &mdash; human or AI.** Reviewers and LLM-based SAST agents get a focused list of attacker-reachable entrypoints and the files around them, instead of having to skim the whole repository.
+- **DAST tools.** ZAP, Burp Suite, and Caido get a real route list to scan, including paths they would never have reached by crawling.
 
 ![noir-usage](./noir-usage.jpg)
 
-## What Can Noir Do?
+## What Noir does
 
-**Find what's hidden.** Noir statically analyzes source code to extract every endpoint, parameter, header, and cookie, even the ones nobody documented.
+**Extract endpoints.** Static analysis pulls endpoints, parameters, headers, and cookies out of source &mdash; including the ones nobody documented.
 
-**Work with any stack.** A single binary supports 50+ frameworks across Crystal, Go, Java, JavaScript, Kotlin, PHP, Python, Ruby, Rust, Swift, and more. No plugins or per-language setup needed.
+**Cover the stack.** A single binary supports 50+ frameworks across Crystal, Go, Java, JavaScript, Kotlin, PHP, Python, Ruby, Rust, Swift, and more. No plugins or per-language setup.
 
-**Bring AI to the table.** For frameworks Noir doesn't natively support, connect an LLM (OpenAI, Ollama, etc.) and let AI analyze the code for you.
+**Fall back to an LLM.** When a framework isn't natively supported (or when routing is custom enough that static rules don't apply), point Noir at an LLM &mdash; OpenAI, Ollama, etc. &mdash; and let it fill the gap.
 
-**Feed DAST tools.** Noir maps endpoints from source code and pipes them straight into ZAP, Burp Suite, or Caido. The crawler stops missing routes that were never linked from a page.
+**Feed DAST scanners.** Pipe endpoints straight into ZAP, Burp Suite, or Caido as a proxy target, or export OpenAPI for them to import. The scanner stops missing routes that were never linked from a page.
 
-**Point AI SAST at the real attack surface.** Noir's endpoint inventory (entrypoints, source files, parameters, tags, and, with `--include-callee`, the 1-hop functions each handler invokes) is exactly the context an LLM-based SAST tool, code auditor, or security agent needs to find attacker-reachable bugs. Hand it the surface Noir already mapped instead of asking the model to scan the whole repository.
+**Give AI SAST useful context.** The endpoint inventory (entrypoints, source files, parameters, tags, and &mdash; with `--include-callee` &mdash; the 1-hop functions each handler invokes) is the focused context an LLM-based SAST tool, code auditor, or security agent needs to find attacker-reachable bugs. Hand it the surface Noir mapped instead of asking the model to scan the whole repository.
 
-**Export in any format.** Results come out as JSON, YAML, OpenAPI specs, SARIF for CI/CD, cURL commands, HTML reports, or Postman collections, whatever your workflow needs.
+**Export to whatever reads next.** JSON, YAML, OpenAPI specs, SARIF for CI/CD, cURL, HTTPie, HTML reports, Postman collections &mdash; whichever format the next tool in the pipeline expects.
 
 ## How Does It Work?
 
