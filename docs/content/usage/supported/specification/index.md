@@ -12,6 +12,8 @@ Beyond source code analysis, Noir can parse API and data specification formats s
 
 | Specification | Format | endpoint | method | query | path | body | header | cookie |
 |---|---|---|---|---|---|---|---|---|
+| Asyncapi | JSON | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ✗ | ✗ |
+| Asyncapi | YAML | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ✗ | ✗ |
 | GraphQL | GRAPHQL | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
 | Grpc | PROTOBUF | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ✗ |
 | HAR | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
@@ -23,3 +25,4 @@ Beyond source code analysis, Noir can parse API and data specification formats s
 | OpenAPI 3.0 | YAML | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
 | Postman Collection | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
 | RAML | YAML | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
+| TypeSpec | TYPESPEC | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |

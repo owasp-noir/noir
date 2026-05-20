@@ -1,0 +1,7 @@
+{
+  "require": {
+    "php": "^8.1",
+    "hyperf/hyperf": "^3.1",
+    "hyperf/http-server": "^3.1"
+  }
+}

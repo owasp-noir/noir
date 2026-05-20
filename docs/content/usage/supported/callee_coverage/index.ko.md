@@ -28,18 +28,18 @@ JSON, JSONL, YAML, TOML 같은 모델 기반 포맷과 plain 모델 직렬화는
 | Clojure | Compojure |
 | C++ | Crow, Drogon |
 | Crystal | Amber, Grip, Kemal, Lucky, Marten |
-| Dart | Dart Frog, Serverpod |
+| Dart | Dart Frog, Serverpod, Shelf |
 | Elixir | Phoenix, Plug |
 | F# | Giraffe |
 | Go | Beego, Chi, Echo, fasthttp, Fiber, Gin, GoFrame, Goyave, go-zero, Hertz, httprouter, Iris, Gorilla Mux |
 | Groovy | Grails |
-| Haskell | Servant, Yesod |
+| Haskell | Scotty, Servant, Yesod |
 | Java | Armeria, Dropwizard, Javalin, JAX-RS, Micronaut, Play, Quarkus, Spark, Spring, Vert.x |
 | JavaScript | Express, Fastify, Hono, Koa, NestJS, Next.js, Nitro, Nuxt, Remix, Restify, SvelteKit |
 | Kotlin | http4k, Ktor, Spring |
 | Lua | Lapis |
 | Perl | Mojolicious |
-| PHP | CakePHP, CodeIgniter, Laravel, Pure PHP, Slim, Symfony, Yii |
+| PHP | CakePHP, CodeIgniter, Hyperf, Laravel, Pure PHP, Slim, Symfony, Yii |
 | Python | Aiohttp, Bottle, Django, Falcon, FastAPI, Flask, Litestar, Pyramid, Sanic, Starlette, Tornado |
 | Ruby | Grape, Hanami, Rails, Roda, Sinatra |
 | Rust | Actix Web, Axum, Gotham, Loco, Poem, Rocket, RWF, Salvo, Tide, Warp |

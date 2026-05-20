@@ -1,0 +1,32 @@
+asyncapi: 2.6.0
+info:
+  title: User Events
+  version: 1.0.0
+servers:
+  production:
+    url: kafka.example.com:9092
+    protocol: kafka
+channels:
+  user/signedup:
+    publish:
+      message:
+        $ref: '#/components/messages/UserSignedUp'
+    subscribe:
+      message:
+        payload:
+          type: object
+          properties:
+            id:
+              type: string
+            email:
+              type: string
+components:
+  messages:
+    UserSignedUp:
+      payload:
+        type: object
+        properties:
+          userId:
+            type: string
+          displayName:
+            type: string

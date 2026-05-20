@@ -15,6 +15,10 @@ nd = "nd"
 edn = "edn"
 # `paket` is the .NET dependency manager (paket.dependencies).
 paket = "paket"
+# Insomnia uses `wrk_` as the canonical prefix for workspace IDs in exports.
+wrk = "wrk"
+# `mis-route` / `mis-classification` are intentional hyphenated forms in comments.
+mis = "mis"
 
 [files]
 extend-exclude = [

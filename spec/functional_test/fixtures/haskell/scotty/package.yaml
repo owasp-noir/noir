@@ -1,0 +1,6 @@
+name: scotty-fixture
+version: 0.1.0.0
+dependencies:
+  - base
+  - scotty
+  - warp

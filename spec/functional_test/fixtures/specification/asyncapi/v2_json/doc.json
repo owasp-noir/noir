@@ -1,0 +1,22 @@
+{
+  "asyncapi": "2.6.0",
+  "info": { "title": "Chat", "version": "1.0.0" },
+  "servers": {
+    "ws": { "url": "chat.example.com", "protocol": "ws" }
+  },
+  "channels": {
+    "chat/messages": {
+      "publish": {
+        "message": {
+          "payload": {
+            "type": "object",
+            "properties": {
+              "text": { "type": "string" },
+              "author": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}
