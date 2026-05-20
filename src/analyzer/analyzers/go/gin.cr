@@ -100,11 +100,7 @@ module Analyzer::Go
                       # expected; the bound struct's fields stay opaque
                       # without a deeper static-type pass.
                       if line.matches?(/\.(?:Should)?Bind(?:JSON|XML|YAML|TOML|Query|Header|Uri|With)?\s*\(/)
-                        body_type = case
-                                    when line.includes?("BindXML"), line.includes?("BindYAML"), line.includes?("BindTOML") then "json"
-                                    else                                                                                        "json"
-                                    end
-                        add_param_to_endpoint(Param.new("body", "", body_type), last_endpoint)
+                        add_param_to_endpoint(Param.new("body", "", "json"), last_endpoint)
                       end
 
                       if line.includes?("Cookie(") &&

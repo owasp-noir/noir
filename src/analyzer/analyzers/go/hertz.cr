@@ -104,9 +104,9 @@ module Analyzer::Go
                       # Hertz body-binding helpers populate the request
                       # body from JSON/form/etc. Surface a single "body"
                       # indicator — the bound struct's fields are not
-                      # statically resolvable here.
-                      if line.matches?(/\.Bind(?:JSON|Query|Header|Form|Protobuf|And\w+)?\s*\(/) ||
-                         line.includes?(".BindAndValidate(")
+                      # statically resolvable here. `And\w+` catches
+                      # `BindAndValidate`.
+                      if line.matches?(/\.Bind(?:JSON|Query|Header|Form|Protobuf|And\w+)?\s*\(/)
                         add_param_to_endpoint(Param.new("body", "", "json"), last_endpoint)
                       end
                     end
