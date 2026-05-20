@@ -49,6 +49,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"groovy_grails", Groovy::Grails},
     {"haskell_servant", Haskell::Servant},
     {"haskell_yesod", Haskell::Yesod},
+    {"asyncapi", Specification::AsyncApi},
     {"grpc", Specification::Grpc},
     {"har", Specification::Har},
     {"java_armeria", Java::Armeria},
