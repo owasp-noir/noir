@@ -29,6 +29,23 @@ expected_endpoints = [
   Endpoint.new("/api/sync", "POST"),
   ws_socket,
   Endpoint.new("/api/legacy", "GET"),
+  # `my $admin = $r->any('/admin')` — the assignment itself defines
+  # a catch-all route at `/admin`, AND grouped children at `/admin/...`.
+  Endpoint.new("/admin", "GET"),
+  Endpoint.new("/admin", "POST"),
+  Endpoint.new("/admin", "PUT"),
+  Endpoint.new("/admin", "DELETE"),
+  Endpoint.new("/admin", "PATCH"),
+  Endpoint.new("/admin", "OPTIONS"),
+  Endpoint.new("/admin", "HEAD"),
+  Endpoint.new("/admin/users", "GET"),
+  Endpoint.new("/admin/users", "POST"),
+  Endpoint.new("/admin/users/:id", "GET", [Param.new("id", "", "path")]),
+  # Nested `$admin->under('/audit')` builds `/admin/audit/...`.
+  Endpoint.new("/admin/audit/logs", "GET"),
+  # Inline `$r->under('/v2')->get('/health')` — no named var, prefix
+  # comes from the chain.
+  Endpoint.new("/v2/health", "GET"),
 ]
 
 FunctionalTester.new("fixtures/perl/mojolicious/", {
