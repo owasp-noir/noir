@@ -2,7 +2,7 @@ using System.Web.Mvc;
 
 namespace MyApp.Controllers
 {
-    [Route("api/[controller]")]
+    [RoutePrefix("api/[controller]")]
     public class ApiController : Controller
     {
         // GET: /api/Api/users/{id}

@@ -80,6 +80,7 @@ module Analyzer::CSharp
       i = 0
       http_method = "GET" # Default method for tracking across lines
       action_route = ""   # Track action-level route
+      explicit_endpoint_attribute = false
 
       while i < lines.size
         line = lines[i]
@@ -88,24 +89,30 @@ module Analyzer::CSharp
         if line.includes?("[HttpPost")
           http_method = "POST"
           action_route = extract_attribute_route(line, "HttpPost")
+          explicit_endpoint_attribute = true
         elsif line.includes?("[HttpGet")
           http_method = "GET"
           action_route = extract_attribute_route(line, "HttpGet")
+          explicit_endpoint_attribute = true
         elsif line.includes?("[HttpPut")
           http_method = "PUT"
           action_route = extract_attribute_route(line, "HttpPut")
+          explicit_endpoint_attribute = true
         elsif line.includes?("[HttpDelete")
           http_method = "DELETE"
           action_route = extract_attribute_route(line, "HttpDelete")
+          explicit_endpoint_attribute = true
         elsif line.includes?("[HttpPatch")
           http_method = "PATCH"
           action_route = extract_attribute_route(line, "HttpPatch")
+          explicit_endpoint_attribute = true
         elsif line.includes?("[Route")
           action_route = extract_attribute_route(line, "Route")
+          explicit_endpoint_attribute = true
         end
 
         # Check for action method definition
-        if line.includes?("public") && line.includes?("ActionResult") && line.includes?("(")
+        if line.includes?("public") && line.includes?("(") && (line.includes?("ActionResult") || explicit_endpoint_attribute)
           signature, end_index = build_signature(lines, i)
           action_name = extract_action_name(signature)
           parameters = extract_parameters(signature, http_method)
@@ -127,6 +134,7 @@ module Analyzer::CSharp
             # Reset to default after processing the method
             http_method = "GET"
             action_route = ""
+            explicit_endpoint_attribute = false
           end
           i = end_index
         end
@@ -144,7 +152,7 @@ module Analyzer::CSharp
 
     private def extract_action_name(line : String) : String
       # Extract method name from: public ActionResult MethodName(params)
-      match = line.match(/public\s+\w+\s+(\w+)\s*\(/)
+      match = line.match(/public\s+(?:async\s+)?(?:override\s+)?(?:virtual\s+)?[\w<>\[\],\s]+\s+(\w+)\s*\(/)
       return "" unless match
       match[1]
     end
@@ -172,7 +180,7 @@ module Analyzer::CSharp
                            end
 
       # Parse individual parameters
-      param_list.split(',').each do |param_def|
+      split_csharp_parameters(param_list).each do |param_def|
         param_def = param_def.strip
         next if param_def.empty?
 
@@ -196,6 +204,8 @@ module Analyzer::CSharp
         elsif param_def.includes?("[FromCookie]")
           param_type = "cookie"
           param_def = param_def.gsub("[FromCookie]", "").strip
+        elsif param_def.includes?("[FromServices]") || param_def.includes?("[FromKeyedServices")
+          next
         end
 
         # Extract parameter name (last word before optional default value)
@@ -213,14 +223,14 @@ module Analyzer::CSharp
 
     private def extract_controller_route(content : String) : String
       # Extract [Route("...")] attribute from controller class
-      match = content.match(/\[Route\s*\(\s*"([^"]+)"\s*\)\s*\]\s*\n?\s*public\s+class\s+\w+Controller/)
+      match = content.match(/\[(?:Route|RoutePrefix)\s*\(\s*"([^"]+)"\s*\)\s*\]\s*\n?\s*public\s+class\s+\w+Controller/)
       return "" unless match
       match[1]
     end
 
     private def extract_attribute_route(line : String, attribute : String) : String
       # Extract route from [HttpGet("route")] or [Route("route")]
-      match = line.match(/\[#{attribute}\s*\(\s*"([^"]+)"\s*\)\s*\]/)
+      match = line.match(/\[#{attribute}[^(]*\(\s*"([^"]+)"/)
       return "" unless match
       match[1]
     end

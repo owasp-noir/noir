@@ -28,6 +28,9 @@ expected_endpoints = [
   Endpoint.new("/api/Users", "POST", [
     Param.new("name", "", "json"),
   ]),
+  Endpoint.new("/api/Users/raw", "GET", [
+    Param.new("filter", "", "query"),
+  ]),
   Endpoint.new("/api/Users/{id}", "PUT", [
     Param.new("id", "", "path"),
     Param.new("name", "", "json"),
@@ -78,6 +81,15 @@ expected_endpoints = [
     Param.new("id", "", "json"),
     Param.new("description", "", "json"),
   ]),
+  Endpoint.new("/api/v1/grouped/{id}", "GET", [
+    Param.new("id", "", "path"),
+    Param.new("mode", "", "query"),
+  ]),
+  Endpoint.new("/api/bulk", "PATCH"),
+  Endpoint.new("/api/bulk", "POST"),
+  Endpoint.new("/chained/submit", "POST", [
+    Param.new("X-Trace", "", "header"),
+  ]),
   Endpoint.new("/expression/null", "GET", [
     Param.new("intValue", "", "query"),
     Param.new("strValue", "", "query"),
@@ -114,5 +126,11 @@ describe "ASP.NET Core MVC analyzer edge cases" do
     ping = tester.app.endpoints.find { |e| e.url == "/mapped/ping" && e.method == "GET" }
     ping.should_not be_nil
     ping.as(Endpoint).params.empty?.should be_true
+  end
+
+  it "does not treat service-injected controller dependencies as request params" do
+    raw = tester.app.endpoints.find { |e| e.url == "/api/Users/raw" && e.method == "GET" }
+    raw.should_not be_nil
+    raw.as(Endpoint).params.any? { |p| p.name == "repository" }.should be_false
   end
 end

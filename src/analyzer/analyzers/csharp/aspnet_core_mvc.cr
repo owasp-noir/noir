@@ -16,19 +16,35 @@ module Analyzer::CSharp
     end
 
     private def analyze_route_builder_endpoints(include_callee : Bool)
-      map_regex = /Map(Get|Post|Put|Delete|Patch|Head|Options)\s*\(\s*"([^"]+)"/
-      map_methods_block_regex = /MapMethods\s*\(\s*"([^"]+)"\s*,\s*([\s\S]+?)=>/
+      map_regex = /(?:\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?Map(Get|Post|Put|Delete|Patch|Head|Options)\s*\(\s*"([^"]+)"/m
+      chained_group_map_regex = /MapGroup\s*\(\s*"([^"]+)"\s*\)\s*\.Map(Get|Post|Put|Delete|Patch|Head|Options)\s*\(\s*"([^"]+)"/m
+      map_methods_block_regex = /(?:\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?MapMethods\s*\(\s*"([^"]+)"\s*,\s*([\s\S]+?)=>/m
+      chained_group_map_methods_regex = /MapGroup\s*\(\s*"([^"]+)"\s*\)\s*\.MapMethods\s*\(\s*"([^"]+)"\s*,\s*([\s\S]+?)=>/m
 
       get_files_by_extension(".cs").each do |file|
         next unless File.exists?(file)
         next if Common.csharp_test_path?(file)
 
-        lines = read_file_content(file).lines
+        content = read_file_content(file)
+        group_prefixes = extract_map_group_prefixes(content)
+        lines = content.lines
         lines.each_with_index do |line, index|
-          if match = map_regex.match(line)
-            http_method = match[1].upcase
-            route = match[2]
+          if route_builder_line?(line)
             block = extract_map_block(lines, index)
+            if chained_match = chained_group_map_regex.match(block)
+              http_method = chained_match[2].upcase
+              route = join_route_parts(chained_match[1], chained_match[3])
+            elsif match = map_regex.match(block)
+              receiver = match[1]?
+              http_method = match[2].upcase
+              route = apply_group_prefix(match[3], receiver, group_prefixes)
+            else
+              route = nil
+              http_method = nil
+            end
+
+            next unless route && http_method
+
             extra_params = extract_params_from_block(block)
             extra_params.concat(extract_bind_params_from_file(block, lines))
             endpoint = build_endpoint_from_route(route, http_method, file, index + 1, extra_params)
@@ -43,13 +59,18 @@ module Analyzer::CSharp
             route = nil
             methods = [] of String
 
-            if match = block.match(/MapMethods\s*\(\s*"([^"]+)"\s*,\s*new[^{]*\{([^}]*)\}/m)
-              route = match[1]
-              methods_list = match[2].split(",")
-              methods = methods_list.map(&.gsub(/["\s]/, "").upcase).reject(&.empty?).uniq!
+            if chained_match = chained_group_map_methods_regex.match(block)
+              route = join_route_parts(chained_match[1], chained_match[2])
+              methods_section = chained_match[3]
+              methods = methods_section.scan(/"([A-Za-z]+)"/).map(&.[1]?.to_s.upcase).reject(&.empty?).uniq!
+            elsif match = block.match(/(?:\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?MapMethods\s*\(\s*"([^"]+)"\s*,\s*new[^{]*\{([^}]*)\}/m)
+              receiver = match[1]?
+              route = apply_group_prefix(match[2], receiver, group_prefixes)
+              methods = match[3].split(",").map(&.gsub(/["\s]/, "").upcase).reject(&.empty?).uniq!
             elsif match = map_methods_block_regex.match(block)
-              route = match[1]
-              methods_section = match[2]
+              receiver = match[1]?
+              route = apply_group_prefix(match[2], receiver, group_prefixes)
+              methods_section = match[3]
               methods = methods_section.scan(/"([A-Za-z]+)"/).map(&.[1]?.to_s.upcase).reject(&.empty?).uniq!
             end
 
@@ -67,6 +88,47 @@ module Analyzer::CSharp
           end
         end
       end
+    end
+
+    private def route_builder_line?(line : String) : Bool
+      line.includes?("MapGet") ||
+        line.includes?("MapPost") ||
+        line.includes?("MapPut") ||
+        line.includes?("MapDelete") ||
+        line.includes?("MapPatch") ||
+        line.includes?("MapHead") ||
+        line.includes?("MapOptions")
+    end
+
+    private def extract_map_group_prefixes(content : String) : Hash(String, String)
+      prefixes = Hash(String, String).new
+      group_assignment_regex = /(?:var\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\s*\.MapGroup\s*\(\s*"([^"]+)"\s*\)/
+
+      content.scan(group_assignment_regex) do |match|
+        variable = match[1]
+        parent = match[2]
+        prefix = match[3]
+        parent_prefix = prefixes[parent]? || ""
+        prefixes[variable] = join_route_parts(parent_prefix, prefix)
+      end
+
+      prefixes
+    end
+
+    private def apply_group_prefix(route : String, receiver : String?, group_prefixes : Hash(String, String)) : String
+      return route unless receiver
+      prefix = group_prefixes[receiver]?
+      return route unless prefix
+      join_route_parts(prefix, route)
+    end
+
+    private def join_route_parts(*parts : String) : String
+      clean_parts = parts.compact_map do |part|
+        clean = part.strip.gsub(/^\//, "").gsub(/\/$/, "")
+        clean.empty? ? nil : clean
+      end
+      return "/" if clean_parts.empty?
+      "/" + clean_parts.join("/")
     end
 
     private def extract_map_block(lines : Array(String), start_index : Int32) : String
@@ -223,6 +285,7 @@ module Analyzer::CSharp
 
       http_method = "GET"
       action_route = ""
+      explicit_endpoint_attribute = false
       in_class = false
 
       i = 0
@@ -231,12 +294,13 @@ module Analyzer::CSharp
 
         in_class = true if line.includes?("class") && line.includes?("Controller")
         if in_class
-          http_method, action_route = update_http_context(line, http_method, action_route)
+          http_method, action_route, found_attribute = update_http_context(line, http_method, action_route)
+          explicit_endpoint_attribute ||= found_attribute
         end
 
         if in_class && potential_action_signature?(line)
           signature, end_index = build_signature(lines, i)
-          if action_method?(signature)
+          if action_method?(signature, explicit_endpoint_attribute)
             action_name = extract_action_name(signature)
             unless action_name.empty?
               parameters = extract_parameters(signature, http_method)
@@ -263,6 +327,7 @@ module Analyzer::CSharp
 
               http_method = "GET"
               action_route = ""
+              explicit_endpoint_attribute = false
             end
           end
           i = end_index
@@ -272,47 +337,60 @@ module Analyzer::CSharp
       end
     end
 
-    private def update_http_context(line : String, current_method : String, action_route : String) : Tuple(String, String)
+    private def update_http_context(line : String, current_method : String, action_route : String) : Tuple(String, String, Bool)
       http_method = current_method
       route = action_route
+      found_attribute = false
 
       if line.includes?("[HttpPost")
         http_method = "POST"
         route = extract_attribute_route(line, "HttpPost", route)
+        found_attribute = true
       elsif line.includes?("[HttpGet")
         http_method = "GET"
         route = extract_attribute_route(line, "HttpGet", route)
+        found_attribute = true
       elsif line.includes?("[HttpPut")
         http_method = "PUT"
         route = extract_attribute_route(line, "HttpPut", route)
+        found_attribute = true
       elsif line.includes?("[HttpDelete")
         http_method = "DELETE"
         route = extract_attribute_route(line, "HttpDelete", route)
+        found_attribute = true
       elsif line.includes?("[HttpPatch")
         http_method = "PATCH"
         route = extract_attribute_route(line, "HttpPatch", route)
+        found_attribute = true
       elsif line.includes?("[HttpHead")
         http_method = "HEAD"
         route = extract_attribute_route(line, "HttpHead", route)
+        found_attribute = true
       elsif line.includes?("[HttpOptions")
         http_method = "OPTIONS"
         route = extract_attribute_route(line, "HttpOptions", route)
+        found_attribute = true
       elsif line.includes?("[Route")
         route = extract_attribute_route(line, "Route", route)
+        found_attribute = true
       end
 
-      {http_method, route}
+      {http_method, route, found_attribute}
     end
 
     private def potential_action_signature?(line : String) : Bool
       line.includes?("public") && line.includes?("(") && !line.includes?(" class ")
     end
 
-    private def action_method?(signature : String) : Bool
+    private def action_method?(signature : String, explicit_endpoint_attribute : Bool) : Bool
+      return true if explicit_endpoint_attribute
+
       signature.includes?("ActionResult") ||
         signature.includes?("IActionResult") ||
         signature.includes?("JsonResult") ||
-        signature.includes?("ViewResult")
+        signature.includes?("ViewResult") ||
+        signature.includes?("IResult") ||
+        signature.matches?(/Task\s*<\s*(?:IEnumerable|List|PagedResult|Result|Response|[A-Z]\w*)/)
     end
 
     private def extract_controller_name(content : String) : String
@@ -338,9 +416,10 @@ module Analyzer::CSharp
 
       default_param_type = default_param_type(http_method)
 
-      param_list.split(',').each do |param_def|
+      split_csharp_parameters(param_list).each do |param_def|
         cleaned_def, param_type = normalize_param_definition(param_def)
         next if cleaned_def.empty?
+        next if param_type == "service"
 
         if match = cleaned_def.match(/(\w+)\s*(?:=\s*[^,]+)?\s*$/)
           param_name = match[1]
@@ -365,11 +444,14 @@ module Analyzer::CSharp
       cleaned = param_def.strip
 
       {
-        "FromQuery"  => "query",
-        "FromRoute"  => "path",
-        "FromBody"   => "json",
-        "FromHeader" => "header",
-        "FromForm"   => "form",
+        "FromQuery"         => "query",
+        "FromRoute"         => "path",
+        "FromBody"          => "json",
+        "FromHeader"        => "header",
+        "FromForm"          => "form",
+        "FromCookie"        => "cookie",
+        "FromServices"      => "service",
+        "FromKeyedServices" => "service",
       }.each do |attr, type|
         if cleaned.includes?("[#{attr}")
           param_type = type

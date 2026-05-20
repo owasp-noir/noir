@@ -9,8 +9,10 @@ module Analyzer::Cpp
     # CROW_BP_ROUTE(bp, "/path") — blueprint-scoped route registration.
     BP_ROUTE_REGEX = /CROW_BP_ROUTE\s*\(\s*[A-Za-z_][A-Za-z0-9_]*\s*,\s*"([^"]*)"\s*\)/
     # .methods("POST"_method, "GET"_method) clause.
-    METHODS_REGEX = /\.methods\s*\(([^)]*)\)/
-    METHOD_TOKEN  = /"([A-Za-z]+)"_method/
+    METHODS_REGEX     = /\.methods\s*\(([^)]*)\)/
+    METHOD_TOKEN      = /"([A-Za-z]+)"_method/
+    HTTP_METHOD_TOKEN = /(?:crow::)?HTTPMethod::([A-Za-z]+)/
+    CROW_METHOD_TOKEN = /CROW_HTTP_METHOD_([A-Za-z]+)/
     # Path placeholder: <int>, <string>, <uint>, <double>, <path> — and the
     # non-standard but occasionally seen <type:name> form.
     PATH_PARAM_REGEX = /<([^<>:]+)(?::([^<>]+))?>/
@@ -63,9 +65,7 @@ module Analyzer::Cpp
 
           methods = [] of String
           if methods_match = search_window.match(METHODS_REGEX)
-            methods_match[1].scan(METHOD_TOKEN) do |m|
-              methods << m[1].upcase
-            end
+            methods = parse_methods(methods_match[1])
           end
           methods << "GET" if methods.empty?
 
@@ -73,10 +73,12 @@ module Analyzer::Cpp
           details = Details.new(PathInfo.new(path, index + 1))
           route_offset = line_offsets[index] + (route_match.begin(0) || 0)
           route_callees = include_callee ? callees_for_route(source, path, route_offset + route_match[0].bytesize) : [] of Noir::CppCalleeExtractor::Entry
+          route_params = params_for_route(source, route_offset + route_match[0].bytesize)
 
           last_endpoints.clear
           methods.uniq.each do |method|
             endpoint = Endpoint.new(normalized_path, method, path_params.dup, details)
+            route_params.each { |param| push_unique(endpoint, param) }
             Noir::CppCalleeExtractor.attach_to(endpoint, route_callees) if include_callee
             result << endpoint
             last_endpoints << endpoint
@@ -96,6 +98,14 @@ module Analyzer::Cpp
 
       body, start_line = block
       Noir::CppCalleeExtractor.callees_for_body(body, path, start_line)
+    end
+
+    private def params_for_route(source : String, search_start : Int32) : Array(Param)
+      block = Noir::CppCalleeExtractor.extract_lambda_block_after(source, search_start, next_route_offset(source, search_start))
+      return [] of Param unless block
+
+      body, _ = block
+      collect_params_from_block(body)
     end
 
     private def next_route_offset(source : String, search_start : Int32) : Int32
@@ -131,6 +141,40 @@ module Analyzer::Cpp
         "{#{name}}"
       end
       {normalized, params}
+    end
+
+    private def parse_methods(raw : String) : Array(String)
+      methods = [] of String
+      raw.scan(METHOD_TOKEN) do |m|
+        methods << m[1].upcase
+      end
+      raw.scan(HTTP_METHOD_TOKEN) do |m|
+        methods << normalize_method_name(m[1])
+      end
+      raw.scan(CROW_METHOD_TOKEN) do |m|
+        methods << normalize_method_name(m[1])
+      end
+      methods.reject(&.empty?).uniq!
+    end
+
+    private def normalize_method_name(name : String) : String
+      case name.upcase
+      when "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"
+        name.upcase
+      else
+        ""
+      end
+    end
+
+    private def collect_params_from_block(block : String) : Array(Param)
+      params = [] of Param
+      block.each_line do |line|
+        collect_params(line).each do |param|
+          next if params.any? { |existing| existing.name == param.name && existing.param_type == param.param_type }
+          params << param
+        end
+      end
+      params
     end
 
     private def collect_params(line : String) : Array(Param)

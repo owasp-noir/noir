@@ -92,11 +92,12 @@ module Analyzer::Cpp
         line_number = find_line_number(lines, "registerHandler", match[1])
         match_start = match.begin(0) || 0
         callees = include_callee ? callees_for_block_after(content, path, match_start) : [] of Noir::CppCalleeExtractor::Entry
+        route_params = params_for_block_after(content, match_start)
 
         methods.each do |m|
           details = Details.new(PathInfo.new(path, line_number))
           endpoint = Endpoint.new(route, m, details)
-          file_params.each { |p| endpoint.push_param(p) }
+          route_params.each { |p| endpoint.push_param(p) }
           Noir::CppCalleeExtractor.attach_to(endpoint, callees) if include_callee
           endpoints << endpoint
         end
@@ -184,6 +185,14 @@ module Analyzer::Cpp
 
       body, start_line = block
       Noir::CppCalleeExtractor.callees_for_body(body, path, start_line)
+    end
+
+    private def params_for_block_after(content : String, search_start : Int32) : Array(Param)
+      block = Noir::CppCalleeExtractor.extract_block_after(content, search_start)
+      return [] of Param unless block
+
+      body, _ = block
+      extract_params(body.lines)
     end
 
     private def callees_for_handler(content : String, path : String, handler_target : HandlerTarget) : Array(Noir::CppCalleeExtractor::Entry)
@@ -289,7 +298,12 @@ module Analyzer::Cpp
     private def parse_methods(raw : String) : Array(String)
       methods = [] of String
       raw.split(",").each do |token|
-        name = token.strip.gsub(/^drogon::/, "").gsub(/^Http/, "").gsub(/Method$/, "")
+        name = token.strip
+          .gsub(/^drogon::/, "")
+          .gsub(/^HttpMethod::/, "")
+          .gsub(/^Http/, "")
+          .gsub(/Method$/, "")
+          .downcase.capitalize
         next if name.empty?
         if mapped = HTTP_METHODS[name]?
           methods << mapped unless methods.includes?(mapped)
