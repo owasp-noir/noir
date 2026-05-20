@@ -1612,6 +1612,21 @@ module NoirTechs
         :websocket   => true,
       },
     },
+    :insomnia => {
+      :format    => ["JSON", "YAML"],
+      :similar   => ["insomnia", "insomnia collection", "insomnia export"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => false,
+        },
+      },
+    },
     :postman => {
       :format    => ["JSON"],
       :similar   => ["postman", "postman collection"],

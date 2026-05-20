@@ -1,0 +1,67 @@
+{
+  "_type": "export",
+  "__export_format": 4,
+  "__export_date": "2026-05-20T00:00:00.000Z",
+  "__export_source": "insomnia.desktop.app:v2024.0.0",
+  "resources": [
+    {
+      "_id": "wrk_1",
+      "_type": "workspace",
+      "name": "Sample API"
+    },
+    {
+      "_id": "env_1",
+      "_type": "environment",
+      "name": "Base",
+      "data": {
+        "base_url": "https://api.example.com"
+      }
+    },
+    {
+      "_id": "req_1",
+      "_type": "request",
+      "parentId": "wrk_1",
+      "name": "List users",
+      "method": "GET",
+      "url": "{{ base_url }}/users",
+      "parameters": [
+        { "name": "page", "value": "1" },
+        { "name": "limit", "value": "10" }
+      ],
+      "headers": [
+        { "name": "Authorization", "value": "Bearer token123" },
+        { "name": "X-Disabled", "value": "skip", "disabled": true }
+      ]
+    },
+    {
+      "_id": "req_2",
+      "_type": "request",
+      "parentId": "wrk_1",
+      "name": "Create user",
+      "method": "POST",
+      "url": "{{ _.base_url }}/users",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\"name\":\"John Doe\",\"email\":\"john@example.com\"}"
+      }
+    },
+    {
+      "_id": "req_3",
+      "_type": "request",
+      "parentId": "wrk_1",
+      "name": "Update user",
+      "method": "PUT",
+      "url": "{{base_url}}/users/:userId",
+      "body": {
+        "mimeType": "application/x-www-form-urlencoded",
+        "params": [
+          { "name": "name", "value": "Jane Doe" },
+          { "name": "email", "value": "jane@example.com" }
+        ]
+      }
+    }
+  ]
+}
