@@ -12,6 +12,9 @@ sort_by = "weight"
 
 | Specification | Format | endpoint | method | query | path | body | header | cookie |
 |---|---|---|---|---|---|---|---|---|
+| AWS CDK | TS | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| AWS CDK | JS | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| AWS CDK | PY | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | AWS SAM / CloudFormation | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | AWS SAM / CloudFormation | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Apisix | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ☑️ | ✗ |

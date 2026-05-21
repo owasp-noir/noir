@@ -1519,6 +1519,21 @@ module NoirTechs
         },
       },
     },
+    :aws_cdk => {
+      :format    => ["TS", "JS", "PY"],
+      :similar   => ["aws cdk", "aws-cdk-lib", "@aws-cdk", "cdk", "aws_cdk"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+      },
+    },
     :aws_cloudformation => {
       :format    => ["YAML", "JSON"],
       :similar   => ["aws cloudformation", "aws sam", "cloudformation", "sam", "template.yaml", "template.yml", "aws::serverless::function", "aws::apigateway::resource"],
