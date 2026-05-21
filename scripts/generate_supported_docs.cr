@@ -37,6 +37,7 @@ SPEC_FRIENDLY_NAMES = {
   "postman"              => "Postman Collection",
   "apache_httpd"         => "Apache httpd",
   "aws_cdk"              => "AWS CDK",
+  "caddy"                => "Caddy",
   "aws_cloudformation"   => "AWS SAM / CloudFormation",
   "azure_functions"      => "Azure Functions",
   "cloudflare_wrangler"  => "Cloudflare Workers (wrangler)",

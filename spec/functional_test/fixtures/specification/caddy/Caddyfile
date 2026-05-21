@@ -1,0 +1,17 @@
+api.example.com {
+    handle /v1/* {
+        reverse_proxy users:8080
+    }
+    handle_path /admin/* {
+        basic_auth { admin $2y$x }
+        reverse_proxy admin:3000
+    }
+    @api {
+        method GET POST
+        path /api/*
+    }
+    handle @api {
+        reverse_proxy api:8000
+    }
+    redir /old /new permanent
+}

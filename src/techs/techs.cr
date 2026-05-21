@@ -1579,6 +1579,21 @@ module NoirTechs
         },
       },
     },
+    :caddy => {
+      :format    => ["CADDYFILE", "JSON"],
+      :similar   => ["caddy", "caddyfile", "caddy.json"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+      },
+    },
     :cloudflare_wrangler => {
       :format    => ["TOML", "JSON"],
       :similar   => ["cloudflare", "cloudflare workers", "wrangler", "wrangler.toml", "wrangler.json", "wrangler.jsonc"],
