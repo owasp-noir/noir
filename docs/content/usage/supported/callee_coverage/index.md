@@ -24,7 +24,7 @@ This matrix lists frameworks with functional test coverage for callee extraction
 
 | Language | Frameworks with callee coverage |
 |----------|---------------------------------|
-| C# | ASP.NET Core MVC, ASP.NET MVC |
+| C# | ASP.NET Core MVC, ASP.NET MVC, FastEndpoints |
 | Clojure | Compojure |
 | C++ | Crow, Drogon |
 | Crystal | Amber, Grip, Kemal, Lucky, Marten |

@@ -119,6 +119,11 @@ module NoirTaggers
       desc:   "Identifies ASP.NET authentication patterns ([Authorize], policies)",
       runner: AspnetAuthTagger,
     },
+    fastendpoints_auth: {
+      name:   "FastEndpoints Auth Tagger",
+      desc:   "Identifies FastEndpoints authentication patterns (Roles, Permissions, Policies)",
+      runner: FastEndpointsAuthTagger,
+    },
     elixir_auth: {
       name:   "Elixir Auth Tagger",
       desc:   "Identifies Phoenix/Plug authentication patterns (plugs, Guardian, Pow)",
