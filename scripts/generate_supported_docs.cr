@@ -35,6 +35,7 @@ SPEC_FRIENDLY_NAMES = {
   "graphql_sdl" => "GraphQL SDL",
   "raml"        => "RAML",
   "postman"     => "Postman Collection",
+  "traefik"     => "Traefik Dynamic Config",
   "typespec"    => "TypeSpec",
 }
 

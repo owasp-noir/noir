@@ -105,6 +105,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"postman", Specification::Postman},
     {"raml", Specification::RAML},
     {"smithy", Specification::Smithy},
+    {"traefik", Specification::Traefik},
     {"typespec", Specification::TypeSpec},
     {"vercel", Specification::Vercel},
     {"wsdl", Specification::WSDL},

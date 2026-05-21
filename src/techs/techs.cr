@@ -2020,6 +2020,21 @@ module NoirTechs
         },
       },
     },
+    :traefik => {
+      :format    => ["YAML", "TOML"],
+      :similar   => ["traefik", "traefik dynamic config", "ingressroute"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+      },
+    },
     :typespec => {
       :format    => ["TYPESPEC"],
       :similar   => ["typespec", "tsp", "cadl"],
