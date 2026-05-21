@@ -21,6 +21,7 @@ Beyond source code analysis, Noir can parse API and data specification formats s
 | Apisix | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ☑️ | ✗ |
 | Asyncapi | JSON | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ✗ | ✗ |
 | Asyncapi | YAML | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ✗ | ✗ |
+| Azure Functions | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Bruno | BRU | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
 | Burp | XML | ☑️ | ☑️ | ☑️ | ✗ | ☑️ | ☑️ | ☑️ |
 | Caido | JSON | ☑️ | ☑️ | ☑️ | ✗ | ☑️ | ☑️ | ☑️ |

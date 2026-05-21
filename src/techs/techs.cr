@@ -1549,6 +1549,21 @@ module NoirTechs
         },
       },
     },
+    :azure_functions => {
+      :format    => ["JSON"],
+      :similar   => ["azure functions", "azure-functions", "function.json", "azure"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+      },
+    },
     :cloudflare_wrangler => {
       :format    => ["TOML", "JSON"],
       :similar   => ["cloudflare", "cloudflare workers", "wrangler", "wrangler.toml", "wrangler.json", "wrangler.jsonc"],
