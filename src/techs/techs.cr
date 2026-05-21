@@ -1519,6 +1519,21 @@ module NoirTechs
         },
       },
     },
+    :aws_cloudformation => {
+      :format    => ["YAML", "JSON"],
+      :similar   => ["aws cloudformation", "aws sam", "cloudformation", "sam", "template.yaml", "template.yml", "aws::serverless::function", "aws::apigateway::resource"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+      },
+    },
     :kong => {
       :format    => ["YAML"],
       :similar   => ["kong", "kong declarative", "deck", "kong ingress controller", "kic"],
