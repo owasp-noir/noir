@@ -29,6 +29,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"dart_frog", Dart::DartFrog},
     {"dart_serverpod", Dart::Serverpod},
     {"dart_shelf", Dart::Shelf},
+    {"elixir_bandit", Elixir::Bandit},
     {"elixir_phoenix", Elixir::Phoenix},
     {"elixir_plug", Elixir::Plug},
     {"fs_giraffe", Fsharp::Giraffe},
@@ -175,6 +176,17 @@ def filter_redundant_generic_techs(techs : Array(String)) : Array(String)
   # Lumen is the actual framework, the Laravel signal is just noise.
   if filtered.includes?("php_lumen") && filtered.includes?("php_laravel")
     filtered.reject!("php_laravel")
+  end
+
+  # Bandit hosts the same `Plug.Router` modules the Plug analyzer
+  # already understands, so both detectors fire on a Bandit project.
+  # When both are present, the Bandit signal is the more specific one
+  # (it tells you which HTTP server is actually serving the routes);
+  # keep it and drop the redundant Plug entry so endpoints aren't
+  # extracted twice with two different technology tags. The Phoenix
+  # analyzer is unaffected — it owns the Phoenix.Router DSL.
+  if filtered.includes?("elixir_bandit") && filtered.includes?("elixir_plug")
+    filtered.reject!("elixir_plug")
   end
 
   filtered
