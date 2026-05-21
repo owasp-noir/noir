@@ -24,7 +24,7 @@ JSON, JSONL, YAML, TOML 같은 모델 기반 포맷과 plain 모델 직렬화는
 
 | 언어 | callee 커버리지가 있는 프레임워크 |
 |------|-----------------------------------|
-| C# | ASP.NET Core MVC, ASP.NET MVC |
+| C# | ASP.NET Core MVC, ASP.NET MVC, FastEndpoints |
 | Clojure | Compojure |
 | C++ | Crow, Drogon |
 | Crystal | Amber, Grip, Kemal, Lucky, Marten |
