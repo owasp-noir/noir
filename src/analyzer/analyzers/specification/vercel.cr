@@ -3,6 +3,7 @@ require "../../../models/analyzer"
 module Analyzer::Specification
   class Vercel < Analyzer
     ROUTING_GROUP_KEYS = {"beforeFiles", "afterFiles", "fallback"}
+    PATTERN_CHARS = {'*', '^', '$', '(', ')', '[', ']', '{', '}', '|', '+', '?', '\\'}
 
     def analyze
       locator = CodeLocator.instance
@@ -73,7 +74,7 @@ module Analyzer::Specification
     end
 
     private def pattern_source?(source : String) : Bool
-      source.matches?(/[\*\^\$\(\)\[\]\{\}\|\+\?]/)
+      source.each_char.any? { |char| PATTERN_CHARS.includes?(char) }
     end
   end
 end
