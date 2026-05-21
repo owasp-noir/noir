@@ -3,40 +3,34 @@ require "../../../../src/models/code_locator"
 require "../../../../src/analyzer/analyzers/specification/netlify"
 
 private def analyze_netlify(redirects_content : String?, toml_content : String?) : Array(Endpoint)
-  tmp_dir = ""
-  redirects_path = ""
-  toml_path = ""
   tmp_dir = File.tempname("netlify-analyzer")
+  redirects_path = File.join(tmp_dir, "_redirects")
+  toml_path = File.join(tmp_dir, "netlify.toml")
+
   Dir.mkdir_p(tmp_dir)
 
   locator = CodeLocator.instance
   locator.clear "netlify-redirects"
   locator.clear "netlify-toml"
 
-  redirects_path = File.join(tmp_dir, "_redirects")
-  toml_path = File.join(tmp_dir, "netlify.toml")
+  begin
+    if redirects_content
+      File.write(redirects_path, redirects_content)
+      locator.push "netlify-redirects", redirects_path
+    end
 
-  if redirects_content
-    File.write(redirects_path, redirects_content)
-    locator.push "netlify-redirects", redirects_path
-  end
+    if toml_content
+      File.write(toml_path, toml_content)
+      locator.push "netlify-toml", toml_path
+    end
 
-  if toml_content
-    File.write(toml_path, toml_content)
-    locator.push "netlify-toml", toml_path
-  end
-
-  options = create_test_options
-  analyzer = Analyzer::Specification::Netlify.new options
-  analyzer.analyze
-ensure
-  tmp_dir_s = tmp_dir.to_s
-  redirects_path_s = redirects_path.to_s
-  toml_path_s = toml_path.to_s
-  if !tmp_dir_s.empty? && Dir.exists?(tmp_dir_s)
-    File.delete(redirects_path_s) if File.exists?(redirects_path_s)
-    File.delete(toml_path_s) if File.exists?(toml_path_s)
-    Dir.delete(tmp_dir_s)
+    options = create_test_options
+    analyzer = Analyzer::Specification::Netlify.new options
+    analyzer.analyze
+  ensure
+    File.delete(redirects_path) if File.exists?(redirects_path)
+    File.delete(toml_path) if File.exists?(toml_path)
+    Dir.delete(tmp_dir) if Dir.exists?(tmp_dir)
   end
 end
 
