@@ -1954,6 +1954,21 @@ module NoirTechs
         },
       },
     },
+    :odata => {
+      :format    => ["XML"],
+      :similar   => ["odata", "edmx", "csdl"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => false,
+          :cookie => false,
+        },
+      },
+    },
     :ruby_grape => {
       :framework => "Grape",
       :language  => "Ruby",
