@@ -13,6 +13,9 @@ expected_endpoints = [
     Param.new("name", "", "query"),
     Param.new("sort", "", "query"),
   ]),
+  Endpoint.new("/api/ping", "GET"),
+  Endpoint.new("/api/ping", "HEAD"),
+  Endpoint.new("/api/bulk", "POST", [Param.new("body", "CreateUser", "json")]),
   Endpoint.new("/v1/health", "GET"),
 ]
 

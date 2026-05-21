@@ -31,35 +31,42 @@ module Analyzer::Scala
         if case_line?(trimmed)
           header, end_index = collect_case_header(lines, i)
           if data = parse_case_header(header)
-            method, segments, path_params, query_params, binding_name = data
+            methods, segments, path_params, query_params, binding_name = data
             full_path = build_full_path(segments, current_routes_name, mount_prefixes)
-            endpoint = Endpoint.new(full_path, method, [] of Param, Details.new(PathInfo.new(path, i + 1)))
-
-            path_params.each do |name|
-              unless endpoint.params.any? { |p| p.name == name && p.param_type == "path" }
-                endpoint.push_param(Param.new(name, "", "path"))
-              end
-            end
-
-            query_params.each do |name|
-              unless endpoint.params.any? { |p| p.name == name && p.param_type == "query" }
-                endpoint.push_param(Param.new(name, "", "query"))
-              end
-            end
-
             body_text = extract_case_body(lines, end_index)
+            body_type : String? = nil
             if binding_name
               if body_match = body_text.match(/#{Regex.escape(binding_name)}\s*\.\s*as\s*\[\s*([^\]\s]+)\s*\]/)
-                endpoint.push_param(Param.new("body", body_match[1], "json"))
+                body_type = body_match[1]
               end
             end
 
-            if include_callee && !body_text.empty?
-              callees = Noir::ScalaCalleeExtractor.callees_for_body(body_text, path, i + 1)
-              attach_scala_callees(endpoint, callees)
-            end
+            methods.each do |method|
+              endpoint = Endpoint.new(full_path, method, [] of Param, Details.new(PathInfo.new(path, i + 1)))
 
-            endpoints << endpoint
+              path_params.each do |name|
+                unless endpoint.params.any? { |p| p.name == name && p.param_type == "path" }
+                  endpoint.push_param(Param.new(name, "", "path"))
+                end
+              end
+
+              query_params.each do |name|
+                unless endpoint.params.any? { |p| p.name == name && p.param_type == "query" }
+                  endpoint.push_param(Param.new(name, "", "query"))
+                end
+              end
+
+              if body_type
+                endpoint.push_param(Param.new("body", body_type, "json"))
+              end
+
+              if include_callee && !body_text.empty?
+                callees = Noir::ScalaCalleeExtractor.callees_for_body(body_text, path, i + 1)
+                attach_scala_callees(endpoint, callees)
+              end
+
+              endpoints << endpoint
+            end
           end
 
           i = end_index + 1
@@ -75,7 +82,7 @@ module Analyzer::Scala
     private def case_line?(trimmed : String) : Bool
       return false unless trimmed.starts_with?("case ")
       return false unless trimmed.includes?("->")
-      trimmed =~ /->\s*Root\b/ ? true : false
+      !!(trimmed =~ /->\s*Root\b/)
     end
 
     # Join continuation lines until we find the `=>` that ends the case pattern.
@@ -102,7 +109,8 @@ module Analyzer::Scala
 
     # Parse a joined case header like:
     #   case req @ POST -> Root / "users" / IntVar(id) :? FooMatcher(foo) +& BarMatcher(bar)
-    # Returns: method, path segments, path params, query params, binding name (or nil)
+    # Returns: methods (1+ for union `GET | POST`), path segments,
+    # path params, query params, binding name (or nil).
     private def parse_case_header(header : String)
       cleaned = header.strip
       return nil unless cleaned.starts_with?("case ")
@@ -114,10 +122,10 @@ module Analyzer::Scala
         body = body[at_match.end(0).not_nil!..]
       end
 
-      method_match = body.match(/^(?:\(\s*)?([A-Z]+)(?:\s*\|\s*[A-Z]+)*(?:\s*\))?\s*->\s*Root\b/)
+      method_match = body.match(/^(?:\(\s*)?([A-Z]+(?:\s*\|\s*[A-Z]+)*)(?:\s*\))?\s*->\s*Root\b/)
       return nil unless method_match
-      method = method_match[1]
-      return nil unless HTTP_METHODS.includes?(method)
+      methods = method_match[1].split('|').map(&.strip).select { |m| HTTP_METHODS.includes?(m) }
+      return nil if methods.empty?
 
       remainder = body[method_match.end(0).not_nil!..].strip
 
@@ -131,7 +139,7 @@ module Analyzer::Scala
       segments, path_params = parse_segments(path_part)
       query_params = parse_query_matchers(query_part)
 
-      {method, segments, path_params, query_params, binding_name}
+      {methods, segments, path_params, query_params, binding_name}
     end
 
     private def parse_segments(path_part : String) : Tuple(Array(String), Array(String))
@@ -146,16 +154,14 @@ module Analyzer::Scala
           name = var_match[1]
           segments << "{#{name}}"
           path_params << name
-        elsif extractor_match = tok.match(/^\w+\s*\(\s*(\w+)\s*\)$/)
+        elsif extractor_match = tok.match(/^[A-Z]\w*\s*\(\s*(\w+)\s*\)$/)
           name = extractor_match[1]
           segments << "{#{name}}"
           path_params << name
-        elsif ident_match = tok.match(/^(\w+)$/)
-          name = ident_match[1]
+        elsif ident_match = tok.match(/^[a-z_]\w*$/)
+          name = ident_match[0]
           segments << "{#{name}}"
           path_params << name
-        else
-          # Unrecognized extractor; skip but continue parsing other segments.
         end
       end
 
@@ -210,13 +216,17 @@ module Analyzer::Scala
     # or the close of the enclosing brace. Used for body-type and callee extraction.
     private def extract_case_body(lines : Array(String), header_end_index : Int32) : String
       body_lines = [] of String
+      brace_depth = 0
+
       tail = lines[header_end_index]? || ""
       if arrow = tail.index("=>")
-        body_lines << tail[(arrow + 2)..]
+        inline = tail[(arrow + 2)..]
+        body_lines << inline
+        inline_code = scala_code_line(inline)
+        brace_depth += inline_code.count('{') - inline_code.count('}')
       end
 
       idx = header_end_index + 1
-      brace_depth = 0
       while idx < lines.size
         line = lines[idx]
         stripped = scala_code_line(line)

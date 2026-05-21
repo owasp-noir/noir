@@ -34,6 +34,13 @@ object Routes {
 
     case GET -> Root / "search" :? NameQueryParamMatcher(name) +& SortQueryParamMatcher(sort) =>
       Ok(s"search $name")
+
+    case (GET | HEAD) -> Root / "ping" =>
+      Ok("pong")
+
+    case req @ POST -> Root / "bulk" => req.as[CreateUser].flatMap { u =>
+      Ok(u.name)
+    }
   }
 
   val healthRoutes: HttpRoutes[IO] = HttpRoutes.of[IO] {

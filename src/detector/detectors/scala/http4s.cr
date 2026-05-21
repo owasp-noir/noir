@@ -5,7 +5,7 @@ module Detector::Scala
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".scala") || filename.ends_with?(".sbt") || File.basename(filename) == "build.sbt"
 
-      if file_contents.includes?("org.http4s") || file_contents.includes?("http4s-dsl") || file_contents.includes?("\"http4s\"")
+      if file_contents.includes?("org.http4s") || file_contents.includes?("http4s-dsl")
         return true
       end
 
