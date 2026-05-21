@@ -31,7 +31,7 @@ describe "Vercel Analyzer" do
       }
       JSON
 
-    endpoints.map(&.url).sort!.should eq ["/api/v1/(.*)", "/old", "^/legacy/(.*)", "/(.*)"].sort!
+    endpoints.map(&.url).sort!.should eq ["/(.*)", "/api/v1/(.*)", "/old", "^/legacy/(.*)"]
     endpoints.all? { |e| e.method == "ANY" }.should be_true
   end
 

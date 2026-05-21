@@ -4,6 +4,7 @@ module Analyzer::Specification
   class Vercel < Analyzer
     ROUTING_GROUP_KEYS = {"beforeFiles", "afterFiles", "fallback"}
     PATTERN_CHARS = {'*', '^', '$', '(', ')', '[', ']', '{', '}', '|', '+', '?', '\\'}
+    METHOD_ANY = "ANY"
 
     def analyze
       locator = CodeLocator.instance
@@ -37,7 +38,7 @@ module Analyzer::Specification
         source = entry[source_key]?.try(&.as_s?)
         next if source.nil? || source.empty?
 
-        endpoint = Endpoint.new(source, "ANY", details)
+        endpoint = Endpoint.new(source, METHOD_ANY, details)
         endpoint.add_tag(Tag.new("vercel-rule", rule_kind, "vercel_analyzer"))
         endpoint.add_tag(Tag.new("pattern", "vercel_source_matcher", "vercel_analyzer")) if pattern_source?(source)
 
