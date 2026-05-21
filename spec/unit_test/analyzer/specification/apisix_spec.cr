@@ -66,11 +66,15 @@ describe "Apisix Analyzer" do
       YAML
 
     endpoints = analyze_apisix(yaml_content: yaml)
-    internal = endpoints.find! { |ep| ep.url == "/internal" && ep.method == "DELETE" }
+    internal = endpoints.find { |ep| ep.url == "/internal" && ep.method == "DELETE" }
+    internal.should_not be_nil
+    internal = internal.not_nil!
     internal_hosts = internal.params.select { |p| p.name == "Host" && p.param_type == "header" }.map(&.value).sort!
     internal_hosts.should eq(["api.example.com", "internal.example.com"])
 
-    admin = endpoints.find! { |ep| ep.url == "/admin" && ep.method == "GET" }
+    admin = endpoints.find { |ep| ep.url == "/admin" && ep.method == "GET" }
+    admin.should_not be_nil
+    admin = admin.not_nil!
     admin_hosts = admin.params.select { |p| p.name == "Host" && p.param_type == "header" }.map(&.value)
     admin_hosts.should eq(["admin.example.com"])
   end

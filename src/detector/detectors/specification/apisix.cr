@@ -47,8 +47,8 @@ module Detector::Specification
     private def route_has_signature_json?(route : JSON::Any) : Bool
       route_obj = route.as_h?
       return false unless route_obj
-      has_path = route_obj["uri"]?.try(&.as_s?).to_s != "" ||
-                 route_obj["uris"]?.try(&.as_a?).try(&.any? { |u| u.as_s?.to_s != "" }) == true
+      has_path = non_empty_json_string?(route_obj["uri"]?) ||
+                 route_obj["uris"]?.try(&.as_a?).try(&.any? { |uri| non_empty_json_string?(uri) }) == true
       return false unless has_path
       route_obj["upstream_id"]? != nil || route_obj["plugins"]?.try(&.as_h?).try(&.empty?) == false
     end
@@ -64,11 +64,21 @@ module Detector::Specification
     private def route_has_signature_yaml?(route : YAML::Any) : Bool
       route_obj = route.as_h?
       return false unless route_obj
-      has_path = route_obj[YAML::Any.new("uri")]?.try(&.as_s?).to_s != "" ||
-                 route_obj[YAML::Any.new("uris")]?.try(&.as_a?).try(&.any? { |u| u.as_s?.to_s != "" }) == true
+      has_path = non_empty_yaml_string?(route_obj[YAML::Any.new("uri")]?) ||
+                 route_obj[YAML::Any.new("uris")]?.try(&.as_a?).try(&.any? { |uri| non_empty_yaml_string?(uri) }) == true
       return false unless has_path
       route_obj[YAML::Any.new("upstream_id")]? != nil ||
         route_obj[YAML::Any.new("plugins")]?.try(&.as_h?).try(&.empty?) == false
+    end
+
+    private def non_empty_json_string?(value : JSON::Any?) : Bool
+      text = value.try(&.as_s?)
+      !!(text && !text.empty?)
+    end
+
+    private def non_empty_yaml_string?(value : YAML::Any?) : Bool
+      text = value.try(&.as_s?)
+      !!(text && !text.empty?)
     end
   end
 end
