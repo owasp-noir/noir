@@ -3,9 +3,9 @@ require "json"
 module NoirTechs
   CALLEE_SUPPORTED_TECHS = [
     "cpp_crow", "cpp_drogon",
-    "clojure_compojure", "clojure_reitit",
+    "clojure_compojure", "clojure_reitit", "clojure_ring",
     "crystal_amber", "crystal_grip", "crystal_kemal", "crystal_lucky", "crystal_marten",
-    "cs_aspnet_core_mvc", "cs_aspnet_mvc", "cs_carter",
+    "cs_aspnet_core_mvc", "cs_aspnet_mvc", "cs_carter", "cs_fastendpoints",
     "dart_frog", "dart_serverpod", "dart_shelf",
     "elixir_bandit", "elixir_phoenix", "elixir_plug",
     "fs_giraffe",
@@ -33,7 +33,7 @@ module NoirTechs
 
   AI_CONTEXT_GUARD_SUPPORTED_TECHS = [
     "crystal_amber", "crystal_grip", "crystal_kemal", "crystal_lucky", "crystal_marten",
-    "cs_aspnet_core_mvc", "cs_aspnet_mvc", "cs_carter",
+    "cs_aspnet_core_mvc", "cs_aspnet_mvc", "cs_carter", "cs_fastendpoints",
     "elixir_bandit", "elixir_phoenix", "elixir_plug",
     "go_beego", "go_chi", "go_echo", "go_fasthttp", "go_fiber", "go_gin", "go_gozero", "go_goyave", "go_mux",
     "java_armeria", "java_jsp", "java_play", "java_spring", "java_vertx",
@@ -97,6 +97,24 @@ module NoirTechs
           :path   => true,
           :body   => true,
           :header => true,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
+    :clojure_ring => {
+      :framework => "Ring",
+      :language  => "Clojure",
+      :similar   => ["ring", "clojure-ring", "clojure_ring", "clj-ring"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => true,
+          :body   => false,
+          :header => false,
           :cookie => false,
         },
         :static_path => false,
@@ -269,6 +287,24 @@ module NoirTechs
       :framework => "Carter",
       :language  => "C#",
       :similar   => ["carter", "cs-carter", "cs_carter", "c# carter", "c#-carter", "c#_carter"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
+    :cs_fastendpoints => {
+      :framework => "FastEndpoints",
+      :language  => "C#",
+      :similar   => ["fastendpoints", "fast-endpoints", "cs-fastendpoints", "cs_fastendpoints", "c# fastendpoints", "c#-fastendpoints", "c#_fastendpoints"],
       :supported => {
         :endpoint => true,
         :method   => true,
@@ -1360,6 +1396,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :ts_trpc => {
+      :framework => "tRPC",
+      :language  => "TypeScript",
+      :similar   => ["trpc", "ts-trpc", "ts_trpc", "@trpc/server", "@trpc/next"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => false,
+          :body   => true,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => true,
+        :websocket   => true,
+      },
+    },
     :kotlin_http4k => {
       :framework => "http4k",
       :language  => "Kotlin",
@@ -1412,6 +1466,36 @@ module NoirTechs
         },
         :static_path => false,
         :websocket   => false,
+      },
+    },
+    :apisix => {
+      :format    => ["JSON", "YAML"],
+      :similar   => ["apisix", "apache apisix", "apache-apisix", "apache_apisix"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => false,
+          :header => true,
+          :cookie => false,
+        },
+      },
+    },
+    :kong => {
+      :format    => ["YAML"],
+      :similar   => ["kong", "kong declarative", "deck", "kong ingress controller", "kic"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
       },
     },
     :oas2 => {
@@ -1469,6 +1553,21 @@ module NoirTechs
           :query  => true,
           :path   => true,
           :body   => true,
+          :header => false,
+          :cookie => false,
+        },
+      },
+    },
+    :envoy => {
+      :format    => ["JSON", "YAML"],
+      :similar   => ["envoy", "envoy-proxy", "envoy_proxy", "istio-envoy"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => false,
           :header => false,
           :cookie => false,
         },
@@ -1897,6 +1996,21 @@ module NoirTechs
         },
       },
     },
+    :netlify => {
+      :format    => ["TXT", "TOML"],
+      :similar   => ["netlify", "_redirects", "netlify.toml"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+      },
+    },
     :postman => {
       :format    => ["JSON"],
       :similar   => ["postman", "postman collection"],
@@ -1942,6 +2056,21 @@ module NoirTechs
         },
       },
     },
+    :traefik => {
+      :format    => ["YAML", "TOML"],
+      :similar   => ["traefik", "traefik dynamic config", "ingressroute"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+      },
+    },
     :typespec => {
       :format    => ["TYPESPEC"],
       :similar   => ["typespec", "tsp", "cadl"],
@@ -1954,6 +2083,21 @@ module NoirTechs
           :body   => true,
           :header => true,
           :cookie => true,
+        },
+      },
+    },
+    :vercel => {
+      :format    => ["JSON"],
+      :similar   => ["vercel", "vercel.json", "now.json"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => false,
+          :header => false,
+          :cookie => false,
         },
       },
     },

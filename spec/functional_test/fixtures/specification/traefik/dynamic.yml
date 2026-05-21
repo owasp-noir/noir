@@ -1,0 +1,12 @@
+http:
+  routers:
+    api:
+      rule: "Host(`api.example.com`) && PathPrefix(`/v1`)"
+      service: users
+      middlewares: [auth, ratelimit]
+    admin:
+      rule: "Host(`example.com`) && Path(`/admin`) && Method(`GET`)"
+      service: admin
+    alternatives:
+      rule: "Path(`/foo`) || Path(`/bar`)"
+      service: alt

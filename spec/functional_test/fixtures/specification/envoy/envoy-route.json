@@ -1,0 +1,21 @@
+{
+  "virtual_hosts": [
+    {
+      "name": "backend",
+      "domains": ["backend.example.com"],
+      "routes": [
+        {
+          "match": { "prefix": "/api" },
+          "route": { "cluster": "backend_cluster" }
+        },
+        {
+          "match": {
+            "path": "/status",
+            "headers": [{ "name": ":method", "exact_match": "GET" }]
+          },
+          "route": { "cluster": "health_cluster" }
+        }
+      ]
+    }
+  ]
+}
