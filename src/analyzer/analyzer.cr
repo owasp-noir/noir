@@ -112,6 +112,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"istio_virtualservice", Specification::IstioVirtualservice},
     {"mitmproxy", Specification::Mitmproxy},
     {"netlify", Specification::Netlify},
+    {"nginx", Specification::Nginx},
     {"odata", Specification::OData},
     {"postman", Specification::Postman},
     {"raml", Specification::RAML},

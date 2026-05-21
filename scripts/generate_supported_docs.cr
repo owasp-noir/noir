@@ -42,6 +42,7 @@ SPEC_FRIENDLY_NAMES = {
   "istio_virtualservice" => "Istio VirtualService",
   "k8s_gateway_api"      => "Kubernetes Gateway API (HTTPRoute)",
   "k8s_ingress"          => "Kubernetes Ingress",
+  "nginx"                => "Nginx",
   "serverless_framework" => "Serverless Framework",
   "traefik"              => "Traefik Dynamic Config",
   "typespec"             => "TypeSpec",

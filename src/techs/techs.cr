@@ -2155,6 +2155,21 @@ module NoirTechs
         },
       },
     },
+    :nginx => {
+      :format    => ["CONF"],
+      :similar   => ["nginx", "nginx.conf", "sites-enabled", "conf.d"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+      },
+    },
     :netlify => {
       :format    => ["TXT", "TOML"],
       :similar   => ["netlify", "_redirects", "netlify.toml"],

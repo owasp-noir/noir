@@ -41,6 +41,7 @@ Beyond source code analysis, Noir can parse API and data specification formats s
 | Kubernetes Ingress | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Netlify | TXT | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Netlify | TOML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Nginx | CONF | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Odata | XML | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ✗ |
 | OpenAPI 2.0 (Swagger) | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
 | OpenAPI 2.0 (Swagger) | YAML | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
