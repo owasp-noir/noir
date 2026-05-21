@@ -1,0 +1,36 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+
+Resources:
+  ListUsers:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/users.list
+      Events:
+        ListEvent:
+          Type: Api
+          Properties:
+            Method: GET
+            Path: /users
+        CreateEvent:
+          Type: HttpApi
+          Properties:
+            Method: POST
+            Path: /users
+
+  Api:
+    Type: AWS::ApiGateway::RestApi
+
+  OrdersResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      PathPart: orders
+      ParentId:
+        "Fn::GetAtt": [Api, RootResourceId]
+
+  ListOrdersMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      HttpMethod: GET
+      ResourceId:
+        Ref: OrdersResource
