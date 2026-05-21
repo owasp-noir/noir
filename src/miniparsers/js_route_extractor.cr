@@ -330,8 +330,11 @@ module Noir
       ".route (", ".register (", ".use (",
     ]
 
+    BRACKET_ROUTE_CALL_PATTERN = /\[\s*['"](?:get|post|put|delete|del|patch|options|head|all)['"]\s*\]\s*\(/i
+
     def self.route_call_candidate?(content : String) : Bool
-      PARSER_ROUTE_CALL_HINTS.any? { |hint| content.includes?(hint) }
+      PARSER_ROUTE_CALL_HINTS.any? { |hint| content.includes?(hint) } ||
+        content.matches?(BRACKET_ROUTE_CALL_PATTERN)
     end
 
     # Test-fixture libraries whose API mimics route registration:
@@ -599,6 +602,11 @@ module Noir
         route_declarations << "#{method}(\"#{lookup_path}\""
         # Method call with template literals
         route_declarations << "#{method}(`#{lookup_path}`"
+        # Bracket method notation: router['get']('/path', ...)
+        route_declarations << "['#{method}']('#{lookup_path}'"
+        route_declarations << "[\"#{method}\"](\"#{lookup_path}\""
+        route_declarations << "['#{method}'](\"#{lookup_path}\""
+        route_declarations << "[\"#{method}\"]('#{lookup_path}'"
       end
 
       # Also handle app.route('/path').method() pattern
@@ -616,6 +624,20 @@ module Noir
           idx = found_idx
           found_declaration = declaration
           break
+        end
+      end
+
+      # Koa/@koa-router named routes put a route name before the real path:
+      #   router.get("route-name", "/path", handler)
+      if idx.nil?
+        escaped_path = Regex.escape(lookup_path)
+        method_variations.each do |method|
+          named_route_pattern = /#{Regex.escape(method)}\s*\(\s*['"][^'"]+['"]\s*,\s*['"]#{escaped_path}['"]/
+          if named_match = content.match(named_route_pattern)
+            idx = named_match.begin(0)
+            found_declaration = method
+            break
+          end
         end
       end
 
@@ -787,7 +809,17 @@ module Noir
         if match.size > 0
           params = match[1].split(",").map(&.strip)
           params.each do |param|
-            clean_param = param.split("=").first.strip
+            clean_param = clean_destructured_param(param)
+            endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
+          end
+        end
+      end
+
+      handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*ctx\.request\.body/) do |match|
+        if match.size > 0
+          params = match[1].split(",").map(&.strip)
+          params.each do |param|
+            clean_param = clean_destructured_param(param)
             endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
           end
         end
@@ -812,7 +844,7 @@ module Noir
         if match.size > 0
           params = match[1].split(",").map(&.strip)
           params.each do |param|
-            clean_param = param.split("=").first.strip
+            clean_param = clean_destructured_param(param)
             endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
           end
         end
@@ -823,7 +855,7 @@ module Noir
         if match.size > 0
           params = match[1].split(",").map(&.strip)
           params.each do |param|
-            clean_param = param.split("=").first.strip
+            clean_param = clean_destructured_param(param)
             endpoint.push_param(Param.new(clean_param, "", "form")) unless clean_param.empty?
           end
         end
@@ -836,7 +868,17 @@ module Noir
         if match.size > 0
           params = match[1].split(",").map(&.strip)
           params.each do |param|
-            clean_param = param.split("=").first.strip
+            clean_param = clean_destructured_param(param)
+            endpoint.push_param(Param.new(clean_param, "", "query")) unless clean_param.empty?
+          end
+        end
+      end
+
+      handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*ctx(?:\.request)?\.query/) do |match|
+        if match.size > 0
+          params = match[1].split(",").map(&.strip)
+          params.each do |param|
+            clean_param = clean_destructured_param(param)
             endpoint.push_param(Param.new(clean_param, "", "query")) unless clean_param.empty?
           end
         end
@@ -844,6 +886,24 @@ module Noir
 
       # Look for req.query.X
       handler_body.scan(/(?:req|request)\.query\.(\w+)/) do |match|
+        if match.size > 0
+          endpoint.push_param(Param.new(match[1], "", "query"))
+        end
+      end
+
+      handler_body.scan(/(?:req|request)\.query\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match|
+        if match.size > 0
+          endpoint.push_param(Param.new(match[1], "", "query"))
+        end
+      end
+
+      handler_body.scan(/ctx(?:\.request)?\.query\.(\w+)/) do |match|
+        if match.size > 0
+          endpoint.push_param(Param.new(match[1], "", "query"))
+        end
+      end
+
+      handler_body.scan(/ctx(?:\.request)?\.query\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match|
         if match.size > 0
           endpoint.push_param(Param.new(match[1], "", "query"))
         end
@@ -884,6 +944,12 @@ module Noir
         end
       end
 
+      handler_body.scan(/(?:req|request)\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
+        if match.size > 0
+          endpoint.push_param(Param.new(match[1], "", "header"))
+        end
+      end
+
       # Koa-style headers: ctx.headers['X'], ctx.header['X'], ctx.get('X')
       handler_body.scan(/ctx\.headers\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match|
         if match.size > 0
@@ -914,6 +980,12 @@ module Noir
     def self.extract_cookie_params(handler_body : String, endpoint : Endpoint)
       # Look for req.cookies.X (Express-style)
       handler_body.scan(/(?:req|request)\.cookies\.(\w+)/) do |match|
+        if match.size > 0
+          endpoint.push_param(Param.new(match[1], "", "cookie"))
+        end
+      end
+
+      handler_body.scan(/(?:req|request)\.cookies\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match|
         if match.size > 0
           endpoint.push_param(Param.new(match[1], "", "cookie"))
         end
@@ -962,6 +1034,16 @@ module Noir
           endpoint.push_param(Param.new(match[1], "", "path")) unless endpoint.params.any? { |p| p.name == match[1] && p.param_type == "path" }
         end
       end
+    end
+
+    private def self.clean_destructured_param(param : String) : String
+      clean_param = param.split("=").first.strip
+      clean_param = clean_param.lchop("...").strip
+      clean_param = clean_param.split(":").first.strip if clean_param.includes?(":")
+      clean_param = clean_param[1..-2] if clean_param.size >= 2 &&
+                                          ((clean_param.starts_with?("'") && clean_param.ends_with?("'")) ||
+                                          (clean_param.starts_with?("\"") && clean_param.ends_with?("\"")))
+      clean_param
     end
 
     # Extract static path declarations from JavaScript content

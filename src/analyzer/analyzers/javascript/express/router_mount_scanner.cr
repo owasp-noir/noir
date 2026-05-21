@@ -70,6 +70,7 @@ module Analyzer::Javascript
       require_map = imports[:require_map]
       function_map = imports[:function_map]
       var_to_function = imports[:var_to_function]
+      prefix_constants = extract_string_constants(content)
 
       # Store arrays of prefixes per router variable to support multi-mount scenarios
       var_prefix = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
@@ -78,20 +79,22 @@ module Analyzer::Javascript
       # `.use('/prefix', router)` and Hono-style `.route('/prefix', childApp)`
       # both contribute cross-file prefixes to the same locator table.
       scan_literal_mount_calls(content, "use", main_file, locator,
-        require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
+        require_map, function_map, var_to_function, var_prefix, global_deferred_mounts, prefix_constants)
       scan_literal_mount_calls(content, "route", main_file, locator,
-        require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
+        require_map, function_map, var_to_function, var_prefix, global_deferred_mounts, prefix_constants)
 
       # Scan for .use(router) patterns where prefix is omitted (defaults to '/')
       # The negative lookahead `(?!\s*['"])` prevents matching calls that have a
       # string literal as the first argument, avoiding double processing with the above scan.
-      content.scan(/(\w+)\.use\s*\((?!\s*['"])/) do |m|
+      content.scan(/(\w+)\.use\s*\(/) do |m|
         next unless m.size >= 2
 
         caller = m[1]
         prefix = "/"
         # Position scanner to start right after the opening parenthesis
         match_end = (m.begin(0) || 0) + m[0].size
+        args = extract_use_call_args(content, match_end)
+        next if explicit_mount_prefix_args?(args, prefix_constants)
 
         process_use_call(content, match_end, caller, prefix, main_file, locator,
           require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
@@ -171,6 +174,7 @@ module Analyzer::Javascript
       var_to_function : Hash(String, String),
       var_prefix : Hash(String, Array(String)),
       global_deferred_mounts : Array(Tuple(String, String, String, String)),
+      prefix_constants : Hash(String, String),
     )
       content.scan(/(\w+)\.#{call_name}\s*\(\s*['"]([^'"]+)['"]\s*,\s*/) do |m|
         next unless m.size >= 3
@@ -182,6 +186,121 @@ module Analyzer::Javascript
         process_use_call(content, match_end, caller, prefix, main_file, locator,
           require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
       end
+
+      content.scan(/(\w+)\.#{call_name}\s*\(\s*`([^`$]+)`\s*,\s*/) do |m|
+        next unless m.size >= 3
+
+        caller = m[1]
+        prefix = m[2]
+        match_end = m.end(0) || 0
+
+        process_use_call(content, match_end, caller, prefix, main_file, locator,
+          require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
+      end
+
+      content.scan(/(\w+)\.#{call_name}\s*\(\s*(\w+)\s*,\s*/) do |m|
+        next unless m.size >= 3
+
+        prefix = prefix_constants[m[2]]?
+        next unless prefix
+
+        caller = m[1]
+        match_end = m.end(0) || 0
+
+        process_use_call(content, match_end, caller, prefix, main_file, locator,
+          require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
+      end
+
+      content.scan(/(\w+)\.#{call_name}\s*\(\s*\[([^\]]+)\]\s*,\s*/m) do |m|
+        next unless m.size >= 3
+
+        caller = m[1]
+        prefixes = extract_mount_prefixes_from_array(m[2], prefix_constants)
+        next if prefixes.empty?
+
+        match_end = m.end(0) || 0
+        prefixes.each do |prefix|
+          process_use_call(content, match_end, caller, prefix, main_file, locator,
+            require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
+        end
+      end
+    end
+
+    private def extract_string_constants(content : String) : Hash(String, String)
+      constants = Hash(String, String).new
+      content.scan(/(?:const|let|var)\s+(\w+)\s*=\s*['"]([^'"]+)['"]/) do |m|
+        next unless m.size >= 3
+        value = m[2]
+        constants[m[1]] = value if mount_prefix?(value)
+      end
+      content.scan(/(?:const|let|var)\s+(\w+)\s*=\s*`([^`$]+)`/) do |m|
+        next unless m.size >= 3
+        value = m[2]
+        constants[m[1]] = value if mount_prefix?(value)
+      end
+      constants
+    end
+
+    private def extract_mount_prefixes_from_array(body : String, constants : Hash(String, String)) : Array(String)
+      prefixes = [] of String
+      body.scan(/['"]([^'"]+)['"]|`([^`$]+)`|\b(\w+)\b/) do |m|
+        value = m[1]? || m[2]?
+        if value.nil?
+          identifier = m[3]?
+          value = constants[identifier]? if identifier
+        end
+        next unless value && mount_prefix?(value)
+        prefixes << value unless prefixes.includes?(value)
+      end
+      prefixes
+    end
+
+    private def mount_prefix?(value : String) : Bool
+      value.starts_with?("/") || value == "*"
+    end
+
+    private def explicit_mount_prefix_args?(args : String, constants : Hash(String, String)) : Bool
+      first_arg = first_top_level_argument(args).strip
+      return false if first_arg.empty?
+      return true if first_arg.starts_with?("'") || first_arg.starts_with?("\"") || first_arg.starts_with?("`")
+      return true if first_arg.starts_with?("[") && !extract_mount_prefixes_from_array(first_arg, constants).empty?
+
+      if first_arg =~ /\A(\w+)\z/
+        return constants.has_key?($1)
+      end
+
+      false
+    end
+
+    private def first_top_level_argument(args : String) : String
+      depth = 0
+      quote = nil.as(Char?)
+      escaped = false
+      args.each_char_with_index do |char, index|
+        if quote
+          if escaped
+            escaped = false
+          elsif char == '\\'
+            escaped = true
+          elsif char == quote
+            quote = nil
+          end
+          next
+        end
+
+        case char
+        when '\'', '"', '`'
+          quote = char
+        when '(', '[', '{'
+          depth += 1
+        when ')', ']', '}'
+          depth -= 1 if depth > 0
+        when ','
+          return args[0...index] if depth == 0
+        end
+      end
+
+      args
     end
 
     # Detect mounts synthesized from a config array iterated via forEach/map,

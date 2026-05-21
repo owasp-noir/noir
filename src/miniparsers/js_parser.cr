@@ -43,6 +43,15 @@ module Noir
       end
     end
 
+    private def http_method_name?(value : String) : Bool
+      case value.downcase
+      when "get", "post", "put", "delete", "options", "head", "patch", "del", "all"
+        true
+      else
+        false
+      end
+    end
+
     private def http_method?(token : JSToken) : Bool
       token.type == :http_method || (token.type == :keyword && token.value == "delete")
     end
@@ -103,9 +112,17 @@ module Noir
            (idx + 1 < @tokens.size) && (@tokens[idx + 1].type == :dot) &&
            (idx + 2 < @tokens.size) && (@tokens[idx + 2].value == "use" || @tokens[idx + 2].value == "register") &&
            (idx + 3 < @tokens.size) && (@tokens[idx + 3].type == :lparen) &&
-           (idx + 4 < @tokens.size) && (@tokens[idx + 4].type == :string)
+           (idx + 4 < @tokens.size) &&
+           (@tokens[idx + 4].type == :string ||
+           @tokens[idx + 4].type == :template_literal ||
+           @tokens[idx + 4].type == :identifier ||
+           @tokens[idx + 4].type == :lbracket)
           parent_router = @tokens[idx].value
-          prefix = @tokens[idx + 4].value
+          prefixes = route_path_entries_from_args(idx + 4).map(&.path)
+          if prefixes.empty?
+            idx += 1
+            next
+          end
 
           # Collect all identifiers after the path to find the router
           # Routers can be before or after middleware in .use() calls
@@ -133,7 +150,9 @@ module Noir
           router_identifier = find_router_candidate(candidates, router_variables)
 
           if router_identifier
-            router_prefixes[router_identifier] << prefix unless router_prefixes[router_identifier].includes?(prefix)
+            prefixes.each do |prefix|
+              router_prefixes[router_identifier] << prefix unless router_prefixes[router_identifier].includes?(prefix)
+            end
             router_parents[router_identifier] << parent_router unless router_parents[router_identifier].includes?(parent_router)
             router_variables.add(router_identifier)
           end
@@ -312,6 +331,27 @@ module Noir
         end
         idx += 1
       end
+
+      # Koa/@koa-router also allows prefixes to be attached after
+      # construction:
+      #   const router = new Router()
+      #   router.prefix('/api')
+      idx = 0
+      while idx < @tokens.size - 4
+        if @tokens[idx].type == :identifier &&
+           idx + 4 < @tokens.size &&
+           @tokens[idx + 1].type == :dot &&
+           @tokens[idx + 2].value == "prefix" &&
+           @tokens[idx + 3].type == :lparen
+          router_var = @tokens[idx].value
+          route_path_entries_from_args(idx + 4).each do |prefix_entry|
+            prefix = prefix_entry.path
+            router_prefixes[router_var] << prefix unless router_prefixes[router_var].includes?(prefix)
+            router_variables.add(router_var)
+          end
+        end
+        idx += 1
+      end
     end
 
     # Format a regex token value into a path string.
@@ -368,6 +408,71 @@ module Noir
       end
 
       paths
+    end
+
+    private def path_entries_from_token(start_idx : Int32) : Array(PathEntry)
+      paths = [] of PathEntry
+      return paths unless start_idx < @tokens.size
+
+      token = @tokens[start_idx]
+      if token.type == :lbracket
+        paths = extract_array_paths(start_idx)
+      elsif token.type == :string
+        paths << PathEntry.new(token.value, false)
+      elsif token.type == :template_literal || token.type == :identifier
+        path = resolve_dynamic_path(start_idx)
+        paths << PathEntry.new(path, false) if path
+      elsif token.type == :regex
+        paths << PathEntry.new(format_regex_path(token.value), true)
+      end
+
+      paths
+    end
+
+    private def route_path_entries_from_args(first_arg_idx : Int32, allow_named_route : Bool = false) : Array(PathEntry)
+      paths = path_entries_from_token(first_arg_idx).select { |path| valid_route_path?(path.path) }
+      return paths unless paths.empty? && allow_named_route
+
+      # Koa/@koa-router supports named routes:
+      #   router.get("route-name", "/real-path", handler)
+      # If the first argument is not path-like, try the next top-level
+      # argument before giving up.
+      if second_arg_idx = next_top_level_arg_index(first_arg_idx)
+        return path_entries_from_token(second_arg_idx).select { |path| valid_route_path?(path.path) }
+      end
+
+      [] of PathEntry
+    end
+
+    private def next_top_level_arg_index(start_idx : Int32) : Int32?
+      idx = start_idx
+      paren_depth = 0
+      bracket_depth = 0
+      brace_depth = 0
+
+      while idx < @tokens.size
+        token = @tokens[idx]
+        case token.type
+        when :lparen
+          paren_depth += 1
+        when :rparen
+          break if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0
+          paren_depth -= 1 if paren_depth > 0
+        when :lbracket
+          bracket_depth += 1
+        when :rbracket
+          bracket_depth -= 1 if bracket_depth > 0
+        when :lbrace
+          brace_depth += 1
+        when :rbrace
+          brace_depth -= 1 if brace_depth > 0
+        when :comma
+          return idx + 1 if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0
+        end
+        idx += 1
+      end
+
+      nil
     end
 
     # Pre-scan tokens to identify router variables
@@ -499,23 +604,29 @@ module Noir
            @tokens[idx + 3].type == :lparen
           router_var = @tokens[idx].value
           method = @tokens[idx + 2].value
-          # read path at idx+4
-          path_token = @tokens[idx + 4]
-          paths = [] of PathEntry
-
-          if path_token.type == :lbracket
-            # Handle array of paths
-            paths = extract_array_paths(idx + 4)
-          elsif path_token.type == :string || path_token.type == :template_literal || path_token.type == :identifier
-            path = resolve_dynamic_path(idx + 4)
-            path ||= (path_token.type == :string ? path_token.value : nil)
-            paths << PathEntry.new(path, false) if path && valid_route_path?(path)
-          elsif path_token.type == :regex
-            path = format_regex_path(path_token.value)
-            paths << PathEntry.new(path, true)
-          end
+          paths = route_path_entries_from_args(idx + 4, allow_named_route: router_var.downcase.includes?("router"))
 
           # Create one route for each path with prefix
+          start_pos = @tokens[idx].position
+          each_prefixed_path(paths, router_var, router_prefixes) do |path_entry, prefixed_path|
+            results << create_route_with_params(method, prefixed_path, path_entry.path, start_pos, path_entry.is_regex?)
+          end
+
+          idx += 1
+          next
+        end
+
+        # Pattern 1b: identifier [ 'http_method' ] ( 'path' )
+        if @tokens[idx].type == :identifier &&
+           @tokens[idx + 1].type == :lbracket &&
+           @tokens[idx + 2].type == :string &&
+           http_method_name?(@tokens[idx + 2].value) &&
+           @tokens[idx + 3].type == :rbracket &&
+           @tokens[idx + 4].type == :lparen
+          router_var = @tokens[idx].value
+          method = @tokens[idx + 2].value
+          paths = route_path_entries_from_args(idx + 5, allow_named_route: router_var.downcase.includes?("router"))
+
           start_pos = @tokens[idx].position
           each_prefixed_path(paths, router_var, router_prefixes) do |path_entry, prefixed_path|
             results << create_route_with_params(method, prefixed_path, path_entry.path, start_pos, path_entry.is_regex?)
@@ -534,17 +645,7 @@ module Noir
           # resolve path at idx+4
           paths = [] of PathEntry
           if idx + 4 < limit
-            t = @tokens[idx + 4]
-            if t.type == :lbracket
-              # Handle array of paths
-              paths = extract_array_paths(idx + 4)
-            elsif t.type == :string || t.type == :template_literal || t.type == :identifier
-              path = resolve_dynamic_path(idx + 4)
-              path ||= (t.type == :string ? t.value : nil)
-              paths << PathEntry.new(path, false) if path
-            elsif t.type == :regex
-              paths << PathEntry.new(format_regex_path(t.value), true)
-            end
+            paths = route_path_entries_from_args(idx + 4)
           end
 
           start_pos = @tokens[idx].position
@@ -616,37 +717,13 @@ module Noir
         if path_idx < @tokens.size &&
            @tokens[path_idx].type == :lparen &&
            path_idx + 1 < @tokens.size
-          base_path : String? = nil
-          # Check for regular string
-          if @tokens[path_idx + 1].type == :string
-            base_path = @tokens[path_idx + 1].value
-            @position = path_idx + 2
-          elsif @tokens[path_idx + 1].type == :regex
-            # Handle regex route path
-            base_path = format_regex_path(@tokens[path_idx + 1].value)
-            @position = path_idx + 2
-            # Check for template literal or dynamic path construction
-          elsif @tokens[path_idx + 1].type == :template_literal ||
-                @tokens[path_idx + 1].type == :identifier
-            resolved_path = resolve_dynamic_path(path_idx + 1)
-            if resolved_path
-              base_path = resolved_path
-              # Skip past the resolved tokens - find the end of the expression
-              skip_idx = path_idx + 1
-              while skip_idx < @tokens.size &&
-                    (@tokens[skip_idx].type == :identifier ||
-                    @tokens[skip_idx].type == :plus ||
-                    @tokens[skip_idx].type == :string ||
-                    @tokens[skip_idx].type == :template_literal)
-                skip_idx += 1
-              end
-              @position = skip_idx
-            end
-          end
+          router_var = @tokens[idx].value
+          path_entries = route_path_entries_from_args(path_idx + 1, allow_named_route: router_var.downcase.includes?("router"))
+          @position = path_idx + 2 unless path_entries.empty?
 
-          if base_path
-            router_var = @tokens[idx].value
-            raw_path = base_path
+          path_entries.each do |path_entry|
+            base_path = path_entry.path
+            raw_path = path_entry.path
             start_pos = @tokens[idx].position
 
             # Get all prefixes (supports multi-mount)
@@ -659,8 +736,10 @@ module Noir
             prefixes_to_apply.each do |prefix|
               path = prefix.empty? ? base_path : URLPath.join(prefix, base_path)
               route = JSRoutePattern.new(method, path, raw_path, start_pos)
-              extract_path_params(path).each do |param|
-                route.push_param(param)
+              unless path_entry.is_regex?
+                extract_path_params(path).each do |param|
+                  route.push_param(param)
+                end
               end
               results << route
             end
@@ -789,38 +868,18 @@ module Noir
         if path_idx < @tokens.size &&
            @tokens[path_idx].type == :lparen &&
            path_idx + 1 < @tokens.size
-          base_path : String? = nil
-          # Check for regular string
-          if @tokens[path_idx + 1].type == :string
-            base_path = @tokens[path_idx + 1].value
-            @position = path_idx + 2
-            # Check for template literal or dynamic path construction
-          elsif @tokens[path_idx + 1].type == :template_literal ||
-                @tokens[path_idx + 1].type == :identifier
-            resolved_path = resolve_dynamic_path(path_idx + 1)
-            if resolved_path
-              base_path = resolved_path
-              # Skip past the resolved tokens - find the end of the expression
-              skip_idx = path_idx + 1
-              while skip_idx < @tokens.size &&
-                    (@tokens[skip_idx].type == :identifier ||
-                    @tokens[skip_idx].type == :plus ||
-                    @tokens[skip_idx].type == :string ||
-                    @tokens[skip_idx].type == :template_literal)
-                skip_idx += 1
-              end
-              @position = skip_idx
-            end
-          end
+          router_var = @tokens[idx - 1].type == :identifier ? @tokens[idx - 1].value : ""
+          path_entries = route_path_entries_from_args(path_idx + 1, allow_named_route: router_var.downcase.includes?("router"))
+          @position = path_idx + 2 unless path_entries.empty?
 
-          if base_path
-            raw_path = base_path
+          path_entries.each do |path_entry|
+            base_path = path_entry.path
+            raw_path = path_entry.path
             start_pos = @tokens[idx].position
 
             # Get all prefixes (supports multi-mount)
             prefixes_to_apply = [""] # Default: no prefix
-            if @tokens[idx - 1].type == :identifier
-              router_var = @tokens[idx - 1].value
+            unless router_var.empty?
               if @router_prefixes.has_key?(router_var)
                 prefixes_to_apply = @router_prefixes[router_var]
               end
@@ -829,8 +888,10 @@ module Noir
             prefixes_to_apply.each do |prefix|
               path = prefix.empty? ? base_path : URLPath.join(prefix, base_path)
               route = JSRoutePattern.new(method, path, raw_path, start_pos)
-              extract_path_params(path).each do |param|
-                route.push_param(param)
+              unless path_entry.is_regex?
+                extract_path_params(path).each do |param|
+                  route.push_param(param)
+                end
               end
               results << route
             end
