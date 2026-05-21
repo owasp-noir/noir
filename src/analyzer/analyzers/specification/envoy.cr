@@ -53,10 +53,9 @@ module Analyzer::Specification
 
     private def process_yaml(data : YAML::Any, details : Details)
       extract_virtual_hosts_yaml(data).each do |vh|
-        host = pick_domain_yaml(vh)
         if routes_node = vh["routes"]?
           if routes = routes_node.as_a?
-            routes.each { |route| process_route_yaml(route, host, details) }
+            routes.each { |route| process_route_yaml(route, details) }
           end
         end
       end
@@ -88,14 +87,7 @@ module Analyzer::Specification
       result
     end
 
-    private def pick_domain_yaml(vh : YAML::Any) : String
-      return "" unless domains_node = vh["domains"]?
-      return "" unless domains = domains_node.as_a?
-      non_wildcard = domains.find { |d| (s = d.as_s?) && !s.starts_with?("*") }
-      (non_wildcard || domains.first?).try(&.as_s?) || ""
-    end
-
-    private def process_route_yaml(route : YAML::Any, host : String, details : Details)
+    private def process_route_yaml(route : YAML::Any, details : Details)
       return unless match = route["match"]?
 
       path = extract_path_yaml(match)
@@ -148,10 +140,9 @@ module Analyzer::Specification
 
     private def process_json(data : JSON::Any, details : Details)
       extract_virtual_hosts_json(data).each do |vh|
-        host = pick_domain_json(vh)
         if routes_node = vh["routes"]?
           if routes = routes_node.as_a?
-            routes.each { |route| process_route_json(route, host, details) }
+            routes.each { |route| process_route_json(route, details) }
           end
         end
       end
@@ -183,14 +174,7 @@ module Analyzer::Specification
       result
     end
 
-    private def pick_domain_json(vh : JSON::Any) : String
-      return "" unless domains_node = vh["domains"]?
-      return "" unless domains = domains_node.as_a?
-      non_wildcard = domains.find { |d| (s = d.as_s?) && !s.starts_with?("*") }
-      (non_wildcard || domains.first?).try(&.as_s?) || ""
-    end
-
-    private def process_route_json(route : JSON::Any, host : String, details : Details)
+    private def process_route_json(route : JSON::Any, details : Details)
       return unless match = route["match"]?
 
       path = extract_path_json(match)

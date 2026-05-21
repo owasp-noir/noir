@@ -9,24 +9,18 @@ module Detector::Specification
       return false unless file_contents.includes?("virtual_hosts") && file_contents.includes?("domains")
 
       if (filename.ends_with?(".yaml") || filename.ends_with?(".yml")) && valid_yaml?(file_contents)
-        begin
-          data = YAML.parse(file_contents)
-          if find_virtual_hosts_yaml(data)
-            locator = CodeLocator.instance
-            locator.push("envoy-yaml", filename)
-            return true
-          end
-        rescue
+        data = YAML.parse(file_contents)
+        if find_virtual_hosts_yaml(data)
+          locator = CodeLocator.instance
+          locator.push("envoy-yaml", filename)
+          return true
         end
       elsif filename.ends_with?(".json") && valid_json?(file_contents)
-        begin
-          data = JSON.parse(file_contents)
-          if find_virtual_hosts_json(data)
-            locator = CodeLocator.instance
-            locator.push("envoy-json", filename)
-            return true
-          end
-        rescue
+        data = JSON.parse(file_contents)
+        if find_virtual_hosts_json(data)
+          locator = CodeLocator.instance
+          locator.push("envoy-json", filename)
+          return true
         end
       end
 
