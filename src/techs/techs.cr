@@ -688,6 +688,21 @@ module NoirTechs
         },
       },
     },
+    :caido => {
+      :format    => ["JSON"],
+      :similar   => ["caido", "caido-export", "caido_export"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => false,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+      },
+    },
     :har => {
       :format    => ["JSON"],
       :similar   => ["har"],
