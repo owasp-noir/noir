@@ -10,18 +10,14 @@ module Analyzer::Specification
       redirects_files = locator.all("netlify-redirects")
       toml_files = locator.all("netlify-toml")
 
-      if redirects_files.is_a?(Array(String))
-        redirects_files.each do |path|
-          next unless File.exists?(path)
-          parse_redirects_file(path)
-        end
+      redirects_files.each do |path|
+        next unless File.exists?(path)
+        parse_redirects_file(path)
       end
 
-      if toml_files.is_a?(Array(String))
-        toml_files.each do |path|
-          next unless File.exists?(path)
-          parse_toml_file(path)
-        end
+      toml_files.each do |path|
+        next unless File.exists?(path)
+        parse_toml_file(path)
       end
 
       @result
