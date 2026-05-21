@@ -26,7 +26,7 @@ module NoirTechs
     "ruby_grape", "ruby_hanami", "ruby_rails", "ruby_roda", "ruby_sinatra",
     "rust_actix_web", "rust_axum", "rust_gotham", "rust_loco", "rust_poem",
     "rust_rocket", "rust_rwf", "rust_salvo", "rust_tide", "rust_warp",
-    "scala_akka", "scala_http4s", "scala_scalatra", "scala_zio_http",
+    "scala_akka", "scala_http4s", "scala_scalatra", "scala_tapir", "scala_zio_http",
     "swift_hummingbird", "swift_kitura", "swift_vapor",
     "ts_nestjs",
   ]
@@ -43,7 +43,7 @@ module NoirTechs
     "python_django", "python_fastapi", "python_flask", "python_quart", "python_sanic", "python_tornado",
     "ruby_hanami", "ruby_rails", "ruby_sinatra",
     "rust_actix_web", "rust_axum", "rust_gotham", "rust_loco", "rust_rocket", "rust_rwf", "rust_tide", "rust_warp",
-    "scala_akka", "scala_http4s", "scala_play", "scala_scalatra",
+    "scala_akka", "scala_http4s", "scala_play", "scala_scalatra", "scala_tapir",
     "swift_hummingbird", "swift_kitura", "swift_vapor",
     "ts_nestjs",
   ]
@@ -2477,6 +2477,24 @@ module NoirTechs
       :framework => "Play Framework",
       :language  => "Scala",
       :similar   => ["play", "play-framework", "scala-play", "scala_play"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
+    :scala_tapir => {
+      :framework => "Tapir",
+      :language  => "Scala",
+      :similar   => ["tapir", "sttp-tapir", "sttp_tapir", "scala-tapir", "scala_tapir"],
       :supported => {
         :endpoint => true,
         :method   => true,
