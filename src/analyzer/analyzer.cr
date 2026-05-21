@@ -92,6 +92,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"oas3", Specification::Oas3},
     {"insomnia", Specification::Insomnia},
     {"mitmproxy", Specification::Mitmproxy},
+    {"odata", Specification::OData},
     {"postman", Specification::Postman},
     {"raml", Specification::RAML},
     {"smithy", Specification::Smithy},
