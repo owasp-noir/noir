@@ -3,8 +3,8 @@ require "../../../models/analyzer"
 module Analyzer::Specification
   class Vercel < Analyzer
     ROUTING_GROUP_KEYS = {"beforeFiles", "afterFiles", "fallback"}
-    PATTERN_CHARS = {'*', '^', '$', '(', ')', '[', ']', '{', '}', '|', '+', '?', '\\'}
-    METHOD_ANY = "ANY"
+    PATTERN_CHARS      = {'*', '^', '$', '(', ')', '[', ']', '{', '}', '|', '+', '?', '\\'}
+    METHOD_ANY         = "ANY"
 
     def analyze
       locator = CodeLocator.instance
