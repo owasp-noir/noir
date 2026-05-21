@@ -24,7 +24,7 @@ This matrix lists frameworks with functional test coverage for callee extraction
 
 | Language | Frameworks with callee coverage |
 |----------|---------------------------------|
-| C# | ASP.NET Core MVC, ASP.NET MVC |
+| C# | ASP.NET Core MVC, ASP.NET MVC, FastEndpoints |
 | Clojure | Compojure |
 | C++ | Crow, Drogon |
 | Crystal | Amber, Grip, Kemal, Lucky, Marten |
@@ -43,7 +43,7 @@ This matrix lists frameworks with functional test coverage for callee extraction
 | Python | Aiohttp, Bottle, Django, Falcon, FastAPI, Flask, Litestar, Pyramid, Sanic, Starlette, Tornado |
 | Ruby | Grape, Hanami, Rails, Roda, Sinatra |
 | Rust | Actix Web, Axum, Gotham, Loco, Poem, Rocket, RWF, Salvo, Tide, Warp |
-| Scala | Akka HTTP, http4s, Scalatra |
+| Scala | Akka HTTP, http4s, Scalatra, ZIO HTTP |
 | Swift | Hummingbird, Kitura, Vapor |
 | TypeScript | NestJS |
 

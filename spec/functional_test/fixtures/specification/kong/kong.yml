@@ -1,0 +1,20 @@
+_format_version: "3.0"
+services:
+  - name: users
+    url: http://users.internal:8080
+    routes:
+      - name: list-users
+        paths:
+          - /v1/users
+        methods:
+          - GET
+      - name: create-user
+        paths:
+          - /v1/users
+        methods:
+          - POST
+      - name: admin
+        paths:
+          - "~/admin/.*"
+        hosts:
+          - admin.example.com

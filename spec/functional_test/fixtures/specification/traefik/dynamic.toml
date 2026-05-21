@@ -1,0 +1,3 @@
+[http.routers.api]
+rule = "Host(`toml.example.com`) && PathPrefix(`/toml`) && Method(`PUT`)"
+service = "svc"

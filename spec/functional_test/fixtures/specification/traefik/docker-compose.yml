@@ -1,0 +1,6 @@
+version: "3.9"
+services:
+  app:
+    image: app:latest
+    labels:
+      - "traefik.http.routers.compose.rule=Host(`compose.example.com`) && Path(`/compose`) && Method(`DELETE`)"

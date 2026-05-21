@@ -1,0 +1,12 @@
+apiVersion: configuration.konghq.com/v1
+kind: KongRoute
+metadata:
+  name: orders-route
+spec:
+  paths:
+    - /v1/orders
+  methods:
+    - GET
+    - POST
+  hosts:
+    - api.example.com

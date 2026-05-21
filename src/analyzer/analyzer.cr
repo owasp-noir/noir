@@ -19,8 +19,11 @@ def initialize_analyzers(logger : NoirLogger)
     {"cpp_drogon", Cpp::Drogon},
     {"cpp_crow", Cpp::Crow},
     {"clojure_compojure", Clojure::Compojure},
+    {"clojure_reitit", Clojure::Reitit},
+    {"clojure_ring", Clojure::Ring},
     {"cs_aspnet_mvc", CSharp::AspNetMvc},
     {"cs_aspnet_core_mvc", CSharp::AspNetCoreMvc},
+    {"cs_fastendpoints", CSharp::FastEndpoints},
     {"crystal_amber", Crystal::Amber},
     {"crystal_grip", Crystal::Grip},
     {"crystal_kemal", Crystal::Kemal},
@@ -29,6 +32,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"dart_frog", Dart::DartFrog},
     {"dart_serverpod", Dart::Serverpod},
     {"dart_shelf", Dart::Shelf},
+    {"elixir_bandit", Elixir::Bandit},
     {"elixir_phoenix", Elixir::Phoenix},
     {"elixir_plug", Elixir::Plug},
     {"fs_giraffe", Fsharp::Giraffe},
@@ -47,11 +51,13 @@ def initialize_analyzers(logger : NoirLogger)
     {"go_httprouter", Go::Httprouter},
     {"go_mux", Go::Mux},
     {"go_pocketbase", Go::Pocketbase},
+    {"go_connect_rpc", Go::ConnectRpc},
     {"groovy_grails", Groovy::Grails},
     {"haskell_scotty", Haskell::Scotty},
     {"haskell_servant", Haskell::Servant},
     {"haskell_yesod", Haskell::Yesod},
     {"asyncapi", Specification::AsyncApi},
+    {"envoy", Specification::Envoy},
     {"bruno", Specification::Bruno},
     {"burp", Specification::Burp},
     {"caido", Specification::Caido},
@@ -69,6 +75,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"lua_lapis", Lua::Lapis},
     {"java_vertx", Java::Vertx},
     {"js_adonisjs", Javascript::Adonisjs},
+    {"js_apollo", Javascript::Apollo},
     {"js_astro", Javascript::Astro},
     {"js_elysia", Javascript::Elysia},
     {"js_express", Javascript::Express},
@@ -88,14 +95,20 @@ def initialize_analyzers(logger : NoirLogger)
     {"kotlin_spring", Kotlin::Spring},
     {"kotlin_ktor", Kotlin::Ktor},
     {"graphql_sdl", Specification::GraphqlSdl},
+    {"apisix", Specification::Apisix},
+    {"kong", Specification::Kong},
     {"oas2", Specification::Oas2},
     {"oas3", Specification::Oas3},
     {"insomnia", Specification::Insomnia},
     {"mitmproxy", Specification::Mitmproxy},
+    {"netlify", Specification::Netlify},
+    {"odata", Specification::OData},
     {"postman", Specification::Postman},
     {"raml", Specification::RAML},
     {"smithy", Specification::Smithy},
+    {"traefik", Specification::Traefik},
     {"typespec", Specification::TypeSpec},
+    {"vercel", Specification::Vercel},
     {"wsdl", Specification::WSDL},
     {"zap_sites_tree", Specification::ZapSitesTree},
     {"php_pure", Php::Php},
@@ -115,6 +128,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"python_flask", Python::Flask},
     {"python_litestar", Python::Litestar},
     {"python_pyramid", Python::Pyramid},
+    {"python_robyn", Python::Robyn},
     {"python_sanic", Python::Sanic},
     {"python_starlette", Python::Starlette},
     {"python_tornado", Python::Tornado},
@@ -137,12 +151,14 @@ def initialize_analyzers(logger : NoirLogger)
     {"scala_scalatra", Scala::Scalatra},
     {"scala_play", Scala::Play},
     {"scala_http4s", Scala::Http4s},
+    {"scala_zio_http", Scala::ZioHttp},
     {"java_play", Java::Play},
     {"swift_vapor", Swift::Vapor},
     {"swift_kitura", Swift::Kitura},
     {"swift_hummingbird", Swift::Hummingbird},
     {"ts_nestjs", Typescript::Nestjs},
     {"ts_tanstack_router", Typescript::TanstackRouter},
+    {"ts_trpc", Typescript::TRPC},
     {"ai", AI::Unified},
   ])
 
@@ -176,6 +192,17 @@ def filter_redundant_generic_techs(techs : Array(String)) : Array(String)
   # Lumen is the actual framework, the Laravel signal is just noise.
   if filtered.includes?("php_lumen") && filtered.includes?("php_laravel")
     filtered.reject!("php_laravel")
+  end
+
+  # Bandit hosts the same `Plug.Router` modules the Plug analyzer
+  # already understands, so both detectors fire on a Bandit project.
+  # When both are present, the Bandit signal is the more specific one
+  # (it tells you which HTTP server is actually serving the routes);
+  # keep it and drop the redundant Plug entry so endpoints aren't
+  # extracted twice with two different technology tags. The Phoenix
+  # analyzer is unaffected — it owns the Phoenix.Router DSL.
+  if filtered.includes?("elixir_bandit") && filtered.includes?("elixir_plug")
+    filtered.reject!("elixir_plug")
   end
 
   filtered

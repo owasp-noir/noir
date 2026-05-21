@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<edmx:Edmx xmlns:edmx="http://docs.oasis-open.org/odata/ns/edmx" Version="4.0">
+  <edmx:DataServices>
+    <Schema xmlns="http://docs.oasis-open.org/odata/ns/edm" Namespace="Sample">
+      <EntityType Name="Product">
+        <Key>
+          <PropertyRef Name="ID"/>
+        </Key>
+        <Property Name="ID" Type="Edm.Int32" Nullable="false"/>
+        <Property Name="Name" Type="Edm.String"/>
+        <Property Name="Price" Type="Edm.Decimal"/>
+      </EntityType>
+      <EntityType Name="User">
+        <Key>
+          <PropertyRef Name="ID"/>
+        </Key>
+        <Property Name="ID" Type="Edm.Int32" Nullable="false"/>
+        <Property Name="Email" Type="Edm.String"/>
+      </EntityType>
+      <Function Name="GetTopProducts" IsBound="false">
+        <Parameter Name="count" Type="Edm.Int32"/>
+        <ReturnType Type="Collection(Sample.Product)"/>
+      </Function>
+      <Action Name="RateProduct" IsBound="false">
+        <Parameter Name="ProductID" Type="Edm.Int32"/>
+        <Parameter Name="Rating" Type="Edm.Int32"/>
+      </Action>
+      <EntityContainer Name="Container">
+        <EntitySet Name="Products" EntityType="Sample.Product"/>
+        <Singleton Name="Me" Type="Sample.User"/>
+        <FunctionImport Name="GetTopProducts" Function="Sample.GetTopProducts" EntitySet="Products"/>
+        <ActionImport Name="RateProduct" Action="Sample.RateProduct"/>
+      </EntityContainer>
+    </Schema>
+  </edmx:DataServices>
+</edmx:Edmx>
