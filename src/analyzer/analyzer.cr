@@ -101,6 +101,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"raml", Specification::RAML},
     {"smithy", Specification::Smithy},
     {"typespec", Specification::TypeSpec},
+    {"vercel", Specification::Vercel},
     {"wsdl", Specification::WSDL},
     {"zap_sites_tree", Specification::ZapSitesTree},
     {"php_pure", Php::Php},
