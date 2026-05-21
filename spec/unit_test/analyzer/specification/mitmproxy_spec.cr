@@ -176,6 +176,54 @@ describe "Mitmproxy Analyzer" do
     endpoints.should be_empty
   end
 
+  it "emits one endpoint per flow in a multi-flow capture" do
+    requests = [
+      "/a", "/b", "/c",
+    ].map do |p|
+      {
+        "method" => "GET".as(Tnetstring::Value),
+        "scheme" => "https".as(Tnetstring::Value),
+        "host"   => "example.com".as(Tnetstring::Value),
+        "port"   => 443_i64.as(Tnetstring::Value),
+        "path"   => p.as(Tnetstring::Value),
+      } of String => Tnetstring::Value
+    end
+
+    endpoints = analyze_flows(requests.map { |r| flow(r) })
+    endpoints.map(&.url).sort!.should eq ["/a", "/b", "/c"]
+  end
+
+  it "salvages prior flows when the stream is truncated mid-record" do
+    good = {
+      "method" => "GET".as(Tnetstring::Value),
+      "scheme" => "https".as(Tnetstring::Value),
+      "host"   => "example.com".as(Tnetstring::Value),
+      "port"   => 443_i64.as(Tnetstring::Value),
+      "path"   => "/ok".as(Tnetstring::Value),
+    } of String => Tnetstring::Value
+
+    path = File.tempname("mitmproxy-trunc", ".mitm")
+    File.open(path, "wb") do |io|
+      encoded = Tnetstring.encode(flow(good).as(Tnetstring::Value))
+      io.write(encoded)
+      io.write("9999:incomplete".to_slice)
+    end
+
+    begin
+      locator = CodeLocator.instance
+      locator.clear "mitmproxy-path"
+      locator.push "mitmproxy-path", path
+
+      options = create_test_options
+      options["url"] = YAML::Any.new("https://example.com")
+      analyzer = Analyzer::Specification::Mitmproxy.new options
+      endpoints = analyzer.analyze
+      endpoints.map(&.url).should eq ["/ok"]
+    ensure
+      File.delete(path) if File.exists?(path)
+    end
+  end
+
   it "ignores non-http flows" do
     request = {
       "method" => "GET".as(Tnetstring::Value),

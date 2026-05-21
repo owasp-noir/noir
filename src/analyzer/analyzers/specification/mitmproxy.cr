@@ -6,11 +6,10 @@ module Analyzer::Specification
   class Mitmproxy < Analyzer
     # mitmproxy's `version` field has changed shape across releases:
     # pre-3.x stored a `[major, minor, patch]` list, while modern
-    # versions (3.x through current ≥20) store a single integer. We
-    # ignore anything that decodes to a list whose major < 3 — those
-    # files predate the dict-based flow layout this analyzer
-    # understands. Modern integer versions are accepted as-is.
-    MIN_LEGACY_MAJOR = 3_i64
+    # versions (3.x through current ≥20) store a single integer. A
+    # list-shaped version with `major < 3` predates the dict-based
+    # flow layout this analyzer understands.
+    LEGACY_LIST_MIN_MAJOR = 3_i64
 
     def analyze
       locator = CodeLocator.instance
@@ -23,7 +22,7 @@ module Analyzer::Specification
           bytes = read_binary(path)
           process_file(path, bytes)
         rescue ex
-          logger.debug "Failed to parse mitmproxy flow #{path}: #{ex.message}"
+          logger.debug "Failed to read mitmproxy flow #{path}: #{ex.message}"
         end
       end
 
@@ -37,10 +36,20 @@ module Analyzer::Specification
       buffer
     end
 
+    # Stream the flow file one tnetstring at a time. A truncated or
+    # malformed record at any offset stops the loop, but the flows we
+    # already pulled out before the bad byte are preserved — mitmproxy
+    # writes each flow independently, so partial captures are still
+    # worth importing.
     private def process_file(path : String, bytes : Bytes)
       pos = 0
       while pos < bytes.size
-        flow, pos = Tnetstring.parse(bytes, pos)
+        begin
+          flow, pos = Tnetstring.parse(bytes, pos)
+        rescue ex : Tnetstring::ParseError
+          logger.debug "Stopping mitmproxy parse at offset #{pos} in #{path}: #{ex.message}"
+          break
+        end
         process_flow(path, flow)
       end
     end
@@ -52,7 +61,7 @@ module Analyzer::Specification
       return unless type_value.is_a?(String) && type_value == "http"
 
       version = flow["version"]?
-      if version.is_a?(Array) && (major = version[0]?).is_a?(Int64) && major < MIN_LEGACY_MAJOR
+      if version.is_a?(Array) && (major = version[0]?).is_a?(Int64) && major < LEGACY_LIST_MIN_MAJOR
         logger.debug "Skipping mitmproxy flow with unsupported version #{major} in #{path}"
         return
       end
