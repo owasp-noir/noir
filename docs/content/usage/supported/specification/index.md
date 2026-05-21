@@ -12,6 +12,8 @@ Beyond source code analysis, Noir can parse API and data specification formats s
 
 | Specification | Format | endpoint | method | query | path | body | header | cookie |
 |---|---|---|---|---|---|---|---|---|
+| Apisix | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ☑️ | ✗ |
+| Apisix | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ☑️ | ✗ |
 | Asyncapi | JSON | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ✗ | ✗ |
 | Asyncapi | YAML | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ✗ | ✗ |
 | Bruno | BRU | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
@@ -23,6 +25,10 @@ Beyond source code analysis, Noir can parse API and data specification formats s
 | HAR | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
 | Insomnia | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
 | Insomnia | YAML | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
+| Kong | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Netlify | TXT | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Netlify | TOML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Odata | XML | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ✗ |
 | OpenAPI 2.0 (Swagger) | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
 | OpenAPI 2.0 (Swagger) | YAML | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
 | OpenAPI 3.0 | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
@@ -31,5 +37,6 @@ Beyond source code analysis, Noir can parse API and data specification formats s
 | RAML | YAML | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
 | Smithy | SMITHY | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
 | TypeSpec | TYPESPEC | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
+| Vercel | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Wsdl | XML | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ☑️ | ✗ |
 | mitmproxy Flow | TNETSTRING | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
