@@ -109,6 +109,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"oas2", Specification::Oas2},
     {"oas3", Specification::Oas3},
     {"insomnia", Specification::Insomnia},
+    {"istio_virtualservice", Specification::IstioVirtualservice},
     {"mitmproxy", Specification::Mitmproxy},
     {"netlify", Specification::Netlify},
     {"odata", Specification::OData},

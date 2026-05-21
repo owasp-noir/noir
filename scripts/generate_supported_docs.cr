@@ -39,6 +39,7 @@ SPEC_FRIENDLY_NAMES = {
   "aws_cloudformation"   => "AWS SAM / CloudFormation",
   "azure_functions"      => "Azure Functions",
   "cloudflare_wrangler"  => "Cloudflare Workers (wrangler)",
+  "istio_virtualservice" => "Istio VirtualService",
   "k8s_gateway_api"      => "Kubernetes Gateway API (HTTPRoute)",
   "k8s_ingress"          => "Kubernetes Ingress",
   "serverless_framework" => "Serverless Framework",

@@ -1,0 +1,28 @@
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: api-vs
+spec:
+  hosts:
+    - api.example.com
+  http:
+    - match:
+        - uri:
+            prefix: /v1/users
+          method:
+            exact: GET
+        - uri:
+            exact: /v1/users
+          method:
+            exact: POST
+      route:
+        - destination:
+            host: users.default.svc.cluster.local
+    - match:
+        - uri:
+            regex: /v2/.*
+      rewrite:
+        uri: /v1/legacy
+      route:
+        - destination:
+            host: legacy.default.svc.cluster.local
