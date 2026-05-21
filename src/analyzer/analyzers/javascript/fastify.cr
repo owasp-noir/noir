@@ -144,8 +144,8 @@ module Analyzer::Javascript
           body_params << p if p.name != "" && !body_params.any? { |bp| bp.name == p.name && bp.param_type == p.param_type }
         end
 
-        methods.each do |method|
-          method_up = method.upcase
+        methods.each do |http_method|
+          method_up = http_method.upcase
           next if result.any? { |e| e.url == url && e.method == method_up }
 
           endpoint = Endpoint.new(url, method_up)

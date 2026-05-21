@@ -48,7 +48,10 @@ module Analyzer::Php
       # 1. Verb routes: $router->get('/path', handler)
       verb_regex = /\$router\s*->\s*(get|post|put|patch|delete|options|head)\s*\(\s*['"]([^'"]+)['"]\s*,/mi
       pos = 0
-      while route_match = content.match(verb_regex, pos)
+      loop do
+        route_match = content.match(verb_regex, pos)
+        break unless route_match
+
         if inside_group_body?(route_match.begin(0), route_groups)
           pos = route_match.end(0)
           next
@@ -74,7 +77,10 @@ module Analyzer::Php
       # 2. Generic addRoute: $router->addRoute(['GET','POST'], '/path', handler)
       add_route_regex = /\$router\s*->\s*addRoute\s*\(\s*\[([^\]]+)\]\s*,\s*['"]([^'"]+)['"]\s*,/mi
       pos = 0
-      while route_match = content.match(add_route_regex, pos)
+      loop do
+        route_match = content.match(add_route_regex, pos)
+        break unless route_match
+
         if inside_group_body?(route_match.begin(0), route_groups)
           pos = route_match.end(0)
           next
@@ -117,8 +123,10 @@ module Analyzer::Php
       group_regex = /\$router\s*->\s*group\s*\(/mi
       pos = 0
 
-      while group_match = content.match(group_regex, pos)
-        group_start = group_match.begin(0)
+      loop do
+        group_match = content.match(group_regex, pos)
+        break unless group_match
+
         info = extract_group_array_and_closure(content, group_match.end(0))
         if info
           prefix, body, body_start, body_end, after = info
