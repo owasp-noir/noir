@@ -56,6 +56,13 @@ module Analyzer::Specification
         path
       end
 
+      # Defensive: Caido stores leading-slash paths, but normalize odd
+      # entries (`api/users`, full URLs already handled above) so the
+      # endpoint URL always starts with `/`.
+      unless normalized_path.starts_with?("/")
+        normalized_path = "/" + normalized_path
+      end
+
       key = "#{method} #{normalized_path}"
       return if seen.includes?(key)
       seen << key
@@ -71,22 +78,17 @@ module Analyzer::Specification
 
       # `raw` carries the full base64-encoded HTTP request message.
       # We pull headers and (for form/JSON bodies) body keys from it.
+      # Host/port/is_tls are intentionally dropped — Noir merges into
+      # a `(method, path)` namespace, matching how HAR/Insomnia exports
+      # are consumed downstream. Multi-host Caido exports therefore
+      # collapse to per-path endpoints by design.
       if raw_value = obj["raw"]?.try(&.as_s?)
-        if raw_value.size > 0
-          decoded = decode_raw(raw_value)
-          if decoded
-            extract_from_raw(decoded, params)
-          end
+        unless raw_value.empty?
+          extract_from_raw(raw_value, params)
         end
       end
 
       @result << Endpoint.new(normalized_path, method, params, details)
-    end
-
-    private def decode_raw(raw : String) : String?
-      Base64.decode_string(raw)
-    rescue
-      nil
     end
 
     private def parse_query_string(query : String) : Array(String)
@@ -102,13 +104,26 @@ module Analyzer::Specification
 
     # Splits an HTTP/1.x request message (CRLF or LF terminated) into
     # headers and body, then extracts header params and body params
-    # for known content types. Best-effort: malformed or binary
-    # bodies are silently skipped.
-    private def extract_from_raw(raw : String, params : Array(Param))
-      separator = raw.includes?("\r\n\r\n") ? "\r\n\r\n" : "\n\n"
-      head, _, body = raw.partition(separator)
-      line_sep = head.includes?("\r\n") ? "\r\n" : "\n"
-      lines = head.split(line_sep)
+    # for known content types. Decoded as bytes first so a binary body
+    # (image upload, protobuf, etc.) doesn't blow up UTF-8 validation
+    # and lose the headers along with it.
+    private def extract_from_raw(raw_b64 : String, params : Array(Param))
+      bytes = begin
+        Base64.decode(raw_b64)
+      rescue
+        return
+      end
+      return if bytes.empty?
+
+      body_start, sep_len = find_header_body_boundary(bytes)
+      header_bytes = body_start ? bytes[0, body_start - sep_len] : bytes
+      body_bytes = body_start ? bytes[body_start..] : Bytes.empty
+
+      # Headers are ASCII per RFC 7230; `invalid: :skip` is defensive
+      # for malformed exports.
+      header_str = String.new(header_bytes, encoding: "UTF-8", invalid: :skip)
+      line_sep = header_str.includes?("\r\n") ? "\r\n" : "\n"
+      lines = header_str.split(line_sep)
       return if lines.empty?
 
       content_type = ""
@@ -134,22 +149,49 @@ module Analyzer::Specification
         params << Param.new(name, value, "header")
       end
 
-      return if body.empty?
+      return if body_bytes.empty?
 
       case
       when content_type.includes?("application/json")
         begin
-          parsed = JSON.parse(body)
+          body_str = String.new(body_bytes, encoding: "UTF-8", invalid: :skip)
+          parsed = JSON.parse(body_str)
           if h = parsed.as_h?
             h.each { |k, _| params << Param.new(k, "", "json") }
           end
         rescue
         end
       when content_type.includes?("application/x-www-form-urlencoded")
-        parse_query_string(body).each do |name|
+        body_str = String.new(body_bytes, encoding: "UTF-8", invalid: :skip)
+        parse_query_string(body_str).each do |name|
           params << Param.new(name, "", "form")
         end
       end
+    end
+
+    # Returns the byte offset just past the header/body separator and
+    # the separator length, or nil if no boundary is present. CRLFCRLF
+    # is preferred (standard HTTP wire format) with LFLF as fallback
+    # for normalized exports.
+    private def find_header_body_boundary(bytes : Bytes) : {Int32?, Int32}
+      i = 0
+      limit = bytes.size - 3
+      while i < limit
+        if bytes[i] == 13_u8 && bytes[i + 1] == 10_u8 &&
+           bytes[i + 2] == 13_u8 && bytes[i + 3] == 10_u8
+          return {i + 4, 4}
+        end
+        i += 1
+      end
+      i = 0
+      limit = bytes.size - 1
+      while i < limit
+        if bytes[i] == 10_u8 && bytes[i + 1] == 10_u8
+          return {i + 2, 2}
+        end
+        i += 1
+      end
+      {nil, 0}
     end
 
     private def skip_header?(name : String) : Bool

@@ -72,5 +72,39 @@
     "edited": false,
     "parent_id": null,
     "created_at": "2026-05-20T00:00:03Z"
+  },
+  {
+    "id": 5,
+    "host": "api.example.com",
+    "method": "GET",
+    "path": "/admin",
+    "length": 0,
+    "port": 443,
+    "raw": "R0VUIC9hZG1pbiBIVFRQLzEuMQpIb3N0OiBhcGkuZXhhbXBsZS5jb20KQ29va2llOiBzZXNzaW9uPWFiYzEyMzsgdGhlbWU9ZGFyawoK",
+    "is_tls": true,
+    "query": "",
+    "file_extension": "",
+    "source": "Proxy",
+    "alteration": "None",
+    "edited": false,
+    "parent_id": null,
+    "created_at": "2026-05-20T00:00:04Z"
+  },
+  {
+    "id": 6,
+    "host": "api.example.com",
+    "method": "POST",
+    "path": "/api/upload",
+    "length": 0,
+    "port": 443,
+    "raw": "UE9TVCAvYXBpL3VwbG9hZCBIVFRQLzEuMQ0KSG9zdDogYXBpLmV4YW1wbGUuY29tDQpBdXRob3JpemF0aW9uOiBCZWFyZXIgeHl6DQpDb250ZW50LVR5cGU6IGltYWdlL3BuZw0KQ29udGVudC1MZW5ndGg6IDgNCg0KiVBORw0KGgo=",
+    "is_tls": true,
+    "query": "",
+    "file_extension": "",
+    "source": "Proxy",
+    "alteration": "None",
+    "edited": false,
+    "parent_id": null,
+    "created_at": "2026-05-20T00:00:05Z"
   }
 ]

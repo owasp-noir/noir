@@ -14,6 +14,15 @@ expected_endpoints = [
     Param.new("name", "", "form"),
     Param.new("email", "", "form"),
   ]),
+  # LF-only separator + Cookie header.
+  Endpoint.new("/admin", "GET", [
+    Param.new("session", "", "cookie"),
+    Param.new("theme", "", "cookie"),
+  ]),
+  # Binary body (PNG bytes) must not blow up header extraction.
+  Endpoint.new("/api/upload", "POST", [
+    Param.new("Authorization", "Bearer xyz", "header"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/specification/caido/", {
