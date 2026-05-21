@@ -44,6 +44,7 @@ describe "Netlify Analyzer" do
       invalid_line_without_target
       TXT
 
+    endpoints.size.should eq 3
     endpoints.map(&.url).should eq ["/api/*", "/old/*", "/checkout"]
     endpoints.all? { |e| e.method == "ANY" }.should be_true
   end
