@@ -62,6 +62,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"envoy", Specification::Envoy},
     {"bruno", Specification::Bruno},
     {"burp", Specification::Burp},
+    {"caddy", Specification::Caddy},
     {"caido", Specification::Caido},
     {"grpc", Specification::Grpc},
     {"har", Specification::Har},

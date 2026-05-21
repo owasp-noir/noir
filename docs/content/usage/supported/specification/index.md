@@ -25,6 +25,8 @@ Beyond source code analysis, Noir can parse API and data specification formats s
 | Azure Functions | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Bruno | BRU | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
 | Burp | XML | ☑️ | ☑️ | ☑️ | ✗ | ☑️ | ☑️ | ☑️ |
+| Caddy | CADDYFILE | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Caddy | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Caido | JSON | ☑️ | ☑️ | ☑️ | ✗ | ☑️ | ☑️ | ☑️ |
 | Cloudflare Workers (wrangler) | TOML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Cloudflare Workers (wrangler) | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
