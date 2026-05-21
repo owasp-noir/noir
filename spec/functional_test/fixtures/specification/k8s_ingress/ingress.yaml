@@ -1,0 +1,22 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api-ingress
+spec:
+  tls:
+    - hosts:
+        - api.example.com
+      secretName: api-tls
+  rules:
+    - host: api.example.com
+      http:
+        paths:
+          - path: /v1/users
+            pathType: Prefix
+          - path: /admin
+            pathType: Prefix
+    - host: example.com
+      http:
+        paths:
+          - path: /metrics
+            pathType: Exact
