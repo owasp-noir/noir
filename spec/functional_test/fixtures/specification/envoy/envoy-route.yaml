@@ -1,0 +1,29 @@
+route_config:
+  virtual_hosts:
+    - name: api
+      domains: ["api.example.com"]
+      routes:
+        - match:
+            prefix: "/v1/users"
+          route:
+            cluster: users_cluster
+        - match:
+            path: "/admin"
+            headers:
+              - name: ":method"
+                exact_match: GET
+          route:
+            cluster: admin_cluster
+        - match:
+            safe_regex:
+              regex: "^/api/v[0-9]+"
+          route:
+            prefix_rewrite: "/"
+            cluster: api_cluster
+    - name: wildcard
+      domains: ["*"]
+      routes:
+        - match:
+            prefix: "/health"
+          route:
+            cluster: health_cluster
