@@ -3,14 +3,17 @@ require "../../func_spec.cr"
 expected_endpoints = [
   # MyRoutingConfiguration.java
   Endpoint.new("/{user}", "GET", [Param.new("user", "", "path")]),
+  Endpoint.new("/{user}/metadata", "HEAD", [Param.new("user", "", "path")]),
   Endpoint.new("/{user}/customers", "GET", [Param.new("user", "", "path")]),
   Endpoint.new("/{user}/0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-_.~", "GET", [Param.new("user", "", "path")]),
   Endpoint.new("/{user}", "DELETE", [Param.new("user", "", "path")]),
   Endpoint.new("/{user}", "POST", [Param.new("user", "", "path")]),
   Endpoint.new("/{user}", "PUT", [Param.new("user", "", "path")]),
+  Endpoint.new("/{user}/options", "OPTIONS", [Param.new("user", "", "path")]),
   # QuoteRouter.java
   Endpoint.new("/hello", "GET"),
   Endpoint.new("/echo", "POST"),
+  Endpoint.new("/quotes/{id}", "PATCH", [Param.new("id", "", "path")]),
   Endpoint.new("/quotes", "GET"),
   Endpoint.new("/quotes/0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-_.~", "GET"),
   # ProductRouter.java — WebMvc.fn `nest(path("/product"), ...)`

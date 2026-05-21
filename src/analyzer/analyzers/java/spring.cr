@@ -7,7 +7,7 @@ require "../../engines/java_engine"
 module Analyzer::Java
   class Spring < Analyzer
     REGEX_ROUTER_CODE_BLOCK = /route\(\)?.*?\);/m
-    REGEX_ROUTE_CODE_LINE   = /((?:andRoute|route)\s*\(|\.)\s*(GET|POST|DELETE|PUT)\(\s*"([^"]*)/
+    REGEX_ROUTE_CODE_LINE   = /((?:andRoute|route)\s*\(|\.)\s*(?:RequestPredicates\.)?(GET|POST|DELETE|PUT|PATCH|HEAD|OPTIONS)\(\s*"([^"]*)/
 
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)

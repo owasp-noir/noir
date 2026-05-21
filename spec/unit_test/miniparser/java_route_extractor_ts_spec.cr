@@ -157,6 +157,93 @@ describe Noir::TreeSitterJavaRouteExtractor do
     ])
   end
 
+  it "preserves empty path literals in mapping arrays" do
+    source = <<-JAVA
+      @RequestMapping({"", "/api"})
+      public class A {
+          @GetMapping({"", "/health"})
+          public void x() {}
+      }
+      JAVA
+
+    routes = Noir::TreeSitterJavaRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", ""},
+      {"GET", "/api/"},
+      {"GET", "/health"},
+      {"GET", "/api/health"},
+    ])
+  end
+
+  it "fans out class-level path arrays across method mappings" do
+    source = <<-JAVA
+      @RequestMapping({"/api", "/internal"})
+      public class A {
+          @GetMapping("/users")
+          public void x() {}
+      }
+      JAVA
+
+    routes = Noir::TreeSitterJavaRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/api/users"},
+      {"GET", "/internal/users"},
+    ])
+  end
+
+  it "resolves compile-time String constants and concatenated paths" do
+    source = <<-JAVA
+      package com.example;
+
+      public final class ApiPaths {
+          public static final String API = "/api";
+          public static final String USERS = API + "/users";
+          public static final String DETAIL = USERS + "/{id}";
+      }
+
+      @RestController
+      public class UsersController {
+          private static final String LOCAL = "/local";
+          private static final String DETAIL = LOCAL + "/{id}";
+
+          @GetMapping(ApiPaths.DETAIL)
+          public void show() {}
+
+          @PostMapping(path = DETAIL)
+          public void local() {}
+      }
+      JAVA
+
+    constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants(source)
+    constants["ApiPaths.DETAIL"].should eq("/api/users/{id}")
+    constants["UsersController.DETAIL"].should eq("/local/{id}")
+
+    routes = Noir::TreeSitterJavaRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path, r.method_name} }.should eq([
+      {"GET", "/api/users/{id}", "show"},
+      {"POST", "/local/{id}", "local"},
+    ])
+  end
+
+  it "does not resolve unknown qualified constants by short name" do
+    source = <<-JAVA
+      public class UsersController {
+          private static final String PATH = "/local";
+
+          @GetMapping(External.PATH)
+          public void external() {}
+
+          @GetMapping(PATH)
+          public void local() {}
+      }
+      JAVA
+
+    routes = Noir::TreeSitterJavaRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path, r.method_name} }.should eq([
+      {"GET", "/local", "local"},
+    ])
+  end
+
   it "fans out method arrays in @RequestMapping" do
     # Matches fixtures/java/spring/src/ItemController.java: both the
     # single-method and array-method forms.
