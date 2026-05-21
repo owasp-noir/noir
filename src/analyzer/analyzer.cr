@@ -136,6 +136,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"scala_akka", Scala::Akka},
     {"scala_scalatra", Scala::Scalatra},
     {"scala_play", Scala::Play},
+    {"scala_zio_http", Scala::ZioHttp},
     {"java_play", Java::Play},
     {"swift_vapor", Swift::Vapor},
     {"swift_kitura", Swift::Kitura},

@@ -26,7 +26,7 @@ module NoirTechs
     "ruby_grape", "ruby_hanami", "ruby_rails", "ruby_roda", "ruby_sinatra",
     "rust_actix_web", "rust_axum", "rust_gotham", "rust_loco", "rust_poem",
     "rust_rocket", "rust_rwf", "rust_salvo", "rust_tide", "rust_warp",
-    "scala_akka", "scala_scalatra",
+    "scala_akka", "scala_scalatra", "scala_zio_http",
     "swift_hummingbird", "swift_kitura", "swift_vapor",
     "ts_nestjs",
   ]
@@ -2183,6 +2183,24 @@ module NoirTechs
           :body   => true,
           :header => true,
           :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
+    :scala_zio_http => {
+      :framework => "ZIO HTTP",
+      :language  => "Scala",
+      :similar   => ["zio", "zio-http", "zio_http", "scala-zio-http", "scala_zio_http"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => false,
         },
         :static_path => false,
         :websocket   => false,
