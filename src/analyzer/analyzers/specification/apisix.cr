@@ -56,7 +56,7 @@ module Analyzer::Specification
 
       paths.each do |path|
         methods.each do |method|
-          endpoint_params = copy_params(host_params)
+          endpoint_params = host_params.dup
           @result << Endpoint.new(path, method, endpoint_params, details)
         end
       end
@@ -70,7 +70,7 @@ module Analyzer::Specification
 
       paths.each do |path|
         methods.each do |method|
-          endpoint_params = copy_params(host_params)
+          endpoint_params = host_params.dup
           @result << Endpoint.new(path, method, endpoint_params, details)
         end
       end
@@ -175,10 +175,6 @@ module Analyzer::Specification
       return "" if stripped.empty?
       return stripped if stripped.starts_with?("/")
       "/" + stripped
-    end
-
-    private def copy_params(params : Array(Param)) : Array(Param)
-      params.map { |param| Param.new(param.name, param.value, param.param_type) }
     end
   end
 end

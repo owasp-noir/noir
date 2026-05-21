@@ -72,12 +72,14 @@ module Detector::Specification
     end
 
     private def non_empty_json_string?(value : JSON::Any?) : Bool
-      text = value.try(&.as_s?)
-      !!(text && !text.empty?)
+      non_empty_text?(value.try(&.as_s?))
     end
 
     private def non_empty_yaml_string?(value : YAML::Any?) : Bool
-      text = value.try(&.as_s?)
+      non_empty_text?(value.try(&.as_s?))
+    end
+
+    private def non_empty_text?(text : String?) : Bool
       !!(text && !text.empty?)
     end
   end
