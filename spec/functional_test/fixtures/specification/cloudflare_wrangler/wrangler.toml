@@ -1,0 +1,11 @@
+name = "api"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+[[routes]]
+pattern = "api.example.com/*"
+zone_name = "example.com"
+
+[[routes]]
+pattern = "example.com/api/*"
+zone_name = "example.com"

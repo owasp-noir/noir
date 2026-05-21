@@ -1549,6 +1549,21 @@ module NoirTechs
         },
       },
     },
+    :cloudflare_wrangler => {
+      :format    => ["TOML", "JSON"],
+      :similar   => ["cloudflare", "cloudflare workers", "wrangler", "wrangler.toml", "wrangler.json", "wrangler.jsonc"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+      },
+    },
     :kong => {
       :format    => ["YAML"],
       :similar   => ["kong", "kong declarative", "deck", "kong ingress controller", "kic"],

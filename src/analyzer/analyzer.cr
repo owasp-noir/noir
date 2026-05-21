@@ -101,6 +101,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"apisix", Specification::Apisix},
     {"aws_cdk", Specification::AwsCdk},
     {"aws_cloudformation", Specification::AwsCloudformation},
+    {"cloudflare_wrangler", Specification::CloudflareWrangler},
     {"kong", Specification::Kong},
     {"oas2", Specification::Oas2},
     {"oas3", Specification::Oas3},
