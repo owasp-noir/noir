@@ -72,7 +72,11 @@ module Analyzer::Specification
     end
 
     private def add_endpoint(route : String, source : String, line : Int32?)
-      details = Details.new(PathInfo.new(source, line))
+      details = if line
+                  Details.new(PathInfo.new(source, line))
+                else
+                  Details.new(PathInfo.new(source))
+                end
       @result << Endpoint.new(route, DEFAULT_METHOD, details)
     end
   end

@@ -3,7 +3,7 @@ require "../../../../src/models/code_locator"
 require "../../../../src/analyzer/analyzers/specification/netlify"
 
 private def analyze_netlify(redirects_content : String?, toml_content : String?) : Array(Endpoint)
-  tmp_dir = File.tempname("netlify-analyzer")
+  tmp_dir = File.join(Dir.tempdir, "netlify-analyzer-#{Process.pid}-#{Time.utc.to_unix_ms}")
   redirects_path = File.join(tmp_dir, "_redirects")
   toml_path = File.join(tmp_dir, "netlify.toml")
 
