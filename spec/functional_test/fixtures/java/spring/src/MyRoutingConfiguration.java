@@ -21,6 +21,7 @@ public class MyRoutingConfiguration {
 		return route()
 				/* Get */
 				.GET("/{user}", ACCEPT_JSON, userHandler::getUser)
+				.HEAD("/{user}/metadata", ACCEPT_JSON, userHandler::getUser)
 				.GET("/{user}/customers", ACCEPT_JSON, userHandler::getUserCustomers)
 				.GET("/{user}/0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-_.~", ACCEPT_JSON, userHandler::getUserCustomers)
 				// Delete
@@ -34,6 +35,7 @@ public class MyRoutingConfiguration {
 		// @formatter:off
 		return route().POST("/{user}", ACCEPT_JSON, userHandler::getUser)
 				.PUT("/{user}", ACCEPT_JSON, userHandler::getUserCustomers)
+				.OPTIONS("/{user}/options", ACCEPT_JSON, userHandler::getUserCustomers)
 				.build();
 		// @formatter:on
 	}
