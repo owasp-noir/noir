@@ -1897,6 +1897,21 @@ module NoirTechs
         },
       },
     },
+    :netlify => {
+      :format    => ["TXT", "TOML"],
+      :similar   => ["netlify", "_redirects", "netlify.toml"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+      },
+    },
     :postman => {
       :format    => ["JSON"],
       :similar   => ["postman", "postman collection"],
