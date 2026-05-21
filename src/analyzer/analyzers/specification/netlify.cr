@@ -50,8 +50,9 @@ module Analyzer::Specification
       if redirects = doc["redirects"]?
         redirects.as_a?.try do |items|
           items.each do |item|
-            from = item["from"]?.try(&.as_s?)
-            add_endpoint(from, path, nil) if from
+            if from = item["from"]?.try(&.as_s?)
+              add_endpoint(from, path, nil) unless from.empty?
+            end
           end
         end
       end
@@ -59,8 +60,9 @@ module Analyzer::Specification
       if edge_functions = doc["edge_functions"]?
         edge_functions.as_a?.try do |items|
           items.each do |item|
-            route_path = item["path"]?.try(&.as_s?)
-            add_endpoint(route_path, path, nil) if route_path
+            if route_path = item["path"]?.try(&.as_s?)
+              add_endpoint(route_path, path, nil) unless route_path.empty?
+            end
           end
         end
       end
@@ -69,8 +71,7 @@ module Analyzer::Specification
       @logger.debug_sub e
     end
 
-    private def add_endpoint(route : String?, source : String, line : Int32?)
-      return if route.nil? || route.empty?
+    private def add_endpoint(route : String, source : String, line : Int32?)
       details = Details.new(PathInfo.new(source, line))
       @result << Endpoint.new(route, DEFAULT_METHOD, details)
     end
