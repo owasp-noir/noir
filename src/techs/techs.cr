@@ -15,7 +15,7 @@ module NoirTechs
     "haskell_scotty", "haskell_servant", "haskell_yesod",
     "java_armeria", "java_dropwizard", "java_jaxrs", "java_javalin", "java_micronaut",
     "java_play", "java_quarkus", "java_spark", "java_spring", "java_vertx",
-    "js_express", "js_fastify", "js_hono", "js_koa", "js_nestjs", "js_nextjs",
+    "js_apollo", "js_express", "js_fastify", "js_hono", "js_koa", "js_nestjs", "js_nextjs",
     "js_nitro", "js_nuxtjs", "js_remix", "js_restify", "js_sveltekit",
     "kotlin_http4k", "kotlin_ktor", "kotlin_spring",
     "lua_lapis",
@@ -1178,6 +1178,24 @@ module NoirTechs
         },
         :static_path => false,
         :websocket   => false,
+      },
+    },
+    :js_apollo => {
+      :framework => "Apollo Server",
+      :language  => "JavaScript",
+      :similar   => ["apollo", "apollo-server", "apollo_server", "js-apollo", "@apollo/server"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => true,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => true,
       },
     },
     :js_hono => {

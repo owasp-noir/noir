@@ -72,6 +72,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"lua_lapis", Lua::Lapis},
     {"java_vertx", Java::Vertx},
     {"js_adonisjs", Javascript::Adonisjs},
+    {"js_apollo", Javascript::Apollo},
     {"js_astro", Javascript::Astro},
     {"js_elysia", Javascript::Elysia},
     {"js_express", Javascript::Express},
