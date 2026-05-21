@@ -6,6 +6,10 @@ expected_endpoints = [
   Endpoint.new("/hidden_header", "GET", [Param.new("hidden_header", "", "header")]),
   Endpoint.new("/cookie_examples/", "GET", [Param.new("data", "", "cookie")]),
   Endpoint.new("/dummypath", "POST", [Param.new("dummy", "", "json")]),
+  Endpoint.new("/constant/concat", "GET"),
+  Endpoint.new("/keyword/fstring", "GET", [Param.new("q", "", "query")]),
+  Endpoint.new("/keyword/items/{item_id}", "GET", [Param.new("item_id", "", "path")]),
+  Endpoint.new("/constant/registered", "POST"),
   Endpoint.new("/main", "GET"),
 ]
 

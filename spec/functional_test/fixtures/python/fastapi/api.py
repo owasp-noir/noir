@@ -5,6 +5,8 @@ from fastapi.responses import JSONResponse
 from fastapi import FastAPI, Path, Query, status, Body, Header, Cookie, Depends, Request, Response, APIRouter
 
 api : APIRouter = APIRouter()
+BASE_ROUTE = "/constant"
+KEYWORD_ROUTE = "/keyword"
 
 @api.get("/query/param-required/int")
 def get_query_param_required_type(query: int = Query()):
@@ -57,3 +59,24 @@ def cookie_examples(
 async def get_body(request: Request):
     jj = request.json()
     return await jj["dummy"]
+
+@api.get(BASE_ROUTE + "/concat")
+def constant_concat_route():
+    return {"ok": True}
+
+@api.get(path=f"{KEYWORD_ROUTE}/fstring")
+def keyword_fstring_route(q: int = Query()):
+    return {"q": q}
+
+@api.get(path=f"{KEYWORD_ROUTE}/items/{{item_id}}")
+def escaped_brace_fstring_route(item_id: int):
+    return {"item_id": item_id}
+
+def registered_handler():
+    return {"ok": True}
+
+api.add_api_route(
+    BASE_ROUTE + "/registered",
+    registered_handler,
+    methods=("POST",),
+)
