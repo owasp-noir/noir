@@ -45,7 +45,7 @@ class ElixirAuthTagger < FrameworkTagger
   end
 
   def self.target_techs : Array(String)
-    ["elixir_phoenix", "elixir_plug"]
+    ["elixir_bandit", "elixir_phoenix", "elixir_plug"]
   end
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
