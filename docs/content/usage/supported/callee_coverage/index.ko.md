@@ -40,7 +40,7 @@ JSON, JSONL, YAML, TOML 같은 모델 기반 포맷과 plain 모델 직렬화는
 | Lua | Lapis |
 | Perl | Mojolicious |
 | PHP | CakePHP, CodeIgniter, Hyperf, Laravel, Pure PHP, Slim, Symfony, Yii |
-| Python | Aiohttp, Bottle, Django, Falcon, FastAPI, Flask, Litestar, Pyramid, Sanic, Starlette, Tornado |
+| Python | Aiohttp, Bottle, Django, Falcon, FastAPI, Flask, Litestar, Pyramid, Quart, Sanic, Starlette, Tornado |
 | Ruby | Grape, Hanami, Rails, Roda, Sinatra |
 | Rust | Actix Web, Axum, Gotham, Loco, Poem, Rocket, RWF, Salvo, Tide, Warp |
 | Scala | Akka HTTP, http4s, Scalatra, ZIO HTTP |

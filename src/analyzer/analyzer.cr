@@ -129,6 +129,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"python_flask", Python::Flask},
     {"python_litestar", Python::Litestar},
     {"python_pyramid", Python::Pyramid},
+    {"python_quart", Python::Quart},
     {"python_robyn", Python::Robyn},
     {"python_sanic", Python::Sanic},
     {"python_starlette", Python::Starlette},

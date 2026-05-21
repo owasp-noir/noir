@@ -49,12 +49,21 @@ module Noir
     # `router_names` optionally restricts which variable names count as
     # routers; `nil` accepts any identifier (matching the regex extractor,
     # which doesn't gate on the name).
-    def extract_decorations(source : String, router_names : Array(String)? = nil) : Array(Decoration)
+    #
+    # `extra_attributes` optionally widens the set of decorator attribute
+    # names that count as a route. Each entry maps an attribute name
+    # (e.g. `"websocket"`) to the HTTP method the synthesised endpoint
+    # should carry (Quart's `@app.websocket` is emitted as `GET` so the
+    # downstream pipeline keeps treating it as an HTTP-shaped endpoint;
+    # the caller flips `protocol = "ws"` based on `attribute_name`).
+    def extract_decorations(source : String,
+                            router_names : Array(String)? = nil,
+                            extra_attributes : Hash(String, String)? = nil) : Array(Decoration)
       results = [] of Decoration
       Noir::TreeSitter.parse_python(source) do |root|
         walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "decorated_definition"
-          collect_decorations(node, source, router_names, results)
+          collect_decorations(node, source, router_names, extra_attributes, results)
         end
       end
       results
@@ -166,6 +175,7 @@ module Noir
     private def collect_decorations(deco_def : LibTreeSitter::TSNode,
                                     source : String,
                                     router_names : Array(String)?,
+                                    extra_attributes : Hash(String, String)?,
                                     sink : Array(Decoration))
       # A decorated_definition has one or more `decorator` named children
       # followed by a `function_definition` / `class_definition` in the
@@ -181,7 +191,7 @@ module Noir
         next unless Noir::TreeSitter.node_type(child) == "decorator"
         call = find_call_inside_decorator(child)
         next unless call
-        if deco = decode_route_call(call, source, router_names)
+        if deco = decode_route_call(call, source, router_names, extra_attributes)
           router_name, attribute_name, path, methods = deco
           sink << Decoration.new(
             router_name,
@@ -212,7 +222,8 @@ module Noir
     # `<router>.route(...)`, returns {router_name, path, methods} or nil.
     private def decode_route_call(call : LibTreeSitter::TSNode,
                                   source : String,
-                                  router_names : Array(String)?) : Tuple(String, String, String, Array(String))?
+                                  router_names : Array(String)?,
+                                  extra_attributes : Hash(String, String)? = nil) : Tuple(String, String, String, Array(String))?
       function = Noir::TreeSitter.field(call, "function")
       return unless function
       return unless Noir::TreeSitter.node_type(function) == "attribute"
@@ -235,6 +246,8 @@ module Noir
           nil
         elsif HTTP_METHODS.includes?(attr_name)
           attr_name.upcase
+        elsif extra_attributes && extra_attributes.has_key?(attr_name)
+          extra_attributes[attr_name]
         else
           return
         end
