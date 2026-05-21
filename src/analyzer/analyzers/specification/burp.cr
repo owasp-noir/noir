@@ -29,7 +29,12 @@ module Analyzer::Specification
     end
 
     private def process_file(content : String, path : String)
-      doc = XML.parse(content)
+      # `NONET` blocks the parser from fetching external entities over the
+      # network. Crystal's default already skips external-entity *substitution*,
+      # but layering NONET on top keeps a malicious sitemap from turning the
+      # analyzer into an SSRF gadget even if a future option change enables
+      # NOENT.
+      doc = XML.parse(content, XML::ParserOptions::NONET)
       root = doc.root
       return unless root && root.name == "items"
 
@@ -101,15 +106,17 @@ module Analyzer::Specification
     # exports (extra whitespace, HTTP/2 pseudo-mappings, unusual methods)
     # don't get rejected wholesale.
     private def parse_raw_request(raw : String) : Tuple(String, String, Array(Tuple(String, String)), String)?
-      # Burp uses CRLF, but be forgiving for hand-edited fixtures.
-      separator_index = raw.index("\r\n\r\n") || raw.index("\n\n")
+      # Burp guarantees CRLF, but tolerate LF-only for hand-edited
+      # fixtures. Capture which separator hit so we can offset past it
+      # without re-slicing the buffer.
+      separator = "\r\n\r\n"
+      separator_index = raw.index(separator)
+      if separator_index.nil?
+        separator = "\n\n"
+        separator_index = raw.index(separator)
+      end
       header_section = separator_index ? raw[0, separator_index] : raw
-      body = if separator_index
-               offset = raw[separator_index, 4]? == "\r\n\r\n" ? 4 : 2
-               raw[(separator_index + offset)..]
-             else
-               ""
-             end
+      body = separator_index ? raw[(separator_index + separator.size)..] : ""
 
       lines = header_section.split(/\r?\n/)
       return nil if lines.empty?
@@ -133,11 +140,28 @@ module Analyzer::Specification
       {method, target, headers, body}
     end
 
+    # Splits the request target into (path, query). Burp proxies often
+    # capture absolute-form targets (`GET http://host/path HTTP/1.1`) when
+    # the client routed through it as a forward proxy; collapse those to
+    # their path component so the dedup key matches sibling relative-form
+    # entries.
     private def split_target(target : String) : Tuple(String, String)
-      if idx = target.index('?')
-        {target[0, idx], target[(idx + 1)..]}
+      normalized = target
+      if normalized.starts_with?("http://") || normalized.starts_with?("https://")
+        begin
+          uri = URI.parse(normalized)
+          path = uri.path
+          query = uri.query
+          normalized = path.empty? ? "/" : path
+          normalized = "#{normalized}?#{query}" if query && !query.empty?
+        rescue
+        end
+      end
+
+      if idx = normalized.index('?')
+        {normalized[0, idx], normalized[(idx + 1)..]}
       else
-        {target, ""}
+        {normalized, ""}
       end
     end
 
@@ -182,10 +206,15 @@ module Analyzer::Specification
       content_type = headers.find { |(n, _)| n.downcase == "content-type" }.try(&.[1]) || ""
       content_type_lower = content_type.downcase
 
+      # Burp's raw export keeps the trailing CRLF the server actually saw;
+      # for our purposes that's just noise on the last value, so trim it
+      # before any per-format parsing.
+      trimmed_body = body.rstrip("\r\n")
+
       if content_type_lower.includes?("application/json")
-        parse_json_body(endpoint, body)
+        parse_json_body(endpoint, trimmed_body)
       elsif content_type_lower.includes?("application/x-www-form-urlencoded")
-        body.split('&').each do |pair|
+        trimmed_body.split('&').each do |pair|
           next if pair.empty?
           name, _, value = pair.partition('=')
           decoded_name = safe_unescape(name)
@@ -194,7 +223,7 @@ module Analyzer::Specification
         end
       elsif content_type_lower.includes?("multipart/form-data")
         # Parameters live in each part's Content-Disposition `name=` attribute.
-        body.scan(/name="([^"]+)"/) do |match|
+        trimmed_body.scan(/name="([^"]+)"/) do |match|
           name = match[1]
           push_unique(endpoint, Param.new(name, "", "form"))
         end

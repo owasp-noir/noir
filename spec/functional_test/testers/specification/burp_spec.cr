@@ -14,6 +14,13 @@ expected_endpoints = [
     Param.new("name", "", "json"),
     Param.new("email", "", "json"),
   ]),
+  Endpoint.new("/login", "POST", [
+    Param.new("user", "admin", "form"),
+    Param.new("pass", "hunter2", "form"),
+  ]),
+  Endpoint.new("/health", "GET", [
+    Param.new("X-Plain", "yes", "header"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/specification/burp/", {
