@@ -93,7 +93,7 @@ module Analyzer::Python
             api_instances[bp.name] ||= bp.prefix
           end
 
-          lines.each_with_index do |original_line, line_index|
+          lines.each do |original_line|
             line = original_line.gsub(" ", "")
 
             # Identify Quart instance assignments: `app = Quart(__name__)`
@@ -163,7 +163,7 @@ module Analyzer::Python
           class_def_index = Noir::PythonRouteExtractor.find_def_line(lines, line_index, :down)
           next if class_def_index >= lines.size
           next unless lines[class_def_index].lstrip.starts_with?("def ") ||
-                     lines[class_def_index].lstrip.starts_with?("async def ")
+                      lines[class_def_index].lstrip.starts_with?("async def ")
 
           def_match = lines[class_def_index].match /(\s*)(async\s+)?def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/
           next unless def_match
@@ -197,10 +197,10 @@ module Analyzer::Python
           end
 
           default_method = HTTP_METHODS.find { |http_method| function_name.downcase == http_method.downcase } || "GET"
-          get_endpoints(default_method, route_path, extra_params, codeblock_lines, prefix).each do |endpoint|
-            endpoint.details = Details.new(PathInfo.new(path, line_index + 1))
-            handler_callees.each { |c| endpoint.push_callee(c) }
-            result << endpoint
+          get_endpoints(default_method, route_path, extra_params, codeblock_lines, prefix).each do |route_endpoint|
+            route_endpoint.details = Details.new(PathInfo.new(path, line_index + 1))
+            handler_callees.each { |c| route_endpoint.push_callee(c) }
+            result << route_endpoint
           end
         end
       end
