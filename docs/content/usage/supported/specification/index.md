@@ -36,6 +36,7 @@ Beyond source code analysis, Noir can parse API and data specification formats s
 | Insomnia | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
 | Insomnia | YAML | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
 | Kong | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Kubernetes Gateway API (HTTPRoute) | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Kubernetes Ingress | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Netlify | TXT | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Netlify | TOML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |

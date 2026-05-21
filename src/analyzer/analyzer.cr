@@ -103,6 +103,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"aws_cloudformation", Specification::AwsCloudformation},
     {"azure_functions", Specification::AzureFunctions},
     {"cloudflare_wrangler", Specification::CloudflareWrangler},
+    {"k8s_gateway_api", Specification::K8sGatewayApi},
     {"k8s_ingress", Specification::K8sIngress},
     {"kong", Specification::Kong},
     {"oas2", Specification::Oas2},

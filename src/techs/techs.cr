@@ -1579,6 +1579,21 @@ module NoirTechs
         },
       },
     },
+    :k8s_gateway_api => {
+      :format    => ["YAML"],
+      :similar   => ["kubernetes gateway api", "k8s gateway api", "httproute", "gateway.networking.k8s.io"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+      },
+    },
     :k8s_ingress => {
       :format    => ["YAML"],
       :similar   => ["kubernetes ingress", "k8s ingress", "kubernetes.io/ingress", "networking.k8s.io/v1"],
