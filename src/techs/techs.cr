@@ -10,7 +10,7 @@ module NoirTechs
     "elixir_phoenix", "elixir_plug",
     "fs_giraffe",
     "go_beego", "go_chi", "go_echo", "go_fasthttp", "go_fiber", "go_gf", "go_gin",
-    "go_gozero", "go_goyave", "go_hertz", "go_httprouter", "go_iris", "go_mux", "go_pocketbase",
+    "go_gozero", "go_goyave", "go_hertz", "go_httprouter", "go_huma", "go_iris", "go_mux", "go_pocketbase",
     "groovy_grails",
     "haskell_scotty", "haskell_servant", "haskell_yesod",
     "java_armeria", "java_dropwizard", "java_jaxrs", "java_javalin", "java_micronaut",
@@ -587,6 +587,24 @@ module NoirTechs
       :framework => "httprouter",
       :language  => "Go",
       :similar   => ["httprouter", "go-httprouter", "go_httprouter", "julienschmidt-httprouter"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
+    :go_huma => {
+      :framework => "Huma",
+      :language  => "Go",
+      :similar   => ["huma", "go-huma", "go_huma", "danielgtaylor-huma"],
       :supported => {
         :endpoint => true,
         :method   => true,
