@@ -52,6 +52,26 @@ expected_endpoints = [
     Param.new("id", "", "query"),
   ]),
 
+  # Parenthesized namespace with path override keeps the controller namespace
+  # while changing the URL prefix.
+  Endpoint.new("/sekret/reports", "GET"),
+  Endpoint.new("/sekret/reports/1", "GET"),
+
+  # scope module/path variants resolve controller params through admin/.
+  Endpoint.new("/backoffice/heartbeat", "GET", [
+    Param.new("X-Heartbeat", "", "header"),
+    Param.new("id", "", "query"),
+  ]),
+  Endpoint.new("/module_ping", "GET", [
+    Param.new("X-Heartbeat", "", "header"),
+    Param.new("id", "", "query"),
+  ]),
+
+  # controller block + action-symbol hash rocket.
+  Endpoint.new("/controller_ping", "GET", [
+    Param.new("X-Ping", "", "header"),
+  ]),
+
   # scope :api do resources :items, only: [:index, :show] end
   Endpoint.new("/api/items", "GET"),
   Endpoint.new("/api/items/1", "GET"),
@@ -64,6 +84,21 @@ expected_endpoints = [
 
   # resources :scans, controller: "billing/scans", only: [:index]
   Endpoint.new("/scans", "GET"),
+
+  # Multiline options and %i lists.
+  Endpoint.new("/legacy_posts", "GET"),
+  Endpoint.new("/legacy_posts/1", "GET"),
+
+  # Inline custom resource scopes: collection, implicit member, and new.
+  Endpoint.new("/refunds/summary", "GET", [
+    Param.new("X-Summary", "", "header"),
+  ]),
+  Endpoint.new("/refunds/1/preview", "GET", [
+    Param.new("X-Preview", "", "header"),
+  ]),
+  Endpoint.new("/refunds/new/template", "GET", [
+    Param.new("X-Template", "", "header"),
+  ]),
 
   # Rails concerns: `concern :commentable do resources :comments end`
   # should not emit top-level `/comments` routes, and applying the concern
@@ -98,6 +133,20 @@ expected_endpoints = [
 
   # mount Sidekiq::Web, at: "/sidekiq"
   Endpoint.new("/sidekiq", "GET"),
+
+  # Parenthesized/multiline explicit route and Rails draw files.
+  Endpoint.new("/split", "GET", [
+    Param.new("X-Ping", "", "header"),
+  ]),
+  Endpoint.new("/drawn/health", "GET", [
+    Param.new("X-Ping", "", "header"),
+  ]),
+  Endpoint.new("/v1/drawn/health", "GET", [
+    Param.new("X-Ping", "", "header"),
+  ]),
+  Endpoint.new("/v2/drawn/health", "GET", [
+    Param.new("X-Ping", "", "header"),
+  ]),
 ]
 
 # Locking the total count ensures only:/except: filters drop the expected
@@ -108,14 +157,21 @@ total_endpoints = 1 +  # root
                   5 +  # admin/reports
                   4 +  # admin/refunds member (change_status, purge, update_metadata) + collection (new_list)
                   1 +  # admin/monitor/heartbeat (namespaced `to:`)
+                  2 +  # namespace path override reports
+                  2 +  # scope module/path explicit routes
+                  1 +  # controller block route
                   2 +  # api/items only:[index,show]
                   4 +  # internal/statements except:[destroy]
                   1 +  # /scans only:[index] via controller override
+                  2 +  # multiline resources options
+                  3 +  # inline collection/member/new custom routes
                   5 +  # posts
                   4 +  # posts/1/comments + nested likes from concern
                   2 +  # /up + /ping
                   20 + # devise_for :users
-                  1    # mount sidekiq
+                  1 +  # mount sidekiq
+                  1 +  # multiline parenthesized get
+                  3    # draw :external at root and under two scopes
 
 FunctionalTester.new("fixtures/ruby/rails_advanced/", {
   :techs     => 1,

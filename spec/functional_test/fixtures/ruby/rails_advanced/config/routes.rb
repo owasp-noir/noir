@@ -24,6 +24,22 @@ Rails.application.routes.draw do
     get "monitor/heartbeat", to: "monitor#heartbeat"
   end
 
+  namespace :admin, path: "sekret" do
+    resources(:reports, only: %i[index show])
+  end
+
+  scope "/backoffice", module: "admin" do
+    get "heartbeat", to: "monitor#heartbeat"
+  end
+
+  scope module: :admin do
+    get "module_ping", controller: "monitor", action: :heartbeat
+  end
+
+  controller :monitor do
+    get "controller_ping" => :ping
+  end
+
   scope :api do
     resources :items, only: [:index, :show]
   end
@@ -33,6 +49,22 @@ Rails.application.routes.draw do
   end
 
   resources :scans, controller: "billing/scans", only: [:index]
+
+  resources :legacy_posts,
+            controller: "posts",
+            only: [
+              :index,
+              :show,
+            ]
+
+  resources :refunds, controller: "admin/refunds", only: [] do
+    get :summary, on: :collection
+    get :preview
+
+    new do
+      get :template
+    end
+  end
 
   concern :commentable do
     resources :comments, only: [:index, :show] do
@@ -48,4 +80,20 @@ Rails.application.routes.draw do
   devise_for :users
 
   mount Sidekiq::Web, at: "/sidekiq"
+
+  get(
+    "/split",
+    controller: "monitor",
+    action: :ping
+  )
+
+  draw :external
+
+  scope :v1 do
+    draw :external
+  end
+
+  scope :v2 do
+    draw :external
+  end
 end
