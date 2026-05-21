@@ -23,6 +23,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"clojure_ring", Clojure::Ring},
     {"cs_aspnet_mvc", CSharp::AspNetMvc},
     {"cs_aspnet_core_mvc", CSharp::AspNetCoreMvc},
+    {"cs_carter", CSharp::Carter},
     {"cs_fastendpoints", CSharp::FastEndpoints},
     {"crystal_amber", Crystal::Amber},
     {"crystal_grip", Crystal::Grip},

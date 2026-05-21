@@ -26,6 +26,12 @@ module Analyzer::CSharp
         next if Common.csharp_test_path?(file)
 
         content = read_file_content(file)
+        # Carter modules are owned by the `cs_carter` analyzer.
+        # Skipping their files here keeps the tech tag accurate and
+        # avoids redundant Map* extraction work (the optimizer would
+        # dedupe by (method, url) but the tech tag of the surviving
+        # entry would race between analyzers).
+        next if content.includes?("ICarterModule")
         group_prefixes = extract_map_group_prefixes(content)
         lines = content.lines
         lines.each_with_index do |line, index|
