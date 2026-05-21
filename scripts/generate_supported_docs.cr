@@ -35,6 +35,7 @@ SPEC_FRIENDLY_NAMES = {
   "graphql_sdl"          => "GraphQL SDL",
   "raml"                 => "RAML",
   "postman"              => "Postman Collection",
+  "apache_httpd"         => "Apache httpd",
   "aws_cdk"              => "AWS CDK",
   "aws_cloudformation"   => "AWS SAM / CloudFormation",
   "azure_functions"      => "Azure Functions",

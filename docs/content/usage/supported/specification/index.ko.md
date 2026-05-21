@@ -17,6 +17,7 @@ sort_by = "weight"
 | AWS CDK | PY | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | AWS SAM / CloudFormation | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | AWS SAM / CloudFormation | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Apache httpd | CONF | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Apisix | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ☑️ | ✗ |
 | Apisix | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ☑️ | ✗ |
 | Asyncapi | JSON | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ✗ | ✗ |
