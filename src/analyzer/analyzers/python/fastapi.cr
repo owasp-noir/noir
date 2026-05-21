@@ -97,147 +97,138 @@ module Analyzer::Python
               # stay aligned with the source.
               effective_line = coalesce_decorator_call(codelines, index, line, instance_name)
 
-              # Some FastAPI declarations pass the path via the
-              # `path=` keyword argument (`@app.get(path="/foo")`).
-              # Rewrite the call to put the path as the first
-              # positional argument so the downstream regex matches.
-              effective_line = lift_path_keyword(effective_line, instance_name)
+              if route_call = parse_fastapi_route_decorator(effective_line, instance_name, source, import_modules)
+                route_attr, http_route_path, _extra_params = route_call
+                http_method_name = route_attr.downcase
+                if http_method_name.in?(%w[websocket route api_route])
+                  http_method_name = "GET"
+                elsif !HTTP_METHODS.includes?(http_method_name)
+                  next
+                end
 
-              effective_line.scan(/@#{instance_name}\.([a-zA-Z_]+)\s*\(\s*[rf]?['"]([^'"]*)['"](.*)/) do |match|
-                if match.size > 0
-                  http_method_name = match[1].downcase
-                  if http_method_name.in?(%w[websocket route api_route])
-                    http_method_name = "GET"
-                  elsif !HTTP_METHODS.includes?(http_method_name)
-                    next
+                http_method_name = http_method_name.upcase
+
+                params = [] of Param
+
+                # Get path params from route path
+                query_params = [] of ::String
+                http_route_path.scan(/\{(#{PYTHON_VAR_NAME_REGEX})\}/) do |route_match|
+                  if route_match.size > 0
+                    query_params << route_match[1]
                   end
+                end
 
-                  http_method_name = http_method_name.upcase
+                # Resolve the actual `def` line, skipping stacked
+                # decorators / comments / blank lines between the
+                # route decorator and the handler. Both param
+                # extraction and callee extraction below need this
+                # to be accurate; the previous `index + 1` shortcut
+                # silently misfired on `@app.post(...)` + `@auth_required`
+                # style stacks.
+                def_line = find_def_line(codelines, index) || (index + 1)
 
-                  http_route_path = match[2]
-                  _extra_params = match[3]
-                  params = [] of Param
+                # Parsing extra params
+                function_definition = parse_function_def(codelines, def_line)
+                if !function_definition.nil?
+                  function_params = function_definition.params
+                  if function_params.size > 0
+                    function_params.each do |param|
+                      # https://fastapi.tiangolo.com/tutorial/path-params-numeric-validations/#order-the-parameters-as-you-need-tricks
+                      next if param.name == "*"
 
-                  # Get path params from route path
-                  query_params = [] of ::String
-                  http_route_path.scan(/\{(#{PYTHON_VAR_NAME_REGEX})\}/) do |route_match|
-                    if route_match.size > 0
-                      query_params << route_match[1]
-                    end
-                  end
+                      unless query_params.includes?(param.name)
+                        # Default value is numeric or string only
+                        default_value = return_literal_value(param.default)
 
-                  # Resolve the actual `def` line, skipping stacked
-                  # decorators / comments / blank lines between the
-                  # route decorator and the handler. Both param
-                  # extraction and callee extraction below need this
-                  # to be accurate; the previous `index + 1` shortcut
-                  # silently misfired on `@app.post(...)` + `@auth_required`
-                  # style stacks.
-                  def_line = find_def_line(codelines, index) || (index + 1)
+                        # Get param type by default value first
+                        param_type = infer_parameter_type(param.default) unless param.default.empty?
 
-                  # Parsing extra params
-                  function_definition = parse_function_def(codelines, def_line)
-                  if !function_definition.nil?
-                    function_params = function_definition.params
-                    if function_params.size > 0
-                      function_params.each do |param|
-                        # https://fastapi.tiangolo.com/tutorial/path-params-numeric-validations/#order-the-parameters-as-you-need-tricks
-                        next if param.name == "*"
+                        # Get param type by type if not found
+                        if param_type.nil? && !param.type.empty?
+                          param_type = param.type
+                          # https://peps.python.org/pep-0593/
+                          param_type = param_type.split("Annotated[", 2)[-1].split(",", 2)[-1] if param_type.includes?("Annotated[")
 
-                        unless query_params.includes?(param.name)
-                          # Default value is numeric or string only
-                          default_value = return_literal_value(param.default)
+                          # https://peps.python.org/pep-0484/#union-types
+                          param_type = param_type.split("Union[", 2)[-1] if param_type.includes?("Union[")
 
-                          # Get param type by default value first
-                          param_type = infer_parameter_type(param.default) unless param.default.empty?
+                          param_type = infer_parameter_type(param_type, true)
+                          param_type = "query" if param_type.nil? && param.type.empty?
+                        else
+                          param_type = "query" if param_type.nil?
+                        end
 
-                          # Get param type by type if not found
-                          if param_type.nil? && !param.type.empty?
-                            param_type = param.type
-                            # https://peps.python.org/pep-0593/
-                            param_type = param_type.split("Annotated[", 2)[-1].split(",", 2)[-1] if param_type.includes?("Annotated[")
+                        if param_type.nil?
+                          if /^#{PYTHON_VAR_NAME_REGEX}$/.match(param.type)
+                            if param.type.in?(%w[Request dict])
+                              function_codeblock = parse_code_block(codelines[def_line..])
+                              next if function_codeblock.nil?
+                              new_params = find_dictionary_params(function_codeblock, param)
+                            elsif import_modules.has_key?(param.type)
+                              # Parse model class from module path
+                              import_module_path = import_modules[param.type].first
 
-                            # https://peps.python.org/pep-0484/#union-types
-                            param_type = param_type.split("Union[", 2)[-1] if param_type.includes?("Union[")
+                              # Skip if import module path is not identified
+                              next if import_module_path.empty?
 
-                            param_type = infer_parameter_type(param_type, true)
-                            param_type = "query" if param_type.nil? && param.type.empty?
-                          else
-                            param_type = "query" if param_type.nil?
-                          end
-
-                          if param_type.nil?
-                            if /^#{PYTHON_VAR_NAME_REGEX}$/.match(param.type)
-                              if param.type.in?(%w[Request dict])
-                                function_codeblock = parse_code_block(codelines[def_line..])
-                                next if function_codeblock.nil?
-                                new_params = find_dictionary_params(function_codeblock, param)
-                              elsif import_modules.has_key?(param.type)
-                                # Parse model class from module path
-                                import_module_path = import_modules[param.type].first
-
-                                # Skip if import module path is not identified
-                                next if import_module_path.empty?
-
-                                import_module_source = read_file_content(import_module_path)
-                                new_params = find_base_model_params(import_module_source, param.type, param.name)
-                              else
-                                # Parse model class from current source
-                                new_params = find_base_model_params(source, param.type, param.name)
-                              end
-
-                              next if new_params.nil?
-
-                              new_params.each do |model_param|
-                                params << model_param
-                              end
+                              import_module_source = read_file_content(import_module_path)
+                              new_params = find_base_model_params(import_module_source, param.type, param.name)
+                            else
+                              # Parse model class from current source
+                              new_params = find_base_model_params(source, param.type, param.name)
                             end
-                          else
-                            # Add endpoint param
-                            params << Param.new(param.name, default_value, param_type)
+
+                            next if new_params.nil?
+
+                            new_params.each do |model_param|
+                              params << model_param
+                            end
                           end
+                        else
+                          # Add endpoint param
+                          params << Param.new(param.name, default_value, param_type)
                         end
                       end
                     end
                   end
+                end
 
-                  # Honor `methods=[...]` on `@router.route(...)` /
-                  # `@router.api_route(...)` decorators by emitting
-                  # one endpoint per declared method. Without this
-                  # the decorator's method-list was discarded and a
-                  # single GET endpoint was produced for what may be
-                  # a multi-verb handler.
-                  declared_methods = extract_declared_methods(_extra_params)
-                  emit_methods = declared_methods.empty? ? [http_method_name] : declared_methods
+                # Honor `methods=[...]` on `@router.route(...)` /
+                # `@router.api_route(...)` decorators by emitting
+                # one endpoint per declared method. Without this
+                # the decorator's method-list was discarded and a
+                # single GET endpoint was produced for what may be
+                # a multi-verb handler.
+                declared_methods = extract_declared_methods(_extra_params)
+                emit_methods = declared_methods.empty? ? [http_method_name] : declared_methods
 
-                  details = Details.new(PathInfo.new(path, index + 1))
-                  full_path = router_class.join(http_route_path)
-                  base_endpoint = Endpoint.new(full_path, emit_methods.first, params, details)
+                details = Details.new(PathInfo.new(path, index + 1))
+                full_path = router_class.join(http_route_path)
+                base_endpoint = Endpoint.new(full_path, emit_methods.first, params, details)
 
-                  # `parse_code_block(codelines[def_line..])` keeps the
-                  # def line, so body row 0 lives at file line `def_line`.
-                  handler_codeblock = parse_code_block(codelines[def_line..])
-                  if handler_codeblock
-                    push_callees_from(
-                      base_endpoint,
-                      handler_codeblock,
-                      def_line,
-                      path,
-                      definition_base_path: definition_base_path,
-                      source: source
-                    )
-                  end
+                # `parse_code_block(codelines[def_line..])` keeps the
+                # def line, so body row 0 lives at file line `def_line`.
+                handler_codeblock = parse_code_block(codelines[def_line..])
+                if handler_codeblock
+                  push_callees_from(
+                    base_endpoint,
+                    handler_codeblock,
+                    def_line,
+                    path,
+                    definition_base_path: definition_base_path,
+                    source: source
+                  )
+                end
 
-                  emit_methods.each do |method|
-                    endpoint_to_add = if method == emit_methods.first
-                                        base_endpoint
-                                      else
-                                        Endpoint.new(full_path, method, params, details).tap do |dup_ep|
-                                          base_endpoint.callees.each { |c| dup_ep.push_callee(c) }
-                                        end
+                emit_methods.each do |method|
+                  endpoint_to_add = if method == emit_methods.first
+                                      base_endpoint
+                                    else
+                                      Endpoint.new(full_path, method, params, details).tap do |dup_ep|
+                                        base_endpoint.callees.each { |c| dup_ep.push_callee(c) }
                                       end
-                    result << endpoint_to_add
-                  end
+                                    end
+                  result << endpoint_to_add
                 end
               end
 
@@ -249,11 +240,8 @@ module Analyzer::Python
               # without trying to find a handler def — the handler is
               # passed by reference as the 2nd positional argument.
               prog_line = coalesce_programmatic_call(codelines, index, line, instance_name)
-              prog_line.scan(/\b#{instance_name}\.(add_api_route|add_api_websocket_route)\s*\(\s*[rf]?['"]([^'"]*)['"](.*)/) do |prog_match|
-                next if prog_match.size < 4
-                prog_attr = prog_match[1]
-                prog_path = prog_match[2]
-                prog_tail = prog_match[3]
+              if prog_call = parse_fastapi_programmatic_route(prog_line, instance_name, source, import_modules)
+                prog_attr, prog_path, prog_tail = prog_call
                 prog_methods = extract_declared_methods(prog_tail)
                 if prog_methods.empty?
                   prog_methods = prog_attr.includes?("websocket") ? ["GET"] : ["GET"]
@@ -418,10 +406,22 @@ module Analyzer::Python
       return if depth > 3
 
       expr = expression.strip
-      if lit = expr.match(/^([rRuUbBfF]*)['"]([^'"]*)['"]/)
+      if parts = split_python_expression(expr, '+')
+        resolved_parts = [] of ::String
+        parts.each do |part|
+          resolved = resolve_string_expression(part, source, import_modules, depth + 1)
+          return unless resolved
+          resolved_parts << resolved
+        end
+        return resolved_parts.join
+      end
+
+      if lit = expr.match(/^([rRuUbBfF]*)['"]([^'"]*)['"]$/)
         prefixes = lit[1].downcase
         value = lit[2]
-        return if prefixes.includes?("f") && value.includes?("{")
+        if prefixes.includes?("f") && value.includes?("{")
+          return resolve_f_string(value, source, import_modules, depth + 1)
+        end
         return value
       end
 
@@ -430,6 +430,40 @@ module Analyzer::Python
       end
 
       resolve_constant_value(expr, import_modules)
+    end
+
+    private def resolve_f_string(value : ::String,
+                                 source : ::String,
+                                 import_modules : Hash(::String, Tuple(::String, Int32)),
+                                 depth : Int32) : ::String?
+      result = String.build do |io|
+        index = 0
+        while index < value.size
+          if value[index] == '{'
+            if index + 1 < value.size && value[index + 1] == '{'
+              io << '{'
+              index += 2
+              next
+            end
+
+            end_index = value.index('}', index + 1)
+            return unless end_index
+            expression = value[(index + 1)...end_index].strip
+            return if expression.empty? || expression.includes?(":") || expression.includes?("!")
+            resolved = resolve_string_expression(expression, source, import_modules, depth + 1)
+            return unless resolved
+            io << resolved
+            index = end_index + 1
+          elsif value[index] == '}' && index + 1 < value.size && value[index + 1] == '}'
+            io << '}'
+            index += 2
+          else
+            io << value[index]
+            index += 1
+          end
+        end
+      end
+      result
     end
 
     private def resolve_constant_in_source(expression : ::String,
@@ -491,6 +525,107 @@ module Analyzer::Python
       end.strip
 
       expression.empty? ? nil : expression
+    end
+
+    private def parse_fastapi_route_decorator(line : ::String,
+                                              instance_name : ::String,
+                                              source : ::String,
+                                              import_modules : Hash(::String, Tuple(::String, Int32))) : Tuple(::String, ::String, ::String)?
+      match = line.match(/^\s*@\s*#{Regex.escape(instance_name)}\s*\.\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*)\)\s*(?:#.*)?$/m)
+      return unless match
+
+      attr = match[1]
+      args = match[2]
+      path_expr = extract_route_path_expression(args)
+      return unless path_expr
+
+      path = resolve_string_expression(path_expr, source, import_modules)
+      return unless path
+
+      {attr, path, args}
+    end
+
+    private def parse_fastapi_programmatic_route(line : ::String,
+                                                 instance_name : ::String,
+                                                 source : ::String,
+                                                 import_modules : Hash(::String, Tuple(::String, Int32))) : Tuple(::String, ::String, ::String)?
+      match = line.match(/\b#{Regex.escape(instance_name)}\s*\.\s*(add_api_route|add_api_websocket_route)\s*\((.*)\)\s*(?:#.*)?$/m)
+      return unless match
+
+      attr = match[1]
+      args = match[2]
+      path_expr = extract_route_path_expression(args)
+      return unless path_expr
+
+      path = resolve_string_expression(path_expr, source, import_modules)
+      return unless path
+
+      {attr, path, args}
+    end
+
+    private def extract_route_path_expression(args : ::String) : ::String?
+      split_python_arguments(args).each do |arg|
+        stripped = arg.strip
+        next if stripped.empty?
+        break if top_level_keyword_argument?(stripped)
+        return stripped
+      end
+
+      extract_python_keyword_expression(args, "path") ||
+        extract_python_keyword_expression(args, "rule") ||
+        extract_python_keyword_expression(args, "uri")
+    end
+
+    private def top_level_keyword_argument?(arg : ::String) : Bool
+      !!arg.match(/^[A-Za-z_][A-Za-z0-9_]*\s*=/)
+    end
+
+    private def split_python_arguments(args : ::String) : Array(::String)
+      split_python_top_level(args, ',')
+    end
+
+    private def split_python_expression(expression : ::String, delimiter : Char) : Array(::String)?
+      parts = split_python_top_level(expression, delimiter)
+      return if parts.size <= 1
+      parts
+    end
+
+    private def split_python_top_level(input : ::String, delimiter : Char) : Array(::String)
+      parts = [] of ::String
+      start = 0
+      depth = 0
+      in_quote = nil
+      escaped = false
+      index = 0
+      while index < input.size
+        ch = input[index]
+        if in_quote
+          if escaped
+            escaped = false
+          elsif ch == '\\'
+            escaped = true
+          elsif ch == in_quote
+            in_quote = nil
+          end
+        else
+          case ch
+          when '\'', '"'
+            in_quote = ch
+          when '(', '[', '{'
+            depth += 1
+          when ')', ']', '}'
+            depth -= 1 if depth > 0
+          else
+            if ch == delimiter && depth == 0
+              parts << input[start...index]
+              start = index + 1
+            end
+          end
+        end
+        index += 1
+      end
+      parts << input[start..]
+      parts
     end
 
     # Infers the type of the parameter based on its default value or type annotation
@@ -579,7 +714,7 @@ module Analyzer::Python
                                            index : Int32,
                                            line : ::String,
                                            instance_name : ::String) : ::String
-      return line unless line.matches?(/\b#{instance_name}\.(add_api_route|add_api_websocket_route)\s*\(/)
+      return line unless line.matches?(/\b#{Regex.escape(instance_name)}\s*\.\s*(add_api_route|add_api_websocket_route)\s*\(/)
       return line if python_call_balanced?(line)
 
       pieces = [line]
@@ -642,7 +777,7 @@ module Analyzer::Python
                                         index : Int32,
                                         line : ::String,
                                         instance_name : ::String) : ::String
-      return line unless line.matches?(/^\s*@#{instance_name}\.[a-zA-Z_]+\s*\(/)
+      return line unless line.matches?(/^\s*@\s*#{Regex.escape(instance_name)}\s*\.\s*[a-zA-Z_]+\s*\(/)
       return line if python_call_balanced?(line)
 
       pieces = [line]
@@ -657,19 +792,6 @@ module Analyzer::Python
       end
 
       pieces.join(' ')
-    end
-
-    # Rewrite `@instance.method(..., path="X", ...)` so `"X"` is the
-    # first positional argument. Lets the main scan regex (which
-    # expects `(<string>` right after the open paren) catch FastAPI
-    # declarations that pass the path via the `path=` keyword. No-op
-    # when no `path=` keyword is present.
-    private def lift_path_keyword(line : ::String, instance_name : ::String) : ::String
-      return line unless line.includes?("path=") || line.includes?("path =")
-      return line if line =~ /@#{instance_name}\.[a-zA-Z_]+\s*\(\s*[rf]?['"]/
-      match = line.match(/^(?<lead>.*@#{instance_name}\.[a-zA-Z_]+\s*\()(?<rest>.*\bpath\s*=\s*[rf]?['"](?<path>[^'"]*)['"].*)$/m)
-      return line unless match
-      "#{match["lead"]}\"#{match["path"]}\", #{match["rest"]}"
     end
 
     # Net `(` − `)` paren count for `line`, ignoring parens inside

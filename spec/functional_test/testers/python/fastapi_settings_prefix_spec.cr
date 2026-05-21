@@ -12,9 +12,9 @@ expected_endpoints = [
   # via `settings.API_V1_STR` on top, yielding `/api/v1/items/`.
   Endpoint.new("/api/v1/items/", "GET"),
   Endpoint.new("/api/v1/items/{id}", "GET", [Param.new("id", "", "path")]),
-  # Interpolated f-string prefixes are not resolved yet; the analyzer
-  # should fall back instead of emitting `/{DYNAMIC_PREFIX}/v1/probe`.
-  Endpoint.new("/api/v1/probe", "GET"),
+  # Simple f-string prefixes with resolvable constants should keep
+  # their concrete segment instead of being dropped or emitted raw.
+  Endpoint.new("/api/v1/dynamic/v1/probe", "GET"),
 ]
 
 FunctionalTester.new("fixtures/python/fastapi_settings_prefix/", {
