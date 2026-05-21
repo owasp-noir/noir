@@ -1,0 +1,88 @@
+<?xml version="1.0"?>
+<!DOCTYPE items [<!ELEMENT items (item*)> <!ATTLIST items burpVersion CDATA "" exportTime CDATA "">]>
+<items burpVersion="2024.6" exportTime="Tue May 21 12:00:00 KST 2026">
+  <item>
+    <time>Tue May 21 12:00:01 KST 2026</time>
+    <url><![CDATA[https://api.example.com/users?q=alice]]></url>
+    <host ip="203.0.113.10">api.example.com</host>
+    <port>443</port>
+    <protocol>https</protocol>
+    <method><![CDATA[GET]]></method>
+    <path><![CDATA[/users?q=alice]]></path>
+    <extension>null</extension>
+    <request base64="true"><![CDATA[R0VUIC91c2Vycz9xPWFsaWNlIEhUVFAvMS4xDQpIb3N0OiBhcGkuZXhhbXBsZS5jb20NClVzZXItQWdlbnQ6IE1vemlsbGEvNS4wDQpDb29raWU6IHNlc3Npb249YWJjMTIzOyBjc3JmPXh5ejc4OQ0KQWNjZXB0OiBhcHBsaWNhdGlvbi9qc29uDQoNCg==]]></request>
+    <status>200</status>
+    <responselength>0</responselength>
+    <mimetype>JSON</mimetype>
+    <response base64="true"><![CDATA[]]></response>
+    <comment></comment>
+  </item>
+  <item>
+    <time>Tue May 21 12:00:02 KST 2026</time>
+    <url><![CDATA[https://api.example.com/users]]></url>
+    <host ip="203.0.113.10">api.example.com</host>
+    <port>443</port>
+    <protocol>https</protocol>
+    <method><![CDATA[POST]]></method>
+    <path><![CDATA[/users]]></path>
+    <extension>null</extension>
+    <request base64="true"><![CDATA[UE9TVCAvdXNlcnMgSFRUUC8xLjENCkhvc3Q6IGFwaS5leGFtcGxlLmNvbQ0KQ29udGVudC1UeXBlOiBhcHBsaWNhdGlvbi9qc29uDQpDb250ZW50LUxlbmd0aDogMzUNCg0KeyJuYW1lIjoiYm9iIiwiZW1haWwiOiJiQGUuY29tIn0NCg==]]></request>
+    <status>201</status>
+    <responselength>0</responselength>
+    <mimetype>JSON</mimetype>
+    <response base64="true"><![CDATA[]]></response>
+    <comment></comment>
+  </item>
+  <item>
+    <time>Tue May 21 12:00:03 KST 2026</time>
+    <url><![CDATA[https://api.example.com/users?role=admin]]></url>
+    <host ip="203.0.113.10">api.example.com</host>
+    <port>443</port>
+    <protocol>https</protocol>
+    <method><![CDATA[GET]]></method>
+    <path><![CDATA[/users?role=admin]]></path>
+    <extension>null</extension>
+    <request base64="true"><![CDATA[R0VUIC91c2Vycz9yb2xlPWFkbWluIEhUVFAvMS4xDQpIb3N0OiBhcGkuZXhhbXBsZS5jb20NClgtVHJhY2UtSWQ6IDQyDQoNCg==]]></request>
+    <status>200</status>
+    <responselength>0</responselength>
+    <mimetype>JSON</mimetype>
+    <response base64="true"><![CDATA[]]></response>
+    <comment></comment>
+  </item>
+  <item>
+    <time>Tue May 21 12:00:04 KST 2026</time>
+    <url><![CDATA[https://api.example.com/login]]></url>
+    <host ip="203.0.113.10">api.example.com</host>
+    <port>443</port>
+    <protocol>https</protocol>
+    <method><![CDATA[POST]]></method>
+    <path><![CDATA[/login]]></path>
+    <extension>null</extension>
+    <request base64="true"><![CDATA[UE9TVCAvbG9naW4gSFRUUC8xLjENCkhvc3Q6IGFwaS5leGFtcGxlLmNvbQ0KQ29udGVudC1UeXBlOiBhcHBsaWNhdGlvbi94LXd3dy1mb3JtLXVybGVuY29kZWQNCkNvbnRlbnQtTGVuZ3RoOiAyNw0KDQp1c2VyPWFkbWluJnBhc3M9aHVudGVyMg0K]]></request>
+    <status>200</status>
+    <responselength>0</responselength>
+    <mimetype>JSON</mimetype>
+    <response base64="true"><![CDATA[]]></response>
+    <comment></comment>
+  </item>
+  <item>
+    <time>Tue May 21 12:00:05 KST 2026</time>
+    <url><![CDATA[https://api.example.com/health]]></url>
+    <host ip="203.0.113.10">api.example.com</host>
+    <port>443</port>
+    <protocol>https</protocol>
+    <method><![CDATA[GET]]></method>
+    <path><![CDATA[/health]]></path>
+    <extension>null</extension>
+    <request base64="false"><![CDATA[GET /health HTTP/1.1
+Host: api.example.com
+X-Plain: yes
+
+]]></request>
+    <status>200</status>
+    <responselength>0</responselength>
+    <mimetype>TEXT</mimetype>
+    <response base64="true"><![CDATA[]]></response>
+    <comment></comment>
+  </item>
+</items>

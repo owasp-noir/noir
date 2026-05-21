@@ -688,6 +688,21 @@ module NoirTechs
         },
       },
     },
+    :burp => {
+      :format    => ["XML"],
+      :similar   => ["burp", "burpsuite", "burp-suite", "burp_suite", "burp-sitemap"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => false,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+      },
+    },
     :caido => {
       :format    => ["JSON"],
       :similar   => ["caido", "caido-export", "caido_export"],
