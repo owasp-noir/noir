@@ -1,0 +1,395 @@
+require "../../engines/go_engine"
+
+module Analyzer::Go
+  # Huma (https://huma.rocks/) is an OpenAPI-first Go framework
+  # where every operation is registered through
+  #   huma.Register(api, huma.Operation{Method: ..., Path: ...}, handler)
+  # The Operation literal carries method/path verbatim, and the
+  # handler's Input struct fields declare parameter shape via
+  # tags (`path:"id"`, `query:"limit"`, `header:"X-Auth"`, plus
+  # a `Body` field for request bodies). That makes extraction
+  # unusually precise compared to other Go routers.
+  class Huma < GoEngine
+    IMPORT_MARKER = "github.com/danielgtaylor/huma"
+
+    # Tags we lift from Input struct fields onto endpoint params.
+    PARAM_TAG_KINDS = {
+      "path"   => "path",
+      "query"  => "query",
+      "header" => "header",
+      "cookie" => "cookie",
+    }
+
+    private struct StructField
+      property name : String
+      property tag : String
+
+      def initialize(@name, @tag)
+      end
+    end
+
+    def analyze
+      result = [] of Endpoint
+
+      package_files = Hash(String, Array(String)).new
+      file_contents_cache = Hash(String, String).new
+
+      get_files_by_extension(".go").each do |scan_path|
+        next if File.directory?(scan_path)
+        next if GoEngine.go_test_file?(scan_path)
+        begin
+          dir = File.dirname(scan_path)
+          package_files[dir] ||= [] of String
+          package_files[dir] << scan_path
+          file_contents_cache[scan_path] = read_file_content(scan_path)
+        rescue File::NotFoundError
+          # skip
+        end
+      end
+
+      # Per-directory struct table: name => [StructField, ...]
+      package_structs = Hash(String, Hash(String, Array(StructField))).new
+      file_contents_cache.each do |path, content|
+        dir = File.dirname(path)
+        package_structs[dir] ||= Hash(String, Array(StructField)).new
+        collect_struct_definitions(content).each do |name, fields|
+          package_structs[dir][name] ||= fields
+        end
+      end
+
+      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
+      begin
+        populate_channel_with_filtered_files(channel, ".go")
+
+        mutex = Mutex.new
+        WaitGroup.wait do |wg|
+          @options["concurrency"].to_s.to_i.times do
+            wg.spawn do
+              loop do
+                begin
+                  path = channel.receive?
+                  break if path.nil?
+                  next if File.directory?(path)
+                  next if GoEngine.go_test_file?(path)
+                  next unless File.exists?(path)
+
+                  content = file_contents_cache[path]? || read_file_content(path)
+                  next unless content.includes?(IMPORT_MARKER)
+
+                  dir = File.dirname(path)
+                  structs = package_structs[dir]? || Hash(String, Array(StructField)).new
+
+                  endpoints = extract_huma_endpoints(content, path, structs)
+                  next if endpoints.empty?
+
+                  mutex.synchronize do
+                    endpoints.each { |ep| result << ep }
+                  end
+                rescue File::NotFoundError
+                  logger.debug "File not found: #{path}"
+                end
+              end
+            end
+          end
+        end
+      rescue e
+        logger.debug e
+      end
+
+      result
+    end
+
+    # Walks the Go AST for every `huma.Register(...)` call, decoding
+    # method/path from the Operation composite literal and resolving
+    # the handler's Input struct fields for param classification.
+    private def extract_huma_endpoints(source : String, path : String,
+                                      structs : Hash(String, Array(StructField))) : Array(Endpoint)
+      endpoints = [] of Endpoint
+      Noir::TreeSitter.parse_go(source) do |root|
+        walk_calls(root) do |call|
+          func = Noir::TreeSitter.field(call, "function")
+          next if func.nil?
+          next unless Noir::TreeSitter.node_text(func, source) == "huma.Register"
+
+          args = Noir::TreeSitter.field(call, "arguments")
+          next if args.nil?
+
+          op_node = nil_arg = nil
+          handler_node = nil_arg
+          arg_index = 0
+          Noir::TreeSitter.each_named_child(args) do |arg|
+            case arg_index
+            when 1
+              op_node = arg
+            when 2
+              handler_node = arg
+            end
+            arg_index += 1
+          end
+          next if op_node.nil?
+
+          method, route_path = decode_operation(op_node.not_nil!, source)
+          next if method.empty? || route_path.empty?
+
+          row = Noir::TreeSitter.node_start_row(call) + 1
+          details = Details.new(PathInfo.new(path, row))
+          endpoint = Endpoint.new(route_path, method.upcase, details)
+
+          if handler_node
+            input_type = extract_input_struct_name(handler_node.not_nil!, source)
+            if input_type && (fields = structs[input_type]?)
+              fields.each do |field|
+                push_field_param(endpoint, field)
+              end
+            end
+          end
+
+          endpoints << endpoint
+        end
+      end
+      endpoints
+    end
+
+    # Walks `composite_literal` (the `huma.Operation{...}` expression)
+    # and returns `{method, path}` decoded from the keyed elements.
+    # `Method` accepts either a string literal or a selector like
+    # `http.MethodGet`; `Path` is always a string literal.
+    private def decode_operation(node : LibTreeSitter::TSNode, source : String) : Tuple(String, String)
+      method = ""
+      path = ""
+
+      type_node = Noir::TreeSitter.field(node, "type")
+      type_text = type_node ? Noir::TreeSitter.node_text(type_node, source) : ""
+      return {method, path} unless type_text.includes?("Operation")
+
+      body = Noir::TreeSitter.field(node, "body")
+      return {method, path} if body.nil?
+
+      Noir::TreeSitter.each_named_child(body.not_nil!) do |child|
+        next unless Noir::TreeSitter.node_type(child) == "keyed_element"
+
+        # tree-sitter-go wraps each side of a keyed_element in a
+        # `literal_element` container; unwrap to reach the actual key
+        # identifier and the value expression.
+        key_node = Noir::TreeSitter.field(child, "key")
+        value_field = Noir::TreeSitter.field(child, "value")
+        # When the field names aren't populated, fall back to the
+        # first two named children.
+        if key_node.nil? || value_field.nil?
+          children = [] of LibTreeSitter::TSNode
+          Noir::TreeSitter.each_named_child(child) { |kv| children << kv }
+          next if children.size < 2
+          key_node ||= children[0]
+          value_field ||= children[1]
+        end
+
+        key_text = unwrap_literal_text(key_node.not_nil!, source)
+        value_node = unwrap_literal_node(value_field.not_nil!)
+        next if value_node.nil?
+        value = value_node.not_nil!
+
+        case key_text
+        when "Method"
+          method = decode_method_value(value, source)
+        when "Path"
+          decoded = decode_string_value(value, source)
+          path = decoded if decoded
+        end
+      end
+
+      {method, path}
+    end
+
+    # `Method` can be:
+    #   - "GET" / "POST" — raw string literal
+    #   - http.MethodGet — selector_expression mapped via lookup table
+    private def decode_method_value(node : LibTreeSitter::TSNode, source : String) : String
+      case Noir::TreeSitter.node_type(node)
+      when "interpreted_string_literal", "raw_string_literal"
+        text = Noir::TreeSitter.node_text(node, source)
+        text.gsub(/^["`]|["`]$/, "")
+      when "selector_expression"
+        selector = Noir::TreeSitter.node_text(node, source)
+        HTTP_METHOD_CONSTANTS[selector]? || ""
+      else
+        ""
+      end
+    end
+
+    private def decode_string_value(node : LibTreeSitter::TSNode, source : String) : String?
+      case Noir::TreeSitter.node_type(node)
+      when "interpreted_string_literal", "raw_string_literal"
+        Noir::TreeSitter.node_text(node, source).gsub(/^["`]|["`]$/, "")
+      else
+        nil
+      end
+    end
+
+    HTTP_METHOD_CONSTANTS = {
+      "http.MethodGet"     => "GET",
+      "http.MethodPost"    => "POST",
+      "http.MethodPut"     => "PUT",
+      "http.MethodPatch"   => "PATCH",
+      "http.MethodDelete"  => "DELETE",
+      "http.MethodHead"    => "HEAD",
+      "http.MethodOptions" => "OPTIONS",
+      "http.MethodConnect" => "CONNECT",
+      "http.MethodTrace"   => "TRACE",
+    }
+
+    # Pulls the Input struct name out of the handler function literal.
+    # Huma handlers look like:
+    #   func(ctx context.Context, input *FooInput) (*FooOutput, error) { ... }
+    # We want `FooInput` (second parameter, dereferenced).
+    private def extract_input_struct_name(node : LibTreeSitter::TSNode, source : String) : String?
+      return nil unless Noir::TreeSitter.node_type(node) == "func_literal"
+
+      params = Noir::TreeSitter.field(node, "parameters")
+      return nil if params.nil?
+
+      decls = [] of LibTreeSitter::TSNode
+      Noir::TreeSitter.each_named_child(params.not_nil!) do |decl|
+        decls << decl if Noir::TreeSitter.node_type(decl) == "parameter_declaration"
+      end
+      return nil if decls.size < 2
+
+      type_node = Noir::TreeSitter.field(decls[1], "type")
+      return nil if type_node.nil?
+
+      text = Noir::TreeSitter.node_text(type_node.not_nil!, source).strip
+      text = text.lchop('*')
+      # Strip package qualifier (e.g., "pkg.Foo" -> "Foo") — Huma input
+      # types are nearly always local to the package, so we keep the
+      # last identifier segment for the lookup.
+      if dot = text.rindex('.')
+        text = text[(dot + 1)..]
+      end
+      text.empty? ? nil : text
+    end
+
+    # Top-level type-declaration scan that produces a name => fields
+    # map for every `type X struct { ... }` in `source`. Fields are
+    # captured with their raw tag string so callers can pull whichever
+    # tag namespace applies (path, query, header, cookie, json).
+    #
+    # We walk the tree-sitter tree rather than regex the source because
+    # Huma input structs can be nested or embedded, and regex would
+    # mis-bind tag strings on long field lines.
+    private def collect_struct_definitions(source : String) : Hash(String, Array(StructField))
+      result = Hash(String, Array(StructField)).new
+      Noir::TreeSitter.parse_go(source) do |root|
+        walk_node(root) do |node|
+          next unless Noir::TreeSitter.node_type(node) == "type_spec"
+          name_node = Noir::TreeSitter.field(node, "name")
+          type_node = Noir::TreeSitter.field(node, "type")
+          next if name_node.nil? || type_node.nil?
+          next unless Noir::TreeSitter.node_type(type_node.not_nil!) == "struct_type"
+
+          struct_name = Noir::TreeSitter.node_text(name_node.not_nil!, source)
+          fields = extract_struct_fields(type_node.not_nil!, source)
+          result[struct_name] ||= fields
+        end
+      end
+      result
+    end
+
+    private def extract_struct_fields(struct_node : LibTreeSitter::TSNode, source : String) : Array(StructField)
+      fields = [] of StructField
+      # `struct_type` has no `fields` field-name in tree-sitter-go's
+      # grammar; the field declaration list is a plain named child.
+      field_list = nil
+      Noir::TreeSitter.each_named_child(struct_node) do |c|
+        if Noir::TreeSitter.node_type(c) == "field_declaration_list"
+          field_list = c
+          break
+        end
+      end
+      return fields if field_list.nil?
+
+      Noir::TreeSitter.each_named_child(field_list.not_nil!) do |decl|
+        next unless Noir::TreeSitter.node_type(decl) == "field_declaration"
+
+        tag = ""
+        tag_node = Noir::TreeSitter.field(decl, "tag")
+        if tag_node
+          tag = Noir::TreeSitter.node_text(tag_node.not_nil!, source)
+          tag = tag.gsub(/^[`"]|[`"]$/, "")
+        end
+
+        name_node = Noir::TreeSitter.field(decl, "name")
+        if name_node
+          field_name = Noir::TreeSitter.node_text(name_node.not_nil!, source)
+          fields << StructField.new(field_name, tag)
+        else
+          # Embedded field — name comes from the type itself; we don't
+          # need to descend into embedded structs for Huma input types
+          # in practice (huma.Operation isn't extended that way), so
+          # leave a placeholder so the slot is preserved.
+          type_node = Noir::TreeSitter.field(decl, "type")
+          if type_node
+            field_name = Noir::TreeSitter.node_text(type_node.not_nil!, source)
+            fields << StructField.new(field_name, tag)
+          end
+        end
+      end
+      fields
+    end
+
+    private def push_field_param(endpoint : Endpoint, field : StructField)
+      tag = field.tag
+      if field.name == "Body"
+        param = Param.new("body", "", "json")
+        endpoint.params << param unless endpoint.params.includes?(param)
+        return
+      end
+
+      PARAM_TAG_KINDS.each do |go_tag, param_type|
+        if match = tag.match(/#{go_tag}:"([^"]+)"/)
+          param = Param.new(match[1], "", param_type)
+          endpoint.params << param unless endpoint.params.includes?(param)
+          return
+        end
+      end
+
+      # Untagged fields on input structs default to "body" in Huma's
+      # implicit conventions only when they're the sole field; we err
+      # on the side of not emitting them to avoid false positives.
+    end
+
+    # `literal_element` is tree-sitter-go's container for keyed-element
+    # children. Strip it so callers see the underlying expression
+    # (identifier, string literal, selector_expression, etc.).
+    private def unwrap_literal_node(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+      if Noir::TreeSitter.node_type(node) == "literal_element"
+        first = nil
+        Noir::TreeSitter.each_named_child(node) do |c|
+          first ||= c
+        end
+        return first
+      end
+      node
+    end
+
+    private def unwrap_literal_text(node : LibTreeSitter::TSNode, source : String) : String
+      inner = unwrap_literal_node(node)
+      return "" if inner.nil?
+      Noir::TreeSitter.node_text(inner.not_nil!, source)
+    end
+
+    private def walk_calls(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
+      if Noir::TreeSitter.node_type(node) == "call_expression"
+        yield node
+      end
+      Noir::TreeSitter.each_named_child(node) do |child|
+        walk_calls(child, &block)
+      end
+    end
+
+    private def walk_node(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
+      yield node
+      Noir::TreeSitter.each_named_child(node) do |child|
+        walk_node(child, &block)
+      end
+    end
+  end
+end
