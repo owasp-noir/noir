@@ -5,7 +5,7 @@ module NoirTechs
     "cpp_crow", "cpp_drogon",
     "clojure_compojure",
     "crystal_amber", "crystal_grip", "crystal_kemal", "crystal_lucky", "crystal_marten",
-    "cs_aspnet_core_mvc", "cs_aspnet_mvc",
+    "cs_aspnet_core_mvc", "cs_aspnet_mvc", "cs_carter",
     "dart_frog", "dart_serverpod", "dart_shelf",
     "elixir_phoenix", "elixir_plug",
     "fs_giraffe",
@@ -33,7 +33,7 @@ module NoirTechs
 
   AI_CONTEXT_GUARD_SUPPORTED_TECHS = [
     "crystal_amber", "crystal_grip", "crystal_kemal", "crystal_lucky", "crystal_marten",
-    "cs_aspnet_core_mvc", "cs_aspnet_mvc",
+    "cs_aspnet_core_mvc", "cs_aspnet_mvc", "cs_carter",
     "elixir_phoenix", "elixir_plug",
     "go_beego", "go_chi", "go_echo", "go_fasthttp", "go_fiber", "go_gin", "go_gozero", "go_goyave", "go_mux",
     "java_armeria", "java_jsp", "java_play", "java_spring", "java_vertx",
@@ -233,6 +233,24 @@ module NoirTechs
       :framework => "ASP.NET Core MVC",
       :language  => "C#",
       :similar   => ["asp.net core mvc", "asp.net core", "aspnetcore", "cs-aspnet-core-mvc", "cs_aspnet_core_mvc", "c# asp.net core mvc", "c#-asp.net-core-mvc", "c#_aspnet_core_mvc"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
+    :cs_carter => {
+      :framework => "Carter",
+      :language  => "C#",
+      :similar   => ["carter", "cs-carter", "cs_carter", "c# carter", "c#-carter", "c#_carter"],
       :supported => {
         :endpoint => true,
         :method   => true,
