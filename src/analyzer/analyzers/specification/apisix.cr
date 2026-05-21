@@ -56,7 +56,7 @@ module Analyzer::Specification
 
       paths.each do |path|
         methods.each do |method|
-          endpoint_params = host_params.map { |param| Param.new(param.name, param.value, param.param_type) }
+          endpoint_params = host_params.dup
           @result << Endpoint.new(path, method, endpoint_params, details)
         end
       end
@@ -70,7 +70,7 @@ module Analyzer::Specification
 
       paths.each do |path|
         methods.each do |method|
-          endpoint_params = host_params.map { |param| Param.new(param.name, param.value, param.param_type) }
+          endpoint_params = host_params.dup
           @result << Endpoint.new(path, method, endpoint_params, details)
         end
       end

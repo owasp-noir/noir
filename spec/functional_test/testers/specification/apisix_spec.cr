@@ -6,7 +6,10 @@ expected_endpoints = [
   Endpoint.new("/admin", "GET", [Param.new("Host", "admin.example.com", "header")]),
   Endpoint.new("/admin/*", "GET", [Param.new("Host", "admin.example.com", "header")]),
   Endpoint.new("/api/*", "ANY"),
-  Endpoint.new("/internal", "DELETE", [Param.new("Host", "api.example.com", "header")]),
+  Endpoint.new("/internal", "DELETE", [
+    Param.new("Host", "api.example.com", "header"),
+    Param.new("Host", "internal.example.com", "header"),
+  ]),
   Endpoint.new("/json/users", "GET"),
   Endpoint.new("/json/admin", "ANY"),
   Endpoint.new("/json/admin/*", "ANY"),
