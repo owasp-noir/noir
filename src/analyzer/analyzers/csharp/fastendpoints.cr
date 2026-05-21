@@ -74,7 +74,9 @@ module Analyzer::CSharp
           base_match = BASE_TYPE_REGEX.match(line)
           if base_match
             base = base_match[1]
-            request_type = extract_request_type(base)
+            # `EndpointWithoutRequest<TResponse>` is response-only — the
+            # generic arg is the response shape, not a request DTO.
+            request_type = base.starts_with?("EndpointWithoutRequest") ? nil : extract_request_type(base)
             class_block, end_index = extract_class_block(lines, i)
             configure_block = extract_configure_block(class_block)
             if configure_block
@@ -104,13 +106,39 @@ module Analyzer::CSharp
       line.includes?("Endpoint") || line.includes?("Ep<")
     end
 
+    # Walks the first generic argument with balanced angle brackets so
+    # `Endpoint<Page<User>, Res>` resolves to `Page<User>` instead of
+    # collapsing to `Page` at the first inner `<`.
     private def extract_request_type(base : String) : String?
-      match = base.match(/<\s*([A-Za-z_][A-Za-z0-9_<>,\s\.]*?)\s*(?:,|>)/)
-      return nil unless match
-      name = match[1].strip
-      return nil if name.empty?
-      # Discard generic args inside the request type name itself.
-      name.split(/[<,]/).first.strip
+      start = base.index('<')
+      return nil unless start
+      depth = 0
+      io = String::Builder.new
+      i = start
+      while i < base.size
+        char = base[i]
+        case char
+        when '<'
+          depth += 1
+          io << char unless depth == 1
+        when '>'
+          depth -= 1
+          break if depth == 0
+          io << char
+        when ','
+          break if depth == 1
+          io << char
+        else
+          io << char
+        end
+        i += 1
+      end
+      arg = io.to_s.strip
+      return nil if arg.empty?
+      # Look up by the outer type name when the request is generic
+      # (e.g. `Page<User>` → index entry for `Page`).
+      outer = arg.split('<').first.strip
+      outer.empty? ? nil : outer
     end
 
     private def extract_class_block(lines : Array(String), start_index : Int32) : Tuple(String, Int32)
@@ -146,6 +174,7 @@ module Analyzer::CSharp
     private def parse_configure(configure_block : String) : Tuple(Array(String), Array(String))
       routes = [] of String
       methods = [] of String
+      configure_block = strip_csharp_comments(configure_block)
 
       # Verb-style: Get("/users/{id}")
       configure_block.scan(VERB_CALL_REGEX) do |match|
@@ -201,6 +230,14 @@ module Analyzer::CSharp
       endpoint = Endpoint.new(route, http_method, details)
       collected.each { |param| endpoint.params << param }
       endpoint
+    end
+
+    # Strip `// line` and `/* block */` comments so commented-out
+    # `Get("/x")` lines don't surface as endpoints. Keeps string
+    # literals intact since the regex only fires inside `/* */`.
+    private def strip_csharp_comments(block : String) : String
+      no_block = block.gsub(/\/\*[\s\S]*?\*\//, " ")
+      no_block.gsub(/\/\/[^\n]*/, "")
     end
 
     private def normalize_route(route : String) : String
@@ -267,12 +304,15 @@ module Analyzer::CSharp
         "FromHeader"    => "header",
         "FromForm"      => "form",
         "FromCookie"    => "cookie",
-        "FromClaim"     => "header",
-        "BindFrom"      => nil,
-        "QueryParam"    => "query",
-        "RouteParam"    => "path",
+        # `[FromClaim]` reads from the auth principal's JWT claims —
+        # not a request-side binding, so skip rather than mis-tag as
+        # `header`.
+        "FromClaim"         => "service",
+        "BindFrom"          => nil,
+        "QueryParam"        => "query",
+        "RouteParam"        => "path",
         "FromKeyedServices" => "service",
-        "FromServices"  => "service",
+        "FromServices"      => "service",
       }
       lines = block.lines
       pending_type : String? = nil
