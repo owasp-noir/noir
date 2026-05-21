@@ -12,6 +12,9 @@ Beyond source code analysis, Noir can parse API and data specification formats s
 
 | Specification | Format | endpoint | method | query | path | body | header | cookie |
 |---|---|---|---|---|---|---|---|---|
+| AWS CDK | TS | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| AWS CDK | JS | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| AWS CDK | PY | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | AWS SAM / CloudFormation | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | AWS SAM / CloudFormation | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Apisix | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ☑️ | ✗ |
