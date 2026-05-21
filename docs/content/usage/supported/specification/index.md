@@ -30,3 +30,4 @@ Beyond source code analysis, Noir can parse API and data specification formats s
 | Smithy | SMITHY | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
 | TypeSpec | TYPESPEC | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
 | Wsdl | XML | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ☑️ | ✗ |
+| mitmproxy Flow | TNETSTRING | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
