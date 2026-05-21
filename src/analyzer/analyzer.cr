@@ -20,6 +20,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"cpp_crow", Cpp::Crow},
     {"clojure_compojure", Clojure::Compojure},
     {"clojure_reitit", Clojure::Reitit},
+    {"clojure_ring", Clojure::Ring},
     {"cs_aspnet_mvc", CSharp::AspNetMvc},
     {"cs_aspnet_core_mvc", CSharp::AspNetCoreMvc},
     {"crystal_amber", Crystal::Amber},

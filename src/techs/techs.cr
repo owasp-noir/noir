@@ -3,7 +3,7 @@ require "json"
 module NoirTechs
   CALLEE_SUPPORTED_TECHS = [
     "cpp_crow", "cpp_drogon",
-    "clojure_compojure", "clojure_reitit",
+    "clojure_compojure", "clojure_reitit", "clojure_ring",
     "crystal_amber", "crystal_grip", "crystal_kemal", "crystal_lucky", "crystal_marten",
     "cs_aspnet_core_mvc", "cs_aspnet_mvc",
     "dart_frog", "dart_serverpod", "dart_shelf",
@@ -97,6 +97,24 @@ module NoirTechs
           :path   => true,
           :body   => true,
           :header => true,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
+    :clojure_ring => {
+      :framework => "Ring",
+      :language  => "Clojure",
+      :similar   => ["ring", "clojure-ring", "clojure_ring", "clj-ring"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => true,
+          :body   => false,
+          :header => false,
           :cookie => false,
         },
         :static_path => false,
