@@ -1522,6 +1522,21 @@ module NoirTechs
         },
       },
     },
+    :envoy => {
+      :format    => ["JSON", "YAML"],
+      :similar   => ["envoy", "envoy-proxy", "envoy_proxy", "istio-envoy"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+      },
+    },
     :graphql => {
       :format    => ["GRAPHQL"],
       :similar   => ["graphql", ".graphql"],
