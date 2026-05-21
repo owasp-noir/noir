@@ -109,7 +109,8 @@ module Noir
     # responsibility.
     def extract_routes_from(root : LibTreeSitter::TSNode, source : String, string_constants = Hash(String, String).new) : Array(Route)
       routes = [] of Route
-      walk_classes(root, source, "", routes)
+      local_string_constants = extract_string_constants(source)
+      walk_classes(root, source, "", routes, string_constants, local_string_constants)
       collect_gateway_routes(source, string_constants, routes)
       routes
     end
@@ -119,10 +120,12 @@ module Noir
     private def walk_classes(node : LibTreeSitter::TSNode,
                              source : String,
                              outer_prefix : String,
-                             routes : Array(Route))
+                             routes : Array(Route),
+                             string_constants : Hash(String, String),
+                             local_string_constants : Hash(String, String))
       ty = Noir::TreeSitter.node_type(node)
       if ty == "class_declaration" || ty == "object_declaration" || ty == "interface_declaration"
-        process_class(node, source, outer_prefix, [] of LibTreeSitter::TSNode, routes)
+        process_class(node, source, outer_prefix, [] of LibTreeSitter::TSNode, routes, string_constants, local_string_constants)
         return
       end
 
@@ -140,13 +143,13 @@ module Noir
         child = LibTreeSitter.ts_node_named_child(node, i.to_u32)
         case Noir::TreeSitter.node_type(child)
         when "class_declaration", "object_declaration", "interface_declaration"
-          process_class(child, source, outer_prefix, pending, routes)
+          process_class(child, source, outer_prefix, pending, routes, string_constants, local_string_constants)
           pending = [] of LibTreeSitter::TSNode
         when "prefix_expression"
           pending << child if prefix_expression_has_annotation?(child)
         else
           pending = [] of LibTreeSitter::TSNode
-          walk_classes(child, source, outer_prefix, routes)
+          walk_classes(child, source, outer_prefix, routes, string_constants, local_string_constants)
         end
       end
     end
@@ -155,18 +158,20 @@ module Noir
                               source : String,
                               outer_prefix : String,
                               pending : Array(LibTreeSitter::TSNode),
-                              routes : Array(Route))
+                              routes : Array(Route),
+                              string_constants : Hash(String, String),
+                              local_string_constants : Hash(String, String))
       class_name = type_identifier_text(node, source)
-      class_prefix = class_mapping_prefix(node, source, pending)
+      class_prefix = class_mapping_prefix(node, source, pending, string_constants, local_string_constants)
       prefix = join_paths(outer_prefix, class_prefix)
 
       if body = class_body(node)
         Noir::TreeSitter.each_named_child(body) do |member|
           case Noir::TreeSitter.node_type(member)
           when "function_declaration"
-            collect_function_routes(member, source, class_name, prefix, routes)
+            collect_function_routes(member, source, class_name, prefix, routes, string_constants, local_string_constants)
           when "class_declaration", "object_declaration", "interface_declaration"
-            walk_classes(member, source, prefix, routes)
+            walk_classes(member, source, prefix, routes, string_constants, local_string_constants)
           end
         end
       end
@@ -212,10 +217,12 @@ module Noir
 
     private def class_mapping_prefix(class_decl : LibTreeSitter::TSNode,
                                      source : String,
-                                     stray_annotation_nodes : Array(LibTreeSitter::TSNode) = [] of LibTreeSitter::TSNode) : String
+                                     stray_annotation_nodes : Array(LibTreeSitter::TSNode) = [] of LibTreeSitter::TSNode,
+                                     string_constants = Hash(String, String).new,
+                                     local_string_constants = Hash(String, String).new) : String
       each_annotation(class_decl, source) do |name, args|
         next unless ANNOTATION_VERBS.has_key?(name)
-        paths = annotation_paths(args, source)
+        paths = annotation_paths(args, source, string_constants, local_string_constants)
         return paths.first unless paths.empty?
       end
 
@@ -231,7 +238,7 @@ module Noir
           next unless ANNOTATION_VERBS.has_key?(name)
           next unless args
           buf = [] of String
-          collect_string_values(args, source, buf)
+          collect_string_values(args, source, buf, string_constants, local_string_constants)
           return buf.first unless buf.empty?
         end
       end
@@ -306,14 +313,16 @@ module Noir
                                         source : String,
                                         class_name : String,
                                         class_prefix : String,
-                                        routes : Array(Route))
+                                        routes : Array(Route),
+                                        string_constants : Hash(String, String),
+                                        local_string_constants : Hash(String, String))
       method_name = function_name(func, source)
 
       each_annotation(func, source) do |ann_name, args, ann_line|
         next unless ANNOTATION_VERBS.has_key?(ann_name)
         verb_default = ANNOTATION_VERBS[ann_name]?
 
-        paths = annotation_paths(args, source)
+        paths = annotation_paths(args, source, string_constants, local_string_constants)
         paths = [""] if paths.empty?
 
         verbs =
@@ -597,7 +606,10 @@ module Noir
     # Kotlin `value_arguments` contains `value_argument` children.
     # Each argument is either positional (a single child that's a
     # literal) or named (has a `simple_identifier` + expression).
-    private def annotation_paths(args_node : LibTreeSitter::TSNode?, source : String) : Array(String)
+    private def annotation_paths(args_node : LibTreeSitter::TSNode?,
+                                 source : String,
+                                 string_constants : Hash(String, String),
+                                 local_string_constants : Hash(String, String)) : Array(String)
       empty = [] of String
       return empty unless args_node
       return empty unless Noir::TreeSitter.node_type(args_node) == "value_arguments"
@@ -612,9 +624,9 @@ module Noir
 
         if kind == :keyword
           next unless key == "value" || key == "path"
-          collect_string_values(value_node, source, keyword)
+          collect_string_values(value_node, source, keyword, string_constants, local_string_constants)
         else
-          collect_string_values(value_node, source, positional)
+          collect_string_values(value_node, source, positional, string_constants, local_string_constants)
         end
       end
 
@@ -643,18 +655,19 @@ module Noir
       {named ? :keyword : :positional, key, value}
     end
 
-    # Collect string literal values from a node. Handles a single
-    # `string_literal`, a `collection_literal` with string children,
-    # or `arrayOf("/a", "/b")` call expressions.
-    private def collect_string_values(node : LibTreeSitter::TSNode, source : String, sink : Array(String))
+    # Collect path values from a node. Handles string literals,
+    # constants, `PATH + "/suffix"`, collection literals, and
+    # `arrayOf("/a", PATH)` call expressions.
+    private def collect_string_values(node : LibTreeSitter::TSNode,
+                                      source : String,
+                                      sink : Array(String),
+                                      string_constants : Hash(String, String),
+                                      local_string_constants : Hash(String, String))
       case Noir::TreeSitter.node_type(node)
-      when "string_literal"
-        text = decode_string_literal(node, source)
-        sink << text unless text.empty?
       when "collection_literal"
         # Kotlin's `[...]` array syntax inside annotations.
         Noir::TreeSitter.each_named_child(node) do |elem|
-          collect_string_values(elem, source, sink)
+          collect_string_values(elem, source, sink, string_constants, local_string_constants)
         end
       when "parenthesized_expression"
         # Stray-annotation case: `@RequestMapping("/x")` gets parsed
@@ -662,7 +675,7 @@ module Noir
         # carrying a bare `string_literal` (no `value_arguments`
         # wrapper).
         Noir::TreeSitter.each_named_child(node) do |elem|
-          collect_string_values(elem, source, sink)
+          collect_string_values(elem, source, sink, string_constants, local_string_constants)
         end
       when "call_expression"
         # `arrayOf("/a", "/b")` — walk the value_arguments.
@@ -673,13 +686,66 @@ module Noir
               Noir::TreeSitter.each_named_child(suf) do |va|
                 next unless Noir::TreeSitter.node_type(va) == "value_argument"
                 Noir::TreeSitter.each_named_child(va) do |v|
-                  collect_string_values(v, source, sink) if Noir::TreeSitter.node_type(v) == "string_literal"
+                  collect_string_values(v, source, sink, string_constants, local_string_constants)
                 end
               end
             end
           end
         end
+      else
+        if value = resolve_string_value(node, source, string_constants, local_string_constants)
+          sink << value unless value.empty?
+        end
       end
+    end
+
+    private def resolve_string_value(node : LibTreeSitter::TSNode,
+                                     source : String,
+                                     string_constants : Hash(String, String),
+                                     local_string_constants : Hash(String, String)) : String?
+      case Noir::TreeSitter.node_type(node)
+      when "string_literal"
+        decode_string_literal(node, source)
+      when "simple_identifier"
+        local_string_constants[Noir::TreeSitter.node_text(node, source)]?
+      when "navigation_expression"
+        text = Noir::TreeSitter.node_text(node, source)
+        local_string_constants[text]? || fully_qualified_constant(text, string_constants)
+      when "parenthesized_expression"
+        Noir::TreeSitter.each_named_child(node) do |child|
+          return resolve_string_value(child, source, string_constants, local_string_constants)
+        end
+      when "additive_expression"
+        parts = [] of String
+        Noir::TreeSitter.each_named_child(node) do |child|
+          part = resolve_string_value(child, source, string_constants, local_string_constants)
+          return unless part
+          parts << part
+        end
+        parts.join
+      end
+    end
+
+    private def fully_qualified_constant(text : String, string_constants : Hash(String, String)) : String?
+      return unless text.count('.') >= 2
+      string_constants[text]?
+    end
+
+    private def last_navigation_segment(node : LibTreeSitter::TSNode, source : String) : String
+      result = ""
+      Noir::TreeSitter.each_named_child(node) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "simple_identifier"
+          result = Noir::TreeSitter.node_text(child, source)
+        when "navigation_suffix"
+          Noir::TreeSitter.each_named_child(child) do |sub|
+            if Noir::TreeSitter.node_type(sub) == "simple_identifier"
+              result = Noir::TreeSitter.node_text(sub, source)
+            end
+          end
+        end
+      end
+      result
     end
 
     # Extract verbs from `method = RequestMethod.X` / `method =

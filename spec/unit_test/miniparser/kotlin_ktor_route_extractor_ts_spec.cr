@@ -38,6 +38,70 @@ describe Noir::TreeSitterKotlinKtorRouteExtractor do
     ])
   end
 
+  it "extracts routes from Route extension functions" do
+    source = <<-KT
+      import io.ktor.server.routing.Route
+
+      fun Route.customerRoutes() {
+          route("/customer") {
+              get { }
+              post("/{id}") { }
+          }
+      }
+      KT
+
+    routes = Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/customer"},
+      {"POST", "/customer/{id}"},
+    ])
+  end
+
+  it "extracts routes from modified Route extension functions" do
+    source = <<-KT
+      import io.ktor.server.routing.Route
+
+      private fun Route.adminRoutes() {
+          get("/admin") { }
+      }
+      KT
+
+    routes = Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/admin"},
+    ])
+  end
+
+  it "extracts route(path, method) handlers" do
+    source = <<-KT
+      routing {
+          route("/hello", HttpMethod.Get) {
+              handle { call.respondText("ok") }
+          }
+      }
+      KT
+
+    routes = Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/hello"},
+    ])
+  end
+
+  it "treats install(RoutingRoot) as a routing entry point" do
+    source = <<-KT
+      fun Application.module() {
+          install(RoutingRoot) {
+              get("/installed") { }
+          }
+      }
+      KT
+
+    routes = Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/installed"},
+    ])
+  end
+
   it "treats authenticate{} as a passthrough wrapper" do
     source = <<-KT
       routing {
@@ -137,13 +201,31 @@ describe Noir::TreeSitterKotlinKtorRouteExtractor do
     end
   end
 
-  it "skips verb DSL calls without a string-literal path" do
-    # `get { ... }` (resource-based routing) currently isn't
-    # supported. We just ignore it rather than emitting an empty
-    # path.
+  it "uses the current route prefix for verb DSL calls without a path argument" do
     source = <<-KT
       routing {
-          get { call.respondText("ok") }
+          route("/items") {
+              get { call.respondText("ok") }
+          }
+          get("/real") { }
+      }
+      KT
+
+    routes = Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/items"},
+      {"GET", "/real"},
+    ])
+  end
+
+  it "does not treat unrelated get calls as routes outside routing contexts" do
+    source = <<-KT
+      fun helper(client: HttpClient) {
+          client.get("/external")
+          get("/local-helper")
+      }
+
+      routing {
           get("/real") { }
       }
       KT

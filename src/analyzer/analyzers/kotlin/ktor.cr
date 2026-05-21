@@ -15,7 +15,7 @@ module Analyzer::Kotlin
         next if KotlinEngine.test_path?(path)
 
         content = read_file_content(path)
-        next unless content.includes?("routing")
+        next unless potential_ktor_route_file?(content)
 
         Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(content, include_callees: include_callee).each do |route|
           @result << build_endpoint(route, path)
@@ -24,6 +24,12 @@ module Analyzer::Kotlin
 
       Fiber.yield
       @result
+    end
+
+    private def potential_ktor_route_file?(content : String) : Bool
+      content.includes?("routing") ||
+        content.includes?("io.ktor.server.routing") ||
+        content.includes?("Route.")
     end
 
     private def build_endpoint(route : Noir::TreeSitterKotlinKtorRouteExtractor::Route, path : String) : Endpoint

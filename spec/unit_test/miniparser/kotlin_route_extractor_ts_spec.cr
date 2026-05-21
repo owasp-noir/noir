@@ -95,6 +95,67 @@ describe Noir::TreeSitterKotlinRouteExtractor do
     ])
   end
 
+  it "resolves Kotlin string constants in mapping paths" do
+    source = <<-KT
+      package com.example
+
+      object ApiPaths {
+          const val PREFIX = "/api"
+      }
+
+      const val USERS = "/users"
+
+      @RequestMapping(ApiPaths.PREFIX)
+      class A {
+          @GetMapping(USERS + "/{id}")
+          fun x(): String = ""
+
+          @PostMapping(path = arrayOf(USERS, "/accounts"))
+          fun y(): String = ""
+      }
+      KT
+
+    constants = Noir::TreeSitterKotlinRouteExtractor.extract_string_constants(source)
+    routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes(source, constants)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/api/users/{id}"},
+      {"POST", "/api/users"},
+      {"POST", "/api/accounts"},
+    ])
+  end
+
+  it "does not resolve simple mapping constants from the global index" do
+    source = <<-KT
+      package com.example
+
+      @RequestMapping("/api")
+      class A {
+          @GetMapping(USERS)
+          fun x(): String = ""
+      }
+      KT
+
+    constants = {"USERS" => "/wrong"} of String => String
+    routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes(source, constants)
+    routes.map(&.path).should_not contain("/api/wrong")
+  end
+
+  it "resolves fully-qualified mapping constants from the global index" do
+    source = <<-KT
+      package com.example
+
+      @RequestMapping(com.example.ApiPaths.PREFIX)
+      class A {
+          @GetMapping("/users")
+          fun x(): String = ""
+      }
+      KT
+
+    constants = {"com.example.ApiPaths.PREFIX" => "/api"} of String => String
+    routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes(source, constants)
+    routes.map(&.path).should eq(["/api/users"])
+  end
+
   it "emits prefix/ when the method path is empty" do
     # Kotlin Spring controllers routinely do
     # `@RequestMapping("/api/article")` on the class and `@GetMapping`
