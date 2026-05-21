@@ -190,6 +190,33 @@ Each card below lists a framework's supported features. **Route** covers endpoin
       </div>
     </div>
   </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title">Reitit</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip off">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip off">sinks</span>
+        <span class="tech-chip off">validators</span>
+        <span class="tech-chip off">signals</span>
+      </div>
+    </div>
+  </article>
 </div>
 
 ## Crystal
@@ -421,6 +448,33 @@ Each card below lists a framework's supported features. **Route** covers endpoin
 ## Elixir
 
 <div class="tech-grid">
+  <article class="tech-card">
+    <h3 class="tech-card-title">Bandit</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
   <article class="tech-card">
     <h3 class="tech-card-title">Phoenix</h3>
     <div class="tech-card-row">
@@ -2942,6 +2996,33 @@ Each card below lists a framework's supported features. **Route** covers endpoin
       <span class="tech-card-label">AI Context</span>
       <div class="tech-card-chips">
         <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title">ZIO HTTP</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
         <span class="tech-chip on">sinks</span>
         <span class="tech-chip on">validators</span>
         <span class="tech-chip on">signals</span>

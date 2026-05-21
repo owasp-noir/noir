@@ -19,6 +19,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"cpp_drogon", Cpp::Drogon},
     {"cpp_crow", Cpp::Crow},
     {"clojure_compojure", Clojure::Compojure},
+    {"clojure_reitit", Clojure::Reitit},
     {"cs_aspnet_mvc", CSharp::AspNetMvc},
     {"cs_aspnet_core_mvc", CSharp::AspNetCoreMvc},
     {"cs_carter", CSharp::Carter},
@@ -30,6 +31,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"dart_frog", Dart::DartFrog},
     {"dart_serverpod", Dart::Serverpod},
     {"dart_shelf", Dart::Shelf},
+    {"elixir_bandit", Elixir::Bandit},
     {"elixir_phoenix", Elixir::Phoenix},
     {"elixir_plug", Elixir::Plug},
     {"fs_giraffe", Fsharp::Giraffe},
@@ -48,6 +50,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"go_httprouter", Go::Httprouter},
     {"go_mux", Go::Mux},
     {"go_pocketbase", Go::Pocketbase},
+    {"go_connect_rpc", Go::ConnectRpc},
     {"groovy_grails", Groovy::Grails},
     {"haskell_scotty", Haskell::Scotty},
     {"haskell_servant", Haskell::Servant},
@@ -70,6 +73,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"lua_lapis", Lua::Lapis},
     {"java_vertx", Java::Vertx},
     {"js_adonisjs", Javascript::Adonisjs},
+    {"js_apollo", Javascript::Apollo},
     {"js_astro", Javascript::Astro},
     {"js_elysia", Javascript::Elysia},
     {"js_express", Javascript::Express},
@@ -93,6 +97,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"oas3", Specification::Oas3},
     {"insomnia", Specification::Insomnia},
     {"mitmproxy", Specification::Mitmproxy},
+    {"odata", Specification::OData},
     {"postman", Specification::Postman},
     {"raml", Specification::RAML},
     {"smithy", Specification::Smithy},
@@ -116,6 +121,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"python_flask", Python::Flask},
     {"python_litestar", Python::Litestar},
     {"python_pyramid", Python::Pyramid},
+    {"python_robyn", Python::Robyn},
     {"python_sanic", Python::Sanic},
     {"python_starlette", Python::Starlette},
     {"python_tornado", Python::Tornado},
@@ -137,6 +143,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"scala_akka", Scala::Akka},
     {"scala_scalatra", Scala::Scalatra},
     {"scala_play", Scala::Play},
+    {"scala_zio_http", Scala::ZioHttp},
     {"java_play", Java::Play},
     {"swift_vapor", Swift::Vapor},
     {"swift_kitura", Swift::Kitura},
@@ -176,6 +183,17 @@ def filter_redundant_generic_techs(techs : Array(String)) : Array(String)
   # Lumen is the actual framework, the Laravel signal is just noise.
   if filtered.includes?("php_lumen") && filtered.includes?("php_laravel")
     filtered.reject!("php_laravel")
+  end
+
+  # Bandit hosts the same `Plug.Router` modules the Plug analyzer
+  # already understands, so both detectors fire on a Bandit project.
+  # When both are present, the Bandit signal is the more specific one
+  # (it tells you which HTTP server is actually serving the routes);
+  # keep it and drop the redundant Plug entry so endpoints aren't
+  # extracted twice with two different technology tags. The Phoenix
+  # analyzer is unaffected — it owns the Phoenix.Router DSL.
+  if filtered.includes?("elixir_bandit") && filtered.includes?("elixir_plug")
+    filtered.reject!("elixir_plug")
   end
 
   filtered
