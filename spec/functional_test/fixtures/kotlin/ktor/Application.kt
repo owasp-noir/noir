@@ -16,6 +16,8 @@ fun main() {
 
 fun Application.configureRouting() {
     routing {
+        extensionRoutes()
+
         get("/") {
             call.respondText("Hello, World!")
         }

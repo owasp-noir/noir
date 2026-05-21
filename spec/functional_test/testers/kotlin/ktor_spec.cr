@@ -1,6 +1,8 @@
 require "../../func_spec.cr"
 
 expected_endpoints = [
+  Endpoint.new("/extension", "GET"),
+  Endpoint.new("/extension/method", "POST"),
   Endpoint.new("/", "GET"),
   Endpoint.new("/users/{id}", "GET", [
     Param.new("id", "", "path"),

@@ -84,48 +84,60 @@ module Noir
     def extract_routes(source : String, *, include_callees : Bool = false) : Array(Route)
       routes = [] of Route
       Noir::TreeSitter.parse_kotlin(source) do |root|
-        walk(root, source, "", routes, 0, include_callees)
+        walk(root, source, "", routes, 0, include_callees, false)
       end
       routes
     end
 
     # ---- traversal ----------------------------------------------------
 
-    private def walk(node : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32, include_callees : Bool)
+    private def walk(node : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32, include_callees : Bool, active : Bool)
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
 
-      if Noir::TreeSitter.node_type(node) == "call_expression"
+      ty = Noir::TreeSitter.node_type(node)
+
+      if ty == "function_declaration" && route_extension_function?(node, source)
+        if body = function_body_statements(node)
+          walk(body, source, prefix, routes, depth + 1, include_callees, true)
+        end
+        return
+      end
+
+      if ty == "call_expression"
         name = call_name(node, source)
         case
-        when HTTP_VERB_NAMES.has_key?(name)
+        when active && HTTP_VERB_NAMES.has_key?(name)
           emit_route(node, source, name, prefix, routes, include_callees)
           return
-        when name == "route"
+        when active && name == "route"
           path_arg = call_string_argument(node, source)
-          new_prefix = path_arg ? prefix + path_arg : prefix
+          new_prefix = path_arg ? join_paths(prefix, path_arg) : prefix
           if body = call_lambda_body(node)
-            walk(body, source, new_prefix, routes, depth + 1, include_callees)
+            if method = call_http_method_argument(node, source)
+              emit_method_route(node, body, source, method, new_prefix, routes, include_callees) if has_handle_call?(body, source)
+            end
+            walk(body, source, new_prefix, routes, depth + 1, include_callees, true)
           end
           return
-        when PASSTHROUGH_NAMES.includes?(name)
+        when name == "routing" || routing_install_call?(node, source) || (active && PASSTHROUGH_NAMES.includes?(name))
           if body = call_lambda_body(node)
-            walk(body, source, prefix, routes, depth + 1, include_callees)
+            walk(body, source, prefix, routes, depth + 1, include_callees, true)
           end
           return
         end
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, source, prefix, routes, depth + 1, include_callees)
+        walk(child, source, prefix, routes, depth + 1, include_callees, active)
       end
     end
 
     private def emit_route(node : LibTreeSitter::TSNode, source : String, name : String, prefix : String, routes : Array(Route), include_callees : Bool)
       path_arg = call_string_argument(node, source)
-      return unless path_arg
+      return unless path_arg || call_has_lambda?(node)
 
       verb = HTTP_VERB_NAMES[name]
-      full_path = prefix + path_arg
+      full_path = join_paths(prefix, path_arg || "")
       line = Noir::TreeSitter.node_start_row(node)
 
       receive_type : String? = nil
@@ -147,6 +159,29 @@ module Noir
             name, _path, line_no = entry
             callees << {name, line_no}
           end
+        end
+      end
+
+      routes << Route.new(verb, full_path, line, receive_type, query_params, header_params, callees)
+    end
+
+    private def emit_method_route(node : LibTreeSitter::TSNode,
+                                  body : LibTreeSitter::TSNode,
+                                  source : String,
+                                  verb : String,
+                                  full_path : String,
+                                  routes : Array(Route),
+                                  include_callees : Bool)
+      line = Noir::TreeSitter.node_start_row(node)
+      query_params = [] of String
+      header_params = [] of String
+      receive_type = scan_handler_body(body, source, query_params, header_params)
+
+      callees = [] of Tuple(String, Int32)
+      if include_callees
+        Noir::KotlinCalleeExtractor.callees_in_lambda(body, source, "").each do |entry|
+          name, _path, line_no = entry
+          callees << {name, line_no}
         end
       end
 
@@ -177,6 +212,8 @@ module Noir
         else
           ""
         end
+      when "navigation_expression"
+        last_navigation_segment(first, source)
       else
         ""
       end
@@ -209,6 +246,80 @@ module Noir
       nil
     end
 
+    private def call_http_method_argument(call : LibTreeSitter::TSNode, source : String) : String?
+      first = first_named_child(call)
+      return unless first
+      return unless Noir::TreeSitter.node_type(first) == "call_expression"
+
+      args = nil
+      Noir::TreeSitter.each_named_child(first) do |child|
+        next unless Noir::TreeSitter.node_type(child) == "call_suffix"
+        Noir::TreeSitter.each_named_child(child) do |sub|
+          args = sub if Noir::TreeSitter.node_type(sub) == "value_arguments"
+        end
+      end
+      return unless args
+
+      Noir::TreeSitter.each_named_child(args) do |arg|
+        next unless Noir::TreeSitter.node_type(arg) == "value_argument"
+        Noir::TreeSitter.each_named_child(arg) do |child|
+          if verb = http_method_value(child, source)
+            return verb
+          end
+        end
+      end
+      nil
+    end
+
+    private def http_method_value(node : LibTreeSitter::TSNode, source : String) : String?
+      candidate =
+        case Noir::TreeSitter.node_type(node)
+        when "simple_identifier"
+          Noir::TreeSitter.node_text(node, source)
+        when "navigation_expression"
+          last_navigation_segment(node, source)
+        else
+          ""
+        end
+
+      return if candidate.empty?
+      upcased = candidate.upcase
+      HTTP_VERB_NAMES.values.includes?(upcased) ? upcased : nil
+    end
+
+    private def routing_install_call?(call : LibTreeSitter::TSNode, source : String) : Bool
+      return false unless call_name(call, source) == "install"
+
+      first = first_named_child(call)
+      return false unless first
+      return false unless Noir::TreeSitter.node_type(first) == "call_expression"
+
+      args = nil
+      Noir::TreeSitter.each_named_child(first) do |child|
+        next unless Noir::TreeSitter.node_type(child) == "call_suffix"
+        Noir::TreeSitter.each_named_child(child) do |sub|
+          args = sub if Noir::TreeSitter.node_type(sub) == "value_arguments"
+        end
+      end
+      return false unless args
+
+      Noir::TreeSitter.each_named_child(args) do |arg|
+        next unless Noir::TreeSitter.node_type(arg) == "value_argument"
+        Noir::TreeSitter.each_named_child(arg) do |child|
+          case Noir::TreeSitter.node_type(child)
+          when "simple_identifier"
+            name = Noir::TreeSitter.node_text(child, source)
+            return true if name == "Routing" || name == "RoutingRoot"
+          when "navigation_expression"
+            text = Noir::TreeSitter.node_text(child, source)
+            name = last_navigation_segment(child, source)
+            return true if name == "Routing" || name == "RoutingRoot" || text.ends_with?("Routing.Plugin")
+          end
+        end
+      end
+      false
+    end
+
     # Locate the lambda body (`statements` node) of a call_expression's
     # trailing lambda — `foo(...) { body }` or `foo { body }`.
     private def call_lambda_body(call : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
@@ -225,6 +336,58 @@ module Noir
           when "lambda_literal"
             return lambda_statements(sub)
           end
+        end
+      end
+      nil
+    end
+
+    private def call_has_lambda?(call : LibTreeSitter::TSNode) : Bool
+      Noir::TreeSitter.each_named_child(call) do |child|
+        next unless Noir::TreeSitter.node_type(child) == "call_suffix"
+        Noir::TreeSitter.each_named_child(child) do |sub|
+          return true if Noir::TreeSitter.node_type(sub) == "annotated_lambda"
+          return true if Noir::TreeSitter.node_type(sub) == "lambda_literal"
+        end
+      end
+      false
+    end
+
+    private def has_handle_call?(node : LibTreeSitter::TSNode, source : String, depth : Int32 = 0) : Bool
+      return false if depth > Noir::TreeSitter::MAX_AST_DEPTH
+      if Noir::TreeSitter.node_type(node) == "call_expression" && call_name(node, source) == "handle"
+        return true
+      end
+
+      Noir::TreeSitter.each_named_child(node) do |child|
+        return true if has_handle_call?(child, source, depth + 1)
+      end
+      false
+    end
+
+    private def route_extension_function?(func : LibTreeSitter::TSNode, source : String) : Bool
+      receiver = nil
+      Noir::TreeSitter.each_named_child(func) do |child|
+        if Noir::TreeSitter.node_type(child) == "user_type"
+          receiver = child
+          break
+        end
+      end
+      return false unless receiver
+
+      last_type = ""
+      Noir::TreeSitter.each_named_child(receiver) do |child|
+        if Noir::TreeSitter.node_type(child) == "type_identifier"
+          last_type = Noir::TreeSitter.node_text(child, source)
+        end
+      end
+      last_type == "Route" || last_type == "Routing"
+    end
+
+    private def function_body_statements(func : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+      Noir::TreeSitter.each_named_child(func) do |child|
+        next unless Noir::TreeSitter.node_type(child) == "function_body"
+        Noir::TreeSitter.each_named_child(child) do |sub|
+          return sub if Noir::TreeSitter.node_type(sub) == "statements"
         end
       end
       nil
@@ -386,6 +549,23 @@ module Noir
       end
     end
 
+    private def last_navigation_segment(node : LibTreeSitter::TSNode, source : String) : String
+      result = ""
+      Noir::TreeSitter.each_named_child(node) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "simple_identifier"
+          result = Noir::TreeSitter.node_text(child, source)
+        when "navigation_suffix"
+          Noir::TreeSitter.each_named_child(child) do |sub|
+            if Noir::TreeSitter.node_type(sub) == "simple_identifier"
+              result = Noir::TreeSitter.node_text(sub, source)
+            end
+          end
+        end
+      end
+      result
+    end
+
     # `["x"]` → `"x"`. Anything else (interpolated string, identifier
     # key) returns nil so the caller skips emitting a param.
     private def indexing_string_key(idx : LibTreeSitter::TSNode, source : String) : String?
@@ -398,6 +578,13 @@ module Noir
         end
       end
       nil
+    end
+
+    private def join_paths(prefix : String, suffix : String) : String
+      return "/" if prefix.empty? && suffix.empty?
+      return suffix if prefix.empty?
+      return prefix.rstrip('/') if suffix.empty?
+      "#{prefix.rstrip('/')}/#{suffix.lstrip('/')}"
     end
   end
 end
