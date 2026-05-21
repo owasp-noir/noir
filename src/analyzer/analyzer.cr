@@ -47,6 +47,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"go_httprouter", Go::Httprouter},
     {"go_mux", Go::Mux},
     {"go_pocketbase", Go::Pocketbase},
+    {"go_connect_rpc", Go::ConnectRpc},
     {"groovy_grails", Groovy::Grails},
     {"haskell_scotty", Haskell::Scotty},
     {"haskell_servant", Haskell::Servant},
