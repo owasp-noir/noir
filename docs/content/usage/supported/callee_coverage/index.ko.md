@@ -43,7 +43,7 @@ JSON, JSONL, YAML, TOML 같은 모델 기반 포맷과 plain 모델 직렬화는
 | Python | Aiohttp, Bottle, Django, Falcon, FastAPI, Flask, Litestar, Pyramid, Sanic, Starlette, Tornado |
 | Ruby | Grape, Hanami, Rails, Roda, Sinatra |
 | Rust | Actix Web, Axum, Gotham, Loco, Poem, Rocket, RWF, Salvo, Tide, Warp |
-| Scala | Akka HTTP, Scalatra |
+| Scala | Akka HTTP, Scalatra, ZIO HTTP |
 | Swift | Hummingbird, Kitura, Vapor |
 | TypeScript | NestJS |
 
