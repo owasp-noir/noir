@@ -77,12 +77,14 @@ module Analyzer::Specification
       return if paths.empty?
 
       # Kong routes without an explicit `methods` filter match all methods.
+      # Noir represents that behavior with the synthetic `ANY` method label.
       methods = array_of_strings(route_h[YAML::Any.new("methods")]?).map(&.upcase)
       methods = ["ANY"] if methods.empty?
       hosts = array_of_strings(route_h[YAML::Any.new("hosts")]?)
 
       paths.each do |path|
-        # A leading `~` indicates regex routing; otherwise Kong treats this as a prefix path.
+        # We currently model Kong route path mode as regex (`~...`) vs non-regex.
+        # Non-regex routes (including exact `=...`) are tagged as `prefix`.
         path_type = path.starts_with?("~") ? "regex" : "prefix"
         methods.each do |method|
           endpoint = Endpoint.new(path, method, details)
