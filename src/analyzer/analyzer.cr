@@ -154,6 +154,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"scala_play", Scala::Play},
     {"scala_http4s", Scala::Http4s},
     {"scala_zio_http", Scala::ZioHttp},
+    {"scala_tapir", Scala::Tapir},
     {"java_play", Java::Play},
     {"swift_vapor", Swift::Vapor},
     {"swift_kitura", Swift::Kitura},
