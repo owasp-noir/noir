@@ -33,9 +33,11 @@ module Analyzer::Ruby
       property controller_subdir : String
       property resource_name : String?
       property controller_path : String?
+      property controller_scope : String?
 
       def initialize(@kind : Symbol, @path : String = "", @controller_subdir : String = "",
-                     @resource_name : String? = nil, @controller_path : String? = nil)
+                     @resource_name : String? = nil, @controller_path : String? = nil,
+                     @controller_scope : String? = nil)
       end
     end
 
@@ -84,8 +86,22 @@ module Analyzer::Ruby
     end
 
     private def parse_routes_file(routes_path : String, framework_root : String)
+      parsed_route_files = Set(String).new
+      concern_resources = {} of String => Array(ConcernResource)
+      parse_routes_file(routes_path, framework_root, parsed_route_files, [] of Frame, concern_resources)
+    end
+
+    private def parse_routes_file(routes_path : String, framework_root : String,
+                                  parsed_route_files : Set(String),
+                                  inherited_stack : Array(Frame),
+                                  concern_resources : Hash(String, Array(ConcernResource)))
+      expanded_routes_path = File.expand_path(routes_path)
+      parse_key = route_file_parse_key(expanded_routes_path, inherited_stack)
+      return if parsed_route_files.includes?(parse_key)
+      parsed_route_files << parse_key
+
       details = Details.new(PathInfo.new(routes_path))
-      stack = [] of Frame
+      stack = inherited_stack.dup
       # Routes files routinely DRY repeated prefixes into local
       # string vars (`base_c_route = "/c/:channel_title/:channel_id"`)
       # then use them with Ruby interpolation
@@ -96,256 +112,307 @@ module Analyzer::Ruby
       # walk the file and expand interpolations before route
       # matching.
       local_string_vars = Hash(String, String).new
-      concern_resources = Hash(String, Array(ConcernResource)).new
+      logical_route_lines(routes_path).each do |raw_line|
+        line = raw_line.strip
+        next if line.empty?
 
-      File.open(routes_path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        file.each_line do |raw_line|
-          line = strip_inline_comment(raw_line).strip
-          next if line.empty?
+        # Capture `name = "literal"` assignments at any nesting.
+        # We only resolve simple string-literal RHS; anything more
+        # complex (method calls, concatenation) stays opaque and
+        # the original `#{...}` falls through unchanged.
+        if assign = line.match(/^([a-z_][a-z0-9_]*)\s*=\s*["']([^"']+)["']\s*$/)
+          local_string_vars[assign[1]] = assign[2]
+        end
 
-          # Capture `name = "literal"` assignments at any nesting.
-          # We only resolve simple string-literal RHS; anything more
-          # complex (method calls, concatenation) stays opaque and
-          # the original `#{...}` falls through unchanged.
-          if assign = line.match(/^([a-z_][a-z0-9_]*)\s*=\s*["']([^"']+)["']\s*$/)
-            local_string_vars[assign[1]] = assign[2]
+        # Expand interpolations in-place so downstream regexes
+        # see the resolved path. We only substitute names we've
+        # actually seen — unresolved `#{...}` survives, which is
+        # better than producing an empty `/` placeholder.
+        unless local_string_vars.empty?
+          line = line.gsub(/\#\{([a-z_][a-z0-9_]*)\}/) do |match|
+            name = $~[1]
+            local_string_vars[name]? || match
           end
+        end
 
-          # Expand interpolations in-place so downstream regexes
-          # see the resolved path. We only substitute names we've
-          # actually seen — unresolved `#{...}` survives, which is
-          # better than producing an empty `/` placeholder.
-          unless local_string_vars.empty?
-            line = line.gsub(/\#\{([a-z_][a-z0-9_]*)\}/) do |match|
-              name = $~[1]
-              local_string_vars[name]? || match
-            end
+        # Handle `end` (top of stack pops one).
+        if line == "end" || line.starts_with?("end ") || line.starts_with?("end;") || line.starts_with?("end#")
+          stack.pop unless stack.empty?
+          next
+        end
+
+        opens_block = opens_do_block?(line)
+
+        # Outermost: Rails.application.routes.draw do ... end
+        if line.starts_with?("Rails.application.routes.draw")
+          stack << Frame.new(:neutral) if opens_block
+          next
+        end
+
+        # draw :admin / draw("api") loads config/routes/admin.rb inline.
+        # Rails evaluates those files in the current mapper scope.
+        if call = route_call(line, ["draw"])
+          draw_names = parse_symbol_list(call[1])
+          draw_names.each do |draw_name|
+            draw_path = File.join(framework_root, "config", "routes", "#{draw_name}.rb")
+            parse_routes_file(draw_path, framework_root, parsed_route_files, stack, concern_resources) if File.exists?(draw_path)
           end
+          next
+        end
 
-          # Handle `end` (top of stack pops one).
-          if line == "end" || line.starts_with?("end ") || line.starts_with?("end;") || line.starts_with?("end#")
-            stack.pop unless stack.empty?
-            next
+        # concern :commentable do
+        if call = route_call(line, ["concern"])
+          next unless m = call[1].match(/^\s*:(\w+)/)
+          name = m[1]
+          concern_resources[name] ||= [] of ConcernResource
+          stack << Frame.new(:concern, resource_name: name) if opens_block
+          next
+        end
+
+        # namespace :foo do
+        if call = route_call(line, ["namespace"])
+          next unless m = call[1].match(/^\s*(?::(\w+)|['"]([^'"]+)['"])/)
+          name = m[1]? || m[2]? || ""
+          options = parse_options(call[1])
+          namespace_path = options.has_key?("path") ? options["path"] : name
+          stack << Frame.new(:namespace, path: namespace_path, controller_subdir: name) if opens_block
+          next
+        end
+
+        # scope :name / scope "/admin" / scope path: ...
+        if call = route_call(line, ["scope"])
+          args = call[1]
+          options = parse_options(args)
+          scope_path = ""
+          if m = args.match(/^\s*:(\w+)/)
+            scope_path = m[1]
+          elsif m = args.match(/^\s*['"]([^'"]+)['"]/)
+            scope_path = m[1].lchop('/')
+          elsif path_option = options["path"]?
+            scope_path = path_option.lchop('/')
           end
+          controller_subdir = options["module"]? || ""
+          controller_scope = options["controller"]?
+          stack << Frame.new(:scope, path: scope_path, controller_subdir: controller_subdir,
+            controller_scope: controller_scope) if opens_block
+          next
+        end
 
-          opens_block = opens_do_block?(line)
+        # controller :posts do ... end
+        if call = route_call(line, ["controller"])
+          controller_name = parse_first_route_name(call[1])
+          stack << Frame.new(:controller, controller_scope: controller_name) if opens_block && controller_name
+          next
+        end
 
-          # Outermost: Rails.application.routes.draw do ... end
-          if line.starts_with?("Rails.application.routes.draw")
-            stack << Frame.new(:neutral) if opens_block
-            next
+        # root "ctrl#action" / root to: "ctrl#action"
+        if call = route_call(line, ["root"])
+          rest = call[1]
+          prefix = current_path_prefix(stack)
+          url = prefix.empty? ? "/" : "/#{prefix}"
+          ctrl_action = parse_controller_action(rest, current_controller_scope(stack))
+          ctrl_path = nil.as(String?)
+          action_name = nil.as(String?)
+          if ctrl_action
+            ctrl_name, action = ctrl_action
+            ctrl_path = find_controller_file(framework_root, ctrl_name, stack)
+            action_name = action
           end
-
-          # concern :commentable do
-          if m = line.match(/^concern\s+:(\w+)/)
-            name = m[1]
-            concern_resources[name] ||= [] of ConcernResource
-            stack << Frame.new(:concern, resource_name: name) if opens_block
-            next
+          parse_route_verbs(rest, ["GET"]).each do |root_verb|
+            action_params = action_name ? params_for_action(ctrl_path, action_name, root_verb) : ([] of Param)
+            endpoint = Endpoint.new(url, root_verb, action_params, details)
+            attach_callees_for_action(endpoint, ctrl_path, action_name) if action_name
+            @result << endpoint
           end
+          next
+        end
 
-          # namespace :foo do
-          if m = line.match(/^namespace\s+(?::(\w+)|['"]([^'"]+)['"])/)
-            name = m[1]? || m[2]? || ""
-            stack << Frame.new(:namespace, path: name, controller_subdir: name) if opens_block
-            next
+        # devise_for :users
+        if call = route_call(line, ["devise_for"])
+          next unless m = call[1].match(/^\s*:(\w+)/)
+          scope_name = m[1]
+          prefix = current_path_prefix(stack)
+          base = prefix.empty? ? "/#{scope_name}" : "/#{prefix}/#{scope_name}"
+          DEVISE_ROUTES.each do |verb, sub|
+            @result << Endpoint.new("#{base}#{sub}", verb, details)
           end
+          next
+        end
 
-          # scope :name / scope "/admin" / scope path: ...
-          if line.starts_with?("scope")
-            scope_path = ""
-            if m = line.match(/^scope\s+:(\w+)/)
-              scope_path = m[1]
-            elsif m = line.match(/^scope\s+['"]([^'"]+)['"]/)
-              scope_path = m[1].lchop('/')
-            elsif m = line.match(/path:\s*['"]([^'"]+)['"]/)
-              scope_path = m[1].lchop('/')
-            elsif m = line.match(/path:\s*:(\w+)/)
-              scope_path = m[1]
-            end
-            stack << Frame.new(:scope, path: scope_path) if opens_block
-            next
+        # mount Engine, at: "/path"  /  mount Engine => "/path"
+        if call = route_call(line, ["mount"])
+          rest = call[1]
+          at_path = nil
+          if m = rest.match(/at:\s*['"]([^'"]+)['"]/)
+            at_path = m[1]
+          elsif m = rest.match(/=>\s*['"]([^'"]+)['"]/)
+            at_path = m[1]
           end
-
-          # root "ctrl#action" / root to: "ctrl#action"
-          if line.starts_with?("root")
+          if at_path
             prefix = current_path_prefix(stack)
-            url = prefix.empty? ? "/" : "/#{prefix}"
+            normalized = at_path.starts_with?("/") ? at_path : "/#{at_path}"
+            url = prefix.empty? ? normalized : "/#{prefix}#{normalized}"
             @result << Endpoint.new(url, "GET", details)
-            next
           end
+          next
+        end
 
-          # devise_for :users
-          if m = line.match(/^devise_for\s+:(\w+)/)
-            scope_name = m[1]
-            prefix = current_path_prefix(stack)
-            base = prefix.empty? ? "/#{scope_name}" : "/#{prefix}/#{scope_name}"
-            DEVISE_ROUTES.each do |verb, sub|
-              @result << Endpoint.new("#{base}#{sub}", verb, details)
-            end
-            next
-          end
+        # concerns :commentable / concerns [:commentable, :taggable]
+        if call = route_call(line, ["concerns"])
+          emit_concern_resources(parse_symbol_list(call[1]), concern_resources, framework_root, stack)
+          next
+        end
 
-          # mount Engine, at: "/path"  /  mount Engine => "/path"
-          if line.starts_with?("mount")
-            at_path = nil
-            if m = line.match(/at:\s*['"]([^'"]+)['"]/)
-              at_path = m[1]
-            elsif m = line.match(/=>\s*['"]([^'"]+)['"]/)
-              at_path = m[1]
-            end
-            if at_path
-              prefix = current_path_prefix(stack)
-              normalized = at_path.starts_with?("/") ? at_path : "/#{at_path}"
-              url = prefix.empty? ? normalized : "/#{prefix}#{normalized}"
-              @result << Endpoint.new(url, "GET", details)
-            end
-            next
-          end
+        # resources :foo / resource :foo
+        if call = route_call(line, ["resources", "resource"])
+          kind_kw = call[0]
+          next unless name = parse_first_route_name(call[1])
+          options = parse_options(call[1])
 
-          # concerns :commentable / concerns [:commentable, :taggable]
-          if m = line.match(/^concerns\s+(.*)/)
-            emit_concern_resources(parse_symbol_list(m[1]), concern_resources, framework_root, stack)
-            next
-          end
-
-          # resources :foo / resource :foo
-          if m = line.match(/^(resources?)\s+:(\w+)/)
-            kind_kw = m[1]
-            name = m[2]
-            options = parse_options(line)
-
-            if concern_name = current_concern_definition(stack)
-              concern_resources[concern_name] ||= [] of ConcernResource
-              concern_resources[concern_name] << ConcernResource.new(kind_kw, name, options, current_concern_relative_stack(stack))
-              if opens_block
-                url_segment = options["path"]? || name
-                singular = (kind_kw == "resource")
-                child_path = singular ? url_segment : "#{url_segment}/1"
-                stack << Frame.new(:resources, path: child_path, resource_name: name)
-              end
-              next
-            end
-
-            existing_controller_path = emit_resource_routes(framework_root, stack, kind_kw, name, options)
-
-            concern_names = parse_symbol_list(options["concerns"]?)
-            unless concern_names.empty?
-              url_segment = options["path"]? || name
-              virtual_stack = stack.dup
-              virtual_stack << Frame.new(:resources, path: (kind_kw == "resource" ? url_segment : "#{url_segment}/1"),
-                resource_name: name, controller_path: existing_controller_path)
-              emit_concern_resources(concern_names, concern_resources, framework_root, virtual_stack)
-            end
-
+          if concern_name = current_concern_definition(stack)
+            concern_resources[concern_name] ||= [] of ConcernResource
+            concern_resources[concern_name] << ConcernResource.new(kind_kw, name, options, current_concern_relative_stack(stack))
             if opens_block
               url_segment = options["path"]? || name
               singular = (kind_kw == "resource")
               child_path = singular ? url_segment : "#{url_segment}/1"
-              stack << Frame.new(:resources, path: child_path, resource_name: name,
-                controller_path: existing_controller_path)
+              stack << Frame.new(:resources, path: child_path, resource_name: name)
             end
             next
           end
 
-          # member do / collection do
-          if line == "member" || line == "member do" || line.starts_with?("member do")
-            stack << Frame.new(:member) if opens_block
-            next
+          existing_controller_path = emit_resource_routes(framework_root, stack, kind_kw, name, options)
+
+          concern_names = parse_symbol_list(options["concerns"]?)
+          unless concern_names.empty?
+            url_segment = options["path"]? || name
+            virtual_stack = stack.dup
+            virtual_stack << Frame.new(:resources, path: (kind_kw == "resource" ? url_segment : "#{url_segment}/1"),
+              resource_name: name, controller_path: existing_controller_path)
+            emit_concern_resources(concern_names, concern_resources, framework_root, virtual_stack)
           end
-          if line == "collection" || line == "collection do" || line.starts_with?("collection do")
-            stack << Frame.new(:collection) if opens_block
-            next
+
+          if opens_block
+            url_segment = options["path"]? || name
+            singular = (kind_kw == "resource")
+            child_path = singular ? url_segment : "#{url_segment}/1"
+            stack << Frame.new(:resources, path: child_path, resource_name: name,
+              controller_path: existing_controller_path)
           end
+          next
+        end
 
-          # HTTP verb routes
-          if m = line.match(/^(get|post|put|patch|delete|head|options)\b(.*)/)
-            verb = m[1].upcase
-            rest = m[2]
+        # member do / collection do
+        if route_call(line, ["member"])
+          stack << Frame.new(:member) if opens_block
+          next
+        end
+        if route_call(line, ["collection"])
+          stack << Frame.new(:collection) if opens_block
+          next
+        end
+        if route_call(line, ["new"])
+          stack << Frame.new(:new) if opens_block
+          next
+        end
 
-            in_collection = stack.last?.try(&.kind) == :collection
-            in_member = stack.last?.try(&.kind) == :member
+        # HTTP verb routes
+        if call = route_call(line, ["get", "post", "put", "patch", "delete", "head", "options"])
+          verb = call[0].upcase
+          rest = call[1]
+          options = parse_options(rest)
 
-            # `get :action` form inside member/collection
-            if (am = rest.match(/^\s*:(\w+)\b/)) && (in_member || in_collection)
-              action = am[1]
-              url = member_collection_url(stack, action, in_collection)
-              if url
-                parent = parent_resources_frame(stack)
-                action_params = parent ? params_for_action(parent.controller_path, action, verb) : ([] of Param)
-                endpoint = Endpoint.new(url, verb, action_params, details)
-                attach_callees_for_action(endpoint, parent.try(&.controller_path), action)
-                @result << endpoint
-              end
-              next
+          route_scope = options["on"]? || current_custom_route_scope(stack)
+          in_collection = route_scope == "collection"
+          in_member = route_scope == "member"
+          in_new = route_scope == "new"
+
+          # `get :action` form inside member/collection/new blocks, inline
+          # `on:` declarations, or directly nested in a resources block.
+          if (am = rest.match(/^\s*:(\w+)\b/)) && (in_member || in_collection || in_new || parent_resources_frame(stack))
+            action = am[1]
+            url = custom_resource_action_url(stack, action, route_scope)
+            if url
+              parent = parent_resources_frame(stack)
+              action_params = parent ? params_for_action(parent.controller_path, action, verb) : ([] of Param)
+              endpoint = Endpoint.new(url, verb, action_params, details)
+              attach_callees_for_action(endpoint, parent.try(&.controller_path), action)
+              @result << endpoint
             end
+            next
+          end
 
-            # `get "path"` / `get "path" => "..."` / `get "path", to: "..."`
-            if sm = rest.match(/^\s*['"]([^'"]+)['"]/)
-              path = sm[1]
-              prefix = current_path_prefix(stack)
-              path_part = path.starts_with?("/") ? path : "/#{path}"
-              url = prefix.empty? ? path_part : "/#{prefix}#{path_part}"
+          # `get "path"` / `get "path" => "..."` / `get "path", to: "..."`
+          if sm = rest.match(/^\s*['"]([^'"]+)['"]/)
+            path = sm[1]
+            prefix = current_path_prefix_for_route(stack, route_scope)
+            path_part = path.starts_with?("/") ? path : "/#{path}"
+            url = prefix.empty? ? path_part : "/#{prefix}#{path_part}"
 
-              ctrl_action = parse_controller_action(rest)
-              action_params = [] of Param
-              ctrl_path = nil.as(String?)
-              action_name = nil.as(String?)
-              if ctrl_action
-                ctrl_name, action = ctrl_action
-                ctrl_path = find_controller_file(framework_root, ctrl_name, stack)
+            ctrl_action = parse_controller_action(rest, current_controller_scope(stack))
+            action_params = [] of Param
+            ctrl_path = nil.as(String?)
+            action_name = nil.as(String?)
+            if ctrl_action
+              ctrl_name, action = ctrl_action
+              ctrl_path = find_controller_file(framework_root, ctrl_name, stack)
+              action_name = action
+              action_params = params_for_action(ctrl_path, action, verb)
+            elsif parent = parent_resources_frame(stack)
+              if action = infer_action_from_path(path)
+                ctrl_path = parent.controller_path
                 action_name = action
                 action_params = params_for_action(ctrl_path, action, verb)
               end
-
-              endpoint = Endpoint.new(url, verb, action_params, details)
-              attach_callees_for_action(endpoint, ctrl_path, action) if action = action_name
-              @result << endpoint
-              next
             end
+
+            endpoint = Endpoint.new(url, verb, action_params, details)
+            attach_callees_for_action(endpoint, ctrl_path, action) if action = action_name
+            @result << endpoint
             next
           end
-
-          # `match` — Rails legacy multi-verb route. Requires `via:`
-          # (or, on older codebases, defaults to ANY). Emits one
-          # endpoint per verb listed under via, all sharing the
-          # same path/controller#action.
-          if line.starts_with?("match ") || line.starts_with?("match\t") || line.starts_with?("match'") || line.starts_with?("match\"")
-            rest = line.lchop("match")
-            if sm = rest.match(/^\s*['"]([^'"]+)['"]/)
-              path = sm[1]
-              prefix = current_path_prefix(stack)
-              path_part = path.starts_with?("/") ? path : "/#{path}"
-              url = prefix.empty? ? path_part : "/#{prefix}#{path_part}"
-
-              match_verbs = parse_match_verbs(rest)
-              ctrl_action = parse_controller_action(rest)
-
-              ctrl_path = nil.as(String?)
-              action_name = nil.as(String?)
-              if ctrl_action
-                ctrl_name, action = ctrl_action
-                ctrl_path = find_controller_file(framework_root, ctrl_name, stack)
-                action_name = action
-              end
-
-              match_verbs.each do |match_verb|
-                action_params = if name = action_name
-                                  params_for_action(ctrl_path, name, match_verb)
-                                else
-                                  [] of Param
-                                end
-                endpoint = Endpoint.new(url, match_verb, action_params, details)
-                attach_callees_for_action(endpoint, ctrl_path, action_name) if action_name
-                @result << endpoint
-              end
-            end
-            next
-          end
-
-          # Unknown DSL line that still opens a block (e.g. `constraints ... do`).
-          stack << Frame.new(:neutral) if opens_block
+          next
         end
+
+        # `match` — Rails legacy multi-verb route. Requires `via:`
+        # (or, on older codebases, defaults to ANY). Emits one
+        # endpoint per verb listed under via, all sharing the
+        # same path/controller#action.
+        if call = route_call(line, ["match"])
+          rest = call[1]
+          if sm = rest.match(/^\s*['"]([^'"]+)['"]/)
+            path = sm[1]
+            prefix = current_path_prefix_for_route(stack, parse_options(rest)["on"]?)
+            path_part = path.starts_with?("/") ? path : "/#{path}"
+            url = prefix.empty? ? path_part : "/#{prefix}#{path_part}"
+
+            match_verbs = parse_match_verbs(rest)
+            ctrl_action = parse_controller_action(rest, current_controller_scope(stack))
+
+            ctrl_path = nil.as(String?)
+            action_name = nil.as(String?)
+            if ctrl_action
+              ctrl_name, action = ctrl_action
+              ctrl_path = find_controller_file(framework_root, ctrl_name, stack)
+              action_name = action
+            end
+
+            match_verbs.each do |match_verb|
+              action_params = if name = action_name
+                                params_for_action(ctrl_path, name, match_verb)
+                              else
+                                [] of Param
+                              end
+              endpoint = Endpoint.new(url, match_verb, action_params, details)
+              attach_callees_for_action(endpoint, ctrl_path, action_name) if action_name
+              @result << endpoint
+            end
+          end
+          next
+        end
+
+        # Unknown DSL line that still opens a block (e.g. `constraints ... do`).
+        stack << Frame.new(:neutral) if opens_block
       end
     end
 
@@ -353,6 +420,181 @@ module Analyzer::Ruby
       if frame = stack.reverse.find { |f| f.kind == :concern }
         return frame.resource_name
       end
+      nil
+    end
+
+    private def route_file_parse_key(path : String, stack : Array(Frame)) : String
+      stack_key = stack.map do |frame|
+        [
+          frame.kind.to_s,
+          frame.path,
+          frame.controller_subdir,
+          frame.resource_name || "",
+          frame.controller_path || "",
+          frame.controller_scope || "",
+        ].join(":")
+      end.join("|")
+
+      "#{path}##{stack_key}"
+    end
+
+    private def logical_route_lines(routes_path : String) : Array(String)
+      lines = [] of String
+      buffer = ""
+      paren_depth = 0
+      bracket_depth = 0
+      brace_depth = 0
+
+      File.open(routes_path, "r", encoding: "utf-8", invalid: :skip) do |file|
+        file.each_line do |raw_line|
+          stripped = strip_inline_comment(raw_line).strip
+          next if stripped.empty?
+
+          buffer = buffer.empty? ? stripped : "#{buffer} #{stripped}"
+          delta = delimiter_delta(stripped)
+          paren_depth += delta[0]
+          bracket_depth += delta[1]
+          brace_depth += delta[2]
+
+          next if paren_depth > 0 || bracket_depth > 0 || brace_depth > 0
+          next if stripped.ends_with?(",")
+
+          lines << buffer
+          buffer = ""
+          paren_depth = 0
+          bracket_depth = 0
+          brace_depth = 0
+        end
+      end
+
+      lines << buffer unless buffer.empty?
+      lines
+    end
+
+    private def delimiter_delta(line : String) : Tuple(Int32, Int32, Int32)
+      paren = 0
+      bracket = 0
+      brace = 0
+      in_str = false
+      escaped = false
+      quote = '\0'
+
+      line.each_char do |c|
+        if in_str
+          if escaped
+            escaped = false
+          elsif c == '\\'
+            escaped = true
+          elsif c == quote
+            in_str = false
+          end
+          next
+        end
+
+        if c == '"' || c == '\''
+          in_str = true
+          quote = c
+          next
+        end
+
+        case c
+        when '('
+          paren += 1
+        when ')'
+          paren -= 1
+        when '['
+          bracket += 1
+        when ']'
+          bracket -= 1
+        when '{'
+          brace += 1
+        when '}'
+          brace -= 1
+        end
+      end
+
+      {paren, bracket, brace}
+    end
+
+    private def route_call(line : String, names : Array(String)) : Tuple(String, String)?
+      names.each do |name|
+        next unless line.starts_with?(name)
+        after = line[name.size, line.size - name.size]
+        next if after.matches?(/\A[A-Za-z0-9_]/)
+
+        stripped = after.lstrip
+        if stripped.starts_with?("(")
+          return {name, stripped[1, stripped.size - 1].strip}
+        end
+        return {name, stripped.strip}
+      end
+      nil
+    end
+
+    private def parse_first_route_name(args : String) : String?
+      if m = args.match(/^\s*(?::([A-Za-z_]\w*)|['"]([^'"]+)['"])/)
+        return (m[1]? || m[2]?).to_s
+      end
+      nil
+    end
+
+    private def current_custom_route_scope(stack : Array(Frame)) : String?
+      if frame = stack.last?
+        return frame.kind.to_s if frame.kind == :member || frame.kind == :collection || frame.kind == :new
+      end
+      nil
+    end
+
+    private def current_path_prefix_for_route(stack : Array(Frame), route_scope : String?) : String
+      prefix = current_path_prefix(stack)
+      return prefix if prefix.empty?
+
+      case route_scope
+      when "collection"
+        prefix.ends_with?("/1") ? prefix[0, prefix.size - 2] : prefix
+      when "new"
+        prefix.ends_with?("/1") ? "#{prefix[0, prefix.size - 2]}/new" : "#{prefix}/new"
+      else
+        prefix
+      end
+    end
+
+    private def custom_resource_action_url(stack : Array(Frame), action : String, route_scope : String?) : String?
+      resources_idx = nil
+      stack.each_with_index do |f, i|
+        resources_idx = i if f.kind == :resources
+      end
+      return if resources_idx.nil?
+
+      parts = [] of String
+      stack[0, resources_idx].each do |f|
+        parts << f.path unless f.path.empty?
+      end
+
+      rf = stack[resources_idx]
+      seg = rf.path
+      case route_scope
+      when "collection"
+        seg = seg[0, seg.size - 2] if seg.ends_with?("/1")
+      when "new"
+        seg = seg.ends_with?("/1") ? "#{seg[0, seg.size - 2]}/new" : "#{seg}/new"
+      end
+
+      parts << seg unless seg.empty?
+      parts << action
+      "/" + parts.join("/")
+    end
+
+    private def current_controller_scope(stack : Array(Frame)) : String?
+      stack.reverse_each do |f|
+        return f.controller_scope if f.controller_scope
+      end
+      nil
+    end
+
+    private def infer_action_from_path(path : String) : String?
+      normalized = path.lchop("/")
+      return normalized if normalized.matches?(/\A[A-Za-z_]\w*\z/)
       nil
     end
 
@@ -426,12 +668,20 @@ module Analyzer::Ruby
     # modern Rails raises in that case but the older Redmine
     # idiom is permissive.
     private def parse_match_verbs(rest : String) : Array(String)
-      via_match = rest.match(/:?via\s*(?:=>|:)\s*(\[[^\]]+\]|:\w+)/)
-      return ["ANY"] unless via_match
+      parse_route_verbs(rest, ["ANY"])
+    end
+
+    private def parse_route_verbs(rest : String, default_verbs : Array(String)) : Array(String)
+      via_match = rest.match(/:?via\s*(?:=>|:)\s*(\[[^\]]+\]|%i[\[\(][^\]\)]*[\]\)]|:\w+)/)
+      return default_verbs unless via_match
       tail = via_match[1]
       verbs = [] of String
-      tail.scan(/:(\w+)/) { |sm| verbs << sm[1].upcase }
-      verbs.empty? ? ["ANY"] : verbs.uniq
+      parse_symbol_list(tail).each do |verb|
+        normalized = verb.upcase
+        normalized = "ANY" if normalized == "ALL"
+        verbs << normalized
+      end
+      verbs.empty? ? default_verbs : verbs.uniq
     end
 
     private def strip_inline_comment(line : String) : String
@@ -465,25 +715,37 @@ module Analyzer::Ruby
 
     private def parse_options(line : String) : Hash(String, String)
       result = {} of String => String
-      # capture key: "value" or key: 'value' or key: :symbol or key: [..]
-      line.scan(/(\w+):\s*(['"][^'"]+['"]|:[a-zA-Z_][\w]*|\[[^\]]*\])/) do |m|
+      value_pattern = "nil|['\"][^'\"]+['\"]|:[a-zA-Z_]\\w*|\\[[^\\]]*\\]|%i[\\[\\(][^\\]\\)]*[\\]\\)]|%w[\\[\\(][^\\]\\)]*[\\]\\)]"
+      # capture key: "value", key: :symbol, key: [..], key: %i[..], and
+      # older hash-rocket forms like :only => [:index].
+      line.scan(Regex.new("(\\w+):\\s*(#{value_pattern})")) do |m|
         key = m[1]
-        raw = m[2]
-        value = if raw.starts_with?('"') || raw.starts_with?('\'')
-                  raw[1, raw.size - 2]
-                elsif raw.starts_with?(':')
-                  raw[1, raw.size - 1]
-                else
-                  raw[1, raw.size - 2] # strip [ ]
-                end
-        result[key] = value
+        result[key] = normalize_option_value(m[2])
+      end
+      line.scan(Regex.new(":(\\w+)\\s*=>\\s*(#{value_pattern})")) do |m|
+        key = m[1]
+        result[key] = normalize_option_value(m[2])
       end
       result
     end
 
+    private def normalize_option_value(raw : String) : String
+      return "" if raw == "nil"
+      if raw.starts_with?('"') || raw.starts_with?('\'')
+        raw[1, raw.size - 2]
+      elsif raw.starts_with?(':')
+        raw[1, raw.size - 1]
+      elsif raw.starts_with?("%i") || raw.starts_with?("%w")
+        raw[3, raw.size - 4]
+      else
+        raw[1, raw.size - 2] # strip [ ]
+      end
+    end
+
     private def parse_symbol_list(raw : String?) : Array(String)
       return [] of String if raw.nil?
-      raw.gsub(/[\[\]]/, "").split(',').map(&.strip.lchop(':').strip).reject(&.empty?)
+      cleaned = raw.gsub(/%[iw][\[\(]/, "").gsub(/[\[\]\(\)'"]/, "")
+      cleaned.split(/[,\s]+/).map(&.strip.lchop(':').strip).reject(&.empty?)
     end
 
     private def current_path_prefix(stack : Array(Frame)) : String
@@ -882,13 +1144,29 @@ module Analyzer::Ruby
       nil
     end
 
-    # Parses `=> "ctrl#action"` and `to: "ctrl#action"` forms.
-    private def parse_controller_action(rest : String) : Tuple(String, String)?
+    # Parses `=> "ctrl#action"`, `to: "ctrl#action"`,
+    # `controller: "ctrl", action: :show`, and controller-block
+    # `get "path" => :action` forms.
+    private def parse_controller_action(rest : String, scoped_controller : String? = nil) : Tuple(String, String)?
       if m = rest.match(/=>\s*['"]([^'"#]+)#([\w]+)['"]/)
         return {m[1], m[2]}
       end
       if m = rest.match(/to:\s*['"]([^'"#]+)#([\w]+)['"]/)
         return {m[1], m[2]}
+      end
+      options = parse_options(rest)
+      if controller = options["controller"]?
+        if action = options["action"]?
+          return {controller, action}
+        end
+      end
+      if scoped_controller
+        if action = options["action"]?
+          return {scoped_controller, action}
+        end
+        if m = rest.match(/(?:=>|to:)\s*:(\w+)/)
+          return {scoped_controller, m[1]}
+        end
       end
       nil
     end

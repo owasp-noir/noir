@@ -8,6 +8,18 @@ class Admin::RefundsController < ApplicationController
     request.headers['X-Page']
   end
 
+  def summary
+    request.headers['X-Summary']
+  end
+
+  def preview
+    request.headers['X-Preview']
+  end
+
+  def template
+    request.headers['X-Template']
+  end
+
   def purge
     request.headers['X-Confirm']
     params["id"]
