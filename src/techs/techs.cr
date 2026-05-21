@@ -1414,6 +1414,21 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :kong => {
+      :format    => ["YAML"],
+      :similar   => ["kong", "kong declarative", "deck", "kong ingress controller", "kic"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+      },
+    },
     :oas2 => {
       :format    => ["JSON", "YAML"],
       :similar   => ["oas 2.0", "oas_2_0", "swagger 2.0", "swagger_2_0", "swagger"],
