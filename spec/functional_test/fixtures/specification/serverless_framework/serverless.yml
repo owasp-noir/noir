@@ -1,0 +1,32 @@
+service: my-api
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  stage: dev
+
+functions:
+  listUsers:
+    handler: src/users.list
+    events:
+      - http:
+          method: get
+          path: /users
+          cors: true
+  createUser:
+    handler: src/users.create
+    events:
+      - http:
+          method: post
+          path: /users
+          authorizer: aws_iam
+  getUser:
+    handler: src/users.get
+    events:
+      - httpApi:
+          method: GET
+          path: /users/{id}
+  healthcheck:
+    handler: src/health.ping
+    events:
+      - http: GET /health

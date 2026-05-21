@@ -108,6 +108,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"odata", Specification::OData},
     {"postman", Specification::Postman},
     {"raml", Specification::RAML},
+    {"serverless_framework", Specification::ServerlessFramework},
     {"smithy", Specification::Smithy},
     {"traefik", Specification::Traefik},
     {"typespec", Specification::TypeSpec},

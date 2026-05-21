@@ -2095,6 +2095,21 @@ module NoirTechs
         },
       },
     },
+    :serverless_framework => {
+      :format    => ["YAML", "JSON"],
+      :similar   => ["serverless framework", "serverless.yml", "serverless.yaml", "serverless.json", "aws lambda"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+      },
+    },
     :smithy => {
       :format    => ["SMITHY"],
       :similar   => ["smithy", "smithy-idl"],
