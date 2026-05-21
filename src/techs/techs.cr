@@ -1342,6 +1342,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :ts_trpc => {
+      :framework => "tRPC",
+      :language  => "TypeScript",
+      :similar   => ["trpc", "ts-trpc", "ts_trpc", "@trpc/server", "@trpc/next"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => false,
+          :body   => true,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => true,
+        :websocket   => true,
+      },
+    },
     :kotlin_http4k => {
       :framework => "http4k",
       :language  => "Kotlin",

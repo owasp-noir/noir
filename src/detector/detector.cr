@@ -173,6 +173,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
     Swift::Hummingbird,
     Typescript::Nestjs,
     Typescript::TanstackRouter,
+    Typescript::TRPC,
   ])
 
   # Handle --only-techs: filter detector_list to only specified techs
