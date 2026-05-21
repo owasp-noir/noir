@@ -172,7 +172,7 @@ module Analyzer::Specification
       end
     end
 
-    private def scan_matchers(expression : String, &block : String, Array(String) ->)
+    private def scan_matchers(expression : String, & : String, Array(String) ->)
       expression.scan(/([A-Za-z]+)\s*\(([^)]*)\)/) do |match|
         next unless match.size >= 3
         name = match[1]

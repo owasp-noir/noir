@@ -32,4 +32,3 @@ FunctionalTester.new("fixtures/specification/envoy/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests
-

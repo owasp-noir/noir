@@ -120,8 +120,8 @@ module Analyzer::Specification
     end
 
     private def extract_method_yaml(match : YAML::Any) : String?
-      return nil unless headers_node = match["headers"]?
-      return nil unless headers = headers_node.as_a?
+      return unless headers_node = match["headers"]?
+      return unless headers = headers_node.as_a?
       headers.each do |header|
         next unless header["name"]?.try(&.as_s?) == ":method"
         if exact = header["exact_match"]?.try(&.as_s?)
@@ -206,8 +206,8 @@ module Analyzer::Specification
     end
 
     private def extract_method_json(match : JSON::Any) : String?
-      return nil unless headers_node = match["headers"]?
-      return nil unless headers = headers_node.as_a?
+      return unless headers_node = match["headers"]?
+      return unless headers = headers_node.as_a?
       headers.each do |header|
         next unless header["name"]?.try(&.as_s?) == ":method"
         if exact = header["exact_match"]?.try(&.as_s?)

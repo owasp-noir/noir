@@ -17,8 +17,8 @@ module Analyzer::Go
   # file that registers the handler instead of (or in addition to)
   # the proto file.
   class ConnectRpc < GoEngine
-    IMPORT_MARKER       = "connectrpc.com/connect"
-    HANDLER_NAME_REGEX  = /New(\w+ServiceHandler)\s*\(/
+    IMPORT_MARKER         = "connectrpc.com/connect"
+    HANDLER_NAME_REGEX    = /New(\w+ServiceHandler)\s*\(/
     CONNECT_CONTENT_TYPES = "application/proto, application/json, application/connect+proto, application/connect+json"
 
     alias MessageFields = Array(Param)
