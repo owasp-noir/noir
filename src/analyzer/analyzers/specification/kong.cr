@@ -76,11 +76,13 @@ module Analyzer::Specification
       paths = array_of_strings(route_h[YAML::Any.new("paths")]?)
       return if paths.empty?
 
+      # Kong routes without an explicit `methods` filter match all methods.
       methods = array_of_strings(route_h[YAML::Any.new("methods")]?).map(&.upcase)
       methods = ["ANY"] if methods.empty?
       hosts = array_of_strings(route_h[YAML::Any.new("hosts")]?)
 
       paths.each do |path|
+        # A leading `~` indicates regex routing; otherwise Kong treats this as a prefix path.
         path_type = path.starts_with?("~") ? "regex" : "prefix"
         methods.each do |method|
           endpoint = Endpoint.new(path, method, details)

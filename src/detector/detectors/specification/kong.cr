@@ -48,8 +48,9 @@ module Detector::Specification
     end
 
     private def deck_shape?(data_h : Hash(YAML::Any, YAML::Any)) : Bool
-      data_h.has_key?(YAML::Any.new("_format_version")) &&
-        !data_h[YAML::Any.new("services")]?.try(&.as_a?).nil?
+      has_format_version = data_h.has_key?(YAML::Any.new("_format_version"))
+      has_services = !data_h[YAML::Any.new("services")]?.try(&.as_a?).nil?
+      has_format_version && has_services
     end
 
     private def kic_shape?(data_h : Hash(YAML::Any, YAML::Any)) : Bool
