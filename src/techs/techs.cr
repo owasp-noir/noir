@@ -583,6 +583,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :go_connect_rpc => {
+      :framework => "Connect-RPC",
+      :language  => "Go",
+      :similar   => ["connect", "connect-rpc", "connect_rpc", "connectrpc", "go-connect", "go_connect_rpc"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => true,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :go_pocketbase => {
       :framework => "PocketBase",
       :language  => "Go",
