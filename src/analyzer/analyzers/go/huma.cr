@@ -103,7 +103,7 @@ module Analyzer::Go
     # method/path from the Operation composite literal and resolving
     # the handler's Input struct fields for param classification.
     private def extract_huma_endpoints(source : String, path : String,
-                                      structs : Hash(String, Array(StructField))) : Array(Endpoint)
+                                       structs : Hash(String, Array(StructField))) : Array(Endpoint)
       endpoints = [] of Endpoint
       Noir::TreeSitter.parse_go(source) do |root|
         walk_calls(root) do |call|
@@ -126,17 +126,19 @@ module Analyzer::Go
             end
             arg_index += 1
           end
-          next if op_node.nil?
 
-          method, route_path = decode_operation(op_node.not_nil!, source)
+          operation_arg = op_node
+          next if operation_arg.nil?
+
+          method, route_path = decode_operation(operation_arg, source)
           next if method.empty? || route_path.empty?
 
           row = Noir::TreeSitter.node_start_row(call) + 1
           details = Details.new(PathInfo.new(path, row))
           endpoint = Endpoint.new(route_path, method.upcase, details)
 
-          if handler_node
-            input_type = extract_input_struct_name(handler_node.not_nil!, source)
+          if handler_arg = handler_node
+            input_type = extract_input_struct_name(handler_arg, source)
             if input_type && (fields = structs[input_type]?)
               fields.each do |field|
                 push_field_param(endpoint, field)
@@ -165,7 +167,7 @@ module Analyzer::Go
       body = Noir::TreeSitter.field(node, "body")
       return {method, path} if body.nil?
 
-      Noir::TreeSitter.each_named_child(body.not_nil!) do |child|
+      Noir::TreeSitter.each_named_child(body) do |child|
         next unless Noir::TreeSitter.node_type(child) == "keyed_element"
 
         # tree-sitter-go wraps each side of a keyed_element in a
@@ -183,10 +185,13 @@ module Analyzer::Go
           value_field ||= children[1]
         end
 
-        key_text = unwrap_literal_text(key_node.not_nil!, source)
-        value_node = unwrap_literal_node(value_field.not_nil!)
-        next if value_node.nil?
-        value = value_node.not_nil!
+        key = key_node
+        val_field = value_field
+        next if key.nil? || val_field.nil?
+
+        key_text = unwrap_literal_text(key, source)
+        value = unwrap_literal_node(val_field)
+        next if value.nil?
 
         case key_text
         when "Method"
@@ -220,8 +225,6 @@ module Analyzer::Go
       case Noir::TreeSitter.node_type(node)
       when "interpreted_string_literal", "raw_string_literal"
         Noir::TreeSitter.node_text(node, source).gsub(/^["`]|["`]$/, "")
-      else
-        nil
       end
     end
 
@@ -242,21 +245,21 @@ module Analyzer::Go
     #   func(ctx context.Context, input *FooInput) (*FooOutput, error) { ... }
     # We want `FooInput` (second parameter, dereferenced).
     private def extract_input_struct_name(node : LibTreeSitter::TSNode, source : String) : String?
-      return nil unless Noir::TreeSitter.node_type(node) == "func_literal"
+      return unless Noir::TreeSitter.node_type(node) == "func_literal"
 
       params = Noir::TreeSitter.field(node, "parameters")
-      return nil if params.nil?
+      return if params.nil?
 
       decls = [] of LibTreeSitter::TSNode
-      Noir::TreeSitter.each_named_child(params.not_nil!) do |decl|
+      Noir::TreeSitter.each_named_child(params) do |decl|
         decls << decl if Noir::TreeSitter.node_type(decl) == "parameter_declaration"
       end
-      return nil if decls.size < 2
+      return if decls.size < 2
 
       type_node = Noir::TreeSitter.field(decls[1], "type")
-      return nil if type_node.nil?
+      return if type_node.nil?
 
-      text = Noir::TreeSitter.node_text(type_node.not_nil!, source).strip
+      text = Noir::TreeSitter.node_text(type_node, source).strip
       text = text.lchop('*')
       # Strip package qualifier (e.g., "pkg.Foo" -> "Foo") — Huma input
       # types are nearly always local to the package, so we keep the
@@ -283,10 +286,12 @@ module Analyzer::Go
           name_node = Noir::TreeSitter.field(node, "name")
           type_node = Noir::TreeSitter.field(node, "type")
           next if name_node.nil? || type_node.nil?
-          next unless Noir::TreeSitter.node_type(type_node.not_nil!) == "struct_type"
+          nn = name_node
+          tn = type_node
+          next unless Noir::TreeSitter.node_type(tn) == "struct_type"
 
-          struct_name = Noir::TreeSitter.node_text(name_node.not_nil!, source)
-          fields = extract_struct_fields(type_node.not_nil!, source)
+          struct_name = Noir::TreeSitter.node_text(nn, source)
+          fields = extract_struct_fields(tn, source)
           result[struct_name] ||= fields
         end
       end
@@ -304,32 +309,28 @@ module Analyzer::Go
           break
         end
       end
-      return fields if field_list.nil?
+      fl = field_list
+      return fields if fl.nil?
 
-      Noir::TreeSitter.each_named_child(field_list.not_nil!) do |decl|
+      Noir::TreeSitter.each_named_child(fl) do |decl|
         next unless Noir::TreeSitter.node_type(decl) == "field_declaration"
 
         tag = ""
-        tag_node = Noir::TreeSitter.field(decl, "tag")
-        if tag_node
-          tag = Noir::TreeSitter.node_text(tag_node.not_nil!, source)
+        if tag_node = Noir::TreeSitter.field(decl, "tag")
+          tag = Noir::TreeSitter.node_text(tag_node, source)
           tag = tag.gsub(/^[`"]|[`"]$/, "")
         end
 
-        name_node = Noir::TreeSitter.field(decl, "name")
-        if name_node
-          field_name = Noir::TreeSitter.node_text(name_node.not_nil!, source)
+        if name_node = Noir::TreeSitter.field(decl, "name")
+          field_name = Noir::TreeSitter.node_text(name_node, source)
           fields << StructField.new(field_name, tag)
-        else
+        elsif type_node = Noir::TreeSitter.field(decl, "type")
           # Embedded field — name comes from the type itself; we don't
           # need to descend into embedded structs for Huma input types
           # in practice (huma.Operation isn't extended that way), so
           # leave a placeholder so the slot is preserved.
-          type_node = Noir::TreeSitter.field(decl, "type")
-          if type_node
-            field_name = Noir::TreeSitter.node_text(type_node.not_nil!, source)
-            fields << StructField.new(field_name, tag)
-          end
+          field_name = Noir::TreeSitter.node_text(type_node, source)
+          fields << StructField.new(field_name, tag)
         end
       end
       fields
@@ -373,7 +374,7 @@ module Analyzer::Go
     private def unwrap_literal_text(node : LibTreeSitter::TSNode, source : String) : String
       inner = unwrap_literal_node(node)
       return "" if inner.nil?
-      Noir::TreeSitter.node_text(inner.not_nil!, source)
+      Noir::TreeSitter.node_text(inner, source)
     end
 
     private def walk_calls(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)

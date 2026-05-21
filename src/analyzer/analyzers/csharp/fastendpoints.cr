@@ -12,9 +12,9 @@ module Analyzer::CSharp
     # base is a candidate.
     BASE_TYPE_REGEX = /:\s*(?:[A-Za-z_][A-Za-z0-9_]*\s*,\s*)*(Endpoint(?:WithoutRequest)?(?:<[^>]*>)?|Ep<[^>]*>)/
 
-    VERB_CALL_REGEX = /\b(Get|Post|Put|Patch|Delete|Options|Head)\s*\(\s*"([^"]+)"/m
-    VERBS_CALL_REGEX = /\bVerbs\s*\(\s*([^)]*)\)/m
-    ROUTES_CALL_REGEX = /\bRoutes\s*\(\s*([^)]*)\)/m
+    VERB_CALL_REGEX       = /\b(Get|Post|Put|Patch|Delete|Options|Head)\s*\(\s*"([^"]+)"/m
+    VERBS_CALL_REGEX      = /\bVerbs\s*\(\s*([^)]*)\)/m
+    ROUTES_CALL_REGEX     = /\bRoutes\s*\(\s*([^)]*)\)/m
     HTTP_VERB_TOKEN_REGEX = /(?:Http\.)?(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)/
 
     def analyze
@@ -111,7 +111,7 @@ module Analyzer::CSharp
     # collapsing to `Page` at the first inner `<`.
     private def extract_request_type(base : String) : String?
       start = base.index('<')
-      return nil unless start
+      return unless start
       depth = 0
       io = String::Builder.new
       i = start
@@ -134,7 +134,7 @@ module Analyzer::CSharp
         i += 1
       end
       arg = io.to_s.strip
-      return nil if arg.empty?
+      return if arg.empty?
       # Look up by the outer type name when the request is generic
       # (e.g. `Page<User>` → index entry for `Page`).
       outer = arg.split('<').first.strip
@@ -207,7 +207,7 @@ module Analyzer::CSharp
     end
 
     private def build_endpoint(raw_route : String, http_method : String, file : String, line : Int32, request_params : Array(Param)) : Endpoint?
-      return nil if raw_route.empty?
+      return if raw_route.empty?
 
       route = normalize_route(raw_route)
       path_params = build_path_params(route)
@@ -298,12 +298,12 @@ module Analyzer::CSharp
     private def extract_props_from_block(block : String) : Array(Param)
       params = [] of Param
       from_attr_map = {
-        "FromQuery"     => "query",
-        "FromRoute"     => "path",
-        "FromBody"      => "json",
-        "FromHeader"    => "header",
-        "FromForm"      => "form",
-        "FromCookie"    => "cookie",
+        "FromQuery"  => "query",
+        "FromRoute"  => "path",
+        "FromBody"   => "json",
+        "FromHeader" => "header",
+        "FromForm"   => "form",
+        "FromCookie" => "cookie",
         # `[FromClaim]` reads from the auth principal's JWT claims —
         # not a request-side binding, so skip rather than mis-tag as
         # `header`.

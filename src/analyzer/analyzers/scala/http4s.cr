@@ -113,21 +113,21 @@ module Analyzer::Scala
     # path params, query params, binding name (or nil).
     private def parse_case_header(header : String)
       cleaned = header.strip
-      return nil unless cleaned.starts_with?("case ")
+      return unless cleaned.starts_with?("case ")
       body = cleaned[("case ".size)..].strip
 
       binding_name : String? = nil
       if at_match = body.match(/^(\w+)\s*@\s*/)
         binding_name = at_match[1]
-        body = body[at_match.end(0).not_nil!..]
+        body = body[at_match[0].size..]
       end
 
       method_match = body.match(/^(?:\(\s*)?([A-Z]+(?:\s*\|\s*[A-Z]+)*)(?:\s*\))?\s*->\s*Root\b/)
-      return nil unless method_match
+      return unless method_match
       methods = method_match[1].split('|').map(&.strip).select { |m| HTTP_METHODS.includes?(m) }
-      return nil if methods.empty?
+      return if methods.empty?
 
-      remainder = body[method_match.end(0).not_nil!..].strip
+      remainder = body[method_match[0].size..].strip
 
       path_part = remainder
       query_part = ""

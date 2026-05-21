@@ -10,23 +10,23 @@ module Analyzer::Specification
   # context.
   class OData < Analyzer
     EDM_PRIMITIVE_BODY_TYPES = {
-      "Edm.String"   => "string",
-      "Edm.Boolean"  => "boolean",
-      "Edm.Int16"    => "int",
-      "Edm.Int32"    => "int",
-      "Edm.Int64"    => "int",
-      "Edm.Decimal"  => "number",
-      "Edm.Double"   => "number",
-      "Edm.Single"   => "number",
-      "Edm.Byte"     => "int",
-      "Edm.SByte"    => "int",
-      "Edm.Guid"     => "string",
-      "Edm.DateTime" => "string",
-      "Edm.Date"     => "string",
-      "Edm.TimeOfDay" => "string",
+      "Edm.String"         => "string",
+      "Edm.Boolean"        => "boolean",
+      "Edm.Int16"          => "int",
+      "Edm.Int32"          => "int",
+      "Edm.Int64"          => "int",
+      "Edm.Decimal"        => "number",
+      "Edm.Double"         => "number",
+      "Edm.Single"         => "number",
+      "Edm.Byte"           => "int",
+      "Edm.SByte"          => "int",
+      "Edm.Guid"           => "string",
+      "Edm.DateTime"       => "string",
+      "Edm.Date"           => "string",
+      "Edm.TimeOfDay"      => "string",
       "Edm.DateTimeOffset" => "string",
-      "Edm.Duration" => "string",
-      "Edm.Binary"   => "string",
+      "Edm.Duration"       => "string",
+      "Edm.Binary"         => "string",
     }
 
     alias EntityType = NamedTuple(properties: Array(NamedTuple(name: String, type: String)), keys: Array(String))
@@ -251,7 +251,7 @@ module Analyzer::Specification
     end
 
     private def function_url(name : String, operation : Operation?) : String
-      return "/#{name}()" unless operation && !operation[:parameters].empty?
+      return "/#{name}()" if operation.nil? || operation[:parameters].empty?
       args = operation[:parameters].map { |p| "#{p[:name]}={#{p[:name]}}" }.join(",")
       "/#{name}(#{args})"
     end

@@ -23,11 +23,9 @@ module Analyzer::Scala
         while m = stripped.match(/(?<![.\w])Method\.([A-Z]+)/, offset)
           method = m[1]
           method_end = m.end(0) || 0
+          offset = method_end
 
-          unless HTTP_METHODS.includes?(method)
-            offset = method_end
-            next
-          end
+          next unless HTTP_METHODS.includes?(method)
 
           rest = stripped[method_end..]
           arrow_idx = rest.index("->")
@@ -51,7 +49,6 @@ module Analyzer::Scala
           end
 
           endpoints << endpoint
-          offset = method_end
         end
       end
 
@@ -137,10 +134,10 @@ module Analyzer::Scala
     private def extract_handler_block(lines : Array(String), start_index : Int32) : Tuple(String, Int32)?
       structural = scala_structural_line(lines[start_index])
       opening_match = structural.match(/(?<![.\w])handler\s*\{/) || structural.match(/->\s*\{/)
-      return nil unless opening_match
+      return unless opening_match
       opening_brace_in_structural = (opening_match.end(0) || 1) - 1
       block = extract_scala_brace_block_with_end_at(lines, start_index, opening_brace_in_structural)
-      return nil unless block
+      return unless block
       {block[0], block[1]}
     end
 

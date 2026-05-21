@@ -135,9 +135,9 @@ module Analyzer::Javascript
     # that line counts and offsets stay aligned) and the byte position
     # just past the closing backtick.
     private def extract_template_literal(content : String, start_pos : Int32) : Tuple(String, Int32)?
-      return nil if start_pos >= content.size || content[start_pos] != '`'
+      return if start_pos >= content.size || content[start_pos] != '`'
       end_pos = find_closing_backtick(content, start_pos + 1)
-      return nil if end_pos.nil?
+      return if end_pos.nil?
 
       raw = content[(start_pos + 1)...end_pos]
       {strip_interpolations(raw), end_pos + 1}
