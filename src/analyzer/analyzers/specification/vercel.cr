@@ -40,9 +40,8 @@ module Analyzer::Specification
         endpoint.add_tag(Tag.new("vercel-rule", rule_kind, "vercel_analyzer"))
         endpoint.add_tag(Tag.new("pattern", "vercel_source_matcher", "vercel_analyzer")) if pattern_source?(source)
 
-        if destination = entry["destination"]?.try(&.as_s?)
-          endpoint.add_tag(Tag.new("vercel-destination", destination, "vercel_analyzer"))
-        elsif destination = entry["dest"]?.try(&.as_s?)
+        destination = entry["destination"]?.try(&.as_s?) || entry["dest"]?.try(&.as_s?)
+        if destination
           endpoint.add_tag(Tag.new("vercel-destination", destination, "vercel_analyzer"))
         end
 
@@ -74,10 +73,7 @@ module Analyzer::Specification
     end
 
     private def pattern_source?(source : String) : Bool
-      source.includes?("*") || source.includes?("^") || source.includes?("$") ||
-        source.includes?("(") || source.includes?(")") || source.includes?("[") ||
-        source.includes?("]") || source.includes?("{") || source.includes?("}") ||
-        source.includes?("|") || source.includes?("+") || source.includes?("?")
+      source.matches?(/[\*\^\$\(\)\[\]\{\}\|\+\?]/)
     end
   end
 end
