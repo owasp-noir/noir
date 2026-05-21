@@ -1849,6 +1849,21 @@ module NoirTechs
         },
       },
     },
+    :vercel => {
+      :format    => ["JSON"],
+      :similar   => ["vercel", "vercel.json", "now.json"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+      },
+    },
     :wsdl => {
       :format    => ["XML"],
       :similar   => ["wsdl", "soap"],
