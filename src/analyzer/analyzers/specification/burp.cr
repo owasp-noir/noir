@@ -119,11 +119,11 @@ module Analyzer::Specification
       body = separator_index ? raw[(separator_index + separator.size)..] : ""
 
       lines = header_section.split(/\r?\n/)
-      return nil if lines.empty?
+      return if lines.empty?
 
       request_line = lines.shift
       parts = request_line.split(' ', 3)
-      return nil if parts.size < 2
+      return if parts.size < 2
       method = parts[0].strip.upcase
       target = parts[1].strip
 
