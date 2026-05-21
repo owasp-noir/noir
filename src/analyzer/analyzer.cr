@@ -92,6 +92,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"kotlin_spring", Kotlin::Spring},
     {"kotlin_ktor", Kotlin::Ktor},
     {"graphql_sdl", Specification::GraphqlSdl},
+    {"apisix", Specification::Apisix},
     {"kong", Specification::Kong},
     {"oas2", Specification::Oas2},
     {"oas3", Specification::Oas3},

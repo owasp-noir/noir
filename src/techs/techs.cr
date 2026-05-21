@@ -1414,6 +1414,21 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :apisix => {
+      :format    => ["JSON", "YAML"],
+      :similar   => ["apisix", "apache apisix", "apache-apisix", "apache_apisix"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => false,
+          :header => true,
+          :cookie => false,
+        },
+      },
+    },
     :kong => {
       :format    => ["YAML"],
       :similar   => ["kong", "kong declarative", "deck", "kong ingress controller", "kic"],

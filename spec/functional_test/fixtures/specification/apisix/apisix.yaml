@@ -1,0 +1,21 @@
+routes:
+  - id: 1
+    uri: /v1/users
+    methods: [GET, POST]
+    upstream_id: 1
+  - id: 2
+    uris: [/admin, /admin/*]
+    methods: [GET]
+    host: admin.example.com
+    upstream_id: 2
+  - id: 3
+    uri: /api/*
+    methods: ["*"]
+    plugins:
+      key-auth: {}
+  - id: 4
+    uri: /internal
+    methods: [DELETE]
+    hosts: [api.example.com, internal.example.com]
+    plugins:
+      cors: {}
