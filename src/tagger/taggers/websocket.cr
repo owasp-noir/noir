@@ -25,8 +25,10 @@ class WebsocketTagger < Tagger
         tmp_params_set = Set.new(tmp_params)
         intersection = words_set & tmp_params_set
 
-        # Check that at least three parameters match.
-        check = intersection.size.to_i >= 2
+        # Require at least two WebSocket-related headers to flag the
+        # endpoint when the protocol metadata is missing (e.g. for
+        # plain HTTP endpoints that happen to mention Sec-WebSocket-*).
+        check = intersection.size >= 2
 
         if check
           tag = Tag.new("websocket", "WebSocket endpoint for real-time, bidirectional communication between clients and servers, enabling efficient data exchanges.", "WebSocket")

@@ -21,8 +21,8 @@ class SoapTagger < Tagger
       tmp_params_set = Set.new(tmp_params)
       intersection = words_set & tmp_params_set
 
-      # Check that at least three parameters match.
-      check = intersection.size.to_i >= 1
+      # A `SOAPAction` header is enough to flag the endpoint as SOAP.
+      check = intersection.size >= 1
 
       if check
         tag = Tag.new("soap", "SOAP endpoint for XML-based web service communication, supporting structured information exchanges across network applications.", "SOAP")

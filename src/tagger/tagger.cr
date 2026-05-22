@@ -188,13 +188,13 @@ module NoirTaggers
   def self.run_tagger(endpoints : Array(Endpoint), options : Hash(String, YAML::Any), use_taggers : String)
     validate_tagger_names!(use_taggers)
 
+    # Every entry in HasTaggers maps a tagger key to a runnable
+    # Tagger subclass. The previous `class.to_s == "Class"` guard was
+    # always true (Crystal class objects are instances of Class) and
+    # therefore a no-op; instantiate directly.
     tagger_list = [] of Tagger
-
     HasTaggers.each_value do |tagger|
-      if tagger[:runner].class.to_s == "Class"
-        instance = tagger[:runner].new(options)
-        tagger_list << instance
-      end
+      tagger_list << tagger[:runner].new(options)
     end
 
     # Parsing use_taggers
