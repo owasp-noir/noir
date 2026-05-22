@@ -32,17 +32,17 @@ class OutputBuilderDiff < OutputBuilder
     result = diff(endpoints, diff_app.endpoints)
 
     if result[:added].size > 0
-      @logger.puts format_section_header("✚", "Added", result[:added].size, :green)
+      ob_puts format_section_header("✚", "Added", result[:added].size, :green)
       OutputBuilderCommon.new(@options).print(result[:added])
     end
 
     if result[:removed].size > 0
-      @logger.puts "\n#{format_section_header("✖", "Removed", result[:removed].size, :red)}"
+      ob_puts "\n#{format_section_header("✖", "Removed", result[:removed].size, :red)}"
       OutputBuilderCommon.new(@options).print(result[:removed])
     end
 
     if result[:changed].size > 0
-      @logger.puts "\n#{format_section_header("≠", "Changed", result[:changed].size, :yellow)}"
+      ob_puts "\n#{format_section_header("≠", "Changed", result[:changed].size, :yellow)}"
       OutputBuilderCommon.new(@options).print(result[:changed])
     end
   end
@@ -63,12 +63,12 @@ class OutputBuilderDiff < OutputBuilder
 
   def print_json(endpoints : Array(Endpoint), diff_app : NoirRunner)
     result = diff(endpoints, diff_app.endpoints)
-    @logger.puts "\n" + result.to_json
+    ob_puts "\n" + result.to_json
   end
 
   def print_yaml(endpoints : Array(Endpoint), diff_app : NoirRunner)
     result = diff(endpoints, diff_app.endpoints)
-    @logger.puts "\n" + result.to_yaml
+    ob_puts "\n" + result.to_yaml
   end
 
   def print_toml(endpoints : Array(Endpoint), diff_app : NoirRunner)
@@ -76,7 +76,7 @@ class OutputBuilderDiff < OutputBuilder
     json_str = result.to_json
     json_obj = JSON.parse(json_str)
     toml_output = generate_toml_from_diff(json_obj.as_h)
-    @logger.puts "\n" + toml_output
+    ob_puts "\n" + toml_output
   end
 
   private def generate_toml_from_diff(data : Hash(String, JSON::Any)) : String

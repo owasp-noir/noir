@@ -1,4 +1,5 @@
 require "../../spec_helper"
+require "file_utils"
 require "../../../src/output_builder/html"
 require "../../../src/models/endpoint"
 require "../../../src/models/passive_scan"

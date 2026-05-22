@@ -85,9 +85,11 @@ class OutputBuilderMermaid < OutputBuilder
     # Output endpoints for this node
     node.endpoints.each do |endpoint|
       indent_str = "  " * indent
-      # Use only the HTTP method as the endpoint label, add [websocket] if applicable
+      # Use only the HTTP method as the endpoint label, add [websocket] if applicable.
+      # The protocol field is "ws" everywhere else in the codebase
+      # (analyzers, common output, websocket tagger).
       endpoint_label = endpoint.method
-      endpoint_label += " [websocket]" if endpoint.protocol == "websocket"
+      endpoint_label += " [websocket]" if endpoint.protocol == "ws"
       ob_puts "#{indent_str}#{endpoint_label}"
 
       # Get parameters grouped by type

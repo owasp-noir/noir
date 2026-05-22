@@ -73,7 +73,7 @@ describe "OutputBuilderMermaid" do
     endpoint5.push_param(Param.new("session_id", "", "cookie"))
 
     endpoint6 = Endpoint.new("/socket", "GET")
-    endpoint6.protocol = "websocket"
+    endpoint6.protocol = "ws"
 
     endpoint7 = Endpoint.new("/app/{user_id}", "GET")
     endpoint7.push_param(Param.new("user_id", "", "path"))
