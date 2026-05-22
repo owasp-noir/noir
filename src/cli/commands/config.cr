@@ -36,17 +36,20 @@ module Noir::CLI::ConfigCommand
   end
 
   def self.print_help
-    puts <<-'HELP'
-      USAGE:
+    cyan = ->(s : String) { Noir::CLI.name(s) }
+    green = ->(s : String) { Noir::CLI.section(s) }
+
+    puts <<-HELP
+      #{green.call("USAGE:")}
         noir config <action>
 
-      ACTIONS:
-        show                 Print the contents of the active config file
-        init                 Create the default config file (idempotent)
-        path                 Print the resolved config file path
+      #{green.call("ACTIONS:")}
+        #{cyan.call("show")}                   Print the contents of the active config file
+        #{cyan.call("init")}                   Create the default config file (idempotent)
+        #{cyan.call("path")}                   Print the resolved config file path
 
       The config directory is controlled by NOIR_HOME (defaults to
-      $HOME/.config/noir on Unix and %APPDATA%\noir on Windows).
+      $HOME/.config/noir on Unix and %APPDATA%\\noir on Windows).
       HELP
   end
 

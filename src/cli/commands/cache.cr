@@ -35,17 +35,20 @@ module Noir::CLI::CacheCommand
   end
 
   def self.print_help
+    cyan = ->(s : String) { Noir::CLI.name(s) }
+    green = ->(s : String) { Noir::CLI.section(s) }
+
     puts <<-HELP
-      USAGE:
+      #{green.call("USAGE:")}
         noir cache <action>
 
-      ACTIONS:
-        info                 Show cache location, entry count, and total size
-        clear                Remove every cached AI response
+      #{green.call("ACTIONS:")}
+        #{cyan.call("info")}                   Show cache location, entry count, and total size
+        #{cyan.call("clear")}                  Remove every cached AI response
 
-      LEGACY ALIASES (still work on `noir scan`):
-        --cache-disable      → disables cache for that scan run
-        --cache-clear        → clears the cache before that scan run
+      #{green.call("LEGACY ALIASES")} (still work on `noir scan`):
+        --cache-disable        → disables cache for that scan run
+        --cache-clear          → clears the cache before that scan run
       HELP
   end
 

@@ -34,14 +34,17 @@ module Noir::CLI::CompletionCommand
   end
 
   def self.print_help
+    cyan = ->(s : String) { Noir::CLI.name(s) }
+    green = ->(s : String) { Noir::CLI.section(s) }
+
     puts <<-HELP
-      USAGE:
+      #{green.call("USAGE:")}
         noir completion <shell>
 
-      SHELLS:
-        zsh                  Generate Zsh completion script
-        bash                 Generate Bash completion script
-        fish                 Generate Fish completion script
+      #{green.call("SHELLS:")}
+        #{cyan.call("zsh")}                    Generate Zsh completion script
+        #{cyan.call("bash")}                   Generate Bash completion script
+        #{cyan.call("fish")}                   Generate Fish completion script
 
       Pipe the output to your shell's completion path, e.g.:
         noir completion zsh  > "${fpath[1]}/_noir"

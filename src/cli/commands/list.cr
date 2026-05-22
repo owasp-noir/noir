@@ -45,18 +45,21 @@ module Noir::CLI::ListCommand
   end
 
   def self.print_help
+    cyan = ->(s : String) { Noir::CLI.name(s) }
+    green = ->(s : String) { Noir::CLI.section(s) }
+
     puts <<-HELP
-      USAGE:
+      #{green.call("USAGE:")}
         noir list <subject>
 
-      SUBJECTS:
-        techs                List supported technologies and analyzer details
-        taggers              List built-in and framework-specific taggers
-        formats              List supported output formats
+      #{green.call("SUBJECTS:")}
+        #{cyan.call("techs")}                  Supported technologies and analyzer details
+        #{cyan.call("taggers")}                Built-in and framework-specific taggers
+        #{cyan.call("formats")}                Supported output formats
 
-      LEGACY ALIASES (still work in v1.x):
-        --list-techs         → noir list techs
-        --list-taggers       → noir list taggers
+      #{green.call("LEGACY ALIASES")} (still work in v1.x):
+        --list-techs           → noir list techs
+        --list-taggers         → noir list taggers
       HELP
   end
 

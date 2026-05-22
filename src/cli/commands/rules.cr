@@ -39,14 +39,17 @@ module Noir::CLI::RulesCommand
   end
 
   def self.print_help
+    cyan = ->(s : String) { Noir::CLI.name(s) }
+    green = ->(s : String) { Noir::CLI.section(s) }
+
     puts <<-HELP
-      USAGE:
+      #{green.call("USAGE:")}
         noir rules <action>
 
-      ACTIONS:
-        list                 Show rule files installed under the rules path
-        update               Pull the latest rules from the upstream repository
-        path                 Print the configured rules directory
+      #{green.call("ACTIONS:")}
+        #{cyan.call("list")}                   Show rule files installed under the rules path
+        #{cyan.call("update")}                 Pull the latest rules from the upstream repository
+        #{cyan.call("path")}                   Print the configured rules directory
 
       Default rules path: ~/.config/noir/passive_rules (overridable via NOIR_HOME).
 

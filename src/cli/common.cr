@@ -36,4 +36,15 @@ module Noir::CLI
     STDERR.puts "ERROR: #{message}".colorize(:yellow)
     exit(code)
   end
+
+  # Shared accent helpers so every `-h` page styles its section labels
+  # and inline command names the same way — green for headers (USAGE,
+  # SUBJECTS, ACTIONS, OPTIONS, …), cyan for the named items inside.
+  def self.section(label : String) : String
+    label.colorize(:green).to_s
+  end
+
+  def self.name(label : String) : String
+    label.colorize(:cyan).to_s
+  end
 end

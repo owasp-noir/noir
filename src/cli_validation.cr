@@ -40,7 +40,13 @@ module Noir::CliValidation
   def self.validate_base_paths!(options : Hash(String, YAML::Any))
     base_paths = options["base"].as_a.map(&.to_s)
     if base_paths.empty?
-      raise Error.new("Base path is required.\nPlease use -b or --base-path to set base path.\nIf you need help, use -h or --help.")
+      raise Error.new(<<-MSG)
+        No path to scan was given.
+        Pass one or more directories as positional arguments (or repeat -b/--base-path):
+          noir scan ./app
+          noir scan ./api ./worker
+        Run `noir help scan` for the full flag list.
+        MSG
     end
 
     base_paths.each do |base_path|

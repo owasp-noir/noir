@@ -5,7 +5,7 @@ describe Noir::CliValidation do
   it "rejects missing base paths" do
     options = create_test_options
 
-    expect_raises(Noir::CliValidation::Error, /Base path is required/) do
+    expect_raises(Noir::CliValidation::Error, /No path to scan was given/) do
       Noir::CliValidation.validate_base_paths!(options)
     end
   end

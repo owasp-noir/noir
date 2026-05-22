@@ -31,18 +31,21 @@ module Noir::CLI::VersionCommand
   end
 
   def self.print_help
+    cyan = ->(s : String) { Noir::CLI.name(s) }
+    green = ->(s : String) { Noir::CLI.section(s) }
+
     puts <<-HELP
-      USAGE:
+      #{green.call("USAGE:")}
         noir version [--verbose]
 
-      OPTIONS:
-        --verbose, -V        Also show Crystal/LLVM/target build details
-                             (replaces v0 `--build-info`).
+      #{green.call("OPTIONS:")}
+        #{cyan.call("--verbose, -V")}          Also show Crystal/LLVM/target build details
+                               (replaces v0 `--build-info`).
 
-      LEGACY ALIASES:
+      #{green.call("LEGACY ALIASES:")}
         noir -v
         noir --version
-        noir --build-info    → noir version --verbose
+        noir --build-info      → noir version --verbose
       HELP
   end
 end

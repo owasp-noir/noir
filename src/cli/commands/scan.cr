@@ -75,27 +75,19 @@ module Noir::CLI::ScanCommand
     end
 
     if noir_options["status_codes"] == true && noir_options["url"] == ""
-      STDERR.puts "ERROR: The --status-codes option requires the -u or --url flag to be specified.".colorize(:yellow)
-      STDERR.puts "Please use -u or --url to set the URL."
-      STDERR.puts "If you need help, use -h or --help."
-      exit(1)
+      Noir::CLI.die("--status-codes needs a target URL. Pass it with -u/--url, e.g. `noir scan ./app --status-codes -u http://localhost:3000`.")
     end
 
     if noir_options["exclude_codes"] != ""
       if noir_options["url"] == ""
-        STDERR.puts "ERROR: The --exclude-codes option requires the -u or --url flag to be specified.".colorize(:yellow)
-        STDERR.puts "Please use -u or --url to set the URL."
-        STDERR.puts "If you need help, use -h or --help."
-        exit(1)
+        Noir::CLI.die("--exclude-codes needs a target URL. Pass it with -u/--url, e.g. `noir scan ./app --exclude-codes 404,500 -u http://localhost:3000`.")
       end
 
       noir_options["exclude_codes"].to_s.split(",").each do |code|
         begin
           code.strip.to_i
         rescue
-          STDERR.puts "ERROR: Invalid --exclude-codes option: '#{code}'".colorize(:yellow)
-          STDERR.puts "Please use comma-separated numbers."
-          exit(1)
+          Noir::CLI.die("--exclude-codes only accepts comma-separated numbers; got '#{code}'.")
         end
       end
     end
@@ -141,7 +133,7 @@ module Noir::CLI::ScanCommand
     if app.techs.empty?
       app.logger.warning "No technologies detected."
       app.logger.sub "➔ If you know the technology, use the -t flag to specify it."
-      app.logger.sub "➔ Please check tech lists using `noir list techs` (or the legacy --list-techs flag)."
+      app.logger.sub "➔ Browse the supported tech list with `noir list techs`."
       if app.options["url"] != ""
         app.logger.info "Start file-based analysis as the -u flag has been used."
       elsif (app.options["ai_provider"] != "") && ((app.options["ai_model"] != "") || app.options["ai_provider"].to_s.downcase.starts_with?("acp:"))

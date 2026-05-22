@@ -31,8 +31,8 @@ module Noir::CLI::HelpCommand
   def self.print_top_level
     banner()
 
-    cyan = ->(s : String) { s.colorize(:cyan).to_s }
-    green = ->(s : String) { s.colorize(:green).to_s }
+    cyan = ->(s : String) { Noir::CLI.name(s) }
+    green = ->(s : String) { Noir::CLI.section(s) }
 
     puts <<-HELP
       #{green.call("USAGE:")}

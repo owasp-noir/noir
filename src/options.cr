@@ -385,7 +385,6 @@ def run_options_parser
     end
 
     parser.on "-h", "--help", "Show this help" do
-      banner()
       puts parser
       exit
     end
