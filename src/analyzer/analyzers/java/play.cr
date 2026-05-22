@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "../../../miniparsers/java_callee_extractor"
+require "../../../miniparsers/java_route_extractor_ts"
 
 module Analyzer::Java
   class Play < Analyzer
@@ -31,10 +32,14 @@ module Analyzer::Java
 
       # Parse controller files to build method map
       controller_methods = parse_controller_files(java_files)
+      routes_by_key = index_routes_files(routes_files)
+      included_routes = collect_included_routes(routes_files, routes_by_key)
+      top_level_routes = routes_files.reject { |path| included_routes.includes?(path) }
+      top_level_routes = routes_files if top_level_routes.empty?
 
       # Process each routes file
-      routes_files.each do |routes_path|
-        process_routes_file(routes_path, controller_methods)
+      top_level_routes.each do |routes_path|
+        process_routes_file(routes_path, controller_methods, routes_by_key, "", Set(String).new)
       end
 
       Fiber.yield
@@ -56,6 +61,8 @@ module Analyzer::Java
         end
 
         Noir::TreeSitter.parse_java(content) do |root|
+          constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content)
+
           walk_class_declarations(root) do |class_decl|
             class_name = class_name_of(class_decl, content)
             next if class_name.empty?
@@ -74,35 +81,10 @@ module Analyzer::Java
               next unless method_body_node
               method_body = Noir::TreeSitter.node_text(method_body_node, content)
 
-              headers = [] of String
-              cookies = [] of String
-              body_type : String? = nil
-
-              # Extract headers: request().header("Header-Name") or request().getHeaders().get("Header-Name")
-              method_body.scan(/request\(\)\s*\.\s*(?:header|getHeaders\(\)\s*\.\s*get)\s*\(\s*["']([^"']+)["']\s*\)/) do |header_match|
-                headers << header_match[1] unless headers.includes?(header_match[1])
-              end
-
-              # Also match Http.Context.current().request().header("Header-Name")
-              method_body.scan(/(?:Http\s*\.\s*)?(?:Context\s*\.\s*current\(\)\s*\.\s*)?request\(\)\s*\.\s*header\s*\(\s*["']([^"']+)["']\s*\)/) do |header_match|
-                headers << header_match[1] unless headers.includes?(header_match[1])
-              end
-
-              # Extract cookies: request().cookie("cookie-name") or request().cookies().get("cookie-name")
-              method_body.scan(/request\(\)\s*\.\s*(?:cookie|cookies\(\)\s*\.\s*get)\s*\(\s*["']([^"']+)["']\s*\)/) do |cookie_match|
-                cookies << cookie_match[1] unless cookies.includes?(cookie_match[1])
-              end
-
-              # Extract body type
-              if method_body.match(/request\(\)\s*\.\s*body\(\)\s*\.\s*(?:asJson|as\(\s*JsonNode)/)
-                body_type = "json"
-              elsif method_body.match(/request\(\)\s*\.\s*body\(\)\s*\.\s*(?:asFormUrlEncoded|asMultipartFormData)/)
-                body_type = "form"
-              elsif method_body.match(/request\(\)\s*\.\s*body\(\)\s*\.\s*asXml/)
-                body_type = "xml"
-              elsif method_body.match(/request\(\)\s*\.\s*body\(\)\s*\.\s*as(?:Text|Raw|Bytes)/)
-                body_type = "body"
-              end
+              request_receivers = request_receivers_for_method(method, content)
+              headers = extract_request_params(method_body, request_receivers, constants, :header)
+              cookies = extract_request_params(method_body, request_receivers, constants, :cookie)
+              body_type = extract_body_type(method_body, request_receivers)
 
               callees = if include_callee
                           Noir::JavaCalleeExtractor.callees_in_body(method_body_node, content, path).map do |(name, callee_path, callee_line)|
@@ -141,12 +123,172 @@ module Analyzer::Java
 
     private def play_action_method?(method : LibTreeSitter::TSNode, method_name : String, content : String) : Bool
       method_source = Noir::TreeSitter.node_text(method, content)
-      !!method_source.match(/(?:public|protected)\s+(?:Result|CompletionStage<Result>)\s+#{Regex.escape(method_name)}\s*\(/)
+      return false unless method_source.match(/(?:public|protected)\s+(?:static\s+)?/)
+
+      return_type = play_action_return_type(method, content)
+      return false unless play_action_return_type?(return_type)
+
+      !!method_source.match(/\b#{Regex.escape(method_name)}\s*\(/)
+    end
+
+    private def play_action_return_type(method : LibTreeSitter::TSNode, content : String) : String
+      if type = Noir::TreeSitter.field(method, "type")
+        return Noir::TreeSitter.node_text(type, content)
+      end
+
+      ""
+    end
+
+    private def play_action_return_type?(return_type : String) : Bool
+      normalized = return_type.gsub(/\s+/, "")
+      return true if normalized == "Result" || normalized.ends_with?(".Result")
+
+      !!(normalized =~ /(?:\A|\.)CompletionStage<(.+\.)?Result>/) ||
+        !!(normalized =~ /(?:\A|\.)Promise<(.+\.)?Result>/)
+    end
+
+    private def request_receivers_for_method(method : LibTreeSitter::TSNode, content : String) : Array(String)
+      receivers = ["request\\(\\)", "(?:Http\\s*\\.\\s*)?(?:Context\\s*\\.\\s*current\\(\\)\\s*\\.\\s*)?request\\(\\)"]
+      params = Noir::TreeSitter.field(method, "parameters")
+      return receivers unless params
+
+      Noir::TreeSitter.each_named_child(params) do |param|
+        next unless Noir::TreeSitter.node_type(param) == "formal_parameter"
+        name_node = Noir::TreeSitter.field(param, "name")
+        type_node = Noir::TreeSitter.field(param, "type")
+        next unless name_node && type_node
+        next unless request_type?(type_node, content)
+        receivers << "\\b#{Regex.escape(Noir::TreeSitter.node_text(name_node, content))}\\b"
+      end
+
+      receivers.uniq
+    end
+
+    private def request_type?(type_node : LibTreeSitter::TSNode, content : String) : Bool
+      type_text = Noir::TreeSitter.node_text(type_node, content)
+      type_text == "Request" || type_text == "Http.Request" || type_text.ends_with?(".Request")
+    end
+
+    private def extract_request_params(method_body : String,
+                                       request_receivers : Array(String),
+                                       constants : Hash(String, String),
+                                       kind : Symbol) : Array(String)
+      params = [] of String
+      method_pattern = case kind
+                       when :header
+                         "(?:header|getHeaders\\(\\)\\s*\\.\\s*get)"
+                       when :cookie
+                         "(?:cookie|cookies\\(\\)\\s*\\.\\s*get)"
+                       else
+                         return params
+                       end
+
+      request_receivers.each do |receiver|
+        method_body.scan(/#{receiver}\s*\.\s*#{method_pattern}\s*\(\s*([^),]+)\s*\)/) do |match|
+          next unless match.size > 1
+          value = resolve_string_arg(match[1], constants)
+          params << value if value && !params.includes?(value)
+        end
+      end
+
+      params
+    end
+
+    private def extract_body_type(method_body : String, request_receivers : Array(String)) : String?
+      request_receivers.each do |receiver|
+        body = /#{receiver}\s*\.\s*body\(\)\s*\.\s*/
+        return "json" if method_body.match(/#{body}(?:asJson|as\(\s*JsonNode)/)
+        return "form" if method_body.match(/#{body}(?:asFormUrlEncoded|asMultipartFormData)/)
+        return "xml" if method_body.match(/#{body}asXml/)
+        return "body" if method_body.match(/#{body}as(?:Text|Raw|Bytes)/)
+      end
+
+      nil
+    end
+
+    private def resolve_string_arg(raw_arg : String, constants : Hash(String, String)) : String?
+      arg = raw_arg.strip
+      if arg.size >= 2 && ((arg.starts_with?('"') && arg.ends_with?('"')) || (arg.starts_with?("'") && arg.ends_with?("'")))
+        return arg[1..-2]
+      end
+
+      if resolved = constants[arg]?
+        return resolved
+      end
+
+      suffix = ".#{arg}"
+      matches = constants.compact_map do |key, value|
+        key.ends_with?(suffix) ? value : nil
+      end.uniq!
+      matches.size == 1 ? matches.first : nil
+    end
+
+    private def index_routes_files(routes_files : Array(String)) : Hash(String, String)
+      index = Hash(String, String).new
+
+      routes_files.each do |path|
+        basename = File.basename(path)
+        index[basename] = path
+
+        if basename == "routes" || basename == "routes.conf"
+          index["Routes"] = path
+          index["router.Routes"] = path
+        elsif match = basename.match(/^(.+)\.routes$/)
+          name = match[1]
+          index[name] = path
+          index["#{name}.Routes"] = path
+        end
+      end
+
+      index
+    end
+
+    private def collect_included_routes(routes_files : Array(String), routes_by_key : Hash(String, String)) : Set(String)
+      included = Set(String).new
+
+      routes_files.each do |path|
+        read_file_content(path).each_line do |line|
+          stripped = line.strip
+          next if stripped.empty? || stripped.starts_with?("#")
+          next unless include_match = stripped.match(/^->\s+[^\s]+\s+(.+)$/)
+
+          if included_path = resolve_included_routes_file(include_match[1], routes_by_key)
+            included << included_path
+          end
+        end
+      end
+
+      included
+    end
+
+    private def resolve_included_routes_file(target : String, routes_by_key : Hash(String, String)) : String?
+      key = target.split(/\s|\(/).first.strip
+      key = key.lchop("@")
+      candidates = [key]
+
+      if key.ends_with?(".Routes")
+        candidates << key[0...(key.size - ".Routes".size)]
+      else
+        candidates << "#{key}.Routes"
+      end
+
+      candidates.each do |candidate|
+        return routes_by_key[candidate] if routes_by_key.has_key?(candidate)
+      end
+
+      nil
     end
 
     # Process a Play routes file
-    private def process_routes_file(path : String, controller_methods : Hash(String, ControllerMethod))
-      content = File.read(path)
+    private def process_routes_file(path : String,
+                                    controller_methods : Hash(String, ControllerMethod),
+                                    routes_by_key : Hash(String, String),
+                                    prefix : String,
+                                    seen : Set(String))
+      return if seen.includes?(path)
+
+      seen << path
+      content = read_file_content(path)
       lines = content.split('\n')
 
       lines.each_with_index do |line, index|
@@ -155,11 +297,20 @@ module Analyzer::Java
         # Skip comments and empty lines
         next if stripped_line.empty? || stripped_line.starts_with?("#")
 
+        if include_match = stripped_line.match(/^->\s+([^\s]+)\s+(.+)$/)
+          include_prefix = include_match[1]
+          include_target = include_match[2]
+          if included_path = resolve_included_routes_file(include_target, routes_by_key)
+            process_routes_file(included_path, controller_methods, routes_by_key, join_paths(prefix, include_prefix), seen)
+          end
+          next
+        end
+
         # Match route definitions: METHOD /path controller.action
         # Example: GET /users/:id controllers.Users.show(id: Long)
         if route_match = stripped_line.match(/^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+([^\s]+)\s+(.+)/)
           method = route_match[1]
-          route_path = route_match[2]
+          route_path = join_paths(prefix, route_match[2])
           action = route_match[3]
 
           endpoint = create_endpoint(route_path, method, path, index + 1)
@@ -176,6 +327,14 @@ module Analyzer::Java
           @result << endpoint
         end
       end
+
+      seen.delete(path)
+    end
+
+    private def join_paths(prefix : String, suffix : String) : String
+      return suffix if prefix.empty?
+      return prefix.rstrip('/') if suffix.empty?
+      "#{prefix.rstrip('/')}/#{suffix.lstrip('/')}"
     end
 
     # Extract path parameters from route pattern
@@ -210,40 +369,152 @@ module Analyzer::Java
       if params_match = action.match(/\((.*)\)/)
         params_str = params_match[1]
 
-        # Split by comma for simple parsing (note: doesn't handle nested structures perfectly)
-        params_str.split(',').each do |param_def|
+        split_route_action_params(params_str).each do |param_def|
           param_def = param_def.strip
           next if param_def.empty?
 
-          # Skip named parameters with literal values (e.g., path="/public")
-          # But don't skip optional parameters with defaults (e.g., name: String = "default")
-          next if param_def.match(/^\w+\s*=\s*"/)
+          if route_param = route_action_param(param_def)
+            param_name, param_type, default_value = route_param
+            next if request_route_param_type?(param_type)
+            next if endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
+            next if endpoint.params.any? { |p| p.name == param_name }
 
-          # Extract parameter name and type
-          # Formats: "id: Long", "name: String", "count: Integer"
-          # Match parameter name followed by colon and any type
-          if param_match = param_def.match(/^(\w+)\s*:\s*/)
-            param_name = param_match[1]
-
-            # Check if it's already a path parameter
-            is_path_param = endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
-
-            unless is_path_param
-              # Add as query parameter
-              unless endpoint.params.any? { |p| p.name == param_name }
-                endpoint.push_param(Param.new(param_name, "", "query"))
-              end
-            end
+            endpoint.push_param(Param.new(param_name, default_value, "query"))
           end
         end
       end
+    end
+
+    private def split_route_action_params(params_str : String) : Array(String)
+      params = [] of String
+      start = 0
+      depth = 0
+      in_string = false
+      quote = '\0'
+      escape = false
+
+      params_str.each_char_with_index do |char, index|
+        if in_string
+          if escape
+            escape = false
+          elsif char == '\\'
+            escape = true
+          elsif char == quote
+            in_string = false
+          end
+          next
+        end
+
+        case char
+        when '"', '\''
+          in_string = true
+          quote = char
+        when '(', '[', '{'
+          depth += 1
+        when ')', ']', '}'
+          depth -= 1 if depth > 0
+        when ','
+          next unless depth == 0
+
+          params << params_str[start...index].strip
+          start = index + 1
+        end
+      end
+
+      tail = params_str[start..]?.to_s.strip
+      params << tail unless tail.empty?
+      params
+    end
+
+    private def route_action_param(param_def : String) : Tuple(String, String?, String)?
+      optional_default_index = top_level_operator_index(param_def, "?=")
+      fixed_value_index = top_level_operator_index(param_def, "=")
+      return if fixed_value_index && optional_default_index.nil?
+
+      declaration_end = optional_default_index || param_def.size
+      declaration = param_def[0...declaration_end].strip
+      return if declaration.empty?
+
+      default_value = ""
+      if optional_default_index
+        raw_default = param_def[(optional_default_index + 2)..].strip
+        default_value = normalize_route_default_value(raw_default)
+      end
+
+      if colon = declaration.index(':')
+        name = declaration[0...colon].strip
+        type_name = declaration[(colon + 1)..].strip
+        return if name.empty?
+        return {name, type_name.empty? ? nil : type_name, default_value}
+      end
+
+      name = declaration.strip
+      return unless name.match(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+      {name, nil, default_value}
+    end
+
+    private def top_level_operator_index(text : String, operator : String) : Int32?
+      depth = 0
+      in_string = false
+      quote = '\0'
+      escape = false
+      i = 0
+
+      while i <= text.size - operator.size
+        char = text[i]
+
+        if in_string
+          if escape
+            escape = false
+          elsif char == '\\'
+            escape = true
+          elsif char == quote
+            in_string = false
+          end
+          i += 1
+          next
+        end
+
+        case char
+        when '"', '\''
+          in_string = true
+          quote = char
+        when '(', '[', '{'
+          depth += 1
+        when ')', ']', '}'
+          depth -= 1 if depth > 0
+        else
+          return i if depth == 0 && text.byte_slice(i, operator.size) == operator
+        end
+        i += 1
+      end
+
+      nil
+    end
+
+    private def normalize_route_default_value(raw_default : String) : String
+      value = raw_default.strip
+      return "" if value.empty?
+
+      if value.size >= 2 && ((value.starts_with?('"') && value.ends_with?('"')) || (value.starts_with?("'") && value.ends_with?("'")))
+        return value[1..-2]
+      end
+
+      value
+    end
+
+    private def request_route_param_type?(param_type : String?) : Bool
+      return false unless param_type
+
+      normalized = param_type.gsub(/\s+/, "")
+      normalized == "Request" || normalized == "Http.Request" || normalized.ends_with?(".Request")
     end
 
     # Extract header, cookie, and body parameters from controller method
     private def extract_controller_params(endpoint : Endpoint, action : String, controller_methods : Hash(String, ControllerMethod))
       # Extract controller method name from action
       # Example: controllers.Users.show(id: Long) -> controllers.Users.show
-      method_name = action.split("(").first.strip
+      method_name = action.split("(").first.strip.lchop("@")
 
       # Look up the controller method
       if method_info = controller_methods[method_name]?

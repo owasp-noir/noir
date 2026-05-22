@@ -60,8 +60,8 @@ describe Noir::TreeSitterJavaRouteExtractor do
     routes.map { |r| {r.verb, r.path} }.should eq([
       {"GET", "/get"},
       {"POST", "/post"},
-      # @RequestMapping without method defaults to GET for our purposes.
-      {"GET", "/default"},
+      # Spring @RequestMapping without a method condition matches all methods.
+      {"ANY", "/default"},
     ])
   end
 
@@ -270,6 +270,189 @@ describe Noir::TreeSitterJavaRouteExtractor do
     ])
   end
 
+  it "applies class-level RequestMapping verbs to generic method mappings" do
+    source = <<-JAVA
+      @RequestMapping(value = "/legacy", method = {RequestMethod.POST, RequestMethod.PUT})
+      public class LegacyController {
+          @RequestMapping("/submit")
+          public void submit() {}
+      }
+      JAVA
+
+    routes = Noir::TreeSitterJavaRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"POST", "/legacy/submit"},
+      {"PUT", "/legacy/submit"},
+    ])
+  end
+
+  it "extracts Spring mapping params and headers conditions as endpoint params" do
+    source = <<-JAVA
+      @RequestMapping(value = "/tenant", params = "tenant")
+      public class TenantController {
+          @GetMapping(value = "/reports", params = {"mode=full", "!skip"}, headers = {"X-Client=mobile", "!X-Debug"})
+          public void reports() {}
+      }
+      JAVA
+
+    routes = Noir::TreeSitterJavaRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path, r.params} }.should eq([
+      {"GET", "/tenant/reports", [
+        Param.new("tenant", "", "query"),
+        Param.new("mode", "full", "query"),
+        Param.new("X-Client", "mobile", "header"),
+      ]},
+    ])
+  end
+
+  it "extracts same-file Spring composed mapping annotations" do
+    source = <<-JAVA
+      package com.example;
+
+      import org.springframework.web.bind.annotation.*;
+
+      @RequestMapping("/internal")
+      public @interface InternalApi {}
+
+      @GetMapping("/reports")
+      public @interface ReportsGet {}
+
+      @RequestMapping(method = RequestMethod.POST)
+      public @interface JsonPost {
+          String value() default "";
+      }
+
+      @RestController
+      @InternalApi
+      public class ReportsController {
+          @ReportsGet
+          public String list() { return ""; }
+
+          @JsonPost("/submit")
+          public String submit() { return ""; }
+      }
+      JAVA
+
+    routes = Noir::TreeSitterJavaRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path, r.method_name} }.should eq([
+      {"GET", "/internal/reports", "list"},
+      {"POST", "/internal/submit", "submit"},
+    ])
+  end
+
+  it "applies externally supplied Spring composed mapping annotations" do
+    annotation_source = <<-JAVA
+      package com.example.annotations;
+
+      import org.springframework.web.bind.annotation.*;
+
+      @RequestMapping("/external")
+      public @interface ExternalApi {}
+
+      @DeleteMapping
+      public @interface ExternalDelete {
+          String value() default "";
+      }
+      JAVA
+
+    controller_source = <<-JAVA
+      package com.example;
+
+      import com.example.annotations.ExternalApi;
+      import com.example.annotations.ExternalDelete;
+      import org.springframework.web.bind.annotation.RestController;
+
+      @RestController
+      @ExternalApi
+      public class ReportsController {
+          @ExternalDelete("/reports/{id}")
+          public void delete() {}
+      }
+      JAVA
+
+    mappings = Hash(String, Noir::TreeSitterJavaRouteExtractor::ClassMapping).new
+    Noir::TreeSitter.parse_java(annotation_source) do |root|
+      mappings = Noir::TreeSitterJavaRouteExtractor.extract_meta_mappings_from(root, annotation_source)
+    end
+
+    routes = [] of Noir::TreeSitterJavaRouteExtractor::Route
+    Noir::TreeSitter.parse_java(controller_source) do |root|
+      routes = Noir::TreeSitterJavaRouteExtractor.extract_routes_from(root, controller_source, mappings)
+    end
+
+    routes.map { |r| {r.verb, r.path, r.method_name} }.should eq([
+      {"DELETE", "/external/reports/{id}", "delete"},
+    ])
+  end
+
+  it "extracts Spring Cloud Gateway Java route predicates" do
+    source = <<-JAVA
+      package com.example;
+
+      public class GatewayRouteConfig {
+          static final class GatewayPolicy {
+              public static final String MCP_ENDPOINT_PATH = "/mcp";
+          }
+
+          RouteLocator customRouteLocator(RouteLocatorBuilder builder) {
+              return builder.routes()
+                  .route("post", r -> r.method(HttpMethod.POST).and().path(GatewayPolicy.MCP_ENDPOINT_PATH).uri("no://op"))
+                  .route("multi", r -> r.method(HttpMethod.GET, HttpMethod.DELETE).and().path("/multi", "/alt").uri("no://op"))
+                  .route("any", r -> r.path("/public/**").uri("no://op"))
+                  .route("helper", r -> isPutRequestToMcpEndpoint(r).uri("no://op"))
+                  .build();
+          }
+
+          private BooleanSpec isPutRequestToMcpEndpoint(PredicateSpec predicateSpec) {
+              return predicateSpec.method(HttpMethod.PUT).and().path(GatewayPolicy.MCP_ENDPOINT_PATH);
+          }
+      }
+      JAVA
+
+    routes = Noir::TreeSitterJavaRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"POST", "/mcp"},
+      {"GET", "/multi"},
+      {"GET", "/alt"},
+      {"DELETE", "/multi"},
+      {"DELETE", "/alt"},
+      {"ANY", "/public/**"},
+      {"PUT", "/mcp"},
+    ])
+  end
+
+  it "keeps controller-interface mappings as definitions instead of standalone endpoints" do
+    source = <<-JAVA
+      package com.example;
+
+      @RequestMapping("/catalog")
+      public interface CatalogApi {
+          @GetMapping("/{id}")
+          Catalog getCatalog(@PathVariable("id") String id);
+      }
+
+      @RestController
+      @RequestMapping("/api")
+      public class CatalogController implements CatalogApi {}
+      JAVA
+
+    Noir::TreeSitterJavaRouteExtractor.extract_routes(source).should be_empty
+
+    interface_routes = Hash(String, Array(Noir::TreeSitterJavaRouteExtractor::Route)).new
+    implementations = [] of Noir::TreeSitterJavaRouteExtractor::ControllerInterfaceImplementation
+    Noir::TreeSitter.parse_java(source) do |root|
+      interface_routes = Noir::TreeSitterJavaRouteExtractor.extract_interface_routes_from(root, source)
+      implementations = Noir::TreeSitterJavaRouteExtractor.extract_controller_interface_implementations_from(root, source)
+    end
+
+    interface_routes["CatalogApi"].map { |r| {r.verb, r.path, r.method_name} }.should eq([
+      {"GET", "/catalog/{id}", "getCatalog"},
+    ])
+    implementations.map { |i| {i.class_name, i.interface_names, i.paths} }.should eq([
+      {"CatalogController", ["CatalogApi"], ["/api"]},
+    ])
+  end
+
   it "walks `interface_declaration` bodies for @FeignClient" do
     # Spring Cloud Feign interfaces are routes too; tree-sitter
     # emits `interface_declaration` for `public interface Foo { ... }`
@@ -320,6 +503,7 @@ describe Noir::TreeSitterJavaRouteExtractor do
       {"DELETE", "/items/delete/{id}"},
       {"PUT", "/items/requestmap/put"},
       {"DELETE", "/items/requestmap/delete"},
+      {"ANY", "/items/any-method"},
       {"GET", "/items/multiple/methods"},
       {"POST", "/items/multiple/methods"},
       # ItemController2.java — class @RequestMapping("items2")
@@ -332,6 +516,9 @@ describe Noir::TreeSitterJavaRouteExtractor do
       {"GET", "/api/v2/items"},
       {"POST", "/api/v2/items"},
       {"DELETE", "/api/v2/items/{id}"},
+      # ComposedAnnotationController.java — same-file meta annotations
+      {"GET", "/internal/reports"},
+      {"POST", "/internal/submit"},
     ]
     missing = expected.reject { |e| found.includes?(e) }
     missing.should be_empty

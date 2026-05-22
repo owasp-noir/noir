@@ -9,12 +9,13 @@ def get_symbol(method : String)
     "HEAD"    => :head,
     "TRACE"   => :trace,
     "CONNECT" => :connect,
+    "QUERY"   => :query,
   }
 
   symbol[method]
 end
 
-ALLOWED_HTTP_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "TRACE", "CONNECT"]
+ALLOWED_HTTP_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "TRACE", "CONNECT", "QUERY"]
 
 def get_allowed_methods
   ALLOWED_HTTP_METHODS

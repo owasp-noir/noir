@@ -21,17 +21,19 @@ import jakarta.ws.rs.core.Response;
 @Path("/users")
 @Produces(MediaType.APPLICATION_JSON)
 public class UserResource {
+    private static final String SIZE_PARAM = "size";
+    private static final String TRACE_HEADER = "X-Trace";
 
     @GET
     public Response listUsers(@QueryParam("page") @DefaultValue("0") int page,
-                              @QueryParam("size") int size) {
+                              @QueryParam(SIZE_PARAM) int size) {
         return Response.ok().build();
     }
 
     @GET
     @Path("/{id}")
     public Response getUser(@PathParam("id") long id,
-                            @HeaderParam("X-Trace") String trace) {
+                            @HeaderParam(TRACE_HEADER) String trace) {
         return Response.ok().build();
     }
 
@@ -69,5 +71,10 @@ public class UserResource {
     public Response patchUser(@PathParam("id") long id,
                               @BeanParam UserFilter filter) {
         return Response.ok().build();
+    }
+
+    @Path("/{id}/profile")
+    public UserProfileResource profile(@PathParam("id") long id) {
+        return new UserProfileResource();
     }
 }

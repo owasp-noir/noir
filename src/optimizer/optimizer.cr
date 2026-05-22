@@ -433,7 +433,7 @@ class EndpointOptimizer
   # endpoints alone — DAST consumers route on these, and downgrading
   # them to `GET` would collapse publish + subscribe into one row.
   private def get_allowed_methods : Array(String)
-    ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "TRACE", "CONNECT", "ANY",
+    ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "TRACE", "CONNECT", "QUERY", "ANY",
      "PUBLISH", "SUBSCRIBE", "SEND", "RECEIVE"]
   end
 end

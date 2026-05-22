@@ -1,6 +1,7 @@
 package com.example;
 
 import io.vertx.core.Vertx;
+import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
@@ -8,6 +9,10 @@ import io.vertx.ext.web.handler.BodyHandler;
 import io.vertx.ext.web.handler.StaticHandler;
 
 public class MainVerticle {
+  private static final String API_PREFIX = "/api";
+  private static final String REPORTS = "/reports";
+  private static final String ADMIN_PREFIX = "/admin";
+  private static final String TASKS = "/tasks";
   
   public static void main(String[] args) {
     Vertx vertx = Vertx.vertx();
@@ -33,12 +38,23 @@ public class MainVerticle {
     router.route("/orders/:id").get(this::getOrder);
     router.route("/orders").post(this::createOrder);
     router.route("/orders/:id").put(this::updateOrder);
+    router.route(HttpMethod.POST, "/imports/:importId").handler(this::importData);
+    router.get(API_PREFIX + REPORTS + "/:reportId").handler(this::getReport);
+    router.route(API_PREFIX + "/exports/:exportId").get(this::exportData);
+    router.route(HttpMethod.DELETE, API_PREFIX + "/imports/:importId").handler(this::deleteImport);
+    router.route().method(HttpMethod.GET).path(API_PREFIX + TASKS + "/:taskId").handler(this::getTask);
+    router.route().path("/jobs/:jobId").method(HttpMethod.POST).handler(this::createJob);
+    router.route(API_PREFIX + "/any/:anyId").handler(this::handleAny);
     
     // Sub-router mounting
     Router apiRouter = Router.router(vertx);
     apiRouter.get("/v1/items").handler(this::getItems);
     apiRouter.post("/v1/items").handler(this::createItem);
     router.mountSubRouter("/api", apiRouter);
+
+    Router adminRouter = Router.router(vertx);
+    adminRouter.get("/metrics/:metricId").handler(this::getMetric);
+    router.mountSubRouter(ADMIN_PREFIX, adminRouter);
     
     // Static resources
     router.route("/static/*").handler(StaticHandler.create());
@@ -99,6 +115,26 @@ public class MainVerticle {
     String orderId = ctx.request().getParam("id");
     ctx.response().end("Order " + orderId + " updated");
   }
+
+  private void importData(RoutingContext ctx) {
+    String importId = ctx.request().getParam("importId");
+    ctx.response().end("Import " + importId);
+  }
+
+  private void deleteImport(RoutingContext ctx) {
+    String importId = ctx.request().getParam("importId");
+    ctx.response().end("Import " + importId + " deleted");
+  }
+
+  private void getReport(RoutingContext ctx) {
+    String reportId = ctx.request().getParam("reportId");
+    ctx.response().end("Report " + reportId);
+  }
+
+  private void exportData(RoutingContext ctx) {
+    String exportId = ctx.request().getParam("exportId");
+    ctx.response().end("Export " + exportId);
+  }
   
   private void getItems(RoutingContext ctx) {
     ctx.response().end("Items list");
@@ -106,5 +142,25 @@ public class MainVerticle {
   
   private void createItem(RoutingContext ctx) {
     ctx.response().end("Item created");
+  }
+
+  private void getMetric(RoutingContext ctx) {
+    String metricId = ctx.request().getParam("metricId");
+    ctx.response().end("Metric " + metricId);
+  }
+
+  private void getTask(RoutingContext ctx) {
+    String taskId = ctx.request().getParam("taskId");
+    ctx.response().end("Task " + taskId);
+  }
+
+  private void createJob(RoutingContext ctx) {
+    String jobId = ctx.request().getParam("jobId");
+    ctx.response().end("Job " + jobId);
+  }
+
+  private void handleAny(RoutingContext ctx) {
+    String anyId = ctx.request().getParam("anyId");
+    ctx.response().end("Any method " + anyId);
   }
 }

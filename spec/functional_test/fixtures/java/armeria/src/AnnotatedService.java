@@ -5,17 +5,20 @@ import com.linecorp.armeria.server.annotation.Get;
 import com.linecorp.armeria.server.annotation.Post;
 import com.linecorp.armeria.server.annotation.Put;
 import com.linecorp.armeria.server.annotation.Delete;
+import com.linecorp.armeria.server.annotation.Default;
 import com.linecorp.armeria.server.annotation.Patch;
 import com.linecorp.armeria.server.annotation.Head;
 import com.linecorp.armeria.server.annotation.Options;
 import com.linecorp.armeria.server.annotation.Param;
 import com.linecorp.armeria.server.annotation.Header;
+import com.linecorp.armeria.server.annotation.Path;
+import com.linecorp.armeria.server.annotation.PathPrefix;
 import com.linecorp.armeria.server.annotation.RequestObject;
 
 public class AnnotatedService {
 
     @Get("/annotated/users")
-    public HttpResponse getUsers(@Param("page") int page, @Param("limit") int limit) {
+    public HttpResponse getUsers(@Param("page") int page, @Param("limit") @Default("25") int limit) {
         return HttpResponse.of("users");
     }
 
@@ -63,5 +66,43 @@ public class AnnotatedService {
     public static class User {
         public String name;
         public String email;
+    }
+}
+
+@PathPrefix(PrefixedAnnotatedService.PREFIX)
+class PrefixedAnnotatedService {
+    static final String PREFIX = "/annotated/prefix";
+    static final String REPORTS = "/reports";
+
+    static final class Headers {
+        static final String TRACE = "X-Trace";
+    }
+
+    @Get
+    @Path(REPORTS + "/{reportId}")
+    public HttpResponse getReport(@Param String reportId, @Header(Headers.TRACE) String trace) {
+        return HttpResponse.of("report");
+    }
+
+    @Post
+    @Path({"/submit", "/submit-alt"})
+    public HttpResponse submit() {
+        return HttpResponse.of("submit");
+    }
+}
+
+class MountedAnnotatedService {
+    @Get("/details/{detailId}")
+    public HttpResponse detail(@Param String detailId) {
+        return HttpResponse.of("detail");
+    }
+
+    @Post("/create")
+    public HttpResponse create(@RequestObject MountedBody body) {
+        return HttpResponse.of("create");
+    }
+
+    public static class MountedBody {
+        public String title;
     }
 }

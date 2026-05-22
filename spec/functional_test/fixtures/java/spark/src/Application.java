@@ -3,7 +3,19 @@ package com.example;
 import static spark.Spark.*;
 
 public class Application {
+    private static final String API_PREFIX = "/api";
+    private static final String REPORTS_PATH = "/reports";
+    private static final String SOCKET_PATH = "/events";
+    private static final String TRACE_HEADER = "X-Report-Trace";
+
+    static final class RouteParts {
+        static final String DETAIL = "/:reportId";
+    }
+
     public static void main(String[] args) {
+        staticFiles.location("/public");
+        staticFiles.externalLocation("/var/www/public");
+
         get("/hello", (req, res) -> {
             String name = req.queryParams("name");
             return "Hello " + name;
@@ -42,5 +54,20 @@ public class Application {
             String trace = req.headers("X-Trace");
             return body;
         });
+
+        redirect.get("/legacy-home", "/hello");
+        redirect.post("/legacy-submit", "/api/v1/submit", Redirect.Status.SEE_OTHER);
+        redirect.any("/legacy-any", "/hello", Redirect.Status.MOVED_PERMANENTLY);
+
+        path(API_PREFIX, () -> {
+            get(REPORTS_PATH + RouteParts.DETAIL, (req, res) -> {
+                String trace = req.headers(TRACE_HEADER);
+                return trace;
+            });
+            webSocket(SOCKET_PATH + "/:roomId", EventsSocket.class);
+        });
+    }
+
+    static class EventsSocket {
     }
 }

@@ -67,14 +67,18 @@
              .service("/internal/l7check", HealthCheckService.of())
              .service("/zipkin/config.json", zipkin)
              .serviceUnder("/zipkin/api", zipkin)
-             .serviceUnder("/zipkin",
-                 FileService.of(
-                     ApplicationStartUp.class.getClassLoader(),
-                     "/zipkin-lens")
-                     .orElse(zipkinIndexPage))
-             .serviceUnder("/",
-                 FileService.of(
-                     ApplicationStartUp.class.getClassLoader(),
+            .serviceUnder("/zipkin",
+                FileService.of(
+                    ApplicationStartUp.class.getClassLoader(),
+                    "/zipkin-lens")
+                    .orElse(zipkinIndexPage))
+            .service("/favicon.ico",
+                HttpFile
+                    .of(ApplicationStartUp.class.getClassLoader(), "/public/favicon.ico")
+                    .asService())
+            .serviceUnder("/",
+                FileService.of(
+                    ApplicationStartUp.class.getClassLoader(),
                      "/public")
                      .orElse(indexPage))
              .build()

@@ -19,6 +19,14 @@ expected_endpoints = [
     Param.new("category", "", "query"),
     Param.new("page", "", "query"),
   ]),
+  Endpoint.new("/clients", "GET", [
+    Param.new("page", "1", "query"),
+    Param.new("label", "new,hot", "query"),
+  ]),
+  Endpoint.new("/api/list-all", "GET", [
+    Param.new("version", "null", "query"),
+  ]),
+  Endpoint.new("/fixed-home", "GET"),
   Endpoint.new("/files/$path<.+>", "GET", [Param.new("path", "", "path")]),
   Endpoint.new("/upload", "POST"),
   Endpoint.new("/api/protected", "GET", [
@@ -28,6 +36,17 @@ expected_endpoints = [
   Endpoint.new("/api/data", "POST", [
     Param.new("Content-Type", "", "header"),
     Param.new("body", "", "json"),
+  ]),
+  Endpoint.new("/api/modern", "POST", [
+    Param.new("X-Trace", "", "header"),
+    Param.new("session_id", "", "cookie"),
+    Param.new("body", "", "json"),
+  ]),
+  Endpoint.new("/async", "GET", [
+    Param.new("X-Async", "", "header"),
+  ]),
+  Endpoint.new("/legacy-async", "GET", [
+    Param.new("X-Legacy-Async", "", "header"),
   ]),
   Endpoint.new("/assets/*file", "GET", [
     Param.new("file", "", "path"),
@@ -39,6 +58,16 @@ expected_endpoints = [
     Param.new("body", "", "body"),
   ]),
   Endpoint.new("/whitespace", "POST", [
+    Param.new("body", "", "json"),
+  ]),
+  Endpoint.new("/api/static", "POST", [
+    Param.new("X-Static", "", "header"),
+    Param.new("body", "", "body"),
+  ]),
+  Endpoint.new("/api/reports/:reportId", "GET", [
+    Param.new("reportId", "", "path"),
+  ]),
+  Endpoint.new("/api/reports", "POST", [
     Param.new("body", "", "json"),
   ]),
 ]

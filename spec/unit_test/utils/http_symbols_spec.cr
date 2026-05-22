@@ -36,4 +36,8 @@ describe "http_symbols test" do
   it "CONNECT" do
     get_symbol("CONNECT").should eq(:connect)
   end
+
+  it "QUERY" do
+    get_symbol("QUERY").should eq(:query)
+  end
 end

@@ -6,7 +6,8 @@ require "../../func_spec.cr"
 # 1-hop callees.
 expected_endpoints = [
   Endpoint.new("/annotated/users/{userId}", "POST", [
-    Param.new("user", "", "json"),
+    Param.new("name", "", "json"),
+    Param.new("email", "", "json"),
     Param.new("Content-Type", "", "header"),
     Param.new("userId", "", "path"),
   ]).tap do |ep|

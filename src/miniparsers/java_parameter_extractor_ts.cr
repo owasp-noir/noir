@@ -2,6 +2,7 @@ require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
 require "../models/code_locator"
 require "./import_graph"
+require "./java_route_extractor_ts"
 
 module Noir
   # Tree-sitter-backed parameter extractor for Java/Spring.
@@ -10,7 +11,7 @@ module Noir
   # discovery pass tells us which methods are routes, this module
   # walks the matching `method_declaration` to extract request
   # parameters from `@RequestParam` / `@RequestBody` / `@RequestHeader`
-  # / `@PathVariable` annotations, primitive typed args,
+  # / `@CookieValue` / `@PathVariable` annotations, primitive typed args,
   # `HttpServletRequest` body scans, and user-defined DTO fields.
   #
   # DTO resolution is caller-provided (`class_fields` map) so the same
@@ -123,7 +124,8 @@ module Noir
                                        class_fields : Hash(String, Array(FieldInfo))) : Array(Param)
       method = find_method(root, source, class_name, method_name)
       return [] of Param unless method
-      collect_method_params(method, source, verb, parameter_format, class_fields)
+      constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source)
+      collect_method_params(method, source, verb, parameter_format, class_fields, constants, class_name)
     end
 
     # Find `@*Mapping` annotation on (class_name, method_name) and
@@ -245,6 +247,24 @@ module Noir
       result
     end
 
+    # Return the set of class/interface simple names that declare a
+    # Spring HTTP Interface. These are remote client contracts when used
+    # with HttpServiceProxyFactory, so Spring analyzer output marks them
+    # internal like Feign clients.
+    def extract_http_exchange_client_classes_from(root : LibTreeSitter::TSNode, source : String) : Set(String)
+      result = Set(String).new
+      walk_class_containers(root) do |decl|
+        next unless Noir::TreeSitter.node_type(decl) == "interface_declaration"
+        name_node = Noir::TreeSitter.field(decl, "name")
+        next unless name_node
+
+        if http_exchange_interface?(decl, source)
+          result << Noir::TreeSitter.node_text(name_node, source)
+        end
+      end
+      result
+    end
+
     # ---- private helpers ----------------------------------------------
 
     # Walk every class/interface declaration in the tree.
@@ -256,6 +276,22 @@ module Noir
       Noir::TreeSitter.each_named_child(node) do |child|
         walk_class_containers(child, &block)
       end
+    end
+
+    private def http_exchange_interface?(decl : LibTreeSitter::TSNode, source : String) : Bool
+      each_annotation_on(decl, source) do |ann_name|
+        return true if ann_name == "HttpExchange"
+      end
+
+      return false unless body = Noir::TreeSitter.field(decl, "body")
+      Noir::TreeSitter.each_named_child(body) do |member|
+        next unless Noir::TreeSitter.node_type(member) == "method_declaration"
+        each_annotation_on(member, source) do |ann_name|
+          return true if ann_name == "HttpExchange" || ann_name.ends_with?("Exchange")
+        end
+      end
+
+      false
     end
 
     # Find the (class_name, method_name) method_declaration in the
@@ -395,7 +431,9 @@ module Noir
                                       source : String,
                                       verb : String,
                                       parameter_format : String?,
-                                      class_fields : Hash(String, Array(FieldInfo))) : Array(Param)
+                                      class_fields : Hash(String, Array(FieldInfo)),
+                                      constants : Hash(String, String),
+                                      current_class : String) : Array(Param)
       params = [] of Param
       fparams = Noir::TreeSitter.field(method, "parameters")
       return params unless fparams
@@ -408,7 +446,7 @@ module Noir
 
       Noir::TreeSitter.each_named_child(fparams) do |fp|
         next unless Noir::TreeSitter.node_type(fp) == "formal_parameter"
-        current_format = emit_param_for(fp, method, source, verb, current_format, class_fields, params)
+        current_format = emit_param_for(fp, method, source, verb, current_format, class_fields, constants, current_class, params)
       end
       params
     end
@@ -419,6 +457,8 @@ module Noir
                                verb : String,
                                parameter_format : String?,
                                class_fields : Hash(String, Array(FieldInfo)),
+                               constants : Hash(String, String),
+                               current_class : String,
                                sink : Array(Param)) : String?
       type_node = Noir::TreeSitter.field(fp, "type")
       name_node = Noir::TreeSitter.field(fp, "name")
@@ -429,7 +469,7 @@ module Noir
 
       # Annotation dispatch. A parameter may carry at most one of
       # `@PathVariable` / `@RequestBody` / `@RequestParam` /
-      # `@RequestHeader`; the first we see wins.
+      # `@RequestHeader` / `@CookieValue`; the first we see wins.
       ann_kind = nil
       ann_node : LibTreeSitter::TSNode? = nil
       if mods = find_modifiers(fp)
@@ -456,6 +496,10 @@ module Noir
             ann_kind = :header
             ann_node = ann
             break
+          when "CookieValue"
+            ann_kind = :cookie
+            ann_node = ann
+            break
           end
         end
       end
@@ -470,6 +514,8 @@ module Noir
         effective_format = "query"
       when :header
         effective_format = "header"
+      when :cookie
+        effective_format = "cookie"
       end
       return effective_format if effective_format.nil?
 
@@ -480,11 +526,13 @@ module Noir
       if ann_node
         if args = Noir::TreeSitter.field(ann_node, "arguments")
           Noir::TreeSitter.each_named_child(args) do |arg|
-            case Noir::TreeSitter.node_type(arg)
-            when "string_literal"
-              parameter_name = decode_string_literal(arg, source)
-            when "field_access"
-              parameter_name = normalise_http_header_constant(Noir::TreeSitter.node_text(arg, source))
+            arg_type = Noir::TreeSitter.node_type(arg)
+            if annotation_string_value_node?(arg_type)
+              parameter_name = resolve_annotation_string_or_const(arg, source, constants, current_class)
+              next
+            end
+
+            case arg_type
             when "element_value_pair"
               key = Noir::TreeSitter.field(arg, "key")
               val = Noir::TreeSitter.field(arg, "value")
@@ -492,9 +540,9 @@ module Noir
               k = Noir::TreeSitter.node_text(key, source)
               case k
               when "value", "name"
-                parameter_name = resolve_annotation_string_or_const(val, source)
+                parameter_name = resolve_annotation_string_or_const(val, source, constants, current_class)
               when "defaultValue"
-                default_value = decode_string_literal(val, source) if Noir::TreeSitter.node_type(val) == "string_literal"
+                default_value = resolve_annotation_string_value(val, source, constants, current_class)
               end
             end
           end
@@ -517,18 +565,70 @@ module Noir
       effective_format
     end
 
-    # Resolve either a string literal or a qualified-identifier
-    # constant (`HttpHeaders.AUTHORIZATION`) to the final header/param
-    # name. Matches the legacy normalisation.
-    private def resolve_annotation_string_or_const(node : LibTreeSitter::TSNode, source : String) : String
+    # Resolve either a string literal, a local Java constant, or a
+    # qualified-identifier constant (`HttpHeaders.AUTHORIZATION`) to
+    # the final header/param name. Matches the legacy normalisation.
+    private def resolve_annotation_string_or_const(node : LibTreeSitter::TSNode,
+                                                   source : String,
+                                                   constants : Hash(String, String),
+                                                   current_class : String) : String
+      resolve_annotation_string_value(node, source, constants, current_class) || Noir::TreeSitter.node_text(node, source)
+    end
+
+    private def resolve_annotation_string_value(node : LibTreeSitter::TSNode,
+                                                source : String,
+                                                constants : Hash(String, String),
+                                                current_class : String,
+                                                depth = 0) : String?
+      return if depth > 16
+
       case Noir::TreeSitter.node_type(node)
       when "string_literal"
         decode_string_literal(node, source)
-      when "field_access"
-        normalise_http_header_constant(Noir::TreeSitter.node_text(node, source))
-      else
-        Noir::TreeSitter.node_text(node, source)
+      when "identifier", "field_access", "scoped_identifier"
+        text = Noir::TreeSitter.node_text(node, source)
+        return normalise_http_header_constant(text) if text.starts_with?("HttpHeaders.")
+
+        resolve_constant_reference(text, constants, current_class)
+      when "binary_expression"
+        return unless Noir::TreeSitter.node_text(node, source).includes?("+")
+        left = Noir::TreeSitter.field(node, "left")
+        right = Noir::TreeSitter.field(node, "right")
+        return unless left && right
+
+        left_value = resolve_annotation_string_value(left, source, constants, current_class, depth + 1)
+        right_value = resolve_annotation_string_value(right, source, constants, current_class, depth + 1)
+        return unless left_value && right_value
+
+        "#{left_value}#{right_value}"
+      when "parenthesized_expression"
+        Noir::TreeSitter.each_named_child(node) do |child|
+          if value = resolve_annotation_string_value(child, source, constants, current_class, depth + 1)
+            return value
+          end
+        end
       end
+    end
+
+    private def resolve_constant_reference(name : String,
+                                           constants : Hash(String, String),
+                                           current_class : String) : String?
+      unless current_class.empty?
+        if resolved = constants["#{current_class}.#{name}"]?
+          return resolved
+        end
+      end
+
+      constants[name]?
+    end
+
+    private def annotation_string_value_node?(node_type : String) : Bool
+      node_type == "string_literal" ||
+        node_type == "identifier" ||
+        node_type == "field_access" ||
+        node_type == "scoped_identifier" ||
+        node_type == "binary_expression" ||
+        node_type == "parenthesized_expression"
     end
 
     # `HttpHeaders.X_FRAME_OPTIONS` → `X-Frame-Options`.

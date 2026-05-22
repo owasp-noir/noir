@@ -6,6 +6,10 @@ import org.springframework.c.d.e.*;
 @RestController
 @RequestMapping("/items")
 public class ItemController {
+    private static final String FILTER_PARAM = "filter";
+    private static final String FILTER_DEFAULT = "all";
+    private static final String CLIENT_HEADER = "X-Client";
+    private static final String SESSION_COOKIE = "session-id";
 
     @GetMapping("/{id}")
     public Item getItem(@PathVariable Long id) throws ItemNotFoundException {
@@ -35,12 +39,22 @@ public class ItemController {
     public void requestDelete(){       
     }
 
+    @RequestMapping("/any-method")
+    public void requestAnyMethod(){
+    }
+
     @RequestMapping("/multiple/methods", method = {RequestMethod.GET, RequestMethod.POST})
     public void multipleMethods(){       
     }
 
     @RequestMapping("/multiple/methods2", method = [RequestMethod.GET, RequestMethod.POST])
     public void multipleMethods2(){       
+    }
+
+    @GetMapping("/constants")
+    public void constants(@RequestParam(name = FILTER_PARAM, defaultValue = FILTER_DEFAULT) String filter,
+                          @RequestHeader(CLIENT_HEADER) String client,
+                          @CookieValue(SESSION_COOKIE) String session) {
     }
 }
 

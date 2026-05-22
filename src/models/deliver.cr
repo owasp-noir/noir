@@ -139,7 +139,7 @@ class Deliver
     else
       # Check if pattern is just a method name
       upper_pattern = pattern.upcase
-      http_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE", "CONNECT"]
+      http_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE", "CONNECT", "QUERY"]
 
       if http_methods.includes?(upper_pattern)
         endpoint.method.upcase == upper_pattern

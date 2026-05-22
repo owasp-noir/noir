@@ -1,0 +1,24 @@
+<web-app xmlns="https://jakarta.ee/xml/ns/jakartaee"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="https://jakarta.ee/xml/ns/jakartaee https://jakarta.ee/xml/ns/jakartaee/web-app_6_0.xsd"
+         version="6.0">
+  <servlet>
+    <servlet-name>legacy</servlet-name>
+    <servlet-class>com.example.LegacyServlet</servlet-class>
+  </servlet>
+
+  <servlet-mapping>
+    <servlet-name>legacy</servlet-name>
+    <url-pattern>/legacy/submit</url-pattern>
+  </servlet-mapping>
+
+  <servlet>
+    <servlet-name>adminView</servlet-name>
+    <jsp-file>/WEB-INF/views/admin.jsp</jsp-file>
+  </servlet>
+
+  <servlet-mapping>
+    <servlet-name>adminView</servlet-name>
+    <url-pattern>/admin</url-pattern>
+  </servlet-mapping>
+</web-app>

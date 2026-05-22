@@ -1,6 +1,5 @@
 package com.example.api;
 
-import io.quarkus.runtime.annotations.RegisterForReflection;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.PUT;
@@ -18,7 +17,6 @@ import org.jboss.resteasy.reactive.RestCookie;
 
 @Path("/greetings")
 @Produces(MediaType.APPLICATION_JSON)
-@RegisterForReflection
 public class GreetingResource {
 
     @GET
