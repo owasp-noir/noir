@@ -9,7 +9,9 @@ module Detector::Java
       # Check Java files for JSP imports
       if filename.ends_with?(".java")
         return file_contents.includes?("javax.servlet.jsp") ||
-          file_contents.includes?("jakarta.servlet.jsp")
+          file_contents.includes?("jakarta.servlet.jsp") ||
+          file_contents.includes?("@WebServlet") ||
+          (file_contents.includes?("HttpServlet") && !!file_contents.match(/\bextends\s+HttpServlet\b/))
       end
 
       if filename.ends_with?(".xml")

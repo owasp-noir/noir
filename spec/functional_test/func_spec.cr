@@ -97,6 +97,12 @@ class FunctionalTester
               actual.method.should eq expected.method
             end
 
+            if expected.protocol != "http"
+              it "check - protocol [K: #{key}]" do
+                actual.protocol.should eq expected.protocol
+              end
+            end
+
             if expected.params.size > 0
               describe "check - params" do
                 expected.params.each do |param|

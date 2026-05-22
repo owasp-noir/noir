@@ -1,0 +1,2 @@
+GET /reports/:reportId controllers.ApiReports.show(reportId: Long)
+POST /reports controllers.ApiReports.create(request: Request)

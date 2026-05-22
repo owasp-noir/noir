@@ -14,9 +14,20 @@ import io.micronaut.http.annotation.PathVariable;
 import io.micronaut.http.annotation.Post;
 import io.micronaut.http.annotation.Put;
 import io.micronaut.http.annotation.QueryValue;
+import io.micronaut.http.annotation.RequestBean;
 
 @Controller("/books")
-public class BookController {
+public class BookController implements BookApi {
+    private static final String ADMIN_PREFIX = "/admin";
+    private static final String STATS_PATH = "/stats";
+    private static final String CODE_PARAM = "code";
+    private static final String CODE_DEFAULT = "none";
+    private static final String CODE_HEADER = "X-Code";
+    private static final String SESSION_COOKIE = "session-id";
+
+    static final class Routes {
+        static final String EXPORT = "/export";
+    }
 
     @Get
     public HttpResponse<?> list(@QueryValue("page") int page,
@@ -35,10 +46,42 @@ public class BookController {
         return HttpResponse.ok();
     }
 
+    @Get(ADMIN_PREFIX + STATS_PATH)
+    public HttpResponse<?> adminStats() {
+        return HttpResponse.ok();
+    }
+
+    @Get(uri = Routes.EXPORT)
+    public HttpResponse<?> export() {
+        return HttpResponse.ok();
+    }
+
+    @Get(value = "/search", produces = MediaType.APPLICATION_JSON)
+    public HttpResponse<?> search(@QueryValue(value = "q", defaultValue = "all") String query,
+                                  @Header(name = "X-Client") String client) {
+        return HttpResponse.ok();
+    }
+
+    @Get("/constants")
+    public HttpResponse<?> constants(@QueryValue(value = CODE_PARAM, defaultValue = CODE_DEFAULT) String code,
+                                     @Header(CODE_HEADER) String header) {
+        return HttpResponse.ok();
+    }
+
+    @Get("/filter")
+    public HttpResponse<?> filter(@RequestBean BookFilter filter) {
+        return HttpResponse.ok();
+    }
+
     @Post
     @Consumes(MediaType.APPLICATION_JSON)
     public HttpResponse<?> create(@Body Book book) {
         return HttpResponse.created("");
+    }
+
+    @Post(value = "/forms", consumes = MediaType.APPLICATION_FORM_URLENCODED)
+    public HttpResponse<?> formBody(@Body Book book) {
+        return HttpResponse.ok();
     }
 
     @Post("/login")
@@ -60,9 +103,32 @@ public class BookController {
         return HttpResponse.noContent();
     }
 
+    @Delete("/constants")
+    public HttpResponse<?> deleteConstants(@CookieValue(SESSION_COOKIE) String sessionId) {
+        return HttpResponse.noContent();
+    }
+
     @Patch("/{id}")
     @Consumes(MediaType.APPLICATION_JSON)
     public HttpResponse<?> patch(@PathVariable long id, Book book) {
         return HttpResponse.ok();
     }
+
+    @Override
+    public HttpResponse<?> interfaceLookup(String isbn, String edition) {
+        return HttpResponse.ok();
+    }
+
+    @Override
+    public HttpResponse<?> interfaceCreate(Book book) {
+        return HttpResponse.created("");
+    }
+}
+
+class BookFilter {
+    private String author;
+    private Integer year;
+
+    public void setAuthor(String author) { this.author = author; }
+    public void setYear(Integer year) { this.year = year; }
 }

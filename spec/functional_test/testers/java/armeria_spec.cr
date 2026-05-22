@@ -1,20 +1,24 @@
 require "../../func_spec.cr"
 
 expected_endpoints = [
-  Endpoint.new("/graphql", "GET"),
-  Endpoint.new("/internal/l7check", "GET"),
-  Endpoint.new("/zipkin/config.json", "GET"),
-  Endpoint.new("/zipkin/api", "GET"),
+  Endpoint.new("/graphql", "ANY"),
+  Endpoint.new("/internal/l7check", "ANY"),
+  Endpoint.new("/zipkin/config.json", "ANY"),
+  Endpoint.new("/zipkin/api", "ANY"),
   Endpoint.new("/zipkin", "GET"),
+  Endpoint.new("/zipkin", "HEAD"),
+  Endpoint.new("/favicon.ico", "GET"),
+  Endpoint.new("/favicon.ico", "HEAD"),
   Endpoint.new("/", "GET"),
+  Endpoint.new("/", "HEAD"),
 ]
 
 # Create endpoints with path parameters from TestParametersService.java
-user_service_endpoint = Endpoint.new("/api/users/{userId}", "GET")
+user_service_endpoint = Endpoint.new("/api/users/{userId}", "ANY")
 user_service_endpoint.push_param(Param.new("userId", "", "path"))
 expected_endpoints << user_service_endpoint
 
-review_service_endpoint = Endpoint.new("/api/products/{productId}/reviews", "GET")
+review_service_endpoint = Endpoint.new("/api/products/{productId}/reviews", "ANY")
 review_service_endpoint.push_param(Param.new("productId", "", "path"))
 expected_endpoints << review_service_endpoint
 
@@ -38,11 +42,59 @@ posts_endpoint = Endpoint.new("/posts/{postId}/status", "PATCH")
 posts_endpoint.push_param(Param.new("postId", "", "path"))
 expected_endpoints << posts_endpoint
 
+open_endpoint = Endpoint.new("/open/{openId}", "ANY")
+open_endpoint.push_param(Param.new("openId", "", "path"))
+expected_endpoints << open_endpoint
+
+bulk_get_endpoint = Endpoint.new("/bulk/{bulkId}", "GET")
+bulk_get_endpoint.push_param(Param.new("bulkId", "", "path"))
+expected_endpoints << bulk_get_endpoint
+
+bulk_post_endpoint = Endpoint.new("/bulk/{bulkId}", "POST")
+bulk_post_endpoint.push_param(Param.new("bulkId", "", "path"))
+expected_endpoints << bulk_post_endpoint
+
+insight_put_endpoint = Endpoint.new("/insights/{insightId}", "PUT")
+insight_put_endpoint.push_param(Param.new("insightId", "", "path"))
+expected_endpoints << insight_put_endpoint
+
+insight_delete_endpoint = Endpoint.new("/insights/{insightId}", "DELETE")
+insight_delete_endpoint.push_param(Param.new("insightId", "", "path"))
+expected_endpoints << insight_delete_endpoint
+
+wildcard_endpoint = Endpoint.new("/wildcards/{wildcardId}", "ANY")
+wildcard_endpoint.push_param(Param.new("wildcardId", "", "path"))
+expected_endpoints << wildcard_endpoint
+
+route_builder_get_endpoint = Endpoint.new("/route-builder/{builderId}", "GET")
+route_builder_get_endpoint.push_param(Param.new("builderId", "", "path"))
+expected_endpoints << route_builder_get_endpoint
+
+route_builder_post_endpoint = Endpoint.new("/route-builder/{builderId}", "POST")
+route_builder_post_endpoint.push_param(Param.new("builderId", "", "path"))
+expected_endpoints << route_builder_post_endpoint
+
+catalog_get_endpoint = Endpoint.new("/catalog/{catalogId}", "GET")
+catalog_get_endpoint.push_param(Param.new("catalogId", "", "path"))
+expected_endpoints << catalog_get_endpoint
+
+catalog_status_patch_endpoint = Endpoint.new("/catalog/{catalogId}/status", "PATCH")
+catalog_status_patch_endpoint.push_param(Param.new("catalogId", "", "path"))
+expected_endpoints << catalog_status_patch_endpoint
+
+prefixed_catalog_get_endpoint = Endpoint.new("/catalog-prefix/catalog/{catalogId}", "GET")
+prefixed_catalog_get_endpoint.push_param(Param.new("catalogId", "", "path"))
+expected_endpoints << prefixed_catalog_get_endpoint
+
+prefixed_catalog_status_patch_endpoint = Endpoint.new("/catalog-prefix/catalog/{catalogId}/status", "PATCH")
+prefixed_catalog_status_patch_endpoint.push_param(Param.new("catalogId", "", "path"))
+expected_endpoints << prefixed_catalog_status_patch_endpoint
+
 # Create endpoints from AnnotatedService.java - annotation-based service definitions
 # GET /annotated/users with query params: page, limit
 annotated_users_get = Endpoint.new("/annotated/users", "GET")
 annotated_users_get.push_param(Param.new("page", "", "query"))
-annotated_users_get.push_param(Param.new("limit", "", "query"))
+annotated_users_get.push_param(Param.new("limit", "25", "query"))
 expected_endpoints << annotated_users_get
 
 # GET /annotated/users/{userId} with path param: userId and header: Authorization
@@ -51,15 +103,17 @@ annotated_user_get.push_param(Param.new("Authorization", "", "header"))
 annotated_user_get.push_param(Param.new("userId", "", "path"))
 expected_endpoints << annotated_user_get
 
-# POST /annotated/users with json body: user and header: Content-Type
+# POST /annotated/users with json body fields from User and header: Content-Type
 annotated_users_post = Endpoint.new("/annotated/users", "POST")
-annotated_users_post.push_param(Param.new("user", "", "json"))
+annotated_users_post.push_param(Param.new("name", "", "json"))
+annotated_users_post.push_param(Param.new("email", "", "json"))
 annotated_users_post.push_param(Param.new("Content-Type", "", "header"))
 expected_endpoints << annotated_users_post
 
-# PUT /annotated/users/{userId} with path param: userId and json body: user
+# PUT /annotated/users/{userId} with path param: userId and json body fields from User
 annotated_user_put = Endpoint.new("/annotated/users/{userId}", "PUT")
-annotated_user_put.push_param(Param.new("user", "", "json"))
+annotated_user_put.push_param(Param.new("name", "", "json"))
+annotated_user_put.push_param(Param.new("email", "", "json"))
 annotated_user_put.push_param(Param.new("userId", "", "path"))
 expected_endpoints << annotated_user_put
 
@@ -90,6 +144,22 @@ expected_endpoints << annotated_health_head
 annotated_cors_options = Endpoint.new("/annotated/cors", "OPTIONS")
 annotated_cors_options.push_param(Param.new("Origin", "", "header"))
 expected_endpoints << annotated_cors_options
+
+prefixed_report_get = Endpoint.new("/annotated/prefix/reports/{reportId}", "GET")
+prefixed_report_get.push_param(Param.new("X-Trace", "", "header"))
+prefixed_report_get.push_param(Param.new("reportId", "", "path"))
+expected_endpoints << prefixed_report_get
+
+expected_endpoints << Endpoint.new("/annotated/prefix/submit", "POST")
+expected_endpoints << Endpoint.new("/annotated/prefix/submit-alt", "POST")
+
+mounted_detail_get = Endpoint.new("/mounted/details/{detailId}", "GET")
+mounted_detail_get.push_param(Param.new("detailId", "", "path"))
+expected_endpoints << mounted_detail_get
+
+mounted_create_post = Endpoint.new("/mounted/create", "POST")
+mounted_create_post.push_param(Param.new("title", "", "json"))
+expected_endpoints << mounted_create_post
 
 FunctionalTester.new("fixtures/java/armeria/", {
   :techs     => 1,

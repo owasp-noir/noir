@@ -39,6 +39,28 @@ describe "Detect Java JSP" do
     instance.detect("MyServlet.java", content).should be_true
   end
 
+  it "detects @WebServlet classes" do
+    content = <<-JAVA
+      import jakarta.servlet.annotation.WebServlet;
+      import jakarta.servlet.http.HttpServlet;
+
+      @WebServlet("/reports")
+      public class ReportServlet extends HttpServlet {
+      }
+      JAVA
+    instance.detect("ReportServlet.java", content).should be_true
+  end
+
+  it "detects direct HttpServlet classes" do
+    content = <<-JAVA
+      import javax.servlet.http.HttpServlet;
+
+      public class LegacyServlet extends HttpServlet {
+      }
+      JAVA
+    instance.detect("LegacyServlet.java", content).should be_true
+  end
+
   it "does not detect pom.xml with javax.servlet.jsp dependency" do
     content = <<-XML
       <dependency>

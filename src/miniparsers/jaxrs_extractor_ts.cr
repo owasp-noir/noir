@@ -2,6 +2,7 @@ require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
 require "./java_callee_extractor"
 require "./java_parameter_extractor_ts"
+require "./java_route_extractor_ts"
 require "./import_graph"
 
 module Noir
@@ -10,6 +11,10 @@ module Noir
   # Walks `@Path` resource classes and emits one `Endpoint`-shaped
   # `Route` per HTTP-method-annotated method. Recognises:
   #
+  #   * Class-level `@ServerEndpoint("/x")` — surfaced as `GET`
+  #     with `protocol = "ws"`.
+  #   * Application-level `@ApplicationPath("/api")` for analyzer
+  #     adapters that need to prefix resource routes.
   #   * Class-level `@Path("/x")` — joined onto each method's path
   #     (or `@Path("/sub")` if the method has one).
   #   * Verb annotations: `@GET`, `@POST`, `@PUT`, `@DELETE`,
@@ -27,9 +32,9 @@ module Noir
   #     request body and expanded against a caller-supplied DTO
   #     index (same pipeline as Spring's `@RequestBody`).
   #
-  # Out of scope for this first cut: meta-annotations, sub-resource
-  # locators (`@Path` returning a sub-resource), `@MatrixParam`,
-  # `@Context` (always skipped — framework injection, not user input).
+  # Out of scope for this first cut: meta-annotations,
+  # `@MatrixParam`, `@Context` (always skipped — framework
+  # injection, not user input).
   module TreeSitterJaxRsExtractor
     extend self
 
@@ -73,6 +78,8 @@ module Noir
       "integer", "character",
     }
 
+    alias SourceEntry = Tuple(String, String) # file_path, source
+
     struct Route
       getter verb : String
       getter path : String
@@ -82,9 +89,11 @@ module Noir
       getter parameter_format : String?
       getter params : Array(Param)
       getter callees : Array(Tuple(String, Int32))
+      getter file_path : String?
+      getter protocol : String
 
       def initialize(@verb, @path, @class_name, @method_name, @line,
-                     @parameter_format, @params, @callees)
+                     @parameter_format, @params, @callees, @file_path = nil, @protocol = "http")
       end
     end
 
@@ -95,11 +104,12 @@ module Noir
     def extract_routes(source : String,
                        dto_index : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)) = {} of String => Array(TreeSitterJavaParameterExtractor::FieldInfo),
                        bean_index : Hash(String, Array(Param)) = {} of String => Array(Param),
+                       subresource_sources : Hash(String, SourceEntry) = {} of String => SourceEntry,
                        *,
                        include_callees : Bool = false) : Array(Route)
       routes = [] of Route
       Noir::TreeSitter.parse_java(source) do |root|
-        routes.concat(extract_routes_from(root, source, dto_index, bean_index, include_callees: include_callees))
+        routes.concat(extract_routes_from(root, source, dto_index, bean_index, subresource_sources, include_callees: include_callees))
       end
       routes
     end
@@ -111,13 +121,61 @@ module Noir
                             source : String,
                             dto_index : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)) = {} of String => Array(TreeSitterJavaParameterExtractor::FieldInfo),
                             bean_index : Hash(String, Array(Param)) = {} of String => Array(Param),
+                            subresource_sources : Hash(String, SourceEntry) = {} of String => SourceEntry,
                             *,
                             include_callees : Bool = false) : Array(Route)
       routes = [] of Route
-      walk_classes(root) do |decl|
-        collect_class_routes(decl, source, dto_index, bean_index, routes, include_callees)
+      classes = collect_classes(root, source)
+      constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source)
+      classes.each_value do |decl|
+        next unless Noir::TreeSitter.node_type(decl) == "class_declaration"
+        class_name = type_identifier_text(decl, source)
+        collect_server_endpoint_route(decl, source, routes, constants, class_name)
+        next unless annotation_string_value(decl, "Path", source, constants, class_name)
+        collect_class_routes(decl, source, dto_index, bean_index, routes, include_callees,
+          class_index: classes, constants: constants, subresource_sources: subresource_sources)
       end
       routes
+    end
+
+    private def collect_server_endpoint_route(decl : LibTreeSitter::TSNode,
+                                              source : String,
+                                              routes : Array(Route),
+                                              constants : Hash(String, String),
+                                              class_name : String)
+      endpoint_path = annotation_string_value(decl, "ServerEndpoint", source, constants, class_name)
+      return unless endpoint_path
+
+      line = annotation_line(decl, "ServerEndpoint", source) || Noir::TreeSitter.node_start_row(decl)
+      routes << Route.new("GET", endpoint_path, class_name, "", line, nil,
+        [] of Param, [] of Tuple(String, Int32), nil, "ws")
+    end
+
+    def extract_class_names(source : String) : Array(String)
+      names = [] of String
+      Noir::TreeSitter.parse_java(source) do |root|
+        names = collect_classes(root, source).keys
+      end
+      names
+    end
+
+    def extract_application_path(source : String) : String?
+      result : String? = nil
+      Noir::TreeSitter.parse_java(source) do |root|
+        result = extract_application_path_from(root, source)
+      end
+      result
+    end
+
+    def extract_application_path_from(root : LibTreeSitter::TSNode, source : String) : String?
+      constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source)
+      collect_classes(root, source).each_value do |decl|
+        class_name = type_identifier_text(decl, source)
+        if path = annotation_string_value(decl, "ApplicationPath", source, constants, class_name)
+          return path
+        end
+      end
+      nil
     end
 
     # Read JAX-RS-annotated fields (`@QueryParam`, `@HeaderParam`,
@@ -126,10 +184,11 @@ module Noir
     def extract_bean_fields(source : String) : Hash(String, Array(Param))
       results = Hash(String, Array(Param)).new
       Noir::TreeSitter.parse_java(source) do |root|
+        constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source)
         walk_classes(root) do |decl|
           name = type_identifier_text(decl, source)
           next if name.empty?
-          params = collect_bean_params(decl, source)
+          params = collect_bean_params(decl, source, constants, name)
           results[name] = params unless params.empty?
         end
       end
@@ -137,6 +196,15 @@ module Noir
     end
 
     # ---- private ------------------------------------------------------
+
+    private def collect_classes(root : LibTreeSitter::TSNode, source : String) : Hash(String, LibTreeSitter::TSNode)
+      classes = Hash(String, LibTreeSitter::TSNode).new
+      walk_classes(root) do |decl|
+        name = type_identifier_text(decl, source)
+        classes[name] ||= decl unless name.empty?
+      end
+      classes
+    end
 
     private def walk_classes(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
       ty = Noir::TreeSitter.node_type(node)
@@ -160,10 +228,25 @@ module Noir
                                      dto_index : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)),
                                      bean_index : Hash(String, Array(Param)),
                                      routes : Array(Route),
-                                     include_callees : Bool = false)
+                                     include_callees : Bool = false,
+                                     base_path : String? = nil,
+                                     inherited_consumes : String? = nil,
+                                     class_index : Hash(String, LibTreeSitter::TSNode)? = nil,
+                                     constants : Hash(String, String)? = nil,
+                                     subresource_sources : Hash(String, SourceEntry) = {} of String => SourceEntry,
+                                     current_file : String? = nil,
+                                     visited : Set(String)? = nil,
+                                     method_excludes : Set(String) = Set(String).new)
       class_name = type_identifier_text(decl, source)
-      class_path = annotation_string_value(decl, "Path", source) || ""
-      class_consumes = consumes_format(decl, source)
+      local_constants = constants || TreeSitterJavaRouteExtractor.extract_string_constants(source)
+      own_class_path = annotation_string_value(decl, "Path", source, local_constants, class_name) || ""
+      class_path = base_path || own_class_path
+      class_consumes = consumes_format(decl, source) || inherited_consumes
+      local_class_index = class_index || collect_classes(decl, source)
+      local_visited = visited || Set(String).new
+      visit_key = "#{class_name}@#{class_path}"
+      return if local_visited.includes?(visit_key)
+      local_visited.add(visit_key)
 
       body = class_body_node(decl)
       return unless body
@@ -181,22 +264,151 @@ module Noir
             break
           end
         end
-        next unless verb && verb_node
 
         method_name = method_name_of(member, source) || ""
-        method_path = annotation_string_value(member, "Path", source) || ""
+        method_path = annotation_string_value(member, "Path", source, local_constants, class_name) || ""
 
         full_path = join_paths(class_path, method_path)
         method_consumes = consumes_format(member, source) || class_consumes
 
+        unless verb && verb_node
+          next if method_excludes.includes?(method_name)
+          next if method_path.empty?
+          return_type = method_return_type(member, source)
+          next if return_type.empty?
+          if subresource = local_class_index[return_type]?
+            collect_class_routes(subresource, source, dto_index, bean_index, routes, include_callees,
+              base_path: full_path, inherited_consumes: method_consumes, class_index: local_class_index,
+              constants: local_constants, subresource_sources: subresource_sources, current_file: current_file,
+              visited: local_visited)
+          elsif source_entry = subresource_sources[return_type]?
+            subresource_path, subresource_source = source_entry
+            collect_cross_file_subresource(return_type, subresource_path, subresource_source,
+              full_path, method_consumes, dto_index, bean_index, routes, include_callees,
+              subresource_sources, local_visited)
+          end
+          next
+        end
+
+        next if method_excludes.includes?(method_name)
         params = collect_method_params(member, source, verb, method_consumes,
-          dto_index, bean_index)
+          dto_index, bean_index, local_constants, class_name)
 
         line = Noir::TreeSitter.node_start_row(verb_node)
         callees = include_callees ? collect_method_callees(member, source) : [] of Tuple(String, Int32)
         routes << Route.new(verb, full_path, class_name, method_name, line,
-          method_consumes, params, callees)
+          method_consumes, params, callees, current_file)
       end
+
+      collect_implemented_interface_routes(decl, source, class_path, class_consumes,
+        dto_index, bean_index, routes, include_callees, local_class_index,
+        local_constants, subresource_sources, current_file, local_visited)
+    end
+
+    private def collect_implemented_interface_routes(decl : LibTreeSitter::TSNode,
+                                                     source : String,
+                                                     class_path : String,
+                                                     class_consumes : String?,
+                                                     dto_index : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)),
+                                                     bean_index : Hash(String, Array(Param)),
+                                                     routes : Array(Route),
+                                                     include_callees : Bool,
+                                                     class_index : Hash(String, LibTreeSitter::TSNode),
+                                                     constants : Hash(String, String),
+                                                     subresource_sources : Hash(String, SourceEntry),
+                                                     current_file : String?,
+                                                     visited : Set(String))
+      return unless Noir::TreeSitter.node_type(decl) == "class_declaration"
+
+      implemented_names = implemented_interface_names(decl, source)
+      return if implemented_names.empty?
+
+      method_excludes = jaxrs_annotated_method_names(decl, source)
+      implemented_names.each do |interface_name|
+        if interface_decl = class_index[interface_name]?
+          interface_path = annotation_string_value(interface_decl, "Path", source, constants, interface_name) || ""
+          collect_class_routes(interface_decl, source, dto_index, bean_index, routes, include_callees,
+            base_path: join_paths(class_path, interface_path), inherited_consumes: class_consumes,
+            class_index: class_index, constants: constants, subresource_sources: subresource_sources,
+            current_file: current_file, visited: visited, method_excludes: method_excludes)
+        elsif source_entry = subresource_sources[interface_name]?
+          interface_source_path, interface_source = source_entry
+          collect_cross_file_interface(interface_name, interface_source_path, interface_source,
+            class_path, class_consumes, dto_index, bean_index, routes, include_callees,
+            subresource_sources, visited, method_excludes)
+        end
+      end
+    end
+
+    private def collect_cross_file_interface(interface_name : String,
+                                             interface_path : String,
+                                             interface_source : String,
+                                             class_path : String,
+                                             class_consumes : String?,
+                                             dto_index : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)),
+                                             bean_index : Hash(String, Array(Param)),
+                                             routes : Array(Route),
+                                             include_callees : Bool,
+                                             subresource_sources : Hash(String, SourceEntry),
+                                             visited : Set(String),
+                                             method_excludes : Set(String))
+      Noir::TreeSitter.parse_java(interface_source) do |root|
+        classes = collect_classes(root, interface_source)
+        interface_decl = classes[interface_name]?
+        next unless interface_decl
+        constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, interface_source)
+        own_path = annotation_string_value(interface_decl, "Path", interface_source, constants, interface_name) || ""
+        collect_class_routes(interface_decl, interface_source, dto_index, bean_index, routes, include_callees,
+          base_path: join_paths(class_path, own_path), inherited_consumes: class_consumes,
+          class_index: classes, constants: constants, subresource_sources: subresource_sources,
+          current_file: interface_path, visited: visited, method_excludes: method_excludes)
+      end
+    end
+
+    private def collect_cross_file_subresource(return_type : String,
+                                               subresource_path : String,
+                                               subresource_source : String,
+                                               base_path : String,
+                                               inherited_consumes : String?,
+                                               dto_index : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)),
+                                               bean_index : Hash(String, Array(Param)),
+                                               routes : Array(Route),
+                                               include_callees : Bool,
+                                               subresource_sources : Hash(String, SourceEntry),
+                                               visited : Set(String))
+      Noir::TreeSitter.parse_java(subresource_source) do |root|
+        classes = collect_classes(root, subresource_source)
+        subresource = classes[return_type]?
+        next unless subresource
+        constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, subresource_source)
+        collect_class_routes(subresource, subresource_source, dto_index, bean_index, routes, include_callees,
+          base_path: base_path, inherited_consumes: inherited_consumes, class_index: classes,
+          constants: constants, subresource_sources: subresource_sources, current_file: subresource_path,
+          visited: visited)
+      end
+    end
+
+    private def method_return_type(method : LibTreeSitter::TSNode, source : String) : String
+      if type_node = Noir::TreeSitter.field(method, "type")
+        return class_return_type(type_node, source)
+      end
+
+      Noir::TreeSitter.each_named_child(method) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "type_identifier", "generic_type", "scoped_type_identifier"
+          return class_return_type(child, source)
+        end
+      end
+      ""
+    end
+
+    private def class_return_type(type_node : LibTreeSitter::TSNode, source : String) : String
+      text = Noir::TreeSitter.node_text(type_node, source)
+      if match = text.match(/\bClass\s*<\s*([A-Za-z_][A-Za-z0-9_]*)\s*>/)
+        return match[1]
+      end
+
+      leaf_type_name(type_node, source)
     end
 
     private def collect_method_callees(method : LibTreeSitter::TSNode,
@@ -222,6 +434,87 @@ module Noir
         return Noir::TreeSitter.node_text(child, source) if Noir::TreeSitter.node_type(child) == "identifier"
       end
       nil
+    end
+
+    private def jaxrs_annotated_method_names(decl : LibTreeSitter::TSNode, source : String) : Set(String)
+      names = Set(String).new
+      body = class_body_node(decl)
+      return names unless body
+
+      Noir::TreeSitter.each_named_child(body) do |member|
+        next unless Noir::TreeSitter.node_type(member) == "method_declaration"
+        next unless method_has_jaxrs_binding?(member, source)
+        name = method_name_of(member, source)
+        names << name if name
+      end
+      names
+    end
+
+    private def method_has_jaxrs_binding?(method : LibTreeSitter::TSNode, source : String) : Bool
+      each_annotation(method, source) do |name, _, _|
+        return true if name == "Path" || name == "Consumes" || HTTP_VERB_ANNOTATIONS.has_key?(name)
+      end
+      false
+    end
+
+    private def implemented_interface_names(class_decl : LibTreeSitter::TSNode, source : String) : Array(String)
+      header = Noir::TreeSitter.node_text(class_decl, source)
+      if body_start = header.index('{')
+        header = header[...body_start]
+      end
+
+      match = header.match(/\bimplements\s+(.+)\z/m)
+      return [] of String unless match
+
+      names = split_top_level_commas(match[1]).compact_map do |raw|
+        type_name = strip_generic_arguments(raw.strip)
+        next if type_name.empty?
+        type_name = type_name.split(/\s+/).first? || type_name
+        if idx = type_name.rindex('.')
+          type_name[(idx + 1)..]
+        else
+          type_name
+        end
+      end
+      names.uniq!
+      names
+    end
+
+    private def split_top_level_commas(text : String) : Array(String)
+      parts = [] of String
+      start = 0
+      depth = 0
+      text.each_char_with_index do |char, index|
+        case char
+        when '<'
+          depth += 1
+        when '>'
+          depth -= 1 if depth > 0
+        when ','
+          if depth == 0
+            parts << text[start...index]
+            start = index + 1
+          end
+        end
+      end
+      parts << text[start..]
+      parts
+    end
+
+    private def strip_generic_arguments(text : String) : String
+      String.build do |io|
+        depth = 0
+        text.each_char do |char|
+          case char
+          when '<'
+            depth += 1
+          when '>'
+            depth -= 1 if depth > 0
+          else
+            io << char if depth == 0
+          end
+        end
+      end.strip
     end
 
     # ---- annotation helpers ------------------------------------------
@@ -267,19 +560,31 @@ module Noir
       nil
     end
 
-    # `@Path("/x")` / `@Path(value = "/x")` — return the string. Skip
-    # if the annotation isn't found or value isn't a string literal.
+    private def annotation_line(decl : LibTreeSitter::TSNode, ann_name : String, source : String) : Int32?
+      result : Int32? = nil
+      each_annotation(decl, source) do |name, _, ann|
+        next unless name == ann_name
+        result = Noir::TreeSitter.node_start_row(ann)
+      end
+      result
+    end
+
+    # `@Path("/x")` / `@Path(value = "/x")` / `@Path(Constants.X)` —
+    # return the resolved string. Skip if the annotation isn't found
+    # or value isn't statically resolvable.
     private def annotation_string_value(decl : LibTreeSitter::TSNode,
                                         ann_name : String,
-                                        source : String) : String?
+                                        source : String,
+                                        constants : Hash(String, String) = Hash(String, String).new,
+                                        current_class : String = "") : String?
       result : String? = nil
       each_annotation(decl, source) do |name, args, _|
         next unless name == ann_name
         next unless args
         Noir::TreeSitter.each_named_child(args) do |child|
           case Noir::TreeSitter.node_type(child)
-          when "string_literal"
-            result = decode_string_literal(child, source)
+          when "string_literal", "identifier", "field_access", "scoped_identifier", "binary_expression", "parenthesized_expression"
+            result = resolve_path_value(child, source, constants, current_class)
           when "element_value_pair"
             key = ""
             value : LibTreeSitter::TSNode? = nil
@@ -291,13 +596,46 @@ module Noir
                 value = sub if value.nil?
               end
             end
-            if key == "value" && value && Noir::TreeSitter.node_type(value) == "string_literal"
-              result = decode_string_literal(value, source)
+            if key == "value" && value
+              result = resolve_path_value(value, source, constants, current_class)
             end
           end
         end
       end
       result
+    end
+
+    private def resolve_path_value(node : LibTreeSitter::TSNode,
+                                   source : String,
+                                   constants : Hash(String, String),
+                                   current_class : String = "",
+                                   depth = 0) : String?
+      return if depth > 16
+
+      case Noir::TreeSitter.node_type(node)
+      when "string_literal"
+        decode_string_literal(node, source)
+      when "identifier"
+        text = Noir::TreeSitter.node_text(node, source)
+        constants["#{current_class}.#{text}"]? || constants[text]?
+      when "field_access", "scoped_identifier"
+        constants[Noir::TreeSitter.node_text(node, source)]?
+      when "binary_expression"
+        return unless Noir::TreeSitter.node_text(node, source).includes?("+")
+        left = Noir::TreeSitter.field(node, "left")
+        right = Noir::TreeSitter.field(node, "right")
+        return unless left && right
+        left_value = resolve_path_value(left, source, constants, current_class, depth + 1)
+        right_value = resolve_path_value(right, source, constants, current_class, depth + 1)
+        return unless left_value && right_value
+        "#{left_value}#{right_value}"
+      when "parenthesized_expression"
+        Noir::TreeSitter.each_named_child(node) do |child|
+          if value = resolve_path_value(child, source, constants, current_class, depth + 1)
+            return value
+          end
+        end
+      end
     end
 
     # `@Consumes(MediaType.APPLICATION_FORM_URLENCODED)` →
@@ -347,14 +685,16 @@ module Noir
                                       verb : String,
                                       method_format : String?,
                                       dto_index : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)),
-                                      bean_index : Hash(String, Array(Param))) : Array(Param)
+                                      bean_index : Hash(String, Array(Param)),
+                                      constants : Hash(String, String),
+                                      current_class : String) : Array(Param)
       params = [] of Param
       formal = formal_parameters_node(method)
       return params unless formal
 
       Noir::TreeSitter.each_named_child(formal) do |param|
         next unless Noir::TreeSitter.node_type(param) == "formal_parameter"
-        emit_param_for(param, source, verb, method_format, dto_index, bean_index, params)
+        emit_param_for(param, source, verb, method_format, dto_index, bean_index, constants, current_class, params)
       end
       params
     end
@@ -372,6 +712,8 @@ module Noir
                                method_format : String?,
                                dto_index : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)),
                                bean_index : Hash(String, Array(Param)),
+                               constants : Hash(String, String),
+                               current_class : String,
                                sink : Array(Param))
       param_name, type_name = parameter_name_and_type(param, source)
       return if param_name.empty?
@@ -383,16 +725,16 @@ module Noir
       each_annotation(param, source) do |name, args, _|
         if PATH_PARAM_ANNOTATIONS.includes?(name)
           ann_kind = :path
-          ann_arg = first_string_arg(args, source)
+          ann_arg = first_string_arg(args, source, constants, current_class)
         elsif name == "BeanParam"
           ann_kind = :bean
         elsif name == "Context"
           ann_kind = :context
         elsif name == "DefaultValue"
-          default_value = first_string_arg(args, source)
+          default_value = first_string_arg(args, source, constants, current_class)
         elsif format = PARAM_ANNOTATION_FORMAT[name]?
           ann_kind = :param
-          ann_arg = first_string_arg(args, source)
+          ann_arg = first_string_arg(args, source, constants, current_class)
           ann_arg ||= ""
           sink << Param.new(ann_arg.presence || param_name, default_value || "", format)
         end
@@ -456,11 +798,27 @@ module Noir
       ""
     end
 
-    private def first_string_arg(args : LibTreeSitter::TSNode?, source : String) : String?
+    private def first_string_arg(args : LibTreeSitter::TSNode?,
+                                 source : String,
+                                 constants : Hash(String, String) = Hash(String, String).new,
+                                 current_class : String = "") : String?
       return unless args
       Noir::TreeSitter.each_named_child(args) do |child|
-        if Noir::TreeSitter.node_type(child) == "string_literal"
+        case Noir::TreeSitter.node_type(child)
+        when "string_literal"
           return decode_string_literal(child, source)
+        when "identifier", "field_access", "scoped_identifier", "binary_expression", "parenthesized_expression"
+          if value = resolve_path_value(child, source, constants, current_class)
+            return value
+          end
+        when "element_value_pair"
+          key = Noir::TreeSitter.field(child, "key")
+          val = Noir::TreeSitter.field(child, "value")
+          next unless key && val
+          next unless Noir::TreeSitter.node_text(key, source) == "value"
+          if value = resolve_path_value(val, source, constants, current_class)
+            return value
+          end
         end
       end
       nil
@@ -468,7 +826,10 @@ module Noir
 
     # ---- @BeanParam field collection --------------------------------
 
-    private def collect_bean_params(decl : LibTreeSitter::TSNode, source : String) : Array(Param)
+    private def collect_bean_params(decl : LibTreeSitter::TSNode,
+                                    source : String,
+                                    constants : Hash(String, String),
+                                    current_class : String) : Array(Param)
       params = [] of Param
       body = class_body_node(decl)
       return params unless body
@@ -489,14 +850,50 @@ module Noir
         end
         next if field_name.empty?
 
+        default_value = annotation_value(member, "DefaultValue", source, constants, current_class) || ""
         each_annotation(member, source) do |name, args, _|
           if format = PARAM_ANNOTATION_FORMAT[name]?
-            arg = first_string_arg(args, source) || field_name
-            params << Param.new(arg, "", format)
+            arg = first_string_arg(args, source, constants, current_class) || field_name
+            params << Param.new(arg, default_value, format)
+          end
+        end
+      end
+
+      Noir::TreeSitter.each_named_child(body) do |member|
+        next unless Noir::TreeSitter.node_type(member) == "method_declaration"
+
+        method_name = method_name_of(member, source) || ""
+        default_value = annotation_value(member, "DefaultValue", source, constants, current_class) || ""
+        each_annotation(member, source) do |name, args, _|
+          if format = PARAM_ANNOTATION_FORMAT[name]?
+            fallback = setter_property_name(method_name)
+            next if fallback.empty?
+            arg = first_string_arg(args, source, constants, current_class) || fallback
+            params << Param.new(arg, default_value, format)
           end
         end
       end
       params
+    end
+
+    private def annotation_value(decl : LibTreeSitter::TSNode,
+                                 ann_name : String,
+                                 source : String,
+                                 constants : Hash(String, String),
+                                 current_class : String) : String?
+      result : String? = nil
+      each_annotation(decl, source) do |name, args, _|
+        next unless name == ann_name
+        result = first_string_arg(args, source, constants, current_class)
+      end
+      result
+    end
+
+    private def setter_property_name(method_name : String) : String
+      return "" unless method_name.starts_with?("set") && method_name.size > 3
+
+      raw = method_name[3..]
+      raw[0].downcase + raw[1..]
     end
   end
 end

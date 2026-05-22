@@ -1,0 +1,3 @@
+micronaut:
+  server:
+    context-path: /mn

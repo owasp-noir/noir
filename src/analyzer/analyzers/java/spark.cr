@@ -27,6 +27,7 @@ module Analyzer::Java
         "options" => "OPTIONS",
         "trace"   => "TRACE",
         "connect" => "CONNECT",
+        "any"     => "ANY",
       },
       nest_methods: Set{"path"},
       transparent_methods: Set{"before", "after", "afterAfter"},
@@ -34,6 +35,7 @@ module Analyzer::Java
       header_methods: Set{"headers"},
       cookie_methods: Set{"cookie"},
       body_methods: Set{"body", "bodyAsBytes"},
+      websocket_methods: Set{"webSocket"},
     )
 
     def analyze
@@ -50,6 +52,11 @@ module Analyzer::Java
         Noir::TreeSitterJvmLambdaDslExtractor.extract_routes(content, CONFIG, include_callees: include_callee).each do |route|
           @result << build_endpoint(route, path)
         end
+
+        collect_static_file_endpoints(content).each do |entry|
+          endpoint_path, line = entry
+          @result << Endpoint.new(endpoint_path, "GET", Details.new(PathInfo.new(path, line)))
+        end
       end
 
       Fiber.yield
@@ -61,10 +68,14 @@ module Analyzer::Java
       route.query_params.each { |name| params << Param.new(name, "", "query") }
       route.header_params.each { |name| params << Param.new(name, "", "header") }
       route.cookie_params.each { |name| params << Param.new(name, "", "cookie") }
+      route.path.scan(%r{/:([A-Za-z_][A-Za-z0-9_]*)}) do |match|
+        params << Param.new(match[1], "", "path")
+      end
       params << Param.new("body", "", "json") if route.has_body?
 
       details = Details.new(PathInfo.new(path, route.line + 1))
       endpoint = Endpoint.new(route.path, route.verb, params, details)
+      endpoint.protocol = route.protocol
 
       # 1-hop callees out of the handler lambda body. The Route
       # extractor doesn't carry the file path, so attach it here.
@@ -74,6 +85,38 @@ module Analyzer::Java
       end
 
       endpoint
+    end
+
+    private def collect_static_file_endpoints(content : String) : Array(Tuple(String, Int32))
+      endpoints = [] of Tuple(String, Int32)
+      scan_static_file_call(content, "staticFiles.location", endpoints)
+      scan_static_file_call(content, "staticFiles.externalLocation", endpoints)
+      scan_static_file_call(content, "staticFileLocation", endpoints)
+      scan_static_file_call(content, "externalStaticFileLocation", endpoints)
+      endpoints.uniq
+    end
+
+    private def scan_static_file_call(content : String,
+                                      method_name : String,
+                                      endpoints : Array(Tuple(String, Int32)))
+      offset = 0
+      while marker = content.index(method_name, offset)
+        offset = marker + method_name.size
+        next unless static_file_call_name?(content, marker, method_name)
+
+        endpoints << {"/**", content[0...marker].count('\n') + 1}
+      end
+    end
+
+    private def static_file_call_name?(content : String, marker : Int32, method_name : String) : Bool
+      before = marker.zero? ? '\0' : content[marker - 1]
+      return false if before.ascii_alphanumeric? || before == '_'
+
+      after_idx = marker + method_name.size
+      while after_idx < content.size && content[after_idx].ascii_whitespace?
+        after_idx += 1
+      end
+      after_idx < content.size && content[after_idx] == '('
     end
   end
 end
