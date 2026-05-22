@@ -1,5 +1,6 @@
 require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
+require "./js_callee_extractor"
 
 module Noir
   # Tree-sitter-backed AdonisJS extractor.
@@ -83,22 +84,23 @@ module Noir
       getter verb : String
       getter path : String
       getter line : Int32
+      getter callees : Array(JSCalleeExtractor::Entry)
 
-      def initialize(@verb, @path, @line)
+      def initialize(@verb, @path, @line, @callees = [] of JSCalleeExtractor::Entry)
       end
     end
 
-    def extract_routes(source : String) : Array(Route)
+    def extract_routes(source : String, include_callees : Bool = false) : Array(Route)
       routes = [] of Route
       Noir::TreeSitter.parse_javascript(source) do |root|
-        walk(root, source, "", routes, 0)
+        walk(root, source, "", routes, 0, include_callees)
       end
       routes
     end
 
     # ---- traversal --------------------------------------------------
 
-    private def walk(node : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32)
+    private def walk(node : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32, include_callees : Bool)
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
 
       if Noir::TreeSitter.node_type(node) == "call_expression"
@@ -106,34 +108,34 @@ module Noir
 
         case
         when HTTP_VERB_METHODS.has_key?(method)
-          emit_verb(node, source, HTTP_VERB_METHODS[method], prefix, routes)
+          emit_verb(node, source, HTTP_VERB_METHODS[method], prefix, routes, include_callees)
           return
         when method == "any"
-          ANY_VERBS.each { |verb| emit_verb(node, source, verb, prefix, routes) }
+          ANY_VERBS.each { |verb| emit_verb(node, source, verb, prefix, routes, include_callees) }
           return
         when method == GROUP_METHOD
-          walk_group(node, source, prefix, routes, depth)
+          walk_group(node, source, prefix, routes, depth, include_callees)
           return
         when method == "resource"
-          emit_resource(node, source, prefix, ANY_VERBS_ALL, routes)
+          emit_resource(node, source, prefix, ANY_VERBS_ALL, routes, include_callees)
           return
         when method == "prefix"
-          handle_prefix(node, source, prefix, routes, depth)
+          handle_prefix(node, source, prefix, routes, depth, include_callees)
           return
         when method == "only"
-          handle_resource_filter(node, source, prefix, :only, routes)
+          handle_resource_filter(node, source, prefix, :only, routes, include_callees)
           return
         when method == "except"
-          handle_resource_filter(node, source, prefix, :except, routes)
+          handle_resource_filter(node, source, prefix, :except, routes, include_callees)
           return
         when TRANSPARENT_MODIFIERS.includes?(method)
-          handle_transparent(node, source, prefix, routes, depth)
+          handle_transparent(node, source, prefix, routes, depth, include_callees)
           return
         end
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, source, prefix, routes, depth + 1)
+        walk(child, source, prefix, routes, depth + 1, include_callees)
       end
     end
 
@@ -144,24 +146,24 @@ module Noir
 
     # `Route.group(cb).prefix('/x')` — capture '/x' and walk the
     # inner call's group with the joined prefix.
-    private def handle_prefix(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32)
+    private def handle_prefix(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32, include_callees : Bool)
       arg = first_string_argument(call, source)
       receiver = chain_receiver(call)
       return unless receiver
 
       new_prefix = arg ? join_paths(prefix, arg) : prefix
-      walk(receiver, source, new_prefix, routes, depth + 1)
+      walk(receiver, source, new_prefix, routes, depth + 1, include_callees)
     end
 
-    private def handle_transparent(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32)
+    private def handle_transparent(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32, include_callees : Bool)
       receiver = chain_receiver(call)
       return unless receiver
-      walk(receiver, source, prefix, routes, depth + 1)
+      walk(receiver, source, prefix, routes, depth + 1, include_callees)
     end
 
     # `.only([...])` / `.except([...])` modifiers on `.resource(...)`.
     # Walk back to the resource call with the action filter applied.
-    private def handle_resource_filter(call : LibTreeSitter::TSNode, source : String, prefix : String, mode : Symbol, routes : Array(Route))
+    private def handle_resource_filter(call : LibTreeSitter::TSNode, source : String, prefix : String, mode : Symbol, routes : Array(Route), include_callees : Bool)
       receiver = chain_receiver(call)
       return unless receiver
       return unless Noir::TreeSitter.node_type(receiver) == "call_expression"
@@ -177,10 +179,10 @@ module Noir
         else
           ANY_VERBS_ALL
         end
-      emit_resource(receiver, source, prefix, effective, routes)
+      emit_resource(receiver, source, prefix, effective, routes, include_callees)
     end
 
-    private def walk_group(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32)
+    private def walk_group(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32, include_callees : Bool)
       args = arguments_node(call)
       return unless args
       Noir::TreeSitter.each_named_child(args) do |arg|
@@ -188,20 +190,21 @@ module Noir
                     Noir::TreeSitter.node_type(arg) == "function_expression" ||
                     Noir::TreeSitter.node_type(arg) == "function"
         if body = function_body(arg)
-          walk(body, source, prefix, routes, depth + 1)
+          walk(body, source, prefix, routes, depth + 1, include_callees)
         end
       end
     end
 
-    private def emit_verb(call : LibTreeSitter::TSNode, source : String, verb : String, prefix : String, routes : Array(Route))
+    private def emit_verb(call : LibTreeSitter::TSNode, source : String, verb : String, prefix : String, routes : Array(Route), include_callees : Bool)
       path = first_string_argument(call, source)
       return unless path
       full = join_paths(prefix, path)
       line = Noir::TreeSitter.node_start_row(call)
-      routes << Route.new(verb, full, line)
+      callees = include_callees ? route_callees(call, source, line) : [] of JSCalleeExtractor::Entry
+      routes << Route.new(verb, full, line, callees)
     end
 
-    private def emit_resource(call : LibTreeSitter::TSNode, source : String, prefix : String, actions : Array(String), routes : Array(Route))
+    private def emit_resource(call : LibTreeSitter::TSNode, source : String, prefix : String, actions : Array(String), routes : Array(Route), include_callees : Bool)
       name = first_string_argument(call, source)
       return unless name
       base = join_paths(prefix, name.starts_with?("/") ? name : "/#{name}")
@@ -212,8 +215,24 @@ module Noir
         next unless verb_path
         verb, suffix = verb_path
         url = suffix.empty? ? base : "#{base.rstrip('/')}#{suffix}"
-        routes << Route.new(verb, url, line)
+        callees = include_callees ? [{controller_action(call, source, action), "", line + 1}] : [] of JSCalleeExtractor::Entry
+        routes << Route.new(verb, url, line, callees)
       end
+    end
+
+    private def route_callees(call : LibTreeSitter::TSNode, source : String, line : Int32) : Array(JSCalleeExtractor::Entry)
+      entries = [] of JSCalleeExtractor::Entry
+      if controller = string_argument_at(call, source, 1)
+        entries << {controller, "", line + 1}
+      elsif handler = function_argument(call)
+        entries = JSCalleeExtractor.callees_for_handler_node(handler, source, "")
+      end
+      entries
+    end
+
+    private def controller_action(call : LibTreeSitter::TSNode, source : String, action : String) : String
+      controller = string_argument_at(call, source, 1) || "resource"
+      "#{controller}.#{action}"
     end
 
     # ---- shape helpers ----------------------------------------------
@@ -250,10 +269,27 @@ module Noir
     end
 
     private def first_string_argument(call : LibTreeSitter::TSNode, source : String) : String?
+      string_argument_at(call, source, 0)
+    end
+
+    private def string_argument_at(call : LibTreeSitter::TSNode, source : String, target_index : Int32) : String?
+      args = arguments_node(call)
+      return unless args
+      index = 0
+      Noir::TreeSitter.each_named_child(args) do |arg|
+        next unless Noir::TreeSitter.node_type(arg) == "string"
+        return decode_string(arg, source) if index == target_index
+        index += 1
+      end
+      nil
+    end
+
+    private def function_argument(call : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
       args = arguments_node(call)
       return unless args
       Noir::TreeSitter.each_named_child(args) do |arg|
-        return decode_string(arg, source) if Noir::TreeSitter.node_type(arg) == "string"
+        type = Noir::TreeSitter.node_type(arg)
+        return arg if type == "arrow_function" || type == "function_expression" || type == "function"
       end
       nil
     end

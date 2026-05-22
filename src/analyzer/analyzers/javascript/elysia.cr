@@ -15,8 +15,9 @@ module Analyzer::Javascript
         content = read_file_content(path)
         next unless ELYSIA_MARKERS.any? { |m| content.includes?(m) }
 
-        Noir::TreeSitterElysiaExtractor.extract_routes(content).each do |route|
-          @result << build_endpoint(route, path)
+        include_callee = callees_needed?
+        Noir::TreeSitterElysiaExtractor.extract_routes(content, include_callee).each do |route|
+          @result << build_endpoint(route, path, include_callee)
         end
       end
 
@@ -24,7 +25,7 @@ module Analyzer::Javascript
       @result
     end
 
-    private def build_endpoint(route : Noir::TreeSitterElysiaExtractor::Route, path : String) : Endpoint
+    private def build_endpoint(route : Noir::TreeSitterElysiaExtractor::Route, path : String, include_callee : Bool) : Endpoint
       params = [] of Param
       route.query_params.each { |name| params << Param.new(name, "", "query") }
       route.header_params.each { |name| params << Param.new(name, "", "header") }
@@ -32,7 +33,15 @@ module Analyzer::Javascript
       params << Param.new("body", "", "json") if route.has_body?
 
       details = Details.new(PathInfo.new(path, route.line + 1))
-      Endpoint.new(route.path, route.verb, params, details)
+      endpoint = Endpoint.new(route.path, route.verb, params, details)
+      attach_route_callees(endpoint, route.callees, path) if include_callee
+      endpoint
+    end
+
+    private def attach_route_callees(endpoint : Endpoint, callees : Array(Noir::JSCalleeExtractor::Entry), path : String)
+      callees.each do |name, _callee_path, line|
+        endpoint.push_callee(Callee.new(name, path: path, line: line))
+      end
     end
   end
 end

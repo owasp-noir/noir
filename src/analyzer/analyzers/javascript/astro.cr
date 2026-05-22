@@ -87,7 +87,9 @@ module Analyzer::Javascript
       methods = detect_api_methods(content)
       mutex.synchronize do
         methods.each do |verb|
-          result << build_endpoint(url, verb, path)
+          endpoint = build_endpoint(url, verb, path)
+          attach_exported_callees(endpoint, content, path, verb) if callees_needed?
+          result << endpoint
         end
       end
     end
@@ -99,6 +101,12 @@ module Analyzer::Javascript
         endpoint.push_param(Param.new(match[1], "", "path"))
       end
       endpoint
+    end
+
+    private def attach_exported_callees(endpoint : Endpoint, content : String, path : String, verb : String)
+      Noir::JSCalleeExtractor.callees_for_exported_function(content, path, verb).each do |name, callee_path, line|
+        endpoint.push_callee(Callee.new(name, path: callee_path, line: line))
+      end
     end
 
     # Filesystem path → URL pattern. Strips the file extension,

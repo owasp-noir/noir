@@ -1,4 +1,5 @@
 require "../../engines/javascript_engine"
+require "../../../miniparsers/js_callee_extractor"
 require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Typescript
@@ -58,6 +59,7 @@ module Analyzer::Typescript
           endpoint = create_endpoint(normalized_path, "GET", path)
           extract_path_parameters(normalized_path, endpoint)
           extract_search_params(content, endpoint)
+          attach_file_route_callees(content, path, match.begin(0) || 0, endpoint) if callees_needed?
           result << endpoint
         end
       end
@@ -76,6 +78,7 @@ module Analyzer::Typescript
           endpoint = create_endpoint(normalized_path, "GET", path)
           extract_path_parameters(normalized_path, endpoint)
           extract_search_params(content, endpoint)
+          attach_file_route_callees(content, path, match.begin(0) || 0, endpoint) if callees_needed?
           result << endpoint
         end
       end
@@ -96,6 +99,7 @@ module Analyzer::Typescript
           endpoint = create_endpoint(resolved_path, "GET", path, route.start_pos, content)
           extract_path_parameters(resolved_path, endpoint)
           extract_search_params_from_route_block(route.block, endpoint)
+          attach_route_block_callees(route.block, path, line_for_pos(content, route.start_pos), endpoint) if callees_needed?
           result << endpoint
         end
       end
@@ -110,6 +114,7 @@ module Analyzer::Typescript
 
           endpoint = create_endpoint(normalized_path, "GET", path, match.begin(0) || 0, content)
           extract_path_parameters(normalized_path, endpoint)
+          attach_route_block_callees(match[0], path, line_for_pos(content, match.begin(0) || 0), endpoint) if callees_needed?
           result << endpoint
         end
       end
@@ -206,6 +211,69 @@ module Analyzer::Typescript
       line = content.empty? ? 1 : content.to_slice[0, start_pos].count('\n'.ord.to_u8) + 1
       endpoint.details = Details.new(PathInfo.new(file_path, line))
       endpoint
+    end
+
+    private def attach_file_route_callees(content : String, path : String, start_pos : Int32, endpoint : Endpoint)
+      call_open = content.index('(', start_pos)
+      return unless call_open
+      call_close = Noir::JSRouteExtractor.find_matching_paren(content, call_open)
+      return unless call_close
+
+      second_call_open = skip_whitespace(content, call_close + 1)
+      return unless content[second_call_open]? == '('
+
+      config_open = skip_whitespace(content, second_call_open + 1)
+      return unless content[config_open]? == '{'
+
+      second_call_close = Noir::JSRouteExtractor.find_matching_paren(content, second_call_open)
+      return unless second_call_close
+
+      config_close = Noir::JSRouteExtractor.find_matching_brace(content, config_open)
+      return unless config_close
+      return if config_close > second_call_close
+
+      block = content[(config_open + 1)...config_close]
+      attach_route_block_callees(block, path, line_for_pos(content, config_open), endpoint)
+    end
+
+    private def skip_whitespace(content : String, pos : Int32) : Int32
+      i = pos
+      while i < content.size && content[i].whitespace?
+        i += 1
+      end
+      i
+    end
+
+    private def attach_route_block_callees(block : String, path : String, start_line : Int32, endpoint : Endpoint)
+      attach_identifier_slot_callees(block, path, start_line, endpoint)
+      attach_function_slot_callees(block, path, start_line, endpoint)
+    end
+
+    private def attach_identifier_slot_callees(block : String, path : String, start_line : Int32, endpoint : Endpoint)
+      block.scan(/\b(component|loader|beforeLoad|pendingComponent|errorComponent)\s*:\s*([A-Za-z_$][\w$]*)/) do |match|
+        line = start_line + block[0, match.begin(2) || 0].count('\n')
+        endpoint.push_callee(Callee.new(match[2], path: path, line: line))
+      end
+    end
+
+    private def attach_function_slot_callees(block : String, path : String, start_line : Int32, endpoint : Endpoint)
+      block.scan(/\b(loader|beforeLoad)\s*:\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/) do |match|
+        body_start = match.end(0) || 0
+        body = block[body_start..]?.try(&.strip) || ""
+        line = start_line + block[0, body_start].count('\n')
+        if body.starts_with?("{")
+          if close = Noir::JSRouteExtractor.find_matching_brace(body, 0)
+            body = body[1...close]
+          end
+        end
+        Noir::JSCalleeExtractor.callees_for_function_body(body, path, line, language: javascript_source_language(path)).each do |name, callee_path, callee_line|
+          endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+        end
+      end
+    end
+
+    private def line_for_pos(content : String, pos : Int32) : Int32
+      content[0, pos].count('\n') + 1
     end
 
     private def extract_path_parameters(url : String, endpoint : Endpoint)

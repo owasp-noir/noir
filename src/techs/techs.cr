@@ -15,7 +15,8 @@ module NoirTechs
     "haskell_scotty", "haskell_servant", "haskell_yesod",
     "java_armeria", "java_dropwizard", "java_jaxrs", "java_javalin", "java_micronaut",
     "java_play", "java_quarkus", "java_spark", "java_spring", "java_vertx",
-    "js_apollo", "js_express", "js_fastify", "js_hono", "js_koa", "js_nestjs", "js_nextjs",
+    "js_adonisjs", "js_apollo", "js_astro", "js_elysia", "js_express", "js_fastify",
+    "js_fresh", "js_hapi", "js_hono", "js_koa", "js_nestjs", "js_nextjs",
     "js_nitro", "js_nuxtjs", "js_remix", "js_restify", "js_sveltekit",
     "kotlin_http4k", "kotlin_ktor", "kotlin_spring",
     "lua_lapis",
@@ -26,9 +27,9 @@ module NoirTechs
     "ruby_grape", "ruby_hanami", "ruby_rails", "ruby_roda", "ruby_sinatra",
     "rust_actix_web", "rust_axum", "rust_gotham", "rust_loco", "rust_poem",
     "rust_rocket", "rust_rwf", "rust_salvo", "rust_tide", "rust_warp",
-    "scala_akka", "scala_http4s", "scala_scalatra", "scala_tapir", "scala_zio_http",
+    "scala_akka", "scala_http4s", "scala_play", "scala_scalatra", "scala_tapir", "scala_zio_http",
     "swift_hummingbird", "swift_kitura", "swift_vapor",
-    "ts_nestjs",
+    "ts_nestjs", "ts_tanstack_router", "ts_trpc",
   ]
 
   AI_CONTEXT_GUARD_SUPPORTED_TECHS = [
