@@ -16,9 +16,14 @@ expected_endpoints = [
   ]),
   Endpoint.new("/orders", "GET"),
   Endpoint.new("/orders", "POST"),
+  Endpoint.new("/accounts/{account_id}/profile", "GET", [
+    Param.new("account_id", "", "path"),
+    Param.new("expand", "", "query"),
+  ]),
+  Endpoint.new("/v2/status", "GET"),
 ]
 
 FunctionalTester.new("fixtures/ruby/grape/", {
   :techs     => 1,
-  :endpoints => 7,
+  :endpoints => 9,
 }, expected_endpoints).perform_tests

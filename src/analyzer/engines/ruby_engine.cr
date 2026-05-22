@@ -29,7 +29,7 @@ module Analyzer::Ruby
         # lookbehind on `.` and word chars covers both
         # `headers.delete` and `xdelete` (some unrelated identifier
         # ending in the verb).
-        content.scan(/(?<![.\w])#{verb}\s+['"](.+?)['"]/) do |match|
+        content.scan(/(?<![.\w])#{verb}\s*\(?\s*['"](.+?)['"]/) do |match|
           if match.size > 1
             if details
               return Endpoint.new(match[1], verb.upcase, details)

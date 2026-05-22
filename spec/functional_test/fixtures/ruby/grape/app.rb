@@ -38,4 +38,19 @@ class API < Grape::API
     post do
     end
   end
+
+  resource :accounts do
+    route_param :account_id do
+      get "profile" do
+        params[:expand]
+      end
+    end
+  end
+
+  version "v2", using: :path
+
+  resource :status do
+    get do
+    end
+  end
 end

@@ -75,8 +75,8 @@ module Analyzer::Ruby
                                    prefix_stack : Array(PrefixEntry),
                                    lines : Array(String),
                                    include_callee : Bool) : Int32
-      if m = line.match(/\br\.on\s+(.+?)\s*(?:do\b|\{)/)
-        segments, path_params = parse_on_args(m[1])
+      if m = line.match(/\br\.(?:on|is)\s+(.+?)\s*(?:do\b\s*(?:\|([^|]*)\|)?|\{\s*(?:\|([^|]*)\|)?)/)
+        segments, path_params = parse_on_args(m[1], m[2]? || m[3]?)
         unless segments.empty? && path_params.empty?
           prefix_stack << {depth: depth + 1, segments: segments, path_params: path_params}
         end
@@ -94,6 +94,19 @@ module Analyzer::Ruby
       end
 
       HTTP_METHOD_MATCHERS.each do |verb|
+        if m = line.match(/\br\.#{verb}\s+(.+?)\s*(?:do\b\s*(?:\|([^|]*)\|)?|\{\s*(?:\|([^|]*)\|)?)/)
+          segments, path_params = parse_on_args(m[1], m[2]? || m[3]?)
+          unless segments.empty? && path_params.empty?
+            url = build_url(collect_segments(prefix_stack), nil, segments)
+            ep = build_endpoint(url, verb.upcase, path, index)
+            apply_path_params(ep, prefix_stack)
+            path_params.each { |name| ep.push_param(Param.new(name, "", "path")) }
+            attach_route_callees(ep, lines, index, path) if include_callee
+            @result << ep
+            return @result.size - 1
+          end
+        end
+
         if m = line.match(/\br\.#{verb}\s+['"]([^'"]+)['"]/)
           url = build_url(collect_segments(prefix_stack), m[1], nil)
           ep = build_endpoint(url, verb.upcase, path, index)
@@ -268,9 +281,12 @@ module Analyzer::Ruby
       end
     end
 
-    private def parse_on_args(args : String) : Tuple(Array(String), Array(String))
+    private def parse_on_args(args : String, block_args : String? = nil) : Tuple(Array(String), Array(String))
       segments = [] of String
       path_params = [] of String
+      matcher_arg_names = block_args ? block_args.split(",").map(&.strip).reject(&.empty?) : [] of String
+      matcher_index = 0
+
       args.split(",").each do |part|
         token = part.strip
         next if token.empty?
@@ -280,6 +296,16 @@ module Analyzer::Ruby
             segments << "{#{name}}"
             path_params << name
           end
+          matcher_index += 1
+        elsif token.matches?(/\A(?:Integer|String|Float|Hash|Array|[A-Z]\w*)\z/)
+          if name = matcher_arg_names[matcher_index]?
+            clean_name = name.gsub(/[^\w]/, "")
+            unless clean_name.empty?
+              segments << "{#{clean_name}}"
+              path_params << clean_name
+            end
+          end
+          matcher_index += 1
         elsif m = token.match(/['"]([^'"]+)['"]/)
           segments << m[1]
         end

@@ -34,5 +34,22 @@ class App < Roda
         end
       end
     end
+
+    r.is "projects", Integer do |project_id|
+      r.get do
+      end
+    end
+
+    r.on "teams" do
+      r.get Integer do |team_id|
+      end
+    end
+
+    r.on "organizations" do
+      r.on :org_id, Integer do |org_id, project_id|
+        r.get do
+        end
+      end
+    end
   end
 end
