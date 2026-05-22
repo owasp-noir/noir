@@ -1,12 +1,12 @@
 +++
 title = "셸 자동완성"
-description = "Zsh, Bash, Fish에서 Noir 셸 자동완성을 설정합니다."
+description = "Zsh, Bash, Fish, Elvish에서 Noir 셸 자동완성을 설정합니다."
 weight = 2
 sort_by = "weight"
 
 +++
 
-`Tab` 키를 누르면 Noir의 명령어, 플래그, 옵션이 자동완성됩니다. 주요 셸별로 완성 스크립트를 생성할 수 있습니다.
+`Tab` 키를 누르면 Noir의 명령어, 플래그, 옵션이 자동완성됩니다. 네 가지 셸별로 완성 스크립트를 생성할 수 있습니다.
 
 ## Zsh
 
@@ -52,6 +52,18 @@ Fish의 완성 디렉터리에 저장하면 자동 로드됩니다.
 mkdir -p ~/.config/fish/completions
 noir completion fish > ~/.config/fish/completions/noir.fish
 ```
+
+## Elvish
+
+[Elvish](https://elv.sh) 는 모듈 경로에서 완성 스크립트를 로드합니다. 스크립트를 `noir.elv` 로 저장한 뒤 `rc.elv` 에서 `use noir` 하면 됩니다.
+
+```bash
+mkdir -p ~/.config/elvish/lib
+noir completion elvish > ~/.config/elvish/lib/noir.elv
+echo 'use noir' >> ~/.config/elvish/rc.elv
+```
+
+로드되면 `$edit:completion:arg-completer[noir]` 에 완성기가 등록되어, `noir <Tab>` 은 동사 목록, `noir scan <Tab>` 은 파일 경로, `noir scan -<Tab>` 은 scan 플래그를 보여줍니다.
 
 ## Homebrew 사용자
 

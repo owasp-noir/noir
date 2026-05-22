@@ -31,7 +31,7 @@ noir <command> [arguments] [flags]
 | `noir rules list`      | List rule files installed under the rules path          |
 | `noir rules update`    | Clone or pull the latest passive-scan rules             |
 | `noir rules path`      | Print the configured rules directory                    |
-| `noir completion zsh`  | Generate Zsh / Bash / Fish completion scripts           |
+| `noir completion zsh`  | Generate Zsh / Bash / Fish / Elvish completion scripts  |
 | `noir version`         | Print the version (use `--verbose` for build details)   |
 | `noir help [command]`  | Show top-level help or per-command help                 |
 
@@ -145,13 +145,15 @@ The default rules path is `~/.config/noir/passive_rules` — override via
 `noir completion <shell>` emits a completion script for the given shell.
 
 ```bash
-noir completion zsh  > "${fpath[1]}/_noir"
-noir completion bash > /etc/bash_completion.d/noir
-noir completion fish > ~/.config/fish/completions/noir.fish
+noir completion zsh    > "${fpath[1]}/_noir"
+noir completion bash   > /etc/bash_completion.d/noir
+noir completion fish   > ~/.config/fish/completions/noir.fish
+noir completion elvish > ~/.config/elvish/lib/noir.elv  # then `use noir` from rc.elv
 ```
 
 The script is subcommand-aware: typing `noir <TAB>` completes the verb
-list, and `noir scan -<TAB>` completes scan flags.
+list, and `noir scan -<TAB>` completes scan flags. The Elvish variant
+wires the same surface into `$edit:completion:arg-completer[noir]`.
 
 ## Version
 

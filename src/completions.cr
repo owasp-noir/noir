@@ -81,14 +81,14 @@ def generate_zsh_completion_script
         'cache:Manage the LLM response cache (info, clear)'
         'config:Manage the user-level config (show, init, path)'
         'rules:Manage passive-scan rules (list, update, path)'
-        'completion:Generate shell completion script (zsh, bash, fish)'
+        'completion:Generate shell completion script (zsh, bash, fish, elvish)'
         'version:Print the noir version (--verbose for build info)'
         'help:Show help for a command'
       )
       subjects=(techs taggers formats)
-      shells=(zsh bash fish)
+      shells=(zsh bash fish elvish)
       cache_actions=(info clear)
-      config_actions=(show init path)
+      config_actions=(show edit init path)
       rules_actions=(list update path)
 
       if (( CURRENT == 2 )); then
@@ -211,7 +211,7 @@ def generate_bash_completion_script
           ;;
         config)
           if [[ ${COMP_CWORD} -eq 2 ]]; then
-            COMPREPLY=( $(compgen -W "show init path" -- "${cur}") )
+            COMPREPLY=( $(compgen -W "show edit init path" -- "${cur}") )
             return 0
           fi
           ;;
@@ -223,7 +223,7 @@ def generate_bash_completion_script
           ;;
         completion)
           if [[ ${COMP_CWORD} -eq 2 ]]; then
-            COMPREPLY=( $(compgen -W "zsh bash fish" -- "${cur}") )
+            COMPREPLY=( $(compgen -W "zsh bash fish elvish" -- "${cur}") )
             return 0
           fi
           ;;
@@ -304,9 +304,9 @@ def generate_fish_completion_script
     # Sub-actions per command
     complete -c noir -f -n '__fish_noir_using_command list' -a 'techs taggers formats'
     complete -c noir -f -n '__fish_noir_using_command cache' -a 'info clear'
-    complete -c noir -f -n '__fish_noir_using_command config' -a 'show init path'
+    complete -c noir -f -n '__fish_noir_using_command config' -a 'show edit init path'
     complete -c noir -f -n '__fish_noir_using_command rules' -a 'list update path'
-    complete -c noir -f -n '__fish_noir_using_command completion' -a 'zsh bash fish'
+    complete -c noir -f -n '__fish_noir_using_command completion' -a 'zsh bash fish elvish'
 
     # Scan-time flags (also valid under bare `noir` for v0 compat)
     complete -c noir -s b -l base-path             -d 'Set base path' -r -F
@@ -343,5 +343,80 @@ def generate_fish_completion_script
     complete -c noir      -l verbose               -d 'Verbose mode'
     complete -c noir -s v -l version               -d 'Show version'
     complete -c noir -s h -l help                  -d 'Show help'
+    SCRIPT
+end
+
+# Native Elvish (https://elv.sh) completion. Wires the noir verb
+# surface into `$edit:completion:arg-completer` so `noir <Tab>` lists
+# the subcommands, `noir <verb> <Tab>` lists that verb's sub-actions,
+# and `noir scan <Tab>` falls back to filesystem path completion.
+#
+# Install:
+#   noir completion elvish > ~/.config/elvish/lib/noir.elv
+# then add `use noir` to ~/.config/elvish/rc.elv.
+def generate_elvish_completion_script
+  <<-SCRIPT
+    # Noir v1 — Elvish tab-completion
+    #
+    # Save this file to ~/.config/elvish/lib/noir.elv and add
+    #   use noir
+    # to your ~/.config/elvish/rc.elv.
+
+    use str
+
+    var commands       = [scan list cache config rules completion version help]
+    var list-subjects  = [techs taggers formats]
+    var cache-actions  = [info clear]
+    var config-actions = [show edit init path]
+    var rules-actions  = [list update path]
+    var shells         = [zsh bash fish elvish]
+    var scan-flags = [
+      -b --base-path -u --url -f --format -o --output
+      --pvalue --status-codes --exclude-codes --exclude-path
+      --include --ai-context --no-color --no-log
+      -P --passive-scan --passive-scan-path --passive-scan-severity
+      --passive-scan-auto-update --passive-scan-no-update-check
+      -T --use-all-taggers --use-taggers
+      --send-req --send-proxy --send-es
+      --with-headers --use-matchers --use-filters
+      --ai-provider --ai-model --ai-key --ai-agent --ai-agent-max-steps
+      --ai-native-tools-allowlist --ai-max-token
+      --diff-path -t --techs --exclude-techs --only-techs
+      --config-file --concurrency
+      --cache-disable --cache-clear
+      -d --debug --verbose
+      -v --version -h --help
+    ]
+
+    set edit:completion:arg-completer[noir] = {|@cmd|
+      var n = (count $cmd)
+      var last = $cmd[-1]
+      if (== $n 2) {
+        put $@commands
+      } else {
+        var verb = $cmd[1]
+        if (eq $verb scan) {
+          if (str:has-prefix $last -) {
+            put $@scan-flags
+          } else {
+            edit:complete-filename $last
+          }
+        } elif (== $n 3) {
+          if (eq $verb list) {
+            put $@list-subjects
+          } elif (eq $verb cache) {
+            put $@cache-actions
+          } elif (eq $verb config) {
+            put $@config-actions
+          } elif (eq $verb rules) {
+            put $@rules-actions
+          } elif (eq $verb completion) {
+            put $@shells
+          } elif (eq $verb help) {
+            put $@commands
+          }
+        }
+      }
+    }
     SCRIPT
 end

@@ -14,6 +14,10 @@ describe "Completion Script Generation" do
     generate_fish_completion_script.size.should be > 0
   end
 
+  it "has a generate_elvish_completion_script method" do
+    generate_elvish_completion_script.size.should be > 0
+  end
+
   describe "Zsh completion" do
     it "includes all output formats" do
       script = generate_zsh_completion_script
@@ -119,6 +123,28 @@ describe "Completion Script Generation" do
       %w[scan list cache config rules completion version help].each do |verb|
         script.should contain("-a #{verb}")
       end
+    end
+
+    it "elvish completion registers the noir arg-completer with every verb" do
+      script = generate_elvish_completion_script
+      # Wires into the Elvish completion API
+      script.should contain("edit:completion:arg-completer[noir]")
+      # Lists each v1 verb as a candidate
+      script.should contain("[scan list cache config rules completion version help]")
+      # Falls back to file completion when the user starts typing a scan path
+      script.should contain("edit:complete-filename")
+    end
+  end
+
+  describe "Elvish completion shells/actions" do
+    it "lists every supported shell, including elvish itself" do
+      script = generate_elvish_completion_script
+      %w[zsh bash fish elvish].each { |shell| script.should contain(shell) }
+    end
+
+    it "exposes config edit as a sub-action" do
+      script = generate_elvish_completion_script
+      script.should contain("[show edit init path]")
     end
   end
 end

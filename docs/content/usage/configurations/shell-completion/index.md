@@ -1,12 +1,12 @@
 +++
 title = "Shell Completions"
-description = "Set up shell auto-completion for Noir in Zsh, Bash, and Fish."
+description = "Set up shell auto-completion for Noir in Zsh, Bash, Fish, and Elvish."
 weight = 2
 sort_by = "weight"
 
 +++
 
-Press `Tab` to auto-complete Noir's commands, flags, and options. Noir can generate completion scripts for the three most popular shells.
+Press `Tab` to auto-complete Noir's commands, flags, and options. Noir can generate completion scripts for four shells.
 
 ## Zsh
 
@@ -52,6 +52,18 @@ Save it to Fish's completions directory for automatic loading:
 mkdir -p ~/.config/fish/completions
 noir completion fish > ~/.config/fish/completions/noir.fish
 ```
+
+## Elvish
+
+[Elvish](https://elv.sh) loads completions from its module path. Save the script as `noir.elv` and `use` it from your `rc.elv`:
+
+```bash
+mkdir -p ~/.config/elvish/lib
+noir completion elvish > ~/.config/elvish/lib/noir.elv
+echo 'use noir' >> ~/.config/elvish/rc.elv
+```
+
+Once loaded, the completer wires into `$edit:completion:arg-completer[noir]` and adds subcommand-aware tab completion: `noir <Tab>` lists the verbs, `noir scan <Tab>` falls back to filesystem paths, and `noir scan -<Tab>` lists scan flags.
 
 ## Homebrew Users
 

@@ -31,7 +31,7 @@ noir <command> [arguments] [flags]
 | `noir rules list`      | 룰 경로에 설치된 룰 파일 목록                           |
 | `noir rules update`    | 최신 passive-scan 룰을 클론/풀                          |
 | `noir rules path`      | 설정된 룰 디렉토리 출력                                 |
-| `noir completion zsh`  | Zsh/Bash/Fish 자동 완성 스크립트 생성                   |
+| `noir completion zsh`  | Zsh/Bash/Fish/Elvish 자동 완성 스크립트 생성            |
 | `noir version`         | 버전 출력 (`--verbose` 시 빌드 세부 정보)               |
 | `noir help [command]`  | 최상위 또는 명령어별 도움말 표시                        |
 
@@ -149,13 +149,15 @@ noir rules path       # 룰 디렉토리 출력
 출력합니다.
 
 ```bash
-noir completion zsh  > "${fpath[1]}/_noir"
-noir completion bash > /etc/bash_completion.d/noir
-noir completion fish > ~/.config/fish/completions/noir.fish
+noir completion zsh    > "${fpath[1]}/_noir"
+noir completion bash   > /etc/bash_completion.d/noir
+noir completion fish   > ~/.config/fish/completions/noir.fish
+noir completion elvish > ~/.config/elvish/lib/noir.elv  # rc.elv 에서 `use noir`
 ```
 
 스크립트는 서브커맨드를 인식합니다. `noir <TAB>` 은 동사를, `noir scan
--<TAB>` 은 scan 플래그를 완성합니다.
+-<TAB>` 은 scan 플래그를 완성합니다. Elvish 버전은 동일한 표면을
+`$edit:completion:arg-completer[noir]` 에 등록합니다.
 
 ## Version
 
