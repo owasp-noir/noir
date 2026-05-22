@@ -2,6 +2,62 @@
 
 All notable changes to [Noir](https://github.com/owasp-noir/noir) will be documented in this file.
 
+## v1.0.0
+
+The CLI moves from a flag-only surface to a verb-centric layout, while
+keeping every v0 invocation pattern (`noir -b ./app [flags]`) working
+unchanged. See the [CLI commands reference](docs/content/usage/cli_commands/_index.md)
+for the full surface.
+
+### Added
+- New subcommand surface:
+  - `noir scan PATHS...` — positional paths plus every existing scan flag
+  - `noir list techs|taggers|formats` — built-in catalogs
+  - `noir cache info|clear` — on-disk LLM response cache
+  - `noir config show|init|path` — user-level YAML configuration
+  - `noir rules list|update|path` — passive-scan rules repository
+  - `noir completion <zsh|bash|fish>` — shell completion script
+  - `noir version [--verbose]` — version number (or build details)
+  - `noir help [command]` — top-level overview / per-command help
+- `--pvalue TYPE=VAL` (repeatable): unified parameter-value flag covering
+  `any` / `header` / `cookie` / `query` / `form` / `json` / `path`
+- `--include LIST`: comma-separated enrichment toggle (`path,techs,callee`)
+- `--ai-context[=LIST]`: optional comma-separated filter narrowing the
+  emitted AI-context categories (`guards`, `sinks`, `validators`,
+  `signals`, `callee`) in plain output
+- `--no-color` (and the `NO_COLOR` env var) honored as a global flag
+  across every subcommand, not just `scan`
+
+### Changed
+- Router default-routes any bare-flag invocation to `scan`, preserving
+  the v0 `noir -b ./app [flags]` shape for every CI pipeline, GitHub
+  Action, Dockerfile entrypoint, and shell alias.
+- Terminal v0 flags are silently rewritten to their v1 subcommand
+  equivalents: `--list-techs` → `noir list techs`,
+  `--list-taggers` → `noir list taggers`,
+  `--build-info` → `noir version --verbose`,
+  `--generate-completion SHELL` → `noir completion SHELL`,
+  `--help-all` → `noir help`.
+- Shell completion scripts are now subcommand-aware: `noir <TAB>`
+  completes verbs, `noir scan -<TAB>` completes scan flags.
+- Documentation updates across the homepage, getting-started guide,
+  troubleshooting, shell-completion, configuration, output-format, and
+  AI-provider pages to lead with the v1 idiom (v0 examples preserved
+  in compatibility callouts).
+
+### Removed
+- `--ollama URL` and `--ollama-model NAME` (deprecated since 2024).
+  Use `--ai-provider ollama [--ai-model NAME]` instead — the CLI prints
+  a one-line migration hint if either flag is passed.
+
+### Compatibility
+- The legacy `--include-path`, `--include-techs`, `--include-callee`,
+  and the seven `--set-pvalue*` flags continue to work as silent
+  aliases throughout the v1.x line.
+- `noir` with no arguments now prints the top-level overview instead
+  of the v0 "Base path is required" error; scripts that intentionally
+  relied on the empty-args exit code should pass `noir scan` explicitly.
+
 ## v0.30.0
 
 ### Added

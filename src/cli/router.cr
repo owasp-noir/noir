@@ -25,6 +25,7 @@ require "./commands/help"
 # Dockerfile entrypoint, and shell alias from v0.x.
 module Noir::CLI::Router
   def self.dispatch(argv : Array(String) = ARGV)
+    Noir::CLI.apply_global_color_flag!(argv)
     argv = Legacy.rewrite(argv)
 
     if argv.empty?

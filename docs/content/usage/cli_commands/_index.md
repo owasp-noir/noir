@@ -158,6 +158,18 @@ output, unchanged in content).
 `noir help` shows the top-level overview, and `noir help <command>` shows
 the flag surface for that command.
 
+## Global flags
+
+A small set of flags work on every subcommand, not just `scan`:
+
+| Flag         | Effect                                                                |
+|--------------|----------------------------------------------------------------------|
+| `--no-color` | Strip ANSI color from every command's output (also honors `NO_COLOR`) |
+| `-h`, `--help` | Show help for the current command                                  |
+
+Per-command flags (output format, concurrency, passive scan, AI provider,
+…) live under `noir scan` and are documented at `noir help scan`.
+
 ## v0 Compatibility
 
 Every v0 invocation pattern continues to work in v1.x without changes:

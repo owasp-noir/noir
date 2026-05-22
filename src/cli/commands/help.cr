@@ -60,6 +60,10 @@ module Noir::CLI::HelpCommand
         #{cyan.call("version")} [--verbose]         Print version (or build details with --verbose)
         #{cyan.call("help")} [command]              Show this overview or a specific command's help
 
+      #{green.call("GLOBAL FLAGS:")}
+        --no-color                  Strip ANSI color from every command's output
+                                    (also honors the NO_COLOR env var)
+
       #{green.call("EXAMPLES:")}
         #{yellow.call("# v1 idiomatic")}
         noir scan ./app

@@ -1,4 +1,6 @@
 require "../../spec_helper"
+require "colorize"
+require "../../../src/cli/common"
 require "../../../src/cli/legacy"
 
 # These specs exercise the slim, side-effect-free portions of the v1 CLI
@@ -39,6 +41,74 @@ describe "Noir::CLI::KNOWN_COMMANDS" do
   it "includes every v1 verb so the router can dispatch them" do
     %w[scan list cache config rules completion version help].each do |verb|
       Noir::CLI::KNOWN_COMMANDS.includes?(verb).should be_true
+    end
+  end
+end
+
+describe "Noir::CLI.apply_global_color_flag!" do
+  # Each spec restores Colorize.enabled and the NO_COLOR env var so
+  # later specs see a clean default.
+  it "disables Colorize when --no-color is present" do
+    saved_env = ENV["NO_COLOR"]?
+    ENV.delete("NO_COLOR")
+    Colorize.enabled = true
+
+    Noir::CLI.apply_global_color_flag!(["list", "techs", "--no-color"])
+    Colorize.enabled?.should be_false
+  ensure
+    Colorize.enabled = true
+    if saved = saved_env
+      ENV["NO_COLOR"] = saved
+    else
+      ENV.delete("NO_COLOR")
+    end
+  end
+
+  it "disables Colorize when NO_COLOR is set" do
+    saved_env = ENV["NO_COLOR"]?
+    ENV["NO_COLOR"] = "1"
+    Colorize.enabled = true
+
+    Noir::CLI.apply_global_color_flag!(["list", "techs"])
+    Colorize.enabled?.should be_false
+  ensure
+    Colorize.enabled = true
+    if saved = saved_env
+      ENV["NO_COLOR"] = saved
+    else
+      ENV.delete("NO_COLOR")
+    end
+  end
+
+  it "treats NO_COLOR=0 as opt-in (color stays on)" do
+    saved_env = ENV["NO_COLOR"]?
+    ENV["NO_COLOR"] = "0"
+    Colorize.enabled = true
+
+    Noir::CLI.apply_global_color_flag!(["list", "techs"])
+    Colorize.enabled?.should be_true
+  ensure
+    Colorize.enabled = true
+    if saved = saved_env
+      ENV["NO_COLOR"] = saved
+    else
+      ENV.delete("NO_COLOR")
+    end
+  end
+
+  it "leaves Colorize alone when neither flag nor env is set" do
+    saved_env = ENV["NO_COLOR"]?
+    ENV.delete("NO_COLOR")
+    Colorize.enabled = true
+
+    Noir::CLI.apply_global_color_flag!(["list", "techs"])
+    Colorize.enabled?.should be_true
+  ensure
+    Colorize.enabled = true
+    if saved = saved_env
+      ENV["NO_COLOR"] = saved
+    else
+      ENV.delete("NO_COLOR")
     end
   end
 end

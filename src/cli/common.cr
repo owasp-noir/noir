@@ -14,18 +14,26 @@ module Noir::CLI
     "help",
   ]
 
+  # Disable Crystal's Colorize globally when the user asks for plain
+  # output via `--no-color` or the `NO_COLOR` env var. Applied at the
+  # router layer so every subcommand (list / cache / config / rules /
+  # completion / version / help / scan) picks it up — scan's own parser
+  # still also sees `--no-color` and threads it through NoirRunner for
+  # the in-scan logger.
+  def self.apply_global_color_flag!(argv : Array(String))
+    return Colorize.enabled = false if no_color_env?
+    return Colorize.enabled = false if argv.includes?("--no-color")
+    nil
+  end
+
+  def self.no_color_env? : Bool
+    value = ENV["NO_COLOR"]?
+    return false if value.nil? || value.empty?
+    value != "0"
+  end
+
   def self.die(message : String, code : Int32 = 1) : NoReturn
     STDERR.puts "ERROR: #{message}".colorize(:yellow)
     exit(code)
-  end
-
-  def self.color_enabled?(argv : Array(String)) : Bool
-    return false if argv.includes?("--no-color")
-    return false if ENV["NO_COLOR"]? == "1" || ENV["NO_COLOR"]? == "true"
-    true
-  end
-
-  def self.colorize_if(s : String, color, argv : Array(String) = ARGV) : String
-    color_enabled?(argv) ? s.colorize(color).to_s : s
   end
 end
