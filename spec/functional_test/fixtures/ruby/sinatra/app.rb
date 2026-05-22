@@ -31,3 +31,13 @@ end
 post "/update" do
   puts "update"
 end
+
+namespace "/api" do
+  get "/widgets" do
+    params[:page]
+  end
+
+  post("/widgets") do
+    request.env["HTTP_X_TRACE_ID"]
+  end
+end
