@@ -175,11 +175,11 @@ def run_options_parser
     parser.on "-b PATH", "--base-path PATH", "Add a base path to scan (positional paths work too; repeatable)" do |v|
       append_to_yaml_array(noir_options, "base", v)
     end
-
-    parser.separator "\n OUTPUT:".colorize(:blue)
-    parser.on "-u URL", "--url http://...", "Base URL prepended to endpoints in -f curl / httpie / powershell" do |v|
+    parser.on "-u URL", "--url http://...", "Prepend this base URL to every discovered path; required for --status-codes, --send-req, and --send-proxy" do |v|
       noir_options["url"] = YAML::Any.new(v)
     end
+
+    parser.separator "\n OUTPUT:".colorize(:blue)
     parser.on "-f FMT", "--format json", <<-DESC do |v|
       Output format:
         plain                Plain text (default)
