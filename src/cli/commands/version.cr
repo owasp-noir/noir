@@ -2,9 +2,9 @@ require "../common"
 
 # `noir version [--verbose]`
 #
-# Replaces v0's `-v`/`--version` (still works as silent alias inside the
-# scan parser) and `--build-info` (rewritten by Legacy to `version
-# --verbose`).
+# Canonical entry point for version output. Legacy.rewrite turns
+# `-v`, `--version`, and `--build-info` into the matching `version`
+# invocation at the router layer.
 module Noir::CLI::VersionCommand
   def self.run(argv : Array(String))
     verbose = false

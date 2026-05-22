@@ -1,5 +1,4 @@
 require "colorize"
-require "file_utils"
 require "../common"
 require "../../llm/cache"
 

@@ -1,4 +1,3 @@
-require "option_parser"
 require "colorize"
 require "../common"
 require "../../techs/techs"
@@ -11,22 +10,18 @@ require "../../cli_validation"
 # so they live under a shared `list` namespace rather than as their own
 # subcommand modules.
 module Noir::CLI::ListCommand
-  SUBJECTS = %w[techs taggers formats]
+  SUBJECTS         = %w[techs taggers formats]
+  AI_CONTEXT_KINDS = %w[guards sinks validators signals]
 
   def self.run(argv : Array(String))
     subject = nil
-    rest = [] of String
     argv.each do |a|
       case a
       when "-h", "--help"
         print_help
         exit
       else
-        if subject.nil?
-          subject = a
-        else
-          rest << a
-        end
+        subject ||= a
       end
     end
 
@@ -102,7 +97,7 @@ module Noir::CLI::ListCommand
   private def self.print_context_support(tech : String)
     puts "     #{"callee".colorize(:cyan)}: #{NoirTechs.context_supported?(tech, "callee")}"
     puts "     #{"ai_context".colorize(:cyan)}:"
-    ["guards", "sinks", "validators", "signals"].each do |feature|
+    AI_CONTEXT_KINDS.each do |feature|
       puts "       #{feature.colorize(:cyan)}: #{NoirTechs.context_supported?(tech, feature)}"
     end
   end

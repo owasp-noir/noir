@@ -16,13 +16,18 @@ require "../../llm/prompt_overrides"
 #
 #   noir scan ./app                 # v1 positional
 #   noir scan ./api ./worker        # v1 multi-path positional
-#   noir -b ./app                   # v0 long-running CI pattern (router default-route)
+#   noir -b ./app                   # v0 (router default-routes to scan)
 #   noir scan -b ./app --passive    # v1 explicit + flags
 module Noir::CLI::ScanCommand
+  # ANSI 256-color orange used for the protocol-missing warning. Kept
+  # as a named constant so the call site reads as "warning color"
+  # rather than a bare magic number.
+  WARNING_COLOR = Colorize::Color256.new(208)
+
   def self.run(argv : Array(String))
     # Stage ARGV through OptionParser (positional path discovery happens
     # inside `run_options_parser`). Dup `argv` upfront because callers
-    # commonly pass ARGV itself (which we are about to clear).
+    # commonly pass ARGV itself, which we are about to clear.
     args_copy = argv.dup
     saved = ARGV.dup
     begin
@@ -38,70 +43,94 @@ module Noir::CLI::ScanCommand
     execute(noir_options)
   end
 
-  # Extracted so `noir help scan` can describe the command without
-  # actually parsing flags (avoids exit-on-error noise).
-  def self.synopsis : String
-    "noir scan [PATHS...] [flags]"
-  end
-
   private def self.execute(noir_options : Hash(String, YAML::Any))
-    if noir_options["cache_disable"] == true
-      LLM::Cache.disable
-    end
-    if noir_options["cache_clear"] == true
-      begin
-        cleared = LLM::Cache.clear
-        STDERR.puts "CACHE: Cleared #{cleared} entries."
-      rescue
-      end
-    end
-
-    if noir_options.has_key?("override_filter_prompt")
-      LLM::PromptOverrides.filter_prompt = noir_options["override_filter_prompt"].to_s
-    end
-    if noir_options.has_key?("override_analyze_prompt")
-      LLM::PromptOverrides.analyze_prompt = noir_options["override_analyze_prompt"].to_s
-    end
-    if noir_options.has_key?("override_bundle_analyze_prompt")
-      LLM::PromptOverrides.bundle_analyze_prompt = noir_options["override_bundle_analyze_prompt"].to_s
-    end
-    if noir_options.has_key?("override_llm_optimize_prompt")
-      LLM::PromptOverrides.llm_optimize_prompt = noir_options["override_llm_optimize_prompt"].to_s
-    end
-
-    if noir_options["url"] != "" && !noir_options["url"].to_s.includes?("://")
-      STDERR.puts "WARNING: The protocol (http or https) is missing in the URL '#{noir_options["url"]}'. Defaulting to 'https://'.".colorize(Colorize::Color256.new(208))
-      noir_options["url"] = YAML::Any.new("https://#{noir_options["url"]}")
-    end
-
-    if noir_options["status_codes"] == true && noir_options["url"] == ""
-      Noir::CLI.die("--status-codes needs a target URL. Pass it with -u/--url, e.g. `noir scan ./app --status-codes -u http://localhost:3000`.")
-    end
-
-    if noir_options["exclude_codes"] != ""
-      if noir_options["url"] == ""
-        Noir::CLI.die("--exclude-codes needs a target URL. Pass it with -u/--url, e.g. `noir scan ./app --exclude-codes 404,500 -u http://localhost:3000`.")
-      end
-
-      noir_options["exclude_codes"].to_s.split(",").each do |code|
-        begin
-          code.strip.to_i
-        rescue
-          Noir::CLI.die("--exclude-codes only accepts comma-separated numbers; got '#{code}'.")
-        end
-      end
-    end
-
-    begin
-      Noir::CliValidation.validate!(noir_options)
-    rescue e : Noir::CliValidation::Error
-      Noir::CliValidation.exit_with_error(e.message || "Invalid options.")
-    end
+    apply_cache_flags(noir_options)
+    apply_prompt_overrides(noir_options)
+    normalize_url!(noir_options)
+    validate_url_dependent_flags(noir_options)
+    validate_options!(noir_options)
 
     if noir_options["nolog"] == false
       banner()
     end
 
+    run_scan(noir_options)
+  end
+
+  private def self.apply_cache_flags(noir_options : Hash(String, YAML::Any))
+    LLM::Cache.disable if noir_options["cache_disable"] == true
+
+    return unless noir_options["cache_clear"] == true
+
+    begin
+      cleared = LLM::Cache.clear
+      STDERR.puts "CACHE: Cleared #{cleared} entries."
+    rescue
+      # Cache may not be initialized yet; best-effort clear.
+    end
+  end
+
+  PROMPT_OVERRIDE_SETTERS = {
+    "override_filter_prompt"         => ->(v : String) { LLM::PromptOverrides.filter_prompt = v },
+    "override_analyze_prompt"        => ->(v : String) { LLM::PromptOverrides.analyze_prompt = v },
+    "override_bundle_analyze_prompt" => ->(v : String) { LLM::PromptOverrides.bundle_analyze_prompt = v },
+    "override_llm_optimize_prompt"   => ->(v : String) { LLM::PromptOverrides.llm_optimize_prompt = v },
+  }
+
+  private def self.apply_prompt_overrides(noir_options : Hash(String, YAML::Any))
+    PROMPT_OVERRIDE_SETTERS.each do |key, setter|
+      setter.call(noir_options[key].to_s) if noir_options.has_key?(key)
+    end
+  end
+
+  private def self.normalize_url!(noir_options : Hash(String, YAML::Any))
+    url = noir_options["url"].to_s
+    return if url.empty? || url.includes?("://")
+
+    STDERR.puts "WARNING: The protocol (http or https) is missing in the URL '#{url}'. Defaulting to 'https://'.".colorize(WARNING_COLOR)
+    noir_options["url"] = YAML::Any.new("https://#{url}")
+  end
+
+  private def self.validate_url_dependent_flags(noir_options : Hash(String, YAML::Any))
+    url = noir_options["url"].to_s
+
+    if noir_options["status_codes"] == true && url.empty?
+      Noir::CLI.die("--status-codes needs a target URL. Pass it with -u/--url, e.g. `noir scan ./app --status-codes -u http://localhost:3000`.")
+    end
+
+    exclude_codes = noir_options["exclude_codes"].to_s
+    return if exclude_codes.empty?
+
+    if url.empty?
+      Noir::CLI.die("--exclude-codes needs a target URL. Pass it with -u/--url, e.g. `noir scan ./app --exclude-codes 404,500 -u http://localhost:3000`.")
+    end
+
+    exclude_codes.split(",").each do |code|
+      begin
+        code.strip.to_i
+      rescue
+        Noir::CLI.die("--exclude-codes only accepts comma-separated numbers; got '#{code}'.")
+      end
+    end
+  end
+
+  private def self.validate_options!(noir_options : Hash(String, YAML::Any))
+    Noir::CliValidation.validate!(noir_options)
+  rescue e : Noir::CliValidation::Error
+    Noir::CliValidation.exit_with_error(e.message || "Invalid options.")
+  end
+
+  # An AI provider is "active" when --ai-provider was set AND either
+  # --ai-model was also set OR the provider is an ACP target (which
+  # supplies its own default model).
+  private def self.ai_provider_active?(options : Hash(String, YAML::Any)) : Bool
+    provider = options["ai_provider"].to_s
+    return false if provider.empty?
+
+    options["ai_model"].to_s != "" || provider.downcase.starts_with?("acp:")
+  end
+
+  private def self.run_scan(noir_options : Hash(String, YAML::Any))
     app = NoirRunner.new noir_options
     start_time = Time.instant
 
@@ -127,7 +156,7 @@ module Noir::CLI::ScanCommand
       app.logger.info "Running Noir with Diff mode."
     end
 
-    app.logger.info "Detecting technologies to base directory."
+    app.logger.info "Detecting technologies in the base directory."
     app.detect
 
     if app.techs.empty?
@@ -135,9 +164,9 @@ module Noir::CLI::ScanCommand
       app.logger.sub "➔ If you know the technology, use the -t flag to specify it."
       app.logger.sub "➔ Browse the supported tech list with `noir list techs`."
       if app.options["url"] != ""
-        app.logger.info "Start file-based analysis as the -u flag has been used."
-      elsif (app.options["ai_provider"] != "") && ((app.options["ai_model"] != "") || app.options["ai_provider"].to_s.downcase.starts_with?("acp:"))
-        app.logger.info "Start AI-based analysis as the --ai-provider flag has been used."
+        app.logger.info "Falling back to file-based analysis because -u was set."
+      elsif ai_provider_active?(app.options)
+        app.logger.info "Falling back to AI-based analysis because --ai-provider was set."
       elsif app.passive_results.size > 0
         app.logger.info "Noir found #{app.passive_results.size} passive results."
         app.report
@@ -148,29 +177,25 @@ module Noir::CLI::ScanCommand
     else
       app.logger.success "Detected #{app.techs.size} technologies."
 
-      exclude_techs = app.options["exclude_techs"]?.to_s.split(",") || [] of String
-      filtered_techs = app.techs.reject do |tech|
-        exclude_techs.any? { |exclude_tech| NoirTechs.similar_to_tech(exclude_tech).includes?(tech) }
-      end
-
+      exclude_techs = app.options["exclude_techs"].to_s.split(",")
       app.techs.each_with_index do |tech, index|
-        is_excluded = exclude_techs.any? { |exclude_tech| NoirTechs.similar_to_tech(exclude_tech).includes?(tech) }
+        is_excluded = exclude_techs.any? { |t| NoirTechs.similar_to_tech(t).includes?(tech) }
         prefix = index < app.techs.size - 1 ? "├──" : "└──"
         status = is_excluded ? " (skip)" : ""
         app.logger.sub "#{prefix} #{tech}#{status}"
       end
 
-      app.techs = filtered_techs
-      app.logger.info "Start code analysis based on the detected technology."
+      app.techs = app.techs.reject do |tech|
+        exclude_techs.any? { |t| NoirTechs.similar_to_tech(t).includes?(tech) }
+      end
+      app.logger.info "Starting code analysis based on the detected technologies."
     end
 
     app.analyze
-    app.logger.success "Finally identified #{app.endpoints.size} endpoints."
+    app.logger.success "Identified #{app.endpoints.size} endpoints in total."
 
-    end_time = Time.instant
-    elapsed_time = end_time - start_time
-
-    app.logger.info "Scan completed in #{(elapsed_time.total_milliseconds / 1000.0).round(4)} s."
+    elapsed = Time.instant - start_time
+    app.logger.info "Scan completed in #{(elapsed.total_milliseconds / 1000.0).round(4)} s."
 
     if app_diff.nil?
       app.logger.info "Generating Report."
