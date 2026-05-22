@@ -1,12 +1,12 @@
 +++
 title = "OpenAI와 함께 Noir 사용하기"
-description = "GPT-5.4 같은 OpenAI 모델을 Noir와 연결하여 AI 기반 코드 분석을 수행하는 방법입니다."
+description = "GPT-5.5 같은 OpenAI 모델을 Noir와 연결하여 AI 기반 코드 분석을 수행하는 방법입니다."
 weight = 4
 sort_by = "weight"
 
 +++
 
-Noir를 [OpenAI](https://openai.com)와 통합하여 GPT-5.4 같은 언어 모델로 코드 분석 및 엔드포인트 탐지를 수행할 수 있습니다.
+Noir를 [OpenAI](https://openai.com)와 통합하여 GPT-5.5 같은 언어 모델로 코드 분석 및 엔드포인트 탐지를 수행할 수 있습니다.
 
 ## 설정
 
