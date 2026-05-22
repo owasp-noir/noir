@@ -1,5 +1,6 @@
 require "colorize"
 require "../common"
+require "../../banner"
 
 # `noir help [command]`
 #
@@ -28,53 +29,31 @@ module Noir::CLI::HelpCommand
   end
 
   def self.print_top_level
+    banner()
+
     cyan = ->(s : String) { s.colorize(:cyan).to_s }
     green = ->(s : String) { s.colorize(:green).to_s }
-    yellow = ->(s : String) { s.colorize(:yellow).to_s }
-    dim = ->(s : String) { s.colorize(:dark_gray).to_s }
 
     puts <<-HELP
-      #{green.call("Noir")} — hunt every endpoint in your code, expose shadow APIs,
-                     map the attack surface.
-
       #{green.call("USAGE:")}
         noir <command> [arguments] [flags]
-        noir [flags]               #{dim.call("# v0-compatible: routes to `noir scan`")}
+        noir [flags]                       # v0-compatible: routes to `noir scan`
 
-      #{green.call("CORE COMMAND:")}
-        #{cyan.call("scan")} [PATHS...]            Discover endpoints in one or more codebases.
-                                  Use positional paths or repeated `-b PATH`.
-
-      #{green.call("CATALOG (read-only enumeration):")}
-        #{cyan.call("list techs")}                 Supported languages, frameworks, and analyzers
-        #{cyan.call("list taggers")}               Built-in and framework-specific taggers
-        #{cyan.call("list formats")}               Supported output formats
-
-      #{green.call("MANAGED RESOURCES:")}
-        #{cyan.call("rules")}  list | update | path     Passive-scan rules repository
-        #{cyan.call("cache")}  info | clear             On-disk LLM response cache
-        #{cyan.call("config")} show | init | path       User-level YAML configuration
-
-      #{green.call("UTILITIES:")}
-        #{cyan.call("completion")} <shell>          Generate shell completion (zsh|bash|fish)
-        #{cyan.call("version")} [--verbose]         Print version (or build details with --verbose)
-        #{cyan.call("help")} [command]              Show this overview or a specific command's help
+      #{green.call("COMMANDS:")}
+        #{cyan.call("scan")} [PATHS...]                Discover endpoints in one or more codebases
+        #{cyan.call("list")} techs | taggers | formats Enumerate built-in catalogs
+        #{cyan.call("cache")} info | clear             Manage the on-disk LLM response cache
+        #{cyan.call("config")} show | init | path      Manage the user-level YAML configuration
+        #{cyan.call("rules")} list | update | path     Manage the passive-scan rules repository
+        #{cyan.call("completion")} <zsh|bash|fish>     Generate shell completion script
+        #{cyan.call("version")} [--verbose]            Print version (or full build details)
+        #{cyan.call("help")} [command]                 Show this overview or a command's help
 
       #{green.call("GLOBAL FLAGS:")}
-        --no-color                  Strip ANSI color from every command's output
-                                    (also honors the NO_COLOR env var)
+        --no-color    Strip ANSI color from every command's output (NO_COLOR env also works)
+        -h, --help    Show this overview, or — after a verb — that command's help
 
-      #{green.call("EXAMPLES:")}
-        #{yellow.call("# v1 idiomatic")}
-        noir scan ./app
-        noir scan ./api ./worker --passive
-        noir scan ./app --ai-context --include path,techs,callee
-
-        #{yellow.call("# v0 still works")}
-        noir -b ./app
-        noir -b ./api -b ./worker -P -f json -o out.json
-
-      Run `noir help <command>` for the flag surface of any command.
+      Run `noir help <command>` (or `noir <command> -h`) for command-specific flags.
       HELP
   end
 end

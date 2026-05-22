@@ -34,6 +34,15 @@ module Noir::CLI::Router
     end
 
     head = argv.first
+
+    # `noir -h` / `noir --help` with no other args show the top-level
+    # subcommand overview, not scan's full flag dump. (Per-command help
+    # is reachable via `noir scan -h`, `noir list -h`, etc.)
+    if argv.size == 1 && (head == "-h" || head == "--help")
+      HelpCommand.run([] of String)
+      return
+    end
+
     if !head.starts_with?("-") && KNOWN_COMMANDS.includes?(head)
       rest = argv[1..]
       route(head, rest)
