@@ -16,7 +16,7 @@ sort_by = "weight"
 ## 사용 방법
 
 ```bash
-noir -b ./myapp \
+noir scan ./myapp \
      --ai-provider=azure \
      --ai-model=YOUR_MODEL_NAME \
      --ai-key=YOUR_API_KEY
@@ -28,7 +28,7 @@ noir -b ./myapp \
 
 ```bash
 export NOIR_AI_KEY=YOUR_API_KEY
-noir -b ./myapp --ai-provider=azure --ai-model=YOUR_MODEL_NAME
+noir scan ./myapp --ai-provider=azure --ai-model=YOUR_MODEL_NAME
 ```
 
 Azure AI를 통해 자연어 엔드포인트 설명, 보안 취약점 식별, 코드 품질 개선 제안을 받을 수 있습니다.

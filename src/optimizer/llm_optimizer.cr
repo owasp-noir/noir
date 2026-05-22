@@ -202,9 +202,6 @@ class LLMEndpointOptimizer < EndpointOptimizer
                 raw_model
               end
       api_key = @options["ai_key"]?.try(&.to_s)
-    elsif @options.has_key?("ollama") && !@options["ollama"].to_s.empty?
-      provider = @options["ollama"].to_s
-      model = @options["ollama_model"]?.try(&.to_s) || ""
     end
 
     if !provider.empty? && (!model.empty? || LLM::ACPClient.acp_provider?(provider))

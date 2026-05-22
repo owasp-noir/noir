@@ -20,19 +20,19 @@ Use ACP (Agent Client Protocol) providers when you want Noir to talk to an AI ag
 ### Codex (recommended test target)
 
 ```bash
-noir -b ./myapp --ai-provider=acp:codex
+noir scan ./myapp --ai-provider=acp:codex
 ```
 
 ### Gemini
 
 ```bash
-noir -b ./myapp --ai-provider=acp:gemini
+noir scan ./myapp --ai-provider=acp:gemini
 ```
 
 ### Claude
 
 ```bash
-noir -b ./myapp --ai-provider=acp:claude
+noir scan ./myapp --ai-provider=acp:claude
 ```
 
 ### Optional model
@@ -40,7 +40,7 @@ noir -b ./myapp --ai-provider=acp:claude
 For `acp:*`, `--ai-model` is optional.
 
 ```bash
-noir -b ./myapp --ai-provider=acp:codex --ai-model=codex
+noir scan ./myapp --ai-provider=acp:codex --ai-model=codex
 ```
 
 ## Logging Behavior
@@ -50,7 +50,7 @@ By default, Noir wraps ACP lifecycle events in Noir-style logs and suppresses ra
 Set this if you need raw ACP and agent logs:
 
 ```bash
-NOIR_ACP_RAW_LOG=1 noir -b ./myapp --ai-provider=acp:codex
+NOIR_ACP_RAW_LOG=1 noir scan ./myapp --ai-provider=acp:codex
 ```
 
 ## Notes

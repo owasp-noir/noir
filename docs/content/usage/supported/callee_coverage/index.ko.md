@@ -8,10 +8,10 @@ sort_by = "weight"
 
 Noir는 엔드포인트에 best-effort 1-hop handler callee를 붙일 수 있습니다. callee는 라우트 핸들러 본문 안에서 직접 관찰된 함수, 메서드, 프레임워크 호출입니다. AI SAST 도구와 코드 리뷰어가 다음에 확인할 코드를 좁히는 데 사용할 수 있습니다.
 
-plain 출력에서 callee를 보려면 `--include-callee`를 사용하세요:
+plain 출력에서 callee를 보려면 `--include callee`를 사용하세요:
 
 ```bash
-noir -b . --include-callee
+noir scan . --include callee
 ```
 
 JSON, JSONL, YAML, TOML 같은 모델 기반 포맷과 plain 모델 직렬화는 엔드포인트 모델을 통해 `callees` 필드를 포함합니다. OpenAPI 2.0/3.0은 operation 레벨의 `x-noir-callees` extension으로, SARIF는 `result.properties.noir.callees`로, Postman collection은 item description의 사람이 읽을 수 있는 목록으로 callee를 제공합니다. cURL, HTTPie, PowerShell, only-url, only-param 같은 명령/필터 목적 출력은 주 출력 형태를 안정적으로 유지하기 위해 callee를 생략합니다.

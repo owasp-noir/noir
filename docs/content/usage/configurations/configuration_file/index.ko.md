@@ -19,7 +19,15 @@ sort_by = "weight"
 설정 파일의 값은 명령줄 인자로 재정의할 수 있습니다. 기본 위치가 아닌 곳에서 설정을 불러오려면 `--config-file <경로>`를 사용하세요:
 
 ```bash
-noir -b . --config-file ./ci/noir.yaml
+noir scan . --config-file ./ci/noir.yaml
+```
+
+설정 파일은 `noir config` 로도 직접 다룰 수 있습니다:
+
+```bash
+noir config init   # 기본 설정 생성 (멱등)
+noir config show   # 활성 파일 출력
+noir config path   # 해석된 경로 출력
 ```
 
 ## 디렉터리 구조
@@ -65,6 +73,8 @@ ai_model: "gpt-5.5"
 위 설정은 다음 명령과 동일합니다:
 
 ```bash
-noir -b /path/to/my/project -f json --exclude-codes "404,500" -T --include-callee --ai-context --ai-provider openai --ai-model gpt-5.5
+noir scan /path/to/my/project -f json --exclude-codes "404,500" -T \
+  --include callee --ai-context \
+  --ai-provider openai --ai-model gpt-5.5
 ```
 

@@ -24,7 +24,7 @@ Relevant flags:
 Send all endpoints to a proxy like Burp Suite or ZAP.
 
 ```bash
-noir -b ./source --send-proxy http://localhost:8080
+noir scan ./source --send-proxy http://localhost:8080
 ```
 
 ![](./deliver-proxy.png)
@@ -34,7 +34,7 @@ noir -b ./source --send-proxy http://localhost:8080
 Attach custom headers such as authentication tokens.
 
 ```bash
-noir -b ./source --send-proxy http://localhost:8080 --with-headers "Authorization: Bearer your-token"
+noir scan ./source --send-proxy http://localhost:8080 --with-headers "Authorization: Bearer your-token"
 ```
 
 ![](./deliver-header.png)
@@ -47,33 +47,33 @@ Use matchers and filters to send only specific endpoints.
 Send endpoints containing "api".
 
 ```bash
-noir -b ./source --send-proxy http://localhost:8080 --use-matchers "api"
+noir scan ./source --send-proxy http://localhost:8080 --use-matchers "api"
 ```
 
 #### Method-based Filtering
 Send only GET requests.
 
 ```bash
-noir -b ./source --send-proxy http://localhost:8080 --use-matchers "GET"
+noir scan ./source --send-proxy http://localhost:8080 --use-matchers "GET"
 ```
 
 Exclude POST requests.
 
 ```bash
-noir -b ./source --send-proxy http://localhost:8080 --use-filters "POST"
+noir scan ./source --send-proxy http://localhost:8080 --use-filters "POST"
 ```
 
 #### Method and URL Combination
 Send POST requests to API endpoints.
 
 ```bash
-noir -b ./source --send-proxy http://localhost:8080 --use-matchers "POST:/api"
+noir scan ./source --send-proxy http://localhost:8080 --use-matchers "POST:/api"
 ```
 
 Exclude GET requests to admin pages.
 
 ```bash
-noir -b ./source --send-proxy http://localhost:8080 --use-filters "GET:/admin"
+noir scan ./source --send-proxy http://localhost:8080 --use-filters "GET:/admin"
 ```
 
 #### Supported HTTP Methods
@@ -84,7 +84,7 @@ GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, TRACE, CONNECT (case insensitive)
 Combine multiple matchers or filters.
 
 ```bash
-noir -b ./source --send-proxy http://localhost:8080 --use-matchers "GET" --use-matchers "POST:/api"
+noir scan ./source --send-proxy http://localhost:8080 --use-matchers "GET" --use-matchers "POST:/api"
 ```
 
 ![](./deliver-mf.png)

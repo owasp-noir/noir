@@ -13,7 +13,7 @@ Integrate Noir into your DAST pipeline to ensure security tools test all applica
 Use Noir's `deliver` feature to send discovered endpoints to a proxy like [OWASP ZAP](https://www.zaproxy.org/), [Burp Suite](https://portswigger.net/burp), or [Caido](https://caido.io/).
 
 ```bash
-noir -b . -u http://localhost:3000 --send-proxy "http://localhost:8080"
+noir scan . -u http://localhost:3000 --send-proxy "http://localhost:8080"
 ```
 
 This scans the current directory, constructs URLs using `http://localhost:3000` as the base, and sends all endpoints to the proxy at `http://localhost:8080`.
@@ -25,7 +25,7 @@ Generate an OpenAPI specification with Noir and feed it into ZAP's automation fr
 1.  **Discover Endpoints**:
 
     ```bash
-    noir -b ~/app_source -f oas3 --no-log -o doc.json
+    noir scan ~/app_source -f oas3 --no-log -o doc.json
     ```
 
 2.  **Run ZAP Scan**:

@@ -18,7 +18,7 @@ Use [xAI](https://x.ai) Grok models for advanced code analysis and endpoint disc
 Run Noir with xAI:
 
 ```bash
-noir -b ./spec/functional_test/fixtures/hahwul \
+noir scan ./spec/functional_test/fixtures/hahwul \
      --ai-provider=xai \
      --ai-model=grok-4.3 \
      --ai-key=xai-...

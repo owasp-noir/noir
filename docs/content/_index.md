@@ -37,7 +37,7 @@ template = "landing"
           <span class="terminal-title">noir</span>
         </div>
         <div class="hero-terminal-body">
-          <div class="terminal-line"><span class="t-prompt">$</span> noir -b .</div>
+          <div class="terminal-line"><span class="t-prompt">$</span> noir scan .</div>
           <div class="terminal-line t-dim">  <span class="t-info">INFO</span> Detected 1 technologies: crystal_kemal</div>
           <div class="terminal-line t-dim">  <span class="t-info">INFO</span> Analysis Started. Code Analyzer: 1 in use</div>
           <div class="terminal-line"><span class="t-success">Finally identified 6 endpoints.</span> <span class="t-dim">in 0.0032s</span></div>
@@ -130,7 +130,7 @@ template = "landing"
         <div class="how-step-content">
           <h3>Point it at a codebase</h3>
           <p>Noir detects language, framework, and routing patterns on its own. No config to write.</p>
-          <div class="how-step-code">$ noir -b ./your-project</div>
+          <div class="how-step-code">$ noir scan ./your-project</div>
         </div>
       </div>
       <div class="how-step">
@@ -145,7 +145,7 @@ template = "landing"
         <div class="how-step-content">
           <h3>Hand off to humans, AI, or DAST</h3>
           <p>Export JSON, OpenAPI, or SARIF for human reviewers; pipe straight into ZAP, Burp, or Caido as a proxy target; or hand the inventory to an LLM-based code auditor as focused entrypoint context.</p>
-          <div class="how-step-code">$ noir -b . -f oas3 --send-proxy http://localhost:8090</div>
+          <div class="how-step-code">$ noir scan . -f oas3 --send-proxy http://localhost:8090</div>
         </div>
       </div>
     </div>

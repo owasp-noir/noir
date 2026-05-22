@@ -1,4 +1,6 @@
 require "../spec_helper"
+require "../../src/tagger/tagger"
+require "../../src/techs/techs"
 require "../../src/options.cr"
 
 describe "default_options" do
@@ -130,6 +132,186 @@ describe "run_options_parser" do
     begin
       noir_options = run_options_parser()
       noir_options["ai_agent_max_steps"].as_i.should eq(10)
+    ensure
+      ARGV.clear
+      ARGV.concat(original_argv)
+    end
+  end
+
+  # ---------- v1 flag-consolidation surface (Phase 6) ----------
+
+  it "supports positional path arguments (v1 scan idiom)" do
+    original_argv = ARGV.dup
+    ARGV.clear
+    ARGV.concat(["./app", "./api"])
+
+    begin
+      noir_options = run_options_parser()
+      base = noir_options["base"].as_a.map(&.to_s)
+      base.should eq(["./app", "./api"])
+    ensure
+      ARGV.clear
+      ARGV.concat(original_argv)
+    end
+  end
+
+  it "mixes positional paths with repeated -b" do
+    original_argv = ARGV.dup
+    ARGV.clear
+    ARGV.concat(["-b", "./app1", "./app2", "-b", "./app3"])
+
+    begin
+      noir_options = run_options_parser()
+      noir_options["base"].as_a.map(&.to_s).should eq(["./app1", "./app3", "./app2"])
+    ensure
+      ARGV.clear
+      ARGV.concat(original_argv)
+    end
+  end
+
+  it "--include path,techs sets the matching include_* booleans" do
+    original_argv = ARGV.dup
+    ARGV.clear
+    ARGV.concat(["-b", "./app", "--include", "path,techs"])
+
+    begin
+      noir_options = run_options_parser()
+      noir_options["include_path"].should be_true
+      noir_options["include_techs"].should be_true
+      noir_options["include_callee"].should be_false
+    ensure
+      ARGV.clear
+      ARGV.concat(original_argv)
+    end
+  end
+
+  it "--include callee enables include_callee only" do
+    original_argv = ARGV.dup
+    ARGV.clear
+    ARGV.concat(["-b", "./app", "--include", "callee"])
+
+    begin
+      noir_options = run_options_parser()
+      noir_options["include_callee"].should be_true
+      noir_options["include_path"].should be_false
+    ensure
+      ARGV.clear
+      ARGV.concat(original_argv)
+    end
+  end
+
+  it "--pvalue TYPE=VAL routes into the matching set_pvalue_* slot" do
+    original_argv = ARGV.dup
+    ARGV.clear
+    ARGV.concat(["-b", "./app", "--pvalue", "query=FOO", "--pvalue", "header=BAR"])
+
+    begin
+      noir_options = run_options_parser()
+      noir_options["set_pvalue_query"].as_a.map(&.to_s).should eq(["FOO"])
+      noir_options["set_pvalue_header"].as_a.map(&.to_s).should eq(["BAR"])
+    ensure
+      ARGV.clear
+      ARGV.concat(original_argv)
+    end
+  end
+
+  it "--pvalue without a TYPE prefix routes into the global set_pvalue array" do
+    original_argv = ARGV.dup
+    ARGV.clear
+    ARGV.concat(["-b", "./app", "--pvalue", "BLAH"])
+
+    begin
+      noir_options = run_options_parser()
+      noir_options["set_pvalue"].as_a.map(&.to_s).should eq(["BLAH"])
+    ensure
+      ARGV.clear
+      ARGV.concat(original_argv)
+    end
+  end
+
+  it "bare --ai-context enables AI context with no feature filter" do
+    original_argv = ARGV.dup
+    ARGV.clear
+    ARGV.concat(["-b", "./app", "--ai-context"])
+
+    begin
+      noir_options = run_options_parser()
+      noir_options["ai_context"].should be_true
+      noir_options["ai_context_features"].to_s.should eq("")
+    ensure
+      ARGV.clear
+      ARGV.concat(original_argv)
+    end
+  end
+
+  it "--ai-context guards,sinks stores the feature filter" do
+    original_argv = ARGV.dup
+    ARGV.clear
+    ARGV.concat(["-b", "./app", "--ai-context", "guards,sinks"])
+
+    begin
+      noir_options = run_options_parser()
+      noir_options["ai_context"].should be_true
+      noir_options["ai_context_features"].to_s.should eq("guards,sinks")
+    ensure
+      ARGV.clear
+      ARGV.concat(original_argv)
+    end
+  end
+
+  it "--ai-context followed by a path leaves the path as positional" do
+    original_argv = ARGV.dup
+    ARGV.clear
+    ARGV.concat(["--ai-context", "./app"])
+
+    begin
+      noir_options = run_options_parser()
+      noir_options["ai_context"].should be_true
+      noir_options["ai_context_features"].to_s.should eq("")
+      noir_options["base"].as_a.map(&.to_s).should eq(["./app"])
+    ensure
+      ARGV.clear
+      ARGV.concat(original_argv)
+    end
+  end
+
+  it "--ai-context=callee accepts the explicit-equals form" do
+    original_argv = ARGV.dup
+    ARGV.clear
+    ARGV.concat(["-b", "./app", "--ai-context=callee"])
+
+    begin
+      noir_options = run_options_parser()
+      noir_options["ai_context"].should be_true
+      noir_options["ai_context_features"].to_s.should eq("callee")
+    ensure
+      ARGV.clear
+      ARGV.concat(original_argv)
+    end
+  end
+
+  it "legacy --set-pvalue-query alias still appends to set_pvalue_query" do
+    original_argv = ARGV.dup
+    ARGV.clear
+    ARGV.concat(["-b", "./app", "--set-pvalue-query", "OLD"])
+
+    begin
+      noir_options = run_options_parser()
+      noir_options["set_pvalue_query"].as_a.map(&.to_s).should eq(["OLD"])
+    ensure
+      ARGV.clear
+      ARGV.concat(original_argv)
+    end
+  end
+
+  it "legacy --include-path alias still flips include_path" do
+    original_argv = ARGV.dup
+    ARGV.clear
+    ARGV.concat(["-b", "./app", "--include-path"])
+
+    begin
+      noir_options = run_options_parser()
+      noir_options["include_path"].should be_true
     ensure
       ARGV.clear
       ARGV.concat(original_argv)

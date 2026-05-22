@@ -51,10 +51,6 @@ module Analyzer::AI
                  end
         raw_key = options["ai_key"]?.try(&.as_s)
         @api_key = (raw_key.nil? || raw_key.empty?) ? nil : raw_key
-      elsif options.has_key?("ollama") && !options["ollama"].as_s.empty?
-        @provider = options["ollama"].as_s
-        @model = options["ollama_model"].as_s
-        @api_key = nil
       else
         @provider = "ollama"
         @model = "llama3"

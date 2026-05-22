@@ -13,14 +13,14 @@ Press `Tab` to auto-complete Noir's commands, flags, and options. Noir can gener
 Preview the generated completion script:
 
 ```bash
-noir --generate-completion zsh
+noir completion zsh
 ```
 
 To load it automatically, save the script to a completions directory that Zsh picks up on startup:
 
 ```bash
 mkdir -p ~/.zsh/completion
-noir --generate-completion zsh > ~/.zsh/completion/_noir
+noir completion zsh > ~/.zsh/completion/_noir
 ```
 
 ## Bash
@@ -28,14 +28,14 @@ noir --generate-completion zsh > ~/.zsh/completion/_noir
 Preview the generated completion script:
 
 ```bash
-noir --generate-completion bash
+noir completion bash
 ```
 
 Save it to the standard `bash-completion` directory so new sessions load it automatically:
 
 ```bash
 mkdir -p ~/.local/share/bash-completion/completions
-noir --generate-completion bash > ~/.local/share/bash-completion/completions/noir
+noir completion bash > ~/.local/share/bash-completion/completions/noir
 ```
 
 ## Fish
@@ -43,14 +43,14 @@ noir --generate-completion bash > ~/.local/share/bash-completion/completions/noi
 Preview the generated completion script:
 
 ```bash
-noir --generate-completion fish
+noir completion fish
 ```
 
 Save it to Fish's completions directory for automatic loading:
 
 ```bash
 mkdir -p ~/.config/fish/completions
-noir --generate-completion fish > ~/.config/fish/completions/noir.fish
+noir completion fish > ~/.config/fish/completions/noir.fish
 ```
 
 ## Homebrew Users

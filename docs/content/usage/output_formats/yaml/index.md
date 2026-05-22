@@ -11,7 +11,7 @@ Output scan results as YAML. It carries the same data as JSON but the indentatio
 ## Usage
 
 ```bash
-noir -b . -f yaml --no-log
+noir scan . -f yaml --no-log
 ```
 
 ## Example Output

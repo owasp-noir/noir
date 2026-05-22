@@ -20,19 +20,19 @@ ACP(Agent Client Protocol) 제공자를 사용하면 Noir가 직접 HTTP LLM API
 ### Codex (권장 테스트 대상)
 
 ```bash
-noir -b ./myapp --ai-provider=acp:codex
+noir scan ./myapp --ai-provider=acp:codex
 ```
 
 ### Gemini
 
 ```bash
-noir -b ./myapp --ai-provider=acp:gemini
+noir scan ./myapp --ai-provider=acp:gemini
 ```
 
 ### Claude
 
 ```bash
-noir -b ./myapp --ai-provider=acp:claude
+noir scan ./myapp --ai-provider=acp:claude
 ```
 
 ### 모델 지정 (선택 사항)
@@ -40,7 +40,7 @@ noir -b ./myapp --ai-provider=acp:claude
 `acp:*`에서는 `--ai-model`이 필수가 아닙니다.
 
 ```bash
-noir -b ./myapp --ai-provider=acp:codex --ai-model=codex
+noir scan ./myapp --ai-provider=acp:codex --ai-model=codex
 ```
 
 ## 로그 동작
@@ -50,7 +50,7 @@ noir -b ./myapp --ai-provider=acp:codex --ai-model=codex
 원본 ACP/에이전트 로그가 필요하면:
 
 ```bash
-NOIR_ACP_RAW_LOG=1 noir -b ./myapp --ai-provider=acp:codex
+NOIR_ACP_RAW_LOG=1 noir scan ./myapp --ai-provider=acp:codex
 ```
 
 ## 참고

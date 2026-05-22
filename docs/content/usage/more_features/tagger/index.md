@@ -17,13 +17,13 @@ Tagger is disabled by default.
 **Enable all taggers**
 
 ```bash
-noir -b <BASE_PATH> -T
+noir scan <BASE_PATH> -T
 ```
 
-**Enable specific taggers** (list available ones with `noir --list-taggers`)
+**Enable specific taggers** (list available ones with `noir list taggers`)
 
 ```bash
-noir -b <BASE_PATH> --use-taggers hunt,oauth
+noir scan <BASE_PATH> --use-taggers hunt,oauth
 ```
 
 ## Output

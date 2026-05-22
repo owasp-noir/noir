@@ -26,9 +26,13 @@ sort_by = "weight"
 ## 사용 방법
 
 ```bash
-noir -b ./spec/functional_test/fixtures/hahwul \
+noir scan ./spec/functional_test/fixtures/hahwul \
      --ai-provider=ollama \
      --ai-model=gemma4
 ```
 
 Ollama를 통해 취약점 탐지, 코드 개선 제안, 엔드포인트 기능 설명 등 로컬 AI 분석을 수행할 수 있습니다.
+
+> **v0 → v1 마이그레이션:** 독립적인 `--ollama` / `--ollama-model` 플래그는
+> v1.0에서 제거되었습니다. 위 예시처럼 통합된 `--ai-provider ollama
+> --ai-model NAME` 형태를 사용하세요.

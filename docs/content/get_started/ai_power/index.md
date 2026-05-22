@@ -15,19 +15,19 @@ Connect Noir to Large Language Models (cloud-based, local, or ACP agent-based) f
 Scan with OpenAI:
 
 ```bash
-noir -b . --ai-provider openai --ai-model gpt-5.5 --ai-key $OPENAI_API_KEY
+noir scan . --ai-provider openai --ai-model gpt-5.5 --ai-key $OPENAI_API_KEY
 ```
 
 Scan with local Ollama (no API key needed):
 
 ```bash
-noir -b . --ai-provider ollama --ai-model gemma4
+noir scan . --ai-provider ollama --ai-model gemma4
 ```
 
 Scan with ACP agent (no model/key needed):
 
 ```bash
-noir -b . --ai-provider acp:codex
+noir scan . --ai-provider acp:codex
 ```
 
 ## Usage
@@ -35,13 +35,13 @@ noir -b . --ai-provider acp:codex
 Specify an AI provider, model, and API key:
 
 ```bash
-noir -b . --ai-provider <PROVIDER> --ai-model <MODEL_NAME> --ai-key <YOUR_API_KEY>
+noir scan . --ai-provider <PROVIDER> --ai-model <MODEL_NAME> --ai-key <YOUR_API_KEY>
 ```
 
 For ACP providers (`acp:*`), `--ai-model` is optional and `--ai-key` is usually not required:
 
 ```bash
-noir -b . --ai-provider acp:codex
+noir scan . --ai-provider acp:codex
 ```
 
 ### Command-Line Flags

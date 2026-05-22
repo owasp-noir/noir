@@ -10,6 +10,7 @@ Reference for running Noir and configuring its individual features.
 
 ## Key Areas
 
+*   **[CLI Commands](cli_commands/)**: The v1 subcommand reference (`scan`, `list`, `cache`, `config`, `rules`, `completion`, `version`, `help`) with v0-compatibility notes.
 *   **[Supported Technologies](supported/)**: Learn about the programming languages, frameworks, and specifications that Noir can analyze.
 *   **[Configurations](configurations/)**: Set up configuration files and shell completion for a better workflow.
 *   **[Output Formats](output_formats/)**: Discover the different output formats that Noir supports, including JSON, YAML, and OpenAPI.

@@ -51,7 +51,51 @@ def extract_hidden_prompt_flags(noir_options : Hash(String, YAML::Any)) : Array(
       i += 1
     end
   end
+  filtered = normalize_ai_context_flag(filtered)
   filtered
+end
+
+# `--ai-context` accepts an optional comma-separated feature list. Crystal's
+# OptionParser cannot express "optional positional value", so we rewrite
+# the few well-defined ambiguous forms upfront:
+#
+#   --ai-context                 → --ai-context=         (bare, all features)
+#   --ai-context=guards,sinks    → unchanged             (explicit value)
+#   --ai-context guards,sinks    → --ai-context=guards,sinks (heuristic)
+#   --ai-context ./app           → --ai-context=         (next token is a path)
+#
+# The heuristic for "is the next token a feature list?" is intentionally
+# tight: lowercase comma-separated words drawn from a fixed vocabulary.
+# This keeps `noir scan --ai-context ./app` working as a positional path.
+AI_CONTEXT_FEATURES = ["guards", "sinks", "validators", "signals", "callee", "all"]
+
+def normalize_ai_context_flag(args : Array(String)) : Array(String)
+  result = [] of String
+  i = 0
+  while i < args.size
+    arg = args[i]
+    if arg == "--ai-context"
+      if i + 1 < args.size && ai_context_feature_list?(args[i + 1])
+        result << "--ai-context=#{args[i + 1]}"
+        i += 2
+      else
+        result << "--ai-context="
+        i += 1
+      end
+    else
+      result << arg
+      i += 1
+    end
+  end
+  result
+end
+
+private def ai_context_feature_list?(token : String) : Bool
+  return false if token.starts_with?("-")
+  return false unless token.matches?(/\A[a-z,]+\z/)
+  tokens = token.split(',').reject(&.empty?)
+  return false if tokens.empty?
+  tokens.all? { |t| AI_CONTEXT_FEATURES.includes?(t) }
 end
 
 private def base_help : String
@@ -157,25 +201,29 @@ def run_options_parser
       noir_options["output"] = YAML::Any.new(v)
     end
 
-    parser.on "--set-pvalue VALUE", "Set parameter value for all types" do |v|
+    parser.on "--pvalue TYPE=VAL", "Set parameter value (TYPE: any|header|cookie|query|form|json|path; repeatable)" do |v|
+      handle_pvalue(noir_options, v)
+    end
+    # Legacy v0 aliases — kept silent in v1.x for `noir -b .` script compat.
+    parser.on "--set-pvalue VALUE", "(legacy) alias for --pvalue any=VALUE" do |v|
       append_to_yaml_array(noir_options, "set_pvalue", v)
     end
-    parser.on "--set-pvalue-header VALUE", "Set parameter value for headers" do |v|
+    parser.on "--set-pvalue-header VALUE", "(legacy) alias for --pvalue header=VALUE" do |v|
       append_to_yaml_array(noir_options, "set_pvalue_header", v)
     end
-    parser.on "--set-pvalue-cookie VALUE", "Set parameter value for cookies" do |v|
+    parser.on "--set-pvalue-cookie VALUE", "(legacy) alias for --pvalue cookie=VALUE" do |v|
       append_to_yaml_array(noir_options, "set_pvalue_cookie", v)
     end
-    parser.on "--set-pvalue-query VALUE", "Set parameter value for query parameters" do |v|
+    parser.on "--set-pvalue-query VALUE", "(legacy) alias for --pvalue query=VALUE" do |v|
       append_to_yaml_array(noir_options, "set_pvalue_query", v)
     end
-    parser.on "--set-pvalue-form VALUE", "Set parameter value for form data" do |v|
+    parser.on "--set-pvalue-form VALUE", "(legacy) alias for --pvalue form=VALUE" do |v|
       append_to_yaml_array(noir_options, "set_pvalue_form", v)
     end
-    parser.on "--set-pvalue-json VALUE", "Set parameter value for JSON body" do |v|
+    parser.on "--set-pvalue-json VALUE", "(legacy) alias for --pvalue json=VALUE" do |v|
       append_to_yaml_array(noir_options, "set_pvalue_json", v)
     end
-    parser.on "--set-pvalue-path VALUE", "Set parameter value for path parameters" do |v|
+    parser.on "--set-pvalue-path VALUE", "(legacy) alias for --pvalue path=VALUE" do |v|
       append_to_yaml_array(noir_options, "set_pvalue_path", v)
     end
 
@@ -188,17 +236,27 @@ def run_options_parser
     parser.on "--exclude-path PATTERN", "Exclude files by glob (e.g. *.test.js,*_test.go)" do |v|
       noir_options["exclude_path"] = YAML::Any.new(v)
     end
-    parser.on "--include-path", "Include file path in plain output" do
+    parser.on "--include LIST", "Enrich plain output (comma-separated: path,techs,callee)" do |v|
+      apply_include_list(noir_options, v)
+    end
+    # Legacy aliases for individual enrichment toggles.
+    parser.on "--include-path", "(legacy) alias for --include path" do
       noir_options["include_path"] = YAML::Any.new(true)
     end
-    parser.on "--include-techs", "Include technology in plain output" do
+    parser.on "--include-techs", "(legacy) alias for --include techs" do
       noir_options["include_techs"] = YAML::Any.new(true)
     end
-    parser.on "--include-callee", "Include 1-hop handler callees in plain output (best-effort, see docs)" do
+    parser.on "--include-callee", "(legacy) alias for --include callee" do
       noir_options["include_callee"] = YAML::Any.new(true)
     end
-    parser.on "--ai-context", "Include aggregated AI review context (guards, callees, sinks, validators, signals)" do
-      noir_options["ai_context"] = YAML::Any.new(true)
+    parser.on "--ai-context [LIST]", <<-DESC do |v|
+      Include aggregated AI review context. With no argument, emits every
+      category (guards, callees, sinks, validators, signals). Pass a
+      comma-separated subset to narrow the output:
+        --ai-context guards,sinks
+        --ai-context=callee
+      DESC
+      apply_ai_context(noir_options, v)
     end
     parser.on "--no-color", "Disable color output" do
       noir_options["color"] = YAML::Any.new(false)
@@ -311,12 +369,6 @@ def run_options_parser
     parser.on "--ai-max-token N", "Max tokens per request" do |v|
       noir_options["ai_max_token"] = YAML::Any.new(v.to_i)
     end
-    parser.on "--ollama URL", "(Deprecated) Use --ai-provider instead" do |v|
-      noir_options["ollama"] = YAML::Any.new(v)
-    end
-    parser.on "--ollama-model NAME", "(Deprecated) Use --ai-model instead" do |v|
-      noir_options["ollama_model"] = YAML::Any.new(v)
-    end
 
     parser.separator "\n DIFF:".colorize(:blue)
     parser.on "--diff-path PATH", "Old code version for diff" do |v|
@@ -417,9 +469,17 @@ def run_options_parser
     end
 
     parser.invalid_option do |flag|
-      STDERR.puts "ERROR: #{flag} is not a valid option.".colorize(:yellow)
-      STDERR.puts parser
-      exit(1)
+      case flag
+      when "--ollama", "--ollama-model"
+        STDERR.puts "ERROR: #{flag} was removed in v1.0.".colorize(:yellow)
+        STDERR.puts "       Use --ai-provider ollama [--ai-model NAME] instead."
+        STDERR.puts "       Example: noir scan ./app --ai-provider ollama --ai-model llama3"
+        exit(1)
+      else
+        STDERR.puts "ERROR: #{flag} is not a valid option.".colorize(:yellow)
+        STDERR.puts parser
+        exit(1)
+      end
     end
 
     parser.missing_option do |flag|
@@ -428,5 +488,82 @@ def run_options_parser
     end
   end
 
+  # Anything left in `extracted_args` after OptionParser ran is a
+  # positional argument. In v1 scan, those are treated as additional
+  # base paths so `noir scan ./a ./b` mirrors `-b ./a -b ./b`.
+  extracted_args.each do |positional|
+    next if positional.starts_with?("-")
+    append_to_yaml_array(noir_options, "base", positional)
+  end
+
   noir_options
+end
+
+# Split `TYPE=VAL` (or bare `VAL` → all-types) and route it into the
+# right slot in noir_options. `--pvalue` may be repeated to set multiple
+# values across different types.
+PVALUE_TYPE_KEYS = {
+  "any"    => "set_pvalue",
+  "all"    => "set_pvalue",
+  "header" => "set_pvalue_header",
+  "cookie" => "set_pvalue_cookie",
+  "query"  => "set_pvalue_query",
+  "form"   => "set_pvalue_form",
+  "json"   => "set_pvalue_json",
+  "path"   => "set_pvalue_path",
+}
+
+def handle_pvalue(noir_options : Hash(String, YAML::Any), spec : String)
+  type, value = if idx = spec.index('=')
+                  {spec[0...idx], spec[(idx + 1)..]}
+                else
+                  {"any", spec}
+                end
+
+  key = PVALUE_TYPE_KEYS[type]?
+  if key.nil?
+    STDERR.puts "ERROR: --pvalue: unknown type '#{type}'. Valid: #{PVALUE_TYPE_KEYS.keys.join(", ")}.".colorize(:yellow)
+    exit(1)
+  end
+
+  append_to_yaml_array(noir_options, key, value)
+end
+
+INCLUDE_TARGETS = {
+  "path"   => "include_path",
+  "techs"  => "include_techs",
+  "callee" => "include_callee",
+}
+
+def apply_include_list(noir_options : Hash(String, YAML::Any), spec : String)
+  spec.split(',').reject(&.empty?).each do |raw|
+    target = raw.strip
+    key = INCLUDE_TARGETS[target]?
+    if key.nil?
+      STDERR.puts "ERROR: --include: unknown target '#{target}'. Valid: #{INCLUDE_TARGETS.keys.join(", ")}.".colorize(:yellow)
+      exit(1)
+    end
+    noir_options[key] = YAML::Any.new(true)
+  end
+end
+
+# `--ai-context[=LIST]` always enables AI context output. An empty LIST
+# means "every category"; a non-empty LIST narrows the output to the
+# named categories.
+AI_CONTEXT_VALID_FEATURES = {"guards", "sinks", "validators", "signals", "callee", "all"}
+
+def apply_ai_context(noir_options : Hash(String, YAML::Any), spec : String)
+  noir_options["ai_context"] = YAML::Any.new(true)
+
+  list = spec.split(',').map(&.strip).reject(&.empty?)
+  return if list.empty? || list.includes?("all")
+
+  list.each do |feature|
+    unless AI_CONTEXT_VALID_FEATURES.includes?(feature)
+      STDERR.puts "ERROR: --ai-context: unknown feature '#{feature}'. Valid: #{(AI_CONTEXT_VALID_FEATURES.to_a - ["all"]).join(", ")}.".colorize(:yellow)
+      exit(1)
+    end
+  end
+
+  noir_options["ai_context_features"] = YAML::Any.new(list.join(","))
 end

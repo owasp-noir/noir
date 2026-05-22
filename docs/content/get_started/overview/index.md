@@ -15,7 +15,7 @@ Noir is an open-source SAST tool. It reads source code and extracts the endpoint
 That inventory feeds three audiences:
 
 - **Human reviewers.** Security engineers and code auditors get a focused list of attacker-reachable entrypoints and the files, parameters, and tags around them, instead of having to skim the whole repository.
-- **AI auditors.** LLM-based SAST agents get the same focused list, plus per-endpoint review context (`--include-callee` for 1-hop callees, `--ai-context` for guards, sinks, validators, and signals).
+- **AI auditors.** LLM-based SAST agents get the same focused list, plus per-endpoint review context (`--include callee` for 1-hop callees, `--ai-context` for guards, sinks, validators, and signals).
 - **DAST tools.** ZAP, Burp Suite, and Caido get a real route list to scan, including paths they would never have reached by crawling.
 
 ![noir-usage](./noir-usage.jpg)
@@ -30,7 +30,7 @@ That inventory feeds three audiences:
 
 **Feed DAST scanners.** Pipe endpoints straight into ZAP, Burp Suite, or Caido as a proxy target, or export OpenAPI for them to import. The scanner stops missing routes that were never linked from a page.
 
-**Give AI SAST useful context.** The endpoint inventory (entrypoints, source files, parameters, tags, and &mdash; with `--include-callee` &mdash; the 1-hop functions each handler invokes) is the focused context an LLM-based SAST tool, code auditor, or security agent needs to find attacker-reachable bugs. `--ai-context` goes further and attaches aggregated review context per endpoint &mdash; guards, callees, sinks, validators, and signals &mdash; so the model doesn't have to rediscover them. Hand it the surface Noir mapped instead of asking the model to scan the whole repository.
+**Give AI SAST useful context.** The endpoint inventory (entrypoints, source files, parameters, tags, and &mdash; with `--include callee` &mdash; the 1-hop functions each handler invokes) is the focused context an LLM-based SAST tool, code auditor, or security agent needs to find attacker-reachable bugs. `--ai-context` goes further and attaches aggregated review context per endpoint &mdash; guards, callees, sinks, validators, and signals &mdash; so the model doesn't have to rediscover them. Hand it the surface Noir mapped instead of asking the model to scan the whole repository.
 
 **Export to whatever reads next.** JSON, YAML, OpenAPI specs, SARIF for CI/CD, cURL, HTTPie, HTML reports, Postman collections &mdash; whichever format the next tool in the pipeline expects.
 

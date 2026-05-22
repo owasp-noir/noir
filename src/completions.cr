@@ -1,157 +1,270 @@
+# Shell completion scripts for the v1 `noir` CLI.
+#
+# v1 introduces subcommands (scan, list, cache, config, rules, completion,
+# version, help) on top of the v0 flag-only surface. Completions are
+# subcommand-aware: typing `noir <TAB>` lists the verbs; typing
+# `noir scan <TAB>` falls back to scan-specific paths/flags.
+#
+# The v0 flag set is still completed under `noir scan` (and under bare
+# `noir` for backward compatibility with users who haven't switched to
+# the verb form).
+
+private FORMATS = "plain yaml json jsonl toml markdown-table sarif html curl httpie powershell oas2 oas3 postman only-url only-param only-header only-cookie only-tag mermaid"
+
+private SCAN_FLAGS = %w[
+  -b --base-path
+  -u --url
+  -f --format
+  -o --output
+  --pvalue
+  --set-pvalue
+  --set-pvalue-header
+  --set-pvalue-cookie
+  --set-pvalue-query
+  --set-pvalue-form
+  --set-pvalue-json
+  --set-pvalue-path
+  --status-codes
+  --exclude-codes
+  --exclude-path
+  --include
+  --include-path
+  --include-techs
+  --include-callee
+  --ai-context
+  --no-color
+  --no-log
+  -P --passive-scan
+  --passive-scan-path
+  --passive-scan-severity
+  --passive-scan-auto-update
+  --passive-scan-no-update-check
+  -T --use-all-taggers
+  --use-taggers
+  --send-req
+  --send-proxy
+  --send-es
+  --with-headers
+  --use-matchers
+  --use-filters
+  --ai-provider
+  --ai-model
+  --ai-key
+  --ai-agent
+  --ai-agent-max-steps
+  --ai-native-tools-allowlist
+  --ai-max-token
+  --diff-path
+  -t --techs
+  --exclude-techs
+  --only-techs
+  --config-file
+  --concurrency
+  --cache-disable
+  --cache-clear
+  -d --debug
+  --verbose
+  -v --version
+  -h --help
+]
+
 def generate_zsh_completion_script
   <<-SCRIPT
     #compdef noir
 
-    _arguments \\
-      '-b[Set base path]:path:_files' \\
-      '-u[Set base URL for endpoints]:URL:_urls' \\
-      '-f[Set output format]:format:(plain yaml json jsonl toml markdown-table sarif html curl httpie powershell oas2 oas3 postman only-url only-param only-header only-cookie only-tag mermaid)' \\
-      '-o[Write result to file]:path:_files' \\
-      '--set-pvalue[Specifies the value of the identified parameter]:value:' \\
-      '--set-pvalue-header[Specifies the value of the identified parameter for headers]:value:' \\
-      '--set-pvalue-cookie[Specifies the value of the identified parameter for cookies]:value:' \\
-      '--set-pvalue-query[Specifies the value of the identified parameter for query parameters]:value:' \\
-      '--set-pvalue-form[Specifies the value of the identified parameter for form data]:value:' \\
-      '--set-pvalue-json[Specifies the value of the identified parameter for JSON data]:value:' \\
-      '--set-pvalue-path[Specifies the value of the identified parameter for path parameters]:value:' \\
-      '--status-codes[Display HTTP status codes for discovered endpoints]' \\
-      '--exclude-codes[Exclude specific HTTP response codes (comma-separated)]:status:' \\
-      '--include-path[Include file path in the plain result]' \\
-      '--include-techs[Include technology in the plain result]' \\
-      '--ai-context[Include aggregated AI review context]' \\
-      '--no-color[Disable color output]' \\
-      '--no-log[Displaying only the results]' \\
-      '-P[Perform a passive scan for security issues using rules from the specified path]' \\
-      '--passive-scan[Enable passive security scan]' \\
-      '--passive-scan-path[Specify the path for the rules used in the passive security scan]:path:_files' \\
-      '--passive-scan-severity[Min severity (critical|high|medium|low, default: high)]:severity:(critical high medium low)' \\
-      '--passive-scan-auto-update[Auto-update rules at startup]' \\
-      '--passive-scan-no-update-check[Skip rule update check]' \\
-      '-T[Activates all taggers for full analysis coverage]' \\
-      '--use-taggers[Activates specific taggers]:values:' \\
-      '--list-taggers[Lists all available taggers]' \\
-      '--send-req[Send results to a web request]' \\
-      '--send-proxy[Send results to a web request via an HTTP proxy]:proxy:' \\
-      '--send-es[Send results to Elasticsearch]:es:' \\
-      '--with-headers[Add custom headers to be included in the delivery]:headers:' \\
-      '--use-matchers[Send URLs that match specific conditions to the Deliver]:string:' \\
-      '--use-filters[Exclude URLs that match specified conditions and send the rest to Deliver]:string:' \\
-      '--diff-path[Specify the path to the old version of the source code for comparison]:path:_files' \\
-      '-t[Specify the technologies to use]:techs:' \\
-      '--exclude-techs[Specify the technologies to be excluded]:techs:' \\
-      '--only-techs[Run only specified tech detectors]:techs:' \\
-      '--list-techs[Show all technologies]' \\
-      '--config-file[Specify the path to a configuration file in YAML format]:path:_files' \\
-      '--concurrency[Set concurrency]:concurrency:' \\
-      '--generate-completion[Generate Zsh/Bash/Fish completion script]:completion:(zsh bash fish)' \\
-      '--cache-disable[Disable LLM cache]' \\
-      '--cache-clear[Clear LLM cache before run]' \\
-      '--ai-provider[Specify the AI (LLM) provider, ACP target, or custom API URL]:provider:' \\
-      '--ai-model[Set the model name to use for AI analysis (optional for acp:*)]:model:' \\
-      '--ai-key[Provide the API key for the AI provider]:key:' \\
-      '--ai-max-token[Set the maximum number of tokens for AI requests]:value:' \\
-      '--ollama[Specify the Ollama server URL (Deprecated)]:URL:_urls' \\
-      '--ollama-model[Specify the Ollama model name (Deprecated)]:model:' \\
-      '-d[Show debug messages]' \\
-      '-v[Show version]' \\
-      '--build-info[Show version and Build info]' \\
-      '--verbose[Show verbose output]' \\
-      '--help-all[Show all help]' \\
-      '-h[Show help]'
+    _noir() {
+      local -a commands subjects shells cache_actions config_actions rules_actions
+
+      commands=(
+        'scan:Discover endpoints in one or more codebases'
+        'list:List built-in catalogs (techs, taggers, formats)'
+        'cache:Manage the LLM response cache (info, clear)'
+        'config:Manage the user-level config (show, init, path)'
+        'rules:Manage passive-scan rules (list, update, path)'
+        'completion:Generate shell completion script (zsh, bash, fish)'
+        'version:Print the noir version (--verbose for build info)'
+        'help:Show help for a command'
+      )
+      subjects=(techs taggers formats)
+      shells=(zsh bash fish)
+      cache_actions=(info clear)
+      config_actions=(show init path)
+      rules_actions=(list update path)
+
+      if (( CURRENT == 2 )); then
+        _describe -t commands 'noir command' commands
+        _files
+        return
+      fi
+
+      case "${words[2]}" in
+        list)
+          if (( CURRENT == 3 )); then
+            _describe -t subjects 'subject' subjects
+          fi
+          return
+          ;;
+        cache)
+          if (( CURRENT == 3 )); then
+            _describe -t cache_actions 'action' cache_actions
+          fi
+          return
+          ;;
+        config)
+          if (( CURRENT == 3 )); then
+            _describe -t config_actions 'action' config_actions
+          fi
+          return
+          ;;
+        rules)
+          if (( CURRENT == 3 )); then
+            _describe -t rules_actions 'action' rules_actions
+          fi
+          return
+          ;;
+        completion)
+          if (( CURRENT == 3 )); then
+            _describe -t shells 'shell' shells
+          fi
+          return
+          ;;
+        version|help)
+          return
+          ;;
+        scan|*)
+          _arguments \\
+            '-b[Set base path]:path:_files' \\
+            '-u[Set base URL for endpoints]:URL:_urls' \\
+            '-f[Output format]:format:(#{FORMATS})' \\
+            '-o[Write result to file]:path:_files' \\
+            '--pvalue[Set parameter value TYPE=VAL]:value:' \\
+            '--include[Enrich plain output (path,techs,callee)]:list:(path techs callee path,techs path,techs,callee)' \\
+            '--ai-context[Include AI review context (guards,sinks,...)]::list:(guards sinks validators signals callee)' \\
+            '--exclude-path[Exclude files by glob]:pattern:' \\
+            '--no-color[Disable color output]' \\
+            '--no-log[Show only results]' \\
+            '-P[Enable passive security scan]' \\
+            '--passive-scan-path[Custom passive rules path]:path:_files' \\
+            '--passive-scan-severity[Min severity]:severity:(critical high medium low)' \\
+            '--passive-scan-auto-update[Auto-update rules at startup]' \\
+            '--passive-scan-no-update-check[Skip rule update check]' \\
+            '-T[Activate all taggers]' \\
+            '--use-taggers[Activate specific taggers]:list:' \\
+            '--send-req[Send results via HTTP]' \\
+            '--send-proxy[Proxy URL]:url:' \\
+            '--send-es[Elasticsearch URL]:url:' \\
+            '--ai-provider[AI provider prefix or URL]:provider:' \\
+            '--ai-model[AI model name]:model:' \\
+            '--ai-key[AI API key]:key:' \\
+            '--diff-path[Old code version for diff]:path:_files' \\
+            '-t[Specify technologies]:techs:' \\
+            '--exclude-techs[Exclude technologies]:techs:' \\
+            '--only-techs[Only run these tech detectors]:techs:' \\
+            '--config-file[YAML config file]:path:_files' \\
+            '--concurrency[Concurrency level]:level:' \\
+            '--cache-disable[Disable LLM cache for this run]' \\
+            '--cache-clear[Clear LLM cache before scan]' \\
+            '-d[Enable debug messages]' \\
+            '--verbose[Verbose mode]' \\
+            '-h[Show help]'
+          return
+          ;;
+      esac
+    }
+
+    compdef _noir noir
     SCRIPT
 end
 
 def generate_bash_completion_script
+  scan_flags = SCAN_FLAGS.join(" ")
   <<-SCRIPT
     _noir_completions() {
-        local cur prev opts
-        COMPREPLY=()
-        cur="${COMP_WORDS[COMP_CWORD]}"
-        prev="${COMP_WORDS[COMP_CWORD-1]}"
-        opts="
-            -b --base-path
-            -u --url
-            -f --format
-            -o --output
-            --set-pvalue
-            --set-pvalue-header
-            --set-pvalue-cookie
-            --set-pvalue-query
-            --set-pvalue-form
-            --set-pvalue-json
-            --set-pvalue-path
-            --status-codes
-            --exclude-codes
-            --include-path
-            --include-techs
-            --ai-context
-            --no-color
-            --no-log
-            -P --passive-scan
-            --passive-scan-path
-            --passive-scan-severity
-            --passive-scan-auto-update
-            --passive-scan-no-update-check
-            -T --use-all-taggers
-            --use-taggers
-            --list-taggers
-            --send-req
-            --send-proxy
-            --send-es
-            --with-headers
-            --use-matchers
-            --use-filters
-            --diff-path
-            -t --techs
-            --exclude-techs
-            --only-techs
-            --list-techs
-            --config-file
-            --concurrency
-            --generate-completion
-            --cache-disable
-            --cache-clear
-            --ai-provider
-            --ai-model
-            --ai-key
-            --ai-max-token
-            --ollama
-            --ollama-model
-            -d --debug
-            -v --version
-            --build-info
-            --verbose
-            --help-all
-            -h --help
-        "
+      local cur prev cmd opts
+      COMPREPLY=()
+      cur="${COMP_WORDS[COMP_CWORD]}"
+      prev="${COMP_WORDS[COMP_CWORD-1]}"
+      cmd="${COMP_WORDS[1]}"
 
-        case "${prev}" in
-            -f|--format)
-                COMPREPLY=( $(compgen -W "plain yaml json jsonl toml markdown-table sarif html curl httpie powershell oas2 oas3 postman only-url only-param only-header only-cookie only-tag mermaid" -- "${cur}") )
-                return 0
-                ;;
-            --send-proxy|--send-es|--with-headers|--use-matchers|--use-filters|--diff-path|--config-file|--set-pvalue|--techs|--exclude-techs|--only-techs|--ollama|--ollama-model|-o|-b|-u)
-                COMPREPLY=( $(compgen -f -- "${cur}") )
-                return 0
-                ;;
-            --generate-completion)
-                COMPREPLY=( $(compgen -W "zsh bash fish" -- "${cur}") )
-                return 0
-                ;;
-            --passive-scan-severity)
-                COMPREPLY=( $(compgen -W "critical high medium low" -- "${cur}") )
-                return 0
-                ;;
-            --ai-provider|--ai-model|--ai-key|--ai-max-token|--ollama|--ollama-model)
-                COMPREPLY=( $(compgen -f -- "${cur}") )
-                return 0
-                ;;
-            *)
-                ;;
-        esac
+      local commands="scan list cache config rules completion version help"
 
-        COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+      if [[ ${COMP_CWORD} -eq 1 ]]; then
+        COMPREPLY=( $(compgen -W "${commands}" -- "${cur}") )
+        if [[ ${#COMPREPLY[@]} -eq 0 ]]; then
+          COMPREPLY=( $(compgen -f -- "${cur}") )
+        fi
         return 0
+      fi
+
+      case "${cmd}" in
+        list)
+          if [[ ${COMP_CWORD} -eq 2 ]]; then
+            COMPREPLY=( $(compgen -W "techs taggers formats" -- "${cur}") )
+            return 0
+          fi
+          ;;
+        cache)
+          if [[ ${COMP_CWORD} -eq 2 ]]; then
+            COMPREPLY=( $(compgen -W "info clear" -- "${cur}") )
+            return 0
+          fi
+          ;;
+        config)
+          if [[ ${COMP_CWORD} -eq 2 ]]; then
+            COMPREPLY=( $(compgen -W "show init path" -- "${cur}") )
+            return 0
+          fi
+          ;;
+        rules)
+          if [[ ${COMP_CWORD} -eq 2 ]]; then
+            COMPREPLY=( $(compgen -W "list update path" -- "${cur}") )
+            return 0
+          fi
+          ;;
+        completion)
+          if [[ ${COMP_CWORD} -eq 2 ]]; then
+            COMPREPLY=( $(compgen -W "zsh bash fish" -- "${cur}") )
+            return 0
+          fi
+          ;;
+        version|help)
+          return 0
+          ;;
+      esac
+
+      # scan flags (also covers bare `noir -b ...` v0 invocation since the
+      # router default-routes to scan)
+      local opts="
+        #{scan_flags}
+      "
+
+      case "${prev}" in
+        -f|--format)
+          COMPREPLY=( $(compgen -W "#{FORMATS}" -- "${cur}") )
+          return 0
+          ;;
+        --include)
+          COMPREPLY=( $(compgen -W "path techs callee path,techs path,techs,callee" -- "${cur}") )
+          return 0
+          ;;
+        --ai-context)
+          COMPREPLY=( $(compgen -W "guards sinks validators signals callee" -- "${cur}") )
+          return 0
+          ;;
+        --passive-scan-severity)
+          COMPREPLY=( $(compgen -W "critical high medium low" -- "${cur}") )
+          return 0
+          ;;
+        --send-proxy|--send-es|--with-headers|--use-matchers|--use-filters|--diff-path|--config-file|--pvalue|--set-pvalue|--techs|--exclude-techs|--only-techs|-o|-b|-u|--ai-provider|--ai-model|--ai-key)
+          COMPREPLY=( $(compgen -f -- "${cur}") )
+          return 0
+          ;;
+        *)
+          ;;
+      esac
+
+      COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+      return 0
     }
 
     complete -F _noir_completions noir
@@ -160,6 +273,16 @@ end
 
 def generate_fish_completion_script
   <<-SCRIPT
+    function __fish_noir_using_command
+        set -l cmd (commandline -opc)
+        if test (count $cmd) -ge 2
+            if test "$cmd[2]" = $argv[1]
+                return 0
+            end
+        end
+        return 1
+    end
+
     function __fish_noir_needs_command
         set -l cmd (commandline -opc)
         if test (count $cmd) -eq 1
@@ -168,60 +291,57 @@ def generate_fish_completion_script
         return 1
     end
 
-    complete -c noir -n '__fish_noir_needs_command' -a '-b' -d 'Set base path'
-    complete -c noir -n '__fish_noir_needs_command' -a '-u' -d 'Set base URL for endpoints'
-    complete -c noir -n '__fish_noir_needs_command' -a '-f' -d 'Set output format'
-    complete -c noir -n '__fish_noir_needs_command' -a '-o' -d 'Write result to file'
-    complete -c noir -n '__fish_noir_needs_command' -a '--set-pvalue' -d 'Specifies the value of the identified parameter'
-    complete -c noir -n '__fish_noir_needs_command' -a '--set-pvalue-header' -d 'Specifies the value of the identified parameter for headers'
-    complete -c noir -n '__fish_noir_needs_command' -a '--set-pvalue-cookie' -d 'Specifies the value of the identified parameter for cookies'
-    complete -c noir -n '__fish_noir_needs_command' -a '--set-pvalue-query' -d 'Specifies the value of the identified parameter for query parameters'
-    complete -c noir -n '__fish_noir_needs_command' -a '--set-pvalue-form' -d 'Specifies the value of the identified parameter for form data'
-    complete -c noir -n '__fish_noir_needs_command' -a '--set-pvalue-json' -d 'Specifies the value of the identified parameter for JSON data'
-    complete -c noir -n '__fish_noir_needs_command' -a '--set-pvalue-path' -d 'Specifies the value of the identified parameter for path parameters'
-    complete -c noir -n '__fish_noir_needs_command' -a '--status-codes' -d 'Display HTTP status codes for discovered endpoints'
-    complete -c noir -n '__fish_noir_needs_command' -a '--exclude-codes' -d 'Exclude specific HTTP response codes (comma-separated)'
-    complete -c noir -n '__fish_noir_needs_command' -a '--include-path' -d 'Include file path in the plain result'
-    complete -c noir -n '__fish_noir_needs_command' -a '--include-techs' -d 'Include technology in the plain result'
-    complete -c noir -n '__fish_noir_needs_command' -a '--ai-context' -d 'Include aggregated AI review context'
-    complete -c noir -n '__fish_noir_needs_command' -a '--no-color' -d 'Disable color output'
-    complete -c noir -n '__fish_noir_needs_command' -a '--no-log' -d 'Displaying only the results'
-    complete -c noir -n '__fish_noir_needs_command' -a '-P' -d 'Perform a passive scan for security issues using rules from the specified path'
-    complete -c noir -n '__fish_noir_needs_command' -a '--passive-scan' -d 'Enable passive security scan'
-    complete -c noir -n '__fish_noir_needs_command' -a '--passive-scan-path' -d 'Specify the path for the rules used in the passive security scan'
-    complete -c noir -n '__fish_noir_needs_command' -a '--passive-scan-severity' -d 'Min severity (critical|high|medium|low, default: high)'
-    complete -c noir -n '__fish_noir_needs_command' -a '--passive-scan-auto-update' -d 'Auto-update rules at startup'
-    complete -c noir -n '__fish_noir_needs_command' -a '--passive-scan-no-update-check' -d 'Skip rule update check'
-    complete -c noir -n '__fish_noir_needs_command' -a '-T' -d 'Activates all taggers for full analysis coverage'
-    complete -c noir -n '__fish_noir_needs_command' -a '--use-taggers' -d 'Activates specific taggers'
-    complete -c noir -n '__fish_noir_needs_command' -a '--list-taggers' -d 'Lists all available taggers'
-    complete -c noir -n '__fish_noir_needs_command' -a '--send-req' -d 'Send results to a web request'
-    complete -c noir -n '__fish_noir_needs_command' -a '--send-proxy' -d 'Send results to a web request via an HTTP proxy'
-    complete -c noir -n '__fish_noir_needs_command' -a '--send-es' -d 'Send results to Elasticsearch'
-    complete -c noir -n '__fish_noir_needs_command' -a '--with-headers' -d 'Add custom headers to be included in the delivery'
-    complete -c noir -n '__fish_noir_needs_command' -a '--use-matchers' -d 'Send URLs that match specific conditions to the Deliver'
-    complete -c noir -n '__fish_noir_needs_command' -a '--use-filters' -d 'Exclude URLs that match specified conditions and send the rest to Deliver'
-    complete -c noir -n '__fish_noir_needs_command' -a '--diff-path' -d 'Specify the path to the old version of the source code for comparison'
-    complete -c noir -n '__fish_noir_needs_command' -a '-t' -d 'Specify the technologies to use'
-    complete -c noir -n '__fish_noir_needs_command' -a '--exclude-techs' -d 'Specify the technologies to be excluded'
-    complete -c noir -n '__fish_noir_needs_command' -a '--only-techs' -d 'Run only specified tech detectors'
-    complete -c noir -n '__fish_noir_needs_command' -a '--list-techs' -d 'Show all technologies'
-    complete -c noir -n '__fish_noir_needs_command' -a '--config-file' -d 'Specify the path to a configuration file in YAML format'
-    complete -c noir -n '__fish_noir_needs_command' -a '--concurrency' -d 'Set concurrency'
-    complete -c noir -n '__fish_noir_needs_command' -a '--generate-completion' -d 'Generate Zsh/Bash/Fish completion script'
-    complete -c noir -n '__fish_noir_needs_command' -a '--cache-disable' -d 'Disable LLM cache'
-    complete -c noir -n '__fish_noir_needs_command' -a '--cache-clear' -d 'Clear LLM cache before run'
-    complete -c noir -n '__fish_noir_needs_command' -a '--ai-provider' -d 'Specify the AI (LLM) provider, ACP target, or custom API URL'
-    complete -c noir -n '__fish_noir_needs_command' -a '--ai-model' -d 'Set the model name to use for AI analysis (optional for acp:*)'
-    complete -c noir -n '__fish_noir_needs_command' -a '--ai-key' -d 'Provide the API key for the AI provider'
-    complete -c noir -n '__fish_noir_needs_command' -a '--ai-max-token' -d 'Set the maximum number of tokens for AI requests'
-    complete -c noir -n '__fish_noir_needs_command' -a '--ollama' -d 'Specify the Ollama server URL (Deprecated)'
-    complete -c noir -n '__fish_noir_needs_command' -a '--ollama-model' -d 'Specify the Ollama model name (Deprecated)'
-    complete -c noir -n '__fish_noir_needs_command' -a '-d' -d 'Show debug messages'
-    complete -c noir -n '__fish_noir_needs_command' -a '-v' -d 'Show version'
-    complete -c noir -n '__fish_noir_needs_command' -a '--build-info' -d 'Show version and Build info'
-    complete -c noir -n '__fish_noir_needs_command' -a '--verbose' -d 'Show verbose messages'
-    complete -c noir -n '__fish_noir_needs_command' -a '--help-all' -d 'Show all help'
-    complete -c noir -n '__fish_noir_needs_command' -a '-h' -d 'Show help'
+    # Top-level subcommands
+    complete -c noir -f -n '__fish_noir_needs_command' -a scan       -d 'Discover endpoints'
+    complete -c noir -f -n '__fish_noir_needs_command' -a list       -d 'List built-in catalogs'
+    complete -c noir -f -n '__fish_noir_needs_command' -a cache      -d 'Manage LLM cache'
+    complete -c noir -f -n '__fish_noir_needs_command' -a config     -d 'Manage user config'
+    complete -c noir -f -n '__fish_noir_needs_command' -a rules      -d 'Manage passive rules'
+    complete -c noir -f -n '__fish_noir_needs_command' -a completion -d 'Generate shell completion'
+    complete -c noir -f -n '__fish_noir_needs_command' -a version    -d 'Print noir version'
+    complete -c noir -f -n '__fish_noir_needs_command' -a help       -d 'Show help'
+
+    # Sub-actions per command
+    complete -c noir -f -n '__fish_noir_using_command list' -a 'techs taggers formats'
+    complete -c noir -f -n '__fish_noir_using_command cache' -a 'info clear'
+    complete -c noir -f -n '__fish_noir_using_command config' -a 'show init path'
+    complete -c noir -f -n '__fish_noir_using_command rules' -a 'list update path'
+    complete -c noir -f -n '__fish_noir_using_command completion' -a 'zsh bash fish'
+
+    # Scan-time flags (also valid under bare `noir` for v0 compat)
+    complete -c noir -s b -l base-path             -d 'Set base path' -r -F
+    complete -c noir -s u -l url                   -d 'Set base URL' -r
+    complete -c noir -s f -l format                -d 'Output format' -r -a 'plain yaml json jsonl toml markdown-table sarif html curl httpie powershell oas2 oas3 postman only-url only-param only-header only-cookie only-tag mermaid'
+    complete -c noir -s o -l output                -d 'Write result to file' -r -F
+    complete -c noir      -l pvalue                -d 'Set param value TYPE=VAL' -r
+    complete -c noir      -l include               -d 'Enrich plain output (path,techs,callee)' -r -a 'path techs callee path,techs path,techs,callee'
+    complete -c noir      -l ai-context            -d 'Include AI review context' -a 'guards sinks validators signals callee'
+    complete -c noir      -l no-color              -d 'Disable color output'
+    complete -c noir      -l no-log                -d 'Show only results'
+    complete -c noir -s P -l passive-scan          -d 'Enable passive scan'
+    complete -c noir      -l passive-scan-path           -d 'Custom passive rules path' -r -F
+    complete -c noir      -l passive-scan-severity       -d 'Min severity' -r -a 'critical high medium low'
+    complete -c noir      -l passive-scan-auto-update    -d 'Auto-update rules at startup'
+    complete -c noir      -l passive-scan-no-update-check -d 'Skip rule update check'
+    complete -c noir -s T -l use-all-taggers       -d 'Activate all taggers'
+    complete -c noir      -l use-taggers           -d 'Activate specific taggers' -r
+    complete -c noir      -l send-req              -d 'Send results via HTTP'
+    complete -c noir      -l send-proxy            -d 'Proxy URL' -r
+    complete -c noir      -l send-es               -d 'Elasticsearch URL' -r
+    complete -c noir      -l ai-provider           -d 'AI provider prefix or URL' -r
+    complete -c noir      -l ai-model              -d 'AI model name' -r
+    complete -c noir      -l ai-key                -d 'AI API key' -r
+    complete -c noir      -l diff-path             -d 'Old code version for diff' -r -F
+    complete -c noir -s t -l techs                 -d 'Specify technologies' -r
+    complete -c noir      -l exclude-techs         -d 'Exclude technologies' -r
+    complete -c noir      -l only-techs            -d 'Only these tech detectors' -r
+    complete -c noir      -l config-file           -d 'YAML config file' -r -F
+    complete -c noir      -l concurrency           -d 'Concurrency level' -r
+    complete -c noir      -l cache-disable         -d 'Disable LLM cache for this run'
+    complete -c noir      -l cache-clear           -d 'Clear LLM cache before scan'
+    complete -c noir -s d -l debug                 -d 'Enable debug messages'
+    complete -c noir      -l verbose               -d 'Verbose mode'
+    complete -c noir -s v -l version               -d 'Show version'
+    complete -c noir -s h -l help                  -d 'Show help'
     SCRIPT
 end

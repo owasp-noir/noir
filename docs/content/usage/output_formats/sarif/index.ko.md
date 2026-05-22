@@ -20,13 +20,13 @@ SARIF v2.1.0 (Static Analysis Results Interchange Format) 형식으로 결과를
 SARIF 출력을 생성합니다.
 
 ```bash
-noir -b . -f sarif --no-log
+noir scan . -f sarif --no-log
 ```
 
 파일로 저장할 수도 있습니다.
 
 ```bash
-noir -b . -f sarif -o results.sarif --no-log
+noir scan . -f sarif -o results.sarif --no-log
 ```
 
 ## 출력 예제
@@ -136,7 +136,7 @@ SARIF 결과를 [GitHub Code Scanning](https://docs.github.com/en/code-security/
 
 ```bash
 # SARIF 출력 생성
-noir -b . -f sarif -o noir-results.sarif --no-log
+noir scan . -f sarif -o noir-results.sarif --no-log
 
 # GitHub에 업로드 (GitHub CLI 사용)
 gh api /repos/:owner/:repo/code-scanning/sarifs \
@@ -152,7 +152,7 @@ gh api /repos/:owner/:repo/code-scanning/sarifs \
 ```yaml
 noir_scan:
   script:
-    - noir -b . -f sarif -o gl-sast-report.json --no-log
+    - noir scan . -f sarif -o gl-sast-report.json --no-log
   artifacts:
     reports:
       sast: gl-sast-report.json
@@ -163,7 +163,7 @@ noir_scan:
 Azure Pipelines에서 SARIF 파일을 빌드 아티팩트로 게시하면 SARIF SAST Scans Tab 확장에서 결과를 볼 수 있습니다.
 
 ```yaml
-- script: noir -b . -f sarif -o noir.sarif --no-log
+- script: noir scan . -f sarif -o noir.sarif --no-log
   displayName: 'Noir 스캔 실행'
 
 - task: PublishBuildArtifacts@1

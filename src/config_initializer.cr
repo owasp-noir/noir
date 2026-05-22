@@ -137,10 +137,9 @@ class ConfigInitializer
       "passive_scan_severity"        => YAML::Any.new("high"),
       "passive_scan_auto_update"     => YAML::Any.new(false),
       "passive_scan_no_update_check" => YAML::Any.new(false),
-      "ollama"                       => YAML::Any.new(""),
-      "ollama_model"                 => YAML::Any.new(""),
       "ai_provider"                  => YAML::Any.new(""),
       "ai_model"                     => YAML::Any.new(""),
+      "ai_context_features"          => YAML::Any.new(""),
       "ai_key"                       => YAML::Any.new(""),
       "ai_agent"                     => YAML::Any.new(false),
       "ai_agent_max_steps"           => YAML::Any.new(20),
@@ -206,6 +205,10 @@ class ConfigInitializer
 
       # Whether to include aggregated AI review context in the output
       ai_context: #{options["ai_context"]}
+
+      # Optional comma-separated subset of AI-context categories to emit
+      # (empty = all). Valid: guards, sinks, validators, signals, callee.
+      ai_context_features: "#{options["ai_context_features"]}"
 
       # Whether to disable logging
       nolog: #{options["nolog"]}

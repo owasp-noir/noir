@@ -11,7 +11,7 @@ Generate a self-contained, interactive HTML file that visualizes scan results. H
 ## Basic Usage
 
 ```bash
-noir -b . -f html -o report.html
+noir scan . -f html -o report.html
 ```
 
 ### Features

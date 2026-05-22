@@ -11,7 +11,7 @@ API 엔드포인트를 [Mermaid 마인드맵](https://mermaid-js.github.io/merma
 ## 사용법
 
 ```bash
-noir -b . -f mermaid
+noir scan . -f mermaid
 ```
 
 ## 출력 예제

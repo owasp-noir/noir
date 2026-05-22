@@ -22,7 +22,7 @@ sort_by = "weight"
 ## 사용 방법
 
 ```bash
-noir -b ./spec/functional_test/fixtures/hahwul \
+noir scan ./spec/functional_test/fixtures/hahwul \
      --ai-provider=vllm \
      --ai-model=google/gemma-4-31B-it
 ```

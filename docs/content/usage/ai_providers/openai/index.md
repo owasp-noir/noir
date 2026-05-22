@@ -18,7 +18,7 @@ Integrate Noir with [OpenAI](https://openai.com) to leverage language models lik
 Run Noir with OpenAI:
 
 ```bash
-noir -b ./spec/functional_test/fixtures/hahwul \
+noir scan ./spec/functional_test/fixtures/hahwul \
      --ai-provider=openai \
      --ai-model=gpt-5.5 \
      --ai-key=sk-...

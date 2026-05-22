@@ -222,4 +222,4 @@ jobs:
 
 - Runs in Docker container for consistency
 - Inputs map directly to CLI flags
-- See supported technologies: `noir --list-techs`
+- See supported technologies: `noir list techs`

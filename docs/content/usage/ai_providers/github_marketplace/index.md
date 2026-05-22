@@ -18,7 +18,7 @@ Use AI models from the [GitHub Marketplace](https://github.com/marketplace/model
 **Using the GitHub API**:
 
 ```bash
-noir -b ./spec/functional_test/fixtures/hahwul \
+noir scan ./spec/functional_test/fixtures/hahwul \
      --ai-provider=github \
      --ai-model=gpt-5.5 \
      --ai-key=github_pat_...
@@ -27,7 +27,7 @@ noir -b ./spec/functional_test/fixtures/hahwul \
 **Using the Azure Inference API** (for models served through Azure):
 
 ```bash
-noir -b ./spec/functional_test/fixtures/hahwul \
+noir scan ./spec/functional_test/fixtures/hahwul \
      --ai-provider=azure \
      --ai-model=gpt-5.5 \
      --ai-key=github_pat_...

@@ -10,8 +10,8 @@ sort_by = "weight"
 
 **Symptom:** Noir runs but reports 0 endpoints.
 
-- Check that you are pointing to the correct directory: `noir -b ./your-app`
-- Verify that your framework is supported: `noir --list-techs`
+- Check that you are pointing to the correct directory: `noir scan ./your-app`
+- Verify that your framework is supported: `noir list techs`
 - Try scanning with `--verbose` to see which technologies were detected
 - If your framework is not supported, use [AI-Powered Analysis](@/get_started/ai_power/index.md) to detect endpoints
 
@@ -19,7 +19,7 @@ sort_by = "weight"
 
 **Symptom:** Noir takes a long time on large codebases.
 
-- Use `--techs` to limit scanning to specific frameworks: `noir -b . --techs rails`
+- Use `--techs` to limit scanning to specific frameworks: `noir scan . --techs rails`
 - Use `--exclude-techs` to skip known irrelevant frameworks
 - AI-powered analysis caches responses; subsequent runs on the same codebase will be faster
 
@@ -37,7 +37,7 @@ sort_by = "weight"
 
 **Symptom:** Permission denied errors when running via Docker.
 
-- Ensure your directory is mounted correctly: `docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest -b /tmp`
+- Ensure your directory is mounted correctly: `docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest scan /tmp`
 - On SELinux systems, add `:z` to the volume mount: `-v $(pwd):/tmp:z`
 
 ## Shell Completion Not Working

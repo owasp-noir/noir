@@ -13,14 +13,14 @@ sort_by = "weight"
 아래 명령으로 생성될 완성 스크립트를 미리 확인할 수 있습니다.
 
 ```bash
-noir --generate-completion zsh
+noir completion zsh
 ```
 
 Zsh이 시작할 때 자동으로 로드하려면, 완성 디렉터리에 저장합니다.
 
 ```bash
 mkdir -p ~/.zsh/completion
-noir --generate-completion zsh > ~/.zsh/completion/_noir
+noir completion zsh > ~/.zsh/completion/_noir
 ```
 
 ## Bash
@@ -28,14 +28,14 @@ noir --generate-completion zsh > ~/.zsh/completion/_noir
 마찬가지로 먼저 미리 확인할 수 있습니다.
 
 ```bash
-noir --generate-completion bash
+noir completion bash
 ```
 
 `bash-completion` 표준 디렉터리에 저장하면 새 세션에서 자동으로 로드됩니다.
 
 ```bash
 mkdir -p ~/.local/share/bash-completion/completions
-noir --generate-completion bash > ~/.local/share/bash-completion/completions/noir
+noir completion bash > ~/.local/share/bash-completion/completions/noir
 ```
 
 ## Fish
@@ -43,14 +43,14 @@ noir --generate-completion bash > ~/.local/share/bash-completion/completions/noi
 미리 확인합니다.
 
 ```bash
-noir --generate-completion fish
+noir completion fish
 ```
 
 Fish의 완성 디렉터리에 저장하면 자동 로드됩니다.
 
 ```bash
 mkdir -p ~/.config/fish/completions
-noir --generate-completion fish > ~/.config/fish/completions/noir.fish
+noir completion fish > ~/.config/fish/completions/noir.fish
 ```
 
 ## Homebrew 사용자

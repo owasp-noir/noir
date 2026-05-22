@@ -37,7 +37,7 @@ template = "landing"
           <span class="terminal-title">noir</span>
         </div>
         <div class="hero-terminal-body">
-          <div class="terminal-line"><span class="t-prompt">$</span> noir -b .</div>
+          <div class="terminal-line"><span class="t-prompt">$</span> noir scan .</div>
           <div class="terminal-line t-dim">  <span class="t-info">INFO</span> Detected 1 technologies: crystal_kemal</div>
           <div class="terminal-line t-dim">  <span class="t-info">INFO</span> Analysis Started. Code Analyzer: 1 in use</div>
           <div class="terminal-line"><span class="t-success">Finally identified 6 endpoints.</span> <span class="t-dim">in 0.0032s</span></div>
@@ -130,7 +130,7 @@ template = "landing"
         <div class="how-step-content">
           <h3>코드베이스를 지정</h3>
           <p>Noir가 언어, 프레임워크, 라우팅 패턴을 알아서 감지합니다. 작성할 설정은 없습니다.</p>
-          <div class="how-step-code">$ noir -b ./your-project</div>
+          <div class="how-step-code">$ noir scan ./your-project</div>
         </div>
       </div>
       <div class="how-step">
@@ -145,7 +145,7 @@ template = "landing"
         <div class="how-step-content">
           <h3>사람, AI, DAST에 전달</h3>
           <p>사람 리뷰어를 위해 JSON, OpenAPI, SARIF로 내보내거나, ZAP·Burp·Caido에 프록시 타깃으로 그대로 흘려보내거나, LLM 기반 코드 감사자에게 집중된 진입점 컨텍스트로 넘기면 됩니다.</p>
-          <div class="how-step-code">$ noir -b . -f oas3 --send-proxy http://localhost:8090</div>
+          <div class="how-step-code">$ noir scan . -f oas3 --send-proxy http://localhost:8090</div>
         </div>
       </div>
     </div>

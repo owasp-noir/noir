@@ -80,22 +80,45 @@ describe "Completion Script Generation" do
   end
 
   describe "Fish completion" do
+    # Fish completions register long flags with `-l name` (without the
+    # leading --), so the substring assertions use that bare form.
     it "includes passive scan options" do
       script = generate_fish_completion_script
-      script.should contain("--passive-scan-severity")
-      script.should contain("--passive-scan-auto-update")
-      script.should contain("--passive-scan-no-update-check")
+      script.should contain("-l passive-scan-severity")
+      script.should contain("-l passive-scan-auto-update")
+      script.should contain("-l passive-scan-no-update-check")
     end
 
     it "includes cache options" do
       script = generate_fish_completion_script
-      script.should contain("--cache-disable")
-      script.should contain("--cache-clear")
+      script.should contain("-l cache-disable")
+      script.should contain("-l cache-clear")
     end
 
     it "includes technology options" do
       script = generate_fish_completion_script
-      script.should contain("--only-techs")
+      script.should contain("-l only-techs")
+    end
+  end
+
+  describe "v1 subcommand awareness" do
+    it "zsh completion lists every top-level subcommand" do
+      script = generate_zsh_completion_script
+      %w[scan list cache config rules completion version help].each do |verb|
+        script.should contain(verb)
+      end
+    end
+
+    it "bash completion lists every top-level subcommand" do
+      script = generate_bash_completion_script
+      script.should contain("scan list cache config rules completion version help")
+    end
+
+    it "fish completion registers each top-level subcommand" do
+      script = generate_fish_completion_script
+      %w[scan list cache config rules completion version help].each do |verb|
+        script.should contain("-a #{verb}")
+      end
     end
   end
 end
