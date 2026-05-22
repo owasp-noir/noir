@@ -318,3 +318,72 @@ describe "run_options_parser" do
     end
   end
 end
+
+# extract_legacy_aliases is the pre-OptionParser rewrite that hides v0
+# spellings (--include-*, --set-pvalue*) from `noir scan -h` while
+# keeping every v0 script byte-identical. Walk every mapping so a
+# future refactor doesn't quietly drop one of the seven pvalue slots
+# or three include flags.
+describe "extract_legacy_aliases" do
+  it "maps every legacy --set-pvalue-* flag to its v1 storage key" do
+    legacy_to_key = {
+      "--set-pvalue"        => "set_pvalue",
+      "--set-pvalue-header" => "set_pvalue_header",
+      "--set-pvalue-cookie" => "set_pvalue_cookie",
+      "--set-pvalue-query"  => "set_pvalue_query",
+      "--set-pvalue-form"   => "set_pvalue_form",
+      "--set-pvalue-json"   => "set_pvalue_json",
+      "--set-pvalue-path"   => "set_pvalue_path",
+    }
+
+    legacy_to_key.each do |flag, key|
+      opts = create_test_options
+      args = [flag, "LEGACY_VALUE"]
+      remaining = extract_legacy_aliases(args, opts)
+      remaining.should be_empty
+      opts[key].as_a.map(&.to_s).should eq(["LEGACY_VALUE"])
+    end
+  end
+
+  it "maps every legacy --include-* flag to its include_* boolean" do
+    legacy_to_key = {
+      "--include-path"   => "include_path",
+      "--include-techs"  => "include_techs",
+      "--include-callee" => "include_callee",
+    }
+
+    legacy_to_key.each do |flag, key|
+      opts = create_test_options
+      remaining = extract_legacy_aliases([flag], opts)
+      remaining.should be_empty
+      opts[key].should be_true
+    end
+  end
+
+  it "leaves unrelated tokens in place for OptionParser" do
+    opts = create_test_options
+    remaining = extract_legacy_aliases(["-b", "./app", "--passive", "--include", "path"], opts)
+    remaining.should eq(["-b", "./app", "--passive", "--include", "path"])
+  end
+
+  it "supports repeating the same legacy flag (each occurrence appends)" do
+    opts = create_test_options
+    remaining = extract_legacy_aliases(
+      ["--set-pvalue-query", "A", "--set-pvalue-query", "B"],
+      opts,
+    )
+    remaining.should be_empty
+    opts["set_pvalue_query"].as_a.map(&.to_s).should eq(["A", "B"])
+  end
+
+  it "mixes legacy and v1-native tokens cleanly" do
+    opts = create_test_options
+    remaining = extract_legacy_aliases(
+      ["--include-callee", "-b", "./app", "--set-pvalue-header", "X=1"],
+      opts,
+    )
+    remaining.should eq(["-b", "./app"])
+    opts["include_callee"].should be_true
+    opts["set_pvalue_header"].as_a.map(&.to_s).should eq(["X=1"])
+  end
+end

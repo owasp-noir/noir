@@ -115,7 +115,11 @@ module Noir::CLI::ConfigCommand
     File.expand_path(File.join(get_home, "config.yaml"))
   end
 
-  private def self.pick_editor : String
+  # Resolution order: $VISUAL, $EDITOR, then a platform default.
+  # Empty/whitespace values are treated as unset so a stray empty
+  # `EDITOR=` doesn't trap `edit` into running an empty command.
+  # Public for unit-test reach.
+  def self.pick_editor : String
     visual = ENV["VISUAL"]?
     return visual unless visual.nil? || visual.empty?
 
@@ -125,7 +129,7 @@ module Noir::CLI::ConfigCommand
     default_editor
   end
 
-  private def self.default_editor : String
+  def self.default_editor : String
     {% if flag?(:windows) %}
       "notepad"
     {% else %}
