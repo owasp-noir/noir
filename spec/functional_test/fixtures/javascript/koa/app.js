@@ -7,6 +7,7 @@ const appRouter = require('./routes/app_router');
 
 const app = new Koa();
 const router = new Router();
+const r = new Router();
 
 app.use(router.routes());
 app.use(userRoutes.routes());
@@ -23,6 +24,10 @@ app.get('/simple', ctx => {
 router.del('/items/:itemId', ctx => {
   // Should be detected as DELETE
   ctx.body = `Deleted item ${ctx.params.itemId}`;
+});
+
+r.get('named.status', '/named/status', ctx => {
+  ctx.body = { status: 'ok' };
 });
 
 app.all('/everything', ctx => {

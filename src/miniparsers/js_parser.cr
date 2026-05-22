@@ -34,6 +34,8 @@ module Noir
     @current_route_raw_path : String? = nil
     @current_route_start_pos : Int32? = nil
     @router_prefixes : Hash(String, Array(String)) = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
+    @named_route_receivers = Set(String).new
+    @supports_named_routes : Bool = false
 
     private struct PathEntry
       getter path : String
@@ -59,6 +61,7 @@ module Noir
     def initialize(source : String)
       lexer = JSLexer.new(source)
       @tokens = lexer.tokenize
+      @supports_named_routes = source.includes?("koa-router") || source.includes?("@koa/router")
       # Extract constants from the source
       extract_constants
     end
@@ -100,7 +103,9 @@ module Noir
       # Pre-scan: identify router variables by looking for:
       # 1. Variables assigned from express.Router()
       # 2. Variables that have route methods called on them (.get, .post, etc.)
+      @named_route_receivers.clear
       identify_router_variables(router_variables)
+      identify_named_route_receivers(router_variables)
       scan_router_constructor_prefixes(router_prefixes, router_variables)
 
       # First pass: scan for router.use("/prefix", ..., routerVariable) patterns
@@ -181,11 +186,6 @@ module Noir
 
         # Try various route patterns for different frameworks
         routes.concat(parse_express_route_method)
-
-        route = parse_fastify_register_route
-        if route
-          routes << route
-        end
 
         route = parse_restify_apply_routes
         if route
@@ -505,6 +505,40 @@ module Noir
       end
     end
 
+    # Koa/@koa-router accepts an optional route name before the real path:
+    #   router.get("users.show", "/users/:id", handler)
+    # Keep this scoped to receivers that are explicitly constructed from a
+    # Koa router import so Express-style `app.get("name", "/x")` does not
+    # become a route accidentally.
+    private def identify_named_route_receivers(router_variables : Set(String))
+      return unless @supports_named_routes
+
+      idx = 0
+      while idx < @tokens.size - 4
+        if @tokens[idx].type == :identifier &&
+           idx + 3 < @tokens.size &&
+           @tokens[idx + 1].type == :assign
+          receiver = @tokens[idx].value
+          scan_idx = idx + 2
+          scan_idx += 1 if scan_idx < @tokens.size && @tokens[scan_idx].value == "new"
+
+          if scan_idx < @tokens.size &&
+             @tokens[scan_idx].type == :identifier &&
+             (@tokens[scan_idx].value == "Router" || @tokens[scan_idx].value.ends_with?("Router"))
+            @named_route_receivers.add(receiver)
+            router_variables.add(receiver)
+          end
+        end
+
+        idx += 1
+      end
+    end
+
+    private def named_route_receiver?(router_var : String) : Bool
+      return true if router_var.downcase.includes?("router")
+      @supports_named_routes && @named_route_receivers.includes?(router_var)
+    end
+
     # Find the best router candidate from a list of identifiers
     # Uses heuristics: known routers > router-like naming > last identifier
     private def find_router_candidate(candidates : Array(String), known_routers : Set(String)) : String?
@@ -604,7 +638,7 @@ module Noir
            @tokens[idx + 3].type == :lparen
           router_var = @tokens[idx].value
           method = @tokens[idx + 2].value
-          paths = route_path_entries_from_args(idx + 4, allow_named_route: router_var.downcase.includes?("router"))
+          paths = route_path_entries_from_args(idx + 4, allow_named_route: named_route_receiver?(router_var))
 
           # Create one route for each path with prefix
           start_pos = @tokens[idx].position
@@ -625,7 +659,7 @@ module Noir
            @tokens[idx + 4].type == :lparen
           router_var = @tokens[idx].value
           method = @tokens[idx + 2].value
-          paths = route_path_entries_from_args(idx + 5, allow_named_route: router_var.downcase.includes?("router"))
+          paths = route_path_entries_from_args(idx + 5, allow_named_route: named_route_receiver?(router_var))
 
           start_pos = @tokens[idx].position
           each_prefixed_path(paths, router_var, router_prefixes) do |path_entry, prefixed_path|
@@ -718,7 +752,7 @@ module Noir
            @tokens[path_idx].type == :lparen &&
            path_idx + 1 < @tokens.size
           router_var = @tokens[idx].value
-          path_entries = route_path_entries_from_args(path_idx + 1, allow_named_route: router_var.downcase.includes?("router"))
+          path_entries = route_path_entries_from_args(path_idx + 1, allow_named_route: named_route_receiver?(router_var))
           @position = path_idx + 2 unless path_entries.empty?
 
           path_entries.each do |path_entry|
@@ -869,7 +903,7 @@ module Noir
            @tokens[path_idx].type == :lparen &&
            path_idx + 1 < @tokens.size
           router_var = @tokens[idx - 1].type == :identifier ? @tokens[idx - 1].value : ""
-          path_entries = route_path_entries_from_args(path_idx + 1, allow_named_route: router_var.downcase.includes?("router"))
+          path_entries = route_path_entries_from_args(path_idx + 1, allow_named_route: named_route_receiver?(router_var))
           @position = path_idx + 2 unless path_entries.empty?
 
           path_entries.each do |path_entry|
