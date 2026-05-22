@@ -310,7 +310,7 @@ module Analyzer::Typescript
 
         resolver_source = value[(open_paren + 1)...close_paren]
         line = value[0, open_paren + 1].count('\n') + 1
-        return arrow_function_body(resolver_source, line) || function_expression_body(resolver_source, line)
+        arrow_function_body(resolver_source, line) || function_expression_body(resolver_source, line)
       end
     end
 
