@@ -98,8 +98,13 @@ jobs:
 
 | Output | Description |
 |--------|-------------|
-| `endpoints` | JSON formatted result of endpoint analysis |
-| `passive_results` | JSON formatted result of passive scan (if enabled) |
+| `endpoints` | The full Noir result document (`{"endpoints": [...], "passive_results": [...]}`) when `format` is `json` or `jsonl`. Empty for plain / yaml / oas / mermaid / etc. |
+| `passive_results` | JSON array of passive-scan findings when `format` is `json` / `jsonl`; otherwise `[]`. |
+
+For non-JSON formats the raw scan output is still written to the file
+under `output_file` (default `/tmp/noir_output.json`). Upload it with
+`actions/upload-artifact` instead of reading from
+`steps.<id>.outputs.endpoints`.
 
 ## Supported Technologies
 
@@ -110,7 +115,7 @@ OWASP Noir supports analysis of applications built with:
 - **API Formats**: REST, GraphQL, gRPC
 - **Frontend Frameworks**: React, Vue.js, Angular, Svelte
 
-For a complete list, run: `noir --list-techs`
+For a complete list, run: `noir list techs`
 
 ## Examples by Language/Framework
 

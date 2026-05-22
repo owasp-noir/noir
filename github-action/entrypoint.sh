@@ -1,47 +1,29 @@
 #!/bin/sh -l
 
-# Arguments mapping:
-# $1 : base_path
-# $2 : url
-# $3 : format
-# $4 : output_file
-# $5 : techs
-# $6 : exclude_techs
-# $7 : passive_scan
-# $8 : passive_scan_severity
-# $9 : use_all_taggers
-# $10 : use_taggers
-# $11 : include_path
-# $12 : verbose
-# $13 : debug
-# $14 : concurrency
-# $15 : exclude_codes
-# $16 : status_codes
+# Argument positions (kept in sync with action.yml `runs.args`):
+#   $1  base_path
+#   $2  url
+#   $3  format
+#   $4  output_file
+#   $5  techs
+#   $6  exclude_techs
+#   $7  passive_scan
+#   $8  passive_scan_severity
+#   $9  use_all_taggers
+#   $10 use_taggers
+#   $11 include_path
+#   $12 verbose
+#   $13 debug
+#   $14 concurrency
+#   $15 exclude_codes
+#   $16 status_codes
+#
+# The script builds an argv list with `set --` and execs it directly,
+# never `eval`s a string. That way values with shell metacharacters
+# (quotes, semicolons, backticks) cannot inject extra commands.
 
-# ==============================================================================
-# Helper Functions
-# ==============================================================================
-
-# Add option with value to command if value is not empty
-# Usage: add_option "flag" "value"
-add_option() {
-    flag="$1"
-    value="$2"
-    [ -n "$value" ] && cmd="$cmd $flag '$value'"
-}
-
-# Add flag to command if condition is "true"
-# Usage: add_flag "flag" "condition"
-add_flag() {
-    flag="$1"
-    condition="$2"
-    [ "$condition" = "true" ] && cmd="$cmd $flag"
-}
-
-# Print error message and exit with given code
-# Usage: error_exit "message" exit_code
 error_exit() {
-    echo "Error: $1"
+    echo "Error: $1" >&2
     exit "$2"
 }
 
@@ -49,42 +31,59 @@ error_exit() {
 # Initialize Variables
 # ==============================================================================
 
+base_path="$1"
+url="$2"
 format="${3:-json}"
 output_file="${4:-/tmp/noir_output.json}"
+techs="$5"
+exclude_techs="$6"
+passive_scan="$7"
+passive_scan_severity="$8"
+use_all_taggers="$9"
+use_taggers="${10}"
+include_path="${11}"
+verbose="${12}"
+debug="${13}"
+concurrency="${14}"
+exclude_codes="${15}"
+status_codes="${16}"
 
 # ==============================================================================
-# Build Command
+# Build noir argv safely
+# ==============================================================================
+#
+# Snapshot the action inputs into named variables above, then build
+# noir's argv in $@ via `set --`. Using positional parameters for the
+# command lets us exec it with the runtime's quoting preserved, so
+# values containing whitespace, quotes, or shell metacharacters can
+# never break out of their slot.
+
+set -- noir -b "$base_path" --no-log -f "$format" -o "$output_file"
+
+[ -n "$url" ]           && set -- "$@" -u "$url"
+[ -n "$techs" ]         && set -- "$@" -t "$techs"
+[ -n "$exclude_techs" ] && set -- "$@" --exclude-techs "$exclude_techs"
+
+if [ "$passive_scan" = "true" ]; then
+    set -- "$@" -P
+    [ -n "$passive_scan_severity" ] && set -- "$@" --passive-scan-severity "$passive_scan_severity"
+fi
+
+[ "$use_all_taggers" = "true" ] && set -- "$@" -T
+[ -n "$use_taggers" ]           && set -- "$@" --use-taggers "$use_taggers"
+[ "$include_path" = "true" ]    && set -- "$@" --include-path
+[ "$verbose" = "true" ]         && set -- "$@" --verbose
+[ "$debug" = "true" ]           && set -- "$@" -d
+[ -n "$concurrency" ]           && set -- "$@" --concurrency "$concurrency"
+[ -n "$exclude_codes" ]         && set -- "$@" --exclude-codes "$exclude_codes"
+[ "$status_codes" = "true" ]    && set -- "$@" --status-codes
+
+# ==============================================================================
+# Execute
 # ==============================================================================
 
-cmd="noir -b '$1' --no-log"
-cmd="$cmd -f $format"
-cmd="$cmd -o '$output_file'"
-
-add_option "-u" "$2"
-add_option "-t" "$5"
-add_option "--exclude-techs" "$6"
-
-add_flag "-P" "$7"
-[ "$7" = "true" ] && add_option "--passive-scan-severity" "$8"
-
-add_flag "-T" "$9"
-add_option "--use-taggers" "${10}"
-
-add_flag "--include-path" "${11}"
-add_flag "--verbose" "${12}"
-add_flag "-d" "${13}"
-
-add_option "--concurrency" "${14}"
-add_option "--exclude-codes" "${15}"
-
-add_flag "--status-codes" "${16}"
-
-# ==============================================================================
-# Execute Command
-# ==============================================================================
-
-echo "Executing command: $cmd"
-eval "$cmd"
+echo "Executing command: $*"
+"$@"
 exit_code=$?
 
 [ $exit_code -ne 0 ] && error_exit "Noir command failed with exit code $exit_code" $exit_code
@@ -109,8 +108,12 @@ if [ "$format" = "json" ] || [ "$format" = "jsonl" ]; then
         echo "passive_results=[]" >> "$GITHUB_OUTPUT"
     fi
 else
-    endpoints_output=$(tr -d '\n' < "$output_file")
-    echo "endpoints=$endpoints_output" >> "$GITHUB_OUTPUT"
+    # Non-JSON formats (plain, yaml, oas3, mermaid, ...) don't fit
+    # the JSON contract of the `endpoints` / `passive_results`
+    # outputs. Emit them as empty so downstream `jq` calls don't
+    # choke on plain text. The raw output file is still on disk —
+    # upload it with `actions/upload-artifact` per README.
+    echo "endpoints=" >> "$GITHUB_OUTPUT"
     echo "passive_results=[]" >> "$GITHUB_OUTPUT"
 fi
 
@@ -120,4 +123,4 @@ fi
 
 echo "Noir analysis completed successfully"
 echo "Output format: $format"
-echo "Results written to GitHub Actions output variables"
+echo "Output file:   $output_file"
