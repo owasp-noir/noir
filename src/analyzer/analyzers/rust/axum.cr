@@ -45,8 +45,11 @@ module Analyzer::Rust
 
       Noir::TreeSitter.parse_rust(source) do |root|
         function_index = include_callee ? build_function_index(root, source) : Hash(String, LibTreeSitter::TSNode).new
+        router_functions = build_router_function_index(root, source)
+        mounted_router_names = collect_mounted_router_names(root, source, test_regions)
+        nested_router_prefixes = collect_nested_router_prefixes(root, source, test_regions, "", mounted_router_names)
 
-        walk_router_builders(root, source, "", test_regions) do |node, prefix|
+        walk_router_builders(root, source, "", test_regions, mounted_router_names) do |node, prefix|
           route = extract_route(node, source)
           next unless route
 
@@ -62,6 +65,51 @@ module Analyzer::Rust
             end
 
             endpoints << endpoint
+          end
+        end
+
+        processed_mounts = Set(String).new
+        mount_queue = [] of Tuple(String, String)
+        nested_router_prefixes.each do |router_name, prefixes|
+          prefixes.each { |prefix| mount_queue << {router_name, prefix} }
+        end
+
+        mount_index = 0
+        while mount_index < mount_queue.size
+          router_name, prefix = mount_queue[mount_index]
+          mount_index += 1
+
+          mount_key = "#{router_name}\0#{prefix}"
+          next if processed_mounts.includes?(mount_key)
+          processed_mounts.add(mount_key)
+
+          router_function = router_functions[router_name]?
+          next unless router_function
+
+          walk_router_builders(router_function, source, prefix, test_regions, Set(String).new) do |node, active_prefix|
+            route = extract_route(node, source)
+            next unless route
+
+            path_str, methods, handler_name = route
+            path_str = join_paths(active_prefix, path_str) unless active_prefix.empty?
+            methods.each do |verb|
+              details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
+              endpoint = Endpoint.new(path_str, verb, details)
+
+              if include_callee && handler_name && (body_node = function_index[handler_name]?)
+                entries = Noir::RustCalleeExtractorTS.callees_in_body(body_node, source, path)
+                attach_rust_callees(endpoint, entries)
+              end
+
+              endpoints << endpoint
+            end
+          end
+
+          collect_nested_router_prefixes(router_function, source, test_regions, prefix, Set(String).new).each do |nested_name, prefixes|
+            prefixes.each do |nested_prefix|
+              nested_key = "#{nested_name}\0#{nested_prefix}"
+              mount_queue << {nested_name, nested_prefix} unless processed_mounts.includes?(nested_key)
+            end
           end
         end
       end
@@ -90,7 +138,14 @@ module Analyzer::Rust
                                      source : String,
                                      prefix : String,
                                      test_regions : Array(Tuple(Int32, Int32)),
+                                     mounted_router_names : Set(String),
                                      &block : LibTreeSitter::TSNode, String ->)
+      if prefix.empty? && Noir::TreeSitter.node_type(node) == "function_item"
+        if name = function_name(node, source)
+          return if mounted_router_names.includes?(name)
+        end
+      end
+
       if Noir::TreeSitter.node_type(node) == "call_expression"
         return if RustEngine.inside_test_region?(node, test_regions)
 
@@ -101,26 +156,26 @@ module Analyzer::Rust
         # the receiver-chain walk single-pass.
         if router_emit?(node, source)
           block.call(node, prefix)
-          walk_receiver_chain(node, source, prefix, test_regions, &block)
+          walk_receiver_chain(node, source, prefix, test_regions, mounted_router_names, &block)
           return
         end
 
         if nest = extract_nest_call(node, source)
           nest_prefix, nested_router = nest
-          walk_receiver_chain(node, source, prefix, test_regions, &block)
-          walk_router_builders(nested_router, source, join_paths(prefix, nest_prefix), test_regions, &block)
+          walk_receiver_chain(node, source, prefix, test_regions, mounted_router_names, &block)
+          walk_router_builders(nested_router, source, join_paths(prefix, nest_prefix), test_regions, mounted_router_names, &block)
           return
         end
 
         if merge_arg = extract_merge_call(node, source)
-          walk_receiver_chain(node, source, prefix, test_regions, &block)
-          walk_router_builders(merge_arg, source, prefix, test_regions, &block)
+          walk_receiver_chain(node, source, prefix, test_regions, mounted_router_names, &block)
+          walk_router_builders(merge_arg, source, prefix, test_regions, mounted_router_names, &block)
           return
         end
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk_router_builders(child, source, prefix, test_regions, &block)
+        walk_router_builders(child, source, prefix, test_regions, mounted_router_names, &block)
       end
     end
 
@@ -128,12 +183,13 @@ module Analyzer::Rust
                                     source : String,
                                     prefix : String,
                                     test_regions : Array(Tuple(Int32, Int32)),
+                                    mounted_router_names : Set(String),
                                     &block : LibTreeSitter::TSNode, String ->)
       function = Noir::TreeSitter.field(call, "function")
       return unless function && Noir::TreeSitter.node_type(function) == "field_expression"
       receiver = Noir::TreeSitter.field(function, "value")
       return unless receiver
-      walk_router_builders(receiver, source, prefix, test_regions, &block)
+      walk_router_builders(receiver, source, prefix, test_regions, mounted_router_names, &block)
     end
 
     private def extract_nest_call(call : LibTreeSitter::TSNode,
@@ -151,6 +207,112 @@ module Analyzer::Rust
       return unless field_call_name(call, source) == "merge"
       args = named_arguments(call)
       args.first?
+    end
+
+    private def collect_mounted_router_names(root : LibTreeSitter::TSNode,
+                                             source : String,
+                                             test_regions : Array(Tuple(Int32, Int32))) : Set(String)
+      names = Set(String).new
+
+      walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "call_expression"
+        next if RustEngine.inside_test_region?(node, test_regions)
+
+        nest = extract_nest_call(node, source)
+        next unless nest
+
+        _, nested_router = nest
+        router_name = router_function_call_name(nested_router, source)
+        names.add(router_name) if router_name
+      end
+
+      names
+    end
+
+    private def collect_nested_router_prefixes(root : LibTreeSitter::TSNode,
+                                               source : String,
+                                               test_regions : Array(Tuple(Int32, Int32)),
+                                               active_prefix : String,
+                                               skip_function_names : Set(String)) : Hash(String, Array(String))
+      prefixes = {} of String => Array(String)
+      collect_nested_router_prefixes(root, source, test_regions, active_prefix, skip_function_names, prefixes)
+      prefixes
+    end
+
+    private def collect_nested_router_prefixes(node : LibTreeSitter::TSNode,
+                                               source : String,
+                                               test_regions : Array(Tuple(Int32, Int32)),
+                                               active_prefix : String,
+                                               skip_function_names : Set(String),
+                                               prefixes : Hash(String, Array(String)))
+      if Noir::TreeSitter.node_type(node) == "function_item"
+        if name = function_name(node, source)
+          return if skip_function_names.includes?(name)
+        end
+      end
+
+      if Noir::TreeSitter.node_type(node) == "call_expression"
+        return if RustEngine.inside_test_region?(node, test_regions)
+
+        if nest = extract_nest_call(node, source)
+          nest_prefix, nested_router = nest
+          mounted_prefix = join_paths(active_prefix, nest_prefix)
+
+          if router_name = router_function_call_name(nested_router, source)
+            entries = prefixes[router_name] ||= [] of String
+            entries << mounted_prefix unless entries.includes?(mounted_prefix)
+          else
+            collect_nested_router_prefixes(nested_router, source, test_regions, mounted_prefix, skip_function_names, prefixes)
+          end
+
+          walk_receiver_chain_for_mounts(node, source, active_prefix, test_regions, skip_function_names, prefixes)
+          return
+        end
+
+        if merge_arg = extract_merge_call(node, source)
+          collect_nested_router_prefixes(merge_arg, source, test_regions, active_prefix, skip_function_names, prefixes)
+          walk_receiver_chain_for_mounts(node, source, active_prefix, test_regions, skip_function_names, prefixes)
+          return
+        end
+      end
+
+      Noir::TreeSitter.each_named_child(node) do |child|
+        collect_nested_router_prefixes(child, source, test_regions, active_prefix, skip_function_names, prefixes)
+      end
+    end
+
+    private def walk_receiver_chain_for_mounts(call : LibTreeSitter::TSNode,
+                                               source : String,
+                                               active_prefix : String,
+                                               test_regions : Array(Tuple(Int32, Int32)),
+                                               skip_function_names : Set(String),
+                                               prefixes : Hash(String, Array(String)))
+      function = Noir::TreeSitter.field(call, "function")
+      return unless function && Noir::TreeSitter.node_type(function) == "field_expression"
+      receiver = Noir::TreeSitter.field(function, "value")
+      return unless receiver
+      collect_nested_router_prefixes(receiver, source, test_regions, active_prefix, skip_function_names, prefixes)
+    end
+
+    private def router_function_call_name(node : LibTreeSitter::TSNode, source : String) : String?
+      return unless Noir::TreeSitter.node_type(node) == "call_expression"
+      function = Noir::TreeSitter.field(node, "function")
+      return unless function
+
+      case Noir::TreeSitter.node_type(function)
+      when "identifier"
+        Noir::TreeSitter.node_text(function, source)
+      when "scoped_identifier"
+        name = Noir::TreeSitter.node_text(function, source).split("::").last
+        return if name == "new"
+        name
+      when "generic_function"
+        inner = Noir::TreeSitter.field(function, "function")
+        return unless inner
+        name = Noir::TreeSitter.node_text(inner, source).split("::").last
+        return if name == "new"
+        name
+      end
     end
 
     private def field_call_name(call : LibTreeSitter::TSNode, source : String) : String?
@@ -295,6 +457,23 @@ module Analyzer::Rust
         content = Noir::TreeSitter.node_text(child, source) if Noir::TreeSitter.node_type(child) == "string_content"
       end
       content
+    end
+
+    private def build_router_function_index(root : LibTreeSitter::TSNode, source : String) : Hash(String, LibTreeSitter::TSNode)
+      index = {} of String => LibTreeSitter::TSNode
+      walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "function_item"
+        name = function_name(node, source)
+        body_node = Noir::TreeSitter.field(node, "body")
+        next unless name && body_node
+        index[name] = body_node unless index.has_key?(name)
+      end
+      index
+    end
+
+    private def function_name(function : LibTreeSitter::TSNode, source : String) : String?
+      name_node = Noir::TreeSitter.field(function, "name")
+      name_node ? Noir::TreeSitter.node_text(name_node, source) : nil
     end
 
     private def build_function_index(root : LibTreeSitter::TSNode, source : String) : Hash(String, LibTreeSitter::TSNode)

@@ -11,6 +11,11 @@ expected_endpoints = [
   Endpoint.new("/protected", "GET"),
   Endpoint.new("/session", "GET"),
   Endpoint.new("/articles/{id}", "PUT"),
+  Endpoint.new("/api/posts", "GET"),
+  Endpoint.new("/api/reports/{id}", "GET", [
+    Param.new("id", "", "path"),
+  ]),
+  Endpoint.new("/root/api/nested", "GET"),
 ]
 
 FunctionalTester.new("fixtures/rust/actix_web/", {
