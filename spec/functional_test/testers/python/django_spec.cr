@@ -1,6 +1,93 @@
 require "../../func_spec.cr"
 
 expected_endpoints = [
+  Endpoint.new("/api/articles/", "GET", [
+    Param.new("status", "", "query"),
+  ]),
+  Endpoint.new("/api/articles/{article_id}/", "GET", [
+    Param.new("preview", "", "query"),
+    Param.new("article_id", "", "path"),
+  ]),
+  Endpoint.new("/api/articles/{article_id}/publish/", "POST", [
+    Param.new("reason", "", "form"),
+    Param.new("article_id", "", "path"),
+  ]),
+  Endpoint.new("/api/articles/stats/", "GET", [
+    Param.new("period", "", "query"),
+  ]),
+  Endpoint.new("/api/articles/bulk-status/", "GET", [
+    Param.new("scope", "", "query"),
+  ]),
+  Endpoint.new("/api/articles/bulk-status/", "POST", [
+    Param.new("scope", "", "query"),
+  ]),
+  Endpoint.new("/api/media/", "GET"),
+  Endpoint.new("/api/media/{media_id}/", "GET", [
+    Param.new("media_id", "", "path"),
+  ]),
+  Endpoint.new("/api/media/{media_id}/moderate/", "PATCH", [
+    Param.new("state", "", "form"),
+    Param.new("media_id", "", "path"),
+  ]),
+  Endpoint.new("/api/keyword-media/", "GET"),
+  Endpoint.new("/api/keyword-media/{media_id}/", "GET", [
+    Param.new("media_id", "", "path"),
+  ]),
+  Endpoint.new("/api/keyword-media/{media_id}/moderate/", "PATCH", [
+    Param.new("state", "", "form"),
+    Param.new("media_id", "", "path"),
+  ]),
+  Endpoint.new("/imported-api/library-media/", "GET"),
+  Endpoint.new("/imported-api/library-media/{media_id}/", "GET", [
+    Param.new("media_id", "", "path"),
+  ]),
+  Endpoint.new("/imported-api/library-media/{media_id}/moderate/", "PATCH", [
+    Param.new("state", "", "form"),
+    Param.new("media_id", "", "path"),
+  ]),
+  Endpoint.new("/direct-articles/", "GET", [
+    Param.new("status", "", "query"),
+  ]),
+  Endpoint.new("/direct-articles/{article_id}/", "GET", [
+    Param.new("preview", "", "query"),
+    Param.new("article_id", "", "path"),
+  ]),
+  Endpoint.new("/direct-articles/{article_id}/publish/", "POST", [
+    Param.new("reason", "", "form"),
+    Param.new("article_id", "", "path"),
+  ]),
+  Endpoint.new("/direct-articles/stats/", "GET", [
+    Param.new("period", "", "query"),
+  ]),
+  Endpoint.new("/direct-articles/bulk-status/", "GET", [
+    Param.new("scope", "", "query"),
+  ]),
+  Endpoint.new("/direct-articles/bulk-status/", "POST", [
+    Param.new("scope", "", "query"),
+  ]),
+  Endpoint.new("/direct-media/", "GET"),
+  Endpoint.new("/direct-media/{media_id}/", "GET", [
+    Param.new("media_id", "", "path"),
+  ]),
+  Endpoint.new("/direct-media/{media_id}/moderate/", "PATCH", [
+    Param.new("state", "", "form"),
+    Param.new("media_id", "", "path"),
+  ]),
+  Endpoint.new("/local/reports/", "GET", [
+    Param.new("owner", "", "query"),
+  ]),
+  Endpoint.new("/local/reports/<slug:report_slug>/", "GET", [
+    Param.new("preview", "", "query"),
+    Param.new("report_slug", "", "path"),
+  ]),
+  Endpoint.new("/namespaced/exports/", "GET", [
+    Param.new("since", "", "query"),
+  ]),
+  Endpoint.new("/combined/", "GET", [
+    Param.new("owner", "", "query"),
+  ]),
+  Endpoint.new("/extended/", "GET", [Param.new("token", "", "form")]),
+  Endpoint.new("/extended/", "POST", [Param.new("token", "", "form")]),
   Endpoint.new("/", "GET"),
   Endpoint.new("/page/<int:page>/", "GET", [
     Param.new("page", "", "path"),
@@ -33,8 +120,10 @@ expected_endpoints = [
     Param.new("tag_name", "", "path"),
     Param.new("page", "", "path"),
   ]),
-  Endpoint.new("/archives.html", "GET"),
+  Endpoint.new("/archives.html", "GET", [Param.new("year", "", "query")]),
   Endpoint.new("/links.html", "GET"),
+  Endpoint.new("/feedback/", "GET", [Param.new("topic", "", "query")]),
+  Endpoint.new("/feedback/", "POST", [Param.new("message", "", "form")]),
   Endpoint.new("/upload", "GET", [Param.new("sign", "", "query"), Param.new("sign", "", "query"), Param.new("X_FORWARDED_FOR", "", "header"), Param.new("X_REAL_IP", "", "header")]),
   Endpoint.new("/upload", "POST", [Param.new("sign", "", "query"), Param.new("X_FORWARDED_FOR", "", "header"), Param.new("X_REAL_IP", "", "header")]),
   Endpoint.new("/not_found", "GET", [Param.new("app_type", "", "cookie")]),
@@ -44,6 +133,10 @@ expected_endpoints = [
   Endpoint.new("/test", "PATCH", [Param.new("test_param", "", "form")]),
   Endpoint.new("/delete_test", "GET"),
   Endpoint.new("/delete_test", "DELETE"),
+  Endpoint.new("/legacy/{legacy_id}/", "GET", [
+    Param.new("preview", "", "query"),
+    Param.new("legacy_id", "", "path"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/python/django/", {

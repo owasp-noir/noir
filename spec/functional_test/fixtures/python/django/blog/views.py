@@ -9,16 +9,64 @@ from django.shortcuts import get_object_or_404
 from django.shortcuts import render
 from django.templatetags.static import static
 from django.utils import timezone
+from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 from django.views.generic.detail import DetailView
 from django.views.generic.list import ListView
 from haystack.views import SearchView
+from rest_framework import mixins, viewsets
+from rest_framework.decorators import action
+from rest_framework.viewsets import ReadOnlyModelViewSet
 
 from blog.models import Article, Category, LinkShowType, Links, Tag
 from comments.forms import CommentForm
 from djangoblog.utils import cache, get_blog_setting, get_sha256
 
 logger = logging.getLogger(__name__)
+
+
+class ArticleViewSet(ReadOnlyModelViewSet):
+    lookup_url_kwarg = "article_id"
+
+    def list(self, request):
+        status = request.query_params.get("status")
+        return HttpResponse(status)
+
+    def retrieve(self, request, article_id=None):
+        preview = request.query_params.get("preview")
+        return HttpResponse(preview)
+
+    @action(detail=True, methods=["post"], url_path="publish")
+    def publish(self, request, article_id=None):
+        reason = request.data.get("reason")
+        return HttpResponse(reason)
+
+    @action(detail=False, methods=["get"])
+    def stats(self, request):
+        period = request.query_params.get("period")
+        return HttpResponse(period)
+
+    @action(detail=False, methods=["get", "post"], url_path="bulk-status")
+    def bulk_status(self, request):
+        scope = request.query_params.get("scope")
+        return HttpResponse(scope)
+
+
+class MediaViewSet(
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    viewsets.GenericViewSet,
+):
+    lookup_url_kwarg = "media_id"
+
+    @action(
+        detail=True,
+        methods=["patch"],
+        url_path="moderate",
+    )
+    def moderate(self, request, media_id=None):
+        state = request.data.get("state")
+        return HttpResponse(state)
 
 
 class ArticleListView(ListView):
@@ -266,7 +314,10 @@ class ArchivesView(ArticleListView):
         return Article.objects.filter(status='p').all()
 
     def get_queryset_cache_key(self):
+        year = self.request.GET.get('year')
         cache_key = 'archives'
+        if year:
+            cache_key = '{cache_key}_{year}'.format(cache_key=cache_key, year=year)
         return cache_key
 
 
@@ -276,6 +327,16 @@ class LinkListView(ListView):
 
     def get_queryset(self):
         return Links.objects.filter(is_enable=True)
+
+
+class FeedbackView(View):
+    def get(self, request):
+        topic = request.GET.get('topic')
+        return HttpResponse(topic)
+
+    def post(self, request):
+        message = request.POST.get('message')
+        return HttpResponse(message)
 
 
 class EsSearchView(SearchView):
@@ -375,6 +436,33 @@ def delete_test(request):
         return 'delete'
 
     return "test"
+
+def legacy_detail(request, legacy_id):
+    preview = request.GET.get('preview')
+    return HttpResponse(f"{legacy_id}:{preview}")
+
+def local_report_list(request):
+    owner = request.GET.get('owner')
+    return HttpResponse(owner)
+
+def local_report_detail(request, report_slug):
+    preview = request.GET.get('preview')
+    return HttpResponse(f"{report_slug}:{preview}")
+
+def local_export(request):
+    since = request.GET.get('since')
+    return HttpResponse(since)
+
+def combined_report(request):
+    owner = request.GET.get('owner')
+    return HttpResponse(owner)
+
+def extended_report(request):
+    if request.method == 'POST':
+        token = request.POST.get('token')
+        return HttpResponse(token)
+
+    return HttpResponse("extended")
 
 def server_error_view(request, template_name='blog/error_page.html'):
     return render(request,

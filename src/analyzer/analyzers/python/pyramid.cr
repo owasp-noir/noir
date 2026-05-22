@@ -48,13 +48,10 @@ module Analyzer::Python
           next if PythonEngine.python_test_path?(path)
 
           content = read_file_content(path)
-          next unless content.includes?("pyramid")
+          next unless content.includes?("pyramid") || content.includes?(".add_route") || content.includes?(".add_static_view")
 
-          # config.add_route("name", "/path") — supports multi-line calls and
-          # keyword argument variants like `name="x", pattern="/y"`.
-          content.scan(/\.add_route\s*\(\s*(?:name\s*=\s*)?[rf]?['"]([^'"]+)['"]\s*,\s*(?:pattern\s*=\s*)?[rf]?['"]([^'"]*)['"]/) do |m|
-            route_map[m[1]] = {m[2], path}
-          end
+          extract_route_declarations(content, path, route_map)
+          extract_static_views(content, path)
         end
       end
 
@@ -67,13 +64,15 @@ module Analyzer::Python
           @logger.debug "Analyzing #{path}"
 
           content = read_file_content(path)
-          next unless content.includes?("pyramid")
+          next unless content.includes?("pyramid") || content.includes?(".add_view")
 
           lines = content.lines
           lines.each_with_index do |line, line_index|
             # @view_config(route_name="name", request_method="GET")
             if vc = match_view_config(lines, line_index)
               route_name, methods = vc
+              route_name ||= class_view_defaults_route_name(lines, line_index)
+              next if route_name.nil?
               next unless route_map.has_key?(route_name)
               route_path, _ = route_map[route_name]
 
@@ -124,10 +123,61 @@ module Analyzer::Python
       result
     end
 
+    private def extract_static_views(content : String, path : String)
+      lines = content.lines
+      lines.each_with_index do |line, line_index|
+        next unless line.includes?(".add_static_view")
+
+        static_line = if python_paren_delta(line) > 0
+                        join_until_python_call_closes(lines, line_index, line)
+                      else
+                        line
+                      end
+        call_match = static_line.match(/\.add_static_view\s*\((.+)\)\s*$/m)
+        next unless call_match
+
+        args = split_python_arguments(call_match[1])
+        name = extract_python_keyword_string(args, "name") || args[0]?.try { |arg| extract_python_string(arg) }
+        next if name.nil? || name.empty?
+
+        result << Endpoint.new(static_view_route_path(name), "GET", Details.new(PathInfo.new(path, line_index + 1)))
+      end
+    end
+
+    # config.add_route("name", "/path") plus keyword variants like
+    # name="x", pattern="/y" in either order.
+    private def extract_route_declarations(content : String, path : String, route_map : Hash(String, Tuple(String, String)))
+      content.scan(/\.add_route\s*\((.*?)\)/m) do |m|
+        args = m[1]
+        name = nil
+        pattern = nil
+
+        if name_match = args.match(/\bname\s*=\s*[rf]?['"]([^'"]+)['"]/)
+          name = name_match[1]
+        end
+        if pattern_match = args.match(/\bpattern\s*=\s*[rf]?['"]([^'"]*)['"]/)
+          pattern = pattern_match[1]
+        end
+
+        if name.nil? || pattern.nil?
+          literals = [] of String
+          args.scan(/[rf]?['"]([^'"]*)['"]/) do |literal_match|
+            literals << literal_match[1]
+          end
+          name ||= literals[0]?
+          pattern ||= literals[1]?
+        end
+
+        route_map[name] = {pattern, path} if name && pattern
+      end
+    end
+
     # Look up `@view_config(...)` either on a single line or across
     # continuation lines (the decorator call may span multiple lines).
-    # Returns {route_name, methods} or nil.
-    private def match_view_config(lines : Array(String), line_index : Int32) : Tuple(String, Array(String))?
+    # Returns {route_name, methods} or nil. `route_name` may be nil
+    # when a method-level `@view_config(request_method=...)` relies on
+    # a class-level `@view_defaults(route_name=...)`.
+    private def match_view_config(lines : Array(String), line_index : Int32) : Tuple(String?, Array(String))?
       stripped = lines[line_index].lstrip
       return unless stripped.starts_with?("@view_config") ||
                     stripped.starts_with?("@pyramid.view.view_config") ||
@@ -145,12 +195,58 @@ module Analyzer::Python
       end
 
       rn_match = decorator.match(/route_name\s*=\s*[rf]?['"]([^'"]+)['"]/)
-      return if rn_match.nil?
-      route_name = rn_match[1]
+      route_name = rn_match ? rn_match[1] : nil
 
       methods = extract_methods_from_args(decorator)
       methods = ["GET"] if methods.empty?
       {route_name, methods}
+    end
+
+    private def class_view_defaults_route_name(lines : Array(String), decorator_index : Int32) : String?
+      decorator_indent = lines[decorator_index].size - lines[decorator_index].lstrip.size
+      idx = decorator_index - 1
+
+      while idx >= 0
+        line = lines[idx]
+        unless line.strip.empty?
+          indent = line.size - line.lstrip.size
+          if indent < decorator_indent
+            if line.lstrip.starts_with?("class ")
+              return extract_view_defaults_route_name_above_class(lines, idx)
+            end
+          end
+        end
+        idx -= 1
+      end
+
+      nil
+    end
+
+    private def extract_view_defaults_route_name_above_class(lines : Array(String), class_index : Int32) : String?
+      idx = class_index - 1
+      decorators = [] of String
+
+      while idx >= 0
+        line = lines[idx]
+        stripped = line.lstrip
+        break if stripped.empty?
+        break unless stripped.starts_with?("@") || decorators.size > 0
+
+        decorators.unshift(line)
+        break if stripped.starts_with?("@view_defaults") ||
+                 stripped.starts_with?("@pyramid.view.view_defaults") ||
+                 stripped.starts_with?("@pyramid.view_defaults")
+        idx -= 1
+      end
+
+      decorator = decorators.join(' ')
+      return unless decorator.includes?("view_defaults")
+
+      if route_match = decorator.match(/route_name\s*=\s*[rf]?['"]([^'"]+)['"]/)
+        return route_match[1]
+      end
+
+      nil
     end
 
     # Pull request_method= or request_method=['GET','POST'] out of an
@@ -181,6 +277,89 @@ module Analyzer::Python
       return if first.includes?('=')
       return first if first.match(/^[A-Za-z_][A-Za-z0-9_]*$/)
       nil
+    end
+
+    private def split_python_arguments(args : String) : Array(String)
+      parts = [] of String
+      current = String::Builder.new
+      paren_depth = 0
+      bracket_depth = 0
+      brace_depth = 0
+      in_quote : Char? = nil
+      escaped = false
+
+      args.each_char do |ch|
+        if in_quote
+          current << ch
+          if escaped
+            escaped = false
+          elsif ch == '\\'
+            escaped = true
+          elsif ch == in_quote
+            in_quote = nil
+          end
+          next
+        end
+
+        case ch
+        when '\'', '"'
+          in_quote = ch
+          current << ch
+        when '('
+          paren_depth += 1
+          current << ch
+        when ')'
+          paren_depth -= 1 if paren_depth > 0
+          current << ch
+        when '['
+          bracket_depth += 1
+          current << ch
+        when ']'
+          bracket_depth -= 1 if bracket_depth > 0
+          current << ch
+        when '{'
+          brace_depth += 1
+          current << ch
+        when '}'
+          brace_depth -= 1 if brace_depth > 0
+          current << ch
+        when ','
+          if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0
+            parts << current.to_s
+            current = String::Builder.new
+          else
+            current << ch
+          end
+        else
+          current << ch
+        end
+      end
+
+      parts << current.to_s
+      parts
+    end
+
+    private def extract_python_keyword_string(args : Array(String), keyword : String) : String?
+      args.each do |arg|
+        keyword_match = arg.match(/^\s*#{Regex.escape(keyword)}\s*=\s*(.+)$/m)
+        next unless keyword_match
+
+        return extract_python_string(keyword_match[1])
+      end
+
+      nil
+    end
+
+    private def extract_python_string(expression : String) : String?
+      string_match = expression.strip.match(/^[rf]?['"]([^'"]*)['"]/)
+      string_match ? string_match[1] : nil
+    end
+
+    private def static_view_route_path(name : String) : String
+      normalized = name.gsub(/\/+/, "/")
+      normalized = "/#{normalized}" unless normalized.starts_with?("/")
+      normalized = normalized[0...-1] if normalized.ends_with?("/") && normalized != "/"
+      normalized == "/" ? "/*" : "#{normalized}/*"
     end
 
     # Walk downwards from `line_index` past any further decorators or
@@ -301,10 +480,10 @@ module Analyzer::Python
 
       ACCESSOR_MAP.each do |param_type, accessors|
         accessors.each do |accessor|
-          body.scan(/request\.#{accessor}\s*\[\s*[rf]?['"]([^'"]+)['"]\s*\]/) do |m|
+          body.scan(/(?:self\.)?request\.#{accessor}\s*\[\s*[rf]?['"]([^'"]+)['"]\s*\]/) do |m|
             record.call(m[1], param_type)
           end
-          body.scan(/request\.#{accessor}\.get(?:all|one)?\s*\(\s*[rf]?['"]([^'"]+)['"]/) do |m|
+          body.scan(/(?:self\.)?request\.#{accessor}\.get(?:all|one)?\s*\(\s*[rf]?['"]([^'"]+)['"]/) do |m|
             record.call(m[1], param_type)
           end
         end

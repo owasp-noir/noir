@@ -2,7 +2,7 @@
 # `prefix=settings.API_V1_STR` is an attribute reference, not a string
 # literal. The previous configure_router_prefix logic kept the raw
 # expression and emitted garbage URLs like `/settings.API_V1_STR/...`.
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 
 from app.api.main import api_router
 from app.core.config import settings
@@ -10,4 +10,8 @@ from app.core.config import settings
 API_PREFIX = settings.API_V1_STR
 
 app = FastAPI()
-app.include_router(api_router, prefix=API_PREFIX)
+app.include_router(
+    router=api_router,
+    prefix=API_PREFIX,
+    dependencies=[Depends(lambda: True)],
+)

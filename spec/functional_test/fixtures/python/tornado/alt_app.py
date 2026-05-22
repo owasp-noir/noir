@@ -104,3 +104,21 @@ deep_dotted_routes = [
 ]
 
 app11 = tornado.web.Application(deep_dotted_routes)
+
+# Test: add_handlers() with variable and inline route lists
+extra_routes = [
+    (r"/metrics", HealthHandler),
+]
+
+app11.add_handlers(r".*", extra_routes)
+app11.add_handlers(r".*", [
+    (r"/version", StatusHandler),
+])
+
+# Test: URLSpec helper objects in route lists
+urlspec_routes = [
+    tornado.web.url(r"/named-url", StatusHandler, name="named_url"),
+    tornado.web.URLSpec(r"/spec-url", HealthHandler, name="spec_url"),
+]
+
+app12 = tornado.web.Application(urlspec_routes)

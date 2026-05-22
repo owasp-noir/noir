@@ -1,5 +1,5 @@
 from pyramid.config import Configurator
-from pyramid.view import view_config
+from pyramid.view import view_config, view_defaults
 from wsgiref.simple_server import make_server
 
 
@@ -32,9 +32,37 @@ def login_view(request):
     return {"ok": bool(username and password)}
 
 
+@view_config(route_name="about", request_method="GET", renderer="json")
+def about_view(request):
+    source = request.params["source"]
+    return {"source": source}
+
+
+@view_config(route_name="external_report", request_method="GET", renderer="json")
+def external_report_view(request):
+    include = request.params.get("include")
+    return {"include": include}
+
+
 def ping_view(request):
     fmt = request.GET.get("format")
     return {"pong": True, "format": fmt}
+
+
+@view_defaults(route_name="orders", renderer="json")
+class OrdersView:
+    def __init__(self, request):
+        self.request = request
+
+    @view_config(request_method="GET")
+    def list(self):
+        status = self.request.params.get("status")
+        return {"status": status}
+
+    @view_config(request_method="POST")
+    def create(self):
+        order_id = self.request.json_body["order_id"]
+        return {"order_id": order_id}
 
 
 def main(global_config, **settings):
@@ -43,7 +71,14 @@ def main(global_config, **settings):
     config.add_route("user", "/users/{id}")
     config.add_route("api_items", "/api/items")
     config.add_route("api_login", "/api/login")
+    config.add_route(pattern="/about", name="about")
     config.add_route("ping", "/ping")
+    config.add_route("orders", "/orders")
+    config.add_static_view(
+        name="assets",
+        path="public",
+        cache_max_age=3600,
+    )
     config.add_view(ping_view, route_name="ping", request_method="GET", renderer="json")
     config.scan()
     return config.make_wsgi_app()
