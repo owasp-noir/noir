@@ -23,20 +23,17 @@ class Deliver
     @logger = NoirLogger.new @is_debug, @is_verbose, @is_color, @is_log
 
     options["send_with_headers"].as_a.each do |set_header|
-      if set_header.to_s.includes? ":"
-        split = set_header.to_s.split(":")
-        begin
-          if split[1][0].to_s == " "
-            value = split[1][1..-1].to_s
-          else
-            value = split[1].to_s
-          end
-        rescue
-          value = split[1].to_s
-        end
+      raw = set_header.to_s
+      # Only split on the first colon so values that contain colons
+      # (e.g. `Authorization: Bearer aaa:bbb`, `X-Time: 12:34:56`)
+      # keep their full payload after the header name.
+      colon_index = raw.index(':')
+      next if colon_index.nil?
 
-        @headers[split[0]] = value
-      end
+      name = raw[0...colon_index]
+      value = raw[(colon_index + 1)..]
+      value = value.lstrip(' ') unless value.empty?
+      @headers[name] = value
     end
 
     options["use_matchers"].as_a.each do |matcher|
@@ -63,12 +60,12 @@ class Deliver
 
     if !@matchers.empty?
       @logger.info "Applying matchers"
-      result = apply_matchers(endpoints)
+      result = apply_matchers(result)
     end
 
     if !@filters.empty?
       @logger.info "Applying filters"
-      result = apply_filters(endpoints)
+      result = apply_filters(result)
     end
 
     result
@@ -78,10 +75,13 @@ class Deliver
     result = [] of Endpoint
     endpoints.each do |endpoint|
       @matchers.each do |matcher|
-        if matches_pattern?(endpoint, matcher)
-          @logger.debug "Endpoint '#{endpoint.method} #{endpoint.url}' matched with '#{matcher}'."
-          result << endpoint
-        end
+        next unless matches_pattern?(endpoint, matcher)
+        @logger.debug "Endpoint '#{endpoint.method} #{endpoint.url}' matched with '#{matcher}'."
+        result << endpoint
+        # Stop after the first matching pattern so an endpoint that
+        # satisfies several matchers (e.g. matchers = ["GET", "GET:/api"])
+        # isn't emitted twice.
+        break
       end
     end
 

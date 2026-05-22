@@ -140,4 +140,92 @@ describe "Method-based filtering" do
     result.size.should eq(2)
     result.all? { |ep| ep.method == "GET" }.should be_true
   end
+
+  # Regression: previously the inner matcher loop did not break after
+  # the first match, so an endpoint matched by several overlapping
+  # patterns ended up emitted N times in the output.
+  it "does not emit duplicates when an endpoint matches multiple matchers" do
+    options["use_matchers"] = YAML::Any.new([
+      YAML::Any.new("GET"),      # matches GET /api/users, GET /admin/dashboard
+      YAML::Any.new("GET:/api"), # also matches GET /api/users
+    ])
+    options["use_filters"] = YAML::Any.new([] of YAML::Any)
+    deliver = Deliver.new options
+
+    result = deliver.apply_matchers(test_endpoints)
+    # 2 distinct endpoints, not 3 (GET /api/users would have been
+    # added twice under the old behavior).
+    result.size.should eq(2)
+    result.map(&.url).uniq!.size.should eq(2)
+  end
+end
+
+describe "Deliver#apply_all chaining" do
+  options = create_test_options
+  options["base"] = YAML::Any.new([YAML::Any.new("noir")])
+
+  endpoints = [
+    Endpoint.new("/api/users", "GET"),
+    Endpoint.new("/api/users", "POST"),
+    Endpoint.new("/api/admin/users", "GET"),
+    Endpoint.new("/admin/dashboard", "GET"),
+    Endpoint.new("/login", "POST"),
+  ]
+
+  # Regression: apply_all used to call apply_filters(endpoints) on the
+  # original list instead of the matcher-filtered result, so combining
+  # matchers and filters silently dropped the matcher narrowing.
+  it "feeds matcher output into filters (instead of the original list)" do
+    options["use_matchers"] = YAML::Any.new([YAML::Any.new("/api")])  # keep /api/*
+    options["use_filters"] = YAML::Any.new([YAML::Any.new("/admin")]) # drop /admin/*
+    deliver = Deliver.new options
+
+    result = deliver.apply_all(endpoints)
+
+    # After the fix: matcher keeps GET /api/users, POST /api/users,
+    # GET /api/admin/users; filter then drops GET /api/admin/users
+    # because its URL contains "/admin".
+    result.size.should eq(2)
+    result.all?(&.url.starts_with?("/api/")).should be_true
+    result.any?(&.url.includes?("/admin")).should be_false
+  end
+end
+
+describe "Deliver#initialize header parsing" do
+  options = create_test_options
+  options["base"] = YAML::Any.new([YAML::Any.new("noir")])
+
+  # Regression: split on every colon dropped everything after the
+  # second one for values that legitimately contain `:`.
+  it "preserves colons inside the header value" do
+    options["send_with_headers"] = YAML::Any.new([
+      YAML::Any.new("Authorization: Bearer aaa:bbb:ccc"),
+    ])
+    deliver = Deliver.new options
+    deliver.headers["Authorization"].should eq("Bearer aaa:bbb:ccc")
+  end
+
+  it "preserves multiple-colon header values like timestamps" do
+    options["send_with_headers"] = YAML::Any.new([
+      YAML::Any.new("X-Request-Time: 12:34:56"),
+    ])
+    deliver = Deliver.new options
+    deliver.headers["X-Request-Time"].should eq("12:34:56")
+  end
+
+  it "trims leading whitespace after the colon" do
+    options["send_with_headers"] = YAML::Any.new([
+      YAML::Any.new("X-Foo:   value-with-spaces"),
+    ])
+    deliver = Deliver.new options
+    deliver.headers["X-Foo"].should eq("value-with-spaces")
+  end
+
+  it "keeps the value as-is when no space follows the colon" do
+    options["send_with_headers"] = YAML::Any.new([
+      YAML::Any.new("X-Bar:tight-value"),
+    ])
+    deliver = Deliver.new options
+    deliver.headers["X-Bar"].should eq("tight-value")
+  end
 end
