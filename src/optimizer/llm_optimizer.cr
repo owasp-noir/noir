@@ -155,13 +155,18 @@ class LLMEndpointOptimizer < EndpointOptimizer
       optimization_data["optimized_params"].as_a.each do |param_data|
         param_obj = param_data.as_h
         name = param_obj["name"].as_s
-        param_type = param_obj["param_type"].as_s
+        # Normalize whatever string the LLM returns to one of the
+        # canonical param types so we don't end up with rogue values
+        # like "uri" or "Querystring" propagating into the endpoint
+        # model. Mirrors the validation Analyzer::AI::Unified does
+        # on its own LLM responses.
+        param_type = normalize_param_type(param_obj["param_type"].as_s)
         value = param_obj.has_key?("value") ? param_obj["value"].as_s : ""
 
         optimized_params << Param.new(name, value, param_type)
       end
 
-      if optimized_params.present?
+      unless optimized_params.empty?
         @logger.debug_sub "  - Parameters optimized: #{endpoint.params.size} → #{optimized_params.size}"
         optimized_endpoint.params = optimized_params
       end
@@ -214,26 +219,19 @@ class LLMEndpointOptimizer < EndpointOptimizer
     end
   end
 
-  # LLM prompt for optimization
-  LLM_OPTIMIZE_PROMPT = <<-PROMPT
-    Analyze the provided endpoint and optimize it for better structure, naming conventions, and parameter handling.
+  VALID_PARAM_TYPES = %w[query json form header cookie path]
 
-    Focus on:
-    - Normalizing unusual URL patterns
-    - Improving parameter naming conventions
-    - Standardizing path structures
-    - Removing redundant or confusing elements
+  # Coerce an LLM-supplied param_type string to one of the canonical
+  # values; anything outside the list falls back to "query".
+  private def normalize_param_type(raw : String) : String
+    normalized = raw.downcase
+    VALID_PARAM_TYPES.includes?(normalized) ? normalized : "query"
+  end
 
-    Guidelines:
-    - Keep the core functionality and meaning intact
-    - Use RESTful conventions where appropriate
-    - Ensure parameter types are accurate
-    - Maintain endpoint uniqueness
-    - Do not include explanations or comments
-    - Output only the JSON result according to the schema
-    PROMPT
-
-  # LLM response format for optimization
+  # LLM response format for optimization. The canonical prompt text
+  # lives in LLM::PromptOverrides.llm_optimize_prompt — the older
+  # LLM_OPTIMIZE_PROMPT constant that used to live here was a dead
+  # duplicate and has been removed.
   LLM_OPTIMIZE_FORMAT = <<-JSON
     {
       "type": "json_schema",
