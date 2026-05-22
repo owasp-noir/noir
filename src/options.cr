@@ -23,14 +23,6 @@ private def process_override_flag(
   end
 end
 
-private def print_context_support(tech : String)
-  puts "     #{"callee".colorize(:cyan)}: #{NoirTechs.context_supported?(tech, "callee")}"
-  puts "     #{"ai_context".colorize(:cyan)}:"
-  ["guards", "sinks", "validators", "signals"].each do |feature|
-    puts "       #{feature.colorize(:cyan)}: #{NoirTechs.context_supported?(tech, feature)}"
-  end
-end
-
 def extract_hidden_prompt_flags(noir_options : Hash(String, YAML::Any)) : Array(String)
   args = ARGV.dup
   filtered = [] of String
@@ -52,7 +44,51 @@ def extract_hidden_prompt_flags(noir_options : Hash(String, YAML::Any)) : Array(
     end
   end
   filtered = normalize_ai_context_flag(filtered)
+  filtered = extract_legacy_aliases(filtered, noir_options)
   filtered
+end
+
+# Silently translate v0 flag spellings to their v1 storage. Keeping the
+# work here (instead of `parser.on "--include-path"`) means the legacy
+# names no longer clutter `noir scan -h`, while every v0 script keeps
+# working untouched in v1.x.
+LEGACY_PVALUE_TARGETS = {
+  "--set-pvalue"        => "set_pvalue",
+  "--set-pvalue-header" => "set_pvalue_header",
+  "--set-pvalue-cookie" => "set_pvalue_cookie",
+  "--set-pvalue-query"  => "set_pvalue_query",
+  "--set-pvalue-form"   => "set_pvalue_form",
+  "--set-pvalue-json"   => "set_pvalue_json",
+  "--set-pvalue-path"   => "set_pvalue_path",
+}
+
+LEGACY_INCLUDE_TARGETS = {
+  "--include-path"   => "include_path",
+  "--include-techs"  => "include_techs",
+  "--include-callee" => "include_callee",
+}
+
+def extract_legacy_aliases(args : Array(String), noir_options : Hash(String, YAML::Any)) : Array(String)
+  result = [] of String
+  i = 0
+  while i < args.size
+    arg = args[i]
+    if key = LEGACY_INCLUDE_TARGETS[arg]?
+      noir_options[key] = YAML::Any.new(true)
+      i += 1
+    elsif pvalue_key = LEGACY_PVALUE_TARGETS[arg]?
+      if i + 1 >= args.size
+        STDERR.puts "ERROR: #{arg} requires an argument.".colorize(:yellow)
+        exit(1)
+      end
+      append_to_yaml_array(noir_options, pvalue_key, args[i + 1])
+      i += 2
+    else
+      result << arg
+      i += 1
+    end
+  end
+  result
 end
 
 # `--ai-context` accepts an optional comma-separated feature list. Crystal's
@@ -101,55 +137,27 @@ end
 private def base_help : String
   <<-HELP
     #{"USAGE:".colorize(:green)}
-      noir -b BASE_PATH [flags]
+      noir scan [PATHS...] [flags]
 
     #{"EXAMPLES:".colorize(:green)}
       #{"Basic scan".colorize(:yellow)}
-        noir -b ./myapp
+        noir scan ./myapp
 
       #{"JSON output to file".colorize(:yellow)}
-        noir -b ./myapp -f json -o endpoints.json
+        noir scan ./myapp -f json -o endpoints.json
 
       #{"Enable passive security scan".colorize(:yellow)}
-        noir -b ./myapp -P
+        noir scan ./myapp -P
 
       #{"AI integration".colorize(:yellow)}
-        $ noir -b . --ai-provider openai --ai-model gpt-5.5 --ai-key YOUR_API_KEY
-        $ noir -b . --ai-provider acp:codex
-        $ noir -b . --ai-provider acp:claude
+        $ noir scan . --ai-provider openai --ai-model gpt-5.5 --ai-key YOUR_API_KEY
+        $ noir scan . --ai-provider acp:codex
+        $ noir scan . --ai-provider acp:claude
 
       #{"Forward results via proxy (Burp/ZAP)".colorize(:yellow)}
-        noir -b ./myapp --send-proxy http://127.0.0.1:8080
+        noir scan ./myapp --send-proxy http://127.0.0.1:8080
 
     HELP
-end
-
-private def full_examples_and_env : String
-  <<-EXTRA
-    \n#{"EXAMPLES:".colorize(:green)}
-      #{"Basic run".colorize(:yellow)}
-        $ noir -b .
-
-      #{"With base URL and proxy".colorize(:yellow)}
-        $ noir -b . -u http://example.com --send-proxy http://localhost:8090
-
-      #{"Detailed analysis".colorize(:yellow)}
-        $ noir -b . --ai-context --include-path
-
-      #{"JSON or YAML output without logs".colorize(:yellow)}
-        $ noir -b . -f json --no-log
-        $ noir -b . -f yaml --no-log
-
-      #{"Specific technology".colorize(:yellow)}
-        $ noir -b . -t rails
-        $ noir -b . -t rails --exclude-techs php
-
-    #{"ENVIRONMENT VARIABLES:".colorize(:green)}
-      NOIR_HOME                    Path to directory containing config file
-      NOIR_AI_KEY                  API key for AI providers (OpenAI, xAI, etc.)
-      NOIR_MAX_FILE_SIZE           Maximum file size for analysis (e.g. 5MB or 1048576)
-      NOIR_PARSER_MAX_DEPTH        Max import depth for parsers (0=entry only; 1=+direct imports; unset=no limit)
-    EXTRA
 end
 
 def run_options_parser
@@ -204,28 +212,6 @@ def run_options_parser
     parser.on "--pvalue TYPE=VAL", "Set parameter value (TYPE: any|header|cookie|query|form|json|path; repeatable)" do |v|
       handle_pvalue(noir_options, v)
     end
-    # Legacy v0 aliases — kept silent in v1.x for `noir -b .` script compat.
-    parser.on "--set-pvalue VALUE", "(legacy) alias for --pvalue any=VALUE" do |v|
-      append_to_yaml_array(noir_options, "set_pvalue", v)
-    end
-    parser.on "--set-pvalue-header VALUE", "(legacy) alias for --pvalue header=VALUE" do |v|
-      append_to_yaml_array(noir_options, "set_pvalue_header", v)
-    end
-    parser.on "--set-pvalue-cookie VALUE", "(legacy) alias for --pvalue cookie=VALUE" do |v|
-      append_to_yaml_array(noir_options, "set_pvalue_cookie", v)
-    end
-    parser.on "--set-pvalue-query VALUE", "(legacy) alias for --pvalue query=VALUE" do |v|
-      append_to_yaml_array(noir_options, "set_pvalue_query", v)
-    end
-    parser.on "--set-pvalue-form VALUE", "(legacy) alias for --pvalue form=VALUE" do |v|
-      append_to_yaml_array(noir_options, "set_pvalue_form", v)
-    end
-    parser.on "--set-pvalue-json VALUE", "(legacy) alias for --pvalue json=VALUE" do |v|
-      append_to_yaml_array(noir_options, "set_pvalue_json", v)
-    end
-    parser.on "--set-pvalue-path VALUE", "(legacy) alias for --pvalue path=VALUE" do |v|
-      append_to_yaml_array(noir_options, "set_pvalue_path", v)
-    end
 
     parser.on "--status-codes", "Display HTTP status codes" do
       noir_options["status_codes"] = YAML::Any.new(true)
@@ -238,16 +224,6 @@ def run_options_parser
     end
     parser.on "--include LIST", "Enrich plain output (comma-separated: path,techs,callee)" do |v|
       apply_include_list(noir_options, v)
-    end
-    # Legacy aliases for individual enrichment toggles.
-    parser.on "--include-path", "(legacy) alias for --include path" do
-      noir_options["include_path"] = YAML::Any.new(true)
-    end
-    parser.on "--include-techs", "(legacy) alias for --include techs" do
-      noir_options["include_techs"] = YAML::Any.new(true)
-    end
-    parser.on "--include-callee", "(legacy) alias for --include callee" do
-      noir_options["include_callee"] = YAML::Any.new(true)
     end
     parser.on "--ai-context [LIST]", <<-DESC do |v|
       Include aggregated AI review context. With no argument, emits every
@@ -294,19 +270,6 @@ def run_options_parser
     end
     parser.on "--use-taggers LIST", "Activate specific taggers (comma-separated)" do |v|
       noir_options["use_taggers"] = YAML::Any.new(v)
-    end
-    parser.on "--list-taggers", "List available taggers" do
-      puts "Available taggers:"
-      NoirTaggers.taggers.each do |tagger, info|
-        puts " #{tagger.to_s.colorize(:green)}"
-        info.each { |k, v| puts "   #{k.to_s.colorize(:blue)}: #{v}" unless k == :runner }
-      end
-      puts "\nFramework-specific taggers:"
-      NoirTaggers.framework_taggers.each do |tagger, info|
-        puts " #{tagger.to_s.colorize(:green)}"
-        info.each { |k, v| puts "   #{k.to_s.colorize(:blue)}: #{v}" unless k == :runner }
-      end
-      exit
     end
 
     parser.separator "\n DELIVER:".colorize(:blue)
@@ -385,22 +348,6 @@ def run_options_parser
     parser.on "--only-techs LIST", "Run only specified tech detectors" do |v|
       noir_options["only_techs"] = YAML::Any.new(v)
     end
-    parser.on "--list-techs", "List available technologies" do
-      puts "Available technologies:"
-      NoirTechs.techs.each do |tech, info|
-        puts " #{tech.to_s.colorize(:green)}"
-        info.each do |k, v|
-          if v.is_a?(Hash)
-            puts "   #{k.to_s.colorize(:blue)}:"
-            v.each { |sk, sv| puts "     #{sk.to_s.colorize(:cyan)}: #{sv}" }
-            print_context_support(tech.to_s) if k.to_s == "supported"
-          else
-            puts "   #{k.to_s.colorize(:blue)}: #{v}"
-          end
-        end
-      end
-      exit
-    end
 
     parser.separator "\n CONFIG:".colorize(:blue)
     parser.on "--config-file PATH", "YAML config file" do |v|
@@ -415,17 +362,6 @@ def run_options_parser
 
       noir_options["concurrency"] = YAML::Any.new(value)
     end
-    parser.on "--generate-completion SHELL", "Generate completion script (zsh|bash|fish)" do |shell|
-      case shell
-      when "zsh"  then puts generate_zsh_completion_script
-      when "bash" then puts generate_bash_completion_script
-      when "fish" then puts generate_fish_completion_script
-      else
-        STDERR.puts "ERROR: Unsupported shell '#{shell}'".colorize(:yellow)
-      end
-      exit
-    end
-
     parser.separator "\n CACHE:".colorize(:blue)
     parser.on "--cache-disable", "Disable LLM cache" do
       noir_options["cache_disable"] = YAML::Any.new(true)
@@ -442,14 +378,7 @@ def run_options_parser
       puts Noir::VERSION
       exit
     end
-    parser.on "--build-info", "Show build information" do
-      puts "Noir: #{Noir::VERSION}"
-      puts "Crystal: #{Crystal::VERSION}"
-      puts "LLVM: #{Crystal::LLVM_VERSION}"
-      puts "Target: #{Crystal::TARGET_TRIPLE}"
-      exit
-    end
-    parser.on "--verbose", "Verbose mode (+ --include-path + --use-all-taggers)" do
+    parser.on "--verbose", "Verbose mode (+ --include path + --use-all-taggers)" do
       noir_options["verbose"] = YAML::Any.new(true)
       noir_options["include_path"] = YAML::Any.new(true)
       noir_options["all_taggers"] = YAML::Any.new(true)
@@ -458,13 +387,6 @@ def run_options_parser
     parser.on "-h", "--help", "Show this help" do
       banner()
       puts parser
-      exit
-    end
-
-    parser.on "--help-all", "Show all help (examples + env vars)" do
-      banner()
-      puts parser
-      puts full_examples_and_env
       exit
     end
 
