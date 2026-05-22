@@ -12,7 +12,7 @@ feed.push_callee(Callee.new("FeedService.live", line: 10))
 
 FunctionalTester.new("fixtures/typescript/trpc/", {
   :techs     => 1,
-  :endpoints => 7,
+  :endpoints => 9,
 }, [list, create, feed], {
   "include_callee" => YAML::Any.new(true),
 }).perform_tests

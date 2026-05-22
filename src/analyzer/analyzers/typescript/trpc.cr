@@ -70,7 +70,7 @@ module Analyzer::Typescript
       collected = [] of Router
       # Capture `(export )? (const|let|var) NAME = <prefix>?(router|createTRPCRouter)({...})`.
       # Prefix tolerates `t.router(`, `initTRPC.create().router(`, `_.router(` etc.
-      pattern = /\b(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:[\w$]+\s*(?:\(\s*\))?\s*\.\s*)?(?:router|createTRPCRouter)\s*\(\s*\{/
+      pattern = /\b(?:export\s+)?(?:const|let|var)\s+(\w+)(?:\s*:[^=]+)?\s*=\s*(?:[\w$]+\s*(?:\(\s*\))?\s*\.\s*)?(?:router|createTRPCRouter)\s*\(\s*\{/
 
       content.scan(pattern) do |match|
         match_start = match.begin(0) || 0
@@ -88,7 +88,42 @@ module Analyzer::Typescript
         collected << Router.new(match[1], body, path, line)
       end
 
+      identifier_arg_pattern = /\b(?:export\s+)?(?:const|let|var)\s+(\w+)(?:\s*:[^=]+)?\s*=\s*(?:[\w$]+\s*(?:\(\s*\))?\s*\.\s*)?(?:router|createTRPCRouter)\s*\(\s*([A-Za-z_$][\w$]*)\s*\)/
+
+      content.scan(identifier_arg_pattern) do |match|
+        match_start = match.begin(0) || 0
+        body_info = extract_object_assignment_body(content, match[2])
+        next unless body_info
+
+        body, object_line = body_info
+        line = object_line > 0 ? object_line : content[0, match_start].count('\n') + 1
+        collected << Router.new(match[1], body, path, line)
+      end
+
       collected
+    end
+
+    private def extract_object_assignment_body(content : String, identifier : String) : Tuple(String, Int32)?
+      escaped = Regex.escape(identifier)
+      pattern = /\b(?:export\s+)?(?:const|let|var)\s+#{escaped}(?:\s*:[^=]+)?\s*=\s*\{/
+
+      content.scan(pattern) do |match|
+        match_start = match.begin(0) || 0
+        match_end = match.end(0) || 0
+        next if match_end == 0
+
+        brace_open = match_end - 1
+        next unless content[brace_open]? == '{'
+
+        brace_close = Noir::JSRouteExtractor.find_matching_brace(content, brace_open)
+        next unless brace_close
+
+        body = content[(brace_open + 1)...brace_close]
+        line = content[0, match_start].count('\n') + 1
+        return {body, line}
+      end
+
+      nil
     end
 
     private def extract_prefix(content : String) : String?
