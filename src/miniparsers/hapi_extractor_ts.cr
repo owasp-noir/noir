@@ -1,5 +1,6 @@
 require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
+require "./js_callee_extractor"
 
 module Noir
   # Tree-sitter-backed Hapi extractor.
@@ -55,32 +56,34 @@ module Noir
       getter query_params : Array(String)
       getter header_params : Array(String)
       getter cookie_params : Array(String)
+      getter callees : Array(JSCalleeExtractor::Entry)
 
       def initialize(@verb, @path, @line, @has_body,
-                     @query_params, @header_params, @cookie_params)
+                     @query_params, @header_params, @cookie_params,
+                     @callees = [] of JSCalleeExtractor::Entry)
       end
     end
 
-    def extract_routes(source : String) : Array(Route)
+    def extract_routes(source : String, include_callees : Bool = false) : Array(Route)
       routes = [] of Route
       Noir::TreeSitter.parse_javascript(source) do |root|
-        walk(root, source, routes, 0)
+        walk(root, source, routes, 0, include_callees)
       end
       routes
     end
 
     # ---- traversal --------------------------------------------------
 
-    private def walk(node : LibTreeSitter::TSNode, source : String, routes : Array(Route), depth : Int32)
+    private def walk(node : LibTreeSitter::TSNode, source : String, routes : Array(Route), depth : Int32, include_callees : Bool)
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
 
       if Noir::TreeSitter.node_type(node) == "call_expression" && route_call?(node, source)
-        emit_routes(node, source, routes)
+        emit_routes(node, source, routes, include_callees)
         return
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, source, routes, depth + 1)
+        walk(child, source, routes, depth + 1, include_callees)
       end
     end
 
@@ -97,23 +100,23 @@ module Noir
       false
     end
 
-    private def emit_routes(call : LibTreeSitter::TSNode, source : String, routes : Array(Route))
+    private def emit_routes(call : LibTreeSitter::TSNode, source : String, routes : Array(Route), include_callees : Bool)
       args = arguments_node(call)
       return unless args
 
       Noir::TreeSitter.each_named_child(args) do |arg|
         case Noir::TreeSitter.node_type(arg)
         when "object"
-          emit_route_object(arg, source, routes)
+          emit_route_object(arg, source, routes, include_callees)
         when "array"
           Noir::TreeSitter.each_named_child(arg) do |elem|
-            emit_route_object(elem, source, routes) if Noir::TreeSitter.node_type(elem) == "object"
+            emit_route_object(elem, source, routes, include_callees) if Noir::TreeSitter.node_type(elem) == "object"
           end
         end
       end
     end
 
-    private def emit_route_object(obj : LibTreeSitter::TSNode, source : String, routes : Array(Route))
+    private def emit_route_object(obj : LibTreeSitter::TSNode, source : String, routes : Array(Route), include_callees : Bool)
       methods = [] of String
       path : String? = nil
       handler : LibTreeSitter::TSNode? = nil
@@ -141,6 +144,7 @@ module Noir
       header_params = [] of String
       cookie_params = [] of String
       has_body = false
+      callees = [] of JSCalleeExtractor::Entry
 
       if handler
         scan_handler(handler, source, 0) do |kind, value|
@@ -151,11 +155,12 @@ module Noir
           when :body   then has_body = true
           end
         end
+        callees = JSCalleeExtractor.callees_for_handler_node(handler, source, "") if include_callees
       end
 
       methods.each do |verb|
         routes << Route.new(verb, resolved_path, line, has_body,
-          query_params, header_params, cookie_params)
+          query_params, header_params, cookie_params, callees)
       end
     end
 

@@ -1,5 +1,6 @@
 require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
+require "./js_callee_extractor"
 
 module Noir
   # Tree-sitter-backed Elysia extractor.
@@ -75,49 +76,51 @@ module Noir
       getter query_params : Array(String)
       getter header_params : Array(String)
       getter cookie_params : Array(String)
+      getter callees : Array(JSCalleeExtractor::Entry)
 
       def initialize(@verb, @path, @line, @has_body,
-                     @query_params, @header_params, @cookie_params)
+                     @query_params, @header_params, @cookie_params,
+                     @callees = [] of JSCalleeExtractor::Entry)
       end
     end
 
-    def extract_routes(source : String) : Array(Route)
+    def extract_routes(source : String, include_callees : Bool = false) : Array(Route)
       routes = [] of Route
       Noir::TreeSitter.parse_javascript(source) do |root|
-        walk(root, source, "", routes, 0)
+        walk(root, source, "", routes, 0, include_callees)
       end
       routes
     end
 
     # ---- traversal --------------------------------------------------
 
-    private def walk(node : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32)
+    private def walk(node : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32, include_callees : Bool)
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
 
       if Noir::TreeSitter.node_type(node) == "call_expression"
         method = chain_method_name(node, source)
         case
         when HTTP_VERB_METHODS.has_key?(method)
-          emit_route(node, source, HTTP_VERB_METHODS[method], prefix, routes)
-          walk_chain_predecessor(node, source, prefix, routes, depth)
+          emit_route(node, source, HTTP_VERB_METHODS[method], prefix, routes, include_callees)
+          walk_chain_predecessor(node, source, prefix, routes, depth, include_callees)
           return
         when method == "all"
-          ALL_VERBS.each { |verb| emit_route(node, source, verb, prefix, routes) }
-          walk_chain_predecessor(node, source, prefix, routes, depth)
+          ALL_VERBS.each { |verb| emit_route(node, source, verb, prefix, routes, include_callees) }
+          walk_chain_predecessor(node, source, prefix, routes, depth, include_callees)
           return
         when GROUP_METHODS.includes?(method)
-          handle_group(node, source, prefix, routes, depth)
-          walk_chain_predecessor(node, source, prefix, routes, depth)
+          handle_group(node, source, prefix, routes, depth, include_callees)
+          walk_chain_predecessor(node, source, prefix, routes, depth, include_callees)
           return
         when TRANSPARENT_METHODS.includes?(method)
-          handle_transparent(node, source, prefix, routes, depth)
-          walk_chain_predecessor(node, source, prefix, routes, depth)
+          handle_transparent(node, source, prefix, routes, depth, include_callees)
+          walk_chain_predecessor(node, source, prefix, routes, depth, include_callees)
           return
         end
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, source, prefix, routes, depth + 1)
+        walk(child, source, prefix, routes, depth + 1, include_callees)
       end
     end
 
@@ -138,16 +141,16 @@ module Noir
     # Continue down the chain into the prior link's call_expression
     # — `a.get(...).post(...)` outer has the inner `a.get(...)` as
     # the member_expression's first child.
-    private def walk_chain_predecessor(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32)
+    private def walk_chain_predecessor(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32, include_callees : Bool)
       callee = first_named_child(call)
       return unless callee
       return unless Noir::TreeSitter.node_type(callee) == "member_expression"
       inner = first_named_child(callee)
       return unless inner
-      walk(inner, source, prefix, routes, depth + 1) if Noir::TreeSitter.node_type(inner) == "call_expression"
+      walk(inner, source, prefix, routes, depth + 1, include_callees) if Noir::TreeSitter.node_type(inner) == "call_expression"
     end
 
-    private def handle_group(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32)
+    private def handle_group(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32, include_callees : Bool)
       args = arguments_node(call)
       return unless args
 
@@ -164,21 +167,21 @@ module Noir
       return unless group_path && group_body
 
       new_prefix = join_paths(prefix, group_path)
-      walk(group_body, source, new_prefix, routes, depth + 1)
+      walk(group_body, source, new_prefix, routes, depth + 1, include_callees)
     end
 
-    private def handle_transparent(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32)
+    private def handle_transparent(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32, include_callees : Bool)
       args = arguments_node(call)
       return unless args
       Noir::TreeSitter.each_named_child(args) do |arg|
         next unless Noir::TreeSitter.node_type(arg) == "arrow_function"
         if body = arrow_body(arg)
-          walk(body, source, prefix, routes, depth + 1)
+          walk(body, source, prefix, routes, depth + 1, include_callees)
         end
       end
     end
 
-    private def emit_route(call : LibTreeSitter::TSNode, source : String, verb : String, prefix : String, routes : Array(Route))
+    private def emit_route(call : LibTreeSitter::TSNode, source : String, verb : String, prefix : String, routes : Array(Route), include_callees : Bool)
       args = arguments_node(call)
       return unless args
 
@@ -201,6 +204,7 @@ module Noir
       header_params = [] of String
       cookie_params = [] of String
       has_body = false
+      callees = [] of JSCalleeExtractor::Entry
 
       if handler
         scan_handler(handler, source, 0) do |kind, value|
@@ -211,10 +215,11 @@ module Noir
           when :body   then has_body = true
           end
         end
+        callees = JSCalleeExtractor.callees_for_handler_node(handler, source, "") if include_callees
       end
 
       routes << Route.new(verb, full_path, line, has_body,
-        query_params, header_params, cookie_params)
+        query_params, header_params, cookie_params, callees)
     end
 
     # ---- handler-body scan ------------------------------------------

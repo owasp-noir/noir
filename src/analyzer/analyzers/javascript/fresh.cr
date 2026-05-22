@@ -1,4 +1,6 @@
 require "../../engines/javascript_engine"
+require "../../../miniparsers/js_callee_extractor"
+require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Javascript
   # Fresh is Deno's filesystem-routed framework. Routes live under
@@ -80,7 +82,11 @@ module Analyzer::Javascript
         next if verbs.empty?
 
         mutex.synchronize do
-          verbs.each { |verb| result << build_endpoint(url, verb, path) }
+          verbs.each do |verb|
+            endpoint = build_endpoint(url, verb, path)
+            attach_handler_callees(endpoint, content, path, verb) if callees_needed?
+            result << endpoint
+          end
         end
       end
 
@@ -94,6 +100,78 @@ module Analyzer::Javascript
         endpoint.push_param(Param.new(match[1], "", "path"))
       end
       endpoint
+    end
+
+    private def attach_handler_callees(endpoint : Endpoint, content : String, path : String, verb : String)
+      callees = Noir::JSCalleeExtractor.callees_for_exported_function(content, path, verb)
+      callees = callees_for_handler_object_method(content, path, verb) if callees.empty?
+      callees = Noir::JSCalleeExtractor.callees_for_exported_function(content, path, "handler") if callees.empty?
+      callees.each do |name, callee_path, line|
+        endpoint.push_callee(Callee.new(name, path: callee_path, line: line))
+      end
+    end
+
+    private def callees_for_handler_object_method(content : String, path : String, verb : String) : Array(Noir::JSCalleeExtractor::Entry)
+      handler_block = extract_handler_object(content)
+      return [] of Noir::JSCalleeExtractor::Entry unless handler_block
+
+      if method = handler_block.match(/(?:^|[\{,\s])(?:async\s+)?#{verb}\s*\([^)]*\)\s*\{(.*?)^\s*\}/m)
+        start_line = content[0, content.index(method[0]) || 0].count('\n') + 1
+        return Noir::JSCalleeExtractor.callees_for_function_body(method[1], path, start_line, language: javascript_source_language(path))
+      end
+
+      if property = handler_block.match(/(?:^|[\{,\s])#{verb}\s*:\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/)
+        body_start = property.end(0) || 0
+        body = handler_block[body_start..]? || ""
+        block_start = content.index(handler_block) || 0
+        absolute_body_start = block_start + body_start
+        start_line = content[0, absolute_body_start].count('\n') + 1
+        body, start_line = extract_arrow_handler_body(body, start_line)
+        return Noir::JSCalleeExtractor.callees_for_function_body(body, path, start_line, language: javascript_source_language(path))
+      end
+
+      [] of Noir::JSCalleeExtractor::Entry
+    end
+
+    private def extract_arrow_handler_body(body : String, start_line : Int32) : Tuple(String, Int32)
+      offset = 0
+      while offset < body.size && body[offset].whitespace?
+        offset += 1
+      end
+
+      body_start_line = start_line + body[0, offset].count('\n')
+      stripped = body[offset..]? || ""
+
+      if stripped.starts_with?("{")
+        if close = Noir::JSRouteExtractor.find_matching_brace(stripped, 0)
+          return {stripped[1...close], body_start_line}
+        end
+      end
+
+      end_pos = top_level_comma(stripped) || stripped.size
+      {stripped[0...end_pos], body_start_line > 1 ? body_start_line - 1 : 1}
+    end
+
+    private def top_level_comma(source : String) : Int32?
+      depth = 0
+      i = 0
+      while i < source.size
+        case source[i]
+        when '\'', '"', '`'
+          quote = source[i]
+          i += 1
+          while i < source.size && source[i] != quote
+            i += source[i] == '\\' ? 2 : 1
+          end
+        when '(', '[', '{'
+          depth += 1
+        when ')', ']', '}'
+          depth -= 1
+        when ','
+          return i if depth == 0
+        end
+        i += 1
+      end
     end
 
     private def strip_extension(name : String) : String

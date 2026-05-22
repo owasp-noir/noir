@@ -1,9 +1,10 @@
 require "../../../models/analyzer"
+require "../../../miniparsers/scala_callee_extractor"
 
 module Analyzer::Scala
   class Play < Analyzer
     # Stores parsed controller methods with their parameters
-    alias ControllerMethod = NamedTuple(headers: Array(String), cookies: Array(String), body_type: String?)
+    alias ControllerMethod = NamedTuple(headers: Array(String), cookies: Array(String), body_type: String?, callees: Array(Noir::ScalaCalleeExtractor::Entry))
     alias MethodBody = NamedTuple(signature: String, body: String)
 
     def analyze
@@ -121,7 +122,8 @@ module Analyzer::Scala
               body_type = "body"
             end
 
-            controller_methods[full_method_name] = {headers: headers, cookies: cookies, body_type: body_type}
+            callees = callees_needed? ? Noir::ScalaCalleeExtractor.callees_for_body(method_body, path, line_number_for_method_body(content, class_start_idx, method_name)) : [] of Noir::ScalaCalleeExtractor::Entry
+            controller_methods[full_method_name] = {headers: headers, cookies: cookies, body_type: body_type, callees: callees}
           end
         end
       end
@@ -281,7 +283,19 @@ module Analyzer::Scala
             endpoint.push_param(Param.new("body", "", body_type))
           end
         end
+
+        method_info[:callees].each do |name, path, line|
+          endpoint.push_callee(Callee.new(name, path: path, line: line))
+        end
       end
+    end
+
+    private def line_number_for_method_body(content : String, class_start_idx : Int32, method_name : String) : Int32
+      if method_start = content.index(/def\s+#{Regex.escape(method_name)}(?:\s*\([^)]*\))?\s*=\s*Action/, class_start_idx)
+        return content[0, method_start].count('\n') + 1
+      end
+
+      1
     end
 
     # Create an endpoint with the given path and method

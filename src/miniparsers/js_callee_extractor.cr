@@ -69,6 +69,16 @@ module Noir::JSCalleeExtractor
     language == :typescript ? fallback_callees_for_function_body(body, file_path, open_brace_line) : [] of Entry
   end
 
+  def callees_for_handler_node(handler : LibTreeSitter::TSNode,
+                               source : String,
+                               file_path : String) : Array(Entry)
+    sink = [] of Entry
+    walk_callees(handler_body(handler), source, file_path, sink, 0)
+    dedup_entries(sink)
+  rescue
+    [] of Entry
+  end
+
   def callees_for_exported_function(source : String,
                                     file_path : String,
                                     export_name : String) : Array(Entry)

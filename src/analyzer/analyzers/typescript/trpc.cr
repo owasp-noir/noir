@@ -1,4 +1,5 @@
 require "../../engines/javascript_engine"
+require "../../../miniparsers/js_callee_extractor"
 require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Typescript
@@ -49,7 +50,7 @@ module Analyzer::Typescript
 
       used_as_child = Set(String).new
       routers.each_value do |router|
-        each_top_level_kv(router.body) do |_key, value|
+        each_top_level_kv(router.body) do |_key, value, _value_line|
           ident = extract_identifier(value)
           used_as_child.add(ident) if ident && routers.has_key?(ident)
         end
@@ -164,7 +165,8 @@ module Analyzer::Typescript
 
         if i >= n || body[i] == ','
           # Shorthand: `userRouter,` — value is the same identifier.
-          yield key, key unless key.empty?
+          value_line = body[0, i].count('\n') + 1
+          yield key, key, value_line unless key.empty?
           i += 1 if i < n && body[i] == ','
           next
         end
@@ -179,7 +181,8 @@ module Analyzer::Typescript
         value_start = i
         value_end = skip_top_level_to_comma(body, i)
         value = body[value_start...value_end]
-        yield key, value unless key.empty?
+        value_line = body[0, value_start].count('\n') + 1
+        yield key, value, value_line unless key.empty?
         i = value_end
       end
     end
@@ -244,7 +247,7 @@ module Analyzer::Typescript
       return if visited.includes?(router.name)
       visited.add(router.name)
 
-      each_top_level_kv(router.body) do |key, value|
+      each_top_level_kv(router.body) do |key, value, value_line|
         next if key.empty?
 
         if ident = extract_identifier(value)
@@ -265,6 +268,8 @@ module Analyzer::Typescript
         endpoint.details = Details.new(PathInfo.new(router.file, router.line))
 
         attach_input_params(value, method, endpoint)
+        procedure_line = router.line + value_line - 1
+        attach_procedure_callees(value, router.file, procedure_line, endpoint) if callees_needed?
 
         result << endpoint
       end
@@ -280,6 +285,58 @@ module Analyzer::Typescript
       return "POST" if value.match(/\.\s*mutation\s*\(/)
       return "GET" if value.match(/\.\s*query\s*\(/)
       nil
+    end
+
+    private def attach_procedure_callees(value : String, file_path : String, procedure_line : Int32, endpoint : Endpoint)
+      resolver = procedure_resolver_body(value)
+      return unless resolver
+
+      body, relative_line = resolver
+      Noir::JSCalleeExtractor.callees_for_function_body(
+        body,
+        file_path,
+        procedure_line + relative_line - 1,
+        language: javascript_source_language(file_path)
+      ).each do |name, callee_path, line|
+        endpoint.push_callee(Callee.new(name, path: callee_path, line: line))
+      end
+    end
+
+    private def procedure_resolver_body(value : String) : Tuple(String, Int32)?
+      if resolver_match = value.match(/\.\s*(?:query|mutation|subscription)\s*\(/)
+        open_paren = (resolver_match.end(0) || 0) - 1
+        close_paren = Noir::JSRouteExtractor.find_matching_paren(value, open_paren)
+        return unless close_paren
+
+        resolver_source = value[(open_paren + 1)...close_paren]
+        line = value[0, open_paren + 1].count('\n') + 1
+        return arrow_function_body(resolver_source, line) || function_expression_body(resolver_source, line)
+      end
+    end
+
+    private def arrow_function_body(source : String, start_line : Int32) : Tuple(String, Int32)?
+      arrow = source.index("=>")
+      return unless arrow
+
+      after_arrow = source[(arrow + 2)..].strip
+      line = start_line + source[0, arrow + 2].count('\n')
+      if after_arrow.starts_with?("{")
+        if close = Noir::JSRouteExtractor.find_matching_brace(after_arrow, 0)
+          return {after_arrow[1...close], line}
+        end
+      end
+
+      {after_arrow, line}
+    end
+
+    private def function_expression_body(source : String, start_line : Int32) : Tuple(String, Int32)?
+      if match = source.match(/\bfunction\b[^{]*\{/)
+        open_brace = (match.end(0) || 0) - 1
+        if close = Noir::JSRouteExtractor.find_matching_brace(source, open_brace)
+          line = start_line + source[0, open_brace + 1].count('\n')
+          return {source[(open_brace + 1)...close], line}
+        end
+      end
     end
 
     private def attach_input_params(value : String, method : String, endpoint : Endpoint)

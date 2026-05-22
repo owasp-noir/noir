@@ -32,6 +32,9 @@ expected_endpoints = [
   # Root-route files with a path should still be scanned even when
   # they do not contain createRoute() code-route assignments.
   Endpoint.new("/docs", "GET", [] of Param),
+  # Empty file routes should emit the route without borrowing later
+  # unrelated object literals as route config.
+  Endpoint.new("/empty", "GET", [] of Param),
 ]
 
 FunctionalTester.new("fixtures/typescript/tanstack_router/", {

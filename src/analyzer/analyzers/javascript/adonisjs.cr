@@ -24,8 +24,9 @@ module Analyzer::Javascript
         # endpoints in `tests/providers.spec.ts` alone.
         next if Noir::JSRouteExtractor.test_stub_only?(path, content)
 
-        Noir::TreeSitterAdonisJsExtractor.extract_routes(content).each do |route|
-          @result << build_endpoint(route, path)
+        include_callee = callees_needed?
+        Noir::TreeSitterAdonisJsExtractor.extract_routes(content, include_callee).each do |route|
+          @result << build_endpoint(route, path, include_callee)
         end
       end
 
@@ -33,7 +34,7 @@ module Analyzer::Javascript
       @result
     end
 
-    private def build_endpoint(route : Noir::TreeSitterAdonisJsExtractor::Route, path : String) : Endpoint
+    private def build_endpoint(route : Noir::TreeSitterAdonisJsExtractor::Route, path : String, include_callee : Bool) : Endpoint
       details = Details.new(PathInfo.new(path, route.line + 1))
       params = [] of Param
 
@@ -44,7 +45,15 @@ module Analyzer::Javascript
         params << Param.new(match[1], "", "path")
       end
 
-      Endpoint.new(route.path, route.verb, params, details)
+      endpoint = Endpoint.new(route.path, route.verb, params, details)
+      attach_route_callees(endpoint, route.callees, path) if include_callee
+      endpoint
+    end
+
+    private def attach_route_callees(endpoint : Endpoint, callees : Array(Noir::JSCalleeExtractor::Entry), path : String)
+      callees.each do |name, callee_path, line|
+        endpoint.push_callee(Callee.new(name, path: callee_path.empty? ? path : callee_path, line: line))
+      end
     end
   end
 end
