@@ -69,12 +69,12 @@ expected_endpoints = [
     Param.new("endDate", "", "query"),
     Param.new("merchant-id", "", "header"),
   ]),
-  # Content-type specific route (detected with prefix due to parser context)
-  Endpoint.new("/api/v1/upload", "POST"),
+  # Content-type specific route
   Endpoint.new("/upload", "POST", [
     Param.new("content-type", "", "header"),
     Param.new("upload-token", "", "header"),
   ]),
+  Endpoint.new("/assets/hello.txt", "GET"),
 ]
 
 FunctionalTester.new("fixtures/javascript/fastify/", {

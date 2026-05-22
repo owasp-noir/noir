@@ -13,6 +13,7 @@ expected_endpoints = [
   Endpoint.new("/items/:itemId", "DELETE", [
     Param.new("itemId", "", "path"),
   ]),
+  Endpoint.new("/named/status", "GET"),
   Endpoint.new("/everything", "GET"),
   Endpoint.new("/everything", "POST"),
   Endpoint.new("/everything", "PUT"),

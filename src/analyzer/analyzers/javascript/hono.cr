@@ -53,7 +53,7 @@ module Analyzer::Javascript
         static_path = static_path[0..-2] if static_path.ends_with?("/") && static_path != "/"
 
         get_files_by_prefix(full_path).each do |file_path|
-          if File.exists?(file_path)
+          if File.file?(file_path)
             relative_path = file_path.starts_with?(full_path) ? file_path.lchop(full_path) : file_path
             url = static_path == "/" ? relative_path : "#{static_path}#{relative_path}"
             url = "/#{url}" unless url.starts_with?("/")

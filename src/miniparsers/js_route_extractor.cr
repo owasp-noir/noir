@@ -330,11 +330,13 @@ module Noir
       ".route (", ".register (", ".use (",
     ]
 
-    BRACKET_ROUTE_CALL_PATTERN = /\[\s*['"](?:get|post|put|delete|del|patch|options|head|all)['"]\s*\]\s*\(/i
+    BRACKET_ROUTE_CALL_PATTERN  = /\[\s*['"](?:get|post|put|delete|del|patch|options|head|all)['"]\s*\]\s*\(/i
+    FLEXIBLE_ROUTE_CALL_PATTERN = /\.(?:\s|\n|\r)*(?:get|post|put|delete|del|patch|options|head|all|route|register|use)(?:\s|\n|\r)*\(/i
 
     def self.route_call_candidate?(content : String) : Bool
       PARSER_ROUTE_CALL_HINTS.any? { |hint| content.includes?(hint) } ||
-        content.matches?(BRACKET_ROUTE_CALL_PATTERN)
+        content.matches?(BRACKET_ROUTE_CALL_PATTERN) ||
+        content.matches?(FLEXIBLE_ROUTE_CALL_PATTERN)
     end
 
     # Test-fixture libraries whose API mimics route registration:
@@ -618,7 +620,28 @@ module Noir
       # Find the index of any matching route declaration
       idx = nil
       found_declaration = ""
+      if pattern.start_pos >= 0
+        start_idx = pattern.start_pos
+        search_window = content[start_idx, Math.min(content.size - start_idx, 500)]
+        method_alternation = method_variations.map { |method| Regex.escape(method) }.join("|")
+        direct_call_pattern = /\.\s*(?:#{method_alternation})\s*\(/i
+        if direct_match = search_window.match(direct_call_pattern)
+          candidate_idx = start_idx + (direct_match.begin(0) || 0)
+          open_paren = content.index("(", candidate_idx)
+          if open_paren
+            arg_window = content[open_paren, Math.min(content.size - open_paren, 300)]
+            escaped_lookup_path = Regex.escape(lookup_path)
+            if arg_window.matches?(/['"`]#{escaped_lookup_path}['"`]/)
+              idx = candidate_idx
+              found_declaration = "direct"
+            end
+          end
+        end
+      end
+
       route_declarations.each do |declaration|
+        break if idx
+
         found_idx = content.index(declaration)
         if found_idx
           idx = found_idx
@@ -1051,11 +1074,15 @@ module Noir
     def self.extract_static_paths(content : String) : Array(Hash(String, String))
       static_paths = [] of Hash(String, String)
 
-      # Cheap pre-filter: every static-mount shape (Express
-      # `express.static`, Koa `serve`/`mount`, fastify-static) is a
-      # `.use(` call. Files without `.use(` cannot host one — skip
-      # the four regex scans on the vast majority of JS/TS files.
-      return static_paths unless content.includes?(".use(") || content.includes?(".use (")
+      # Cheap pre-filter: static-mount shapes use Express/Koa
+      # `.use(...)`, Fastify `.register(...)`, NestJS
+      # `ServeStaticModule.forRoot(...)`, or Restify `serveStatic(...)`.
+      # Files without any of those markers cannot host one — skip the
+      # regex scans on the vast majority of JS/TS files.
+      return static_paths unless content.includes?(".use(") || content.includes?(".use (") ||
+                                 content.includes?(".register(") || content.includes?(".register (") ||
+                                 content.includes?("ServeStaticModule.forRoot") ||
+                                 content.includes?("serveStatic")
 
       # Express patterns:
       # app.use('/static', express.static('public'))

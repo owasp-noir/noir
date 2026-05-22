@@ -1,5 +1,10 @@
 const fastify = require('fastify')({ logger: true });
 
+fastify.register(require('@fastify/static'), {
+  root: 'public',
+  prefix: '/assets/',
+});
+
 // Basic routes
 fastify.get('/', async (request, reply) => {
   const name = request.query.name;
