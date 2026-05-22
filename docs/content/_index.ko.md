@@ -18,7 +18,7 @@ template = "landing"
         <span class="hero-title-line hero-title-accent">공격 표면을</span>
         <span class="hero-title-line hero-title-accent">매핑합니다.</span>
       </h1>
-      <p class="hero-desc">소스 코드를 읽어 50개 이상의 프레임워크에서 엔드포인트, 파라미터, 숨겨진 라우트를 뽑아내는 SAST 도구입니다. 추출한 인벤토리는 사람 리뷰어, AI 감사자, 실제 라우트 목록이 필요한 DAST 도구로 전달됩니다.</p>
+      <p class="hero-desc">50개 이상의 프레임워크 소스 코드를 분석해 엔드포인트, 파라미터, 숨겨진 라우트를 찾아냅니다. 결과는 리뷰어, AI 감사자, 실제 라우트가 필요한 DAST 스캐너에 그대로 전달됩니다.</p>
       <div class="hero-actions">
         <a href="./get_started/overview" class="hero-btn hero-btn-primary">
           <span>시작하기</span>

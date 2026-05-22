@@ -18,7 +18,7 @@ template = "landing"
         <span class="hero-title-line hero-title-accent">Map the</span>
         <span class="hero-title-line hero-title-accent">Attack Surface.</span>
       </h1>
-      <p class="hero-desc">SAST tool that reads source and extracts endpoints, parameters, and hidden routes across 50+ frameworks. The inventory feeds three audiences: human reviewers, AI auditors, and DAST tools that need a real list of routes to scan.</p>
+      <p class="hero-desc">Discovers endpoints, parameters, and hidden routes from source code across 50+ frameworks. The inventory goes to reviewers, AI auditors, and DAST scanners that need a real route list.</p>
       <div class="hero-actions">
         <a href="./get_started/overview" class="hero-btn hero-btn-primary">
           <span>Get Started</span>
