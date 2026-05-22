@@ -1,6 +1,6 @@
 # Maintainer: HAHWUL <hahwul@gmail.com>
 pkgname=noir
-pkgver=0.30.0
+pkgver=1.0.0
 pkgrel=1
 pkgdesc="Attack surface detector that identifies endpoints by static analysis."
 arch=('x86_64')
