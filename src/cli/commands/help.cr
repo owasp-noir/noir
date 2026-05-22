@@ -40,14 +40,14 @@ module Noir::CLI::HelpCommand
         noir [flags]                       # v0-compatible: routes to `noir scan`
 
       #{green.call("COMMANDS:")}
-        #{cyan.call("scan")} [PATHS...]                Discover endpoints in one or more codebases
-        #{cyan.call("list")} techs | taggers | formats Enumerate built-in catalogs
-        #{cyan.call("cache")} info | clear             Manage the on-disk LLM response cache
+        #{cyan.call("scan")} [PATHS...]                   Discover endpoints in one or more codebases
+        #{cyan.call("list")} techs | taggers | formats    Enumerate built-in catalogs
+        #{cyan.call("cache")} info | clear                Manage the on-disk LLM response cache
         #{cyan.call("config")} show | edit | init | path  Manage the user-level YAML configuration
-        #{cyan.call("rules")} list | update | path     Manage the passive-scan rules repository
-        #{cyan.call("completion")} <zsh|bash|fish>     Generate shell completion script
-        #{cyan.call("version")} [--verbose]            Print version (or full build details)
-        #{cyan.call("help")} [command]                 Show this overview or a command's help
+        #{cyan.call("rules")} list | update | path        Manage the passive-scan rules repository
+        #{cyan.call("completion")} <zsh|bash|fish>        Generate shell completion script
+        #{cyan.call("version")} [--verbose]               Print version (or full build details)
+        #{cyan.call("help")} [command]                    Show this overview or a command's help
 
       #{green.call("GLOBAL FLAGS:")}
         --no-color     Strip ANSI color from every command's output (NO_COLOR env also works)
