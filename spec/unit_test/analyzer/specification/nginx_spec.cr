@@ -41,8 +41,8 @@ describe "Nginx Analyzer" do
       {"/v1/users", "prefix"},
       {"^/admin/.*", "regex"},
     ])
-    endpoints.each { |e| e.method.should eq "ANY" }
-    endpoints.each { |e| e.protocol.should eq "https" }
+    endpoints.each(&.method.should(eq("ANY")))
+    endpoints.each(&.protocol.should(eq("https")))
   end
 
   it "emits method-specific endpoints from if (\\$request_method) blocks" do
