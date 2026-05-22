@@ -1,4 +1,5 @@
 import tornado.web
+import tornado.websocket
 import tornado.escape
 from handlers import ApiHandler, SearchHandler
 from admin import AdminHandler
@@ -24,10 +25,28 @@ class AuthHandler(tornado.web.RequestHandler):
         if token and api_key:
             self.write("Authenticated")
 
+class ChatSocket(tornado.websocket.WebSocketHandler):
+    def open(self, room_id):
+        token = self.get_argument("token")
+        self.write_message(f"joined {room_id} with {token}")
+
+class ProductHandler(tornado.web.RequestHandler):
+    def get(self, product_id):
+        expand = self.get_argument("expand")
+        self.write({"product_id": product_id, "expand": expand})
+
+class NamedItemHandler(tornado.web.RequestHandler):
+    def get(self, item_id):
+        trace = self.request.headers.get("X-Trace-ID")
+        self.write({"item_id": item_id, "trace": trace})
+
 routes = [
     (r"/", MainHandler),
     (r"/users", UserHandler),
     (r"/auth", AuthHandler),
+    (r"/ws/([^/]+)", ChatSocket),
+    (r"/products/([0-9]+)", ProductHandler),
+    (r"/named/(?P<item_id>[^/]+)", NamedItemHandler),
     (r"/api", ApiHandler),
     (r"/search", SearchHandler),
     (r"/items(?:/(\d+))?", SearchHandler),

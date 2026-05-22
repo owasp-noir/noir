@@ -21,6 +21,7 @@ module Analyzer::Python
     #     bracket / `.get()` notation.
 
     HTTP_METHOD_DECORATORS = %w[get post put patch delete head options trace]
+    WEBSOCKET_ATTRIBUTES   = {"websocket" => "GET"}
 
     def analyze
       router_prefixes = Hash(::String, ::String).new
@@ -53,7 +54,7 @@ module Analyzer::Python
 
             # Decorator-driven routes via tree-sitter (handles multi-line
             # decorator headers cleanly).
-            Noir::TreeSitterPythonRouteExtractor.extract_decorations(file_content).each do |deco|
+            Noir::TreeSitterPythonRouteExtractor.extract_decorations(file_content, nil, WEBSOCKET_ATTRIBUTES).each do |deco|
               next unless router_prefixes.has_key?(deco.router_name)
               attr = deco.attribute_name.downcase
               next unless attr.in?(HTTP_METHOD_DECORATORS) || attr == "websocket"
@@ -77,6 +78,7 @@ module Analyzer::Python
 
               details = Details.new(PathInfo.new(path, deco.decorator_line + 1))
               endpoint = Endpoint.new(full_path, http_method, params, details)
+              endpoint.protocol = "ws" if attr == "websocket"
               result << endpoint
             end
           end
@@ -91,11 +93,17 @@ module Analyzer::Python
     # Robyn's SubRouter takes the prefix as a positional argument:
     #   SubRouter(__file__, "/api")
     private def collect_router_assignments(lines : Array(::String), router_prefixes : Hash(::String, ::String))
-      lines.each do |line|
+      lines.each_with_index do |line, index|
         if m = line.match(/^\s*(#{PYTHON_VAR_NAME_REGEX})\s*=\s*(?:robyn\.)?Robyn\s*\(/)
           router_prefixes[m[1]] = ""
         end
-        if m = line.match(/^\s*(#{PYTHON_VAR_NAME_REGEX})\s*=\s*(?:robyn\.)?SubRouter\s*\((.*)/)
+
+        effective_line = if line.includes?("SubRouter") && python_paren_delta(line) > 0
+                           join_until_python_call_closes(lines, index, line)
+                         else
+                           line
+                         end
+        if m = effective_line.match(/^\s*(#{PYTHON_VAR_NAME_REGEX})\s*=\s*(?:robyn\.)?SubRouter\s*\((.*)/m)
           name = m[1]
           tail = m[2]
           prefix = extract_subrouter_prefix(tail)
@@ -123,16 +131,42 @@ module Analyzer::Python
       ""
     end
 
-    # `parent.include_router(child)` — Robyn merges the child's routes
-    # under the parent's already-registered prefix. The child's own
-    # prefix stays intact (we don't override it from the include call).
-    # No-op for now — Robyn computes the joined path at runtime by
-    # concatenating the parent app's mount with the SubRouter's prefix,
-    # and we already record the SubRouter's own prefix at construction
-    # time. If a future fixture mounts a SubRouter under a non-root
-    # parent prefix, this is where to compose them.
+    # `parent.include_router(child)` composes nested SubRouter prefixes.
+    # The root Robyn app usually has an empty prefix, but real apps also
+    # nest routers, e.g. `api.include_router(admin)`, which should place
+    # `admin` routes under `/api/admin`.
     private def scan_include_routers(lines : Array(::String), router_prefixes : Hash(::String, ::String))
-      # Intentionally empty — see comment above.
+      includes = [] of Tuple(::String, ::String)
+
+      lines.each_with_index do |line, index|
+        next unless line.includes?(".include_router(")
+
+        effective_line = python_paren_delta(line) > 0 ? join_until_python_call_closes(lines, index, line) : line
+        effective_line.scan(/\b(#{PYTHON_VAR_NAME_REGEX})\.include_router\s*\(\s*(#{PYTHON_VAR_NAME_REGEX})/) do |m|
+          next if m.size < 3
+          includes << {m[1], m[2]}
+        end
+      end
+
+      changed = true
+      iterations = 0
+      while changed && iterations < includes.size
+        changed = false
+        iterations += 1
+
+        includes.each do |parent, child|
+          parent_prefix = router_prefixes[parent]?
+          child_prefix = router_prefixes[child]?
+          next if parent_prefix.nil? || child_prefix.nil? || parent_prefix.empty?
+          next if child_prefix == parent_prefix || child_prefix.starts_with?("#{parent_prefix}/")
+
+          composed_prefix = normalize_path(join_prefix(parent_prefix, child_prefix))
+          next if composed_prefix == child_prefix
+
+          router_prefixes[child] = composed_prefix
+          changed = true
+        end
+      end
     end
 
     # Robyn uses `:name` for path params; Noir's canonical form is `{name}`.
@@ -201,6 +235,15 @@ module Analyzer::Python
       json_vars = [] of ::String
       body.scan(/([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:await\s+)?request\.json\s*\(\s*\)/) do |m|
         json_vars << m[1]
+      end
+
+      # Direct one-liners: `request.json()["name"]` /
+      # `request.json().get("name")`.
+      body.scan(/(?:await\s+)?request\.json\s*\(\s*\)\s*\[['"]([^'"]+)['"]\]/) do |m|
+        record.call(m[1], "json")
+      end
+      body.scan(/(?:await\s+)?request\.json\s*\(\s*\)\.get\(['"]([^'"]+)['"]/) do |m|
+        record.call(m[1], "json")
       end
 
       json_vars.each do |var|

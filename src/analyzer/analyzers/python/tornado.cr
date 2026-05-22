@@ -67,6 +67,12 @@ module Analyzer::Python
                 # Extract URL patterns from this and following lines
                 extract_url_patterns_from_application(lines, line_index, path, api_instances)
               end
+
+              # Tornado apps commonly attach routes after Application()
+              # construction via app.add_handlers(host_pattern, handlers).
+              if line.includes?(".add_handlers(")
+                extract_url_patterns_from_add_handlers(lines, line_index, path)
+              end
             end
           end
         end
@@ -165,6 +171,18 @@ module Analyzer::Python
 
       # Inline list: Application([(...), ...])
       extract_routes_from_lines(lines, start_index, file_path)
+    end
+
+    private def extract_url_patterns_from_add_handlers(lines : Array(::String), start_index : Int32, file_path : ::String)
+      @routes[file_path] ||= [] of Tuple(Int32, ::String, ::String, ::String)
+
+      app_line = join_multiline_call(lines, start_index)
+      if var_match = app_line.match(/\.add_handlers\s*\([^,]+,\s*(#{PYTHON_VAR_NAME_REGEX})\s*[,)]/)
+        extract_routes_from_variable(lines, var_match[1], file_path)
+        return
+      end
+
+      register_routes_from_text(app_line, start_index, file_path)
     end
 
     private def extract_routes_from_variable(lines : Array(::String), var_name : ::String, file_path : ::String)
@@ -282,11 +300,23 @@ module Analyzer::Python
       # Second pass: scan the joined block for tuples whose `(` and
       # path/handler sit on different lines. The per-line scan above
       # only catches single-line and "handler on next line" shapes.
-      block_text = block_pieces.join(" ")
+      register_routes_from_text(block_pieces.join(" "), start_index, file_path)
+    end
+
+    private def register_routes_from_text(block_text : ::String, start_index : Int32, file_path : ::String)
       existing_routes = (@routes[file_path]? || [] of Tuple(Int32, ::String, ::String, ::String))
         .map { |info| {info[2], info[3]} }
         .to_set
       block_text.scan(/\(\s*r?["']([^"']*)["']\s*,\s*([a-zA-Z_][a-zA-Z0-9_.]*)/) do |match|
+        next unless match.size >= 3
+        route_path = match[1]
+        handler_class = match[2]
+        next if existing_routes.includes?({route_path, handler_class})
+        @routes[file_path] << {start_index, "ALL", route_path, handler_class}
+        existing_routes << {route_path, handler_class}
+      end
+
+      block_text.scan(/(?:^|[^a-zA-Z0-9_.])(?:tornado\.web\.)?(?:url|URLSpec)\s*\(\s*r?["']([^"']*)["']\s*,\s*([a-zA-Z_][a-zA-Z0-9_.]*)/) do |match|
         next unless match.size >= 3
         route_path = match[1]
         handler_class = match[2]
@@ -354,21 +384,49 @@ module Analyzer::Python
       lines = read_file_lines(file_path)
 
       class_found = false
+      class_is_websocket = false
       class_indent = 0
       lines.each_with_index do |line, line_index|
         stripped = line.strip
         if (m = stripped.match(CLASS_DEF_REGEX)) && m[1] == handler_class && !class_found
           class_found = true
+          class_is_websocket = stripped.includes?("WebSocketHandler")
           class_indent = indent_level(line)
           next
         end
 
         next unless class_found
 
+        if class_is_websocket &&
+           (stripped.starts_with?("def open(") || stripped.starts_with?("async def open("))
+          params = extract_path_params_from_method_signature(stripped, route_path)
+          extract_params_from_method(lines, line_index, file_path).each do |param|
+            add_unique_param(params, param)
+          end
+          endpoint = Endpoint.new(route_path, "GET", params)
+          endpoint.protocol = "ws"
+
+          if codeblock = parse_code_block(lines[line_index..])
+            push_callees_from(
+              endpoint,
+              codeblock,
+              line_index,
+              file_path,
+              definition_base_path: base_path_for(file_path),
+              source: read_file_content(file_path),
+            )
+          end
+
+          endpoints << endpoint
+        end
+
         # Look for HTTP method handlers (both sync and async)
         HTTP_METHODS.each do |http_method|
           if stripped.starts_with?("def #{http_method}(") || stripped.starts_with?("async def #{http_method}(")
-            params = extract_params_from_method(lines, line_index, file_path)
+            params = extract_path_params_from_method_signature(stripped, route_path)
+            extract_params_from_method(lines, line_index, file_path).each do |param|
+              add_unique_param(params, param)
+            end
             endpoint = Endpoint.new(route_path, http_method.upcase, params)
 
             # Attach 1-hop callees from this method's body. Each
@@ -400,6 +458,57 @@ module Analyzer::Python
       end
 
       class_found
+    end
+
+    private def extract_path_params_from_method_signature(def_line : ::String, route_path : ::String) : Array(Param)
+      params = [] of Param
+
+      route_path.scan(/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/) do |match|
+        add_unique_param(params, Param.new(match[1], "", "path"))
+      end
+
+      route_path.scan(/\(\?P<([a-zA-Z_][a-zA-Z0-9_]*)>/) do |match|
+        add_unique_param(params, Param.new(match[1], "", "path"))
+      end
+      return params unless params.empty?
+
+      capture_count = unnamed_regex_capture_count(route_path)
+      return params if capture_count == 0
+
+      method_arg_names(def_line).first(capture_count).each do |name|
+        add_unique_param(params, Param.new(name, "", "path"))
+      end
+
+      params
+    end
+
+    private def method_arg_names(def_line : ::String) : Array(::String)
+      match = def_line.match(/def\s+[a-zA-Z_][a-zA-Z0-9_]*\s*\(([^)]*)\)/)
+      return [] of ::String unless match
+
+      names = [] of ::String
+      match[1].split(",").each do |arg|
+        name = arg.strip.split("=", 2)[0].split(":", 2)[0].strip
+        while name.starts_with?("*")
+          name = name.lchop("*")
+        end
+        next if name.empty? || name.in?(%w[self cls args kwargs])
+        names << name
+      end
+      names
+    end
+
+    private def unnamed_regex_capture_count(route_path : ::String) : Int32
+      count = 0
+      route_path.scan(/(?:^|[^\\])\((?!\?)/) do
+        count += 1
+      end
+      count
+    end
+
+    private def add_unique_param(params : Array(Param), param : Param)
+      return if params.any? { |existing| existing.name == param.name && existing.param_type == param.param_type }
+      params << param
     end
 
     private def resolve_imports(file_path : ::String) : Hash(::String, Tuple(::String, Int32))

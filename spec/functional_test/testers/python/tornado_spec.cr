@@ -5,6 +5,9 @@ expected_endpoints = [
   Endpoint.new("/users", "GET"),
   Endpoint.new("/users", "POST", [Param.new("username", "", "form"), Param.new("email", "", "form")]),
   Endpoint.new("/auth", "POST", [Param.new("X-API-Key", "", "header"), Param.new("auth_token", "", "cookie")]),
+  Endpoint.new("/ws/([^/]+)", "GET", [Param.new("room_id", "", "path"), Param.new("token", "", "query")]),
+  Endpoint.new("/products/([0-9]+)", "GET", [Param.new("product_id", "", "path"), Param.new("expand", "", "query")]),
+  Endpoint.new("/named/{item_id}", "GET", [Param.new("item_id", "", "path"), Param.new("X-Trace-ID", "", "header")]),
   Endpoint.new("/api", "GET", [Param.new("X-API-Key", "", "header")]),
   Endpoint.new("/api", "POST", [Param.new("", "", "json")]),
   Endpoint.new("/search", "GET", [Param.new("tags", "", "query"), Param.new("q", "", "query")]),
@@ -29,9 +32,22 @@ expected_endpoints = [
   Endpoint.new("/multiline-triple", "GET"),
   Endpoint.new("/multiline-triple", "POST"),
   Endpoint.new("/deep", "GET", [Param.new("token", "", "query")]),
+  Endpoint.new("/metrics", "GET"),
+  Endpoint.new("/metrics", "POST"),
+  Endpoint.new("/version", "GET"),
+  Endpoint.new("/named-url", "GET"),
+  Endpoint.new("/spec-url", "GET"),
+  Endpoint.new("/spec-url", "POST"),
 ]
 
-FunctionalTester.new("fixtures/python/tornado/", {
+tester = FunctionalTester.new("fixtures/python/tornado/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
+}, expected_endpoints)
+tester.perform_tests
+
+it "marks Tornado WebSocketHandler endpoints with ws protocol" do
+  websocket_route = tester.app.endpoints.find { |endpoint| endpoint.url == "/ws/([^/]+)" }
+  websocket_route.should_not be_nil
+  websocket_route.try(&.protocol).should eq("ws")
+end

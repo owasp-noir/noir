@@ -25,9 +25,22 @@ expected_endpoints = [
     Param.new("User-Agent", "", "header"),
   ]),
   Endpoint.new("/ws", "GET"),
+  Endpoint.new("/live/{room_id}", "GET", [
+    Param.new("room_id", "", "path"),
+  ]),
   Endpoint.new("/api/items", "GET"),
   Endpoint.new("/api/items/{item_id}/tags", "POST", [
     Param.new("item_id", "", "path"),
+    Param.new("tag", "", "json"),
+    Param.new("priority", "", "json"),
+  ]),
+  Endpoint.new("/api/admin/metrics/{metric_id}", "GET", [
+    Param.new("metric_id", "", "path"),
+    Param.new("window", "", "query"),
+  ]),
+  Endpoint.new("/v2/reports/{report_id}", "GET", [
+    Param.new("report_id", "", "path"),
+    Param.new("include", "", "query"),
   ]),
 ]
 

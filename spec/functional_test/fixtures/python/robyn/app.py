@@ -55,9 +55,15 @@ async def websocket_endpoint():
     return {"ws": True}
 
 
+@app.websocket("/live/:room_id")
+async def live_updates():
+    return {"live": True}
+
+
 # SubRouter with positional `/api` prefix; routes under it inherit the
 # `/api` mount.
 api = SubRouter(__file__, "/api")
+admin = SubRouter(__file__, "/admin")
 
 
 @api.get("/items")
@@ -67,10 +73,32 @@ async def list_items():
 
 @api.post("/items/:item_id/tags")
 async def tag_item(request):
+    tag = request.json().get("tag")
+    priority = request.json()["priority"]
     return {"ok": True}
 
 
+@admin.get("/metrics/:metric_id")
+async def admin_metric(request):
+    window = request.query_params.get("window")
+    return {"window": window}
+
+
+v2 = SubRouter(
+    __file__,
+    "/v2",
+)
+
+
+@v2.get("/reports/:report_id")
+async def get_report(request):
+    include = request.query_params.get("include")
+    return {"include": include}
+
+
+api.include_router(admin)
 app.include_router(api)
+app.include_router(v2)
 
 
 if __name__ == "__main__":

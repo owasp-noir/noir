@@ -46,6 +46,8 @@ module Analyzer::Python
     @file_content_cache = Hash(::String, ::String).new
     @parsers = Hash(::String, PythonParser).new
     @routes = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String, Bool))).new
+    @method_view_routes = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String, Array(::String)))).new
+    @function_view_routes = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String, Array(::String)))).new
 
     def analyze
       quart_instances = Hash(::String, ::String).new
@@ -53,6 +55,7 @@ module Analyzer::Python
       blueprint_prefixes = Hash(::String, ::String).new
       path_api_instances = Hash(::String, Hash(::String, ::String)).new
       register_blueprint = Hash(::String, Hash(::String, ::String)).new
+      blueprint_mounts = Hash(::String, Array(Tuple(::String, ::String, ::String))).new
 
       python_files = get_files_by_extension(".py")
       base_paths.each do |current_base_path|
@@ -70,6 +73,7 @@ module Analyzer::Python
           api_instances = Hash(::String, ::String).new
           path_api_instances[path] = api_instances
           import_map_cache : Hash(::String, Tuple(::String, Int32))? = nil
+          view_assignments = Hash(::String, ::String).new
 
           # Tree-sitter pre-pass: harvest every `@<router>.route(...)`,
           # `@<router>.<method>(...)`, and `@<router>.websocket(...)`
@@ -93,7 +97,7 @@ module Analyzer::Python
             api_instances[bp.name] ||= bp.prefix
           end
 
-          lines.each do |original_line|
+          lines.each_with_index do |original_line, line_index|
             line = original_line.gsub(" ", "")
 
             # Identify Quart instance assignments: `app = Quart(__name__)`
@@ -104,13 +108,52 @@ module Analyzer::Python
               quart_instances[quart_instance_name] ||= ""
             end
 
+            if view_assign_match = line.match(/(#{PYTHON_VAR_NAME_REGEX})=(#{PYTHON_VAR_NAME_REGEX})\.as_view\(/)
+              view_assignments[view_assign_match[1]] = view_assign_match[2]
+            end
+
+            if line.includes?(".add_url_rule(")
+              effective_line = python_paren_delta(original_line) > 0 ? join_until_python_call_closes(lines, line_index, original_line) : original_line
+              effective_line.scan(/(#{PYTHON_VAR_NAME_REGEX})\.add_url_rule\s*\((.*)\)\s*$/m) do |rule_match|
+                next if rule_match.size < 3
+                router_name = rule_match[1]
+                args = rule_match[2]
+                route_path = extract_add_url_rule_path(args)
+                next if route_path.empty?
+
+                class_name = extract_method_view_class(args, view_assignments)
+                methods = extract_add_url_rule_methods(args)
+                if class_name.empty?
+                  function_name = extract_add_url_rule_function_name(args)
+                  next if function_name.empty?
+
+                  route_info = Tuple(Int32, ::String, ::String, ::String, Array(::String)).new(
+                    line_index, path, route_path, function_name, methods
+                  )
+                  @function_view_routes[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, Array(::String))
+                  @function_view_routes[router_name] << route_info
+                else
+                  route_info = Tuple(Int32, ::String, ::String, ::String, Array(::String)).new(
+                    line_index, path, route_path, class_name, methods
+                  )
+                  @method_view_routes[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, Array(::String))
+                  @method_view_routes[router_name] << route_info
+                end
+              end
+            end
+
             # Identify Blueprint registration:
             #   `app.register_blueprint(bp, url_prefix="/api")`
             register_blueprint_match = line.match /(#{PYTHON_VAR_NAME_REGEX})\.register_blueprint\((#{DOT_NATION})/
             if register_blueprint_match
+              parent_name = register_blueprint_match[1]
+              blueprint_name = register_blueprint_match[2]
               url_prefix_match = original_line.match /url_prefix\s*=\s*[rf]?['"]([^'"]*)['"]/
+              blueprint_mount_prefix = url_prefix_match ? url_prefix_match[1] : ""
+              blueprint_mounts[path] ||= [] of Tuple(::String, ::String, ::String)
+              blueprint_mounts[path] << {parent_name, blueprint_name, blueprint_mount_prefix}
+
               if url_prefix_match
-                blueprint_name = register_blueprint_match[2]
                 resolved = false
                 parser = get_parser(path)
                 if parser.@global_variables.has_key?(blueprint_name)
@@ -140,6 +183,7 @@ module Analyzer::Python
 
       # Resolve url_prefix discovered at register_blueprint sites back to
       # the file that declared the Blueprint.
+      own_api_instances = clone_path_api_instances(path_api_instances)
       register_blueprint.each do |path, blueprint_info|
         blueprint_info.each do |blueprint_name, blueprint_prefix|
           if path_api_instances.has_key?(path)
@@ -150,6 +194,7 @@ module Analyzer::Python
           end
         end
       end
+      apply_nested_blueprint_prefixes(path_api_instances, own_api_instances, blueprint_mounts)
 
       # Iterate through the collected route decorations and extract endpoints
       @routes.each do |router_name, router_info_list|
@@ -205,8 +250,380 @@ module Analyzer::Python
         end
       end
 
+      @function_view_routes.each do |router_name, route_infos|
+        route_infos.each do |route_info|
+          line_index, path, route_path, function_name, methods = route_info
+          source = fetch_file_content(path)
+          lines = source.lines
+          api_instances = path_api_instances[path]?
+          prefix = (api_instances && api_instances.has_key?(router_name)) ? api_instances[router_name] : ""
+
+          function_path = path
+          function_source = source
+          function_lines = lines
+          function_def_index = function_name.includes?(".") ? -1 : find_function_def(lines, function_name)
+          if function_def_index < 0
+            import_modules = find_imported_modules(base_path_for(path), path, source)
+            resolved = resolve_external_function_view(function_name, path, import_modules)
+            next unless resolved
+
+            function_path, resolved_name = resolved
+            next unless File.exists?(function_path)
+
+            function_source = fetch_file_content(function_path)
+            function_lines = function_source.lines
+            function_def_index = find_function_def(function_lines, resolved_name)
+            next if function_def_index < 0
+          end
+
+          codeblock = parse_code_block(function_lines[function_def_index..])
+          next if codeblock.nil?
+          codeblock_lines = codeblock.split("\n")
+          route_methods = methods.empty? ? ["GET"] : methods
+          extra_params = "methods=[#{route_methods.map { |m| "'#{m.upcase}'" }.join(",")}]"
+
+          handler_callees = build_callees_from(
+            codeblock,
+            function_def_index,
+            function_path,
+            definition_base_path: base_path_for(function_path),
+            source: function_source,
+          )
+
+          get_endpoints(route_methods.first, route_path, extra_params, codeblock_lines, prefix).each do |route_endpoint|
+            route_endpoint.details = Details.new(PathInfo.new(path, line_index + 1))
+            handler_callees.each { |c| route_endpoint.push_callee(c) }
+            result << route_endpoint
+          end
+        end
+      end
+
+      @method_view_routes.each do |router_name, route_infos|
+        route_infos.each do |route_info|
+          line_index, path, route_path, class_name, methods = route_info
+          source = fetch_file_content(path)
+          lines = source.lines
+          api_instances = path_api_instances[path]?
+          prefix = (api_instances && api_instances.has_key?(router_name)) ? api_instances[router_name] : ""
+
+          class_def_index = find_class_def(lines, class_name)
+          next if class_def_index < 0
+
+          class_indent = lines[class_def_index].size - lines[class_def_index].lstrip.size
+          route_methods = methods.empty? ? infer_method_view_methods(lines, class_def_index, class_indent) : methods
+          route_methods << "GET" if route_methods.empty?
+
+          route_methods.uniq.each do |http_method|
+            method_def_index = find_method_def(lines, class_def_index, class_indent, http_method.downcase)
+            method_def_index = find_method_def(lines, class_def_index, class_indent, "dispatch_request") if method_def_index < 0
+            next if method_def_index < 0
+
+            codeblock = parse_code_block(lines[method_def_index..])
+            next if codeblock.nil?
+            codeblock_lines = codeblock.split("\n")
+            extra_params = "methods=['#{http_method.upcase}']"
+
+            handler_callees = build_callees_from(
+              codeblock,
+              method_def_index,
+              path,
+              definition_base_path: base_path_for(path),
+              source: source,
+            )
+
+            get_endpoints(http_method, route_path, extra_params, codeblock_lines, prefix).each do |route_endpoint|
+              route_endpoint.details = Details.new(PathInfo.new(path, line_index + 1))
+              handler_callees.each { |c| route_endpoint.push_callee(c) }
+              result << route_endpoint
+            end
+          end
+        end
+      end
+
       Fiber.yield
       result
+    end
+
+    private def extract_add_url_rule_path(args : ::String) : ::String
+      if keyword_match = args.match(/(?:rule|path)\s*=\s*[rf]?['"]([^'"]*)['"]/)
+        return keyword_match[1]
+      end
+
+      if positional_match = args.match(/^\s*[rf]?['"]([^'"]*)['"]/)
+        return positional_match[1]
+      end
+
+      ""
+    end
+
+    private def extract_method_view_class(args : ::String, view_assignments : Hash(::String, ::String)) : ::String
+      if direct_match = args.match(/view_func\s*=\s*(#{PYTHON_VAR_NAME_REGEX})\.as_view\s*\(/)
+        return direct_match[1]
+      end
+
+      if variable_match = args.match(/view_func\s*=\s*(#{PYTHON_VAR_NAME_REGEX})/)
+        return view_assignments[variable_match[1]]? || ""
+      end
+
+      if positional_match = args.match(/^\s*[rf]?['"][^'"]*['"]\s*,\s*[rf]?['"][^'"]*['"]\s*,\s*(#{PYTHON_VAR_NAME_REGEX})\.as_view\s*\(/)
+        return positional_match[1]
+      end
+
+      if positional_variable_match = args.match(/^\s*[rf]?['"][^'"]*['"]\s*,\s*[rf]?['"][^'"]*['"]\s*,\s*(#{PYTHON_VAR_NAME_REGEX})(?:\s*,|\s*$)/)
+        return view_assignments[positional_variable_match[1]]? || ""
+      end
+
+      ""
+    end
+
+    private def extract_add_url_rule_function_name(args : ::String) : ::String
+      if view_func_match = args.match(/view_func\s*=\s*(#{DOT_NATION})(?:\s*,|\s*\)|\s*$)/)
+        return view_func_match[1]
+      end
+
+      positional_parts = split_python_call_args(args)
+      view_arg = if positional_parts.size >= 3
+                   positional_parts[2]
+                 elsif positional_parts.size == 2
+                   positional_parts[1]
+                 else
+                   ""
+                 end
+      view_arg.matches?(/^#{DOT_NATION}$/) ? view_arg : ""
+    end
+
+    private def resolve_external_function_view(function_ref : ::String,
+                                               current_path : ::String,
+                                               import_modules : Hash(::String, Tuple(::String, Int32))) : Tuple(::String, ::String)?
+      reference = function_ref.strip
+      return if reference.empty?
+
+      if reference.includes?(".")
+        receiver, function_name = reference.split(".", 2)
+        if import_info = import_modules[receiver]?
+          import_path = import_info.first
+          return {import_path, function_name} unless import_path.empty?
+        end
+
+        sibling_module_path = File.join(File.dirname(current_path), "#{receiver}.py")
+        return {sibling_module_path, function_name} if File.exists?(sibling_module_path)
+
+        return
+      end
+
+      if import_info = import_modules[reference]?
+        import_path = import_info.first
+        return {import_path, reference} unless import_path.empty?
+      end
+
+      nil
+    end
+
+    private def split_python_call_args(args : ::String) : Array(::String)
+      parts = [] of ::String
+      current = String::Builder.new
+      paren_depth = 0
+      bracket_depth = 0
+      single_quote = false
+      double_quote = false
+      escaped = false
+
+      args.each_char do |ch|
+        if escaped
+          current << ch
+          escaped = false
+          next
+        end
+
+        if ch == '\\'
+          current << ch
+          escaped = true
+          next
+        end
+
+        if single_quote
+          single_quote = false if ch == '\''
+          current << ch
+          next
+        end
+
+        if double_quote
+          double_quote = false if ch == '"'
+          current << ch
+          next
+        end
+
+        case ch
+        when '\''
+          single_quote = true
+        when '"'
+          double_quote = true
+        when '('
+          paren_depth += 1
+        when ')'
+          paren_depth -= 1 if paren_depth > 0
+        when '[', '{'
+          bracket_depth += 1
+        when ']', '}'
+          bracket_depth -= 1 if bracket_depth > 0
+        when ','
+          if paren_depth == 0 && bracket_depth == 0
+            part = current.to_s.strip
+            parts << part unless part.empty?
+            current = String::Builder.new
+            next
+          end
+        end
+
+        current << ch
+      end
+
+      part = current.to_s.strip
+      parts << part unless part.empty?
+      parts
+    end
+
+    private def extract_add_url_rule_methods(args : ::String) : Array(::String)
+      methods = [] of ::String
+      methods_match = args.match(/methods\s*=\s*[\[\(](.*?)[\]\)]/m)
+      return methods unless methods_match
+
+      methods_match[1].scan(/['"]([A-Za-z]+)['"]/) do |method_match|
+        method = method_match[1].upcase
+        methods << method if HTTP_METHODS.any? { |hm| hm.upcase == method }
+      end
+      methods
+    end
+
+    private def find_class_def(lines : Array(::String), class_name : ::String) : Int32
+      lines.each_with_index do |line, idx|
+        stripped = line.lstrip
+        class_prefix = "class #{class_name}"
+        if stripped.starts_with?(class_prefix) &&
+           (stripped.size == class_prefix.size || stripped[class_prefix.size].in?('(', ':', ' ', '\t'))
+          return idx
+        end
+      end
+
+      -1
+    end
+
+    private def infer_method_view_methods(lines : Array(::String), class_def_index : Int32, class_indent : Int32) : Array(::String)
+      methods = extract_class_declared_methods(lines, class_def_index, class_indent)
+      i = class_def_index + 1
+      while i < lines.size
+        line = lines[i]
+        if class_match = line.match(/(\s*)class\s+/)
+          break if class_match[1].size <= class_indent
+        end
+
+        if method_match = line.match(/(\s*)(async\s+)?def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/)
+          if method_match[1].size > class_indent
+            method = HTTP_METHODS.find { |http_method| http_method.downcase == method_match[3].downcase }
+            methods << method.upcase if method
+          end
+        end
+        i += 1
+      end
+
+      methods
+    end
+
+    private def extract_class_declared_methods(lines : Array(::String), class_def_index : Int32, class_indent : Int32) : Array(::String)
+      methods = [] of ::String
+      i = class_def_index + 1
+      while i < lines.size
+        line = lines[i]
+        stripped = line.strip
+        unless stripped.empty?
+          indent = line.size - line.lstrip.size
+          break if indent <= class_indent
+
+          if stripped.match(/^methods\s*=/)
+            declaration = collect_python_collection_assignment(lines, i, line)
+            declaration.scan(/['"]([A-Za-z]+)['"]/) do |method_match|
+              method = method_match[1].upcase
+              methods << method if HTTP_METHODS.any? { |known| known.upcase == method }
+            end
+            break
+          end
+        end
+        i += 1
+      end
+
+      methods.uniq
+    end
+
+    private def collect_python_collection_assignment(lines : Array(::String), start_index : Int32, line : ::String) : ::String
+      return line unless line.includes?("[") || line.includes?("(")
+
+      pieces = [line]
+      depth = python_paren_delta(line) + python_bracket_delta(line)
+      i = start_index + 1
+      while i < lines.size && depth > 0
+        pieces << lines[i]
+        depth += python_paren_delta(lines[i]) + python_bracket_delta(lines[i])
+        i += 1
+      end
+
+      pieces.join(" ")
+    end
+
+    private def python_bracket_delta(line : ::String) : Int32
+      depth = 0
+      in_quote : Char? = nil
+      escaped = false
+
+      line.each_char do |ch|
+        if in_quote
+          if escaped
+            escaped = false
+          elsif ch == '\\'
+            escaped = true
+          elsif ch == in_quote
+            in_quote = nil
+          end
+          next
+        end
+
+        case ch
+        when '\'', '"'
+          in_quote = ch
+        when '['
+          depth += 1
+        when ']'
+          depth -= 1
+        end
+      end
+
+      depth
+    end
+
+    private def find_method_def(lines : Array(::String), class_def_index : Int32, class_indent : Int32, method_name : ::String) : Int32
+      i = class_def_index + 1
+      while i < lines.size
+        line = lines[i]
+        if class_match = line.match(/(\s*)class\s+/)
+          break if class_match[1].size <= class_indent
+        end
+
+        if method_match = line.match(/(\s*)(async\s+)?def\s+#{Regex.escape(method_name)}\s*\(/)
+          return i if method_match[1].size > class_indent
+        end
+        i += 1
+      end
+
+      -1
+    end
+
+    private def find_function_def(lines : Array(::String), function_name : ::String) : Int32
+      lines.each_with_index do |line, index|
+        if line.match(/^\s*(?:async\s+)?def\s+#{Regex.escape(function_name)}\s*\(/)
+          return index
+        end
+      end
+
+      -1
     end
 
     private def fetch_file_content(path : ::String) : ::String
@@ -215,6 +632,42 @@ module Analyzer::Python
 
     private def base_path_for(file_path : ::String) : ::String
       base_paths.find { |bp| file_path.starts_with?(bp) } || base_paths[0]? || ""
+    end
+
+    private def clone_path_api_instances(path_api_instances : Hash(::String, Hash(::String, ::String))) : Hash(::String, Hash(::String, ::String))
+      cloned = Hash(::String, Hash(::String, ::String)).new
+      path_api_instances.each do |path, api_instances|
+        cloned[path] = api_instances.dup
+      end
+
+      cloned
+    end
+
+    private def apply_nested_blueprint_prefixes(path_api_instances : Hash(::String, Hash(::String, ::String)),
+                                                own_api_instances : Hash(::String, Hash(::String, ::String)),
+                                                blueprint_mounts : Hash(::String, Array(Tuple(::String, ::String, ::String))))
+      blueprint_mounts.each do |path, mounts|
+        api_instances = path_api_instances[path]?
+        next unless api_instances
+
+        own_prefixes = own_api_instances[path]? || api_instances
+        changed = true
+        while changed
+          changed = false
+          mounts.each do |mount|
+            parent_name, child_name, mount_prefix = mount
+            next unless api_instances.has_key?(child_name)
+
+            parent_prefix = api_instances[parent_name]? || ""
+            child_own_prefix = own_prefixes[child_name]? || ""
+            resolved_prefix = File.join(parent_prefix, mount_prefix, child_own_prefix)
+            next if api_instances[child_name] == resolved_prefix
+
+            api_instances[child_name] = resolved_prefix
+            changed = true
+          end
+        end
+      end
     end
 
     def create_parser(path : ::String, content : ::String = "") : PythonParser

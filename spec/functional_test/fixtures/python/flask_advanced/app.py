@@ -5,12 +5,15 @@ Flask test fixture for advanced features:
 - add_url_rule with view assignments
 """
 from flask import Flask, Blueprint, request, jsonify
-from flask.views import MethodView
+from flask.views import MethodView, View
+import external_views
 
-app = Flask(__name__)
+app = Flask(__name__, static_url_path='/assets', static_folder='public')
 
 # Blueprint with shortcut decorators
 bp = Blueprint('api', __name__, url_prefix='/api')
+parent_bp = Blueprint('parent', __name__)
+nested_bp = Blueprint('nested', __name__)
 
 @app.get('/app-get')
 def app_get():
@@ -100,12 +103,49 @@ class AsyncAPI(MethodView):
         title = request.json.get('title')
         return jsonify({'title': title})
 
+class ReportView(View):
+    """Pluggable View using dispatch_request and class-level methods"""
+
+    methods = [
+        'GET',
+        'POST',
+    ]
+
+    def dispatch_request(self):
+        if request.method == 'POST':
+            payload = request.get_json()
+            title = payload.get('title')
+            return jsonify({'title': title})
+
+        owner = request.args.get('owner')
+        return jsonify({'owner': owner})
+
 @bp.post('/get-json')
 def use_get_json():
     """Test request.get_json() detection"""
     payload = request.get_json()
     action = payload.get('action')
     return jsonify({'action': action})
+
+@nested_bp.get('/reports/<int:report_id>')
+def nested_report(report_id):
+    """Nested blueprint route should inherit parent and app prefixes"""
+    mode = request.args.get('mode')
+    return jsonify({'report_id': report_id, 'mode': mode})
+
+
+def registered_search():
+    """Function view registered with add_url_rule"""
+    term = request.args.get('term')
+    trace_id = request.headers.get('X-Trace-Id')
+    return jsonify({'term': term, 'trace_id': trace_id})
+
+
+def registered_create():
+    """Keyword view_func registered with add_url_rule"""
+    payload = request.get_json()
+    name = payload['name']
+    return jsonify({'name': name})
 
 # Register MethodView with add_url_rule
 user_view = UserAPI.as_view('user_api')
@@ -121,6 +161,9 @@ bp.add_url_rule('/async', view_func=async_view, methods=['GET', 'POST'])
 # add_url_rule without explicit methods (should infer from class)
 bp.add_url_rule('/items-inferred', view_func=ItemAPI.as_view('item_inferred'))
 
+# flask.views.View uses dispatch_request with class-level methods
+bp.add_url_rule('/reports-view', view_func=ReportView.as_view('reports_view'))
+
 # add_url_rule with rule= keyword argument (not first positional)
 bp.add_url_rule(view_func=item_view, rule='/items-kwarg', methods=['GET', 'POST'])
 
@@ -133,8 +176,26 @@ bp.add_url_rule('/items-no-endpoint', item_view, methods=['GET', 'POST'])
 # add_url_rule with tuple methods syntax
 bp.add_url_rule('/items-tuple', view_func=item_view, methods=('GET', 'POST'))
 
+# add_url_rule split across lines, matching large app style
+bp.add_url_rule(
+    '/items-multiline',
+    view_func=item_view,
+    methods=[
+        'GET',
+        'POST',
+    ],
+)
+
+# add_url_rule with function views should preserve handler params
+bp.add_url_rule('/registered-search', 'registered_search', registered_search, methods=['GET'])
+bp.add_url_rule(rule='/registered-create', endpoint='registered_create', view_func=registered_create, methods=['POST'])
+bp.add_url_rule('/external-search', view_func=external_views.external_search, methods=['GET'])
+
+parent_bp.register_blueprint(nested_bp, url_prefix='/child')
+
 # Register blueprint
 app.register_blueprint(bp)
+app.register_blueprint(parent_bp, url_prefix='/mounted')
 
 if __name__ == '__main__':
     app.run(debug=True)

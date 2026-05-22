@@ -21,7 +21,7 @@ module Analyzer::Python
             next if PythonEngine.python_test_path?(path)
             source = read_file_content(path)
 
-            import_modules = find_imported_modules(current_base_path, path, source)
+            import_modules = find_fastapi_imported_modules(current_base_path, path, source)
             codelines = source.split("\n")
             codelines.each_with_index do |original_line, index|
               effective_line = coalesce_constructor_call(codelines, index, original_line, "APIRouter")
@@ -77,7 +77,7 @@ module Analyzer::Python
         include_router_map.each do |path, router_map|
           source = read_file_content(path)
           definition_base_path = base_paths.find { |base_path| path.starts_with?(base_path) } || @fastapi_base_path
-          import_modules = find_imported_modules(@fastapi_base_path, path, source)
+          import_modules = find_fastapi_imported_modules(@fastapi_base_path, path, source)
           codelines = source.split("\n")
           router_map.each do |instance_name, router_class|
             codelines.each_with_index do |line, index|
@@ -100,6 +100,7 @@ module Analyzer::Python
               if route_call = parse_fastapi_route_decorator(effective_line, instance_name, source, import_modules)
                 route_attr, http_route_path, _extra_params = route_call
                 http_method_name = route_attr.downcase
+                websocket_route = http_method_name == "websocket"
                 if http_method_name.in?(%w[websocket route api_route])
                   http_method_name = "GET"
                 elsif !HTTP_METHODS.includes?(http_method_name)
@@ -135,6 +136,9 @@ module Analyzer::Python
                     function_params.each do |param|
                       # https://fastapi.tiangolo.com/tutorial/path-params-numeric-validations/#order-the-parameters-as-you-need-tricks
                       next if param.name == "*"
+                      next if param.name.in?(%w[self cls])
+                      next if param.type == "WebSocket"
+                      next if fastapi_dependency_param?(param)
 
                       unless query_params.includes?(param.name)
                         # Default value is numeric or string only
@@ -205,6 +209,7 @@ module Analyzer::Python
                 details = Details.new(PathInfo.new(path, index + 1))
                 full_path = router_class.join(http_route_path)
                 base_endpoint = Endpoint.new(full_path, emit_methods.first, params, details)
+                base_endpoint.protocol = "ws" if websocket_route
 
                 # `parse_code_block(codelines[def_line..])` keeps the
                 # def line, so body row 0 lives at file line `def_line`.
@@ -225,6 +230,7 @@ module Analyzer::Python
                                       base_endpoint
                                     else
                                       Endpoint.new(full_path, method, params, details).tap do |dup_ep|
+                                        dup_ep.protocol = "ws" if websocket_route
                                         base_endpoint.callees.each { |c| dup_ep.push_callee(c) }
                                       end
                                     end
@@ -242,15 +248,44 @@ module Analyzer::Python
               prog_line = coalesce_programmatic_call(codelines, index, line, instance_name)
               if prog_call = parse_fastapi_programmatic_route(prog_line, instance_name, source, import_modules)
                 prog_attr, prog_path, prog_tail = prog_call
+                prog_websocket_route = prog_attr.includes?("websocket")
                 prog_methods = extract_declared_methods(prog_tail)
                 if prog_methods.empty?
-                  prog_methods = prog_attr.includes?("websocket") ? ["GET"] : ["GET"]
+                  prog_methods = prog_websocket_route ? ["GET"] : ["GET"]
                 end
                 prog_full = router_class.join(prog_path)
                 prog_details = Details.new(PathInfo.new(path, index + 1))
-                prog_methods.each do |m|
-                  result << Endpoint.new(prog_full, m, [] of Param, prog_details)
+                prog_params = [] of Param
+                prog_callees = [] of Callee
+                if handler = resolve_programmatic_handler(prog_tail, path, source, import_modules)
+                  handler_path, handler_name = handler
+                  handler_source = handler_path == path ? source : read_file_content(handler_path)
+                  handler_lines = handler_source.split("\n")
+                  handler_imports = handler_path == path ? import_modules : find_fastapi_imported_modules(definition_base_path, handler_path, handler_source)
+                  if handler_def_line = find_function_def_line(handler_lines, handler_name)
+                    prog_params = extract_fastapi_handler_params(handler_lines, handler_def_line, prog_full, handler_source, handler_imports)
+                    if handler_codeblock = parse_code_block(handler_lines[handler_def_line..])
+                      prog_callees = build_callees_from(
+                        handler_codeblock,
+                        handler_def_line,
+                        handler_path,
+                        definition_base_path: definition_base_path,
+                        source: handler_source
+                      )
+                    end
+                  end
                 end
+                prog_methods.each do |m|
+                  endpoint = Endpoint.new(prog_full, m, prog_params, prog_details)
+                  endpoint.protocol = "ws" if prog_websocket_route
+                  prog_callees.each { |c| endpoint.push_callee(c) }
+                  result << endpoint
+                end
+              end
+
+              mount_line = coalesce_mount_call(codelines, index, line, instance_name)
+              if static_mount_path = parse_fastapi_static_mount(mount_line, instance_name, source, import_modules)
+                result << Endpoint.new(static_route_path(router_class.join(static_mount_path)), "GET", Details.new(PathInfo.new(path, index + 1)))
               end
             end
           end
@@ -279,14 +314,34 @@ module Analyzer::Python
       end
     end
 
+    private def find_fastapi_imported_modules(app_base_path : ::String,
+                                              file_path : ::String,
+                                              source : ::String? = nil) : Hash(::String, Tuple(::String, Int32))
+      import_modules = find_imported_modules(app_base_path, file_path, source)
+      local_base_path = File.dirname(file_path)
+      return import_modules if local_base_path == app_base_path
+
+      local_import_modules = find_imported_modules(local_base_path, file_path, source)
+      local_import_modules.each do |name, import_info|
+        import_modules[name] = import_info unless import_modules.has_key?(name)
+      end
+
+      import_modules
+    end
+
     # Configures the prefix for each router
-    def configure_router_prefix(file : ::String, include_router_map : Hash(::String, Hash(::String, Router)), router_prefix : ::String = "")
+    def configure_router_prefix(file : ::String,
+                                include_router_map : Hash(::String, Hash(::String, Router)),
+                                router_prefix : ::String = "",
+                                target_instance_name : ::String? = nil)
       return if file.empty? || !File.exists?(file)
 
       # Parse the source file for router configuration
       source = read_file_content(file)
-      import_modules = find_imported_modules(@fastapi_base_path, file, source)
+      import_modules = find_fastapi_imported_modules(@fastapi_base_path, file, source)
       include_router_map[file].each do |instance_name, router_class|
+        next if target_instance_name && instance_name != target_instance_name
+
         # PREPEND the inherited prefix to the router's own. The
         # initial pass captures `APIRouter(prefix="/users")`, so
         # `router_class.prefix` may already be `/users`; if we
@@ -299,54 +354,109 @@ module Analyzer::Python
         # `/users` / `/items` segment.
         router_class.prefix = combine_router_prefixes(router_prefix, router_class.prefix)
 
-        # Parse '{app}.include_router({item}.router, prefix="{prefix}")' code
-        source.scan(/#{instance_name}\.include_router\(([^\)]*)\)/).each do |match|
-          if match.size > 0
-            params = match[1].split(",")
-            prefix = ""
-            router_instance_name = params[0].strip
-            if params.size != 1
-              select_params = params.select(&.strip.starts_with?("prefix"))
-              if select_params.size != 0
-                raw_value = select_params.first.split("=", 2)[1]?.try(&.strip) || ""
-                # Only set prefix when the value is a quoted string
-                # literal. Anything else — `prefix=settings.API_V1_STR`,
-                # `prefix=f"{base}/v1"`, `prefix=API_PREFIX` — is a
-                # cross-file reference we can't resolve from the call
-                # site alone. Letting the raw expression flow through
-                # to `router_class.join` used to surface garbage URLs
-                # like `/settings.API_V1_STR/me` (regression seen on
-                # full-stack-fastapi-template). Try one more rescue
-                # path before falling back to empty: when the value
-                # is a bare top-level constant (`API_V1_STR`) imported
-                # via `from … import …`, look up its definition.
-                if lit = raw_value.match(/^['"]([^'"]*)['"]/)
-                  prefix = lit[1]
-                elsif resolved = resolve_string_expression(raw_value, source, import_modules)
-                  prefix = resolved
-                end
-              end
+        # Parse `{app}.include_router(...)` calls. Real FastAPI apps
+        # often use keyword form (`router=users.router`) and nested
+        # options (`dependencies=[Depends(...)]`), so parse arguments
+        # with the same top-level splitter used by route decorators
+        # instead of a comma split or a regex that stops at the first
+        # nested `)`.
+        extract_include_router_calls(source, instance_name).each do |args|
+          router_instance_name = extract_include_router_target(args)
+          next if router_instance_name.empty?
+
+          prefix = ""
+          if raw_value = extract_python_keyword_expression(args, "prefix")
+            # Only set prefix when the value is a quoted string
+            # literal. Anything else — `prefix=settings.API_V1_STR`,
+            # `prefix=f"{base}/v1"`, `prefix=API_PREFIX` — is a
+            # cross-file reference we can't resolve from the call
+            # site alone. Letting the raw expression flow through
+            # to `router_class.join` used to surface garbage URLs
+            # like `/settings.API_V1_STR/me` (regression seen on
+            # full-stack-fastapi-template). Try one more rescue
+            # path before falling back to empty: when the value
+            # is a bare top-level constant (`API_V1_STR`) imported
+            # via `from … import …`, look up its definition.
+            if lit = raw_value.match(/^['"]([^'"]*)['"]/)
+              prefix = lit[1]
+            elsif resolved = resolve_string_expression(raw_value, source, import_modules)
+              prefix = resolved
+            end
+          end
+
+          # Register router's prefix recursively
+          prefix = router_class.join(prefix)
+          if router_instance_name.count(".") == 0
+            if local_router = include_router_map[file][router_instance_name]?
+              local_router.prefix = combine_router_prefixes(prefix, local_router.prefix)
+              next
             end
 
-            # Register router's prefix recursively
-            prefix = router_class.join(prefix)
-            if router_instance_name.count(".") == 0
-              next unless import_modules.has_key?(router_instance_name)
-              import_module_path = import_modules[router_instance_name].first
+            next unless import_modules.has_key?(router_instance_name)
+            import_module_path = import_modules[router_instance_name].first
 
-              next unless include_router_map.has_key?(import_module_path)
-              configure_router_prefix(import_module_path, include_router_map, prefix)
-            elsif router_instance_name.count(".") == 1
-              module_name, _router_instance_name = router_instance_name.split(".")
-              next unless import_modules.has_key?(module_name)
-              import_module_path = import_modules[module_name].first
+            next unless include_router_map.has_key?(import_module_path)
+            configure_router_prefix(import_module_path, include_router_map, prefix, router_instance_name)
+          elsif router_instance_name.count(".") == 1
+            module_name, imported_router_instance_name = router_instance_name.split(".")
+            next unless import_modules.has_key?(module_name)
+            import_module_path = import_modules[module_name].first
 
-              next unless include_router_map.has_key?(import_module_path)
-              configure_router_prefix(import_module_path, include_router_map, prefix)
-            end
+            next unless include_router_map.has_key?(import_module_path)
+            configure_router_prefix(import_module_path, include_router_map, prefix, imported_router_instance_name)
           end
         end
       end
+    end
+
+    private def extract_include_router_calls(source : ::String, instance_name : ::String) : Array(::String)
+      calls = [] of ::String
+      lines = source.split("\n")
+      lines.each_with_index do |line, index|
+        stripped = line.lstrip
+        next if stripped.starts_with?("#")
+        next unless line.matches?(/\b#{Regex.escape(instance_name)}\s*\.\s*include_router\s*\(/)
+
+        logical_line = coalesce_include_router_call(lines, index, line, instance_name)
+        match = logical_line.match(/\b#{Regex.escape(instance_name)}\s*\.\s*include_router\s*\((.*)\)\s*(?:#.*)?$/m)
+        calls << match[1] if match
+      end
+      calls
+    end
+
+    private def coalesce_include_router_call(codelines : Array(::String),
+                                             index : Int32,
+                                             line : ::String,
+                                             instance_name : ::String) : ::String
+      return line unless line.matches?(/\b#{Regex.escape(instance_name)}\s*\.\s*include_router\s*\(/)
+      return line if python_call_balanced?(line)
+
+      pieces = [line]
+      depth = python_paren_delta(line)
+      i = index + 1
+      while i < codelines.size && depth > 0
+        nxt = codelines[i]
+        pieces << nxt
+        depth += python_paren_delta(nxt)
+        break if depth <= 0
+        i += 1
+      end
+      pieces.join(' ')
+    end
+
+    private def extract_include_router_target(args : ::String) : ::String
+      if router_keyword = extract_python_keyword_expression(args, "router")
+        return router_keyword.strip
+      end
+
+      split_python_arguments(args).each do |arg|
+        stripped = arg.strip
+        next if stripped.empty?
+        break if top_level_keyword_argument?(stripped)
+        return stripped
+      end
+
+      ""
     end
 
     # Best-effort resolver for a non-literal `prefix=` expression in
@@ -563,6 +673,150 @@ module Analyzer::Python
       {attr, path, args}
     end
 
+    private def parse_fastapi_static_mount(line : ::String,
+                                           instance_name : ::String,
+                                           source : ::String,
+                                           import_modules : Hash(::String, Tuple(::String, Int32))) : ::String?
+      match = line.match(/\b#{Regex.escape(instance_name)}\s*\.\s*mount\s*\((.*)\)\s*(?:#.*)?$/m)
+      return unless match
+
+      args = match[1]
+      return unless args.includes?("StaticFiles")
+
+      path_expr = extract_route_path_expression(args)
+      return unless path_expr
+
+      resolve_string_expression(path_expr, source, import_modules)
+    end
+
+    private def resolve_programmatic_handler(args : ::String,
+                                             current_path : ::String,
+                                             source : ::String,
+                                             import_modules : Hash(::String, Tuple(::String, Int32))) : Tuple(::String, ::String)?
+      handler_reference = extract_programmatic_handler_reference(args)
+      return unless handler_reference
+
+      if handler_reference.includes?(".")
+        receiver, function_name = handler_reference.split(".", 2)
+        if import_info = import_modules[receiver]?
+          import_path = import_info.first
+          return {import_path, function_name} unless import_path.empty?
+        end
+
+        sibling_module_path = File.join(File.dirname(current_path), "#{receiver}.py")
+        return {sibling_module_path, function_name} if File.exists?(sibling_module_path)
+
+        return
+      end
+
+      return {current_path, handler_reference} if find_function_def_line(source.split("\n"), handler_reference)
+
+      if import_info = import_modules[handler_reference]?
+        import_path = import_info.first
+        return {import_path, handler_reference} unless import_path.empty?
+      end
+
+      nil
+    end
+
+    private def extract_programmatic_handler_reference(args : ::String) : ::String?
+      if endpoint_expr = extract_python_keyword_expression(args, "endpoint")
+        return clean_programmatic_handler_reference(endpoint_expr)
+      end
+
+      positional_args = [] of ::String
+      split_python_arguments(args).each do |arg|
+        stripped = arg.strip
+        break if top_level_keyword_argument?(stripped)
+        positional_args << stripped
+      end
+
+      return if positional_args.size < 2
+      clean_programmatic_handler_reference(positional_args[1])
+    end
+
+    private def clean_programmatic_handler_reference(expression : ::String) : ::String?
+      reference = expression.strip.split("#", 2)[0].strip
+      return reference if reference.matches?(/^#{PYTHON_VAR_NAME_REGEX}(?:\.#{PYTHON_VAR_NAME_REGEX})?$/)
+
+      nil
+    end
+
+    private def find_function_def_line(lines : Array(::String), function_name : ::String) : Int32?
+      lines.each_with_index do |line, index|
+        return index if line.matches?(/^\s*(?:async\s+)?def\s+#{Regex.escape(function_name)}\s*\(/)
+      end
+
+      nil
+    end
+
+    private def extract_fastapi_handler_params(codelines : Array(::String),
+                                               def_line : Int32,
+                                               route_path : ::String,
+                                               source : ::String,
+                                               import_modules : Hash(::String, Tuple(::String, Int32))) : Array(Param)
+      params = [] of Param
+      function_definition = parse_function_def(codelines, def_line)
+      return params unless function_definition
+
+      path_param_names = [] of ::String
+      route_path.scan(/\{(#{PYTHON_VAR_NAME_REGEX})\}/) do |route_match|
+        path_param_names << route_match[1] if route_match.size > 0
+      end
+
+      function_definition.params.each do |param|
+        next if param.name == "*" || path_param_names.includes?(param.name)
+        next if param.name.in?(%w[self cls])
+        next if fastapi_dependency_param?(param)
+
+        default_value = return_literal_value(param.default)
+        param_type = infer_parameter_type(param.default) unless param.default.empty?
+        if param_type.nil? && !param.type.empty?
+          param_type = param.type
+          param_type = param_type.split("Annotated[", 2)[-1].split(",", 2)[-1] if param_type.includes?("Annotated[")
+          param_type = param_type.split("Union[", 2)[-1] if param_type.includes?("Union[")
+          param_type = infer_parameter_type(param_type, true)
+          param_type = "query" if param_type.nil? && param.type.empty?
+        else
+          param_type = "query" if param_type.nil?
+        end
+
+        if param_type.nil?
+          if /^#{PYTHON_VAR_NAME_REGEX}$/.match(param.type)
+            if param.type.in?(%w[Request dict])
+              function_codeblock = parse_code_block(codelines[def_line..])
+              next if function_codeblock.nil?
+              new_params = find_dictionary_params(function_codeblock, param)
+            elsif import_modules.has_key?(param.type)
+              import_module_path = import_modules[param.type].first
+              next if import_module_path.empty?
+
+              import_module_source = read_file_content(import_module_path)
+              new_params = find_base_model_params(import_module_source, param.type, param.name)
+            else
+              new_params = find_base_model_params(source, param.type, param.name)
+            end
+
+            next if new_params.nil?
+            new_params.each { |model_param| params << model_param }
+          end
+        else
+          params << Param.new(param.name, default_value, param_type)
+        end
+      end
+
+      params
+    end
+
+    private def fastapi_dependency_param?(param : FunctionParameter) : Bool
+      fastapi_dependency_expression?(param.default) ||
+        fastapi_dependency_expression?(param.type)
+    end
+
+    private def fastapi_dependency_expression?(expression : ::String) : Bool
+      expression.includes?("Depends(") || expression.includes?("Security(")
+    end
+
     private def extract_route_path_expression(args : ::String) : ::String?
       split_python_arguments(args).each do |arg|
         stripped = arg.strip
@@ -626,6 +880,13 @@ module Analyzer::Python
       end
       parts << input[start..]
       parts
+    end
+
+    private def static_route_path(path : ::String) : ::String
+      normalized = path.gsub(/\/+/, "/")
+      normalized = "/#{normalized}" unless normalized.starts_with?("/")
+      normalized = normalized[0...-1] if normalized.ends_with?("/") && normalized != "/"
+      normalized == "/" ? "/*" : "#{normalized}/*"
     end
 
     # Infers the type of the parameter based on its default value or type annotation
@@ -715,6 +976,26 @@ module Analyzer::Python
                                            line : ::String,
                                            instance_name : ::String) : ::String
       return line unless line.matches?(/\b#{Regex.escape(instance_name)}\s*\.\s*(add_api_route|add_api_websocket_route)\s*\(/)
+      return line if python_call_balanced?(line)
+
+      pieces = [line]
+      depth = python_paren_delta(line)
+      i = index + 1
+      while i < codelines.size && depth > 0
+        nxt = codelines[i]
+        pieces << nxt
+        depth += python_paren_delta(nxt)
+        break if depth <= 0
+        i += 1
+      end
+      pieces.join(' ')
+    end
+
+    private def coalesce_mount_call(codelines : Array(::String),
+                                    index : Int32,
+                                    line : ::String,
+                                    instance_name : ::String) : ::String
+      return line unless line.matches?(/\b#{Regex.escape(instance_name)}\s*\.\s*mount\s*\(/)
       return line if python_call_balanced?(line)
 
       pieces = [line]

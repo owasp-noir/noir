@@ -15,7 +15,7 @@ require "../../func_spec.cr"
 #   4. DELETE /orders/{...} — blank line + comment between the route
 #                              decorator and the def. Same fragility,
 #                              same fix path.
-#   5. GET /reports         — @api.get on an APIRouter declared in
+#   5. GET /internal/reports — @api.get on an APIRouter declared in
 #                              a separate file; locks in that the
 #                              include_router emit branch also pushes
 #                              callees.
@@ -43,7 +43,7 @@ expected_endpoints = [
     ep.push_callee(Callee.new("audit_log", db_path, 5))
   end,
 
-  Endpoint.new("/reports", "GET").tap do |ep|
+  Endpoint.new("/internal/reports", "GET").tap do |ep|
     ep.push_callee(Callee.new("db.fetch_report", db_path, 9))
   end,
 ]
