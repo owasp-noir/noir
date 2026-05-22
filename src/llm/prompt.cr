@@ -467,6 +467,7 @@ module LLM
       "gemini-3-flash-preview"        => 1048576,
       "gemini-3.1-flash-preview"      => 1048576,
       "gemini-3.1-flash-lite-preview" => 1048576,
+      "gemini-3.5-flash"              => 1048576,
       "default"                       => 32760,
     },
     "cohere" => {
