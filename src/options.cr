@@ -374,10 +374,6 @@ def run_options_parser
     parser.on "-d", "--debug", "Enable debug messages" do
       noir_options["debug"] = YAML::Any.new(true)
     end
-    parser.on "-v", "--version", "Show version" do
-      puts Noir::VERSION
-      exit
-    end
     parser.on "--verbose", "Verbose mode (+ --include path + --use-all-taggers)" do
       noir_options["verbose"] = YAML::Any.new(true)
       noir_options["include_path"] = YAML::Any.new(true)

@@ -14,11 +14,18 @@ require "./common"
 # via its own OptionParser. That keeps `noir -b ./app -P` byte-identical
 # to v0 behavior.
 module Noir::CLI::Legacy
+  # Global short-circuits. The first time any of these appear anywhere
+  # in ARGV the entire invocation is rewritten to the canonical v1
+  # subcommand call, so flags that are inherently global (`-v`,
+  # `--version`) behave the same no matter whether the user typed them
+  # before, after, or in place of a verb.
   TERMINAL_REWRITES = {
     "--list-techs"   => ["list", "techs"],
     "--list-taggers" => ["list", "taggers"],
     "--build-info"   => ["version", "--verbose"],
     "--help-all"     => ["help"],
+    "-v"             => ["version"],
+    "--version"      => ["version"],
   }
 
   # Returns a possibly-rewritten ARGV. If a terminal v0 flag is found,

@@ -27,6 +27,17 @@ describe "Noir::CLI::Legacy.rewrite" do
     Noir::CLI::Legacy.rewrite(["--generate-completion", "zsh"]).should eq(["completion", "zsh"])
   end
 
+  it "rewrites -v to the version subcommand (global anywhere in ARGV)" do
+    Noir::CLI::Legacy.rewrite(["-v"]).should eq(["version"])
+    Noir::CLI::Legacy.rewrite(["scan", "-v"]).should eq(["version"])
+    Noir::CLI::Legacy.rewrite(["scan", "./app", "-v"]).should eq(["version"])
+  end
+
+  it "rewrites --version the same way as -v" do
+    Noir::CLI::Legacy.rewrite(["--version"]).should eq(["version"])
+    Noir::CLI::Legacy.rewrite(["list", "techs", "--version"]).should eq(["version"])
+  end
+
   it "leaves non-terminal v0 invocations untouched" do
     argv = ["-b", "./app", "--passive"]
     Noir::CLI::Legacy.rewrite(argv).should eq(argv)

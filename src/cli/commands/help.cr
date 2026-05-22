@@ -50,8 +50,9 @@ module Noir::CLI::HelpCommand
         #{cyan.call("help")} [command]                 Show this overview or a command's help
 
       #{green.call("GLOBAL FLAGS:")}
-        --no-color    Strip ANSI color from every command's output (NO_COLOR env also works)
-        -h, --help    Show this overview, or — after a verb — that command's help
+        --no-color     Strip ANSI color from every command's output (NO_COLOR env also works)
+        -v, --version  Print the noir version and exit (alias for `noir version`)
+        -h, --help     Show this overview, or — after a verb — that command's help
 
       Run `noir help <command>` (or `noir <command> -h`) for command-specific flags.
       HELP
