@@ -29,6 +29,12 @@ expected_endpoints = [
   ]),
   # Pathless layout routes (leading underscore) should not add a URL segment.
   Endpoint.new("/login", "GET", [] of Param),
+  # File-route pathless layout segments should not become URL
+  # segments or standalone layout endpoints.
+  Endpoint.new("/settings", "GET", [
+    Param.new("tab", "", "query"),
+    Param.new("page", "", "query"),
+  ]),
   # Root-route files with a path should still be scanned even when
   # they do not contain createRoute() code-route assignments.
   Endpoint.new("/docs", "GET", [] of Param),

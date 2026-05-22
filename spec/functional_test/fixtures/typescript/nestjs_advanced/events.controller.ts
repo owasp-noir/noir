@@ -1,4 +1,4 @@
-import { Controller, Sse, UploadedFile, UploadedFiles, Post, HostParam, Get } from '@nestjs/common';
+import { Controller, Sse, UploadedFile, UploadedFiles, Post, HostParam, Get, Headers, Query } from '@nestjs/common';
 
 // Versioned controller with a multi-version array — Nest expands this
 // into one route per version.
@@ -23,6 +23,11 @@ export class TenantController {
   @Get(':slug')
   describe(@HostParam('account') account: string) {
     return { account };
+  }
+
+  @Get('lookup')
+  lookup(@Query() query: Record<string, string>, @Headers() headers: Record<string, string>) {
+    return { query, headers };
   }
 }
 
@@ -50,7 +55,20 @@ export class UploadsController {
     return files;
   }
 
+  @Post('public')
+  uploadPublic(@UploadedFile() file: any) {
+    return file;
+  }
+
   // Commented-out decorator must NOT be reported as a real route.
   // @Get('/legacy/path')
   // legacy() { return null; }
+}
+
+@Controller('health')
+export class HealthController {
+  @Get()
+  check() {
+    return { ok: true };
+  }
 }

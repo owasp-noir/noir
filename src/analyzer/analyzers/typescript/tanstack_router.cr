@@ -53,6 +53,8 @@ module Analyzer::Typescript
       content.scan(file_route_pattern) do |match|
         if match.size > 0
           route_path = match[1]
+          next if pathless_only_route?(route_path)
+
           # Convert TanStack Router path params ($param) to standard format (:param)
           normalized_path = normalize_path(route_path)
 
@@ -73,6 +75,8 @@ module Analyzer::Typescript
       content.scan(lazy_file_route_pattern) do |match|
         if match.size > 0
           route_path = match[1]
+          next if pathless_only_route?(route_path)
+
           normalized_path = normalize_path(route_path)
 
           endpoint = create_endpoint(normalized_path, "GET", path)
@@ -200,10 +204,25 @@ module Analyzer::Typescript
       stripped.starts_with?("_") && !stripped.empty?
     end
 
+    private def pathless_only_route?(path : String) : Bool
+      segments = path.split('/').reject(&.empty?)
+      !segments.empty? && segments.all? { |segment| pathless_segment?(segment) }
+    end
+
     private def normalize_path(path : String) : String
       # TanStack Router uses $param for path parameters
       # Convert to standard :param format
-      path.gsub(/\$(\w+)/, ":\\1")
+      normalized = path.gsub(/\$(\w+)/, ":\\1")
+      remove_pathless_segments(normalized)
+    end
+
+    private def remove_pathless_segments(path : String) : String
+      absolute = path.starts_with?("/")
+      kept = path.split('/').reject(&.empty?).reject { |segment| pathless_segment?(segment) }
+      return "/" if kept.empty?
+
+      normalized = kept.join("/")
+      absolute ? "/#{normalized}" : normalized
     end
 
     private def create_endpoint(url : String, method : String, file_path : String, start_pos : Int32 = 0, content : String = "") : Endpoint
@@ -328,6 +347,8 @@ module Analyzer::Typescript
         end
       end
 
+      extract_validate_search_function_params(content, endpoint)
+
       # Look for useSearch hook usage. Three call shapes show up
       # across TanStack v1 apps:
       #   - Route.useSearch()                       (file-route scope)
@@ -358,6 +379,82 @@ module Analyzer::Typescript
     private def extract_search_params_from_route_block(route_block : String, endpoint : Endpoint)
       # Extract search params from the route definition block
       extract_search_params(route_block, endpoint)
+    end
+
+    private def extract_validate_search_function_params(content : String, endpoint : Endpoint)
+      content.scan(/\bvalidateSearch\s*:/) do |match|
+        value_start = match.end(0) || 0
+        value_end = skip_top_level_to_comma(content, value_start)
+        value = content[value_start...value_end]
+        search_name = validate_search_argument_name(value)
+        next unless search_name
+
+        value.scan(/\b#{Regex.escape(search_name)}\s*\.\s*([A-Za-z_$][\w$]*)/) do |param_match|
+          push_unique_query_param(endpoint, param_match[1])
+        end
+
+        value.scan(/\b(?:const|let|var)\s*\{([^}]+)\}\s*=\s*#{Regex.escape(search_name)}\b/) do |destructure_match|
+          destructure_match[1].split(",").each do |param|
+            param_name = param.strip.split(":").first.strip.split("=").first.strip
+            push_unique_query_param(endpoint, param_name)
+          end
+        end
+      end
+    end
+
+    private def validate_search_argument_name(value : String) : String?
+      if match = value.match(/\A\s*(?:async\s*)?\(\s*([A-Za-z_$][\w$]*)\b/)
+        match[1]
+      elsif match = value.match(/\A\s*(?:async\s*)?([A-Za-z_$][\w$]*)\s*=>/)
+        match[1]
+      elsif match = value.match(/\A\s*(?:async\s*)?function[^(]*\(\s*([A-Za-z_$][\w$]*)\b/)
+        match[1]
+      end
+    end
+
+    private def skip_top_level_to_comma(text : String, start : Int32) : Int32
+      depth = 0
+      quote : Char? = nil
+      escaped = false
+      i = start
+
+      while i < text.size
+        char = text[i]
+
+        if quote
+          if escaped
+            escaped = false
+          elsif char == '\\'
+            escaped = true
+          elsif char == quote
+            quote = nil
+          end
+          i += 1
+          next
+        end
+
+        case char
+        when '\'', '"', '`'
+          quote = char
+        when '(', '[', '{'
+          depth += 1
+        when ')', ']', '}'
+          depth -= 1 if depth > 0
+        when ','
+          return i if depth == 0
+        end
+
+        i += 1
+      end
+
+      i
+    end
+
+    private def push_unique_query_param(endpoint : Endpoint, param_name : String)
+      return if param_name.empty?
+      return if endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
+
+      endpoint.push_param(Param.new(param_name, "", "query"))
     end
   end
 end

@@ -4,6 +4,22 @@ require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Javascript
   class Nestjs < JavascriptEngine
+    private struct GlobalPrefixExclude
+      getter path : String
+      getter method : String?
+
+      def initialize(@path : String, @method : String? = nil)
+      end
+    end
+
+    private struct GlobalPrefixConfig
+      getter prefix : String
+      getter excludes : Array(GlobalPrefixExclude)
+
+      def initialize(@prefix : String, @excludes : Array(GlobalPrefixExclude))
+      end
+    end
+
     def analyze
       analyze_with_extensions([".js", ".jsx"])
     end
@@ -12,7 +28,7 @@ module Analyzer::Javascript
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
-      global_prefix_holder = [] of String
+      global_prefix_holder = [] of GlobalPrefixConfig
       global_prefix_mutex = Mutex.new
 
       parallel_file_scan(extensions) do |path|
@@ -33,8 +49,12 @@ module Analyzer::Javascript
     # every endpoint URL. Endpoints whose URL already starts with the
     # normalized prefix (e.g. controllers that hard-coded `/api/...`)
     # are left untouched so we don't double-prefix.
-    private def apply_global_prefix(result : Array(Endpoint), prefix : String?)
-      return if prefix.nil? || prefix.empty?
+    private def apply_global_prefix(result : Array(Endpoint), config : GlobalPrefixConfig?)
+      return unless config
+
+      prefix = config.prefix
+      return if prefix.empty?
+
       normalized = prefix.starts_with?("/") ? prefix : "/#{prefix}"
       normalized = normalized.chomp("/")
       return if normalized.empty?
@@ -43,10 +63,37 @@ module Analyzer::Javascript
       # binding is a copy — write back through the index to make the
       # URL change visible to callers.
       result.each_with_index do |endpoint, idx|
+        next if global_prefix_excluded?(endpoint, config.excludes)
         next if endpoint.url.starts_with?(normalized + "/") || endpoint.url == normalized
         endpoint.url = endpoint.url.starts_with?("/") ? "#{normalized}#{endpoint.url}" : "#{normalized}/#{endpoint.url}"
         result[idx] = endpoint
       end
+    end
+
+    private def global_prefix_excluded?(endpoint : Endpoint, excludes : Array(GlobalPrefixExclude)) : Bool
+      excludes.any? do |exclude|
+        next false if exclude.method && exclude.method != "ALL" && exclude.method != endpoint.method
+        exclude_path_matches?(endpoint.url, exclude.path)
+      end
+    end
+
+    private def exclude_path_matches?(url : String, exclude_path : String) : Bool
+      normalized_url = normalize_path_for_prefix_exclude(url)
+      normalized_exclude = normalize_path_for_prefix_exclude(exclude_path)
+
+      if normalized_exclude.ends_with?("*")
+        normalized_url.starts_with?(normalized_exclude.rstrip('*'))
+      else
+        normalized_url == normalized_exclude
+      end
+    end
+
+    private def normalize_path_for_prefix_exclude(path : String) : String
+      normalized = path.strip
+      normalized = "/#{normalized}" unless normalized.starts_with?("/")
+      normalized = normalized.gsub_repeatedly("//", "/")
+      normalized = normalized.chomp("/") unless normalized == "/"
+      normalized
     end
 
     # Process static directories and add endpoints for each file
@@ -71,7 +118,7 @@ module Analyzer::Javascript
       end
     end
 
-    private def analyze_nestjs_file(path : String, result : Array(Endpoint), static_dirs : Array(Hash(String, String)), include_callee : Bool, global_prefix_holder : Array(String), global_prefix_mutex : Mutex)
+    private def analyze_nestjs_file(path : String, result : Array(Endpoint), static_dirs : Array(Hash(String, String)), include_callee : Bool, global_prefix_holder : Array(GlobalPrefixConfig), global_prefix_mutex : Mutex)
       File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
         content = file.gets_to_end
 
@@ -87,7 +134,7 @@ module Analyzer::Javascript
         # `app.setGlobalPrefix('api')` in a bootstrap file scopes
         # every controller below it. Record it now; apply once after
         # all files have been parsed.
-        if prefix = extract_global_prefix(sanitized)
+        if prefix = extract_global_prefix_config(sanitized)
           global_prefix_mutex.synchronize do
             global_prefix_holder << prefix if global_prefix_holder.empty?
           end
@@ -99,14 +146,104 @@ module Analyzer::Javascript
       logger.debug "Error analyzing NestJS file #{path}: #{e.message}"
     end
 
-    # Detect `app.setGlobalPrefix('api')` (single string-literal arg).
-    # Returns the prefix or nil. Constants and dynamic expressions
-    # are ignored conservatively — false-positive prefixing would
-    # mis-route everything.
-    private def extract_global_prefix(content : String) : String?
-      content.scan(/\.setGlobalPrefix\s*\(\s*(['"`])([^'"`]+)\1\s*[,)]/) do |match|
-        return match[2] if match.size > 2 && !match[2].empty?
+    # Detect `app.setGlobalPrefix('api', { exclude: [...] })`.
+    # Constants and dynamic expressions are ignored conservatively —
+    # false-positive prefixing would mis-route every controller.
+    private def extract_global_prefix_config(content : String) : GlobalPrefixConfig?
+      literal_values = extract_literal_values(content)
+
+      content.scan(/\.setGlobalPrefix\s*\(/) do |match|
+        open_paren = (match.end(0) || 0) - 1
+        next if open_paren < 0
+
+        close_paren = Noir::JSRouteExtractor.find_matching_paren(content, open_paren)
+        next unless close_paren
+
+        args = split_top_level(content[(open_paren + 1)...close_paren], ',')
+        next if args.empty?
+
+        prefixes = literal_paths_from_expression(args[0], literal_values)
+        next if prefixes.nil?
+        next if prefixes.size != 1 || prefixes[0].empty?
+
+        excludes = args.size > 1 ? extract_global_prefix_excludes(args[1], literal_values) : [] of GlobalPrefixExclude
+        return GlobalPrefixConfig.new(prefixes[0], excludes)
       end
+      nil
+    end
+
+    private def extract_global_prefix_excludes(options : String, literal_values : Hash(String, Array(String))) : Array(GlobalPrefixExclude)
+      excludes = [] of GlobalPrefixExclude
+      match = options.match(/\bexclude\s*:/)
+      return excludes unless match
+
+      idx = match.end(0)
+      while idx < options.size && options[idx].whitespace?
+        idx += 1
+      end
+      return excludes unless options[idx]? == '['
+
+      close = find_matching_bracket(options, idx)
+      return excludes unless close
+
+      split_top_level(options[(idx + 1)...close], ',').each do |entry|
+        excludes.concat(parse_global_prefix_exclude_entry(entry, literal_values))
+      end
+      excludes
+    end
+
+    private def parse_global_prefix_exclude_entry(entry : String, literal_values : Hash(String, Array(String))) : Array(GlobalPrefixExclude)
+      stripped = entry.strip
+      return [] of GlobalPrefixExclude if stripped.empty?
+
+      paths = [] of String
+      method : String? = nil
+
+      if stripped.starts_with?("{")
+        if path_match = stripped.match(/(?:^|[,{]\s*)path\s*:\s*([\s\S]*?)(?:,\s*\w+\s*:|\}\s*$)/m)
+          paths = literal_paths_from_expression(path_match[1].strip, literal_values) || [] of String
+        end
+
+        if method_match = stripped.match(/\bmethod\s*:\s*(?:RequestMethod\.)?([A-Za-z]+)/)
+          method = method_match[1].upcase
+        end
+      else
+        paths = literal_paths_from_expression(stripped, literal_values) || [] of String
+      end
+
+      paths.map { |path| GlobalPrefixExclude.new(path, method) }
+    end
+
+    private def find_matching_bracket(text : String, open_idx : Int32) : Int32?
+      depth = 0
+      quote : Char? = nil
+      escaped = false
+
+      text.each_char_with_index do |char, idx|
+        next if idx < open_idx
+
+        if quote
+          if escaped
+            escaped = false
+          elsif char == '\\'
+            escaped = true
+          elsif char == quote
+            quote = nil
+          end
+          next
+        end
+
+        case char
+        when '\'', '"', '`'
+          quote = char
+        when '['
+          depth += 1
+        when ']'
+          depth -= 1
+          return idx if depth == 0
+        end
+      end
+
       nil
     end
 
@@ -561,6 +698,9 @@ module Analyzer::Javascript
           push_unique_param(endpoint, Param.new(param_name, "", "query"))
         end
       end
+      if method_params =~ /@Query\s*\(\s*(?:\)|[^'"`][\s\S]*?\))/
+        push_unique_param(endpoint, Param.new("query", "", "query"))
+      end
 
       # Extract @Param parameters (path parameters)
       method_params.scan(/@Param\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
@@ -587,6 +727,9 @@ module Analyzer::Javascript
           param_name = param_match[1]
           push_unique_param(endpoint, Param.new(param_name, "", "header"))
         end
+      end
+      if method_params =~ /@Headers\s*\(\s*(?:\)|[^'"`][\s\S]*?\))/
+        push_unique_param(endpoint, Param.new("headers", "", "header"))
       end
 
       # `@HostParam('account')` — subdomain capture when the controller

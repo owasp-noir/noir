@@ -14,6 +14,10 @@ expected_endpoints = [
     Param.new("postId", "", "query"),
   ]),
   Endpoint.new("/api/trpc/post.liveFeed", "SUBSCRIBE", [] of Param),
+  Endpoint.new("/api/trpc/account.me", "GET", [] of Param),
+  Endpoint.new("/api/trpc/account.update", "POST", [
+    Param.new("displayName", "", "body"),
+  ]),
   Endpoint.new("/api/trpc/health", "GET", [] of Param),
 ]
 
