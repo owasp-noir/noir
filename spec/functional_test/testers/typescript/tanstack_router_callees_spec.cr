@@ -29,5 +29,7 @@ it "does not attach callees from unrelated objects after empty file routes" do
 
   empty = app.endpoints.find { |endpoint| endpoint.method == "GET" && endpoint.url == "/empty" }
   empty.should_not be_nil
-  empty.not_nil!.callees.map(&.name).includes?("Secret.run").should be_false
+  if empty
+    empty.callees.map(&.name).includes?("Secret.run").should be_false
+  end
 end
