@@ -8,5 +8,5 @@ sort_by = "weight"
 
 Beyond endpoint extraction, Noir ships two features that shape how the inventory is used downstream:
 
-*   **Tagger** — attaches contextual tags to endpoints and parameters (e.g. `shadow`, `websocket`, sink hints). Useful when you want a code auditor — human or LLM — to focus on the entries worth reviewing first.
-*   **Deliver** — pushes findings to Burp Suite, ZAP, Elasticsearch, and similar tools so Noir's output drops into a pipeline you already run.
+*   **Tagger**: attaches contextual tags to endpoints and parameters (e.g. `shadow`, `websocket`, sink hints). Useful when you want a code auditor, whether human or LLM, to focus on the entries worth reviewing first.
+*   **Deliver**: pushes findings to Burp Suite, ZAP, Elasticsearch, and similar tools so Noir's output fits into a pipeline you already run.

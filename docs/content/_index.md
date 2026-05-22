@@ -87,12 +87,12 @@ template = "landing"
       <div class="feature-cell feature-wide">
         <div class="feature-number">01</div>
         <h3>Endpoint Extraction</h3>
-        <p>Static analysis pulls endpoints, parameters, headers, and cookies out of source. Shadow APIs, deprecated routes, and undocumented handlers come out of the same pass &mdash; not a separate mode.</p>
+        <p>Static analysis pulls endpoints, parameters, headers, and cookies out of source. Shadow APIs, deprecated routes, and undocumented handlers come out of the same pass, not a separate mode.</p>
       </div>
       <div class="feature-cell">
         <div class="feature-number">02</div>
         <h3>Multi-Language</h3>
-        <p>Crystal, Ruby, Python, Go, Java, Kotlin, JS/TS, PHP, C#, and more &mdash; 50+ frameworks in a single binary. No plugins or per-language setup.</p>
+        <p>Crystal, Ruby, Python, Go, Java, Kotlin, JS/TS, PHP, C#, and more. 50+ frameworks in a single binary, no plugins or per-language setup.</p>
       </div>
       <div class="feature-cell">
         <div class="feature-number">03</div>

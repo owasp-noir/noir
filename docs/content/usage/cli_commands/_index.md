@@ -1,14 +1,14 @@
 +++
 title = "CLI Commands"
-description = "Reference for Noir's v1 subcommand surface — scan, list, cache, config, rules, completion, version, help."
+description = "Subcommands available in Noir v1: scan, list, cache, config, rules, completion, version, help."
 weight = 1
 sort_by = "weight"
 
 +++
 
-Starting in v1.0, Noir's CLI follows a verb-centric layout. `scan` is the
-top-of-mind operation, and a small set of namespaces (`list`, `cache`,
-`config`, `rules`) groups everything else.
+Starting with v1.0, Noir's CLI uses a verb-based layout. `scan` is the
+main command. A few namespaces (`list`, `cache`, `config`, `rules`)
+group the rest.
 
 ```
 noir <command> [arguments] [flags]
@@ -37,9 +37,9 @@ noir <command> [arguments] [flags]
 
 ## Scan
 
-`noir scan` is the workhorse: it walks one or more codebases, runs
-analyzers per detected technology, optionally runs the passive scanner,
-and reports endpoints in the requested output format.
+`noir scan` walks one or more codebases, runs analyzers for each
+detected technology, optionally runs the passive scanner, and reports
+endpoints in the requested format.
 
 ```bash
 # Discover endpoints in a single codebase
@@ -55,12 +55,12 @@ noir scan ./app -P -f json -o endpoints.json
 noir scan ./app --include path,techs,callee --ai-context
 ```
 
-Positional paths and repeated `-b PATH` are interchangeable — pick
-whichever reads better in your scripts.
+Positional paths and repeated `-b PATH` work the same way. Use whichever
+reads better in your scripts.
 
 ### Flag consolidation in v1
 
-A few v0 flag families collapsed into more compact forms in v1.0. The old
+A few v0 flag families collapsed into shorter forms in v1.0. The old
 forms still work as silent aliases throughout v1.x.
 
 | v1 form                                    | v0 equivalent (still works)             |
@@ -88,26 +88,27 @@ noir scan ./app --ai-provider ollama --ai-model llama3
 
 ## List
 
-`noir list` enumerates built-in catalogs. These never grow `update`-style
-verbs, so they live as static subjects under one namespace.
+`noir list` shows built-in catalogs. These never grow `update`-style
+actions, so they live as static subjects under one namespace.
 
 ```bash
-noir list techs       # what languages / frameworks / specs ship with Noir
-noir list taggers     # built-in + framework-specific tagger plugins
+noir list techs       # supported languages, frameworks, and specs
+noir list taggers     # built-in and framework-specific tagger plugins
 noir list formats     # every supported output format
 ```
 
 ## Cache
 
-`noir cache` manages the on-disk LLM response cache (`~/.config/noir/cache/ai`).
+`noir cache` manages the on-disk LLM response cache at
+`~/.config/noir/cache/ai`.
 
 ```bash
 noir cache info       # location, entry count, total size
-noir cache clear      # wipe every cached AI response
+noir cache clear      # remove every cached AI response
 ```
 
-In-scan controls remain on `noir scan`: `--cache-disable` skips the cache
-for one run, and `--cache-clear` wipes before scanning.
+In-scan controls stay on `noir scan`: `--cache-disable` skips the cache
+for one run, and `--cache-clear` clears it before scanning.
 
 ## Config
 
@@ -120,12 +121,12 @@ noir config init      # create the default config (idempotent)
 noir config path      # print the resolved path
 ```
 
-The config directory follows `NOIR_HOME` if set; otherwise it falls back
+The config directory follows `NOIR_HOME` if set. Otherwise it falls back
 to `$HOME/.config/noir` on Unix and `%APPDATA%\noir` on Windows.
 
 `noir config edit` resolves the editor in the order `$VISUAL`,
 `$EDITOR`, then a platform default (`vi` on Unix, `notepad` on Windows).
-The config file is created first if it does not yet exist.
+The config file is created first if it does not exist yet.
 
 ## Rules
 
@@ -137,8 +138,8 @@ noir rules update     # clone or pull the latest rules
 noir rules path       # print the rules directory
 ```
 
-The default rules path is `~/.config/noir/passive_rules` — override via
-`NOIR_HOME` or with `--passive-scan-path PATH` at scan time.
+The default rules path is `~/.config/noir/passive_rules`. Override it
+via `NOIR_HOME`, or with `--passive-scan-path PATH` at scan time.
 
 ## Completion
 
@@ -151,47 +152,50 @@ noir completion fish   > ~/.config/fish/completions/noir.fish
 noir completion elvish > ~/.config/elvish/lib/noir.elv  # then `use noir` from rc.elv
 ```
 
-The script is subcommand-aware: typing `noir <TAB>` completes the verb
-list, and `noir scan -<TAB>` completes scan flags. The Elvish variant
-wires the same surface into `$edit:completion:arg-completer[noir]`.
+The script knows about every subcommand. Typing `noir <TAB>` completes
+the verb list. `noir scan -<TAB>` completes scan flags. The Elvish
+variant registers the same completer at
+`$edit:completion:arg-completer[noir]`.
 
 ## Version
 
-`noir version` prints just the version number; `noir version --verbose`
-adds Crystal, LLVM, and target-triple build details (the v0 `--build-info`
-output, unchanged in content).
+`noir version` prints the version number. `noir version --verbose` adds
+Crystal, LLVM, and target-triple build details (the same content the v0
+`--build-info` flag produced).
 
 ## Help
 
-`noir help` shows the top-level overview, and `noir help <command>` shows
-the flag surface for that command.
+`noir help` shows the top-level overview. `noir help <command>` shows
+the flags for a specific command.
 
 ## Global flags
 
 A small set of flags work on every subcommand, not just `scan`:
 
-| Flag         | Effect                                                                |
-|--------------|----------------------------------------------------------------------|
-| `--no-color` | Strip ANSI color from every command's output (also honors `NO_COLOR`) |
-| `-h`, `--help` | Show help for the current command                                  |
+| Flag           | Effect                                                                |
+|----------------|----------------------------------------------------------------------|
+| `--no-color`   | Strip ANSI color from every command's output (also honors `NO_COLOR`) |
+| `-v, --version`| Print the noir version and exit                                       |
+| `-h, --help`   | Show help for the current command                                     |
 
-Per-command flags (output format, concurrency, passive scan, AI provider,
-…) live under `noir scan` and are documented at `noir help scan`.
+Per-command flags (output format, concurrency, passive scan, AI
+provider, and so on) live under `noir scan`. See `noir help scan` for
+the full list.
 
 ## v0 Compatibility
 
-Every v0 invocation pattern continues to work in v1.x without changes:
+Every v0 invocation pattern keeps working in v1.x without changes:
 
 ```bash
 # All three forms produce identical scan results
-noir -b ./app                # v0 (router default-route to scan)
-noir scan ./app              # v1 idiomatic
-noir scan -b ./app           # v1 explicit + v0-shaped flags
+noir -b ./app                # v0 form (routed to scan)
+noir scan ./app              # v1 form
+noir scan -b ./app           # v1 verb with v0-style flags
 ```
 
-The router falls back to `scan` whenever `ARGV[0]` is not a known verb,
-so CI pipelines, GitHub Actions, Dockerfile entrypoints, and shell
-aliases all roll forward to v1.0 without edits.
+When `ARGV[0]` is not a known verb, the router falls back to `scan`.
+CI pipelines, GitHub Actions, Dockerfile entrypoints, and shell aliases
+all keep working without edits.
 
-Deprecation warnings will land in a later v1.x release; verb-form
+Deprecation warnings will land in a later v1.x release. The verb form
 becomes mandatory only at v2.x.

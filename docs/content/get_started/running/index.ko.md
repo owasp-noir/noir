@@ -28,8 +28,9 @@ noir scan .
 
 Noir가 소스 파일을 읽고, 사용 중인 프레임워크를 탐지하고, 발견한 모든 엔드포인트를 출력합니다. 메서드, 경로, 파라미터, 헤더, 쿠키까지 함께요.
 
-> **v0 호환:** v0 형태인 `noir -b ./app` 도 변경 없이 그대로 동작합니다.
-> 라우터가 플래그만 있는 호출을 자동으로 `scan` 으로 보냅니다.
+> **v0 호환:** `noir -b ./app` 같은 v0 형식도 변경 없이 그대로
+> 동작합니다. 라우터가 플래그만 있는 호출을 자동으로 `scan` 으로
+> 보냅니다.
 
 ## 탐지된 기술 확인
 
@@ -49,19 +50,19 @@ noir list techs
 
 ## 다양한 출력 형식 사용
 
-기본 출력은 사람이 읽기 쉬운 표 형식입니다. 워크플로에 따라 다른 형식이 필요할 수 있습니다:
+기본 출력은 사람이 읽기 좋은 표 형식입니다. 워크플로에 따라 다른 형식이 필요할 수 있습니다.
 
 ```bash
-# 스크립팅과 파이프라인을 위한 JSON
+# 스크립트와 파이프라인에 적합한 JSON
 noir scan . -f json
 
-# 읽기 쉽고 설정 친화적인 YAML
+# 사람이 읽기 좋고 설정 파일에 어울리는 YAML
 noir scan . -f yaml
 
-# API 문서 생성이나 도구 연동에 유용한 OpenAPI 명세
+# API 문서 생성이나 도구 연동에 쓰는 OpenAPI 명세
 noir scan . -f oas3
 
-# 라이브 타겟에 바로 실행할 수 있는 cURL 명령
+# 대상에 바로 실행 가능한 cURL 명령
 noir scan . -f curl -u https://your-target.com
 ```
 
@@ -79,13 +80,13 @@ noir scan . -f json -o results.json
 
 ## 엔드포인트를 소스까지 추적
 
-엔드포인트가 정확히 어디서 정의되었는지 알고 싶다면 `--include path`를 추가하세요:
+엔드포인트가 정확히 어디서 정의되어 있는지 알고 싶다면 `--include path` 를 추가하세요.
 
 ```bash
 noir scan . --include path
 ```
 
-여러 enrichment 를 한 플래그에 묶을 수 있습니다:
+여러 항목을 한 플래그에 묶을 수 있습니다.
 
 ```bash
 noir scan . --include path,techs -f json -o results.json
@@ -93,33 +94,37 @@ noir scan . --include path,techs -f json -o results.json
 
 ## 스캔 범위 좁히기
 
-대규모 모노레포에는 여러 프레임워크가 포함될 수 있습니다. 필요한 것만 스캔할 수 있습니다:
+대규모 모노레포에는 여러 프레임워크가 섞여 있을 수 있습니다. 필요한 것만 스캔합니다.
 
 ```bash
-# Rails와 Django 디텍터만 실행 (나머지는 건너뜀)
+# Rails 와 Django 디텍터만 실행 (나머지는 건너뜀)
 noir scan . --only-techs rails,django
 
-# 디텍터는 돌리지 않고 결과에 강제로 태그만 부여
+# 디텍터는 실행하지 않고 결과에 기술 태그만 강제로 추가
 noir scan . --techs rails,django
 
-# Express를 제외한 모든 것 스캔
+# Express 만 제외하고 나머지 전부 스캔
 noir scan . --exclude-techs express
 
-# glob으로 파일 단위 제외 (모노레포에서 유용, 쉼표 구분)
+# 모노레포에서 glob 패턴으로 파일 제외 (쉼표로 구분)
 noir scan . --exclude-path "*_test.go,vendor/*,**/node_modules/**"
 ```
 
-`--only-techs`와 `--techs`는 비슷해 보이지만 다릅니다: `--only-techs`는 디텍터 리스트를 필터링해서 그 항목만 실제로 탐지를 수행(스캔 속도 향상)하고, `--techs`는 탐지 없이 결과에 기술 태그만 강제로 추가(스택을 이미 알고 있을 때 사용)합니다.
+`--only-techs` 와 `--techs` 는 비슷해 보이지만 다릅니다.
+`--only-techs` 는 디텍터 목록을 필터링해서 지정한 항목만 탐지를
+실행하고(스캔 속도 향상), `--techs` 는 탐지를 건너뛰고 결과에 기술
+태그만 강제로 추가합니다(스택을 이미 알고 있을 때 사용).
 
 ## 출력 보강하기
 
-`--include` 가 plain 출력의 엔드포인트별 enrichment 를 켜고, `--ai-context` 는 큐레이션된 리뷰 컨텍스트를 첨부합니다:
+`--include` 는 plain 출력에 엔드포인트별 부가 정보를 더하고,
+`--ai-context` 는 리뷰용 컨텍스트를 첨부합니다.
 
 ```bash
-# 라우트 본문 안의 1-hop 핸들러 callee를 첨부
+# 라우트 본문 안의 1-hop 핸들러 callee 첨부
 noir scan . --include callee
 
-# AI 리뷰에 바로 쓸 컨텍스트 첨부 (guards, callees, sinks, validators, signals)
+# AI 리뷰용 컨텍스트 첨부 (guards, callees, sinks, validators, signals)
 noir scan . --ai-context
 
 # AI 컨텍스트 범위 좁히기
@@ -132,7 +137,7 @@ noir scan . --ai-context guards,sinks
 
 | 플래그                | 역할 |
 |----------------------|---|
-| positional 경로       | 스캔할 디렉토리(들) — `noir scan ./api ./worker` |
+| positional 경로       | 스캔할 디렉토리(들). 예: `noir scan ./api ./worker` |
 | `-b <경로>`           | positional 과 동치, v0 호환 |
 | `-f <형식>`           | 출력 형식 (json, yaml, oas3, curl 등) |
 | `-o <파일>`           | 출력을 파일로 저장 |
@@ -160,7 +165,7 @@ noir scan . --ai-context guards,sinks
 
 시작하기 가이드를 완료했습니다! 다음으로 살펴볼 내용:
 
-- **[CLI 명령어](@/usage/cli_commands/_index.md)**: v1 서브커맨드(스캔/list/cache/config/rules/…) 전체 레퍼런스
+- **[CLI 명령어](@/usage/cli_commands/_index.md)**: v1 서브커맨드(scan, list, cache, config, rules 등) 전체 레퍼런스
 - **[설정](@/usage/configurations/configuration_file/index.md)**: 매번 플래그를 반복하지 않도록 기본 옵션 설정
 - **[출력 형식](@/usage/output_formats/_index.md)**: 모든 출력 형식 자세히 알아보기
 - **[패시브 스캔](@/usage/passive_scan/_index.md)**: 하드코딩된 비밀키, 잘못된 설정 등 보안 이슈 스캔

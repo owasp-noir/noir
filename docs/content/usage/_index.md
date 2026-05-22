@@ -1,6 +1,6 @@
 +++
 title = "Usage Guide"
-description = "How to use Noir — supported technologies, output formats, AI integrations, and additional features."
+description = "How to use Noir: supported technologies, output formats, AI integrations, and additional features."
 weight = 2
 sort_by = "weight"
 

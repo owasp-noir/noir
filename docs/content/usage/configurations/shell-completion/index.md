@@ -63,7 +63,7 @@ noir completion elvish > ~/.config/elvish/lib/noir.elv
 echo 'use noir' >> ~/.config/elvish/rc.elv
 ```
 
-Once loaded, the completer wires into `$edit:completion:arg-completer[noir]` and adds subcommand-aware tab completion: `noir <Tab>` lists the verbs, `noir scan <Tab>` falls back to filesystem paths, and `noir scan -<Tab>` lists scan flags.
+Once loaded, the completer registers at `$edit:completion:arg-completer[noir]`. `noir <Tab>` lists the verbs, `noir scan <Tab>` falls back to filesystem paths, and `noir scan -<Tab>` lists scan flags.
 
 ## Homebrew Users
 

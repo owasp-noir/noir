@@ -28,8 +28,9 @@ noir scan .
 
 Noir reads the source files, detects which frameworks are in use, and prints every endpoint it finds: methods, paths, parameters, headers, and cookies.
 
-> **v0 compatibility:** the v0 form `noir -b ./app` still works without
-> changes; the router default-routes bare-flag invocations to `scan`.
+> **v0 compatibility:** the v0 form `noir -b ./app` still works
+> without changes. The router falls back to `scan` for any
+> invocation that starts with a flag.
 
 ## Check What Was Detected
 
@@ -113,7 +114,8 @@ noir scan . --exclude-path "*_test.go,vendor/*,**/node_modules/**"
 
 ## Enrich the Output
 
-The `--include` flag turns on per-endpoint enrichment in the plain output, and `--ai-context` adds a curated review context:
+`--include` adds per-endpoint detail to the plain output, and
+`--ai-context` attaches a review context for AI auditors.
 
 ```bash
 # Attach 1-hop handler callees (function/method calls inside the route body)
@@ -160,7 +162,7 @@ For build details (Crystal / LLVM / target), run `noir version --verbose`. Run `
 
 You've completed the Getting Started guide! Here's what to explore next:
 
-- **[CLI Commands](@/usage/cli_commands/_index.md)**: The full v1 subcommand reference (scan, list, cache, config, rules, …)
+- **[CLI Commands](@/usage/cli_commands/_index.md)**: The full v1 subcommand reference (scan, list, cache, config, rules, and so on)
 - **[Configurations](@/usage/configurations/configuration_file/index.md)**: Set default options so you don't repeat flags every time
 - **[Output Formats](@/usage/output_formats/_index.md)**: Dive deeper into all output formats
 - **[Passive Scan](@/usage/passive_scan/_index.md)**: Scan for security issues like hardcoded secrets and misconfigurations
