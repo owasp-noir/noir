@@ -84,6 +84,36 @@ async fn update_article(
     HttpResponse::Ok().body("Updated")
 }
 
+// Scoped service registration. In real actix-web apps, handlers are
+// often declared with route attributes and mounted under web::scope(...)
+// from configure functions.
+#[get("/posts")]
+async fn scoped_posts() -> impl Responder {
+    HttpResponse::Ok().body("Scoped posts")
+}
+
+#[get("/reports/{id}")]
+async fn scoped_report(path: web::Path<u32>) -> impl Responder {
+    HttpResponse::Ok().body(format!("Report {}", path.into_inner()))
+}
+
+#[get("/nested")]
+async fn nested_scoped_posts() -> impl Responder {
+    HttpResponse::Ok().body("Nested scoped posts")
+}
+
+fn configure(cfg: &mut web::ServiceConfig) {
+    cfg.service(
+        web::scope("/api")
+            .service(scoped_posts)
+            .service(scoped_report),
+    );
+    cfg.service(
+        web::scope("/root")
+            .service(web::scope("/api").service(nested_scoped_posts)),
+    );
+}
+
 async fn manual_hello() -> impl Responder {
     HttpResponse::Ok().body("Hey there!")
 }

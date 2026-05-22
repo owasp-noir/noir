@@ -20,6 +20,8 @@ module Analyzer::Rust
       test_regions = RustEngine.collect_cfg_test_regions(source)
 
       Noir::TreeSitter.parse_rust(source) do |root|
+        scoped_services = collect_service_registrations(root, source, test_regions)
+
         each_routing_pair(root) do |attr, function|
           next if RustEngine.inside_test_region?(attr, test_regions)
 
@@ -27,14 +29,17 @@ module Analyzer::Rust
           next unless route
           route_path, method, attr_row = route
 
-          details = Details.new(PathInfo.new(path, attr_row))
-          endpoint = Endpoint.new(route_path, method, details)
+          handler_name = function_name(function, source)
+          prefixes = handler_name ? scoped_services[handler_name]? : nil
 
-          extract_path_params(route_path, endpoint)
-          extract_function_params(function, source, endpoint)
-          attach_handler_callees(function, source, path, endpoint) if include_callee
-
-          endpoints << endpoint
+          if prefixes && !prefixes.empty?
+            prefixes.each do |prefix|
+              endpoint_path = scoped_route_path(prefix, route_path)
+              endpoints << build_attribute_endpoint(endpoint_path, method, attr_row, path, function, source, include_callee)
+            end
+          else
+            endpoints << build_attribute_endpoint(route_path, method, attr_row, path, function, source, include_callee)
+          end
         end
 
         # Second pass: `App::new().route("/path", web::<verb>().to(handler))`
@@ -60,13 +65,97 @@ module Analyzer::Rust
       endpoints
     end
 
+    private def build_attribute_endpoint(route_path : String,
+                                         method : String,
+                                         attr_row : Int32,
+                                         file_path : String,
+                                         function : LibTreeSitter::TSNode,
+                                         source : String,
+                                         include_callee : Bool) : Endpoint
+      details = Details.new(PathInfo.new(file_path, attr_row))
+      endpoint = Endpoint.new(route_path, method, details)
+
+      extract_path_params(route_path, endpoint)
+      extract_function_params(function, source, endpoint)
+      attach_handler_callees(function, source, file_path, endpoint) if include_callee
+
+      endpoint
+    end
+
+    # Actix attribute routes are commonly mounted with
+    # `web::scope("/api").service(handler)`. The attribute itself only
+    # carries the local path, so the service registration is needed to
+    # avoid emitting `/posts` when the real endpoint is `/api/posts`.
+    private def collect_service_registrations(root : LibTreeSitter::TSNode,
+                                              source : String,
+                                              test_regions : Array(Tuple(Int32, Int32))) : Hash(String, Array(String))
+      registrations = {} of String => Array(String)
+      collect_service_registrations(root, source, test_regions, "", registrations)
+      registrations
+    end
+
+    private def collect_service_registrations(node : LibTreeSitter::TSNode,
+                                              source : String,
+                                              test_regions : Array(Tuple(Int32, Int32)),
+                                              active_prefix : String,
+                                              registrations : Hash(String, Array(String)))
+      if Noir::TreeSitter.node_type(node) == "call_expression"
+        return if RustEngine.inside_test_region?(node, test_regions)
+
+        if field_call_name(node, source) == "service"
+          args = Noir::TreeSitter.field(node, "arguments")
+          return unless args
+          named = named_children(args)
+          return unless named.size == 1
+
+          function = Noir::TreeSitter.field(node, "function")
+          return unless function
+          receiver = Noir::TreeSitter.field(function, "value")
+          receiver_prefix = receiver ? (extract_scope_prefix(receiver, source) || "") : ""
+          service_prefix = scoped_route_path(active_prefix, receiver_prefix)
+
+          if handler_name = service_handler_name(named[0], source)
+            push_registration(registrations, handler_name, service_prefix)
+          else
+            collect_service_registrations(named[0], source, test_regions, service_prefix, registrations)
+          end
+
+          collect_service_registrations(receiver, source, test_regions, active_prefix, registrations) if receiver
+          return
+        end
+      end
+
+      Noir::TreeSitter.each_named_child(node) do |child|
+        collect_service_registrations(child, source, test_regions, active_prefix, registrations)
+      end
+    end
+
+    private def push_registration(registrations : Hash(String, Array(String)),
+                                  handler_name : String,
+                                  prefix : String)
+      prefixes = registrations[handler_name] ||= [] of String
+      prefixes << prefix unless prefixes.includes?(prefix)
+    end
+
+    private def service_handler_name(node : LibTreeSitter::TSNode, source : String) : String?
+      case Noir::TreeSitter.node_type(node)
+      when "identifier"
+        Noir::TreeSitter.node_text(node, source)
+      when "scoped_identifier"
+        Noir::TreeSitter.node_text(node, source).split("::").last
+      end
+    end
+
+    private def function_name(function : LibTreeSitter::TSNode, source : String) : String?
+      name = Noir::TreeSitter.field(function, "name")
+      name ? Noir::TreeSitter.node_text(name, source) : nil
+    end
+
     # Walks `call_expression` nodes whose receiver chain looks like
     # `<owner>.route(<path_lit>, web::<verb>().to(<handler>))` (i.e.,
     # `App::new().route(...)`, `web::scope("/x").route(...)`,
     # `web::resource("/y").route(...)`) and returns
     # `{path, [verbs]}`. Returns `nil` when the shape doesn't match.
-    # Scope-prefix application is intentionally out of scope here —
-    # it requires walking the parent chain.
     private def extract_builder_route(call : LibTreeSitter::TSNode, source : String) : Tuple(String, Array(String))?
       function = Noir::TreeSitter.field(call, "function")
       return unless function
@@ -95,6 +184,9 @@ module Analyzer::Rust
         return unless path_lit
         methods = extract_web_verbs(named[0], source)
         return if methods.empty?
+        if scope_prefix = extract_scope_prefix(receiver, source)
+          path_lit = scoped_route_path(scope_prefix, path_lit)
+        end
         return {path_lit, methods}
       end
 
@@ -112,8 +204,7 @@ module Analyzer::Rust
       if receiver
         scope_prefix = extract_scope_prefix(receiver, source)
         if scope_prefix
-          combined = "#{scope_prefix.rstrip('/')}/#{path_lit.lstrip('/')}"
-          path_lit = combined
+          path_lit = scoped_route_path(scope_prefix, path_lit)
         end
       end
 
@@ -148,6 +239,33 @@ module Analyzer::Rust
         end
       end
       nil
+    end
+
+    private def field_call_name(call : LibTreeSitter::TSNode, source : String) : String?
+      function = Noir::TreeSitter.field(call, "function")
+      return unless function && Noir::TreeSitter.node_type(function) == "field_expression"
+      field = Noir::TreeSitter.field(function, "field")
+      field ? Noir::TreeSitter.node_text(field, source) : nil
+    end
+
+    private def named_children(node : LibTreeSitter::TSNode) : Array(LibTreeSitter::TSNode)
+      named = [] of LibTreeSitter::TSNode
+      Noir::TreeSitter.each_named_child(node) { |c| named << c }
+      named
+    end
+
+    private def scoped_route_path(prefix : String, route_path : String) : String
+      normalized_prefix = prefix.starts_with?("/") ? prefix : "/#{prefix}"
+      normalized_path = route_path.starts_with?("/") ? route_path : "/#{route_path}"
+
+      return normalized_path if normalized_prefix == "/"
+      clean_prefix = normalized_prefix.rstrip('/')
+      return normalized_path if normalized_path == clean_prefix || normalized_path.starts_with?("#{clean_prefix}/")
+
+      suffix = normalized_path.lstrip('/')
+      return clean_prefix if suffix.empty?
+
+      "#{clean_prefix}/#{suffix}"
     end
 
     # Find the path string carried by a `web::resource(<path>)` call.

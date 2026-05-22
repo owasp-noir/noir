@@ -23,7 +23,11 @@ async fn main() {
             Router::new()
                 .route("/users", get(handler))
                 .route("/admin", post(handler)),
-        );
+        )
+        // Real applications often keep a Router-returning function
+        // per module and mount it under a prefix.
+        .nest("/v1", v1_routes())
+        .nest("/root", api_routes());
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
         .await
@@ -34,6 +38,20 @@ async fn main() {
 
 async fn handler() -> Html<&'static str> {
     Html("<h1>Hello, World!</h1>")
+}
+
+fn v1_routes() -> Router {
+    Router::new()
+        .route("/projects", get(handler))
+        .route("/projects/{id}", get(handler))
+}
+
+fn api_routes() -> Router {
+    Router::new().nest("/api", v2_routes())
+}
+
+fn v2_routes() -> Router {
+    Router::new().route("/audit", get(handler))
 }
 
 // Regression guard: routes registered inside `#[cfg(test)] mod tests`
