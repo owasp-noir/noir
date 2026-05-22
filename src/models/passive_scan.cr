@@ -70,8 +70,14 @@ struct PassiveScan
     @techs = yaml["techs"].as_a
   end
 
+  # A rule is usable when it has an id, a non-empty info name, and at
+  # least one matcher. The earlier `@info != ""` check compared an
+  # Info struct against a String, which is always true and therefore a
+  # no-op; the rewrite checks `@info.name` instead so rules with an
+  # empty name (effectively unusable for SARIF / human output) are
+  # dropped during load.
   def valid?
-    @id != "" && @info != "" && !@matchers.empty?
+    !@id.empty? && !@info.name.empty? && !@matchers.empty?
   end
 end
 

@@ -85,8 +85,13 @@ class NoirRunner
 
       if !@options["passive_scan_path"].as_a.empty?
         @logger.sub "├── Using custom passive rules."
+        # Concatenate rules from every passive_scan_path. The previous
+        # assignment (`@passive_scans = NoirPassiveScan.load_rules …`)
+        # inside the loop silently dropped every path except the last
+        # one whenever the user passed multiple --passive-scan-path
+        # entries.
         @options["passive_scan_path"].as_a.each do |rule_path|
-          @passive_scans = NoirPassiveScan.load_rules rule_path.to_s, @logger
+          @passive_scans.concat(NoirPassiveScan.load_rules(rule_path.to_s, @logger))
         end
       else
         @logger.sub "├── Using default passive rules."

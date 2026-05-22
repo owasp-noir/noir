@@ -502,4 +502,63 @@ describe NoirPassiveScan do
       severities.should contain("low")
     end
   end
+
+  describe "PassiveScan#valid?" do
+    it "rejects rules with an empty info.name" do
+      yaml = YAML.parse <<-YAML
+        id: missing-name
+        info:
+          name: ""
+          author: [test]
+          severity: critical
+          description: ...
+          reference: []
+        matchers-condition: or
+        matchers:
+          - type: word
+            patterns: [needle]
+            condition: or
+        category: security
+        techs: ['*']
+        YAML
+      PassiveScan.new(yaml).valid?.should be_false
+    end
+
+    it "rejects rules with no matchers" do
+      yaml = YAML.parse <<-YAML
+        id: no-matchers
+        info:
+          name: empty
+          author: [test]
+          severity: critical
+          description: ...
+          reference: []
+        matchers-condition: or
+        matchers: []
+        category: security
+        techs: ['*']
+        YAML
+      PassiveScan.new(yaml).valid?.should be_false
+    end
+
+    it "accepts a well-formed rule" do
+      yaml = YAML.parse <<-YAML
+        id: well-formed
+        info:
+          name: ok
+          author: [test]
+          severity: critical
+          description: ...
+          reference: []
+        matchers-condition: or
+        matchers:
+          - type: word
+            patterns: [needle]
+            condition: or
+        category: security
+        techs: ['*']
+        YAML
+      PassiveScan.new(yaml).valid?.should be_true
+    end
+  end
 end
