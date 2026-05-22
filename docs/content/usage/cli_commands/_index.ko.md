@@ -25,6 +25,7 @@ noir <command> [arguments] [flags]
 | `noir cache info`      | LLM 캐시 디렉토리·항목 수·크기 표시                     |
 | `noir cache clear`     | 캐시된 AI 응답 전체 삭제                                |
 | `noir config show`     | 활성 설정 파일 출력                                     |
+| `noir config edit`     | `$VISUAL` / `$EDITOR` 로 설정 파일 열기                 |
 | `noir config init`     | 기본 설정 파일 생성 (멱등)                              |
 | `noir config path`     | 해석된 설정 경로 출력                                   |
 | `noir rules list`      | 룰 경로에 설치된 룰 파일 목록                           |
@@ -117,12 +118,17 @@ noir cache clear      # 캐시된 AI 응답 전체 삭제
 
 ```bash
 noir config show      # 활성 파일 출력
+noir config edit      # $VISUAL / $EDITOR 로 열기
 noir config init      # 기본 설정 생성 (멱등)
 noir config path      # 해석된 경로 출력
 ```
 
 설정 디렉토리는 `NOIR_HOME` 이 있으면 그 값을 따르고, 없으면 Unix에서는
 `$HOME/.config/noir`, Windows 에서는 `%APPDATA%\noir` 로 폴백합니다.
+
+`noir config edit` 는 `$VISUAL`, `$EDITOR`, 그리고 플랫폼 기본값
+(Unix: `vi`, Windows: `notepad`) 순서로 에디터를 결정합니다. 설정
+파일이 없으면 먼저 기본 파일을 만든 뒤 엽니다.
 
 ## Rules
 

@@ -1,13 +1,14 @@
 require "colorize"
+require "process"
 require "../common"
 require "../../config_initializer"
 require "../../utils/home"
 
-# `noir config <show|init|path>`
+# `noir config <show|edit|init|path>`
 #
 # Managed resource: the user-level YAML configuration file.
 module Noir::CLI::ConfigCommand
-  ACTIONS = %w[show init path]
+  ACTIONS = %w[show edit init path]
 
   def self.run(argv : Array(String))
     action = nil
@@ -28,6 +29,7 @@ module Noir::CLI::ConfigCommand
 
     case action
     when "show" then show
+    when "edit" then edit
     when "init" then init
     when "path" then puts config_path
     else
@@ -45,11 +47,16 @@ module Noir::CLI::ConfigCommand
 
       #{green.call("ACTIONS:")}
         #{cyan.call("show")}                   Print the contents of the active config file
+        #{cyan.call("edit")}                   Open the config file in $VISUAL / $EDITOR
         #{cyan.call("init")}                   Create the default config file (idempotent)
         #{cyan.call("path")}                   Print the resolved config file path
 
       The config directory is controlled by NOIR_HOME (defaults to
       $HOME/.config/noir on Unix and %APPDATA%\\noir on Windows).
+
+      `edit` resolves the editor in the order $VISUAL, $EDITOR, then a
+      platform default (vi on Unix, notepad on Windows). The config
+      file is created first if it does not yet exist.
       HELP
   end
 
@@ -77,7 +84,52 @@ module Noir::CLI::ConfigCommand
     end
   end
 
+  def self.edit
+    # Ensure the file exists before launching the editor so users always
+    # land on something well-formed rather than a brand-new empty buffer.
+    unless File.exists?(config_path)
+      ConfigInitializer.new.setup
+      if File.exists?(config_path)
+        STDERR.puts "Created default config at #{config_path}"
+      else
+        Noir::CLI.die("Failed to create config file at #{config_path}.")
+      end
+    end
+
+    editor = pick_editor
+    command = "#{editor} #{Process.quote(config_path)}"
+    status = Process.run(
+      command,
+      shell: true,
+      input: Process::Redirect::Inherit,
+      output: Process::Redirect::Inherit,
+      error: Process::Redirect::Inherit,
+    )
+
+    unless status.success?
+      Noir::CLI.die("Editor '#{editor}' exited with status #{status.exit_code}.")
+    end
+  end
+
   def self.config_path : String
     File.expand_path(File.join(get_home, "config.yaml"))
+  end
+
+  private def self.pick_editor : String
+    visual = ENV["VISUAL"]?
+    return visual unless visual.nil? || visual.empty?
+
+    editor = ENV["EDITOR"]?
+    return editor unless editor.nil? || editor.empty?
+
+    default_editor
+  end
+
+  private def self.default_editor : String
+    {% if flag?(:windows) %}
+      "notepad"
+    {% else %}
+      "vi"
+    {% end %}
   end
 end

@@ -25,6 +25,7 @@ noir <command> [arguments] [flags]
 | `noir cache info`      | Show LLM cache directory, entry count, and size         |
 | `noir cache clear`     | Remove every cached AI response                         |
 | `noir config show`     | Print the active config file                            |
+| `noir config edit`     | Open the config file in `$VISUAL` / `$EDITOR`           |
 | `noir config init`     | Create the default config file (idempotent)             |
 | `noir config path`     | Print the resolved config path                          |
 | `noir rules list`      | List rule files installed under the rules path          |
@@ -114,12 +115,17 @@ for one run, and `--cache-clear` wipes before scanning.
 
 ```bash
 noir config show      # print the active file
+noir config edit      # open the file in $VISUAL / $EDITOR
 noir config init      # create the default config (idempotent)
 noir config path      # print the resolved path
 ```
 
 The config directory follows `NOIR_HOME` if set; otherwise it falls back
 to `$HOME/.config/noir` on Unix and `%APPDATA%\noir` on Windows.
+
+`noir config edit` resolves the editor in the order `$VISUAL`,
+`$EDITOR`, then a platform default (`vi` on Unix, `notepad` on Windows).
+The config file is created first if it does not yet exist.
 
 ## Rules
 
