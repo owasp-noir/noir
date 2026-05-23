@@ -4,19 +4,26 @@ All notable changes to [Noir](https://github.com/owasp-noir/noir) will be docume
 
 ## v1.0.0
 
-The CLI moves from a flag-only surface to a verb-centric layout, while
-keeping every v0 invocation pattern (`noir -b ./app [flags]`) working
-unchanged. See the [CLI commands reference](docs/content/usage/cli_commands/_index.md)
+Two motivations for the major bump: noir's analyzer / tagger / passive-scan
+surface is now stable enough across the supported framework matrix to
+deserve a 1.x line, and the CLI moves from a flag-only layout to a
+verb-centric one (`noir scan` / `list` / `cache` / `config` / `rules` /
+`completion` / `version` / `help`). The verb introduction is the *only*
+intentional design break — every v0 invocation pattern (`noir -b ./app
+[flags]`) still works untouched, and the entire v0 → v1 cleanup was
+designed around preserving the v0 surface anywhere it could be preserved.
+See the [CLI commands reference](docs/content/usage/cli_commands/_index.md)
 for the full surface.
 
 ### Added
 - New subcommand surface:
   - `noir scan PATHS...` — positional paths plus every existing scan flag
   - `noir list techs|taggers|formats` — built-in catalogs
-  - `noir cache info|clear` — on-disk LLM response cache
-  - `noir config show|init|path` — user-level YAML configuration
+  - `noir cache info|clear|purge` — on-disk LLM response cache;
+    `purge <days>` drops entries older than N days
+  - `noir config show|edit|init|path` — user-level YAML configuration
   - `noir rules list|update|path` — passive-scan rules repository
-  - `noir completion <zsh|bash|fish>` — shell completion script
+  - `noir completion <zsh|bash|fish|elvish>` — shell completion script
   - `noir version [--verbose]` — version number (or build details)
   - `noir help [command]` — top-level overview / per-command help
 - `--pvalue TYPE=VAL` (repeatable): unified parameter-value flag covering
@@ -27,6 +34,17 @@ for the full surface.
   `signals`, `callee`) in plain output
 - `--no-color` (and the `NO_COLOR` env var) honored as a global flag
   across every subcommand, not just `scan`
+- Elvish shell completion alongside zsh / bash / fish
+- Endpoint JSON output gains two additive fields: `callees`
+  (1-hop call graph populated by analyzers that surface it) and
+  `ai_context` (per-endpoint AI review context, present only when
+  `--ai-context` is enabled)
+- Docker image (`ghcr.io/owasp-noir/noir`) now ships the upstream
+  `noir-passive-rules` snapshot baked at `/opt/noir/passive_rules/`,
+  so `noir scan -P` works out of the box inside the container without
+  git or network. The user-managed `~/.config/noir/passive_rules/`
+  still wins when populated; `NOIR_BUNDLED_RULES_PATH` env var lets
+  packagers override the bundled location.
 
 ### Changed
 - Router default-routes any bare-flag invocation to `scan`, preserving
@@ -40,15 +58,69 @@ for the full surface.
   `--help-all` → `noir help`.
 - Shell completion scripts are now subcommand-aware: `noir <TAB>`
   completes verbs, `noir scan -<TAB>` completes scan flags.
+- Default `concurrency` scales with the host's CPU count
+  (`System.cpu_count.clamp(4, 32)`) instead of the v0 fixed `"20"`.
+  Explicit user configuration is still respected.
+- GitHub Action switched from `using: docker` (sibling Dockerfile
+  rebuilt on every call) to `using: composite` (docker pull a
+  pre-built ghcr image and run). `with:` inputs and outputs are
+  unchanged; the first invocation is faster since the jq install no
+  longer runs per workflow, and the image tag now tracks
+  `github.action_ref` automatically.
+- Docker image is self-contained: ships `jq`, `ca-certificates`,
+  `/entrypoint.sh`, the passive-rules snapshot, and GitHub Action
+  labels. The standalone `github-action/Dockerfile` was folded in.
+- `noir rules update` is no longer silent when rules are already up
+  to date — emits an explicit success / warning message every time.
+- AI provider model metadata refreshed for v1 (gemini-3.5-flash etc.
+  added to `MODEL_TOKEN_LIMITS`); unknown models surface a warning
+  instead of silently using the default cap.
 - Documentation updates across the homepage, getting-started guide,
   troubleshooting, shell-completion, configuration, output-format, and
   AI-provider pages to lead with the v1 idiom (v0 examples preserved
   in compatibility callouts).
 
+### Fixed
+- `--send-es URL` (Elasticsearch delivery) shipped empty POST bodies
+  on every call because Crest's `Request.execute` ignores `body:` and
+  only honors `form:`. Switched to `form: body, json: true` — payloads
+  now actually reach Elasticsearch.
+- Passive scan AND-branch logged "Detected" before per-line
+  confirmation, so rules whose whole-file gate passed but matched no
+  single line produced false-positive log entries with zero findings.
+- Passive scan OR-branch logged "Detected" once per individual hit,
+  flooding output on noisy rules. Now logs once per (rule × file).
+- Passive scan retried `Regex.new` on every line × file when a
+  matcher's regex failed to compile at load time. Failed compilations
+  are now sticky; later matches short-circuit to false.
+- Passive scan rules with empty `patterns` arrays no longer match
+  every file (the prior `matcher.patterns && Array#all?` shape made
+  an empty array act as "match everything").
+- `--with-headers "Authorization: Bearer x:y:z"` lost everything
+  after the first colon. Now splits on the first colon only so
+  multi-colon values survive.
+- Latent bugs in the Deliver layer (`apply_all` chaining, matcher
+  dedup, header propagation, ES header leakage, header parsing).
+- Latent bugs in the OutputBuilder layer.
+- Latent bugs in the Tagger layer.
+- Latent bugs in the Passive Scan layer (whole-content prefilter
+  misapplication, others).
+- Latent bugs in ConfigInitializer (legacy boolean parsing).
+- `noir cache clear` silently dropped partial-delete failures behind
+  a single count; now reports the failed count alongside `deleted`.
+- `LLM::Cache.store` was not atomic; a crash mid-write corrupted the
+  cache entry and forced a spurious retry on the next scan. Writes
+  now go through a `.tmp` sibling + `File.rename`.
+- `LLM::Cache.clear` / `stats` walked every file in the cache
+  directory, so any non-cache file dropped there could be wiped or
+  miscounted. Both now filter on `.json`.
+- `NOIR_CACHE_DISABLE` tolerates surrounding whitespace.
+
 ### Removed
 - `--ollama URL` and `--ollama-model NAME` (deprecated since 2024).
   Use `--ai-provider ollama [--ai-model NAME]` instead — the CLI prints
   a one-line migration hint if either flag is passed.
+- `github-action/Dockerfile` (folded into the repo-root `Dockerfile`).
 
 ### Compatibility
 - The legacy `--include-path`, `--include-techs`, `--include-callee`,
@@ -57,6 +129,16 @@ for the full surface.
 - `noir` with no arguments now prints the top-level overview instead
   of the v0 "Base path is required" error; scripts that intentionally
   relied on the empty-args exit code should pass `noir scan` explicitly.
+- Endpoint JSON output is strictly additive — `callees` and
+  `ai_context` are new keys; every v0 field is preserved with the
+  same semantics. Strict-schema consumers (SARIF strict mode, etc.)
+  may need to allow the new keys.
+- Docker image tag conventions unchanged (`latest`, `1.0.0`, `1.0`,
+  `main`). Pinning the GitHub Action to `@v1.0.0` resolves to ghcr
+  tag `1.0.0` and ships the rules snapshot from that release.
+- `NOIR_HOME`, `NOIR_AI_KEY`, `NOIR_CACHE_DISABLE`, `NO_COLOR`, and
+  the on-disk paths under `~/.config/noir/` (passive_rules, cache/ai,
+  config.yaml) are unchanged from v0.
 
 ## v0.30.0
 
