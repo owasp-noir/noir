@@ -1,15 +1,17 @@
 +++
 title = "--ai-context and --include-callee — hint and sink for AI code review"
-description = "Two v1 flags that ship structured security context to AI source-code reviewers instead of raw code."
+description = "Two v1 flags that ship structured security context to AI source-code analysis instead of raw code."
 date = "2026-05-23"
 tags = ["v1", "ai-context", "callee", "design"]
 authors = ["hahwul"]
 template = "blog_post"
 +++
 
-AI source-code analysis tools are everywhere now. Most of them follow the same shape — feed code in, ask an LLM, get a report back. To actually be effective, the LLM needs to know *what to look at*. Drop the whole codebase on it and you burn tokens while missing the points that matter.
+Around late 2025, AI's leap forward reshaped how software gets built — and source-code vulnerability analysis has been moving in the same AI-first direction from roughly the same point.
 
-Noir v1 ships two flags that extract that "what to look at" upfront and pack it into the output:
+A lot of AI-based source-code analysis tools and approaches follow the same shape: feed code in, ask an LLM, get a report back. To actually work well, the LLM needs to know *what to look at*. Drop the whole codebase on it and you burn tokens while missing the points that matter.
+
+Noir v1 ships two flags that extract that "what to look at" upfront and pack it into the output.
 
 - `--include-callee` — adds a 1-hop callee graph to each endpoint as a `callees` array
 - `--ai-context` — includes the same callee data and sorts it into **five security categories** under `ai_context`
@@ -48,7 +50,7 @@ To an LLM this reads as "to review this endpoint, also look at `utils.py:3` and 
 - **validators** — input-validation calls
 - **signals** — heuristic flags like `state_change`, `credential_input`, `guard_absence`
 
-Running the same Flask `/sign` POST endpoint with `--ai-context` (excerpted from real v1.0.0 output):
+Running the same Flask `/sign` POST endpoint with `--ai-context`
 
 ```bash
 $ noir -b ./flask_app --ai-context -f json
@@ -78,7 +80,7 @@ $ noir -b ./flask_app --ai-context -f json
 }
 ```
 
-What the LLM gets from this single endpoint:
+What the LLM gets from this single endpoint
 
 1. There's a `credential_input` — a password arrives via form
 2. It's a `state_change` — POST
@@ -87,7 +89,7 @@ What the LLM gets from this single endpoint:
 
 Human reviewer or LLM, four signals stacking on one handler land cleanly: **review this first**. A credential-handling endpoint missing auth is priority 1 without further reasoning.
 
-For contrast, here's a case where `--ai-context` did pick up auth (from the flask_auth fixture):
+For contrast, here's a case where `--ai-context` did pick up auth (flask_auth fixture)
 
 ```json
 {
@@ -105,7 +107,7 @@ For contrast, here's a case where `--ai-context` did pick up auth (from the flas
 }
 ```
 
-The `@login_required` decorator landed in `guards`. To an LLM that's a *negative* signal — "this endpoint already has an auth check, focus on other vuln classes instead".
+The `@login_required` decorator landed in `guards`. To an LLM that's a **negative** signal — "this endpoint already has an auth check, focus on other vuln classes instead".
 
 ## Hint and sink at the same time
 
@@ -114,7 +116,7 @@ The interesting bit is that these flags work as both hint and sink at once.
 - As a **hint** — pre-curated per-endpoint context narrows the LLM's attention. Instead of "review the entire codebase", it's "this handler plus these files".
 - As a **sink** (the source-to-sink kind) — the `sinks` bucket lists framework-aware candidates for where data might land. A generic LLM *can* reason that `User.query.filter` is SQL, but it burns tokens doing so every time. Noir pre-labels them so the LLM can skip that reasoning step.
 
-The framework-aware labeling is where the leverage is. The same callee name `query` means different things in different contexts:
+The framework-aware labeling is where the leverage is. The same callee name `query` means different things in different contexts.
 
 - Flask + SQLAlchemy: `User.query.filter` → SQL sink
 - Express + MongoDB: `User.find` → NoSQL sink
@@ -124,7 +126,7 @@ Noir identifies the framework in the detector phase, and the augmentor applies t
 
 ## Recommended use
 
-For an AI-driven code review pipeline:
+For an AI-driven code review pipeline
 
 ```bash
 # Every category
@@ -143,4 +145,4 @@ The full category set is best for the first audit pass. For incremental review o
 
 `--ai-context`'s sink and guard patterns are currently regex-based heuristics. We don't do real data-flow tracing — we mark "this looks like a sink" based on callee names and code patterns, and stop there. That's a deliberate trade-off. Precise taint analysis has dedicated tooling, and Noir aims to be the layer that gives that tool (or an LLM) a fast **focus point** to start from.
 
-Over the 1.x line the pattern catalogue will get more framework-aware, and new signal kinds will land. Feedback and new pattern proposals welcome on [GitHub Issues](https://github.com/owasp-noir/noir/issues).
+Going forward, the pattern catalogue will get more framework-aware and new signal kinds will land. Feedback and new pattern proposals are always welcome.
