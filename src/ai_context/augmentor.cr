@@ -1037,15 +1037,38 @@ module NoirAIContext
       paren_balance = 0
       # Block style starts as `nil` and locks in to one of:
       #   :brace   — JS / Go / Java / Rust / C-family `{ ... }`
-      #   :ruby    — Ruby `def …` (closes with `end`, but we just let
-      #              MAX_ROUTE_SCOPE_LINES bound it — `end` parsing is
-      #              brittle next to identifiers like `puts user.send`)
-      #   :python  — Python `def …:` / `class …:` (indented body, no
-      #              braces; let MAX_ROUTE_SCOPE_LINES bound)
+      #   :ruby    — Ruby `def name` (ends on a line with `end` at
+      #              the same indent as `def`)
+      #   :python  — Python `def name():` / `class …:` (ends when a
+      #              non-blank line returns to ≤ the def's indent)
       block_style : Symbol? = nil
+      # Indent of the `def` / `class` that triggered :python / :ruby
+      # mode. We use it to stop the capture when control returns to
+      # that column (= the next top-level statement / next decorator).
+      def_indent : Int32? = nil
 
       start_idx.upto(Math.min(start_idx + MAX_ROUTE_SCOPE_LINES - 1, lines.size - 1)) do |idx|
         raw_line = lines[idx]
+        line_indent = raw_line.size - raw_line.lstrip.size
+
+        # Indent-based end-of-block check for :python / :ruby. Runs
+        # BEFORE we append the line, so we don't bleed into the next
+        # function / decorator (the bug behind the django `/public/`
+        # false-positive — the next function's `@login_required`
+        # decorator was getting captured into the previous handler's
+        # scope).
+        if (def_idx = def_indent) && (style = block_style)
+          if (style == :python || style == :ruby) &&
+             !raw_line.strip.empty? && line_indent <= def_idx
+            # `end` on a line at def-column belongs to the def — keep
+            # it. Anything else at that column is the *next* statement.
+            stripped_check = raw_line.strip
+            if !(style == :ruby && stripped_check == "end")
+              break
+            end
+          end
+        end
+
         selected << "#{idx + 1}: #{raw_line.strip}"
 
         sanitized = raw_line.gsub(/(['"]).*?\1/, "\"\"")
@@ -1063,24 +1086,30 @@ module NoirAIContext
 
         # Lock in a block style on the first line that opens one. Once
         # locked, later lines don't change the kind.
-        block_style ||= if opens > 0 || sanitized.matches?(/\bdo\b/)
-                          :brace
-                        elsif !is_decorator && stripped.ends_with?(":")
-                          :python
-                        elsif !is_decorator && (stripped.matches?(/\b(def|class)\s+\w+/) || stripped.matches?(/\bfunction\s+\w+/))
-                          :ruby # also covers JS plain `function name()` shape — treated as let-MAX-bound
-                        end
+        if block_style.nil?
+          if opens > 0 || sanitized.matches?(/\bdo\b/)
+            block_style = :brace
+          elsif !is_decorator && stripped.ends_with?(":")
+            block_style = :python
+            def_indent = line_indent
+          elsif !is_decorator && (stripped.matches?(/\b(def|class)\s+\w+/) || stripped.matches?(/\bfunction\s+\w+/))
+            block_style = :ruby
+            def_indent = line_indent
+          end
+        end
 
         case block_style
         when :brace
           # JS-style: capture until braces close back to zero.
           break if brace_depth <= 0
-        when :python, :ruby
-          # No reliable cheap end-of-block marker — let
-          # MAX_ROUTE_SCOPE_LINES bound the capture so the snippet
-          # surfaces sinks / validators that live inside the handler
-          # body.
-          next
+        when :python
+          # Indent guard runs at the top of the next iteration; no
+          # per-line break needed here.
+        when :ruby
+          # Stop after the matching `end` at the def's indent.
+          if def_indent == line_indent && stripped == "end"
+            break
+          end
         else
           statement_done = !is_decorator && (stripped.ends_with?(";") || stripped.ends_with?(")") || stripped.ends_with?(" do"))
           break if statement_done && paren_balance <= 0

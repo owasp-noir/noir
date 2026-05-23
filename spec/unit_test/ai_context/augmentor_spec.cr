@@ -768,6 +768,66 @@ describe "NoirAIContext" do
     end
   end
 
+  it "does not bleed Python route scope into the next decorator (regression)" do
+    # Pre-fix, the `:python` block style used MAX_ROUTE_SCOPE_LINES as
+    # its only bound, so a 3-line public function followed by a
+    # `@login_required` decorator would falsely surface auth_guard on
+    # the public route.
+    source = <<-CODE
+      def public_page(request):
+          return HttpResponse("Public content")
+
+
+      @login_required
+      def post_list(request):
+          return HttpResponse("Post list")
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      public_ep = Endpoint.new("/public/", "GET")
+      details = public_ep.details
+      details.add_path(PathInfo.new(path, 1))
+      public_ep.details = details
+
+      private_ep = Endpoint.new("/posts/", "GET")
+      pdetails = private_ep.details
+      pdetails.add_path(PathInfo.new(path, 5)) # decorator line (Django analyzer points here)
+      private_ep.details = pdetails
+
+      endpoints = NoirAIContext.apply([public_ep, private_ep])
+
+      public_ctx = endpoints[0].ai_context.should_not be_nil
+      public_ctx.guards.should be_empty
+
+      private_ctx = endpoints[1].ai_context.should_not be_nil
+      private_ctx.guards.map(&.kind).should contain("auth_guard")
+    end
+  end
+
+  it "stops Ruby route scope at the matching `end` keyword" do
+    # Ruby `def name … end` pairs at the same indent. The next def
+    # below must not leak into the current handler's snippet.
+    source = <<-CODE
+      def public_action
+        render plain: "ok"
+      end
+
+      def admin_action
+        authorize! :manage, :admin
+      end
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      public_ep = Endpoint.new("/public", "GET")
+      details = public_ep.details
+      details.add_path(PathInfo.new(path, 1))
+      public_ep.details = details
+
+      ctx = NoirAIContext.apply([public_ep])[0].ai_context.should_not be_nil
+      ctx.guards.map(&.kind).should_not contain("authz_guard")
+    end
+  end
+
   it "does NOT emit rate_limit_absence on routes without credential params" do
     source = <<-CODE
       app.post('/posts', (req, res) => {
