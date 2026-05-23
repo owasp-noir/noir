@@ -48,9 +48,21 @@ class NoirRunner
     @passive_results = [] of PassiveScanResult
 
     if @config_file != ""
-      config = YAML.parse(File.read(@config_file)).as_h
-      symbolized_hash = config.transform_keys(&.to_s)
-      @options = @options.merge(symbolized_hash) { |_, _, new_val| new_val }
+      # The CLI layer (`Noir::CliValidation.validate_config_file!`)
+      # has already verified the file exists, is a file, parses as
+      # YAML, and is a top-level mapping. Still rescue here as a
+      # safety net for callers that construct NoirRunner without
+      # going through the CLI (specs, library use).
+      begin
+        parsed = YAML.parse(File.read(@config_file))
+        unless parsed.raw.nil?
+          config = parsed.as_h
+          symbolized_hash = config.transform_keys(&.to_s)
+          @options = @options.merge(symbolized_hash) { |_, _, new_val| new_val }
+        end
+      rescue ex
+        STDERR.puts "WARNING: ignoring --config-file (#{@config_file}): #{ex.message}".colorize(:yellow)
+      end
     end
 
     @techs = [] of String

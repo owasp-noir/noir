@@ -63,4 +63,80 @@ describe Noir::CliValidation do
       Noir::CliValidation.validate_tagger_names!(options)
     end
   end
+
+  describe "validate_config_file!" do
+    it "passes when no config-file is set" do
+      options = create_test_options
+      options["config_file"] = YAML::Any.new("")
+      Noir::CliValidation.validate_config_file!(options)
+    end
+
+    it "rejects missing config-file" do
+      options = create_test_options
+      options["config_file"] = YAML::Any.new("/tmp/no-such-config-#{Random.rand(1_000_000)}.yaml")
+      expect_raises(Noir::CliValidation::Error, /does not exist/) do
+        Noir::CliValidation.validate_config_file!(options)
+      end
+    end
+
+    it "rejects directories passed as --config-file" do
+      options = create_test_options
+      options["config_file"] = YAML::Any.new("/tmp")
+      expect_raises(Noir::CliValidation::Error, /is not a file/) do
+        Noir::CliValidation.validate_config_file!(options)
+      end
+    end
+
+    it "rejects malformed YAML" do
+      path = File.tempname("noir-bad-yaml")
+      File.write(path, "not valid yaml: :\n  - \"broken\n")
+      begin
+        options = create_test_options
+        options["config_file"] = YAML::Any.new(path)
+        expect_raises(Noir::CliValidation::Error, /invalid YAML/) do
+          Noir::CliValidation.validate_config_file!(options)
+        end
+      ensure
+        File.delete(path) if File.exists?(path)
+      end
+    end
+
+    it "rejects YAML whose top-level value is not a mapping" do
+      path = File.tempname("noir-list-yaml")
+      File.write(path, "- one\n- two\n")
+      begin
+        options = create_test_options
+        options["config_file"] = YAML::Any.new(path)
+        expect_raises(Noir::CliValidation::Error, /must be a YAML mapping/) do
+          Noir::CliValidation.validate_config_file!(options)
+        end
+      ensure
+        File.delete(path) if File.exists?(path)
+      end
+    end
+
+    it "accepts an empty file (treated as no overrides)" do
+      path = File.tempname("noir-empty-yaml")
+      File.write(path, "")
+      begin
+        options = create_test_options
+        options["config_file"] = YAML::Any.new(path)
+        Noir::CliValidation.validate_config_file!(options)
+      ensure
+        File.delete(path) if File.exists?(path)
+      end
+    end
+
+    it "accepts a valid YAML mapping" do
+      path = File.tempname("noir-good-yaml")
+      File.write(path, "concurrency: 10\nformat: yaml\n")
+      begin
+        options = create_test_options
+        options["config_file"] = YAML::Any.new(path)
+        Noir::CliValidation.validate_config_file!(options)
+      ensure
+        File.delete(path) if File.exists?(path)
+      end
+    end
+  end
 end

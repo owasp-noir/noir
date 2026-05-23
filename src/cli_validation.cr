@@ -35,6 +35,33 @@ module Noir::CliValidation
     validate_concurrency!(options)
     validate_output_path!(options)
     validate_tagger_names!(options)
+    validate_config_file!(options)
+  end
+
+  # `--config-file PATH` needs to exist, be a file (not a directory),
+  # and parse as a YAML mapping. The previous shape let `File.read` /
+  # `YAML.parse` raise straight through to the user, producing a
+  # Crystal stack trace for what should be a one-line "wrong path"
+  # message.
+  def self.validate_config_file!(options : Hash(String, YAML::Any))
+    path = options["config_file"]?.try(&.to_s)
+    return if path.nil? || path.empty?
+
+    raise Error.new("--config-file does not exist: #{path}") unless File.exists?(path)
+    raise Error.new("--config-file is not a file: #{path}") if File.directory?(path)
+
+    begin
+      content = File.read(path)
+      parsed = YAML.parse(content)
+    rescue ex : YAML::ParseException
+      raise Error.new("--config-file contains invalid YAML: #{path}\n  #{ex.message}")
+    rescue ex : IO::Error
+      raise Error.new("--config-file could not be read: #{path}\n  #{ex.message}")
+    end
+
+    # Empty files parse to nil; that's OK (treated as "no overrides").
+    return if parsed.raw.nil?
+    raise Error.new("--config-file must be a YAML mapping at the top level: #{path}") unless parsed.raw.is_a?(Hash)
   end
 
   def self.validate_base_paths!(options : Hash(String, YAML::Any))
