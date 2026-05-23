@@ -1187,6 +1187,130 @@ describe "NoirAIContext" do
     context.signals.map(&.kind).should_not contain("path_traversal")
   end
 
+  it "flags jwt.decode with verify=False as jwt_unsafe" do
+    source = <<-CODE
+      @app.route('/me')
+      def me():
+          payload = jwt.decode(request.headers['Authorization'], options={"verify_signature": False})
+          return jsonify(user=payload['sub'])
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/me", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should contain("jwt_unsafe")
+    end
+  end
+
+  it "flags algorithm: 'none' as jwt_unsafe" do
+    source = <<-CODE
+      app.post('/issue', (req, res) => {
+        const token = jwt.sign(payload, secret, { algorithm: 'none' })
+        res.json({ token })
+      })
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/issue", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should contain("jwt_unsafe")
+    end
+  end
+
+  it "does NOT flag jwt.decode that verifies the signature" do
+    source = <<-CODE
+      def me():
+          payload = jwt.decode(request.headers['Authorization'], SECRET, algorithms=['HS256'])
+          return jsonify(user=payload['sub'])
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/me", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should_not contain("jwt_unsafe")
+    end
+  end
+
+  it "flags CORS wildcard origin + credentials true together as cors_open" do
+    source = <<-CODE
+      app.use(cors({ origin: '*', credentials: true }))
+
+      app.get('/data', (req, res) => {
+        res.json({ items: [] })
+      })
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/data", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should contain("cors_open")
+    end
+  end
+
+  it "does NOT flag CORS wildcard origin without credentials" do
+    source = <<-CODE
+      app.use(cors({ origin: '*' }))
+
+      app.get('/public', (req, res) => {
+        res.json({ ok: true })
+      })
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/public", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should_not contain("cors_open")
+    end
+  end
+
+  it "treats jwt_unsafe as a sharp signal that bumps priority_review" do
+    source = <<-CODE
+      @app.route('/me')
+      def me():
+          payload = jwt.decode(token, options={"verify_signature": False})
+          return jsonify(user=payload)
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/me", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      priority = context.signals.find(&.kind.== "priority_review")
+      priority.should_not be_nil
+      # jwt_unsafe alone (sharp +1, score=1) doesn't qualify — but
+      # the GET endpoint also has no guards typically (it's a state-
+      # changing? No, GET is safe-method, no guard_absence emitted).
+      # So jwt_unsafe contributes 1 to score. Below the 2 minimum.
+      # Hmm let me reconsider — actually priority_review emits only
+      # when score >= 2, so jwt_unsafe alone (score=1 with sharp+1=2)
+      # is exactly at the threshold. Should land medium.
+      ["high", "medium"].includes?(priority.not_nil!.name).should be_true
+    end
+  end
+
   it "stops Ruby route scope at the matching `end` keyword" do
     # Ruby `def name … end` pairs at the same indent. The next def
     # below must not leak into the current handler's snippet.

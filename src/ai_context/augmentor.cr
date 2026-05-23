@@ -432,6 +432,52 @@ module NoirAIContext
       ),
     ] of PatternDefinition
 
+    # JWT verification bypass — explicit "trust whatever we
+    # received without checking" shapes across pyjwt / jsonwebtoken
+    # / java-jwt / ruby-jwt. Each pattern is a single-line dead
+    # giveaway, surfaced as a sharp signal alongside csrf_exempt /
+    # cors_open. The kind is `jwt_unsafe` so consumers can sort it
+    # next to csrf_exempt.
+    JWT_UNSAFE_PATTERNS = [
+      PatternDefinition.new(
+        "jwt_unsafe",
+        "JWT verification is disabled or weakened — token contents become attacker-controlled",
+        82,
+        source_patterns: [
+          # pyjwt — `verify=False` / `verify_signature: False`
+          # (quoted in dict literals: `"verify_signature": False`).
+          # The optional `['"]?` before the colon handles JSON-style
+          # key quoting.
+          /\bjwt\.decode\s*\([^)]*verify\s*=\s*False/i,
+          /\bverify_signature['"]?\s*:\s*False/i,
+          /\bverify_signature\s*=\s*False/i,
+          # algorithm "none" — pyjwt / jsonwebtoken / java-jwt
+          /algorithms?['"]?\s*[:=]\s*\[?\s*['"]none['"]/i,
+          /algorithm['"]?\s*[:=]\s*['"]none['"]/i,
+          # jsonwebtoken (node) — ignoreExpiration weakens validation
+          /ignoreExpiration['"]?\s*:\s*true/i,
+          # java-jwt — Algorithm.none()
+          /Algorithm\.none\s*\(/,
+          # ruby-jwt — verify: false / verify => false
+          /\bJWT\.decode\s*\([^)]*verify\s*=>\s*false/i,
+          /\bJWT\.decode\s*\([^)]*verify:\s*false/i,
+        ]
+      ),
+    ] of PatternDefinition
+
+    # CORS open-with-credentials. Wildcard `*` origin combined with
+    # `credentials: true` is the textbook CORS misconfiguration —
+    # browsers actually block this combination at the spec level for
+    # security reasons, so seeing it in code means either the
+    # config is broken or the developer is reaching for something
+    # the spec forbids. Either way, worth a sharp signal.
+    #
+    # The check is order-independent across two regex windows so
+    # `origin: '*'` followed by `credentials: true` and the reverse
+    # both fire.
+    CORS_WILDCARD_PATTERN = /\b(?:origin|origins?)\s*[:=]\s*['"]\*['"]/i
+    CORS_CREDENTIALS_PATTERN = /\b(?:credentials|allow[_-]?credentials|allowCredentials)\s*[:=]\s*(?:true|['"]true['"])/i
+
     PARAM_PATTERNS = [
       PatternDefinition.new(
         "credential_input",
@@ -597,6 +643,8 @@ module NoirAIContext
       "rate_limit_absence",
       "idor_review",
       "csrf_exempt",
+      "jwt_unsafe",
+      "cors_open",
       "open_redirect",
       "ssrf",
       "path_traversal",
@@ -629,10 +677,14 @@ module NoirAIContext
       heavy_sinks = context.sinks.count { |s| PRIORITY_SCORING_SINK_BLACKLIST.includes?(s.kind) }
 
       score = review_signals + heavy_sinks
-      # `csrf_exempt` and `open_redirect` are individually loud
-      # enough to bump the bucket even when other signals are quiet.
+      # `csrf_exempt` / `jwt_unsafe` / `cors_open` / `open_redirect`
+      # are individually loud enough to bump the bucket even when
+      # other signals are quiet — explicit protection-bypass /
+      # well-known misconfiguration classes that don't need a
+      # second supporting signal to be worth surfacing.
       sharp_signal = context.signals.any? do |s|
-        s.kind == "csrf_exempt" || s.kind == "open_redirect"
+        s.kind == "csrf_exempt" || s.kind == "open_redirect" ||
+          s.kind == "jwt_unsafe" || s.kind == "cors_open"
       end
       score += 1 if sharp_signal
 
@@ -1072,6 +1124,35 @@ module NoirAIContext
           next if context.signals.any? { |s| s.kind == "csrf_exempt" }
           if entry = detect_single_pattern(pattern, "", snippet, path_info.path, path_info.line, "route_source")
             context.push_signal(entry)
+          end
+        end
+
+        # JWT verification bypass — same family as csrf_exempt.
+        JWT_UNSAFE_PATTERNS.each do |pattern|
+          next if context.signals.any? { |s| s.kind == "jwt_unsafe" }
+          if entry = detect_single_pattern(pattern, "", snippet, path_info.path, path_info.line, "route_source")
+            context.push_signal(entry)
+          end
+        end
+
+        # CORS open-with-credentials: needs BOTH patterns in the
+        # snippet to be a real misconfiguration. A wildcard origin
+        # without credentials is fine (public APIs do this); a
+        # credentials-true config without a wildcard origin is fine
+        # (just sets a sensible CORS). It's the combination that
+        # bites.
+        unless context.signals.any? { |s| s.kind == "cors_open" }
+          if snippet.matches?(CORS_WILDCARD_PATTERN) && snippet.matches?(CORS_CREDENTIALS_PATTERN)
+            context.push_signal(AIContextEntry.new(
+              "cors_open",
+              "origin=* + credentials=true",
+              source: "route_source",
+              description: "CORS configured with wildcard origin AND credentials — browsers reject this combination at the spec level, so either the config is broken or the developer is intentionally weakening cross-origin policy. Either way, review.",
+              path: path_info.path,
+              line: path_info.line,
+              confidence: 84,
+              snippet: snippet
+            ))
           end
         end
 
