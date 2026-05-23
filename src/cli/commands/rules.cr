@@ -12,37 +12,46 @@ require "../../utils/passive_rules_updater"
 module Noir::CLI::RulesCommand
   ACTIONS = %w[list update path]
 
-  def self.run(argv : Array(String))
+  # Parsed argv. Pulled out of `run` so the parser can be exercised in
+  # unit specs without triggering the `exit`/`die` side effects.
+  record Parsed, action : String?, help : Bool
+
+  def self.parse_argv(argv : Array(String)) : Parsed
     action = nil
+    help = false
     argv.each do |a|
       case a
       when "-h", "--help"
-        print_help
-        exit
+        help = true
       else
         action ||= a
       end
     end
+    Parsed.new(action: action, help: help)
+  end
 
-    if action.nil?
+  def self.run(argv : Array(String))
+    parsed = parse_argv(argv)
+
+    if parsed.help || parsed.action.nil?
       print_help
       exit
     end
 
-    case action
+    case parsed.action
     when "list"   then list_rules
     when "update" then update_rules
     when "path"   then puts rules_path
     else
-      Noir::CLI.die("Unknown rules action: #{action}. Valid: #{ACTIONS.join(", ")}.")
+      Noir::CLI.die("Unknown rules action: #{parsed.action}. Valid: #{ACTIONS.join(", ")}.")
     end
   end
 
-  def self.print_help
+  def self.print_help(io : IO = STDOUT)
     cyan = ->(s : String) { Noir::CLI.name(s) }
     green = ->(s : String) { Noir::CLI.section(s) }
 
-    puts <<-HELP
+    io.puts <<-HELP
       #{green.call("USAGE:")}
         noir rules <action>
 
@@ -62,26 +71,26 @@ module Noir::CLI::RulesCommand
     File.join(get_home, "passive_rules")
   end
 
-  def self.list_rules
+  def self.list_rules(io : IO = STDOUT)
     path = rules_path
     unless Dir.exists?(path)
-      puts "Rules directory does not exist: #{path}"
-      puts "Run `noir rules update` to clone the upstream rules repository."
+      io.puts "Rules directory does not exist: #{path}"
+      io.puts "Run `noir rules update` to clone the upstream rules repository."
       return
     end
 
     rule_files = Dir.glob(File.join(path, "**/*.{yml,yaml}"))
     if rule_files.empty?
-      puts "No rule files found under #{path}."
-      puts "Run `noir rules update` to fetch the latest rules."
+      io.puts "No rule files found under #{path}."
+      io.puts "Run `noir rules update` to fetch the latest rules."
       return
     end
 
-    puts "Rules path: #{path}"
-    puts "Rule files (#{rule_files.size}):"
+    io.puts "Rules path: #{path}"
+    io.puts "Rule files (#{rule_files.size}):"
     rule_files.sort.each do |file|
       rel = file.sub(path + "/", "")
-      puts "  #{rel}"
+      io.puts "  #{rel}"
     end
   end
 
