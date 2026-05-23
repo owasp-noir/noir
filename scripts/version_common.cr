@@ -8,7 +8,6 @@ DOCKERFILE     = "Dockerfile"
 SNAPCRAFT_FILE = "snap/snapcraft.yaml"
 DOCS_INDEX     = "docs/content/_index.md"
 DOCS_INDEX_KO  = "docs/content/_index.ko.md"
-ACTION_DOCKER  = "github-action/Dockerfile"
 ACTION_README  = "github-action/README.md"
 RELEASE_DOC    = "docs/content/development/how_to_release/index.md"
 RELEASE_DOC_KO = "docs/content/development/how_to_release/index.ko.md"
@@ -60,14 +59,6 @@ rescue
   nil
 end
 
-# Extract version from github-action/Dockerfile
-def get_action_dockerfile_version : String?
-  match = File.read(ACTION_DOCKER).match(/FROM\s+ghcr\.io\/owasp-noir\/noir:([\d.]+)/)
-  match ? match[1] : nil
-rescue
-  nil
-end
-
 # Extract version from github-action/README.md
 def get_action_readme_version : String?
   match = File.read(ACTION_README).match(/uses:\s+owasp-noir\/noir@v([\d.]+)/)
@@ -102,7 +93,6 @@ def collect_versions : Array(Tuple(String, String, String?))
     {"snap/snapcraft.yaml", SNAPCRAFT_FILE, get_snapcraft_version},
     {"docs/_index.md", DOCS_INDEX, get_docs_index_version(DOCS_INDEX)},
     {"docs/_index.ko.md", DOCS_INDEX_KO, get_docs_index_version(DOCS_INDEX_KO)},
-    {"github-action/Dockerfile", ACTION_DOCKER, get_action_dockerfile_version},
     {"github-action/README.md", ACTION_README, get_action_readme_version},
     {"docs/.../how_to_release/index.md", RELEASE_DOC, get_release_doc_version(RELEASE_DOC)},
     {"docs/.../how_to_release/index.ko.md", RELEASE_DOC_KO, get_release_doc_version(RELEASE_DOC_KO)},

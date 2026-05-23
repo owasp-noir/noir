@@ -1,22 +1,13 @@
-#!/bin/sh -l
-
-# Argument positions (kept in sync with action.yml `runs.args`):
-#   $1  base_path
-#   $2  url
-#   $3  format
-#   $4  output_file
-#   $5  techs
-#   $6  exclude_techs
-#   $7  passive_scan
-#   $8  passive_scan_severity
-#   $9  use_all_taggers
-#   $10 use_taggers
-#   $11 include_path
-#   $12 verbose
-#   $13 debug
-#   $14 concurrency
-#   $15 exclude_codes
-#   $16 status_codes
+#!/bin/sh
+# shellcheck shell=sh
+#
+# OWASP Noir GitHub Action entrypoint.
+#
+# Inputs arrive as INPUT_* environment variables — the composite
+# action.yml in the repo root forwards `with:` keys via `docker run -e`.
+# The legacy positional form (16 ordered $1..${16}) is no longer
+# supported because the action shifted from `using: docker` to
+# `using: composite`.
 #
 # The script builds an argv list with `set --` and execs it directly,
 # never `eval`s a string. That way values with shell metacharacters
@@ -28,33 +19,36 @@ error_exit() {
 }
 
 # ==============================================================================
-# Initialize Variables
+# Read inputs from environment with defaults
 # ==============================================================================
+#
+# Default for `output_file` writes inside the container (/tmp/...).
+# The composite action mounts $GITHUB_WORKSPACE at /github/workspace so
+# results land outside the container too — see action.yml.
 
-base_path="$1"
-url="$2"
-format="${3:-json}"
-output_file="${4:-/tmp/noir_output.json}"
-techs="$5"
-exclude_techs="$6"
-passive_scan="$7"
-passive_scan_severity="$8"
-use_all_taggers="$9"
-use_taggers="${10}"
-include_path="${11}"
-verbose="${12}"
-debug="${13}"
-concurrency="${14}"
-exclude_codes="${15}"
-status_codes="${16}"
+base_path="${INPUT_BASE_PATH:-.}"
+url="${INPUT_URL:-}"
+format="${INPUT_FORMAT:-json}"
+output_file="${INPUT_OUTPUT_FILE:-/tmp/noir_output.json}"
+techs="${INPUT_TECHS:-}"
+exclude_techs="${INPUT_EXCLUDE_TECHS:-}"
+passive_scan="${INPUT_PASSIVE_SCAN:-false}"
+passive_scan_severity="${INPUT_PASSIVE_SCAN_SEVERITY:-high}"
+use_all_taggers="${INPUT_USE_ALL_TAGGERS:-false}"
+use_taggers="${INPUT_USE_TAGGERS:-}"
+include_path="${INPUT_INCLUDE_PATH:-false}"
+verbose="${INPUT_VERBOSE:-false}"
+debug="${INPUT_DEBUG:-false}"
+concurrency="${INPUT_CONCURRENCY:-}"
+exclude_codes="${INPUT_EXCLUDE_CODES:-}"
+status_codes="${INPUT_STATUS_CODES:-false}"
 
 # ==============================================================================
 # Build noir argv safely
 # ==============================================================================
 #
-# Snapshot the action inputs into named variables above, then build
-# noir's argv in $@ via `set --`. Using positional parameters for the
-# command lets us exec it with the runtime's quoting preserved, so
+# Build noir's argv in $@ via `set --`. Using positional parameters for
+# the command lets us exec it with the runtime's quoting preserved, so
 # values containing whitespace, quotes, or shell metacharacters can
 # never break out of their slot.
 
@@ -93,6 +87,11 @@ exit_code=$?
 # Process Output
 # ==============================================================================
 
+# GITHUB_OUTPUT may be absent when this image is run outside a GitHub
+# Action (e.g. ad-hoc `docker run`). Fall back to /dev/null so the
+# script still finishes cleanly with the scan results on disk.
+github_output="${GITHUB_OUTPUT:-/dev/null}"
+
 if [ "$format" = "json" ] || [ "$format" = "jsonl" ]; then
     if command -v jq >/dev/null 2>&1; then
         jq empty "$output_file" 2>/dev/null || error_exit "Invalid JSON output from Noir" 1
@@ -100,12 +99,12 @@ if [ "$format" = "json" ] || [ "$format" = "jsonl" ]; then
         endpoints_output=$(jq -c . "$output_file")
         passive_results=$(jq -c '.passive_results // []' "$output_file")
 
-        echo "endpoints=$endpoints_output" >> "$GITHUB_OUTPUT"
-        echo "passive_results=$passive_results" >> "$GITHUB_OUTPUT"
+        echo "endpoints=$endpoints_output" >> "$github_output"
+        echo "passive_results=$passive_results" >> "$github_output"
     else
         endpoints_output=$(tr -d '\n' < "$output_file")
-        echo "endpoints=$endpoints_output" >> "$GITHUB_OUTPUT"
-        echo "passive_results=[]" >> "$GITHUB_OUTPUT"
+        echo "endpoints=$endpoints_output" >> "$github_output"
+        echo "passive_results=[]" >> "$github_output"
     fi
 else
     # Non-JSON formats (plain, yaml, oas3, mermaid, ...) don't fit
@@ -113,8 +112,8 @@ else
     # outputs. Emit them as empty so downstream `jq` calls don't
     # choke on plain text. The raw output file is still on disk —
     # upload it with `actions/upload-artifact` per README.
-    echo "endpoints=" >> "$GITHUB_OUTPUT"
-    echo "passive_results=[]" >> "$GITHUB_OUTPUT"
+    echo "endpoints=" >> "$github_output"
+    echo "passive_results=[]" >> "$github_output"
 fi
 
 # ==============================================================================

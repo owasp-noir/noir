@@ -71,26 +71,79 @@ inputs:
     default: "false"
 outputs:
   endpoints:
-    description: JSON formatted result of the endpoint analysis
+    description: Full Noir result document (`{"endpoints":[...],"passive_results":[...]}`) when format=json|jsonl. Empty otherwise.
+    value: ${{ steps.noir.outputs.endpoints }}
   passive_results:
-    description: JSON formatted result of the passive scan (if enabled)
+    description: JSON array of passive-scan findings when format=json|jsonl. `[]` otherwise.
+    value: ${{ steps.noir.outputs.passive_results }}
 runs:
-  using: docker
-  image: github-action/Dockerfile
-  args:
-    - ${{ inputs.base_path }}
-    - ${{ inputs.url }}
-    - ${{ inputs.format }}
-    - ${{ inputs.output_file }}
-    - ${{ inputs.techs }}
-    - ${{ inputs.exclude_techs }}
-    - ${{ inputs.passive_scan }}
-    - ${{ inputs.passive_scan_severity }}
-    - ${{ inputs.use_all_taggers }}
-    - ${{ inputs.use_taggers }}
-    - ${{ inputs.include_path }}
-    - ${{ inputs.verbose }}
-    - ${{ inputs.debug }}
-    - ${{ inputs.concurrency }}
-    - ${{ inputs.exclude_codes }}
-    - ${{ inputs.status_codes }}
+  using: composite
+  steps:
+    # Resolve the ghcr.io tag from the ref the user pinned the action
+    # to. `@v1.0.0` → `1.0.0`, `@main` → `main`, no ref → `latest`.
+    # Mirrors the matching released image so locking the action to a
+    # tag locks the runtime too — no more `FROM noir:1.0.0` hardcoded
+    # in a sibling Dockerfile that the maintainer must keep bumping.
+    - name: Resolve Noir image tag
+      id: resolve
+      shell: bash
+      run: |
+        REF="${{ github.action_ref }}"
+        TAG="${REF#v}"
+        TAG="${TAG:-latest}"
+        echo "image=ghcr.io/owasp-noir/noir:${TAG}" >> "$GITHUB_OUTPUT"
+        echo "Using Noir image: ghcr.io/owasp-noir/noir:${TAG}"
+
+    # Pull explicitly so the next step's log only shows "running
+    # noir", not the registry round-trip. Easier triage for registry
+    # vs runtime failures.
+    - name: Pull Noir image
+      shell: bash
+      run: docker pull "${{ steps.resolve.outputs.image }}"
+
+    # Run the entrypoint inside the pre-built image. INPUT_* env vars
+    # match the keys exposed via `with:`; the entrypoint reads them in
+    # place of the legacy positional argv it used to receive via the
+    # `args:` array under `using: docker`.
+    #
+    # $GITHUB_OUTPUT inside the container points at a workspace path
+    # so the runner host can read it back after the container exits —
+    # the runner's real $GITHUB_OUTPUT lives outside the container.
+    - name: Run Noir
+      id: noir
+      shell: bash
+      run: |
+        docker run --rm \
+          -v "${{ github.workspace }}":/github/workspace \
+          -w /github/workspace \
+          -e GITHUB_ACTIONS=true \
+          -e GITHUB_REPOSITORY="${{ github.repository }}" \
+          -e GITHUB_ACTOR="${{ github.actor }}" \
+          -e GITHUB_OUTPUT=/github/workspace/.noir-output \
+          -e INPUT_BASE_PATH="${{ inputs.base_path }}" \
+          -e INPUT_URL="${{ inputs.url }}" \
+          -e INPUT_FORMAT="${{ inputs.format }}" \
+          -e INPUT_OUTPUT_FILE="${{ inputs.output_file }}" \
+          -e INPUT_TECHS="${{ inputs.techs }}" \
+          -e INPUT_EXCLUDE_TECHS="${{ inputs.exclude_techs }}" \
+          -e INPUT_PASSIVE_SCAN="${{ inputs.passive_scan }}" \
+          -e INPUT_PASSIVE_SCAN_SEVERITY="${{ inputs.passive_scan_severity }}" \
+          -e INPUT_USE_ALL_TAGGERS="${{ inputs.use_all_taggers }}" \
+          -e INPUT_USE_TAGGERS="${{ inputs.use_taggers }}" \
+          -e INPUT_INCLUDE_PATH="${{ inputs.include_path }}" \
+          -e INPUT_VERBOSE="${{ inputs.verbose }}" \
+          -e INPUT_DEBUG="${{ inputs.debug }}" \
+          -e INPUT_CONCURRENCY="${{ inputs.concurrency }}" \
+          -e INPUT_EXCLUDE_CODES="${{ inputs.exclude_codes }}" \
+          -e INPUT_STATUS_CODES="${{ inputs.status_codes }}" \
+          --entrypoint /entrypoint.sh \
+          "${{ steps.resolve.outputs.image }}"
+
+        # The container wrote to /github/workspace/.noir-output (its
+        # view of $GITHUB_OUTPUT); promote that into the composite
+        # step's real $GITHUB_OUTPUT so the `endpoints` /
+        # `passive_results` outputs surface.
+        if [ -f "${{ github.workspace }}/.noir-output" ]; then
+          cat "${{ github.workspace }}/.noir-output" >> "$GITHUB_OUTPUT"
+          rm -f "${{ github.workspace }}/.noir-output"
+        fi

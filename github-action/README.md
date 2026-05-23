@@ -2,6 +2,14 @@
 
 This GitHub Action allows you to run OWASP Noir security analysis in your CI/CD pipeline to detect attack surfaces by static analysis.
 
+> **For maintainers:** the action runs as a composite that `docker pull`s
+> the pre-built `ghcr.io/owasp-noir/noir:<tag>` image (built from the
+> repo-root `Dockerfile`) and invokes `entrypoint.sh` inside it. This
+> directory used to host a sibling `Dockerfile` that pulled the main
+> image and layered jq + entrypoint on top — that's now folded into
+> the main `Dockerfile` so there's a single image and no per-workflow
+> Dockerfile build.
+
 ## Features
 
 - **Endpoint Detection**: Automatically discovers endpoints in your application code
