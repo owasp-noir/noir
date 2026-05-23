@@ -63,8 +63,10 @@ module Noir::CLI::ScanCommand
     return unless noir_options["cache_clear"] == true
 
     begin
-      cleared = LLM::Cache.clear
-      STDERR.puts "CACHE: Cleared #{cleared} entries."
+      outcome = LLM::Cache.clear
+      msg = "CACHE: Cleared #{outcome.deleted} entries."
+      msg += " (#{outcome.failed} failed)" if outcome.failed > 0
+      STDERR.puts msg
     rescue
       # Cache may not be initialized yet; best-effort clear.
     end

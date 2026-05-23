@@ -42,7 +42,7 @@ module Noir::CLI::HelpCommand
       #{green.call("COMMANDS:")}
         #{cyan.call("scan")} [PATHS...]                   Discover endpoints in one or more codebases
         #{cyan.call("list")} techs | taggers | formats    Enumerate built-in catalogs
-        #{cyan.call("cache")} info | clear                Manage the on-disk LLM response cache
+        #{cyan.call("cache")} info | clear | purge        Manage the on-disk LLM response cache
         #{cyan.call("config")} show | edit | init | path  Manage the user-level YAML configuration
         #{cyan.call("rules")} list | update | path        Manage the passive-scan rules repository
         #{cyan.call("completion")} <shell>                Generate shell completion (zsh, bash, fish, elvish)

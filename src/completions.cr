@@ -78,7 +78,7 @@ def generate_zsh_completion_script
       commands=(
         'scan:Discover endpoints in one or more codebases'
         'list:List built-in catalogs (techs, taggers, formats)'
-        'cache:Manage the LLM response cache (info, clear)'
+        'cache:Manage the LLM response cache (info, clear, purge)'
         'config:Manage the user-level config (show, init, path)'
         'rules:Manage passive-scan rules (list, update, path)'
         'completion:Generate shell completion script (zsh, bash, fish, elvish)'
@@ -87,7 +87,7 @@ def generate_zsh_completion_script
       )
       subjects=(techs taggers formats)
       shells=(zsh bash fish elvish)
-      cache_actions=(info clear)
+      cache_actions=(info clear purge)
       config_actions=(show edit init path)
       rules_actions=(list update path)
 
@@ -231,7 +231,7 @@ def generate_bash_completion_script
           ;;
         cache)
           if [[ ${COMP_CWORD} -eq 2 ]]; then
-            COMPREPLY=( $(compgen -W "info clear" -- "${cur}") )
+            COMPREPLY=( $(compgen -W "info clear purge" -- "${cur}") )
             return 0
           fi
           ;;
@@ -339,7 +339,7 @@ def generate_fish_completion_script
 
     # Sub-actions per command
     complete -c noir -f -n '__fish_noir_using_command list' -a 'techs taggers formats'
-    complete -c noir -f -n '__fish_noir_using_command cache' -a 'info clear'
+    complete -c noir -f -n '__fish_noir_using_command cache' -a 'info clear purge'
     complete -c noir -f -n '__fish_noir_using_command config' -a 'show edit init path'
     complete -c noir -f -n '__fish_noir_using_command rules' -a 'list update path'
     complete -c noir -f -n '__fish_noir_using_command completion' -a 'zsh bash fish elvish'
@@ -419,7 +419,7 @@ def generate_elvish_completion_script
 
     var commands       = [scan list cache config rules completion version help]
     var list-subjects  = [techs taggers formats]
-    var cache-actions  = [info clear]
+    var cache-actions  = [info clear purge]
     var config-actions = [show edit init path]
     var rules-actions  = [list update path]
     var shells         = [zsh bash fish elvish]
