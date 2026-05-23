@@ -38,6 +38,36 @@ module Noir::CliValidation
     validate_tagger_names!(options)
     validate_config_file!(options)
     validate_tech_names!(options)
+    warn_about_unused_delivery_flags(options)
+  end
+
+  # `--use-matchers` and `--use-filters` only run inside the Deliver
+  # pipeline (the code that ships endpoints to --send-req /
+  # --send-proxy / --send-es). With no delivery target configured
+  # they silently no-op — a real surprise for users who set the
+  # flags expecting stdout output to be filtered. Warn at CLI parse
+  # time so the gap is obvious.
+  def self.warn_about_unused_delivery_flags(options : Hash(String, YAML::Any))
+    has_matchers = non_empty_array?(options["use_matchers"]?)
+    has_filters = non_empty_array?(options["use_filters"]?)
+    return unless has_matchers || has_filters
+
+    delivery_active = (options["send_req"]?.try(&.raw) == true) ||
+                      !(options["send_proxy"]?.try(&.to_s) || "").empty? ||
+                      !(options["send_es"]?.try(&.to_s) || "").empty?
+    return if delivery_active
+
+    flags = [] of String
+    flags << "--use-matchers" if has_matchers
+    flags << "--use-filters" if has_filters
+    STDERR.puts "WARNING: #{flags.join(" / ")} set but no delivery target (--send-req / --send-proxy / --send-es). These flags only filter what gets delivered, not what's written to stdout.".colorize(:yellow)
+  end
+
+  private def self.non_empty_array?(value : YAML::Any?) : Bool
+    return false if value.nil?
+    raw = value.raw
+    return false unless raw.is_a?(Array)
+    !raw.empty?
   end
 
   # `-t/--techs`, `--only-techs`, `--exclude-techs` should reject
