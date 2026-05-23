@@ -140,6 +140,50 @@ describe Noir::CliValidation do
     end
   end
 
+  describe "validate_ai_provider_pair!" do
+    it "passes when neither --ai-provider nor --ai-model is set" do
+      options = create_test_options
+      Noir::CliValidation.validate_ai_provider_pair!(options)
+    end
+
+    it "passes when both --ai-provider and --ai-model are set" do
+      options = create_test_options
+      options["ai_provider"] = YAML::Any.new("openai")
+      options["ai_model"] = YAML::Any.new("gpt-4")
+      Noir::CliValidation.validate_ai_provider_pair!(options)
+    end
+
+    it "passes when --ai-provider is ACP-prefixed and no model is given" do
+      # `acp:claude` / `acp:codex` carry their own default model;
+      # forcing `--ai-model` here would block a valid invocation.
+      options = create_test_options
+      options["ai_provider"] = YAML::Any.new("acp:claude")
+      Noir::CliValidation.validate_ai_provider_pair!(options)
+    end
+
+    it "is case-insensitive on the ACP prefix" do
+      options = create_test_options
+      options["ai_provider"] = YAML::Any.new("ACP:Codex")
+      Noir::CliValidation.validate_ai_provider_pair!(options)
+    end
+
+    it "rejects --ai-provider without --ai-model (non-ACP)" do
+      options = create_test_options
+      options["ai_provider"] = YAML::Any.new("openai")
+      expect_raises(Noir::CliValidation::Error, /companion --ai-model/) do
+        Noir::CliValidation.validate_ai_provider_pair!(options)
+      end
+    end
+
+    it "rejects --ai-model without --ai-provider" do
+      options = create_test_options
+      options["ai_model"] = YAML::Any.new("gpt-4")
+      expect_raises(Noir::CliValidation::Error, /companion --ai-provider/) do
+        Noir::CliValidation.validate_ai_provider_pair!(options)
+      end
+    end
+  end
+
   describe "validate_passive_scan_paths!" do
     it "passes when no --passive-scan-path is set" do
       options = create_test_options

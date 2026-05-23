@@ -39,7 +39,31 @@ module Noir::CliValidation
     validate_config_file!(options)
     validate_tech_names!(options)
     validate_passive_scan_paths!(options)
+    validate_ai_provider_pair!(options)
     warn_about_unused_delivery_flags(options)
+  end
+
+  # `--ai-provider` and `--ai-model` need each other to take effect.
+  # Either flag set on its own silently skips the AI analyzer:
+  #   * `--ai-provider openai` (no model) — `ai_provider_active?` is
+  #     false, AI never runs, user just gets a plain scan
+  #   * `--ai-model gpt-4` (no provider) — same outcome
+  # The ACP family is the one exception: `acp:claude` / `acp:codex`
+  # carry their own default model, so no `--ai-model` is required.
+  def self.validate_ai_provider_pair!(options : Hash(String, YAML::Any))
+    provider = options["ai_provider"]?.try(&.to_s) || ""
+    model = options["ai_model"]?.try(&.to_s) || ""
+
+    if !model.empty? && provider.empty?
+      raise Error.new("--ai-model needs a companion --ai-provider. Set both, e.g. `noir scan ./app --ai-provider openai --ai-model #{model} --ai-key …`.")
+    end
+
+    return if provider.empty?
+
+    is_acp = provider.downcase.starts_with?("acp:")
+    return if is_acp || !model.empty?
+
+    raise Error.new("--ai-provider '#{provider}' needs a companion --ai-model. Pass it with --ai-model, e.g. `noir scan ./app --ai-provider #{provider} --ai-model gpt-4 --ai-key …`. (ACP providers like `acp:claude` or `acp:codex` are the exception and don't need --ai-model.)")
   end
 
   # `--passive-scan-path PATH` accepts multiple entries (repeatable),
