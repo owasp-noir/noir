@@ -94,8 +94,14 @@ class NoirRunner
           @passive_scans.concat(NoirPassiveScan.load_rules(rule_path.to_s, @logger))
         end
       else
-        @logger.sub "├── Using default passive rules."
-        @passive_scans = NoirPassiveScan.load_rules "#{@noir_home}/passive_rules/", @logger
+        # Resolve the effective rules path — prefers the user-managed
+        # `$NOIR_HOME/passive_rules` when populated, falls back to the
+        # image-baked snapshot at `/opt/noir/passive_rules` (present
+        # in the official Docker image) so `-P` works out of the box
+        # without network/git.
+        rules_dir = PassiveRulesUpdater.effective_rules_path
+        @logger.sub "├── Using default passive rules (#{rules_dir})."
+        @passive_scans = NoirPassiveScan.load_rules rules_dir, @logger
       end
     end
   end
