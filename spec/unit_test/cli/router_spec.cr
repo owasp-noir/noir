@@ -27,6 +27,13 @@ describe "Noir::CLI::Legacy.rewrite" do
     Noir::CLI::Legacy.rewrite(["--generate-completion", "zsh"]).should eq(["completion", "zsh"])
   end
 
+  it "consumes only the immediate arg after --generate-completion" do
+    # Anything past the shell name is irrelevant — the rewritten form
+    # is a closed pair, so a trailing positional must be dropped
+    # rather than smuggled through to the eventual scan call.
+    Noir::CLI::Legacy.rewrite(["--generate-completion", "bash", "./extra"]).should eq(["completion", "bash"])
+  end
+
   it "rewrites -v to the version subcommand (global anywhere in ARGV)" do
     Noir::CLI::Legacy.rewrite(["-v"]).should eq(["version"])
     Noir::CLI::Legacy.rewrite(["scan", "-v"]).should eq(["version"])
@@ -45,6 +52,23 @@ describe "Noir::CLI::Legacy.rewrite" do
 
   it "matches terminal flags even when they appear after positional args" do
     Noir::CLI::Legacy.rewrite(["-b", "./app", "--list-techs"]).should eq(["list", "techs"])
+  end
+
+  it "honors the first terminal flag when several are present" do
+    # Iteration order in `rewrite` is left-to-right, so the leftmost
+    # terminal match wins. Lock that in so future refactors don't
+    # silently change which subcommand `noir --list-techs --build-info`
+    # routes to.
+    Noir::CLI::Legacy.rewrite(["--list-techs", "--build-info"]).should eq(["list", "techs"])
+    Noir::CLI::Legacy.rewrite(["--build-info", "--list-techs"]).should eq(["version", "--verbose"])
+  end
+
+  it "is idempotent on already-rewritten input" do
+    # `rewrite` consumes the original v0 form and emits the v1 form,
+    # which contains no terminal flags by construction — passing it
+    # back in must not alter it.
+    rewritten = Noir::CLI::Legacy.rewrite(["--list-techs"])
+    Noir::CLI::Legacy.rewrite(rewritten).should eq(rewritten)
   end
 end
 
@@ -118,6 +142,79 @@ describe "Noir::CLI.apply_global_color_flag!" do
     Colorize.enabled = true
     if saved = saved_env
       ENV["NO_COLOR"] = saved
+    else
+      ENV.delete("NO_COLOR")
+    end
+  end
+
+  it "treats an empty NO_COLOR value as not-set per the no-color.org spec" do
+    # The spec at https://no-color.org/ requires implementations to
+    # ignore an empty value — opting out of color should require an
+    # actual non-empty, non-"0" value.
+    saved_env = ENV["NO_COLOR"]?
+    ENV["NO_COLOR"] = ""
+    Colorize.enabled = true
+
+    Noir::CLI.apply_global_color_flag!(["list", "techs"])
+    Colorize.enabled?.should be_true
+  ensure
+    Colorize.enabled = true
+    if saved = saved_env
+      ENV["NO_COLOR"] = saved
+    else
+      ENV.delete("NO_COLOR")
+    end
+  end
+end
+
+describe "Noir::CLI.no_color_env?" do
+  it "returns false when NO_COLOR is unset" do
+    saved = ENV["NO_COLOR"]?
+    ENV.delete("NO_COLOR")
+    Noir::CLI.no_color_env?.should be_false
+  ensure
+    if v = saved
+      ENV["NO_COLOR"] = v
+    else
+      ENV.delete("NO_COLOR")
+    end
+  end
+
+  it "returns false for an empty NO_COLOR" do
+    saved = ENV["NO_COLOR"]?
+    ENV["NO_COLOR"] = ""
+    Noir::CLI.no_color_env?.should be_false
+  ensure
+    if v = saved
+      ENV["NO_COLOR"] = v
+    else
+      ENV.delete("NO_COLOR")
+    end
+  end
+
+  it "returns false for NO_COLOR=0 (explicit opt-in to color)" do
+    saved = ENV["NO_COLOR"]?
+    ENV["NO_COLOR"] = "0"
+    Noir::CLI.no_color_env?.should be_false
+  ensure
+    if v = saved
+      ENV["NO_COLOR"] = v
+    else
+      ENV.delete("NO_COLOR")
+    end
+  end
+
+  it "returns true for any other non-empty NO_COLOR value" do
+    saved = ENV["NO_COLOR"]?
+    ENV["NO_COLOR"] = "1"
+    Noir::CLI.no_color_env?.should be_true
+    ENV["NO_COLOR"] = "yes"
+    Noir::CLI.no_color_env?.should be_true
+    ENV["NO_COLOR"] = "anything"
+    Noir::CLI.no_color_env?.should be_true
+  ensure
+    if v = saved
+      ENV["NO_COLOR"] = v
     else
       ENV.delete("NO_COLOR")
     end
