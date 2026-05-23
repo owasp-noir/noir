@@ -20,7 +20,7 @@ module PassiveRulesUpdater
     git_dir = File.join(rules_path, ".git")
     unless Dir.exists?(git_dir)
       logger.debug "Passive rules directory is not a git repository"
-      return check_revision_file(rules_path, logger, auto_update)
+      return check_revision_file(rules_path, logger)
     end
 
     logger.debug "Checking for passive rules updates..."
@@ -82,8 +82,12 @@ module PassiveRulesUpdater
     false
   end
 
-  # Check for updates using a revision file (fallback method)
-  private def self.check_revision_file(rules_path : String, logger : NoirLogger, auto_update : Bool) : Bool
+  # Fallback for installations where the rules directory was unpacked
+  # without git metadata (e.g. tarball install). We can't compare
+  # against the upstream main branch here, so the best we can do is
+  # confirm a `.revision` marker file exists and assume the rules are
+  # usable. Updates from this path require a manual re-install.
+  private def self.check_revision_file(rules_path : String, logger : NoirLogger) : Bool
     revision_file = File.join(rules_path, ".revision")
 
     unless File.exists?(revision_file)
@@ -91,8 +95,6 @@ module PassiveRulesUpdater
       return false
     end
 
-    # For now, we'll just assume rules are up to date if revision file exists
-    # A more sophisticated implementation could fetch the latest revision from GitHub API
     true
   end
 

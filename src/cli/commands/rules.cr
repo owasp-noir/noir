@@ -87,8 +87,19 @@ module Noir::CLI::RulesCommand
 
   def self.update_rules
     logger = NoirLogger.new(false, false, true, false)
-    if PassiveRulesUpdater.initialize_rules(logger)
-      PassiveRulesUpdater.check_for_updates(logger, true)
+    unless PassiveRulesUpdater.initialize_rules(logger)
+      logger.warning "Could not initialize passive rules at #{rules_path}."
+      return
+    end
+
+    if PassiveRulesUpdater.check_for_updates(logger, true)
+      logger.success "Passive rules are ready (#{rules_path})."
+    else
+      # `check_for_updates` returns false either because the fetch
+      # failed or because rules are behind and auto-update could not
+      # complete cleanly — surface that explicitly so `noir rules
+      # update` is never silent.
+      logger.warning "Passive rules update did not complete cleanly. See logs above."
     end
   end
 end

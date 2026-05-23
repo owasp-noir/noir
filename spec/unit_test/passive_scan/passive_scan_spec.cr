@@ -503,6 +503,117 @@ describe NoirPassiveScan do
     end
   end
 
+  describe "edge cases" do
+    it "returns no results when the rule has empty patterns" do
+      logger = NoirLogger.new(false, false, false, true)
+      rules = [
+        PassiveScan.new(YAML.parse(<<-YAML)),
+          id: empty-patterns
+          info:
+            name: empty patterns rule
+            author: [test]
+            severity: critical
+            description: ...
+            reference: []
+          matchers-condition: or
+          matchers:
+            - type: word
+              patterns: []
+              condition: or
+          category: security
+          techs: ['*']
+          YAML
+      ]
+      # Previously the `matcher.patterns && matcher.patterns.all?` shape
+      # treated an empty array as "every match passes" → every file
+      # silently flagged. The empty-patterns short circuit must drop
+      # this rule entirely.
+      results = NoirPassiveScan.detect("test.txt", "any content at all", rules, logger)
+      results.size.should eq(0)
+    end
+
+    it "returns no results when regex compilation failed (no retry per line)" do
+      logger = NoirLogger.new(false, false, false, true)
+      rules = [
+        PassiveScan.new(YAML.parse(<<-YAML)),
+          id: bad-regex
+          info:
+            name: bad regex
+            author: [test]
+            severity: critical
+            description: ...
+            reference: []
+          matchers-condition: or
+          matchers:
+            - type: regex
+              patterns:
+                - "[unterminated"
+              condition: or
+          category: security
+          techs: ['*']
+          YAML
+      ]
+      # The matcher must mark itself as compilation-failed so the
+      # per-line loop short-circuits without retrying Regex.new.
+      rules[0].matchers[0].regex_compile_failed.should be_true
+      results = NoirPassiveScan.detect("test.txt", "any\ncontent", rules, logger)
+      results.size.should eq(0)
+    end
+
+    it "precomputes string_patterns at Matcher construction" do
+      matcher = PassiveScan::Matcher.new(YAML.parse(<<-YAML))
+        type: word
+        patterns:
+          - alpha
+          - beta
+        condition: or
+        YAML
+      matcher.string_patterns.should eq(["alpha", "beta"])
+    end
+  end
+
+  describe "filter_rules_by_severity" do
+    it "drops rules below the threshold once for the whole scan" do
+      rules = [
+        PassiveScan.new(YAML.parse(<<-YAML)),
+          id: keep
+          info: { name: keep, author: [t], severity: critical, description: ., reference: [] }
+          matchers-condition: or
+          matchers:
+            - { type: word, patterns: [k], condition: or }
+          category: security
+          techs: ['*']
+          YAML
+        PassiveScan.new(YAML.parse(<<-YAML)),
+          id: drop
+          info: { name: drop, author: [t], severity: low, description: ., reference: [] }
+          matchers-condition: or
+          matchers:
+            - { type: word, patterns: [d], condition: or }
+          category: security
+          techs: ['*']
+          YAML
+      ]
+      filtered = NoirPassiveScan.filter_rules_by_severity(rules, "high")
+      filtered.map(&.id).should eq(["keep"])
+    end
+
+    it "returns an empty list when nothing meets the threshold" do
+      rules = [
+        PassiveScan.new(YAML.parse(<<-YAML)),
+          id: only-low
+          info: { name: low, author: [t], severity: low, description: ., reference: [] }
+          matchers-condition: or
+          matchers:
+            - { type: word, patterns: [x], condition: or }
+          category: security
+          techs: ['*']
+          YAML
+      ]
+      NoirPassiveScan.filter_rules_by_severity(rules, "critical").should be_empty
+    end
+  end
+
   describe "PassiveScan#valid?" do
     it "rejects rules with an empty info.name" do
       yaml = YAML.parse <<-YAML
