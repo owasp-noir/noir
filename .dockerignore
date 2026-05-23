@@ -1,0 +1,35 @@
+# Local build artifacts. `shards build` inside the container needs to
+# regenerate these against the container's libc/arch — leaving a stale
+# `lib.o` or grammar `*.o` from a host build (e.g. macOS arm64) makes
+# the in-container static link choke with
+#   "file format not recognized" / "ld returned 1 exit status"
+# because the build.sh staleness check sees a newer .o than source.
+bin/
+src/ext/tree_sitter/runtime/lib.o
+src/ext/tree_sitter/grammars/**/*.o
+
+# Test + dev caches (not needed at runtime, slow down the build context
+# transfer, and `spec/functional_test/fixtures/` is large).
+spec/
+.crystal/
+.shards/
+
+# Source control and IDE state — never relevant inside the image.
+.git/
+.gitignore
+.github/
+.claude/
+.vscode/
+.idea/
+.DS_Store
+
+# Documentation and release artifacts — not needed at runtime.
+docs/
+*.md
+LICENSE
+
+# Worktrees from agent runs.
+.claude/worktrees/
+
+# Lockfiles for non-Crystal deps — Crystal uses shard.lock which IS
+# needed inside the container; leave it tracked.
