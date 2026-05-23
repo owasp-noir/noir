@@ -141,4 +141,73 @@ describe MediaFilter do
       File.delete(temp_file) if File.exists?(temp_file)
     end
   end
+
+  describe ".binary_content_signature?" do
+    it "returns false for plain text content" do
+      temp = "/tmp/noir-binsig-text-#{Random.rand(1_000_000)}.py"
+      File.write(temp, "def hello():\n    return 'hi'\n")
+      begin
+        MediaFilter.binary_content_signature?(temp).should be_false
+      ensure
+        File.delete(temp) if File.exists?(temp)
+      end
+    end
+
+    it "returns true for content containing NUL bytes" do
+      temp = "/tmp/noir-binsig-bin-#{Random.rand(1_000_000)}.py"
+      # `dd` style random bytes — virtually certain to contain a NUL
+      # in 1KB. Use a deterministic NUL-bearing payload so the test
+      # isn't probabilistic.
+      File.write(temp, "header\x00\x01\x02binary\x00content")
+      begin
+        MediaFilter.binary_content_signature?(temp).should be_true
+      ensure
+        File.delete(temp) if File.exists?(temp)
+      end
+    end
+
+    it "returns false for empty files (nothing to sample)" do
+      temp = "/tmp/noir-binsig-empty-#{Random.rand(1_000_000)}.py"
+      File.write(temp, "")
+      begin
+        MediaFilter.binary_content_signature?(temp).should be_false
+      ensure
+        File.delete(temp) if File.exists?(temp)
+      end
+    end
+
+    it "returns false on unreadable paths (graceful)" do
+      MediaFilter.binary_content_signature?("/nonexistent-path-#{Random.rand(1_000_000)}").should be_false
+    end
+  end
+
+  describe ".skip_check (binary content)" do
+    it "skips a text-extension file whose bytes look binary" do
+      # The dogfood case: a `.py` file that's actually random binary
+      # bytes (e.g. accidentally renamed object file, packed asset
+      # with the wrong extension) used to take Crystal regexes down
+      # with `ArgumentError: UTF-8 error: code points greater than
+      # 0x10ffff are not defined`. The binary-sniff in skip_check
+      # catches it before any analyzer regex runs.
+      temp = "/tmp/noir-skip-binary-#{Random.rand(1_000_000)}.py"
+      File.write(temp, "import os\x00\x01\x02unparseable")
+      begin
+        reason = MediaFilter.skip_check(temp)
+        reason.should_not be_nil
+        reason.as(String).should contain("binary content")
+      ensure
+        File.delete(temp) if File.exists?(temp)
+      end
+    end
+
+    it "does not skip ordinary text source files" do
+      temp = "/tmp/noir-skip-text-#{Random.rand(1_000_000)}.py"
+      File.write(temp, "from flask import Flask\napp = Flask(__name__)\n")
+      begin
+        MediaFilter.skip_check(temp).should be_nil
+      ensure
+        File.delete(temp) if File.exists?(temp)
+      end
+    end
+  end
 end

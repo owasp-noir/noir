@@ -131,7 +131,37 @@ module MediaFilter
       return "file too large (#{size_mb}MB > #{max_mb}MB)"
     end
 
+    # Binary-content sniff: text-extension files (.py, .rb, .js, …)
+    # that contain NUL bytes or invalid UTF-8 sequences blow up
+    # analyzer regexes with `ArgumentError: UTF-8 error: code points
+    # greater than 0x10ffff are not defined`. The exception escapes
+    # the spawn fiber and appears on stderr as a Crystal stack trace,
+    # which is alarming even though it doesn't crash the run.
+    #
+    # Sample the first 512 bytes — that's enough to spot the NUL-byte
+    # signature of binary blobs (object files, packed assets, etc.)
+    # without re-reading the whole file content.
+    if binary_content_signature?(file_path)
+      return "binary content (file is text-extension but bytes look binary)"
+    end
+
     nil
+  end
+
+  # Cheap binary-content sniff. Reads the first 512 bytes and
+  # returns true if the buffer contains a NUL byte (`\x00`), which
+  # is the canonical "this is binary, not text" marker — text files
+  # in any common encoding (UTF-8, UTF-16-with-BOM, Latin-1, etc.)
+  # don't contain interior NULs in practice.
+  def self.binary_content_signature?(file_path : String) : Bool
+    File.open(file_path) do |io|
+      buffer = Bytes.new(512)
+      bytes_read = io.read(buffer)
+      return false if bytes_read == 0
+      buffer[0, bytes_read].includes?(0_u8)
+    end
+  rescue
+    false
   end
 
   # Combined check - returns true if file should be skipped. Prefer
