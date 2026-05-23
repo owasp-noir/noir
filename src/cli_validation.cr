@@ -38,7 +38,28 @@ module Noir::CliValidation
     validate_tagger_names!(options)
     validate_config_file!(options)
     validate_tech_names!(options)
+    validate_passive_scan_paths!(options)
     warn_about_unused_delivery_flags(options)
+  end
+
+  # `--passive-scan-path PATH` accepts multiple entries (repeatable),
+  # and each must exist + be a directory — `NoirPassiveScan.load_rules`
+  # walks `PATH/**/*.{yml,yaml}` and Dir.glob silently returns zero
+  # matches for non-existent paths. The result is a passive scan that
+  # ran with 0 rules and surfaced 0 findings, with no indication that
+  # the path was bogus. Surface the typo at CLI parse time instead.
+  def self.validate_passive_scan_paths!(options : Hash(String, YAML::Any))
+    raw = options["passive_scan_path"]?
+    return if raw.nil?
+    paths = raw.raw
+    return unless paths.is_a?(Array)
+
+    paths.each do |entry|
+      path = entry.to_s
+      next if path.empty?
+      raise Error.new("--passive-scan-path does not exist: #{path}") unless File.exists?(path)
+      raise Error.new("--passive-scan-path is not a directory: #{path}") unless File.directory?(path)
+    end
   end
 
   # `--use-matchers` and `--use-filters` only run inside the Deliver

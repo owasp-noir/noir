@@ -140,6 +140,57 @@ describe Noir::CliValidation do
     end
   end
 
+  describe "validate_passive_scan_paths!" do
+    it "passes when no --passive-scan-path is set" do
+      options = create_test_options
+      Noir::CliValidation.validate_passive_scan_paths!(options)
+    end
+
+    it "rejects a missing directory" do
+      options = create_test_options
+      options["passive_scan_path"] = YAML::Any.new([
+        YAML::Any.new("/tmp/noir-no-such-dir-#{Random.rand(1_000_000)}"),
+      ])
+      expect_raises(Noir::CliValidation::Error, /does not exist/) do
+        Noir::CliValidation.validate_passive_scan_paths!(options)
+      end
+    end
+
+    it "rejects a path that points at a file, not a directory" do
+      # Create a temp file to point at — pre-fix, this would silently
+      # load 0 rules because Dir.glob("FILE/**/*.{yml,yaml}") returns
+      # nothing.
+      path = File.tempname("noir-passive-file")
+      File.write(path, "")
+      begin
+        options = create_test_options
+        options["passive_scan_path"] = YAML::Any.new([YAML::Any.new(path)])
+        expect_raises(Noir::CliValidation::Error, /is not a directory/) do
+          Noir::CliValidation.validate_passive_scan_paths!(options)
+        end
+      ensure
+        File.delete(path) if File.exists?(path)
+      end
+    end
+
+    it "accepts an existing directory" do
+      options = create_test_options
+      options["passive_scan_path"] = YAML::Any.new([YAML::Any.new("/tmp")])
+      Noir::CliValidation.validate_passive_scan_paths!(options)
+    end
+
+    it "flags the first invalid entry when multiple paths are passed" do
+      options = create_test_options
+      options["passive_scan_path"] = YAML::Any.new([
+        YAML::Any.new("/tmp"),
+        YAML::Any.new("/tmp/noir-no-such-dir-#{Random.rand(1_000_000)}"),
+      ])
+      expect_raises(Noir::CliValidation::Error, /does not exist/) do
+        Noir::CliValidation.validate_passive_scan_paths!(options)
+      end
+    end
+  end
+
   describe "validate_tech_names!" do
     it "rejects unknown --only-techs values" do
       options = create_test_options
