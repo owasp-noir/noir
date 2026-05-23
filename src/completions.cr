@@ -47,6 +47,8 @@ private SCAN_FLAGS = %w[
   --probe-match
   --probe-skip
   --export-es
+  --export-opensearch
+  --export-webhook
   --send-req
   --send-proxy
   --send-es
@@ -180,6 +182,8 @@ def generate_zsh_completion_script
             '--probe-match[Only probe matching endpoints]:value:' \\
             '--probe-skip[Skip matching endpoints]:value:' \\
             '--export-es[Index endpoints in Elasticsearch]:url:' \\
+            '--export-opensearch[Index endpoints in OpenSearch]:url:' \\
+            '--export-webhook[POST endpoint catalog as JSON]:url:' \\
             '--send-req[v0 alias for --probe]' \\
             '--send-proxy[v0 alias for --probe-via]:url:' \\
             '--send-es[v0 alias for --export-es]:url:' \\
@@ -299,7 +303,7 @@ def generate_bash_completion_script
           COMPREPLY=( $(compgen -W "critical high medium low" -- "${cur}") )
           return 0
           ;;
-        -b|--base-path|-u|--url|-o|--output|--diff-path|--config-file|--passive-scan-path|--probe-via|--export-es|--send-proxy|--send-es)
+        -b|--base-path|-u|--url|-o|--output|--diff-path|--config-file|--passive-scan-path|--probe-via|--export-es|--export-opensearch|--export-webhook|--send-proxy|--send-es)
           COMPREPLY=( $(compgen -f -- "${cur}") )
           return 0
           ;;
@@ -396,6 +400,8 @@ def generate_fish_completion_script
     complete -c noir      -l probe-match           -d 'Only probe matching endpoints' -r
     complete -c noir      -l probe-skip            -d 'Skip matching endpoints' -r
     complete -c noir      -l export-es             -d 'Index endpoints in Elasticsearch' -r
+    complete -c noir      -l export-opensearch     -d 'Index endpoints in OpenSearch' -r
+    complete -c noir      -l export-webhook        -d 'POST endpoint catalog as JSON' -r
     complete -c noir      -l send-req              -d 'v0 alias for --probe'
     complete -c noir      -l send-proxy            -d 'v0 alias for --probe-via' -r
     complete -c noir      -l send-es               -d 'v0 alias for --export-es' -r
@@ -453,7 +459,7 @@ def generate_elvish_completion_script
       --passive-scan-auto-update --passive-scan-no-update-check
       -T --use-all-taggers --use-taggers
       --probe --probe-via --probe-header --probe-match --probe-skip
-      --export-es
+      --export-es --export-opensearch --export-webhook
       --send-req --send-proxy --send-es
       --with-headers --use-matchers --use-filters
       --ai-provider --ai-model --ai-key --ai-agent --ai-agent-max-steps

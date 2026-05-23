@@ -90,11 +90,34 @@ for the full surface.
     - `--use-matchers VAL` → `--probe-match VAL`
     - `--use-filters VAL` → `--probe-skip VAL`
     - `--send-es URL` → `--export-es URL`
-  All v0 names remain accepted (silent aliases — same internal
-  options keys, no behavior change), so v0.x scripts and
-  Dockerfiles keep working. The rename clarifies that
+  All v0 names remain accepted (silent aliases), so v0.x scripts
+  and Dockerfiles keep working. The rename clarifies that
   match/skip/header only affect probing, not the stdout/`-o`
   output.
+- EXPORT family grew two new targets:
+    - `--export-opensearch URL` — speaks the same HTTP protocol
+      as Elasticsearch, so it shares the SendElasticSearch
+      delivery class and the same internal key.
+    - `--export-webhook URL` — POSTs the endpoint catalog as a
+      single JSON document (`{endpoints, endpoint_count,
+      noir_version}`) to any webhook receiver. Slack incoming
+      webhooks, Discord, Zapier/n8n, and custom internal endpoints
+      all accept arbitrary JSON, so one contract covers the common
+      destinations. Network errors are swallowed at debug level so
+      a misconfigured URL doesn't crash the scan.
+- Internal option keys aligned with the v1 CLI surface:
+    - `send_req` → `probe`
+    - `send_proxy` → `probe_via`
+    - `send_es` → `export_es`
+    - `send_with_headers` → `probe_header`
+    - `use_matchers` → `probe_match`
+    - `use_filters` → `probe_skip`
+  v0 `config.yaml` files using the old keys are auto-migrated at
+  load time (`ConfigInitializer::LEGACY_CONFIG_KEY_MAP`). When
+  both a v0 and a v1 key are present in the same config file, the
+  v1 entry wins so explicit user intent isn't clobbered. The
+  default config template `noir config init` writes uses v1 keys
+  with v1-aligned comments.
 
 ### Fixed
 - `--send-es URL` (Elasticsearch delivery) shipped empty POST bodies

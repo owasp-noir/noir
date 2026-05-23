@@ -17,9 +17,10 @@ class NoirRunner
   @techs : Array(String)
   @endpoints : Array(Endpoint)
   @logger : NoirLogger
-  @send_proxy : String
-  @send_req : Bool
-  @send_es : String
+  @probe_via : String
+  @probe : Bool
+  @export_es : String
+  @export_webhook : String
   @is_debug : Bool
   @is_verbose : Bool
   @is_color : Bool
@@ -67,9 +68,10 @@ class NoirRunner
 
     @techs = [] of String
     @endpoints = [] of Endpoint
-    @send_proxy = @options["send_proxy"].to_s
-    @send_req = any_to_bool(@options["send_req"])
-    @send_es = @options["send_es"].to_s
+    @probe_via = @options["probe_via"].to_s
+    @probe = any_to_bool(@options["probe"])
+    @export_es = @options["export_es"].to_s
+    @export_webhook = @options["export_webhook"].to_s
     @is_debug = any_to_bool(@options["debug"])
     @is_verbose = any_to_bool(@options["verbose"])
     @is_color = any_to_bool(@options["color"])
@@ -273,22 +275,28 @@ class NoirRunner
   end
 
   def deliver
-    if @send_proxy != ""
-      @logger.info "Sending requests with proxy #{@send_proxy}."
+    if @probe_via != ""
+      @logger.info "Probing endpoints through proxy #{@probe_via}."
       deliver = SendWithProxy.new(@options)
       deliver.run(@endpoints)
     end
 
-    if @send_req != false
-      @logger.info "Sending requests without proxy."
+    if @probe != false
+      @logger.info "Probing endpoints directly."
       deliver = SendReq.new(@options)
       deliver.run(@endpoints)
     end
 
-    if @send_es != ""
-      @logger.info "Sending requests to Elasticsearch."
+    if @export_es != ""
+      @logger.info "Exporting endpoints to Elasticsearch."
       deliver = SendElasticSearch.new(@options)
-      deliver.run(@endpoints, @send_es)
+      deliver.run(@endpoints, @export_es)
+    end
+
+    if @export_webhook != ""
+      @logger.info "Exporting endpoints to webhook #{@export_webhook}."
+      deliver = SendWebhook.new(@options)
+      deliver.run(@endpoints, @export_webhook)
     end
   end
 

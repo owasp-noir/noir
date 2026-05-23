@@ -35,9 +35,9 @@ class ConfigInitializer
   # callers can iterate without per-call type checks.
   ARRAY_CONFIG_KEYS = %w[
     base
-    send_with_headers
-    use_filters
-    use_matchers
+    probe_header
+    probe_skip
+    probe_match
     set_pvalue
     set_pvalue_header
     set_pvalue_cookie
@@ -47,6 +47,19 @@ class ConfigInitializer
     set_pvalue_path
     passive_scan_path
   ]
+
+  # v0 config-key → v1 config-key map. Applied during `read_config`
+  # so a `~/.config/noir/config.yaml` written by v0.x with the old
+  # deliver/probe keys still loads under v1 without surprises.
+  # Mirrors the LEGACY CLI flag aliases in src/options.cr.
+  LEGACY_CONFIG_KEY_MAP = {
+    "send_req"          => "probe",
+    "send_proxy"        => "probe_via",
+    "send_es"           => "export_es",
+    "send_with_headers" => "probe_header",
+    "use_matchers"      => "probe_match",
+    "use_filters"       => "probe_skip",
+  }
 
   @config_dir : String
   @config_file : String
@@ -84,6 +97,16 @@ class ConfigInitializer
     begin
       parsed_yaml = YAML.parse(File.read(@config_file)).as_h
       symbolized_hash = parsed_yaml.transform_keys(&.to_s)
+
+      # Migrate v0 deliver/probe keys to their v1 equivalents before
+      # any downstream code looks them up. New keys present in the
+      # config win — v0 entry is dropped on collision so the user's
+      # explicit v1 setting is never silently overwritten.
+      LEGACY_CONFIG_KEY_MAP.each do |old_key, new_key|
+        next unless symbolized_hash.has_key?(old_key)
+        symbolized_hash[new_key] = symbolized_hash[old_key] unless symbolized_hash.has_key?(new_key)
+        symbolized_hash.delete(old_key)
+      end
 
       # Coerce legacy "yes" / "no" strings into Bool for keys the
       # downstream code compares against `true` / `false` directly.
@@ -161,10 +184,11 @@ class ConfigInitializer
       "ai_context"                   => YAML::Any.new(false),
       "nolog"                        => YAML::Any.new(false),
       "output"                       => YAML::Any.new(""),
-      "send_es"                      => YAML::Any.new(""),
-      "send_proxy"                   => YAML::Any.new(""),
-      "send_req"                     => YAML::Any.new(false),
-      "send_with_headers"            => YAML::Any.new([] of YAML::Any),
+      "export_es"                    => YAML::Any.new(""),
+      "probe_via"                    => YAML::Any.new(""),
+      "probe"                        => YAML::Any.new(false),
+      "probe_header"                 => YAML::Any.new([] of YAML::Any),
+      "export_webhook"               => YAML::Any.new(""),
       "set_pvalue"                   => YAML::Any.new([] of YAML::Any),
       "set_pvalue_header"            => YAML::Any.new([] of YAML::Any),
       "set_pvalue_cookie"            => YAML::Any.new([] of YAML::Any),
@@ -175,8 +199,8 @@ class ConfigInitializer
       "status_codes"                 => YAML::Any.new(false),
       "techs"                        => YAML::Any.new(""),
       "url"                          => YAML::Any.new(""),
-      "use_filters"                  => YAML::Any.new([] of YAML::Any),
-      "use_matchers"                 => YAML::Any.new([] of YAML::Any),
+      "probe_skip"                   => YAML::Any.new([] of YAML::Any),
+      "probe_match"                  => YAML::Any.new([] of YAML::Any),
       "all_taggers"                  => YAML::Any.new(false),
       "use_taggers"                  => YAML::Any.new(""),
       "diff"                         => YAML::Any.new(""),
@@ -264,20 +288,25 @@ class ConfigInitializer
       # The output file to write to
       output: "#{options["output"]}"
 
-      # The Elasticsearch server to send data to
+      # The Elasticsearch / OpenSearch server to export endpoints to
       # e.g http://localhost:9200
-      send_es: "#{options["send_es"]}"
+      export_es: "#{options["export_es"]}"
 
-      # The proxy server to use
+      # The proxy URL to route HTTP probes through
       # e.g http://localhost:8080
-      send_proxy: "#{options["send_proxy"]}"
+      probe_via: "#{options["probe_via"]}"
 
-      # Whether to send a request
-      send_req: #{options["send_req"]}
+      # Whether to fire HTTP probes at discovered endpoints
+      probe: #{options["probe"]}
 
-      # Whether to send headers with the request (Array of strings)
+      # Per-probe headers (Array of strings)
       # e.g "Authorization: Bearer token"
-      send_with_headers:
+      probe_header:
+
+      # The webhook URL to POST the endpoint catalog as JSON
+      # (Slack incoming webhook, Discord webhook, custom receiver, ...)
+      # e.g https://hooks.slack.com/services/T0/B0/XXXX
+      export_webhook: "#{options["export_webhook"]}"
 
       # The value to set for pvalue (Array of strings)
       set_pvalue:
@@ -297,11 +326,13 @@ class ConfigInitializer
       # The URL to use
       url: "#{options["url"]}"
 
-      # Whether to use filters (Array of strings)
-      use_filters:
+      # Probe-side skip patterns (Array of strings)
+      # URL substring, HTTP method, or "method:URL"
+      probe_skip:
 
-      # Whether to use matchers (Array of strings)
-      use_matchers:
+      # Probe-side match patterns (Array of strings)
+      # URL substring, HTTP method, or "method:URL"
+      probe_match:
 
       # Whether to use all taggers
       all_taggers: #{options["all_taggers"]}

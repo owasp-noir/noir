@@ -19,10 +19,10 @@ class Deliver
     @is_verbose = any_to_bool(options["verbose"])
     @is_color = any_to_bool(options["color"])
     @is_log = any_to_bool(options["nolog"])
-    @proxy = options["send_proxy"].to_s
+    @proxy = options["probe_via"].to_s
     @logger = NoirLogger.new @is_debug, @is_verbose, @is_color, @is_log
 
-    options["send_with_headers"].as_a.each do |set_header|
+    options["probe_header"].as_a.each do |set_header|
       raw = set_header.to_s
       # Only split on the first colon so values that contain colons
       # (e.g. `Authorization: Bearer aaa:bbb`, `X-Time: 12:34:56`)
@@ -36,7 +36,7 @@ class Deliver
       @headers[name] = value
     end
 
-    options["use_matchers"].as_a.each do |matcher|
+    options["probe_match"].as_a.each do |matcher|
       @matchers << matcher.to_s
     end
     @matchers.delete("")
@@ -44,7 +44,7 @@ class Deliver
       @logger.info "#{@matchers.size} matchers added."
     end
 
-    options["use_filters"].as_a.each do |filter|
+    options["probe_skip"].as_a.each do |filter|
       @filters << filter.to_s
     end
     @filters.delete("")

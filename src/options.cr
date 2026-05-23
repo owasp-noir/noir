@@ -279,19 +279,19 @@ def run_options_parser
     # scripts and v0.x Dockerfiles still parse.
     parser.separator "\n PROBE:".colorize(:blue)
     parser.on "--probe", "Fire HTTP requests at discovered endpoints (needs -u)" do
-      noir_options["send_req"] = YAML::Any.new(true)
+      noir_options["probe"] = YAML::Any.new(true)
     end
     parser.on "--probe-via URL", "Route probes through this proxy URL" do |v|
-      noir_options["send_proxy"] = YAML::Any.new(v)
+      noir_options["probe_via"] = YAML::Any.new(v)
     end
     parser.on "--probe-header VAL", "Add header to each probe (repeatable)" do |v|
-      append_to_yaml_array(noir_options, "send_with_headers", v)
+      append_to_yaml_array(noir_options, "probe_header", v)
     end
     parser.on "--probe-match VAL", "Only probe endpoints matching pattern (repeatable)" do |v|
-      append_to_yaml_array(noir_options, "use_matchers", v)
+      append_to_yaml_array(noir_options, "probe_match", v)
     end
     parser.on "--probe-skip VAL", "Skip endpoints matching pattern (repeatable)" do |v|
-      append_to_yaml_array(noir_options, "use_filters", v)
+      append_to_yaml_array(noir_options, "probe_skip", v)
     end
 
     # EXPORT — ship the endpoint catalog to an external data store.
@@ -299,30 +299,41 @@ def run_options_parser
     # endpoints themselves, just data shipping.
     parser.separator "\n EXPORT:".colorize(:blue)
     parser.on "--export-es URL", "Index endpoints in Elasticsearch" do |v|
-      noir_options["send_es"] = YAML::Any.new(v)
+      noir_options["export_es"] = YAML::Any.new(v)
+    end
+    parser.on "--export-opensearch URL", "Index endpoints in OpenSearch (ES-protocol compatible)" do |v|
+      # OpenSearch speaks the same HTTP protocol as Elasticsearch for
+      # the `POST /_doc` shape noir uses, so the existing
+      # SendElasticSearch delivery class talks to OpenSearch
+      # unmodified. Same internal key on purpose.
+      noir_options["export_es"] = YAML::Any.new(v)
+    end
+    parser.on "--export-webhook URL", "POST endpoint catalog as JSON to a webhook URL" do |v|
+      noir_options["export_webhook"] = YAML::Any.new(v)
     end
 
-    # v0 aliases — kept silent so existing automation keeps working.
-    # If a future deprecation pass is desired, this is the spot to
-    # add stderr notices.
+    # v0 aliases — silent CLI flag aliases that write to the v1
+    # internal keys directly. The parallel config-file alias map lives
+    # in ConfigInitializer::LEGACY_CONFIG_KEY_MAP so a v0 config.yaml
+    # also keeps working.
     parser.separator "\n LEGACY (v0 aliases, still work — prefer PROBE/EXPORT above):".colorize(:blue)
     parser.on "--send-req", "alias for --probe" do
-      noir_options["send_req"] = YAML::Any.new(true)
+      noir_options["probe"] = YAML::Any.new(true)
     end
     parser.on "--send-proxy URL", "alias for --probe-via" do |v|
-      noir_options["send_proxy"] = YAML::Any.new(v)
+      noir_options["probe_via"] = YAML::Any.new(v)
     end
     parser.on "--send-es URL", "alias for --export-es" do |v|
-      noir_options["send_es"] = YAML::Any.new(v)
+      noir_options["export_es"] = YAML::Any.new(v)
     end
     parser.on "--with-headers VAL", "alias for --probe-header" do |v|
-      append_to_yaml_array(noir_options, "send_with_headers", v)
+      append_to_yaml_array(noir_options, "probe_header", v)
     end
     parser.on "--use-matchers VAL", "alias for --probe-match" do |v|
-      append_to_yaml_array(noir_options, "use_matchers", v)
+      append_to_yaml_array(noir_options, "probe_match", v)
     end
     parser.on "--use-filters VAL", "alias for --probe-skip" do |v|
-      append_to_yaml_array(noir_options, "use_filters", v)
+      append_to_yaml_array(noir_options, "probe_skip", v)
     end
 
     parser.separator "\n AI Integration:".colorize(:blue)

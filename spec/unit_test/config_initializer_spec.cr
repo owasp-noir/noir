@@ -70,4 +70,73 @@ describe ConfigInitializer do
       options.has_key?("color").should be_true
     end
   end
+
+  describe "v0 -> v1 deliver/probe key migration" do
+    # A v0.x `config.yaml` that hard-coded the old deliver keys must
+    # keep working after the rename to PROBE/EXPORT internal keys.
+    # Mapping is owned by LEGACY_CONFIG_KEY_MAP and applied inside
+    # read_config before the merge with default_options.
+    it "migrates send_req -> probe (scalar)" do
+      with_noir_home("send_req: true\n") do |options|
+        options["probe"].as_bool.should be_true
+        options.has_key?("send_req").should be_false
+      end
+    end
+
+    it "migrates send_proxy -> probe_via" do
+      with_noir_home("send_proxy: http://127.0.0.1:8080\n") do |options|
+        options["probe_via"].to_s.should eq("http://127.0.0.1:8080")
+        options.has_key?("send_proxy").should be_false
+      end
+    end
+
+    it "migrates send_es -> export_es" do
+      with_noir_home("send_es: http://es:9200\n") do |options|
+        options["export_es"].to_s.should eq("http://es:9200")
+        options.has_key?("send_es").should be_false
+      end
+    end
+
+    it "migrates send_with_headers -> probe_header (array)" do
+      body = <<-YAML
+        send_with_headers:
+          - "Authorization: Bearer abc"
+          - "X-Trace: 1"
+        YAML
+      with_noir_home(body) do |options|
+        arr = options["probe_header"].as_a.map(&.to_s)
+        arr.should eq(["Authorization: Bearer abc", "X-Trace: 1"])
+        options.has_key?("send_with_headers").should be_false
+      end
+    end
+
+    it "migrates use_matchers -> probe_match and use_filters -> probe_skip" do
+      body = <<-YAML
+        use_matchers:
+          - "/api"
+        use_filters:
+          - "/admin"
+        YAML
+      with_noir_home(body) do |options|
+        options["probe_match"].as_a.map(&.to_s).should eq(["/api"])
+        options["probe_skip"].as_a.map(&.to_s).should eq(["/admin"])
+        options.has_key?("use_matchers").should be_false
+        options.has_key?("use_filters").should be_false
+      end
+    end
+
+    it "does not overwrite a v1 key that's already set" do
+      # If a config carries BOTH the v0 and v1 spelling (because the
+      # user is mid-migration), the v1 entry wins — explicit user
+      # intent shouldn't be clobbered by the legacy mapping.
+      body = <<-YAML
+        send_req: false
+        probe: true
+        YAML
+      with_noir_home(body) do |options|
+        options["probe"].as_bool.should be_true
+        options.has_key?("send_req").should be_false
+      end
+    end
+  end
 end

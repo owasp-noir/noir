@@ -115,13 +115,13 @@ module Noir::CLI::ScanCommand
     # delivery loops catch + log to debug level only, so the user sees
     # the normal JSON output with zero requests sent and no warning.
     # Fail early instead.
-    if noir_options["send_req"]? == YAML::Any.new(true) && url.empty?
+    if noir_options["probe"]? == YAML::Any.new(true) && url.empty?
       Noir::CLI.die("--probe needs a target URL. Pass it with -u/--url, e.g. `noir scan ./app --probe -u http://localhost:3000`.")
     end
 
-    send_proxy = noir_options["send_proxy"]?.try(&.to_s) || ""
-    if !send_proxy.empty? && url.empty?
-      Noir::CLI.die("--probe-via needs a target URL. Pass it with -u/--url, e.g. `noir scan ./app --probe-via #{send_proxy} -u http://localhost:3000`.")
+    probe_via = noir_options["probe_via"]?.try(&.to_s) || ""
+    if !probe_via.empty? && url.empty?
+      Noir::CLI.die("--probe-via needs a target URL. Pass it with -u/--url, e.g. `noir scan ./app --probe-via #{probe_via} -u http://localhost:3000`.")
     end
 
     exclude_codes = noir_options["exclude_codes"].to_s

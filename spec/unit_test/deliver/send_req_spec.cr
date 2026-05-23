@@ -132,7 +132,7 @@ describe SendReq do
       ep = Endpoint.new(server.url_for("/ping"), "GET")
 
       options = base_deliver_options
-      options["send_with_headers"] = YAML::Any.new([
+      options["probe_header"] = YAML::Any.new([
         YAML::Any.new("X-Api-Key: abc123"),
         YAML::Any.new("Authorization: Bearer x:y:z"),
       ])
@@ -156,7 +156,7 @@ describe SendReq do
       ep_drop = Endpoint.new(server.url_for("/public/info"), "GET")
 
       options = base_deliver_options
-      options["use_matchers"] = YAML::Any.new([YAML::Any.new("/admin")])
+      options["probe_match"] = YAML::Any.new([YAML::Any.new("/admin")])
       sender = SendReq.new(options)
       sender.run([ep_keep, ep_drop])
 

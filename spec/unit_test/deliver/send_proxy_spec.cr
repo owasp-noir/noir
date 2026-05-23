@@ -43,7 +43,7 @@ end
 private def base_deliver_options(proxy_url : String)
   options = create_test_options
   options["base"] = YAML::Any.new([YAML::Any.new(".")])
-  options["send_proxy"] = YAML::Any.new(proxy_url)
+  options["probe_via"] = YAML::Any.new(proxy_url)
   options
 end
 
@@ -89,7 +89,7 @@ describe SendWithProxy do
     # the connect failure and not hang the WaitGroup.
     options = create_test_options
     options["base"] = YAML::Any.new([YAML::Any.new(".")])
-    options["send_proxy"] = YAML::Any.new("http://127.0.0.1:1")
+    options["probe_via"] = YAML::Any.new("http://127.0.0.1:1")
 
     ep = Endpoint.new("http://example.test/", "GET")
     sender = SendWithProxy.new(options)

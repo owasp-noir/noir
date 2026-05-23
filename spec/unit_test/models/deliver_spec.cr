@@ -5,7 +5,7 @@ require "../../../src/models/endpoint.cr"
 describe "Initialize" do
   options = create_test_options
   options["base"] = YAML::Any.new([YAML::Any.new("noir")])
-  options["send_proxy"] = YAML::Any.new("http://localhost:8090")
+  options["probe_via"] = YAML::Any.new("http://localhost:8090")
 
   it "Deliver" do
     object = Deliver.new options
@@ -13,25 +13,25 @@ describe "Initialize" do
   end
 
   it "Deliver with headers" do
-    options["send_with_headers"] = YAML::Any.new([YAML::Any.new("X-API-Key: abcdssss")])
+    options["probe_header"] = YAML::Any.new([YAML::Any.new("X-API-Key: abcdssss")])
     object = Deliver.new options
     object.headers["X-API-Key"].should eq("abcdssss")
   end
 
   it "Deliver with headers (bearer case)" do
-    options["send_with_headers"] = YAML::Any.new([YAML::Any.new("Authorization: Bearer gAAAAABl3qwaQqol243Np")])
+    options["probe_header"] = YAML::Any.new([YAML::Any.new("Authorization: Bearer gAAAAABl3qwaQqol243Np")])
     object = Deliver.new options
     object.headers["Authorization"].should eq("Bearer gAAAAABl3qwaQqol243Np")
   end
 
   it "Deliver with matchers" do
-    options["use_matchers"] = YAML::Any.new([YAML::Any.new("/admin")])
+    options["probe_match"] = YAML::Any.new([YAML::Any.new("/admin")])
     object = Deliver.new options
     object.matchers[0].to_s.should eq("/admin")
   end
 
   it "Deliver with filters" do
-    options["use_filters"] = YAML::Any.new([YAML::Any.new("/admin")])
+    options["probe_skip"] = YAML::Any.new([YAML::Any.new("/admin")])
     object = Deliver.new options
     object.filters[0].to_s.should eq("/admin")
   end
@@ -40,7 +40,7 @@ end
 describe "Method-based filtering" do
   options = create_test_options
   options["base"] = YAML::Any.new([YAML::Any.new("noir")])
-  options["send_proxy"] = YAML::Any.new("http://localhost:8090")
+  options["probe_via"] = YAML::Any.new("http://localhost:8090")
 
   # Create test endpoints
   endpoint1 = Endpoint.new("/api/users", "GET")
@@ -51,8 +51,8 @@ describe "Method-based filtering" do
   test_endpoints = [endpoint1, endpoint2, endpoint3, endpoint4, endpoint5]
 
   it "applies matchers with URL-only pattern (backward compatibility)" do
-    options["use_matchers"] = YAML::Any.new([YAML::Any.new("/api")])
-    options["use_filters"] = YAML::Any.new([] of YAML::Any)
+    options["probe_match"] = YAML::Any.new([YAML::Any.new("/api")])
+    options["probe_skip"] = YAML::Any.new([] of YAML::Any)
     deliver = Deliver.new options
 
     result = deliver.apply_matchers(test_endpoints)
@@ -64,8 +64,8 @@ describe "Method-based filtering" do
   end
 
   it "applies matchers with method-only pattern" do
-    options["use_matchers"] = YAML::Any.new([YAML::Any.new("GET")])
-    options["use_filters"] = YAML::Any.new([] of YAML::Any)
+    options["probe_match"] = YAML::Any.new([YAML::Any.new("GET")])
+    options["probe_skip"] = YAML::Any.new([] of YAML::Any)
     deliver = Deliver.new options
 
     result = deliver.apply_matchers(test_endpoints)
@@ -77,8 +77,8 @@ describe "Method-based filtering" do
   end
 
   it "applies matchers with method:url pattern" do
-    options["use_matchers"] = YAML::Any.new([YAML::Any.new("POST:/api")])
-    options["use_filters"] = YAML::Any.new([] of YAML::Any)
+    options["probe_match"] = YAML::Any.new([YAML::Any.new("POST:/api")])
+    options["probe_skip"] = YAML::Any.new([] of YAML::Any)
     deliver = Deliver.new options
 
     result = deliver.apply_matchers(test_endpoints)
@@ -88,8 +88,8 @@ describe "Method-based filtering" do
   end
 
   it "applies filters with URL-only pattern (backward compatibility)" do
-    options["use_matchers"] = YAML::Any.new([] of YAML::Any)
-    options["use_filters"] = YAML::Any.new([YAML::Any.new("/admin")])
+    options["probe_match"] = YAML::Any.new([] of YAML::Any)
+    options["probe_skip"] = YAML::Any.new([YAML::Any.new("/admin")])
     deliver = Deliver.new options
 
     result = deliver.apply_filters(test_endpoints)
@@ -98,8 +98,8 @@ describe "Method-based filtering" do
   end
 
   it "applies filters with method-only pattern" do
-    options["use_matchers"] = YAML::Any.new([] of YAML::Any)
-    options["use_filters"] = YAML::Any.new([YAML::Any.new("POST")])
+    options["probe_match"] = YAML::Any.new([] of YAML::Any)
+    options["probe_skip"] = YAML::Any.new([YAML::Any.new("POST")])
     deliver = Deliver.new options
 
     result = deliver.apply_filters(test_endpoints)
@@ -108,8 +108,8 @@ describe "Method-based filtering" do
   end
 
   it "applies filters with method:url pattern" do
-    options["use_matchers"] = YAML::Any.new([] of YAML::Any)
-    options["use_filters"] = YAML::Any.new([YAML::Any.new("GET:/api")])
+    options["probe_match"] = YAML::Any.new([] of YAML::Any)
+    options["probe_skip"] = YAML::Any.new([YAML::Any.new("GET:/api")])
     deliver = Deliver.new options
 
     result = deliver.apply_filters(test_endpoints)
@@ -118,8 +118,8 @@ describe "Method-based filtering" do
   end
 
   it "supports multiple matchers with different patterns" do
-    options["use_matchers"] = YAML::Any.new([YAML::Any.new("GET"), YAML::Any.new("POST:/login")])
-    options["use_filters"] = YAML::Any.new([] of YAML::Any)
+    options["probe_match"] = YAML::Any.new([YAML::Any.new("GET"), YAML::Any.new("POST:/login")])
+    options["probe_skip"] = YAML::Any.new([] of YAML::Any)
     deliver = Deliver.new options
 
     result = deliver.apply_matchers(test_endpoints)
@@ -132,8 +132,8 @@ describe "Method-based filtering" do
   end
 
   it "case insensitive method matching" do
-    options["use_matchers"] = YAML::Any.new([YAML::Any.new("get")])
-    options["use_filters"] = YAML::Any.new([] of YAML::Any)
+    options["probe_match"] = YAML::Any.new([YAML::Any.new("get")])
+    options["probe_skip"] = YAML::Any.new([] of YAML::Any)
     deliver = Deliver.new options
 
     result = deliver.apply_matchers(test_endpoints)
@@ -145,11 +145,11 @@ describe "Method-based filtering" do
   # the first match, so an endpoint matched by several overlapping
   # patterns ended up emitted N times in the output.
   it "does not emit duplicates when an endpoint matches multiple matchers" do
-    options["use_matchers"] = YAML::Any.new([
+    options["probe_match"] = YAML::Any.new([
       YAML::Any.new("GET"),      # matches GET /api/users, GET /admin/dashboard
       YAML::Any.new("GET:/api"), # also matches GET /api/users
     ])
-    options["use_filters"] = YAML::Any.new([] of YAML::Any)
+    options["probe_skip"] = YAML::Any.new([] of YAML::Any)
     deliver = Deliver.new options
 
     result = deliver.apply_matchers(test_endpoints)
@@ -176,8 +176,8 @@ describe "Deliver#apply_all chaining" do
   # original list instead of the matcher-filtered result, so combining
   # matchers and filters silently dropped the matcher narrowing.
   it "feeds matcher output into filters (instead of the original list)" do
-    options["use_matchers"] = YAML::Any.new([YAML::Any.new("/api")])  # keep /api/*
-    options["use_filters"] = YAML::Any.new([YAML::Any.new("/admin")]) # drop /admin/*
+    options["probe_match"] = YAML::Any.new([YAML::Any.new("/api")])  # keep /api/*
+    options["probe_skip"] = YAML::Any.new([YAML::Any.new("/admin")]) # drop /admin/*
     deliver = Deliver.new options
 
     result = deliver.apply_all(endpoints)
@@ -198,7 +198,7 @@ describe "Deliver#initialize header parsing" do
   # Regression: split on every colon dropped everything after the
   # second one for values that legitimately contain `:`.
   it "preserves colons inside the header value" do
-    options["send_with_headers"] = YAML::Any.new([
+    options["probe_header"] = YAML::Any.new([
       YAML::Any.new("Authorization: Bearer aaa:bbb:ccc"),
     ])
     deliver = Deliver.new options
@@ -206,7 +206,7 @@ describe "Deliver#initialize header parsing" do
   end
 
   it "preserves multiple-colon header values like timestamps" do
-    options["send_with_headers"] = YAML::Any.new([
+    options["probe_header"] = YAML::Any.new([
       YAML::Any.new("X-Request-Time: 12:34:56"),
     ])
     deliver = Deliver.new options
@@ -214,7 +214,7 @@ describe "Deliver#initialize header parsing" do
   end
 
   it "trims leading whitespace after the colon" do
-    options["send_with_headers"] = YAML::Any.new([
+    options["probe_header"] = YAML::Any.new([
       YAML::Any.new("X-Foo:   value-with-spaces"),
     ])
     deliver = Deliver.new options
@@ -222,7 +222,7 @@ describe "Deliver#initialize header parsing" do
   end
 
   it "keeps the value as-is when no space follows the colon" do
-    options["send_with_headers"] = YAML::Any.new([
+    options["probe_header"] = YAML::Any.new([
       YAML::Any.new("X-Bar:tight-value"),
     ])
     deliver = Deliver.new options

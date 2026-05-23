@@ -88,24 +88,25 @@ module Noir::CliValidation
 
   # `--probe-match` and `--probe-skip` only run inside the Deliver
   # pipeline (the code that ships endpoints to --probe / --probe-via /
-  # --export-es). With no delivery target configured they silently
-  # no-op — a real surprise for users who set the flags expecting
-  # stdout output to be filtered. Warn at CLI parse time so the gap
-  # is obvious.
+  # --export-es / --export-webhook). With no delivery target
+  # configured they silently no-op — a real surprise for users who
+  # set the flags expecting stdout output to be filtered. Warn at
+  # CLI parse time so the gap is obvious.
   def self.warn_about_unused_delivery_flags(options : Hash(String, YAML::Any))
-    has_matchers = non_empty_array?(options["use_matchers"]?)
-    has_filters = non_empty_array?(options["use_filters"]?)
+    has_matchers = non_empty_array?(options["probe_match"]?)
+    has_filters = non_empty_array?(options["probe_skip"]?)
     return unless has_matchers || has_filters
 
-    delivery_active = (options["send_req"]?.try(&.raw) == true) ||
-                      !(options["send_proxy"]?.try(&.to_s) || "").empty? ||
-                      !(options["send_es"]?.try(&.to_s) || "").empty?
+    delivery_active = (options["probe"]?.try(&.raw) == true) ||
+                      !(options["probe_via"]?.try(&.to_s) || "").empty? ||
+                      !(options["export_es"]?.try(&.to_s) || "").empty? ||
+                      !(options["export_webhook"]?.try(&.to_s) || "").empty?
     return if delivery_active
 
     flags = [] of String
     flags << "--probe-match" if has_matchers
     flags << "--probe-skip" if has_filters
-    STDERR.puts "WARNING: #{flags.join(" / ")} set but no delivery target (--probe / --probe-via / --export-es). These flags only filter what gets delivered, not what's written to stdout.".colorize(:yellow)
+    STDERR.puts "WARNING: #{flags.join(" / ")} set but no delivery target (--probe / --probe-via / --export-es / --export-webhook). These flags only filter what gets delivered, not what's written to stdout.".colorize(:yellow)
   end
 
   private def self.non_empty_array?(value : YAML::Any?) : Bool
