@@ -51,6 +51,10 @@ module Analyzer::Crystal
     end
 
     private def collect_public_dir_endpoints
+      # `get_public_files` scopes to `public/` directories that sit
+      # next to a `shard.yml`, so files in unrelated `*/public/`
+      # subtrees (e.g. a built docs site at `docs/public/`) no
+      # longer leak in as fake Lucky endpoints.
       get_public_files(@base_path).each do |file|
         # Extract the path after "/public/" regardless of depth
         if file =~ /\/public\/(.*)/

@@ -260,9 +260,20 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
       # still have their project scanned. Only descendants of the base
       # are subject to pruning.
       ignored_dir_names = Set{
-        "node_modules", ".git", "dist", "build", "target",
-        "__pycache__", ".venv", "venv", ".idea", ".vscode",
-        "tmp", ".next", "out", "vendor",
+        # Source control / IDE / agent state
+        ".git", ".idea", ".vscode", ".claude",
+        # Language-specific dependency / build caches
+        "node_modules", "vendor", "__pycache__", ".venv", "venv",
+        ".pytest_cache", ".tox", ".gradle", ".bundle", ".dart_tool",
+        ".cargo", ".terraform",
+        # Common build / dist / cache outputs
+        "dist", "build", "target", "out", "tmp", ".cache",
+        ".next", ".nuxt", ".svelte-kit", ".turbo", ".parcel-cache",
+        ".serverless", ".expo",
+        # Test coverage / reports
+        "coverage", ".coverage",
+        # iOS / macOS noise
+        "Pods", "__MACOSX",
       }
 
       # User-supplied --exclude-path patterns (comma-separated globs).
