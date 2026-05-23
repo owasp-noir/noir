@@ -1,90 +1,102 @@
 +++
 title = "Delivering Results to Other Tools"
-description = "Send discovered endpoints to Burp Suite, ZAP, or Elasticsearch."
+description = "Probe endpoints through Burp/ZAP or export them to Elasticsearch."
 weight = 1
 sort_by = "weight"
 
 +++
 
-Send discovered endpoints directly to security tools like Burp Suite, ZAP, or Elasticsearch for further analysis.
+Noir splits "delivering results" into two distinct families:
 
-## Usage
+- **PROBE** — fire HTTP requests at the endpoints noir just discovered (active replay, optionally through a proxy like Burp Suite or ZAP).
+- **EXPORT** — ship the endpoint catalog to an external data store (e.g. Elasticsearch) as data, with no HTTP traffic to the endpoints themselves.
+
+## Probe
 
 Relevant flags:
 
-*   `--send-req`: Send as web request
-*   `--send-proxy http://proxy...`: Send through HTTP proxy
-*   `--send-es http://es...`: Send to Elasticsearch
-*   `--with-headers X-Header:Value`: Add custom headers
-*   `--use-matchers string`: Only send matching endpoints (URL, method, or method:URL)
-*   `--use-filters string`: Exclude matching endpoints (URL, method, or method:URL)
+| Flag | Purpose |
+| --- | --- |
+| `--probe` | Fire HTTP requests at each discovered endpoint (needs `-u`) |
+| `--probe-via URL` | Route probes through this proxy URL |
+| `--probe-header VAL` | Add a header to every probe (repeatable) |
+| `--probe-match VAL` | Only probe endpoints matching the pattern (URL, method, or `method:URL`) |
+| `--probe-skip VAL` | Skip endpoints matching the pattern |
 
-### Sending to a Proxy
+### Replay through a proxy
 
-Send all endpoints to a proxy like Burp Suite or ZAP.
+Send every endpoint through a local Burp/ZAP proxy so its scanner picks them up.
 
 ```bash
-noir scan ./source --send-proxy http://localhost:8080
+noir scan ./source -u http://localhost:3000 --probe-via http://localhost:8080
 ```
 
 ![](./deliver-proxy.png)
 
-### Adding Custom Headers
+### Custom headers
 
-Attach custom headers such as authentication tokens.
+Attach an auth token or any other header to every probe.
 
 ```bash
-noir scan ./source --send-proxy http://localhost:8080 --with-headers "Authorization: Bearer your-token"
+noir scan ./source -u http://localhost:3000 \
+  --probe-via http://localhost:8080 \
+  --probe-header "Authorization: Bearer your-token"
 ```
 
 ![](./deliver-header.png)
 
-### Filtering and Matching
+### Match / skip
 
-Use matchers and filters to send only specific endpoints.
-
-#### URL-based Filtering
-Send endpoints containing "api".
+Narrow the set of endpoints sent through the proxy. Patterns accept a URL substring, an HTTP method (case-insensitive), or `method:URL` combined.
 
 ```bash
-noir scan ./source --send-proxy http://localhost:8080 --use-matchers "api"
+# Only API endpoints
+noir scan ./source -u http://localhost:3000 --probe-via http://localhost:8080 --probe-match "api"
+
+# Only GET requests
+noir scan ./source -u http://localhost:3000 --probe-via http://localhost:8080 --probe-match "GET"
+
+# Skip POST requests
+noir scan ./source -u http://localhost:3000 --probe-via http://localhost:8080 --probe-skip "POST"
+
+# POST requests to /api only
+noir scan ./source -u http://localhost:3000 --probe-via http://localhost:8080 --probe-match "POST:/api"
+
+# Skip GET requests to /admin
+noir scan ./source -u http://localhost:3000 --probe-via http://localhost:8080 --probe-skip "GET:/admin"
 ```
 
-#### Method-based Filtering
-Send only GET requests.
+Supported HTTP methods: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, TRACE, CONNECT.
+
+Multiple `--probe-match` / `--probe-skip` flags compose:
 
 ```bash
-noir scan ./source --send-proxy http://localhost:8080 --use-matchers "GET"
-```
-
-Exclude POST requests.
-
-```bash
-noir scan ./source --send-proxy http://localhost:8080 --use-filters "POST"
-```
-
-#### Method and URL Combination
-Send POST requests to API endpoints.
-
-```bash
-noir scan ./source --send-proxy http://localhost:8080 --use-matchers "POST:/api"
-```
-
-Exclude GET requests to admin pages.
-
-```bash
-noir scan ./source --send-proxy http://localhost:8080 --use-filters "GET:/admin"
-```
-
-#### Supported HTTP Methods
-GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, TRACE, CONNECT (case insensitive)
-
-#### Multiple Patterns
-
-Combine multiple matchers or filters.
-
-```bash
-noir scan ./source --send-proxy http://localhost:8080 --use-matchers "GET" --use-matchers "POST:/api"
+noir scan ./source -u http://localhost:3000 \
+  --probe-via http://localhost:8080 \
+  --probe-match "GET" --probe-match "POST:/api"
 ```
 
 ![](./deliver-mf.png)
+
+## Export
+
+Push the endpoint catalog to an external data store. Categorically different from probing — no traffic hits the endpoints themselves.
+
+```bash
+noir scan ./source --export-es http://localhost:9200
+```
+
+## v0 aliases
+
+The v0.x flag names continue to work — noir maps them silently:
+
+| v0 flag | v1 equivalent |
+| --- | --- |
+| `--send-req` | `--probe` |
+| `--send-proxy URL` | `--probe-via URL` |
+| `--send-es URL` | `--export-es URL` |
+| `--with-headers VAL` | `--probe-header VAL` |
+| `--use-matchers VAL` | `--probe-match VAL` |
+| `--use-filters VAL` | `--probe-skip VAL` |
+
+Existing CI scripts and Dockerfiles using the v0 names don't need any changes. New documentation, examples, and shell completions surface the v1 names.

@@ -86,12 +86,12 @@ module Noir::CliValidation
     end
   end
 
-  # `--use-matchers` and `--use-filters` only run inside the Deliver
-  # pipeline (the code that ships endpoints to --send-req /
-  # --send-proxy / --send-es). With no delivery target configured
-  # they silently no-op — a real surprise for users who set the
-  # flags expecting stdout output to be filtered. Warn at CLI parse
-  # time so the gap is obvious.
+  # `--probe-match` and `--probe-skip` only run inside the Deliver
+  # pipeline (the code that ships endpoints to --probe / --probe-via /
+  # --export-es). With no delivery target configured they silently
+  # no-op — a real surprise for users who set the flags expecting
+  # stdout output to be filtered. Warn at CLI parse time so the gap
+  # is obvious.
   def self.warn_about_unused_delivery_flags(options : Hash(String, YAML::Any))
     has_matchers = non_empty_array?(options["use_matchers"]?)
     has_filters = non_empty_array?(options["use_filters"]?)
@@ -103,9 +103,9 @@ module Noir::CliValidation
     return if delivery_active
 
     flags = [] of String
-    flags << "--use-matchers" if has_matchers
-    flags << "--use-filters" if has_filters
-    STDERR.puts "WARNING: #{flags.join(" / ")} set but no delivery target (--send-req / --send-proxy / --send-es). These flags only filter what gets delivered, not what's written to stdout.".colorize(:yellow)
+    flags << "--probe-match" if has_matchers
+    flags << "--probe-skip" if has_filters
+    STDERR.puts "WARNING: #{flags.join(" / ")} set but no delivery target (--probe / --probe-via / --export-es). These flags only filter what gets delivered, not what's written to stdout.".colorize(:yellow)
   end
 
   private def self.non_empty_array?(value : YAML::Any?) : Bool

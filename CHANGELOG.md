@@ -79,6 +79,22 @@ for the full surface.
   troubleshooting, shell-completion, configuration, output-format, and
   AI-provider pages to lead with the v1 idiom (v0 examples preserved
   in compatibility callouts).
+- Deliver surface split into two semantic families. `noir scan -h`
+  now shows three sections: **PROBE** for active HTTP replay
+  against the discovered endpoints, **EXPORT** for shipping the
+  catalog to an external data store, and **LEGACY** for the v0
+  aliases that map onto them:
+    - `--send-req` → `--probe`
+    - `--send-proxy URL` → `--probe-via URL`
+    - `--with-headers VAL` → `--probe-header VAL`
+    - `--use-matchers VAL` → `--probe-match VAL`
+    - `--use-filters VAL` → `--probe-skip VAL`
+    - `--send-es URL` → `--export-es URL`
+  All v0 names remain accepted (silent aliases — same internal
+  options keys, no behavior change), so v0.x scripts and
+  Dockerfiles keep working. The rename clarifies that
+  match/skip/header only affect probing, not the stdout/`-o`
+  output.
 
 ### Fixed
 - `--send-es URL` (Elasticsearch delivery) shipped empty POST bodies

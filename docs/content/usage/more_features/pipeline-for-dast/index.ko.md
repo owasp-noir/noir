@@ -13,7 +13,7 @@ Noir를 DAST 파이프라인에 통합하여 애플리케이션의 모든 엔드
 Noir의 `deliver` 기능으로 발견된 엔드포인트를 [OWASP ZAP](https://www.zaproxy.org/), [Burp Suite](https://portswigger.net/burp), [Caido](https://caido.io/) 등의 프록시로 전송합니다.
 
 ```bash
-noir scan . -u http://localhost:3000 --send-proxy "http://localhost:8080"
+noir scan . -u http://localhost:3000 --probe-via "http://localhost:8080"
 ```
 
 현재 디렉터리를 스캔하고, `http://localhost:3000`을 기준 URL로 사용하여, 모든 엔드포인트를 `http://localhost:8080` 프록시로 전송합니다.

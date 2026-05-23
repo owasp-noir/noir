@@ -154,8 +154,8 @@ private def base_help : String
         $ noir scan . --ai-provider acp:codex
         $ noir scan . --ai-provider acp:claude
 
-      #{"Forward results via proxy (Burp/ZAP)".colorize(:yellow)}
-        noir scan ./myapp --send-proxy http://127.0.0.1:8080
+      #{"Replay endpoints through Burp/ZAP".colorize(:yellow)}
+        noir scan ./myapp --probe-via http://127.0.0.1:8080 -u http://target
 
     HELP
 end
@@ -175,7 +175,7 @@ def run_options_parser
     parser.on "-b PATH", "--base-path PATH", "Add a base path to scan (positional paths work too; repeatable)" do |v|
       append_to_yaml_array(noir_options, "base", v)
     end
-    parser.on "-u URL", "--url http://...", "Prepend this base URL to every discovered path; required for --status-codes, --send-req, and --send-proxy" do |v|
+    parser.on "-u URL", "--url http://...", "Prepend this base URL to every discovered path; required for --status-codes, --probe, and --probe-via" do |v|
       noir_options["url"] = YAML::Any.new(v)
     end
 
@@ -272,23 +272,56 @@ def run_options_parser
       noir_options["use_taggers"] = YAML::Any.new(v)
     end
 
-    parser.separator "\n DELIVER:".colorize(:blue)
-    parser.on "--send-req", "Send results via HTTP request" do
+    # PROBE — fire HTTP requests against the endpoints noir just
+    # discovered (active replay). The v0 names `--send-req` /
+    # `--send-proxy` / `--with-headers` / `--use-matchers` /
+    # `--use-filters` are kept as silent aliases so existing CI
+    # scripts and v0.x Dockerfiles still parse.
+    parser.separator "\n PROBE:".colorize(:blue)
+    parser.on "--probe", "Fire HTTP requests at discovered endpoints (needs -u)" do
       noir_options["send_req"] = YAML::Any.new(true)
     end
-    parser.on "--send-proxy URL", "Proxy for delivery" do |v|
+    parser.on "--probe-via URL", "Route probes through this proxy URL" do |v|
       noir_options["send_proxy"] = YAML::Any.new(v)
     end
-    parser.on "--send-es URL", "Send to Elasticsearch" do |v|
-      noir_options["send_es"] = YAML::Any.new(v)
-    end
-    parser.on "--with-headers VAL", "Add custom headers (repeatable)" do |v|
+    parser.on "--probe-header VAL", "Add header to each probe (repeatable)" do |v|
       append_to_yaml_array(noir_options, "send_with_headers", v)
     end
-    parser.on "--use-matchers VAL", "Matchers for delivery (repeatable)" do |v|
+    parser.on "--probe-match VAL", "Only probe endpoints matching pattern (repeatable)" do |v|
       append_to_yaml_array(noir_options, "use_matchers", v)
     end
-    parser.on "--use-filters VAL", "Filters for delivery (repeatable)" do |v|
+    parser.on "--probe-skip VAL", "Skip endpoints matching pattern (repeatable)" do |v|
+      append_to_yaml_array(noir_options, "use_filters", v)
+    end
+
+    # EXPORT — ship the endpoint catalog to an external data store.
+    # Categorically different from probing: no HTTP traffic to the
+    # endpoints themselves, just data shipping.
+    parser.separator "\n EXPORT:".colorize(:blue)
+    parser.on "--export-es URL", "Index endpoints in Elasticsearch" do |v|
+      noir_options["send_es"] = YAML::Any.new(v)
+    end
+
+    # v0 aliases — kept silent so existing automation keeps working.
+    # If a future deprecation pass is desired, this is the spot to
+    # add stderr notices.
+    parser.separator "\n LEGACY (v0 aliases, still work — prefer PROBE/EXPORT above):".colorize(:blue)
+    parser.on "--send-req", "alias for --probe" do
+      noir_options["send_req"] = YAML::Any.new(true)
+    end
+    parser.on "--send-proxy URL", "alias for --probe-via" do |v|
+      noir_options["send_proxy"] = YAML::Any.new(v)
+    end
+    parser.on "--send-es URL", "alias for --export-es" do |v|
+      noir_options["send_es"] = YAML::Any.new(v)
+    end
+    parser.on "--with-headers VAL", "alias for --probe-header" do |v|
+      append_to_yaml_array(noir_options, "send_with_headers", v)
+    end
+    parser.on "--use-matchers VAL", "alias for --probe-match" do |v|
+      append_to_yaml_array(noir_options, "use_matchers", v)
+    end
+    parser.on "--use-filters VAL", "alias for --probe-skip" do |v|
       append_to_yaml_array(noir_options, "use_filters", v)
     end
 

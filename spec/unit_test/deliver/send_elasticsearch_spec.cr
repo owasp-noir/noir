@@ -103,7 +103,7 @@ describe SendElasticSearch do
   it "swallows network errors instead of bubbling out of run" do
     sender = SendElasticSearch.new(base_deliver_options)
     # Unreachable port → Crest raises; the rescue inside `run` must
-    # absorb it so a misconfigured --send-es URL doesn't crash noir.
+    # absorb it so a misconfigured --export-es URL doesn't crash noir.
     # The assertion is just "no exception escapes" — `run` returns
     # nil after the rescue.
     sender.run([Endpoint.new("/x", "GET")], "http://127.0.0.1:1/dead").should be_nil

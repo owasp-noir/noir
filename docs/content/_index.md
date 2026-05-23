@@ -145,7 +145,7 @@ template = "landing"
         <div class="how-step-content">
           <h3>Hand off to humans, AI, or DAST</h3>
           <p>Export JSON, OpenAPI, or SARIF for human reviewers; pipe straight into ZAP, Burp, or Caido as a proxy target; or hand the inventory to an LLM-based code auditor as focused entrypoint context.</p>
-          <div class="how-step-code">$ noir scan . -f oas3 --send-proxy http://localhost:8090</div>
+          <div class="how-step-code">$ noir scan . -f oas3 --probe-via http://localhost:8090</div>
         </div>
       </div>
     </div>

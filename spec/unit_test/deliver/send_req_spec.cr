@@ -126,7 +126,7 @@ describe SendReq do
     end
   end
 
-  it "attaches user-supplied --with-headers to every request" do
+  it "attaches user-supplied --probe-header to every request" do
     server = CapturingServer.new
     begin
       ep = Endpoint.new(server.url_for("/ping"), "GET")

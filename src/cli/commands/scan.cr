@@ -108,7 +108,7 @@ module Noir::CLI::ScanCommand
       Noir::CLI.die("--status-codes needs a target URL. Pass it with -u/--url, e.g. `noir scan ./app --status-codes -u http://localhost:3000`.")
     end
 
-    # `--send-req` and `--send-proxy` both fire HTTP requests against
+    # `--probe` and `--probe-via` both fire HTTP requests against
     # `endpoint.url`, which is just the discovered path (e.g. `/sign`)
     # until `-u/--url` prepends a base. Without `-u` the request URL is
     # malformed and Crest raises — but the SendReq / SendWithProxy
@@ -116,12 +116,12 @@ module Noir::CLI::ScanCommand
     # the normal JSON output with zero requests sent and no warning.
     # Fail early instead.
     if noir_options["send_req"]? == YAML::Any.new(true) && url.empty?
-      Noir::CLI.die("--send-req needs a target URL. Pass it with -u/--url, e.g. `noir scan ./app --send-req -u http://localhost:3000`.")
+      Noir::CLI.die("--probe needs a target URL. Pass it with -u/--url, e.g. `noir scan ./app --probe -u http://localhost:3000`.")
     end
 
     send_proxy = noir_options["send_proxy"]?.try(&.to_s) || ""
     if !send_proxy.empty? && url.empty?
-      Noir::CLI.die("--send-proxy needs a target URL. Pass it with -u/--url, e.g. `noir scan ./app --send-proxy #{send_proxy} -u http://localhost:3000`.")
+      Noir::CLI.die("--probe-via needs a target URL. Pass it with -u/--url, e.g. `noir scan ./app --probe-via #{send_proxy} -u http://localhost:3000`.")
     end
 
     exclude_codes = noir_options["exclude_codes"].to_s

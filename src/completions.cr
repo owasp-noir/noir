@@ -41,6 +41,12 @@ private SCAN_FLAGS = %w[
   --passive-scan-no-update-check
   -T --use-all-taggers
   --use-taggers
+  --probe
+  --probe-via
+  --probe-header
+  --probe-match
+  --probe-skip
+  --export-es
   --send-req
   --send-proxy
   --send-es
@@ -168,12 +174,18 @@ def generate_zsh_completion_script
             '--passive-scan-no-update-check[Skip rule update check]' \\
             '(-T --use-all-taggers)'{-T,--use-all-taggers}'[Activate all taggers]' \\
             '--use-taggers[Activate specific taggers]:list:' \\
-            '--send-req[Send results via HTTP]' \\
-            '--send-proxy[Proxy URL]:url:' \\
-            '--send-es[Elasticsearch URL]:url:' \\
-            '--with-headers[Add custom headers]:value:' \\
-            '--use-matchers[Matchers for delivery]:value:' \\
-            '--use-filters[Filters for delivery]:value:' \\
+            '--probe[Fire HTTP requests at endpoints]' \\
+            '--probe-via[Route probes through proxy]:url:' \\
+            '--probe-header[Header per probe]:value:' \\
+            '--probe-match[Only probe matching endpoints]:value:' \\
+            '--probe-skip[Skip matching endpoints]:value:' \\
+            '--export-es[Index endpoints in Elasticsearch]:url:' \\
+            '--send-req[v0 alias for --probe]' \\
+            '--send-proxy[v0 alias for --probe-via]:url:' \\
+            '--send-es[v0 alias for --export-es]:url:' \\
+            '--with-headers[v0 alias for --probe-header]:value:' \\
+            '--use-matchers[v0 alias for --probe-match]:value:' \\
+            '--use-filters[v0 alias for --probe-skip]:value:' \\
             '--ai-provider[AI provider prefix or URL]:provider:' \\
             '--ai-model[AI model name]:model:' \\
             '--ai-key[AI API key]:key:' \\
@@ -287,11 +299,11 @@ def generate_bash_completion_script
           COMPREPLY=( $(compgen -W "critical high medium low" -- "${cur}") )
           return 0
           ;;
-        -b|--base-path|-u|--url|-o|--output|--diff-path|--config-file|--passive-scan-path|--send-proxy|--send-es)
+        -b|--base-path|-u|--url|-o|--output|--diff-path|--config-file|--passive-scan-path|--probe-via|--export-es|--send-proxy|--send-es)
           COMPREPLY=( $(compgen -f -- "${cur}") )
           return 0
           ;;
-        --with-headers|--use-matchers|--use-filters|--use-taggers|--pvalue|--set-pvalue|--set-pvalue-header|--set-pvalue-cookie|--set-pvalue-query|--set-pvalue-form|--set-pvalue-json|--set-pvalue-path|-t|--techs|--exclude-techs|--only-techs|--exclude-codes|--exclude-path|--ai-provider|--ai-model|--ai-key|--ai-agent-max-steps|--ai-native-tools-allowlist|--ai-max-token|--concurrency)
+        --probe-header|--probe-match|--probe-skip|--with-headers|--use-matchers|--use-filters|--use-taggers|--pvalue|--set-pvalue|--set-pvalue-header|--set-pvalue-cookie|--set-pvalue-query|--set-pvalue-form|--set-pvalue-json|--set-pvalue-path|-t|--techs|--exclude-techs|--only-techs|--exclude-codes|--exclude-path|--ai-provider|--ai-model|--ai-key|--ai-agent-max-steps|--ai-native-tools-allowlist|--ai-max-token|--concurrency)
           # value flags — no useful completion, just let the user type
           return 0
           ;;
@@ -378,9 +390,15 @@ def generate_fish_completion_script
     complete -c noir      -l passive-scan-no-update-check -d 'Skip rule update check'
     complete -c noir -s T -l use-all-taggers       -d 'Activate all taggers'
     complete -c noir      -l use-taggers           -d 'Activate specific taggers' -r
-    complete -c noir      -l send-req              -d 'Send results via HTTP'
-    complete -c noir      -l send-proxy            -d 'Proxy URL' -r
-    complete -c noir      -l send-es               -d 'Elasticsearch URL' -r
+    complete -c noir      -l probe                 -d 'Fire HTTP requests at endpoints'
+    complete -c noir      -l probe-via             -d 'Route probes through proxy' -r
+    complete -c noir      -l probe-header          -d 'Header per probe' -r
+    complete -c noir      -l probe-match           -d 'Only probe matching endpoints' -r
+    complete -c noir      -l probe-skip            -d 'Skip matching endpoints' -r
+    complete -c noir      -l export-es             -d 'Index endpoints in Elasticsearch' -r
+    complete -c noir      -l send-req              -d 'v0 alias for --probe'
+    complete -c noir      -l send-proxy            -d 'v0 alias for --probe-via' -r
+    complete -c noir      -l send-es               -d 'v0 alias for --export-es' -r
     complete -c noir      -l ai-provider           -d 'AI provider prefix or URL' -r
     complete -c noir      -l ai-model              -d 'AI model name' -r
     complete -c noir      -l ai-key                -d 'AI API key' -r
@@ -434,6 +452,8 @@ def generate_elvish_completion_script
       -P --passive-scan --passive-scan-path --passive-scan-severity
       --passive-scan-auto-update --passive-scan-no-update-check
       -T --use-all-taggers --use-taggers
+      --probe --probe-via --probe-header --probe-match --probe-skip
+      --export-es
       --send-req --send-proxy --send-es
       --with-headers --use-matchers --use-filters
       --ai-provider --ai-model --ai-key --ai-agent --ai-agent-max-steps

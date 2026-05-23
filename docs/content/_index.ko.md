@@ -145,7 +145,7 @@ template = "landing"
         <div class="how-step-content">
           <h3>사람, AI, DAST에 전달</h3>
           <p>사람 리뷰어를 위해 JSON, OpenAPI, SARIF로 내보내거나, ZAP·Burp·Caido에 프록시 타깃으로 그대로 흘려보내거나, LLM 기반 코드 감사자에게 집중된 진입점 컨텍스트로 넘기면 됩니다.</p>
-          <div class="how-step-code">$ noir scan . -f oas3 --send-proxy http://localhost:8090</div>
+          <div class="how-step-code">$ noir scan . -f oas3 --probe-via http://localhost:8090</div>
         </div>
       </div>
     </div>
