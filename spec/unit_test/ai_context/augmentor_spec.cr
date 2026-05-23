@@ -1311,6 +1311,93 @@ describe "NoirAIContext" do
     end
   end
 
+  it "does NOT emit path_traversal when file_io is tagger-derived (file upload, not path operation)" do
+    # FP sweep #1 regression: the FileUpload tagger pushes a `file_io`
+    # sink to mark the endpoint as a file-handling route, but
+    # receiving a multipart upload doesn't itself mean the file's
+    # PATH is attacker-controlled. path_traversal requires a
+    # code-derived file_io (File.read/write/send_file in source),
+    # not the tagger-derived "this is an upload endpoint" marker.
+    endpoint = Endpoint.new("/upload", "POST")
+    endpoint.push_param(Param.new("file", "blob", "form"))
+    endpoint.add_tag(Tag.new("file_upload", "Endpoint characteristics suggest file upload or file handling behavior", "FileUpload"))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    # The sink should still be present (it's a useful hint that this
+    # is an upload route).
+    context.sinks.map(&.kind).should contain("file_io")
+    # But the path_traversal combination signal should NOT fire,
+    # because the file_io came from the upload tagger, not from a
+    # path-operation source pattern.
+    context.signals.map(&.kind).should_not contain("path_traversal")
+  end
+
+  it "still emits path_traversal for actual file-path I/O with a file-named input" do
+    # Sanity check that the new tagger filter didn't break the
+    # legitimate case — a code-derived file_io sink (File.read,
+    # send_file callee) WITH a file-named input still fires.
+    endpoint = Endpoint.new("/download", "GET")
+    endpoint.push_param(Param.new("filename", "report.pdf", "query"))
+    endpoint.push_callee(Callee.new("File.read", "controller.rb", 5))
+    endpoint.push_callee(Callee.new("send_file", "controller.rb", 6))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.map(&.kind).should contain("path_traversal")
+  end
+
+  it "suppresses unsafe_method when the handler dispatches on request.method" do
+    # FP sweep #1 regression: Flask's `@app.route(... methods=['GET',
+    # 'POST'])` splits into a GET endpoint and a POST endpoint that
+    # share the same callee list. The POST branch's mutating callee
+    # (db_session.commit) shouldn't surface as unsafe_method on the
+    # GET endpoint — the augmentor can't reach inside the
+    # if-method-equals branch to know which branch each callee
+    # belongs to.
+    source = <<-CODE
+      @app.route('/sign', methods=['GET', 'POST'])
+      def sign_sample():
+          if request.method == 'POST':
+              db_session.add(user)
+              db_session.commit()
+          return render_template('sign.html')
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/sign", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_callee(Callee.new("db_session.commit", path, 5))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should_not contain("unsafe_method")
+    end
+  end
+
+  it "still emits unsafe_method when the GET handler unconditionally mutates" do
+    # Sanity check that the request.method suppression didn't kill
+    # the legitimate case — a GET handler without any method-
+    # dispatching branch that nonetheless calls `User.destroy` IS
+    # the canonical unsafe_method case.
+    source = <<-CODE
+      @app.route('/cleanup', methods=['GET'])
+      def cleanup():
+          User.destroy_all()
+          return jsonify(ok=True)
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/cleanup", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_callee(Callee.new("User.destroy_all", path, 3))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should contain("unsafe_method")
+    end
+  end
+
   it "stops Ruby route scope at the matching `end` keyword" do
     # Ruby `def name … end` pairs at the same indent. The next def
     # below must not leak into the current handler's snippet.

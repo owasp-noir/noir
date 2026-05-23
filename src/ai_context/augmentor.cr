@@ -610,26 +610,31 @@ module NoirAIContext
       ))
     end
 
-    # Path-traversal candidate: handler has a file_io sink AND a
-    # file-like input (file/upload/attachment/filename/filepath/
-    # path). Standalone either is normal; the combination is the
-    # textbook `../` traversal pattern when the path isn't
-    # normalised against a fixed root.
+    # Path-traversal candidate: handler has a *code-derived* file_io
+    # sink AND a file-like input. The "code-derived" qualifier is
+    # what keeps this honest: the FileUpload tagger pushes a
+    # `file_io` sink to flag the endpoint as a file-handling route,
+    # but receiving a multipart upload doesn't itself imply that
+    # the file's PATH is attacker-controlled. The traversal pattern
+    # specifically wants `File.read(filename_from_user)` style sinks,
+    # not "endpoint accepts file content as bytes".
     private def add_path_traversal_signal(context : AIContext, anchor : PathInfo?, route_snippet : String?)
-      return unless context.sinks.any? { |s| s.kind == "file_io" }
+      code_derived_file_sink = context.sinks.find do |s|
+        s.kind == "file_io" && s.source != "FileUpload"
+      end
+      return unless code_derived_file_sink
       return unless context.signals.any? { |s| s.kind == "file_input" }
       return if context.signals.any? { |s| s.kind == "path_traversal" }
 
-      file_sink = context.sinks.find { |s| s.kind == "file_io" }.not_nil!
       context.push_signal(AIContextEntry.new(
         "path_traversal",
-        file_sink.name,
+        code_derived_file_sink.name,
         source: "heuristic",
         description: "Handler performs file I/O alongside a path/filename-like input. Review for `../` traversal and ensure the resolved path stays inside an allow-listed root.",
-        path: anchor.try(&.path) || file_sink.path,
-        line: anchor.try(&.line) || file_sink.line,
+        path: anchor.try(&.path) || code_derived_file_sink.path,
+        line: anchor.try(&.line) || code_derived_file_sink.line,
         confidence: 68,
-        snippet: route_snippet || file_sink.snippet
+        snippet: route_snippet || code_derived_file_sink.snippet
       ))
     end
 
@@ -723,7 +728,21 @@ module NoirAIContext
     # but the code says otherwise.
     SAFE_METHODS = Set{"GET", "HEAD", "OPTIONS"}
 
-    MUTATING_CALLEE_PATTERN = /\b(create|destroy|delete|update|save|insert|remove|drop|truncate|write|push|append|persist|flush|commit|rollback|set_\w+)\b/i
+    # Each verb may be followed by additional word chars
+    # (`destroy_all`, `createMany`, `deleteOne`, `updateUser`), so we
+    # don't anchor with a trailing `\b` — that would miss those
+    # suffixed forms because `_` and word continuation count as the
+    # same word in regex.
+    MUTATING_CALLEE_PATTERN = /\b(create|destroy|delete|update|save|insert|remove|drop|truncate|persist|flush|commit|rollback|set_)\w*/i
+
+    # Suppression for unsafe_method: route handlers that branch on
+    # `request.method` (Flask / Django) or `req.method` (Express,
+    # Node, Go's r.Method, Java's request.getMethod()) typically
+    # register a single route under multiple methods. Analyzers
+    # split that into one endpoint per method but share the
+    # callees list. The mutating callee in the GET endpoint is
+    # often the POST branch's call, not actually reachable via GET.
+    METHOD_DISPATCH_PATTERN = /(?:request\.method\s*==|req\.method\s*==|r\.Method\s*==|request\.getMethod\(\)\s*\.equals|\.match\(\s*['"](?:GET|POST|PUT|PATCH|DELETE)['"])/i
 
     private def add_unsafe_method_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
       return unless SAFE_METHODS.includes?(endpoint.method)
@@ -731,6 +750,22 @@ module NoirAIContext
 
       mutating = endpoint.callees.find { |c| c.name.matches?(MUTATING_CALLEE_PATTERN) }
       return unless mutating
+
+      # If the handler dispatches on HTTP method internally, we
+      # can't tell from the callee list alone which branch the
+      # mutation lives in — better to skip the signal than fire it
+      # falsely. The augmentor would also emit it on the genuinely
+      # state-changing endpoint (POST/PUT/DELETE) for the same
+      # route, where it doesn't apply (state-change is expected).
+      if route_snippet && route_snippet.matches?(METHOD_DISPATCH_PATTERN)
+        return
+      end
+      endpoint.details.code_paths.each do |path_info|
+        scope = route_scope_snippet_for(path_info.path, path_info.line)
+        if scope && scope.matches?(METHOD_DISPATCH_PATTERN)
+          return
+        end
+      end
 
       context.push_signal(AIContextEntry.new(
         "unsafe_method",
