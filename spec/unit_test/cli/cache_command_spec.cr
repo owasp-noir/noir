@@ -83,6 +83,18 @@ describe Noir::CLI::CacheCommand do
     it "returns nil for nil input" do
       Noir::CLI::CacheCommand.parse_days(nil).should be_nil
     end
+
+    it "rejects values above the MAX_PURGE_DAYS bound (avoids Time overflow)" do
+      # `Time.utc - <very-large>.days` raises ArgumentError because
+      # the resulting Time falls outside Crystal's supported range.
+      # Validation has to catch this before the arithmetic runs.
+      Noir::CLI::CacheCommand.parse_days("99999999").should be_nil
+      Noir::CLI::CacheCommand.parse_days("36501").should be_nil # one over the bound
+    end
+
+    it "accepts the MAX_PURGE_DAYS boundary value itself" do
+      Noir::CLI::CacheCommand.parse_days(Noir::CLI::CacheCommand::MAX_PURGE_DAYS.to_s).should eq(Noir::CLI::CacheCommand::MAX_PURGE_DAYS)
+    end
   end
 
   describe ".clear" do

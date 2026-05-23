@@ -31,13 +31,22 @@ module Noir::CLI::CacheCommand
     Parsed.new(action: action, rest: rest, help: help)
   end
 
-  # Returns `days` when `arg` is a positive integer, `nil` otherwise.
-  # Pulled out of `purge` so the validation rule can be exercised
-  # without going through the `die` exit path.
+  # Upper bound on `noir cache purge <days>`. 100 years is well past
+  # any realistic cache retention horizon; the actual reason for the
+  # cap is Crystal's `Time.utc - <days>.days` arithmetic, which
+  # raises `ArgumentError: Invalid time: seconds out of range` for
+  # values that push the resulting Time past the supported range.
+  # 100 years stays comfortably inside the Time bounds.
+  MAX_PURGE_DAYS = 36_500
+
+  # Returns `days` when `arg` is a positive integer within the
+  # representable Time range, `nil` otherwise. Pulled out of `purge`
+  # so the validation rule can be exercised without going through
+  # the `die` exit path.
   def self.parse_days(arg : String?) : Int32?
     return nil if arg.nil?
     days = arg.to_i?
-    return nil if days.nil? || days < 1
+    return nil if days.nil? || days < 1 || days > MAX_PURGE_DAYS
     days
   end
 
@@ -116,7 +125,7 @@ module Noir::CLI::CacheCommand
 
     days = parse_days(rest.first)
     if days.nil?
-      Noir::CLI.die("Invalid <days> '#{rest.first}'. Must be a positive integer.")
+      Noir::CLI.die("Invalid <days> '#{rest.first}'. Must be a positive integer between 1 and #{MAX_PURGE_DAYS}.")
     end
 
     outcome = LLM::Cache.purge_older_than(days)
