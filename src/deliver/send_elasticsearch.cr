@@ -24,14 +24,17 @@ class SendElasticSearch < Deliver
     es_headers["Content-Type"] = "application/json"
     es_headers["Accept"] = "application/json"
 
-    # Use `body:` (raw payload) rather than `form:` (URL-encoded). The
-    # payload is a JSON document and ES rejects form-encoded JSON.
+    # Crest's `Request.execute` only recognizes `form:` as the body
+    # source — `body:` is silently swallowed into `**options` and the
+    # request goes out with Content-Length: 0. Combined with
+    # `json: true`, `form:` ships the raw String through as the JSON
+    # payload (verified against Crest 1.4.x in spec).
     Crest::Request.execute(
       method: :post,
       url: uri.to_s,
       tls: OpenSSL::SSL::Context::Client.insecure,
       user_agent: "Noir/#{Noir::VERSION}",
-      body: body,
+      form: body,
       headers: es_headers,
       json: true
     )
