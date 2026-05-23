@@ -804,6 +804,83 @@ describe "NoirAIContext" do
     end
   end
 
+  it "detects credential_input from source when the analyzer missed the param (JS destructuring)" do
+    # Round 2: express `/api/login` has `const { username, password } = req.body`
+    # but the express analyzer surfaces empty params. Without the source-
+    # scan backstop, rate_limit_absence / guard_absence reasoning would
+    # silently skip this endpoint.
+    source = <<-CODE
+      router.post('/login', (req, res) => {
+        const { username, password } = req.body
+        res.json({ ok: true })
+      })
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/login", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should contain("credential_input")
+      # And rate_limit_absence should also fire because the credential
+      # signal is now present.
+      context.signals.map(&.kind).should contain("rate_limit_absence")
+    end
+  end
+
+  it "detects credential_input from source via req.body.password member access" do
+    source = <<-CODE
+      app.post('/login', (req, res) => {
+        verify(req.body.password)
+        res.json({ ok: true })
+      })
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/login", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should contain("credential_input")
+    end
+  end
+
+  it "detects credential_input from Python request.form access" do
+    source = <<-CODE
+      @app.route('/login', methods=['POST'])
+      def login():
+          password = request.form['password']
+          return jsonify(ok=True)
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/login", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should contain("credential_input")
+    end
+  end
+
+  it "does not duplicate credential_input when the param already supplied it" do
+    # When the analyzer already extracted a credential-bearing param,
+    # the source-scan backstop must not double-emit. The param-level
+    # signal fires first (confidence 86); the source-scan should skip.
+    endpoint = Endpoint.new("/login", "POST")
+    endpoint.push_param(Param.new("password", "x", "form"))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    creds = context.signals.select(&.kind.== "credential_input")
+    creds.size.should eq(1)
+    creds[0].source.should eq("param")
+  end
+
   it "stops Ruby route scope at the matching `end` keyword" do
     # Ruby `def name … end` pairs at the same indent. The next def
     # below must not leak into the current handler's snippet.

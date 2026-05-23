@@ -522,9 +522,65 @@ module NoirAIContext
       add_tag_entries(context, endpoint, anchor, route_snippet)
       add_callee_entries(context, endpoint)
       add_source_scan_entries(context, endpoint)
+      add_credential_from_source_signal(context, endpoint, anchor)
       add_missing_guard_signal(context, endpoint, anchor, route_snippet)
 
       context
+    end
+
+    # Some analyzers (express's loose destructuring, Java route extractors
+    # that don't follow `@RequestBody Credentials c.password`, …) miss
+    # credential-bearing parameters at extract time. When that happens
+    # the param-based credential_input signal never fires and downstream
+    # heuristics like rate_limit_absence silently skip the route.
+    #
+    # As a backstop, scan the route-scope snippet for the canonical
+    # request-body destructuring shapes (`req.body.password`,
+    # `request.form['password']`, `{ password } = req.body`, …) and
+    # emit a credential_input signal with a slightly lower confidence
+    # than the param-based one. The kind is the same so downstream
+    # rate_limit_absence / guard_absence logic catches it transparently.
+    CREDENTIAL_SOURCE_PATTERNS = [
+      # JS/TS destructuring: `const { password, token } = req.body`
+      /(?:const|let|var)\s*\{[^}]*\b(password|passwd|token|secret|api[_-]?key|jwt|bearer)\b[^}]*\}\s*=\s*req\.body/i,
+      # JS member access: `req.body.password`, `req.body.token`, …
+      /\breq\.body\.(password|passwd|token|secret|api[_-]?key|jwt|bearer)\b/i,
+      # Python form/json access: `request.form['password']`, `request.json['token']`
+      /\brequest\.(form|json|data)\[\s*['"](password|passwd|token|secret|api[_-]?key|jwt|bearer)['"]/i,
+      # Python attribute access (FastAPI / DRF): `payload.password`,
+      # `credentials.token` — tighter scope so generic `.password`
+      # access doesn't fire.
+      /\b(payload|credentials|creds|input|body)\.(password|passwd|token|secret|api[_-]?key|jwt|bearer)\b/i,
+      # Java/Kotlin field access on a DTO marked @RequestBody: `c.password`
+      # is too generic alone; require the credential noun directly.
+      /\b(password|passwd|token|secret|api[_-]?key|jwt|bearer)\s*=\s*req\./i,
+    ]
+
+    private def add_credential_from_source_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?)
+      return if context.signals.any? { |s| s.kind == "credential_input" }
+      return if endpoint.details.code_paths.empty?
+
+      endpoint.details.code_paths.each do |path_info|
+        snippet = route_scope_snippet_for(path_info.path, path_info.line)
+        next unless snippet
+
+        CREDENTIAL_SOURCE_PATTERNS.each do |pattern|
+          if match = snippet.match(pattern)
+            captured = match[1]? || match[0]
+            context.push_signal(AIContextEntry.new(
+              "credential_input",
+              "source.#{captured.downcase}",
+              source: "route_source",
+              description: "Credential-like identifier observed in handler body (analyzer did not surface it as a parameter); review secret handling and auth bypass paths.",
+              path: path_info.path,
+              line: path_info.line,
+              confidence: 64,
+              snippet: snippet
+            ))
+            return # one credential_input from source is enough
+          end
+        end
+      end
     end
 
     private def add_route_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
@@ -806,13 +862,16 @@ module NoirAIContext
       # Rate-limit absence is informational — only emit on
       # credential-bearing endpoints where it actually matters (login,
       # password reset, OTP). General state-changing endpoints don't
-      # always need rate limiting.
+      # always need rate limiting. Also accepts source-scanned
+      # credential_input signals (analyzer missed the param) so
+      # destructured login handlers still light up.
       credential_param = endpoint.params.any? do |p|
         PARAM_PATTERNS.find { |pattern| pattern.kind == "credential_input" }.try do |pattern|
           matches_any?(p.name, pattern.name_patterns)
         end
       end
-      if credential_param && !has_rate_limit
+      credential_signal = context.signals.any? { |s| s.kind == "credential_input" }
+      if (credential_param || credential_signal) && !has_rate_limit
         context.push_signal(AIContextEntry.new(
           "rate_limit_absence",
           endpoint.url,
