@@ -298,6 +298,13 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
         stack = [base_path]
         until stack.empty?
           dir = stack.pop
+          # Crystal's vendor convention is `lib/` next to `shard.yml`
+          # (same shape as Node's node_modules / Ruby's vendor/bundle).
+          # The directory name `lib` is too generic to put in the global
+          # ignored set — Rails / Python / many other ecosystems use it
+          # for source. Resolve the ambiguity contextually: skip `lib/`
+          # only when a sibling `shard.yml` is present.
+          dir_has_shard = File.exists?(File.join(dir, "shard.yml"))
           begin
             Dir.each_child(dir) do |entry|
               full_path = File.join(dir, entry)
@@ -308,6 +315,10 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
                 # Subtree prune happens here. Entry name (not full path)
                 # so the base-as-node_modules case from #912 is safe.
                 if ignored_dir_names.includes?(entry)
+                  skipped_ignored_dirs += 1
+                  next
+                end
+                if entry == "lib" && dir_has_shard
                   skipped_ignored_dirs += 1
                   next
                 end

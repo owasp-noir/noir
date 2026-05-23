@@ -24,6 +24,14 @@ module Noir::CLI::ScanCommand
   # rather than a bare magic number.
   WARNING_COLOR = Colorize::Color256.new(208)
 
+  # Output formats whose downstream consumers (jq, SARIF parsers,
+  # CI report uploaders) treat empty stdout as a hard error. When a
+  # scan finds no endpoints, we still emit a valid empty document
+  # for these formats — `{"endpoints":[],"passive_results":[]}` for
+  # json, the matching shape for the others. Plain / human-oriented
+  # formats stay silent because there's nothing meaningful to render.
+  STRUCTURED_OUTPUT_FORMATS = Set{"json", "yaml", "jsonl", "toml", "sarif"}
+
   def self.run(argv : Array(String))
     # Stage ARGV through OptionParser (positional path discovery happens
     # inside `run_options_parser`). Dup `argv` upfront because callers
@@ -174,6 +182,14 @@ module Noir::CLI::ScanCommand
         app.report
         exit(0)
       else
+        # Structured output formats need a valid empty document on
+        # stdout even when no endpoints were discovered — downstream
+        # `jq` / SARIF parsers / CI report uploaders treat zero bytes
+        # as a hard error. Plain text formats stay silent because
+        # there's nothing meaningful to render.
+        if STRUCTURED_OUTPUT_FORMATS.includes?(app.options["format"].to_s)
+          app.report
+        end
         exit(0)
       end
     else
