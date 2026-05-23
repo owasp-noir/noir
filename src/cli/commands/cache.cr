@@ -8,14 +8,18 @@ require "../../llm/cache"
 module Noir::CLI::CacheCommand
   ACTIONS = %w[info clear purge]
 
-  def self.run(argv : Array(String))
+  # Parsed argv. Extracted from `run` so the parser itself stays
+  # unit-testable — `run` still owns the `exit`/`die` side effects.
+  record Parsed, action : String?, rest : Array(String), help : Bool
+
+  def self.parse_argv(argv : Array(String)) : Parsed
     action = nil
     rest = [] of String
+    help = false
     argv.each do |a|
       case a
       when "-h", "--help"
-        print_help
-        exit
+        help = true
       else
         if action.nil?
           action = a
@@ -24,26 +28,41 @@ module Noir::CLI::CacheCommand
         end
       end
     end
+    Parsed.new(action: action, rest: rest, help: help)
+  end
 
-    if action.nil?
+  # Returns `days` when `arg` is a positive integer, `nil` otherwise.
+  # Pulled out of `purge` so the validation rule can be exercised
+  # without going through the `die` exit path.
+  def self.parse_days(arg : String?) : Int32?
+    return nil if arg.nil?
+    days = arg.to_i?
+    return nil if days.nil? || days < 1
+    days
+  end
+
+  def self.run(argv : Array(String))
+    parsed = parse_argv(argv)
+
+    if parsed.help || parsed.action.nil?
       print_help
       exit
     end
 
-    case action
+    case parsed.action
     when "info"  then print_info
     when "clear" then clear
-    when "purge" then purge(rest)
+    when "purge" then purge(parsed.rest)
     else
-      Noir::CLI.die("Unknown cache action: #{action}. Valid: #{ACTIONS.join(", ")}.")
+      Noir::CLI.die("Unknown cache action: #{parsed.action}. Valid: #{ACTIONS.join(", ")}.")
     end
   end
 
-  def self.print_help
+  def self.print_help(io : IO = STDOUT)
     cyan = ->(s : String) { Noir::CLI.name(s) }
     green = ->(s : String) { Noir::CLI.section(s) }
 
-    puts <<-HELP
+    io.puts <<-HELP
       #{green.call("USAGE:")}
         noir cache <action>
 
@@ -61,49 +80,49 @@ module Noir::CLI::CacheCommand
       HELP
   end
 
-  def self.print_info
+  def self.print_info(io : IO = STDOUT)
     stats = LLM::Cache.stats
-    puts "Cache directory: #{LLM::Cache.cache_dir}"
-    puts "Entries:         #{stats.entries}"
-    puts "Total size:      #{format_bytes(stats.bytes)}"
+    io.puts "Cache directory: #{LLM::Cache.cache_dir}"
+    io.puts "Entries:         #{stats.entries}"
+    io.puts "Total size:      #{format_bytes(stats.bytes)}"
     if stats.entries > 0
       if oldest = stats.oldest
-        puts "Oldest entry:    #{oldest.to_local} (#{format_age(oldest)} ago)"
+        io.puts "Oldest entry:    #{oldest.to_local} (#{format_age(oldest)} ago)"
       end
       if newest = stats.newest
-        puts "Newest entry:    #{newest.to_local} (#{format_age(newest)} ago)"
+        io.puts "Newest entry:    #{newest.to_local} (#{format_age(newest)} ago)"
       end
     end
-    puts "Enabled:         #{LLM::Cache.enabled?}"
+    io.puts "Enabled:         #{LLM::Cache.enabled?}"
     if LLM::Cache.disabled_by_env?
-      puts "  (disabled via NOIR_CACHE_DISABLE)"
+      io.puts "  (disabled via NOIR_CACHE_DISABLE)"
     end
-    puts ""
-    puts "To disable for a single scan: --cache-disable"
-    puts "To disable persistently:      export NOIR_CACHE_DISABLE=1"
+    io.puts ""
+    io.puts "To disable for a single scan: --cache-disable"
+    io.puts "To disable persistently:      export NOIR_CACHE_DISABLE=1"
   end
 
-  def self.clear
+  def self.clear(io : IO = STDOUT)
     outcome = LLM::Cache.clear
     msg = "Removed #{outcome.deleted} cache entr#{outcome.deleted == 1 ? "y" : "ies"} from #{LLM::Cache.cache_dir}."
     msg += " (#{outcome.failed} failed)" if outcome.failed > 0
-    puts msg
+    io.puts msg
   end
 
-  def self.purge(rest : Array(String))
+  def self.purge(rest : Array(String), io : IO = STDOUT)
     if rest.empty?
       Noir::CLI.die("Missing <days> argument. Usage: noir cache purge <days>")
     end
 
-    days = rest.first.to_i?
-    if days.nil? || days < 1
+    days = parse_days(rest.first)
+    if days.nil?
       Noir::CLI.die("Invalid <days> '#{rest.first}'. Must be a positive integer.")
     end
 
     outcome = LLM::Cache.purge_older_than(days)
     msg = "Purged #{outcome.deleted} cache entr#{outcome.deleted == 1 ? "y" : "ies"} older than #{days} day#{days == 1 ? "" : "s"} from #{LLM::Cache.cache_dir}."
     msg += " (#{outcome.failed} failed)" if outcome.failed > 0
-    puts msg
+    io.puts msg
   end
 
   private def self.format_bytes(bytes : Int64) : String
