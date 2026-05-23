@@ -158,9 +158,27 @@ module Noir::CLI::ScanCommand
 
     app_diff = nil
     if noir_options["diff"] != ""
+      diff_path = noir_options["diff"].to_s
+      # Validate the diff target exists — without this, a misspelled
+      # `--diff-path` silently treats every current endpoint as
+      # "added" (because the missing directory analyzes to zero
+      # endpoints), which is indistinguishable from "we made huge
+      # changes" in CI diff pipelines.
+      unless File.exists?(diff_path)
+        Noir::CLI.die("--diff-path does not exist: #{diff_path}")
+      end
+      unless File.directory?(diff_path)
+        Noir::CLI.die("--diff-path is not a directory: #{diff_path}")
+      end
+
       diff_options = noir_options.dup
-      diff_options["base"] = YAML::Any.new([YAML::Any.new(noir_options["diff"].to_s)])
-      diff_options["nolog"] = YAML::Any.new(false)
+      diff_options["base"] = YAML::Any.new([YAML::Any.new(diff_path)])
+      # `noir_options.dup` already carries over the parent's `nolog`
+      # setting, so --no-log applies to both scans uniformly.
+      # The previous shape force-set nolog=false for the diff side,
+      # which mixed diff-scan progress (banner, "Optimizing
+      # endpoints", "Found N endpoints") into the JSON stdout when
+      # the user explicitly asked for quiet output.
 
       app_diff = NoirRunner.new diff_options
       app.logger.info "Running Noir with Diff mode."
