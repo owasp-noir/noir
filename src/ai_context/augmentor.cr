@@ -534,10 +534,57 @@ module NoirAIContext
     # contribute.
     private def add_combination_signals(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
       add_open_redirect_signal(context, anchor, route_snippet)
+      add_ssrf_signal(context, anchor, route_snippet)
+      add_path_traversal_signal(context, anchor, route_snippet)
       add_sensitive_response_signal(context, endpoint, anchor, route_snippet)
       add_unsafe_method_signal(context, endpoint, anchor, route_snippet)
       add_log_injection_signal(context, endpoint, anchor, route_snippet)
       add_priority_review_signal(context, endpoint, anchor, route_snippet)
+    end
+
+    # SSRF candidate: handler has an outbound_http sink AND a URL-
+    # like input (redirect_input param covers url/uri/redirect/
+    # return/next/dest/callback — all the names that typically
+    # carry attacker-controlled URLs into server-side fetches).
+    private def add_ssrf_signal(context : AIContext, anchor : PathInfo?, route_snippet : String?)
+      return unless context.sinks.any? { |s| s.kind == "outbound_http" }
+      return unless context.signals.any? { |s| s.kind == "redirect_input" }
+      return if context.signals.any? { |s| s.kind == "ssrf" }
+
+      outbound = context.sinks.find { |s| s.kind == "outbound_http" }.not_nil!
+      context.push_signal(AIContextEntry.new(
+        "ssrf",
+        outbound.name,
+        source: "heuristic",
+        description: "Handler makes an outbound HTTP request alongside a URL-like input — classic SSRF signature. Review whether the destination is validated against an allowlist of hosts/schemes.",
+        path: anchor.try(&.path) || outbound.path,
+        line: anchor.try(&.line) || outbound.line,
+        confidence: 72,
+        snippet: route_snippet || outbound.snippet
+      ))
+    end
+
+    # Path-traversal candidate: handler has a file_io sink AND a
+    # file-like input (file/upload/attachment/filename/filepath/
+    # path). Standalone either is normal; the combination is the
+    # textbook `../` traversal pattern when the path isn't
+    # normalised against a fixed root.
+    private def add_path_traversal_signal(context : AIContext, anchor : PathInfo?, route_snippet : String?)
+      return unless context.sinks.any? { |s| s.kind == "file_io" }
+      return unless context.signals.any? { |s| s.kind == "file_input" }
+      return if context.signals.any? { |s| s.kind == "path_traversal" }
+
+      file_sink = context.sinks.find { |s| s.kind == "file_io" }.not_nil!
+      context.push_signal(AIContextEntry.new(
+        "path_traversal",
+        file_sink.name,
+        source: "heuristic",
+        description: "Handler performs file I/O alongside a path/filename-like input. Review for `../` traversal and ensure the resolved path stays inside an allow-listed root.",
+        path: anchor.try(&.path) || file_sink.path,
+        line: anchor.try(&.line) || file_sink.line,
+        confidence: 68,
+        snippet: route_snippet || file_sink.snippet
+      ))
     end
 
     # Concrete review-worthy signal kinds. These are the "this is
@@ -551,6 +598,8 @@ module NoirAIContext
       "idor_review",
       "csrf_exempt",
       "open_redirect",
+      "ssrf",
+      "path_traversal",
       "sensitive_response",
       "unsafe_method",
       "log_injection",

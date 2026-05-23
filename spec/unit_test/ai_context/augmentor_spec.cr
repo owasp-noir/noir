@@ -1127,6 +1127,66 @@ describe "NoirAIContext" do
     end
   end
 
+  it "emits ssrf when outbound_http sink coexists with a URL-like input" do
+    source = <<-CODE
+      app.get('/fetch', (req, res) => {
+        const data = await fetch(req.query.url)
+        res.send(data)
+      })
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/fetch", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_param(Param.new("url", "https://example.com", "query"))
+      endpoint.push_callee(Callee.new("fetch", path, 2))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should contain("ssrf")
+    end
+  end
+
+  it "does NOT emit ssrf when outbound_http has no URL-like input" do
+    # Server-side webhook poll where the URL is hard-coded.
+    source = <<-CODE
+      app.get('/poll', (req, res) => {
+        const data = await fetch('https://api.example.com/status')
+        res.json(data)
+      })
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/poll", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_callee(Callee.new("fetch", path, 2))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should_not contain("ssrf")
+    end
+  end
+
+  it "emits path_traversal when file_io coexists with a file-like input" do
+    endpoint = Endpoint.new("/download", "GET")
+    endpoint.push_param(Param.new("filename", "report.pdf", "query"))
+    endpoint.push_callee(Callee.new("File.read", "controller.rb", 5))
+    endpoint.push_callee(Callee.new("send_file", "controller.rb", 6))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.map(&.kind).should contain("path_traversal")
+  end
+
+  it "does NOT emit path_traversal on file I/O without a file-like input" do
+    endpoint = Endpoint.new("/icon", "GET")
+    endpoint.push_callee(Callee.new("File.read", "controller.rb", 5))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.map(&.kind).should_not contain("path_traversal")
+  end
+
   it "stops Ruby route scope at the matching `end` keyword" do
     # Ruby `def name … end` pairs at the same indent. The next def
     # below must not leak into the current handler's snippet.
