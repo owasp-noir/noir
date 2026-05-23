@@ -5,9 +5,51 @@ require "./utils/home.cr"
 require "./llm/native_tool_calling"
 
 class ConfigInitializer
+  # Keys that should be coerced from a legacy "yes" / "no" string into
+  # a real Bool when parsed from config.yaml. Every boolean field in
+  # default_options must be listed here; otherwise direct comparisons
+  # like `options["cache_disable"] == true` in scan.cr would miss a
+  # legacy `cache_disable: yes` entry and silently leave the flag off.
+  BOOLEAN_CONFIG_KEYS = %w[
+    color
+    debug
+    verbose
+    include_path
+    include_techs
+    include_callee
+    ai_context
+    nolog
+    send_req
+    all_taggers
+    status_codes
+    passive_scan
+    passive_scan_auto_update
+    passive_scan_no_update_check
+    ai_agent
+    cache_disable
+    cache_clear
+    analyze_feign
+  ]
+
+  # Keys whose value should always end up as an Array(YAML::Any) so
+  # callers can iterate without per-call type checks.
+  ARRAY_CONFIG_KEYS = %w[
+    base
+    send_with_headers
+    use_filters
+    use_matchers
+    set_pvalue
+    set_pvalue_header
+    set_pvalue_cookie
+    set_pvalue_query
+    set_pvalue_form
+    set_pvalue_json
+    set_pvalue_path
+    passive_scan_path
+  ]
+
   @config_dir : String
   @config_file : String
-  @default_config : Hash(String, YAML::Any) = {"key" => YAML::Any.new("default_value")} # Replace with your default config
 
   def initialize
     # Define the config directory and file based on ENV variables
@@ -43,31 +85,37 @@ class ConfigInitializer
       parsed_yaml = YAML.parse(File.read(@config_file)).as_h
       symbolized_hash = parsed_yaml.transform_keys(&.to_s)
 
-      # Transform specific keys from "yes"/"no" to true/false for old version noir config
-      ["color", "debug", "include_path", "include_techs", "include_callee", "ai_context", "nolog", "send_req", "all_taggers"].each do |key|
-        if symbolized_hash[key] == "yes"
+      # Coerce legacy "yes" / "no" strings into Bool for keys the
+      # downstream code compares against `true` / `false` directly.
+      # `[key]?` is critical: a partial config that only sets one key
+      # would otherwise raise KeyError on the next iteration, get
+      # swallowed by the outer rescue, and silently revert every
+      # setting to defaults.
+      BOOLEAN_CONFIG_KEYS.each do |key|
+        value = symbolized_hash[key]?
+        next if value.nil?
+
+        case value.to_s
+        when "yes"
           symbolized_hash[key] = YAML::Any.new(true)
-        elsif symbolized_hash[key] == "no"
+        when "no"
           symbolized_hash[key] = YAML::Any.new(false)
         end
       end
 
-      # Transform specific keys for array and string config values
-      [
-        "base", "send_with_headers", "use_filters", "use_matchers",
-        "set_pvalue", "set_pvalue_header", "set_pvalue_cookie",
-        "set_pvalue_query", "set_pvalue_form", "set_pvalue_json", "set_pvalue_path",
-      ].each do |key|
-        if symbolized_hash[key].to_s == ""
-          # If the value is an empty string, initialize it as an empty array of YAML::Any
+      # Normalize array-style keys: empty string → empty array,
+      # bare string → single-element array, real array → unchanged.
+      ARRAY_CONFIG_KEYS.each do |key|
+        value = symbolized_hash[key]?
+        next if value.nil?
+
+        if value.to_s.empty?
           symbolized_hash[key] = YAML::Any.new([] of YAML::Any)
         else
           begin
-            # If the value is already an array, ensure it is treated as an array of YAML::Any
-            symbolized_hash[key].as_a
+            value.as_a
           rescue
-            # If the value is a string, wrap it in an array of YAML::Any
-            symbolized_hash[key] = YAML::Any.new([YAML::Any.new(symbolized_hash[key].to_s)])
+            symbolized_hash[key] = YAML::Any.new([YAML::Any.new(value.to_s)])
           end
         end
       end
