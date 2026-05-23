@@ -1398,6 +1398,90 @@ describe "NoirAIContext" do
     end
   end
 
+  it "captures Python decorators above the def line for sharp-signal detection" do
+    # FP sweep #2 regression: Django analyzers point path_info.line
+    # at the `def` line, not the decorator above it. Negative
+    # protection markers like `@csrf_exempt` live ABOVE the def, so
+    # they were invisible to the source-scan path until the
+    # route_scope_snippet_for look-behind landed.
+    source = <<-CODE
+      from django.views.decorators.csrf import csrf_exempt
+
+
+      @csrf_exempt
+      def fileupload(request):
+          if request.method == 'POST':
+              return HttpResponse('ok')
+          return HttpResponse('no')
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/upload", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 5)) # def line, not the decorator
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should contain("csrf_exempt")
+    end
+  end
+
+  it "captures Java annotations above the method for sharp-signal detection" do
+    # Same look-behind benefits @PreAuthorize / @CrossOrigin etc.
+    source = <<-CODE
+      @PreAuthorize("hasRole('ADMIN')")
+      @PostMapping("/users/{id}/promote")
+      public ResponseEntity promote(@PathVariable Long id) {
+          return service.promote(id);
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/users/{id}/promote", "POST")
+      details = endpoint.details
+      # path_info.line at the method signature, not at the annotation
+      details.add_path(PathInfo.new(path, 3))
+      endpoint.details = details
+      endpoint.push_param(Param.new("id", "1", "path"))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.guards.map(&.kind).should contain("authz_guard")
+    end
+  end
+
+  it "does NOT bump priority_review on a GET endpoint with csrf_exempt (CSRF doesn't apply)" do
+    # FP sweep #2 regression: an `@csrf_exempt`-decorated function
+    # that handles both GET and POST creates two endpoints. The
+    # POST one is legitimately high-priority; the GET one shouldn't
+    # be because CSRF protection only applies to state-changing
+    # methods. csrf_exempt stays as a signal (it's a truthful piece
+    # of information for the LLM) but is excluded from the
+    # sharp_signal bucket on safe-method endpoints.
+    source = <<-CODE
+      @csrf_exempt
+      def webhook(request):
+          return HttpResponse('ok')
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/webhook", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 2))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      # csrf_exempt still surfaces as a signal — it's truthful.
+      context.signals.map(&.kind).should contain("csrf_exempt")
+      # But the GET endpoint shouldn't land high-priority just for
+      # that decorator; CSRF doesn't apply to GET. Either no
+      # priority_review at all (score < 2) or low/medium at most.
+      priority = context.signals.find(&.kind.== "priority_review")
+      if priority
+        priority.name.should_not eq("high")
+      end
+    end
+  end
+
   it "stops Ruby route scope at the matching `end` keyword" do
     # Ruby `def name … end` pairs at the same indent. The next def
     # below must not leak into the current handler's snippet.

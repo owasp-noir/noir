@@ -687,9 +687,22 @@ module NoirAIContext
       # other signals are quiet — explicit protection-bypass /
       # well-known misconfiguration classes that don't need a
       # second supporting signal to be worth surfacing.
+      #
+      # csrf_exempt is method-gated: CSRF only protects state-
+      # changing methods, so an @csrf_exempt decorator on a GET /
+      # HEAD endpoint (often the GET-side of a `methods=['GET',
+      # 'POST']` Flask split) has no security impact. Don't let it
+      # bump priority on those routes.
+      method_safe = SAFE_METHODS.includes?(endpoint.method)
       sharp_signal = context.signals.any? do |s|
-        s.kind == "csrf_exempt" || s.kind == "open_redirect" ||
-          s.kind == "jwt_unsafe" || s.kind == "cors_open"
+        case s.kind
+        when "csrf_exempt"
+          !method_safe
+        when "open_redirect", "jwt_unsafe", "cors_open"
+          true
+        else
+          false
+        end
       end
       score += 1 if sharp_signal
 
@@ -1462,14 +1475,39 @@ module NoirAIContext
       snippet.size > MAX_SNIPPET_CHARS ? snippet[0, MAX_SNIPPET_CHARS] : snippet
     end
 
+    # Maximum number of decorator / annotation lines to capture
+    # *before* path_info.line. Lets negative-protection markers
+    # (`@csrf_exempt`, `@PreAuthorize`, `@CrossOrigin`) reach the
+    # source-scan even when the analyzer sets path_line to the
+    # function `def` rather than the decorator above it.
+    MAX_LEAD_DECORATOR_LINES = 4
+
     private def route_scope_snippet_for(path : String?, line : Int32?) : String?
       return unless path && line
 
       lines = read_lines(path)
       return if line < 1 || line > lines.size
 
+      # Look back from path_line-1 for consecutive decorator /
+      # annotation lines and blank lines between them. Stops at the
+      # first line that's not a decorator / annotation / blank —
+      # that's the end of the preceding declaration boundary.
+      lead_lines = [] of String
+      back_idx = line - 2
+      MAX_LEAD_DECORATOR_LINES.times do
+        break if back_idx < 0
+        raw = lines[back_idx]
+        stripped = raw.strip
+        if stripped.empty? || stripped.starts_with?("@")
+          lead_lines.unshift("#{back_idx + 1}: #{stripped}")
+          back_idx -= 1
+        else
+          break
+        end
+      end
+
       start_idx = line - 1
-      selected = [] of String
+      selected = lead_lines
       brace_depth = 0
       paren_balance = 0
       # Block style starts as `nil` and locks in to one of:
