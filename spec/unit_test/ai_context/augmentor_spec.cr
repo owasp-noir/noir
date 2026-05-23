@@ -965,6 +965,92 @@ describe "NoirAIContext" do
     end
   end
 
+  it "emits unsafe_method when a GET handler invokes a mutating callee" do
+    endpoint = Endpoint.new("/users/:id", "GET")
+    endpoint.push_callee(Callee.new("User.destroy", "controller.rb", 5))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.map(&.kind).should contain("unsafe_method")
+    context.signals.find(&.kind.== "unsafe_method").not_nil!.name.should contain("GET")
+    context.signals.find(&.kind.== "unsafe_method").not_nil!.name.should contain("User.destroy")
+  end
+
+  it "does NOT emit unsafe_method for POST/PUT/DELETE handlers with mutating callees" do
+    # Mutation via state-changing verbs is normal — the signal only
+    # fires when the verb claims safety but the body says otherwise.
+    endpoint = Endpoint.new("/users", "POST")
+    endpoint.push_callee(Callee.new("User.create", "controller.rb", 5))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.map(&.kind).should_not contain("unsafe_method")
+  end
+
+  it "does NOT emit unsafe_method for safe-method handlers with only read callees" do
+    endpoint = Endpoint.new("/users/:id", "GET")
+    endpoint.push_callee(Callee.new("User.find", "controller.rb", 5))
+    endpoint.push_callee(Callee.new("Renderer.render", "controller.rb", 6))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.map(&.kind).should_not contain("unsafe_method")
+  end
+
+  it "emits log_injection when handler logs request-controlled input" do
+    source = <<-CODE
+      app.post('/feedback', (req, res) => {
+        logger.info("got feedback: " + req.body.message)
+        res.json({ ok: true })
+      })
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/feedback", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should contain("log_injection")
+    end
+  end
+
+  it "emits log_injection when handler logs a credential noun" do
+    source = <<-CODE
+      def login
+        log.debug "attempting with password=" + password
+        do_login
+      end
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/login", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should contain("log_injection")
+    end
+  end
+
+  it "does NOT emit log_injection on logs that mention neither input nor credentials" do
+    source = <<-CODE
+      app.get('/health', (req, res) => {
+        logger.info("health probe ok")
+        res.json({ status: 'ok' })
+      })
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/health", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should_not contain("log_injection")
+    end
+  end
+
   it "stops Ruby route scope at the matching `end` keyword" do
     # Ruby `def name … end` pairs at the same indent. The next def
     # below must not leak into the current handler's snippet.

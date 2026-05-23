@@ -535,6 +535,69 @@ module NoirAIContext
     private def add_combination_signals(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
       add_open_redirect_signal(context, anchor, route_snippet)
       add_sensitive_response_signal(context, endpoint, anchor, route_snippet)
+      add_unsafe_method_signal(context, endpoint, anchor, route_snippet)
+      add_log_injection_signal(context, endpoint, anchor, route_snippet)
+    end
+
+    # HTTP method intent vs implementation mismatch. A GET/HEAD
+    # endpoint that mutates server state through a callee
+    # (`User.create`, `record.destroy`, `db.delete`, …) is a textbook
+    # CSRF / side-effect-on-read bug — the verb says "safe / idempotent"
+    # but the code says otherwise.
+    SAFE_METHODS = Set{"GET", "HEAD", "OPTIONS"}
+
+    MUTATING_CALLEE_PATTERN = /\b(create|destroy|delete|update|save|insert|remove|drop|truncate|write|push|append|persist|flush|commit|rollback|set_\w+)\b/i
+
+    private def add_unsafe_method_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
+      return unless SAFE_METHODS.includes?(endpoint.method)
+      return if context.signals.any? { |s| s.kind == "unsafe_method" }
+
+      mutating = endpoint.callees.find { |c| c.name.matches?(MUTATING_CALLEE_PATTERN) }
+      return unless mutating
+
+      context.push_signal(AIContextEntry.new(
+        "unsafe_method",
+        "#{endpoint.method} → #{mutating.name}",
+        source: "heuristic",
+        description: "Safe-method (GET/HEAD/OPTIONS) endpoint invokes a state-changing callee; CSRF protections typically don't gate read methods, so a mutation through one is suspect.",
+        path: mutating.path || anchor.try(&.path),
+        line: mutating.line || anchor.try(&.line),
+        confidence: 56,
+        snippet: route_snippet
+      ))
+    end
+
+    # Log injection / sensitive data in logs. Catches the canonical
+    # "log user input or credential field directly" shape. False
+    # positives are bounded because both the log call AND a user-
+    # input reference (or credential noun) need to be on the same
+    # line / snippet window.
+    LOG_EMITTER_PATTERN = /\b(?:logger\.(?:info|warn|warning|error|debug|critical|fatal)|log\.(?:info|warn|warning|error|debug)|console\.(?:log|info|warn|error|debug)|print|puts|printf|System\.out\.println|Log\.[dwiev])\b/i
+
+    LOG_INPUT_OR_CRED_PATTERN = /\b(?:req\.body|req\.query|req\.params|request\.form|request\.json|request\.args|params\[|password|passwd|token|secret|api[_-]?key|jwt|session_id|access_token|refresh_token)\b/i
+
+    private def add_log_injection_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
+      return if context.signals.any? { |s| s.kind == "log_injection" }
+      return if endpoint.details.code_paths.empty?
+
+      endpoint.details.code_paths.each do |path_info|
+        scope = route_scope_snippet_for(path_info.path, path_info.line)
+        next unless scope
+        next unless scope.matches?(LOG_EMITTER_PATTERN)
+        next unless scope.matches?(LOG_INPUT_OR_CRED_PATTERN)
+
+        context.push_signal(AIContextEntry.new(
+          "log_injection",
+          "log+input",
+          source: "route_source",
+          description: "Handler logs request-controlled or credential-bearing data; review for log-injection (newline/control-char smuggling) and sensitive-data leakage into log sinks.",
+          path: path_info.path,
+          line: path_info.line,
+          confidence: 50,
+          snippet: scope
+        ))
+        return
+      end
     end
 
     # Open-redirect candidate: handler has a redirect sink AND
