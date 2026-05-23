@@ -106,7 +106,11 @@ module LLM
       client.request_with_context(system, user, format, cache_key)
     end
 
-    private def flatten_messages(messages : Messages) : {String?, String}
+    # Promoted to a class-level pure function so the flattening rule
+    # (system messages joined with \n\n, non-system/non-user roles
+    # dropped, nil system when no system messages were present) is
+    # unit-testable without standing up a real Ollama client.
+    def self.flatten_messages(messages : Messages) : {String?, String}
       systems = [] of String
       users = [] of String
       messages.each do |m|
@@ -121,6 +125,10 @@ module LLM
       sys = systems.empty? ? nil : systems.join("\n\n")
       usr = users.join("\n\n")
       {sys, usr}
+    end
+
+    private def flatten_messages(messages : Messages) : {String?, String}
+      self.class.flatten_messages(messages)
     end
   end
 
