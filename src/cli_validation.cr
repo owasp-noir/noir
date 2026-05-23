@@ -1,6 +1,7 @@
 require "colorize"
 require "yaml"
 require "./tagger/tagger"
+require "./techs/techs"
 
 module Noir::CliValidation
   class Error < Exception
@@ -36,6 +37,32 @@ module Noir::CliValidation
     validate_output_path!(options)
     validate_tagger_names!(options)
     validate_config_file!(options)
+    validate_tech_names!(options)
+  end
+
+  # `-t/--techs`, `--only-techs`, `--exclude-techs` should reject
+  # unknown tech names eagerly. Pre-fix, a typo like `--only-techs
+  # falsk` (instead of `flask`) silently dropped through
+  # `NoirTechs.similar_to_tech` returning "" and the scan produced
+  # zero endpoints without explanation — indistinguishable from
+  # "no flask code found here". Surfacing the typo at CLI parse
+  # time saves the surprise.
+  def self.validate_tech_names!(options : Hash(String, YAML::Any))
+    {"techs", "only_techs", "exclude_techs"}.each do |key|
+      raw = options[key]?.try(&.to_s) || ""
+      next if raw.empty?
+      unknown = raw.split(",").map(&.strip).reject(&.empty?).reject do |tech|
+        !NoirTechs.similar_to_tech(tech).empty?
+      end
+      next if unknown.empty?
+      cli_flag = case key
+                 when "techs"         then "-t/--techs"
+                 when "only_techs"    then "--only-techs"
+                 when "exclude_techs" then "--exclude-techs"
+                 else                      key
+                 end
+      raise Error.new("#{cli_flag}: unknown tech#{"es" if unknown.size > 1} #{unknown.map(&.inspect).join(", ")}. List supported names with `noir list techs`.")
+    end
   end
 
   # `--config-file PATH` needs to exist, be a file (not a directory),

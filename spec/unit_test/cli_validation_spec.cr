@@ -139,4 +139,66 @@ describe Noir::CliValidation do
       end
     end
   end
+
+  describe "validate_tech_names!" do
+    it "rejects unknown --only-techs values" do
+      options = create_test_options
+      options["only_techs"] = YAML::Any.new("bogusFramework")
+      expect_raises(Noir::CliValidation::Error, /unknown tech/) do
+        Noir::CliValidation.validate_tech_names!(options)
+      end
+    end
+
+    it "rejects unknown --exclude-techs values" do
+      options = create_test_options
+      options["exclude_techs"] = YAML::Any.new("notathing")
+      expect_raises(Noir::CliValidation::Error, /unknown tech/) do
+        Noir::CliValidation.validate_tech_names!(options)
+      end
+    end
+
+    it "rejects unknown -t/--techs values" do
+      options = create_test_options
+      options["techs"] = YAML::Any.new("madeup")
+      expect_raises(Noir::CliValidation::Error, /unknown tech/) do
+        Noir::CliValidation.validate_tech_names!(options)
+      end
+    end
+
+    it "flags every unknown name in a comma-separated list, not just the first" do
+      options = create_test_options
+      options["only_techs"] = YAML::Any.new("flask,fakeOne,fakeTwo")
+      # First valid name (flask) passes; the unknown ones must be
+      # reported. Error message lists them in the order they appear.
+      expect_raises(Noir::CliValidation::Error, /"fakeOne".*"fakeTwo"/) do
+        Noir::CliValidation.validate_tech_names!(options)
+      end
+    end
+
+    it "accepts canonical tech keys" do
+      options = create_test_options
+      options["only_techs"] = YAML::Any.new("python_flask")
+      Noir::CliValidation.validate_tech_names!(options)
+    end
+
+    it "accepts alias names" do
+      options = create_test_options
+      options["only_techs"] = YAML::Any.new("flask")
+      Noir::CliValidation.validate_tech_names!(options)
+    end
+
+    it "accepts comma-separated mix of canonical + alias" do
+      options = create_test_options
+      options["only_techs"] = YAML::Any.new("flask,python_flask,express")
+      Noir::CliValidation.validate_tech_names!(options)
+    end
+
+    it "passes when no tech flags are set" do
+      options = create_test_options
+      options["only_techs"] = YAML::Any.new("")
+      options["exclude_techs"] = YAML::Any.new("")
+      options["techs"] = YAML::Any.new("")
+      Noir::CliValidation.validate_tech_names!(options)
+    end
+  end
 end
