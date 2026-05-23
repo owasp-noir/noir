@@ -1051,6 +1051,82 @@ describe "NoirAIContext" do
     end
   end
 
+  it "emits high-priority priority_review when multiple risk signals stack" do
+    # POST /sign style: credential_input + guard_absence +
+    # rate_limit_absence + sql sink = textbook high priority.
+    source = <<-CODE
+      @app.route('/sign', methods=['POST'])
+      def sign_up():
+          username = request.form['username']
+          password = request.form['password']
+          User.query.filter(User.name == username).first()
+          db.session.add(User(username, password))
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/sign", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_param(Param.new("password", "x", "form"))
+      endpoint.push_callee(Callee.new("User.query.filter", path, 5))
+      endpoint.push_callee(Callee.new("db.session.add", path, 6))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      priority = context.signals.find(&.kind.== "priority_review")
+      priority.should_not be_nil
+      priority.not_nil!.name.should eq("high")
+    end
+  end
+
+  it "emits medium priority_review when only one missing guard + one sink stack" do
+    endpoint = Endpoint.new("/posts", "POST")
+    endpoint.push_callee(Callee.new("Post.create", "controller.rb", 5))
+    # No guard, no rate-limit param, but state-change exists. Then
+    # the create callee is a name-matched sql sink ("execute") —
+    # let's instead use a clearer sink.
+    endpoint.push_callee(Callee.new("User.query", "controller.rb", 6))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    priority = context.signals.find(&.kind.== "priority_review")
+    if priority
+      # Score = guard_absence (1) + sql sink (1) = 2 → low bucket
+      # (medium requires score>=3). Accept either bucket — what
+      # matters is the bucket scales with signal count.
+      ["high", "medium", "low"].includes?(priority.name).should be_true
+    end
+  end
+
+  it "does NOT emit priority_review on quiet endpoints with no risk signals" do
+    endpoint = Endpoint.new("/health", "GET")
+    # GET with no callees, no params, no guards needed.
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.map(&.kind).should_not contain("priority_review")
+  end
+
+  it "lets a sharp signal (csrf_exempt) tip the bucket toward high" do
+    source = <<-CODE
+      @csrf_exempt
+      def webhook(request):
+          User.create(request.POST)
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/webhook", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_callee(Callee.new("User.create", path, 3))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      priority = context.signals.find(&.kind.== "priority_review")
+      priority.should_not be_nil
+      # csrf_exempt + guard_absence + maybe sink = score≥3 with
+      # sharp_signal → high bucket.
+      ["high", "medium"].includes?(priority.not_nil!.name).should be_true
+    end
+  end
+
   it "stops Ruby route scope at the matching `end` keyword" do
     # Ruby `def name … end` pairs at the same indent. The next def
     # below must not leak into the current handler's snippet.

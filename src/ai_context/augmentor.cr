@@ -537,6 +537,82 @@ module NoirAIContext
       add_sensitive_response_signal(context, endpoint, anchor, route_snippet)
       add_unsafe_method_signal(context, endpoint, anchor, route_snippet)
       add_log_injection_signal(context, endpoint, anchor, route_snippet)
+      add_priority_review_signal(context, endpoint, anchor, route_snippet)
+    end
+
+    # Concrete review-worthy signal kinds. These are the "this is
+    # actually scary" categories — not the structural ones
+    # (`route_definition`, `technology`, `path_param`) that every
+    # endpoint surfaces.
+    REVIEW_PRIORITY_SIGNAL_KINDS = Set{
+      "guard_absence",
+      "authz_absence",
+      "rate_limit_absence",
+      "idor_review",
+      "csrf_exempt",
+      "open_redirect",
+      "sensitive_response",
+      "unsafe_method",
+      "log_injection",
+    }
+
+    # Categories whose mere presence is a security-review signal —
+    # used alongside concrete signals to compute the overall
+    # priority bucket.
+    PRIORITY_SCORING_SINK_BLACKLIST = Set{
+      "sql", "command_exec", "code_eval", "deserialization",
+      "template_injection", "xss", "mass_assignment", "crypto_weak",
+    }
+
+    # Roll-up "this endpoint deserves attention" hint. Counts the
+    # concrete review-worthy signals and sink kinds the augmentor
+    # already raised, and emits one of three buckets — high / medium
+    # / low — so an LLM (or a human triage pass) can sort the JSON
+    # output by priority without re-implementing the scoring.
+    #
+    # Confidence is fixed per bucket (high / medium / low) so the
+    # signal stays trivially filterable: `select(.confidence >= 80)`
+    # gives just the high-priority routes.
+    private def add_priority_review_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
+      return if context.signals.any? { |s| s.kind == "priority_review" }
+
+      review_signals = context.signals.count { |s| REVIEW_PRIORITY_SIGNAL_KINDS.includes?(s.kind) }
+      heavy_sinks = context.sinks.count { |s| PRIORITY_SCORING_SINK_BLACKLIST.includes?(s.kind) }
+
+      score = review_signals + heavy_sinks
+      # `csrf_exempt` and `open_redirect` are individually loud
+      # enough to bump the bucket even when other signals are quiet.
+      sharp_signal = context.signals.any? do |s|
+        s.kind == "csrf_exempt" || s.kind == "open_redirect"
+      end
+      score += 1 if sharp_signal
+
+      return if score < 2 # don't pollute every endpoint with low-signal entries
+
+      # Threshold rationale: a "missing guard + dangerous sink" pair
+      # (e.g. guard_absence + sql sink, score=2) is the classic
+      # textbook signal. We want that to surface, but not as "high"
+      # — high is reserved for stacked risk (multiple missing
+      # protections AND a sink, or a sharp signal like csrf_exempt
+      # / open_redirect already screaming for attention).
+      bucket = if score >= 3 || (sharp_signal && score >= 2) || heavy_sinks >= 2
+                 {name: "high", confidence: 90,
+                  description: "High-priority review candidate — multiple risk signals stack on this endpoint (combination of missing guards, dangerous sinks, or explicit protection bypasses)."}
+               else
+                 {name: "medium", confidence: 70,
+                  description: "Medium-priority review candidate — at least one missing guard and one risky sink (or equivalent) co-occur on this endpoint."}
+               end
+
+      context.push_signal(AIContextEntry.new(
+        "priority_review",
+        bucket[:name],
+        source: "heuristic",
+        description: bucket[:description].as(String),
+        path: anchor.try(&.path),
+        line: anchor.try(&.line),
+        confidence: bucket[:confidence].as(Int32),
+        snippet: route_snippet
+      ))
     end
 
     # HTTP method intent vs implementation mismatch. A GET/HEAD
