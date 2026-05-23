@@ -44,11 +44,11 @@ LLM 입장에서는 "이 endpoint를 보려면 `utils.py:3`과 `app.py:21,24,25,
 
 `--ai-context`는 같은 callee 정보를 가져다가 추가 분석을 거쳐 5가지 카테고리로 분류합니다.
 
-- **guards** — 인증 미들웨어 / 데코레이터 등 접근 제어
-- **callees** — 위 callee와 동일하지만 snippet과 confidence가 함께 붙음
-- **sinks** — SQL / command exec / file I/O / redirect / template render 같은 잠재적 sink
-- **validators** — 입력 검증 호출
-- **signals** — `state_change`, `credential_input`, `guard_absence` 같은 휴리스틱 신호
+- **guards**: 인증 미들웨어 / 데코레이터 등 접근 제어
+- **callees**: 위 callee와 동일하지만 snippet과 confidence가 함께 붙음
+- **sinks**: SQL / command exec / file I/O / redirect / template render 같은 잠재적 sink
+- **validators**: 입력 검증 호출
+- **signals**: `state_change`, `credential_input`, `guard_absence` 같은 휴리스틱 신호
 
 같은 Flask `/sign` POST endpoint를 `--ai-context`로 돌리면
 
@@ -82,10 +82,10 @@ $ noir -b ./flask_app --ai-context -f json
 
 이 endpoint 하나로 LLM이 받는 정보를 정리하면
 
-1. `credential_input`이 있다 — password를 form으로 받음
-2. `state_change`다 — POST
-3. `guard_absence`다 — auth 데코레이터 안 보임
-4. `sql` sink가 있다 — `User.query.filter`
+1. `credential_input`이 있다 (password를 form으로 받음)
+2. `state_change`다 (POST)
+3. `guard_absence`다 (auth 데코레이터 안 보임)
+4. `sql` sink가 있다 (`User.query.filter`)
 
 사람 리뷰어든 LLM이든 이 네 신호가 한 곳에 모여 있다면 자연스럽게 **"이 핸들러 먼저 보세요"**라는 결론이 나옵니다. 회원가입 같은 credential-handling 경로에 auth 부재 = 명백한 priority 1.
 
@@ -113,8 +113,8 @@ $ noir -b ./flask_app --ai-context -f json
 
 이 두 플래그가 동시에 hint이자 sink로 쓸 수 있다는 게 핵심입니다.
 
-- **Hint**으로 — endpoint 단위로 1-hop context를 미리 추려 LLM의 attention을 좁혀줍니다. "전체 코드베이스" 대신 "이 핸들러 + 이 파일들"만 보면 됩니다.
-- **Sink**으로 — `sinks` 카테고리는 데이터 흐름의 종착점 후보를 framework-aware하게 알려줍니다. 일반 LLM은 "`User.query.filter`는 SQL이다"를 추론은 가능하지만 매번 token을 태워야 합니다. Noir가 미리 라벨링해주면 그 추론 단계를 건너뛸 수 있습니다.
+- **Hint**으로: endpoint 단위로 1-hop context를 미리 추려 LLM의 attention을 좁혀줍니다. "전체 코드베이스" 대신 "이 핸들러 + 이 파일들"만 보면 됩니다.
+- **Sink**으로: `sinks` 카테고리는 데이터 흐름의 종착점 후보를 framework-aware하게 알려줍니다. 일반 LLM은 "`User.query.filter`는 SQL이다"를 추론은 가능하지만 매번 token을 태워야 합니다. Noir가 미리 라벨링해주면 그 추론 단계를 건너뛸 수 있습니다.
 
 특히 framework-aware라는 점이 큽니다. 같은 `query`라는 callee 이름이라도 컨텍스트에 따라 의미가 다릅니다.
 
@@ -135,7 +135,7 @@ noir -b ./app --ai-context -f json
 # 필요한 카테고리만 (token 절약)
 noir -b ./app --ai-context=guards,sinks,signals -f json
 
-# callee만 — 가벼운 hint
+# callee만 (가벼운 hint)
 noir -b ./app --include callee -f json
 ```
 
