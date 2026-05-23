@@ -7,38 +7,47 @@ require "../../completions"
 module Noir::CLI::CompletionCommand
   SHELLS = %w[zsh bash fish elvish]
 
-  def self.run(argv : Array(String))
+  # Parsed argv. Extracted from `run` so the parser stays unit-testable
+  # without going through the `exit`/`die` side effects.
+  record Parsed, shell : String?, help : Bool
+
+  def self.parse_argv(argv : Array(String)) : Parsed
     shell = nil
+    help = false
     argv.each do |a|
       case a
       when "-h", "--help"
-        print_help
-        exit
+        help = true
       else
         shell ||= a
       end
     end
+    Parsed.new(shell: shell, help: help)
+  end
 
-    if shell.nil?
+  def self.run(argv : Array(String))
+    parsed = parse_argv(argv)
+
+    if parsed.help || parsed.shell.nil?
       print_help
       exit
     end
 
-    case shell
+    case parsed.shell
     when "zsh"    then puts generate_zsh_completion_script
     when "bash"   then puts generate_bash_completion_script
     when "fish"   then puts generate_fish_completion_script
     when "elvish" then puts generate_elvish_completion_script
     else
-      Noir::CLI.die("Unsupported shell: #{shell}. Valid: #{SHELLS.join(", ")}.")
+      Noir::CLI.die("Unsupported shell: #{parsed.shell}. Valid: #{SHELLS.join(", ")}.")
     end
   end
 
-  def self.print_help
+  def self.print_help(io : IO = STDOUT)
     cyan = ->(s : String) { Noir::CLI.name(s) }
     green = ->(s : String) { Noir::CLI.section(s) }
 
-    puts <<-HELP
+    io.puts <<-HELP
       #{green.call("USAGE:")}
         noir completion <shell>
 

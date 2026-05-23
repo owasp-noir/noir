@@ -13,37 +13,46 @@ module Noir::CLI::ListCommand
   SUBJECTS         = %w[techs taggers formats]
   AI_CONTEXT_KINDS = %w[guards sinks validators signals]
 
-  def self.run(argv : Array(String))
+  # Parsed argv. Extracted from `run` so the parser stays unit-testable
+  # without going through the `exit`/`die` side effects.
+  record Parsed, subject : String?, help : Bool
+
+  def self.parse_argv(argv : Array(String)) : Parsed
     subject = nil
+    help = false
     argv.each do |a|
       case a
       when "-h", "--help"
-        print_help
-        exit
+        help = true
       else
         subject ||= a
       end
     end
+    Parsed.new(subject: subject, help: help)
+  end
 
-    if subject.nil?
+  def self.run(argv : Array(String))
+    parsed = parse_argv(argv)
+
+    if parsed.help || parsed.subject.nil?
       print_help
       exit
     end
 
-    case subject
+    case parsed.subject
     when "techs"   then print_techs
     when "taggers" then print_taggers
     when "formats" then print_formats
     else
-      Noir::CLI.die("Unknown list subject: #{subject}. Valid: #{SUBJECTS.join(", ")}.")
+      Noir::CLI.die("Unknown list subject: #{parsed.subject}. Valid: #{SUBJECTS.join(", ")}.")
     end
   end
 
-  def self.print_help
+  def self.print_help(io : IO = STDOUT)
     cyan = ->(s : String) { Noir::CLI.name(s) }
     green = ->(s : String) { Noir::CLI.section(s) }
 
-    puts <<-HELP
+    io.puts <<-HELP
       #{green.call("USAGE:")}
         noir list <subject>
 

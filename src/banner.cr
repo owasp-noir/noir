@@ -1,4 +1,4 @@
-def banner
+def banner(io : IO = STDERR)
   art = [
     "           ùç  Y  wù           ",
     "        ™w£ Í  ±  Í £w2        ",
@@ -33,9 +33,9 @@ def banner
 
   art_color = Colorize::Color256.new(81)
 
-  STDERR.puts ""
+  io.puts ""
   art.each_with_index do |line, i|
-    STDERR.puts "#{line.colorize(art_color)}#{side[i]}"
+    io.puts "#{line.colorize(art_color)}#{side[i]}"
   end
-  STDERR.puts ""
+  io.puts ""
 end
