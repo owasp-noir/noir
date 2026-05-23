@@ -128,45 +128,71 @@ def generate_zsh_completion_script
           fi
           return
           ;;
-        version|help)
+        version)
+          return
+          ;;
+        help)
+          if (( CURRENT == 3 )); then
+            _describe -t commands 'noir command' commands
+          fi
           return
           ;;
         scan|*)
           _arguments \\
-            '-b[Set base path]:path:_files' \\
-            '-u[Set base URL for endpoints]:URL:_urls' \\
-            '-f[Output format]:format:(#{FORMATS})' \\
-            '-o[Write result to file]:path:_files' \\
+            '(-b --base-path)'{-b,--base-path}'[Set base path]:path:_files' \\
+            '(-u --url)'{-u,--url}'[Set base URL for endpoints]:URL:_urls' \\
+            '(-f --format)'{-f,--format}'[Output format]:format:(#{FORMATS})' \\
+            '(-o --output)'{-o,--output}'[Write result to file]:path:_files' \\
             '--pvalue[Set parameter value TYPE=VAL]:value:' \\
+            '--set-pvalue[Set pvalue (any)]:value:' \\
+            '--set-pvalue-header[Set pvalue (header)]:value:' \\
+            '--set-pvalue-cookie[Set pvalue (cookie)]:value:' \\
+            '--set-pvalue-query[Set pvalue (query)]:value:' \\
+            '--set-pvalue-form[Set pvalue (form)]:value:' \\
+            '--set-pvalue-json[Set pvalue (json)]:value:' \\
+            '--set-pvalue-path[Set pvalue (path)]:value:' \\
+            '--status-codes[Display HTTP status codes]' \\
+            '--exclude-codes[Exclude HTTP codes (comma-separated)]:codes:' \\
             '--include[Enrich plain output (path,techs,callee)]:list:(path techs callee path,techs path,techs,callee)' \\
+            '--include-path[Include source path column (legacy)]' \\
+            '--include-techs[Include techs column (legacy)]' \\
+            '--include-callee[Include callee column (legacy)]' \\
             '--ai-context[Include AI review context (guards,sinks,...)]::list:(guards sinks validators signals callee)' \\
             '--exclude-path[Exclude files by glob]:pattern:' \\
             '--no-color[Disable color output]' \\
             '--no-log[Show only results]' \\
-            '-P[Enable passive security scan]' \\
+            '(-P --passive-scan)'{-P,--passive-scan}'[Enable passive security scan]' \\
             '--passive-scan-path[Custom passive rules path]:path:_files' \\
             '--passive-scan-severity[Min severity]:severity:(critical high medium low)' \\
             '--passive-scan-auto-update[Auto-update rules at startup]' \\
             '--passive-scan-no-update-check[Skip rule update check]' \\
-            '-T[Activate all taggers]' \\
+            '(-T --use-all-taggers)'{-T,--use-all-taggers}'[Activate all taggers]' \\
             '--use-taggers[Activate specific taggers]:list:' \\
             '--send-req[Send results via HTTP]' \\
             '--send-proxy[Proxy URL]:url:' \\
             '--send-es[Elasticsearch URL]:url:' \\
+            '--with-headers[Add custom headers]:value:' \\
+            '--use-matchers[Matchers for delivery]:value:' \\
+            '--use-filters[Filters for delivery]:value:' \\
             '--ai-provider[AI provider prefix or URL]:provider:' \\
             '--ai-model[AI model name]:model:' \\
             '--ai-key[AI API key]:key:' \\
+            '--ai-agent[Enable agentic AI workflow]' \\
+            '--ai-agent-max-steps[Max steps for AI agent loop]:n:' \\
+            '--ai-native-tools-allowlist[Provider allowlist for native tool-calling]:list:' \\
+            '--ai-max-token[Max tokens per request]:n:' \\
             '--diff-path[Old code version for diff]:path:_files' \\
-            '-t[Specify technologies]:techs:' \\
+            '(-t --techs)'{-t,--techs}'[Specify technologies]:techs:' \\
             '--exclude-techs[Exclude technologies]:techs:' \\
             '--only-techs[Only run these tech detectors]:techs:' \\
             '--config-file[YAML config file]:path:_files' \\
             '--concurrency[Concurrency level]:level:' \\
             '--cache-disable[Disable LLM cache for this run]' \\
             '--cache-clear[Clear LLM cache before scan]' \\
-            '-d[Enable debug messages]' \\
+            '(-d --debug)'{-d,--debug}'[Enable debug messages]' \\
             '--verbose[Verbose mode]' \\
-            '-h[Show help]'
+            '(-v --version)'{-v,--version}'[Show version]' \\
+            '(-h --help)'{-h,--help}'[Show help]'
           return
           ;;
       esac
@@ -227,7 +253,13 @@ def generate_bash_completion_script
             return 0
           fi
           ;;
-        version|help)
+        version)
+          return 0
+          ;;
+        help)
+          if [[ ${COMP_CWORD} -eq 2 ]]; then
+            COMPREPLY=( $(compgen -W "${commands}" -- "${cur}") )
+          fi
           return 0
           ;;
       esac
@@ -255,8 +287,12 @@ def generate_bash_completion_script
           COMPREPLY=( $(compgen -W "critical high medium low" -- "${cur}") )
           return 0
           ;;
-        --send-proxy|--send-es|--with-headers|--use-matchers|--use-filters|--diff-path|--config-file|--pvalue|--set-pvalue|--techs|--exclude-techs|--only-techs|-o|-b|-u|--ai-provider|--ai-model|--ai-key)
+        -b|--base-path|-u|--url|-o|--output|--diff-path|--config-file|--passive-scan-path|--send-proxy|--send-es)
           COMPREPLY=( $(compgen -f -- "${cur}") )
+          return 0
+          ;;
+        --with-headers|--use-matchers|--use-filters|--use-taggers|--pvalue|--set-pvalue|--set-pvalue-header|--set-pvalue-cookie|--set-pvalue-query|--set-pvalue-form|--set-pvalue-json|--set-pvalue-path|-t|--techs|--exclude-techs|--only-techs|--exclude-codes|--exclude-path|--ai-provider|--ai-model|--ai-key|--ai-agent-max-steps|--ai-native-tools-allowlist|--ai-max-token|--concurrency)
+          # value flags — no useful completion, just let the user type
           return 0
           ;;
         *)
@@ -314,8 +350,25 @@ def generate_fish_completion_script
     complete -c noir -s f -l format                -d 'Output format' -r -a 'plain yaml json jsonl toml markdown-table sarif html curl httpie powershell oas2 oas3 postman only-url only-param only-header only-cookie only-tag mermaid'
     complete -c noir -s o -l output                -d 'Write result to file' -r -F
     complete -c noir      -l pvalue                -d 'Set param value TYPE=VAL' -r
+    complete -c noir      -l set-pvalue            -d 'Set pvalue (any)'    -r
+    complete -c noir      -l set-pvalue-header     -d 'Set pvalue (header)' -r
+    complete -c noir      -l set-pvalue-cookie     -d 'Set pvalue (cookie)' -r
+    complete -c noir      -l set-pvalue-query      -d 'Set pvalue (query)'  -r
+    complete -c noir      -l set-pvalue-form       -d 'Set pvalue (form)'   -r
+    complete -c noir      -l set-pvalue-json       -d 'Set pvalue (json)'   -r
+    complete -c noir      -l set-pvalue-path       -d 'Set pvalue (path)'   -r
+    complete -c noir      -l status-codes          -d 'Display HTTP status codes'
+    complete -c noir      -l exclude-codes         -d 'Exclude HTTP codes' -r
+    complete -c noir      -l exclude-path          -d 'Exclude files by glob' -r
     complete -c noir      -l include               -d 'Enrich plain output (path,techs,callee)' -r -a 'path techs callee path,techs path,techs,callee'
+    complete -c noir      -l include-path          -d 'Include source path in plain output (legacy)'
+    complete -c noir      -l include-techs         -d 'Include techs column in plain output (legacy)'
+    complete -c noir      -l include-callee        -d 'Include callee column in plain output (legacy)'
     complete -c noir      -l ai-context            -d 'Include AI review context' -a 'guards sinks validators signals callee'
+    complete -c noir      -l ai-agent              -d 'Enable agentic AI workflow'
+    complete -c noir      -l ai-agent-max-steps    -d 'Max steps for AI agent loop' -r
+    complete -c noir      -l ai-native-tools-allowlist -d 'Provider allowlist for native tool-calling' -r
+    complete -c noir      -l ai-max-token          -d 'Max tokens per request' -r
     complete -c noir      -l no-color              -d 'Disable color output'
     complete -c noir      -l no-log                -d 'Show only results'
     complete -c noir -s P -l passive-scan          -d 'Enable passive scan'
@@ -372,8 +425,12 @@ def generate_elvish_completion_script
     var shells         = [zsh bash fish elvish]
     var scan-flags = [
       -b --base-path -u --url -f --format -o --output
-      --pvalue --status-codes --exclude-codes --exclude-path
-      --include --ai-context --no-color --no-log
+      --pvalue --set-pvalue
+      --set-pvalue-header --set-pvalue-cookie --set-pvalue-query
+      --set-pvalue-form --set-pvalue-json --set-pvalue-path
+      --status-codes --exclude-codes --exclude-path
+      --include --include-path --include-techs --include-callee
+      --ai-context --no-color --no-log
       -P --passive-scan --passive-scan-path --passive-scan-severity
       --passive-scan-auto-update --passive-scan-no-update-check
       -T --use-all-taggers --use-taggers
@@ -395,7 +452,9 @@ def generate_elvish_completion_script
         put $@commands
       } else {
         var verb = $cmd[1]
-        if (eq $verb scan) {
+        # v0 compat: a leading flag (e.g. `noir -b ./path`) means the
+        # whole invocation is an implicit `scan`, so treat it that way.
+        if (or (eq $verb scan) (str:has-prefix $verb -)) {
           if (str:has-prefix $last -) {
             put $@scan-flags
           } else {
