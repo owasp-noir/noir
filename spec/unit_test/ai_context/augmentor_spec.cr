@@ -353,4 +353,437 @@ describe "NoirAIContext" do
       context.sinks.map(&.kind).should_not contain("sql")
     end
   end
+
+  # ===== Phase 1: New sink categories =====
+
+  it "flags innerHTML assignment as an xss sink" do
+    source = <<-CODE
+      app.get("/profile", (req, res) => {
+        const el = document.getElementById("name")
+        el.innerHTML = req.query.name
+      })
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/profile", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should contain("xss")
+    end
+  end
+
+  it "flags Rails .html_safe as an xss sink" do
+    source = <<-CODE
+      def show
+        @greeting = params[:name].html_safe
+      end
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/greet", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should contain("xss")
+    end
+  end
+
+  it "flags pickle.loads as a deserialization sink" do
+    source = <<-CODE
+      @app.route('/restore', methods=['POST'])
+      def restore():
+          data = pickle.loads(request.data)
+          return jsonify(data=data)
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/restore", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should contain("deserialization")
+    end
+  end
+
+  it "flags render_template_string as a template-injection sink" do
+    source = <<-CODE
+      @app.route('/hello')
+      def hello():
+          return render_template_string("Hello " + request.args.get('name'))
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/hello", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should contain("template_injection")
+    end
+  end
+
+  it "flags eval() as a code_eval sink" do
+    source = <<-CODE
+      app.post('/calc', (req, res) => {
+        const result = eval(req.body.formula)
+        res.json({ result })
+      })
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/calc", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should contain("code_eval")
+    end
+  end
+
+  it "flags update_attributes(params) as mass_assignment" do
+    source = <<-CODE
+      def update
+        @user = User.find(params[:id])
+        @user.update_attributes(params[:user])
+      end
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/users/:id", "PUT")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should contain("mass_assignment")
+    end
+  end
+
+  it "skips mass_assignment when the snippet shows a .permit() allowlist" do
+    source = <<-CODE
+      def update
+        @user.update_attributes(params.require(:user).permit(:name, :email))
+      end
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/users/:id", "PUT")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should_not contain("mass_assignment")
+    end
+  end
+
+  it "flags MD5 in a security context as crypto_weak" do
+    source = <<-CODE
+      def login
+        password = params[:password]
+        digest = Digest::MD5.hexdigest(password)
+        verify_session(digest)
+      end
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/login", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should contain("crypto_weak")
+    end
+  end
+
+  it "skips crypto_weak for MD5 used on non-security data (e.g. cache keys)" do
+    source = <<-CODE
+      def index
+        cache_key = Digest::MD5.hexdigest(file_path)
+        render_cached(cache_key)
+      end
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/files", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should_not contain("crypto_weak")
+    end
+  end
+
+  it "emits both sql and xss when a single handler shows both" do
+    # Regression for the source-scan one-sink-per-route cap. Pre-fix,
+    # `sql` would land first and `xss` would be silently dropped.
+    # Uses `req.params.id` (path param) instead of `req.query.id`
+    # because the sql suppress rule treats `req.query.*` as a generic
+    # query accessor — see the "avoids treating request query
+    # accessors as sql sinks" spec further up.
+    source = <<-CODE
+      app.get('/q', (req, res) => {
+        const rows = db.execute("SELECT * FROM users WHERE id=" + req.params.id)
+        document.write(rows[0].name)
+      })
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/q", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      kinds = context.sinks.map(&.kind)
+      kinds.should contain("sql")
+      kinds.should contain("xss")
+    end
+  end
+
+  # ===== Phase 2: Guard categories =====
+
+  it "detects authz_guard via @PreAuthorize annotation" do
+    source = <<-CODE
+      @PreAuthorize("hasRole('ADMIN')")
+      @PostMapping("/users/{id}/promote")
+      public ResponseEntity promote(@PathVariable Long id) {
+          return service.promote(id);
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/users/{id}/promote", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_param(Param.new("id", "1", "path"))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.guards.map(&.kind).should contain("authz_guard")
+    end
+  end
+
+  it "detects csrf_guard via protect_from_forgery" do
+    source = <<-CODE
+      class UsersController < ApplicationController
+        protect_from_forgery with: :exception
+        def update
+          @user.update(user_params)
+        end
+      end
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/users/:id", "PUT")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 2))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.guards.map(&.kind).should contain("csrf_guard")
+    end
+  end
+
+  it "detects rate_limit_guard via RateLimiter middleware" do
+    source = <<-CODE
+      @RateLimiter(name = "login", fallbackMethod = "tooMany")
+      @PostMapping("/login")
+      public ResponseEntity login(@RequestBody Credentials c) {
+          return svc.login(c);
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/login", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.guards.map(&.kind).should contain("rate_limit_guard")
+    end
+  end
+
+  it "emits csrf_exempt signal when protection is explicitly disabled" do
+    source = <<-CODE
+      @csrf_exempt
+      def webhook(request):
+          return process(request.body)
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/webhook", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should contain("csrf_exempt")
+    end
+  end
+
+  # ===== Phase 3: Validator categories =====
+
+  it "detects schema_validation via Pydantic BaseModel at the call site" do
+    source = <<-CODE
+      @app.post('/users')
+      def create_user(payload):
+          user = UserIn.parse_obj(payload)
+          return user
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/users", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.validators.map(&.kind).should contain("schema_validation")
+    end
+  end
+
+  it "detects type_coercion via parseInt" do
+    source = <<-CODE
+      app.get('/page/:n', (req, res) => {
+        const n = parseInt(req.params.n)
+        return res.send(items.slice(n, n + 10))
+      })
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/page/:n", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.validators.map(&.kind).should contain("type_coercion")
+    end
+  end
+
+  it "detects allowlist_check via membership against a constant set" do
+    source = <<-CODE
+      @app.route('/files')
+      def files():
+          ext = request.args.get('ext')
+          if ext in ALLOWED_EXTENSIONS:
+              return serve(ext)
+          abort(400)
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/files", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.validators.map(&.kind).should contain("allowlist_check")
+    end
+  end
+
+  # ===== Phase 4: New param categories =====
+
+  it "tags email params as pii_input" do
+    endpoint = Endpoint.new("/signup", "POST")
+    endpoint.push_param(Param.new("email", "a@b.c", "form"))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.map(&.kind).should contain("pii_input")
+  end
+
+  it "tags content params as html_content_input" do
+    endpoint = Endpoint.new("/posts", "POST")
+    endpoint.push_param(Param.new("content", "hello <b>world</b>", "json"))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.map(&.kind).should contain("html_content_input")
+  end
+
+  it "tags formula params as code_input" do
+    endpoint = Endpoint.new("/eval", "POST")
+    endpoint.push_param(Param.new("formula", "1+1", "json"))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.map(&.kind).should contain("code_input")
+  end
+
+  # ===== Phase 5: New heuristic signals =====
+
+  it "emits authz_absence when authn is present but no authz and the route has a path id" do
+    source = <<-CODE
+      class UsersController < ApplicationController
+        before_action :authenticate_user!
+        def update
+          @user = User.find(params[:id])
+          @user.update_attributes(params.require(:user).permit(:name))
+        end
+      end
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/users/:id", "PUT")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 2))
+      endpoint.details = details
+      endpoint.push_param(Param.new("id", "1", "path"))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.guards.map(&.kind).should contain("auth_guard")
+      context.guards.map(&.kind).should_not contain("authz_guard")
+      context.signals.map(&.kind).should contain("authz_absence")
+    end
+  end
+
+  it "emits rate_limit_absence for credential-handling endpoints without a rate limit" do
+    source = <<-CODE
+      @app.route('/login', methods=['POST'])
+      def login():
+          authenticate_user(request.form['password'])
+          return jsonify(ok=True)
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/login", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_param(Param.new("password", "x", "form"))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should contain("rate_limit_absence")
+    end
+  end
+
+  it "does NOT emit rate_limit_absence on routes without credential params" do
+    source = <<-CODE
+      app.post('/posts', (req, res) => {
+        Post.create({ title: req.body.title })
+      })
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/posts", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_param(Param.new("title", "x", "json"))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should_not contain("rate_limit_absence")
+    end
+  end
 end

@@ -76,6 +76,138 @@ module NoirAIContext
         name_patterns: [/\bhttp\b/i, /\bfetch\b/i, /\bclient\b/i, /\baxios\b/i],
         source_patterns: [/requests\.(get|post|put|delete)/i, /\bfetch\s*\(/i, /\baxios\./i, /\bhttp\.(Get|Post|NewRequest)/, /\bclient\.(get|post|request)/i]
       ),
+      # ----- New in v1.1 (--ai-context coverage expansion) -----
+      #
+      # XSS / unsafe-HTML output. Catches assignments and helpers that
+      # bypass the framework's auto-escaping (innerHTML, React's
+      # dangerouslySetInnerHTML, Rails' html_safe / raw, Django /
+      # Jinja's |safe + mark_safe / Markup, Vue's v-html, Svelte's
+      # {@html ...}).
+      PatternDefinition.new(
+        "xss",
+        "Potential XSS sink — unsafe HTML output bypassing the framework's auto-escaping",
+        75,
+        name_patterns: [/\bhtml_safe\b/i, /\bmark_safe\b/i, /\bdangerouslySetInnerHTML\b/, /\bformat_html\b/i],
+        source_patterns: [
+          /\.innerHTML\s*=/,
+          /\.outerHTML\s*=/,
+          /\bdocument\.write\s*\(/,
+          /\bdangerouslySetInnerHTML\b/,
+          /\{@html\b/,
+          /\bv-html\b/,
+          /\bMarkup\s*\(/,
+          /\bmark_safe\s*\(/,
+          /\|\s*safe\b/,
+          /\.html_safe\b/,
+          /\braw\s*\(/i,
+          /\bbypassSecurityTrust(Html|Script|Style|Url|ResourceUrl)\b/,
+        ]
+      ),
+      # Unsafe deserialization. RCE-class — anything that revives an
+      # attacker-controlled byte stream into a live object graph.
+      PatternDefinition.new(
+        "deserialization",
+        "Potential unsafe deserialization — attacker-controlled bytes revive into a live object graph (RCE class)",
+        86,
+        name_patterns: [/\bpickle\.loads\b/, /\bcPickle\.loads\b/, /\bdill\.loads\b/, /\bjsonpickle\.decode\b/, /\bunserialize\b/, /\bMarshal\.load\b/, /\breadObject\b/],
+        source_patterns: [
+          /\bpickle\.loads\s*\(/,
+          /\bcPickle\.loads\s*\(/,
+          /\bdill\.loads\s*\(/,
+          /\bjsonpickle\.decode\s*\(/,
+          /\byaml\.load\s*\(/,         # yaml.load without SafeLoader
+          /\bMarshal\.load\s*\(/,
+          /\bunserialize\s*\(/,
+          /\bObjectInputStream\b.*\breadObject\b/m,
+          /\bXMLDecoder\b/,
+          /\bXStream\b.*\bfromXML\b/,
+          /\bBinaryFormatter\b.*\bDeserialize\b/,
+          /\bLosFormatter\b/,
+          /\bnode-serialize\b/,
+        ]
+      ),
+      # Server-side template injection. Distinct from template_render —
+      # SSTI specifically means the *template string itself* is built
+      # from user input. The patterns look for template-from-string
+      # constructors and `render_template_string`-style calls.
+      PatternDefinition.new(
+        "template_injection",
+        "Potential server-side template injection (SSTI) — template string itself may be attacker-controlled",
+        80,
+        name_patterns: [/\brender_template_string\b/, /\bfrom_string\b/, /\bTemplate\.compile\b/],
+        source_patterns: [
+          /\brender_template_string\s*\(/,
+          /\bEnvironment\(\)\.from_string\s*\(/,
+          /\bjinja2\.Template\s*\(/,
+          /\bERB\.new\s*\(/,
+          /\bLiquid::Template\.parse\s*\(/,
+          /\bHandlebars\.compile\s*\(/,
+          /\b_\.template\s*\(/,
+          /\bVelocity\.evaluate\s*\(/,
+        ]
+      ),
+      # In-process code evaluation. Sibling of command_exec but stays
+      # inside the runtime — eval / exec / Function() / instance_eval.
+      PatternDefinition.new(
+        "code_eval",
+        "Potential in-process code evaluation — attacker-controlled source executed by the runtime (RCE class)",
+        84,
+        name_patterns: [/\binstance_eval\b/, /\bclass_eval\b/, /\bcreate_function\b/],
+        source_patterns: [
+          /\beval\s*\(/,
+          /\bexec\s*\(/,                  # Python's exec (overlaps with shell exec but resolved by context)
+          /\bcompile\s*\([^)]*,\s*['"]exec['"]/,
+          /\bnew\s+Function\s*\(/,
+          /\bFunction\s*\([^)]*\)\s*\(/,
+          /\bsetTimeout\s*\(\s*['"]/,     # setTimeout("string code", ...)
+          /\bsetInterval\s*\(\s*['"]/,
+          /\binstance_eval\s*\(/,
+          /\bclass_eval\s*\(/,
+          /\bbinding\.eval\s*\(/,
+          /\bcreate_function\s*\(/,
+          /\bassert\s*\(\s*\$/,           # PHP assert($var) — eval-equivalent
+          /\bScriptEngine\b.*\beval\b/,
+        ]
+      ),
+      # Mass assignment — direct param/body → model write without
+      # explicit field allowlist. Tunes confidence down because well-
+      # structured apps with strong_params / DTO / Pydantic also
+      # surface this shape and aren't necessarily vulnerable.
+      PatternDefinition.new(
+        "mass_assignment",
+        "Potential mass-assignment — request params written into a model without an explicit field allowlist",
+        60,
+        name_patterns: [/\bupdate_attributes\b/, /\bassign_attributes\b/],
+        source_patterns: [
+          /\bupdate_attributes\s*\(/,
+          /\bassign_attributes\s*\(/,
+          /\.create\s*\(\s*params\b/,
+          /\.create\s*\(\s*req\.body\b/,
+          /\.update\s*\(\s*params\b/,
+          /\.update\s*\(\s*req\.body\b/,
+          /Object\.assign\s*\([^,]+,\s*req\.body\b/,
+          /_\.merge\s*\([^,]+,\s*req\.body\b/,
+        ]
+      ),
+      # Weak cryptography. Conservative — only flag when the snippet
+      # also looks security-relevant (password / token / signature /
+      # session). Plain MD5 on a cache key isn't worth flagging.
+      PatternDefinition.new(
+        "crypto_weak",
+        "Potential weak cryptographic primitive in a security-relevant context (MD5/SHA1 for auth, DES, ECB, non-CSPRNG random)",
+        56,
+        name_patterns: [/\bDigest::MD5\b/, /\bDigest::SHA1\b/, /\bhashlib\.md5\b/, /\bhashlib\.sha1\b/, /\bMessageDigest\.getInstance\b/],
+        source_patterns: [
+          /\bDigest::(MD5|SHA1)\b/,
+          /\bhashlib\.(md5|sha1)\s*\(/,
+          /\bMessageDigest\.getInstance\s*\(\s*['"](MD5|SHA-?1)['"]/,
+          /\bCipher\.(getInstance|new)\s*\(\s*['"]DES/,
+          /\bAES\/ECB\b/,
+          /\bMode::ECB\b/,
+          /\bRC4\b/,
+          /\bMath\.random\s*\(\s*\)/,                # JS non-CSPRNG
+        ]
+      ),
     ] of PatternDefinition
 
     VALIDATOR_PATTERNS = [
@@ -93,25 +225,209 @@ module NoirAIContext
         name_patterns: [/\bsanitize\b/i, /\bescape\b/i, /\bencode\b/i, /\bnormalize\b/i, /\bclean\b/i],
         source_patterns: [/\bsanitize\w*\s*\(/i, /\bescape\w*\s*\(/i, /\bhtml_escape\b/i, /\bnormalize\w*\s*\(/i, /\bclean\w*\s*\(/i]
       ),
+      # Schema-based validation — Pydantic / Zod / Joi / marshmallow /
+      # JSON Schema. These give the strongest input-shape guarantee
+      # because they reject any field outside the declared schema.
+      # Worth a higher confidence than free-form validators.
+      PatternDefinition.new(
+        "schema_validation",
+        "Schema-based input validation (strong shape guarantee — rejects fields outside the declared schema)",
+        78,
+        name_patterns: [/\bBaseModel\b/, /\bparse_obj\b/, /\bmodel_validate\b/, /\bz\.object\b/, /\bjoi\.object\b/i, /\bjsonschema\b/i, /\bmarshmallow\b/i],
+        source_patterns: [
+          # Class definitions — `class X(BaseModel)` / `pydantic.BaseModel`
+          /\bclass\s+\w+\(\s*BaseModel\s*\)/,
+          /\bpydantic\.BaseModel\b/,
+          /\b\w+:\s*BaseModel\b/,                      # type hint `payload: BaseModel`
+          # Pydantic call-site validation — works whether the model
+          # is defined in the same file or imported.
+          /\.parse_obj\s*\(/,
+          /\.model_validate\s*\(/,
+          /\.parse_raw\s*\(/,
+          # Zod / Yup
+          /\bz\.(object|string|number|array)\s*\(/,
+          /\bschema\.parse\s*\(/,
+          /\bYup\.(object|string|number)\b/,
+          # Joi
+          /\bjoi\.object\s*\(/i,
+          /\bJoi\.validate\s*\(/,
+          # marshmallow
+          /\bSchema\(\)\.load\s*\(/,
+          # JSON Schema
+          /\bjsonschema\.validate\s*\(/,
+          /\bvalidate\s*\(\s*\w+,\s*schema\s*\)/i,
+        ]
+      ),
+      # Type coercion — parseInt / Integer / .to_i!. A weaker guard
+      # than schema validation but still useful evidence that the
+      # author considered the input type.
+      PatternDefinition.new(
+        "type_coercion",
+        "Type coercion on input — narrower than schema validation but still constrains the value",
+        50,
+        name_patterns: [/\bparseInt\b/, /\bparseFloat\b/, /\bInteger\b/, /\bFloat\b/, /\btoInt\b/, /\bto_i!\b/],
+        source_patterns: [
+          /\bparseInt\s*\(/,
+          /\bparseFloat\s*\(/,
+          /\bInteger\s*\(/,
+          /\bFloat\s*\(/,
+          /\b\.to_i!\b/,
+          /\b\.to_f!\b/,
+          /\bNumber\s*\(/,
+          /\bint\s*\(\s*request\./,
+        ]
+      ),
+      # Allowlist check — explicit `in ALLOWED` / `whitelist.include?`
+      # / `permitted_values.contains`. Often the cleanest defence for
+      # values where the legitimate set is small and known.
+      PatternDefinition.new(
+        "allowlist_check",
+        "Allowlist / membership check — value compared against a known-good fixed set",
+        62,
+        name_patterns: [/\bwhitelist\b/i, /\ballowlist\b/i, /\bpermitted_values\b/i],
+        source_patterns: [
+          /\bwhitelist\b/i,
+          /\ballowlist\b/i,
+          /\ballowed[_-]?values\b/i,
+          /\bpermitted_values\b/i,
+          /\bif\s+\w+\s+in\s+[A-Z_][A-Z0-9_]+\b/,      # `if value in ALLOWED_*`
+          /\b\bALLOWED_[A-Z_]+\.(include|contains)/,
+          /\.include\?\s*\(\s*\w+\s*\)\s*(?:or|\|\|)/,  # very loose, low priority
+          /\bin\s*\[[\w\s,'"]+\]/i,                    # `if v in ['a','b']`
+        ]
+      ),
     ] of PatternDefinition
 
-    GUARD_PATTERNS = [
+    # ----- Guards -----
+    #
+    # Split into four narrow groups so the LLM (and human reviewers)
+    # can tell *which* layer is protecting a route. A route with
+    # authentication but no authorization is a privilege-escalation
+    # candidate; a route with authentication but no CSRF protection
+    # is a cross-site request candidate; etc.
+    #
+    # The legacy single `guard` kind was too coarse: a `before_action
+    # :authenticate_user!` and a `before_action :authorize_admin!`
+    # would both surface as the same flat "guard", losing the
+    # distinction reviewers actually care about.
+
+    # Authentication guard — "verifies who you are". Login required,
+    # JWT verification, session check.
+    AUTH_GUARD_PATTERNS = [
       PatternDefinition.new(
-        "guard",
-        "Potential authz/authn guard inferred from nearby source",
-        52,
+        "auth_guard",
+        "Potential authentication guard — checks who the caller is",
+        56,
         source_patterns: [
           /passport\.authenticate/i,
           /expressjwt/i,
           /\bauthenticate\w*\b/i,
-          /\bauthorize\w*\b/i,
-          /\brequireAuth\b/i,
           /\bverifyToken\b/i,
-          /\bcheckPermission\b/i,
+          /\brequireAuth\b/i,
+          /\blogin_required\b/i,
+          /\bjwt_required\b/i,
           /Depends\s*\(\s*get_current_/i,
-          /Security\s*\(/i,
           /before_action\s+:\w*auth/i,
           /\.Use\s*\(\s*\w*Auth\w*/i,
+        ]
+      ),
+    ] of PatternDefinition
+
+    # Authorization guard — "verifies what you can do". Role,
+    # permission, ability, policy checks. Distinct from authentication
+    # because the common security gap is "logged in but no further
+    # check" → horizontal / vertical privilege escalation.
+    AUTHZ_GUARD_PATTERNS = [
+      PatternDefinition.new(
+        "authz_guard",
+        "Potential authorization guard — checks what the authenticated caller may do",
+        60,
+        source_patterns: [
+          /\bauthorize\w*\b/i,
+          /\bcheckPermission\b/i,
+          /\bhasAuthority\b/i,
+          /\brequiresRole\b/i,
+          /\brole_required\b/i,
+          /\badmin_required\b/i,
+          /@PreAuthorize\b/,
+          /@RolesAllowed\b/,
+          /@Secured\b/,
+          /Security\s*\(/,
+          /\bPundit\b.*\bauthorize\b/i,
+          /\bcan\?\s*\(/,
+          /\b(can|cannot)\s+:[\w_!?]+/,
+          /\bability\.\w+/i,
+        ]
+      ),
+    ] of PatternDefinition
+
+    # CSRF protection. Different layer from authn/authz — protects
+    # against cross-site request forgery via tokens / SameSite cookies
+    # / origin checks. Absent on state-changing endpoints is usually
+    # worth a review note.
+    CSRF_GUARD_PATTERNS = [
+      PatternDefinition.new(
+        "csrf_guard",
+        "Potential CSRF protection — token check, SameSite cookie policy, or origin check",
+        70,
+        source_patterns: [
+          /\bprotect_from_forgery\b/,
+          /\bcsrf_token\b/,
+          /\bcsrfProtection\b/,
+          /\bCsrf(Token)?Filter\b/,
+          /\bCSRFGuard\b/,
+          /verify_authenticity_token/,
+          /@csrf_protect\b/,
+          /\bSameSite\b.*\bStrict\b/i,
+        ]
+      ),
+    ] of PatternDefinition
+
+    # Rate limiting / throttling. Often the only defence on
+    # credential-handling endpoints against credential stuffing /
+    # brute-force. Confidence is moderate because not every endpoint
+    # needs rate limiting (only credential / lookup-style ones).
+    RATE_LIMIT_GUARD_PATTERNS = [
+      PatternDefinition.new(
+        "rate_limit_guard",
+        "Potential rate-limit / throttling layer",
+        64,
+        source_patterns: [
+          /\bThrottle\b/,
+          /\bRateLimiter\b/,
+          /@limits?\s*\(/,
+          /@limiter\b/,
+          /\bflask[-_]limiter\b/i,
+          /\bslowapi\b/i,
+          /\bratelimit\b/i,
+          /\.throttle\s*\(/,
+          /Bucket(Token)?\b/,
+        ]
+      ),
+    ] of PatternDefinition
+
+    GUARD_PATTERN_GROUPS = [
+      AUTH_GUARD_PATTERNS,
+      AUTHZ_GUARD_PATTERNS,
+      CSRF_GUARD_PATTERNS,
+      RATE_LIMIT_GUARD_PATTERNS,
+    ]
+
+    # Negative protection: explicit CSRF bypass. Emit as a SIGNAL
+    # (not a guard) so the LLM knows protection is intentionally
+    # disabled here and the endpoint warrants extra scrutiny.
+    CSRF_EXEMPT_PATTERNS = [
+      PatternDefinition.new(
+        "csrf_exempt",
+        "Explicit CSRF protection bypass — review whether the exemption is justified",
+        80,
+        source_patterns: [
+          /@csrf_exempt\b/,
+          /\bcsrf_exempt\s*\(/,
+          /protect_from_forgery\s+with:\s*:null_session/,
+          /\.disable\s*\(\s*\.?csrf/i,
+          /csrfProtection:\s*false/i,
+          /@SuppressWarnings\(.*csrf.*\)/i,
         ]
       ),
     ] of PatternDefinition
@@ -146,6 +462,34 @@ module NoirAIContext
         "Query-builder-like input can influence filtering, sorting, or data access clauses",
         70,
         name_patterns: [/\b(sort|order|filter|where|search|select|field|column)\b/i]
+      ),
+      # PII (personally identifiable info). Worth a review note for
+      # storage / logging / retention even when no specific sink is
+      # nearby. Confidence high — these names rarely co-opt for
+      # unrelated purposes.
+      PatternDefinition.new(
+        "pii_input",
+        "Personally identifiable information; review storage, logging, retention, and access controls",
+        78,
+        name_patterns: [/\b(email|e[-_]?mail|phone|mobile|ssn|tax[_-]?id|dob|date[_-]?of[_-]?birth|birthdate|nin|national[_-]?id|passport|driver[_-]?license)\b/i]
+      ),
+      # Rich content fields. Common XSS source — body / description /
+      # comment / markdown almost always flow into a render path and
+      # need either escaping or a strict schema.
+      PatternDefinition.new(
+        "html_content_input",
+        "Rich-content input may flow into HTML output; review escaping or schema validation",
+        72,
+        name_patterns: [/\b(content|body|description|html|message|comment|note|memo|markdown|rich[_-]?text)\b/i]
+      ),
+      # Code / formula / template fields. High-risk XSS+SSTI+eval
+      # source class. If an endpoint accepts these names, the
+      # downstream sinks deserve closer scrutiny.
+      PatternDefinition.new(
+        "code_input",
+        "Code/script-like input often flows into eval, template, or interpreter sinks",
+        80,
+        name_patterns: [/\b(script|code|formula|expression|command|cmd|template|query[_-]?string)\b/i]
       ),
     ] of PatternDefinition
 
@@ -388,8 +732,14 @@ module NoirAIContext
       endpoint.details.code_paths.each do |path_info|
         route_scope = route_scope_snippet_for(path_info.path, path_info.line)
 
-        if context.guards.empty?
-          if guard = detect_from_patterns("", route_scope, GUARD_PATTERNS, path_info.path, path_info.line, "route_source")
+        # Try each guard category independently — a route can be
+        # protected by authn, authz, csrf, and rate-limit at once,
+        # and the LLM should see every layer that's present so it
+        # can reason about which one is missing.
+        GUARD_PATTERN_GROUPS.each do |patterns|
+          kind = patterns.first.kind
+          next if context.guards.any? { |g| g.kind == kind }
+          if guard = detect_from_patterns("", route_scope, patterns, path_info.path, path_info.line, "route_source")
             context.push_guard(guard)
           end
         end
@@ -397,14 +747,31 @@ module NoirAIContext
         snippet = route_scope || snippet_for(path_info.path, path_info.line, SOURCE_SCAN_RADIUS)
         next if snippet.nil?
 
-        if context.sinks.empty?
-          if sink = detect_from_patterns("", snippet, SINK_PATTERNS, path_info.path, path_info.line, "route_source")
+        # Explicit CSRF bypass is a negative signal: protection is
+        # disabled here on purpose, but the reviewer should confirm
+        # the justification.
+        CSRF_EXEMPT_PATTERNS.each do |pattern|
+          next if context.signals.any? { |s| s.kind == "csrf_exempt" }
+          if entry = detect_single_pattern(pattern, "", snippet, path_info.path, path_info.line, "route_source")
+            context.push_signal(entry)
+          end
+        end
+
+        # Try every sink pattern, not just the first. Stops at one
+        # match per `kind`, so the same SQL pattern firing twice won't
+        # double-emit but a route that's both `xss` and `sql` will
+        # surface both. Previously we capped the whole route at one
+        # sink, which silently dropped the second / third class.
+        SINK_PATTERNS.each do |pattern|
+          next if context.sinks.any? { |s| s.kind == pattern.kind }
+          if sink = detect_single_pattern(pattern, "", snippet, path_info.path, path_info.line, "route_source")
             context.push_sink(sink)
           end
         end
 
-        if context.validators.empty?
-          if validator = detect_from_patterns("", snippet, VALIDATOR_PATTERNS, path_info.path, path_info.line, "route_source")
+        VALIDATOR_PATTERNS.each do |pattern|
+          next if context.validators.any? { |v| v.kind == pattern.kind }
+          if validator = detect_single_pattern(pattern, "", snippet, path_info.path, path_info.line, "route_source")
             context.push_validator(validator)
           end
         end
@@ -413,9 +780,55 @@ module NoirAIContext
 
     private def add_missing_guard_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
       return unless STATE_CHANGING_METHODS.includes?(endpoint.method)
+
+      has_authn = context.guards.any? { |g| g.kind == "auth_guard" }
+      has_authz = context.guards.any? { |g| g.kind == "authz_guard" }
+      has_rate_limit = context.guards.any? { |g| g.kind == "rate_limit_guard" }
+      path_id_param = endpoint.params.any? { |p| p.param_type == "path" && identifier_like?(p.name) }
+
+      # Authentication is present but no authorization check is —
+      # classic privilege escalation candidate. Especially noisy on
+      # routes that take a path identifier (could touch another
+      # user's object), but worth surfacing in either case.
+      if has_authn && !has_authz && path_id_param
+        context.push_signal(AIContextEntry.new(
+          "authz_absence",
+          endpoint.url,
+          source: "heuristic",
+          description: "Authenticated endpoint uses a path identifier with no authorization check detected; review for horizontal / vertical privilege escalation.",
+          path: anchor.try(&.path),
+          line: anchor.try(&.line),
+          confidence: 44,
+          snippet: route_snippet
+        ))
+      end
+
+      # Rate-limit absence is informational — only emit on
+      # credential-bearing endpoints where it actually matters (login,
+      # password reset, OTP). General state-changing endpoints don't
+      # always need rate limiting.
+      credential_param = endpoint.params.any? do |p|
+        PARAM_PATTERNS.find { |pattern| pattern.kind == "credential_input" }.try do |pattern|
+          matches_any?(p.name, pattern.name_patterns)
+        end
+      end
+      if credential_param && !has_rate_limit
+        context.push_signal(AIContextEntry.new(
+          "rate_limit_absence",
+          endpoint.url,
+          source: "heuristic",
+          description: "Credential-handling endpoint with no rate-limit / throttling layer detected; review for credential stuffing and brute-force exposure.",
+          path: anchor.try(&.path),
+          line: anchor.try(&.line),
+          confidence: 32,
+          snippet: route_snippet
+        ))
+      end
+
+      # Existing authn-absence flow (preserves v1.0 behaviour).
       return unless context.guards.empty?
 
-      if endpoint.params.any? { |param| param.param_type == "path" && identifier_like?(param.name) }
+      if path_id_param
         context.push_signal(AIContextEntry.new(
           "idor_review",
           endpoint.url,
@@ -458,27 +871,42 @@ module NoirAIContext
                                      line : Int32?,
                                      source : String) : AIContextEntry?
       patterns.each do |pattern|
-        next if suppress_pattern_detection?(pattern.kind, name, snippet)
-
-        name_match = name_match_text(name, pattern.name_patterns)
-        snippet_match = snippet_match_text(snippet, pattern.source_patterns)
-        next unless name_match || snippet_match
-        next if source == "callee" && name_match.nil?
-
-        evidence_name = name_match || snippet_match || pattern.kind
-        return AIContextEntry.new(
-          pattern.kind,
-          evidence_name,
-          source: source,
-          description: pattern.description,
-          path: path,
-          line: line,
-          confidence: source == "route_source" ? pattern.confidence - 12 : pattern.confidence,
-          snippet: snippet
-        )
+        if entry = detect_single_pattern(pattern, name, snippet, path, line, source)
+          return entry
+        end
       end
 
       nil
+    end
+
+    # Single-pattern variant of `detect_from_patterns`. Pulled out so
+    # `add_source_scan_entries` can iterate every sink/validator
+    # pattern independently (one match per kind), where the legacy
+    # behaviour stopped at the first match across the whole list.
+    private def detect_single_pattern(pattern : PatternDefinition,
+                                      name : String,
+                                      snippet : String?,
+                                      path : String?,
+                                      line : Int32?,
+                                      source : String) : AIContextEntry?
+      return nil if suppress_pattern_detection?(pattern.kind, name, snippet)
+
+      name_match = name_match_text(name, pattern.name_patterns)
+      snippet_match = snippet_match_text(snippet, pattern.source_patterns)
+      return nil unless name_match || snippet_match
+      return nil if source == "callee" && name_match.nil?
+
+      evidence_name = name_match || snippet_match || pattern.kind
+      AIContextEntry.new(
+        pattern.kind,
+        evidence_name,
+        source: source,
+        description: pattern.description,
+        path: path,
+        line: line,
+        confidence: source == "route_source" ? pattern.confidence - 12 : pattern.confidence,
+        snippet: snippet
+      )
     end
 
     private def suppress_pattern_detection?(kind : String, name : String, snippet : String?) : Bool
@@ -493,6 +921,30 @@ module NoirAIContext
       when "outbound_http"
         return true if name.starts_with?("request.")
         return true if name == "request"
+      when "crypto_weak"
+        # Weak hash primitives are common for non-security uses (cache
+        # keys, ETags, file fingerprints). Only flag when the snippet
+        # also mentions a security-relevant identifier — keeps the
+        # signal noise down for codebases that hash file paths or
+        # serialize cache state.
+        return true unless snippet
+        return false if snippet.matches?(/\b(password|passwd|secret|token|session|sign(ature)?|nonce|otp|cred(ential)?|jwt|hmac|salt|api[_-]?key)\b/i)
+        # AES/ECB and RC4 are weak regardless of context — keep the
+        # snippet match alone good enough for those.
+        return !snippet.matches?(/\bAES\/ECB\b|\bMode::ECB\b|\bRC4\b|\b['"]DES['"]?\b/)
+      when "code_eval"
+        return false unless snippet
+        # `compile(..., 'exec')` already has an explicit 'exec' marker
+        # in our regex; bare `compile()` from JSON/template tooling
+        # must not collide. Keep the targeted patterns above and skip
+        # generic compile() calls that didn't carry the 'exec' arg.
+        return true if name == "compile"
+      when "mass_assignment"
+        return false unless snippet
+        # If the snippet shows `.permit(` or `parse(`/`validate(` near
+        # the suspect call, the developer already gated it. Skip the
+        # warning in that case.
+        return snippet.matches?(/\.permit\s*\(/) || snippet.matches?(/\.(parse|validate)\s*\(/i)
       end
 
       false
@@ -582,8 +1034,15 @@ module NoirAIContext
       start_idx = line - 1
       selected = [] of String
       brace_depth = 0
-      seen_block = false
       paren_balance = 0
+      # Block style starts as `nil` and locks in to one of:
+      #   :brace   — JS / Go / Java / Rust / C-family `{ ... }`
+      #   :ruby    — Ruby `def …` (closes with `end`, but we just let
+      #              MAX_ROUTE_SCOPE_LINES bound it — `end` parsing is
+      #              brittle next to identifiers like `puts user.send`)
+      #   :python  — Python `def …:` / `class …:` (indented body, no
+      #              braces; let MAX_ROUTE_SCOPE_LINES bound)
+      block_style : Symbol? = nil
 
       start_idx.upto(Math.min(start_idx + MAX_ROUTE_SCOPE_LINES - 1, lines.size - 1)) do |idx|
         raw_line = lines[idx]
@@ -595,13 +1054,35 @@ module NoirAIContext
         brace_depth += opens - closes
         paren_balance += sanitized.count('(') - sanitized.count(')')
 
-        seen_block ||= opens > 0 || sanitized.matches?(/\bdo\b/)
+        stripped = sanitized.strip
+        # Decorator / annotation lines (`@app.route(...)`, `@PostMapping(...)`,
+        # `@PreAuthorize(...)`) come *before* the actual route handler.
+        # Their trailing `)` is not end-of-statement — the handler is on
+        # the next line(s).
+        is_decorator = stripped.starts_with?("@")
 
-        if seen_block
+        # Lock in a block style on the first line that opens one. Once
+        # locked, later lines don't change the kind.
+        block_style ||= if opens > 0 || sanitized.matches?(/\bdo\b/)
+                          :brace
+                        elsif !is_decorator && stripped.ends_with?(":")
+                          :python
+                        elsif !is_decorator && (stripped.matches?(/\b(def|class)\s+\w+/) || stripped.matches?(/\bfunction\s+\w+/))
+                          :ruby # also covers JS plain `function name()` shape — treated as let-MAX-bound
+                        end
+
+        case block_style
+        when :brace
+          # JS-style: capture until braces close back to zero.
           break if brace_depth <= 0
+        when :python, :ruby
+          # No reliable cheap end-of-block marker — let
+          # MAX_ROUTE_SCOPE_LINES bound the capture so the snippet
+          # surfaces sinks / validators that live inside the handler
+          # body.
+          next
         else
-          stripped = sanitized.strip
-          statement_done = stripped.ends_with?(";") || stripped.ends_with?(")") || stripped.ends_with?(" do")
+          statement_done = !is_decorator && (stripped.ends_with?(";") || stripped.ends_with?(")") || stripped.ends_with?(" do"))
           break if statement_done && paren_balance <= 0
         end
       end
