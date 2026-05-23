@@ -524,8 +524,82 @@ module NoirAIContext
       add_source_scan_entries(context, endpoint)
       add_credential_from_source_signal(context, endpoint, anchor)
       add_missing_guard_signal(context, endpoint, anchor, route_snippet)
+      add_combination_signals(context, endpoint, anchor, route_snippet)
 
       context
+    end
+
+    # Derived signals that depend on multiple primary signals being
+    # present. Run last so every prior populate step has a chance to
+    # contribute.
+    private def add_combination_signals(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
+      add_open_redirect_signal(context, anchor, route_snippet)
+      add_sensitive_response_signal(context, endpoint, anchor, route_snippet)
+    end
+
+    # Open-redirect candidate: handler has a redirect sink AND
+    # accepts a redirect-like input (url / uri / next / dest /
+    # callback / return / continue). Either alone is normal; the
+    # combination is the textbook open-redirect signature.
+    private def add_open_redirect_signal(context : AIContext, anchor : PathInfo?, route_snippet : String?)
+      return unless context.sinks.any? { |s| s.kind == "redirect" }
+      return unless context.signals.any? { |s| s.kind == "redirect_input" }
+      return if context.signals.any? { |s| s.kind == "open_redirect" }
+
+      redirect_sink = context.sinks.find { |s| s.kind == "redirect" }.not_nil!
+      context.push_signal(AIContextEntry.new(
+        "open_redirect",
+        redirect_sink.name,
+        source: "heuristic",
+        description: "Handler redirects using a user-controlled-looking input — classic open-redirect signature. Review whether the destination is validated against an allowlist.",
+        path: anchor.try(&.path) || redirect_sink.path,
+        line: anchor.try(&.line) || redirect_sink.line,
+        confidence: 72,
+        snippet: route_snippet || redirect_sink.snippet
+      ))
+    end
+
+    # Sensitive-response detection runs as a two-step check on the
+    # route-scope snippet:
+    #
+    #   1. RESPONSE_EMITTER_PATTERN — the snippet calls a response-
+    #      serializing helper (`res.json`, `jsonify`, `render json:`,
+    #      `to_json`, `JsonResponse`, …).
+    #   2. CREDENTIAL_KEY_IN_RESPONSE — the snippet also has a
+    #      credential noun *as a key* (followed by `:`, and not
+    #      preceded by a quote or word character — so the noun
+    #      appearing inside a string value like
+    #      `{ message: "Set X-API-KEY header" }` doesn't fire).
+    #
+    # Both have to match in the same scope. The earlier single-regex
+    # version was too loose and caught english prose mentioning
+    # credentials in response strings.
+    RESPONSE_EMITTER_PATTERN = /\b(jsonify|res\.json|json_response|JsonResponse|render\s+json:|to_json|respond_with)\b/i
+    CREDENTIAL_KEY_IN_RESPONSE = /[^"'\w](password|passwd|token|secret|api[_-]?key|session_id|access_token|refresh_token|private_key)\s*:/i
+
+    private def add_sensitive_response_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
+      return if context.signals.any? { |s| s.kind == "sensitive_response" }
+      return if endpoint.details.code_paths.empty?
+
+      endpoint.details.code_paths.each do |path_info|
+        scope = route_scope_snippet_for(path_info.path, path_info.line)
+        next unless scope
+        next unless scope.matches?(RESPONSE_EMITTER_PATTERN)
+        if match = scope.match(CREDENTIAL_KEY_IN_RESPONSE)
+          field = match[1]? || "credential"
+          context.push_signal(AIContextEntry.new(
+            "sensitive_response",
+            field.downcase,
+            source: "route_source",
+            description: "Response body appears to include a credential-bearing field; review whether it's intentional and whether the field is stripped/masked for the caller's role.",
+            path: path_info.path,
+            line: path_info.line,
+            confidence: 68,
+            snippet: scope
+          ))
+          return
+        end
+      end
     end
 
     # Some analyzers (express's loose destructuring, Java route extractors

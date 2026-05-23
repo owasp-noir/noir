@@ -881,6 +881,90 @@ describe "NoirAIContext" do
     creds[0].source.should eq("param")
   end
 
+  it "emits open_redirect when a redirect sink coexists with a redirect_input param" do
+    source = <<-CODE
+      app.get('/jump', (req, res) => {
+        res.redirect(req.query.next)
+      })
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/jump", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_param(Param.new("next", "/x", "query"))
+      endpoint.push_callee(Callee.new("res.redirect", path, 2))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should contain("open_redirect")
+    end
+  end
+
+  it "does NOT emit open_redirect for a redirect with no user-controlled input" do
+    # Rails fixture style — `redirect_to post_url(@post)` after save.
+    source = <<-CODE
+      def create
+        @post = Post.create(title: 'x')
+        redirect_to post_url(@post)
+      end
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/posts", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should_not contain("open_redirect")
+    end
+  end
+
+  it "emits sensitive_response when the handler serializes credential fields" do
+    source = <<-CODE
+      app.get('/me', (req, res) => {
+        const u = current_user()
+        res.json({ name: u.name, token: u.access_token })
+      })
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/me", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should contain("sensitive_response")
+    end
+  end
+
+  it "does NOT emit sensitive_response on responses that just talk *about* tokens" do
+    source = <<-CODE
+      app.get('/help', (req, res) => {
+        res.json({ message: "Set the X-API-KEY header to authenticate" })
+      })
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/help", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      # The credential noun (api_key) appears in a string value, not
+      # as a serialized field name. Pattern shouldn't fire — the regex
+      # looks for the noun inside the response shape, not arbitrary
+      # text in the body. (This is a noise-control check.)
+      sensitive = context.signals.any? { |s| s.kind == "sensitive_response" }
+      # If it does fire here it's a false positive — surface it via
+      # the assertion so it's visible if the regex regresses.
+      sensitive.should be_false
+    end
+  end
+
   it "stops Ruby route scope at the matching `end` keyword" do
     # Ruby `def name … end` pairs at the same indent. The next def
     # below must not leak into the current handler's snippet.
