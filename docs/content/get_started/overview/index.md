@@ -3,6 +3,7 @@ title = "What is Noir?"
 description = "OWASP Noir is a SAST tool that extracts endpoints from source code to feed human reviewers, AI auditors, and DAST scanners."
 weight = 1
 sort_by = "weight"
+next_page = { path = "/get_started/installation/", label = "Install Noir" }
 
 +++
 

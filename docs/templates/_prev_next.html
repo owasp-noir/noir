@@ -1,0 +1,23 @@
+{% if page.params.prev_page or page.params.next_page %}
+<nav class="prev-next-nav" aria-label="{% if page.language == "ko" %}페이지 이동{% else %}Page navigation{% endif %}">
+  <div class="prev-next-row">
+    {% if page.params.prev_page %}
+      <a class="prev-next-link prev" href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}{{ page.params.prev_page.path }}">
+        <span class="prev-next-direction">← {% if page.language == "ko" %}이전{% else %}Previous{% endif %}</span>
+        <span class="prev-next-title">{{ page.params.prev_page.label }}</span>
+      </a>
+    {% else %}
+      <span class="prev-next-link prev placeholder" aria-hidden="true"></span>
+    {% endif %}
+
+    {% if page.params.next_page %}
+      <a class="prev-next-link next" href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}{{ page.params.next_page.path }}">
+        <span class="prev-next-direction">{% if page.language == "ko" %}다음{% else %}Next{% endif %} →</span>
+        <span class="prev-next-title">{{ page.params.next_page.label }}</span>
+      </a>
+    {% else %}
+      <span class="prev-next-link next placeholder" aria-hidden="true"></span>
+    {% endif %}
+  </div>
+</nav>
+{% endif %}

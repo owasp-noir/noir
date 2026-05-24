@@ -3,6 +3,8 @@ title = "Install Noir"
 description = "Install OWASP Noir via Homebrew, Snapcraft, Docker, Nix, AUR, .deb, .rpm, .apk, binary download, or from source."
 weight = 2
 sort_by = "weight"
+prev_page = { path = "/get_started/overview/", label = "What is Noir?" }
+next_page = { path = "/get_started/running/", label = "Your First Scan" }
 
 +++
 

@@ -20,6 +20,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Verify EN/KO doc parity
+        # Every English page needs a Korean counterpart and vice
+        # versa — the sidebar / language switcher assume parity, so
+        # an unpaired page surfaces as a broken language link. Fails
+        # fast before the build runs.
+        run: bash docs/scripts/check_doc_parity.sh
+
       - name: Build and Deploy
         uses: hahwul/hwaro@main
         with:

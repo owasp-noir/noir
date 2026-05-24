@@ -3,6 +3,8 @@ title = "Noir 설치"
 description = "Homebrew, Snapcraft, Docker, Nix, AUR, .deb, .rpm, .apk, 바이너리 다운로드 또는 소스 빌드를 통해 OWASP Noir를 설치합니다."
 weight = 2
 sort_by = "weight"
+prev_page = { path = "/get_started/overview/", label = "Noir란?" }
+next_page = { path = "/get_started/running/", label = "첫 번째 스캔" }
 
 +++
 

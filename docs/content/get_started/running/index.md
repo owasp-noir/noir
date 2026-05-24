@@ -3,6 +3,7 @@ title = "Your First Scan"
 description = "Run your first scan with Noir and explore the results."
 weight = 3
 sort_by = "weight"
+prev_page = { path = "/get_started/installation/", label = "Install Noir" }
 
 +++
 
