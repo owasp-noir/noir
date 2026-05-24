@@ -14,6 +14,17 @@ Noir는 각 엔드포인트에 구조화된 **AI 리뷰 컨텍스트**를 붙일
 noir scan . --ai-context
 ```
 
+쉼표 구분 bucket 목록을 넘기면 원하는 카테고리만 남깁니다. 필터는 데이터 단에서 동작하므로 JSON / SARIF / YAML / Postman / OAS 모두 동일한 선택을 봅니다 (plain-text 렌더러만이 아니라).
+
+```bash
+noir scan . --ai-context=guards,sinks       # auth + 위험 sink 만
+noir scan . --ai-context=callee             # 1-hop handler callee 만
+noir scan . --ai-context=all                # "전부" 의 명시적 형태
+noir scan . --ai-context                    # bare 형태, 동일하게 "전부"
+```
+
+유효한 feature 이름: `guards`, `callee`, `sinks`, `validators`, `signals` (그리고 `all`). 대소문자 구분 없음.
+
 plain 출력에서는 비어있지 않은 컨텍스트를 가진 엔드포인트마다 `ai_context:` 블록이 추가됩니다. 모델 기반 출력에서는 다음 위치에 동일한 구조가 노출됩니다.
 
 | 형식 | AI 컨텍스트 위치 |

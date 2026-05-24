@@ -65,6 +65,12 @@ forms still work as silent aliases throughout v1.x.
 
 | v1 form                                    | v0 equivalent (still works)             |
 |--------------------------------------------|-----------------------------------------|
+| `--probe`                                  | `--send-req`                            |
+| `--probe-via URL`                          | `--send-proxy URL`                      |
+| `--probe-header VAL`                       | `--with-headers VAL`                    |
+| `--probe-match VAL`                        | `--use-matchers VAL`                    |
+| `--probe-skip VAL`                         | `--use-filters VAL`                     |
+| `--export-es URL`                          | `--send-es URL`                         |
 | `--pvalue query=FOO`                       | `--set-pvalue-query FOO`                |
 | `--pvalue header=X`                        | `--set-pvalue-header X`                 |
 | `--pvalue FOO` (no `TYPE=`)                | `--set-pvalue FOO`                      |
@@ -75,6 +81,8 @@ forms still work as silent aliases throughout v1.x.
 | `noir list techs`                          | `--list-techs`                          |
 | `noir list taggers`                        | `--list-taggers`                        |
 | `noir help`                                | `--help-all`                            |
+
+The deliver family was split into two semantic sections in `noir scan -h`: **PROBE** for active HTTP replay against the discovered endpoints and **EXPORT** for shipping the endpoint catalog to an external data store (Elasticsearch, OpenSearch, webhook). See [Delivering Results to Other Tools](@/usage/more_features/deliver/index.md) for the full surface, and [Migrating from v0 to v1](@/get_started/migrate_v0_to_v1/index.md) for the rationale and the new exports added in v1.
 
 ### Removed in v1.0
 

@@ -155,6 +155,88 @@ for the full surface.
   miscounted. Both now filter on `.json`.
 - `NOIR_CACHE_DISABLE` tolerates surrounding whitespace.
 
+### Analyzer accuracy
+Cross-language fuzzing pass surfaced two silent corruption
+patterns and a handful of framework-specific gaps. Output URLs
+for routes that exercise these patterns will differ from
+v0.30.0 — the new shape is always the correct one, but
+SARIF/Postman/OpenAPI diffs against an older snapshot can
+surprise you.
+
+- **String interpolation in route paths** preserved as a
+  `{name}` placeholder instead of being silently dropped or
+  leaking the language's raw syntax into the URL. The bug
+  shape was consistent across six languages; each is now
+  routed through a per-engine normalizer:
+    - Python (Flask / Django / FastAPI / Quart):
+      `f"/api/{VERSION}/items"` → previously dropped the
+      `{VERSION}` segment entirely (URL became `/api/items`);
+      now `/api/{VERSION}/items` + a `VERSION` path param.
+    - Ruby (Sinatra / Hanami / Rails inheritors):
+      `get "/api/#{PREFIX}/items"` — `#{PREFIX}` stayed as
+      literal text in the URL; now `{PREFIX}`.
+    - PHP (Laravel and PHP-engine subclasses):
+      `Route::get("/api/{$VERSION}/items", …)` — the
+      `{$VERSION}` / `${VERSION}` / `$VERSION` shapes all
+      leaked their `$` characters; now `{VERSION}`.
+    - Crystal (Kemal / Lucky / Amber / Marten / Grip): same
+      `#{}` template syntax as Ruby; same drop-and-leak; now
+      normalized.
+    - Elixir (Phoenix): `get "/api/#{@version}/items"` —
+      `#{@version}` leaked verbatim; now `{version}` (the `@`
+      module-attribute sigil is stripped).
+    - Kotlin (Ktor): tree-sitter Kotlin grammar uses
+      `interpolated_identifier` / `interpolated_expression`
+      child nodes the `decode_string_literal` walk used to
+      skip. Both shapes (`"$var"` short and `"${expr}"` long)
+      now produce `{name}` placeholders.
+
+- **`Any` / `All` verb fan-out** for method-agnostic
+  registrations. `axum::routing::any`, `r.Any` (Gin),
+  `e.Any` (Echo), `app.All` (Fiber), Beego's wildcard,
+  Goyave's `Route(…)`, gorilla/mux without `.Methods(...)`,
+  Chi's `Mount`, Pocketbase, Gozero, Fasthttp, and
+  actix-web's `web::route()` all used to emit a single
+  endpoint with the non-HTTP verb `"ANY"` — SARIF parsers,
+  Postman collection importers, and `--probe-via` HTTP
+  clients all rejected it. Now fans out into the seven
+  canonical methods (GET, POST, PUT, PATCH, DELETE, HEAD,
+  OPTIONS) so downstream tooling sees real HTTP methods.
+  Behavior matches Express's existing `app.all` expansion.
+  The Go gf analyzer keeps its documented `ALL → GET` fold
+  because the fixture deliberately asserts that shape; every
+  other Go and Rust analyzer fans out.
+
+- **Comment / string-literal route false positives** in
+  Ruby/PHP. `// Route::get('/x', …)` (comment), `# get '/x'`
+  (Ruby comment, already handled), and
+  `$hint = "Route::get('/x', …)"` (PHP string literal),
+  `hint = "get '/x' do ..."` (Ruby string literal) all used
+  to surface as live routes. Each loop now:
+    - For Sinatra/Hanami: anchors the verb to the start of
+      the stripped line so verbs inside string content can't
+      match.
+    - For Laravel: pre-computes byte ranges that fall inside
+      `//`, `#`, `/* */` comments or `"..."` / `'...'`
+      string literals, and each verb scan skips matches
+      inside any such range.
+
+- **ASP.NET multi-line attribute** stitching. Developers
+  routinely split long route attributes across lines for
+  readability (`[HttpPost(\n  "/path",\n  Order = 1\n)]`).
+  The per-line scanner only saw `[HttpPost(` and recorded
+  POST with an empty path, so the endpoint surfaced with
+  only the class-level prefix and the user's path was
+  silently lost. The attribute is now joined onto a single
+  logical line before the route regex runs.
+
+- **Rails `public/*.html` discovery in monorepos**.
+  `get_public_files` was scoped to `shard.yml` siblings
+  (Crystal-project layout) and missed `App/Gemfile` +
+  `App/public/secret.html` style Rails monorepos. The anchor
+  set now includes `Gemfile` so Rails apps under a non-root
+  directory surface their static assets again.
+
 ### Removed
 - `--ollama URL` and `--ollama-model NAME` (deprecated since 2024).
   Use `--ai-provider ollama [--ai-model NAME]` instead — the CLI prints
