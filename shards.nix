@@ -1,13 +1,13 @@
 {
   "acp" = {
     url = "https://github.com/hahwul/acp.cr.git";
-    rev = "v0.1.0";
-    sha256 = "19pliij35m5i8bg8w92gib6k3mygdcp30bilqq1cj017zs4gapi6";
+    rev = "v0.2.0";
+    sha256 = "15m0ljxvz46cwf3kgm149z3r69pmyj7x2fcwywqlm63m3iqhim4j";
   };
   "ameba" = {
     url = "https://github.com/crystal-ameba/ameba.git";
-    rev = "ae09e383a062d50cec1dd7cc93382ca6ad2363ce";
-    sha256 = "04bp58212rx9vr1hqk6p6rmnw69vvhc71x8gfw9rhvl7qz5vh6sg";
+    rev = "97296d4a1c6ca7308ba220671bc7aafecfcecab3";
+    sha256 = "1qabkl2dvfirwgncy2csrkaqy2rwb6fyy4wmgcdwqsaq2y5asq1z";
   };
   "crest" = {
     url = "https://github.com/mamantoha/crest.git";
