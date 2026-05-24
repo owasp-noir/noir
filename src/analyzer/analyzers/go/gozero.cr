@@ -80,15 +80,17 @@ module Analyzer::Go
                       if File.extname(path) == ".go"
                         if ts_hits = routes_by_line[index]?
                           ts_hits.each do |route|
-                            new_endpoint = Endpoint.new(route.path, route.verb, details)
-                            if entries = callees_by_route[route.line]?
-                              entries.each do |entry|
-                                name, callee_path, callee_line = entry
-                                new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+                            Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
+                              new_endpoint = Endpoint.new(route.path, verb, details)
+                              if entries = callees_by_route[route.line]?
+                                entries.each do |entry|
+                                  name, callee_path, callee_line = entry
+                                  new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+                                end
                               end
+                              result << new_endpoint
+                              last_endpoint = new_endpoint
                             end
-                            result << new_endpoint
-                            last_endpoint = new_endpoint
                           end
                         end
 

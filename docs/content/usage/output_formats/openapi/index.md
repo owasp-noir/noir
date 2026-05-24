@@ -15,13 +15,13 @@ Noir supports both OAS 2.0 (Swagger) and OAS 3.0.
 **OAS 3.0 (recommended)**:
 
 ```bash
-noir -b . -f oas3
+noir scan . -f oas3
 ```
 
 **OAS 2.0**:
 
 ```bash
-noir -b . -f oas2
+noir scan . -f oas2
 ```
 
 ## Example Output

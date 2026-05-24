@@ -8,10 +8,10 @@ sort_by = "weight"
 
 Noir can attach best-effort 1-hop handler callees to endpoints. A callee is a function, method, or framework call observed directly inside the route handler body. It helps AI SAST tools and code reviewers decide where to inspect next.
 
-Use `--include-callee` to show callees in plain output:
+Use `--include callee` to show callees in plain output:
 
 ```bash
-noir -b . --include-callee
+noir scan . --include callee
 ```
 
 Model-based formats such as JSON, JSONL, YAML, TOML, and plain model serialization include the `callees` field through the endpoint model. OpenAPI 2.0 and 3.0 expose callees as the operation-level `x-noir-callees` extension, SARIF stores them in `result.properties.noir.callees`, and Postman collections add a human-readable list to the item description. Purpose-specific command and filter outputs such as cURL, HTTPie, PowerShell, only-url, and only-param omit callees to keep their primary output stable.

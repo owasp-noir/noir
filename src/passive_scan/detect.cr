@@ -4,60 +4,71 @@ require "./severity"
 require "yaml"
 
 module NoirPassiveScan
-  # Original detect method for backward compatibility
-  def self.detect(file_path : String, file_content : String, rules : Array(PassiveScan), logger : NoirLogger) : Array(PassiveScanResult)
-    detect_with_severity(file_path, file_content, rules, logger, "low")
+  # Pre-filter the rule set against `min_severity`. Callers should run
+  # this once at scan-startup and pass the result into `detect` per
+  # file, so the per-(file × rule) severity comparison is amortized
+  # down to a single pass over the rule set.
+  def self.filter_rules_by_severity(rules : Array(PassiveScan), min_severity : String) : Array(PassiveScan)
+    rules.select { |rule| PassiveScanSeverity.meets_threshold?(rule.info.severity, min_severity) }
   end
 
-  # Enhanced detect method with severity filtering
-  def self.detect_with_severity(file_path : String, file_content : String, rules : Array(PassiveScan), logger : NoirLogger, min_severity : String) : Array(PassiveScanResult)
+  # Pure detection: runs every supplied rule against `file_content`.
+  # Callers are responsible for pre-filtering by severity (see
+  # `filter_rules_by_severity`). Returns an empty array (no allocation
+  # beyond the literal) when there are no rules to run, so callers can
+  # short-circuit on `passive_scans.empty?` before reading the file.
+  def self.detect(file_path : String, file_content : String, rules : Array(PassiveScan), logger : NoirLogger) : Array(PassiveScanResult)
     results = [] of PassiveScanResult
+    return results if rules.empty?
 
     rules.each do |rule|
-      # Skip rules that don't meet the severity threshold
-      unless PassiveScanSeverity.meets_threshold?(rule.info.severity, min_severity)
-        next
-      end
-
       matchers = rule.matchers
+      # Set on the first per-line hit so the "Detected" sub-log fires
+      # exactly once per (rule × file) — the previous shape logged
+      # before the per-line confirmation (false positive on AND) and
+      # per result (spam on OR).
+      detected_logged = false
 
       if rule.matchers_condition == "and"
-        if matchers.all? { |matcher| match_content?(file_content, matcher) }
-          logger.sub "└── Detected: #{rule.info.name}"
-          index = 0
-          file_content.each_line do |line|
-            if matchers.all? { |matcher| match_content?(line, matcher) }
-              results << PassiveScanResult.new(rule, file_path, index + 1, line)
+        # Necessary-but-not-sufficient gate: every matcher must appear
+        # somewhere in the file. The per-line `all?` below is the real
+        # confirmation.
+        next unless matchers.all? { |matcher| match_content?(file_content, matcher) }
+
+        index = 0
+        file_content.each_line do |line|
+          if matchers.all? { |matcher| match_content?(line, matcher) }
+            unless detected_logged
+              logger.sub "└── Detected: #{rule.info.name}"
+              detected_logged = true
             end
-            index += 1
+            results << PassiveScanResult.new(rule, file_path, index + 1, line)
           end
+          index += 1
         end
       else
-        # Per-matcher early-out. Since any `match_content?(line, m)`
-        # is a strict subset of `match_content?(file_content, m)`,
-        # drop the matchers that cannot possibly fire on any line
-        # before entering the per-line loop. This is the "or"
-        # counterpart to the whole-content pre-check the "and" branch
-        # above uses — except for "or" we can prune individual
-        # matchers independently rather than requiring all of them to
-        # match the file. If nothing survives the prune, there is no
-        # work to do for this rule.
+        # OR branch: prune matchers that cannot fire on any line
+        # before the per-line loop, then walk the file once checking
+        # every survivor.
         active_matchers = matchers.select { |matcher| match_content?(file_content, matcher) }
         next if active_matchers.empty?
 
-        # Single pass over the file's lines, checking every surviving
-        # matcher per line. The previous shape ran `each_line` once
-        # per active matcher, which re-parsed line boundaries and
-        # allocated a fresh substring for every line × matcher pair —
-        # the dominant cost on large files in monorepo scans where a
-        # single rule can have multiple matchers and a single file can
-        # have hundreds of thousands of lines.
         index = 0
         file_content.each_line do |line|
+          # Stop at the first matcher that fires on this line. The
+          # previous shape pushed one `PassiveScanResult` per matcher
+          # hit — so a rule with both `word` and `regex` matchers
+          # joined by `or` (e.g. aws-access-key, github-token) would
+          # emit two duplicate entries for any line that happened to
+          # satisfy both matchers, even though it's the same finding.
           active_matchers.each do |matcher|
             if match_content?(line, matcher)
-              logger.sub "└── Detected: #{rule.info.name}"
+              unless detected_logged
+                logger.sub "└── Detected: #{rule.info.name}"
+                detected_logged = true
+              end
               results << PassiveScanResult.new(rule, file_path, index + 1, line)
+              break
             end
           end
           index += 1
@@ -68,42 +79,44 @@ module NoirPassiveScan
     results
   end
 
-  private def self.match_content?(content : String, matcher : PassiveScan::Matcher) : (Array(YAML::Any) | Bool)
+  # Backwards-compatible entry point used by existing specs. Pre-filters
+  # the rule set by severity and dispatches to `detect`.
+  def self.detect_with_severity(file_path : String, file_content : String, rules : Array(PassiveScan), logger : NoirLogger, min_severity : String) : Array(PassiveScanResult)
+    detect(file_path, file_content, filter_rules_by_severity(rules, min_severity), logger)
+  end
+
+  private def self.match_content?(content : String, matcher : PassiveScan::Matcher) : Bool
+    patterns = matcher.string_patterns
+    return false if patterns.empty?
+
     case matcher.type
     when "word"
       case matcher.condition
       when "and"
-        matcher.patterns && matcher.patterns.all? { |pattern| content.includes?(pattern.to_s) }
+        patterns.all? { |pattern| content.includes?(pattern) }
       when "or"
-        matcher.patterns && matcher.patterns.any? { |pattern| content.includes?(pattern.to_s) }
+        patterns.any? { |pattern| content.includes?(pattern) }
       else
         false
       end
     when "regex"
+      # Compilation already failed at load time — there is no useful
+      # work to do here, and retrying would just raise the same
+      # exception on every line of every file.
+      return false if matcher.regex_compile_failed?
+
       case matcher.condition
       when "and"
         if regexes = matcher.compiled_regexes
-          regexes.all? { |regex| content.match(regex) }
+          regexes.all? { |regex| !!content.match(regex) }
         else
-          begin
-            matcher.patterns && matcher.patterns.all? { |pattern| content.match(Regex.new(pattern.to_s)) }
-          rescue
-            false
-          end
+          false
         end
       when "or"
         if regex = matcher.compiled_regex
-          begin
-            !!content.match(regex)
-          rescue
-            false
-          end
+          !!content.match(regex)
         else
-          begin
-            matcher.patterns && matcher.patterns.any? { |pattern| content.match(Regex.new(pattern.to_s)) }
-          rescue
-            false
-          end
+          false
         end
       else
         false

@@ -16,7 +16,7 @@ sort_by = "weight"
 ## 사용 방법
 
 ```bash
-noir -b ./spec/functional_test/fixtures/hahwul \
+noir scan ./spec/functional_test/fixtures/hahwul \
      --ai-provider=xai \
      --ai-model=grok-4.3 \
      --ai-key=xai-...

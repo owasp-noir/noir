@@ -16,7 +16,7 @@ Noir supports two JSON-flavored output modes:
 Use `-f json` to get JSON. Adding `--no-log` suppresses log messages so only the JSON hits stdout, which keeps things clean when piping into other tools.
 
 ```bash
-noir -b . -f json --no-log
+noir scan . -f json --no-log
 ```
 
 The result is an object with an `endpoints` array. Each endpoint has the URL, HTTP method, parameters (typed as `cookie`, `form`, `header`, `json`, etc.), source code location in `details.code_paths`, and any security tags from taggers.
@@ -67,7 +67,7 @@ The result is an object with an `endpoints` array. Each endpoint has the URL, HT
 [JSON Lines](https://jsonlines.org/) prints one JSON object per line. Ideal for `jq` pipelines or processing large result sets line-by-line without loading everything into memory.
 
 ```bash
-noir -b . -f jsonl --no-log
+noir scan . -f jsonl --no-log
 ```
 
 Each line is a self-contained endpoint object:

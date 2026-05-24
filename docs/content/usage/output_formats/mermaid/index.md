@@ -11,7 +11,7 @@ Visualize API endpoints as a [Mermaid mindmap](https://mermaid-js.github.io/merm
 ## Usage
 
 ```bash
-noir -b . -f mermaid
+noir scan . -f mermaid
 ```
 
 ## Example Output

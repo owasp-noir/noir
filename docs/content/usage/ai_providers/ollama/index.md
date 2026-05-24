@@ -28,10 +28,14 @@ Run large language models locally using [Ollama](https://ollama.com) for code an
 Run Noir with Ollama:
 
 ```bash
-noir -b ./spec/functional_test/fixtures/hahwul \
+noir scan ./spec/functional_test/fixtures/hahwul \
      --ai-provider=ollama \
      --ai-model=gemma4
 ```
 
 Ollama provides local AI analysis for vulnerability detection, code improvements, and endpoint functionality descriptions.
+
+> **v0 → v1 migration:** The standalone `--ollama` / `--ollama-model`
+> flags were removed in v1.0. Use the unified `--ai-provider ollama
+> --ai-model NAME` form (shown above).
 

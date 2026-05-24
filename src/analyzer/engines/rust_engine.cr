@@ -12,6 +12,24 @@ module Analyzer::Rust
 
     abstract def analyze_file(path : String) : Array(Endpoint)
 
+    # Standard set of HTTP methods that `axum::routing::any(...)` /
+    # actix `web::route()` / similar method-agnostic registrations
+    # accept. Mirrors the Go `fan_out_verbs` set so output formats
+    # see real HTTP methods instead of a non-HTTP "ANY" string.
+    ANY_FAN_OUT_VERBS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+
+    # Expand `any` / `all` (case-insensitive) into the seven
+    # canonical HTTP methods. Anything else passes through as a
+    # single-element list.
+    def self.fan_out_verbs(verb : String) : Array(String)
+      case verb.upcase
+      when "ANY", "ALL"
+        ANY_FAN_OUT_VERBS
+      else
+        [verb]
+      end
+    end
+
     # `.rs` extension filter baked in. Subclasses that want a different scan
     # shape (e.g. a post-pass after the file walk) can override `analyze`
     # and call this helper directly; the default `analyze` above is the

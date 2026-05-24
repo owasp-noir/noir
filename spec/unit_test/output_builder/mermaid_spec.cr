@@ -73,7 +73,7 @@ describe "OutputBuilderMermaid" do
     endpoint5.push_param(Param.new("session_id", "", "cookie"))
 
     endpoint6 = Endpoint.new("/socket", "GET")
-    endpoint6.protocol = "websocket"
+    endpoint6.protocol = "ws"
 
     endpoint7 = Endpoint.new("/app/{user_id}", "GET")
     endpoint7.push_param(Param.new("user_id", "", "path"))
@@ -157,7 +157,7 @@ describe "OutputBuilderMermaid" do
     builder.print(endpoints, passive_results)
     output = builder.io.to_s
 
-    # Verify mindmap structure, ignoring passive results
+    # Verify mindmap structure
     output.should contain("mindmap")
     output.should_not contain("```mermaid")
     output.should_not contain("```")
@@ -166,5 +166,11 @@ describe "OutputBuilderMermaid" do
     output.should contain("  GET")
     output.should contain("    body")
     output.should contain("      test_param")
+
+    # Verify passive scan findings are rendered as a branch
+    output.should contain("  passive")
+    output.should contain("test_rule")
+    output.should contain("high")
+    output.should contain("test_cr_10")
   end
 end

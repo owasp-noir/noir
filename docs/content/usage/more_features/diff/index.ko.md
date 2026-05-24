@@ -9,7 +9,7 @@ sort_by = "weight"
 코드베이스의 두 버전을 비교하여 엔드포인트 변경사항을 식별합니다. 코드 리뷰, 보안 평가, 기능 영향 분석에 유용합니다.
 
 ```bash
-noir -b <NEW_VERSION_PATH> --diff-path <OLD_VERSION_PATH>
+noir scan <NEW_VERSION_PATH> --diff-path <OLD_VERSION_PATH>
 ```
 
 ## 출력

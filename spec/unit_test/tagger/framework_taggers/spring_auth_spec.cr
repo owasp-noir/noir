@@ -21,6 +21,35 @@ describe "SpringAuthTagger" do
     CodeLocator.instance.clear_all
   end
 
+  # Regression: in production, options["base"] is always wrapped in an
+  # Array(YAML::Any) by the CLI. The previous `@base_path =
+  # options["base"].to_s` stringified the array as `["…"]`, so every
+  # `get_files_by_prefix_and_extension(@base_path, …)` call returned
+  # nothing and the tagger silently no-op'd. The spec below mirrors
+  # the CLI shape (array of base paths) instead of the bare string
+  # form that masked the bug.
+  it "still detects @PreAuthorize when options[\"base\"] is wrapped in an array (CLI shape)" do
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new([YAML::Any.new(fixture_base)])
+
+    locator = CodeLocator.instance
+    Dir.glob("#{fixture_base}/**/*").each do |file|
+      next if File.directory?(file)
+      locator.push("file_map", file)
+    end
+
+    details = Details.new(PathInfo.new(controller_path, 14))
+    details.technology = "java_spring"
+    endpoint = Endpoint.new("/api/admin/users", "GET", [] of Param, details)
+
+    tagger = SpringAuthTagger.new(noir_options)
+    tagger.perform([endpoint])
+
+    endpoint.tags.empty?.should be_false
+    endpoint.tags[0].name.should eq("auth")
+    endpoint.tags[0].tagger.should eq("spring_auth")
+  end
+
   it "detects @PreAuthorize annotation" do
     noir_options = create_test_options
     noir_options["base"] = YAML::Any.new(fixture_base)

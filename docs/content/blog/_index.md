@@ -2,8 +2,10 @@
 title = "Blog"
 description = "Release deep dives, performance investigations, framework coverage notes, and the occasional design rationale from the Noir team. Guest posts welcome."
 template = "blog_section"
+# hwaro's `compare_by_date` already orders pages newest-first, so
+# `reverse = true` would actually flip the list to oldest-first.
+# Leave reverse unset (= false) to keep the newest post on top.
 sort_by = "date"
-reverse = true
 weight = 4
 +++
 

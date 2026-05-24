@@ -11,8 +11,19 @@ Noir can attach a structured **AI review context** to each endpoint. It groups s
 Use `--ai-context` to enable it:
 
 ```bash
-noir -b . --ai-context
+noir scan . --ai-context
 ```
+
+Pass a comma-separated bucket list to narrow the output to just the categories you care about. The filter applies at the data layer, so JSON / SARIF / YAML / Postman / OAS all see the same selection — not just the plain-text renderer.
+
+```bash
+noir scan . --ai-context=guards,sinks       # only auth + likely-dangerous sinks
+noir scan . --ai-context=callee             # only the 1-hop handler callees
+noir scan . --ai-context=all                # explicit form of "everything"
+noir scan . --ai-context                    # bare form: also "everything"
+```
+
+Valid feature names: `guards`, `callee`, `sinks`, `validators`, `signals` (plus `all`). Names are case-insensitive.
 
 In plain output, every endpoint with non-empty context grows an `ai_context:` block. Model-based formats expose the same structure under standard locations:
 
@@ -31,7 +42,7 @@ Every context bucket is a list of entries with `kind`, `name`, optional `source`
 | Bucket | Meaning |
 |---|---|
 | `guards` | Authentication / authorization gates detected on the route (middleware, decorators, `requires_auth`, role checks, etc.) |
-| `callees` | The 1-hop handler callees Noir already collects with `--include-callee`, re-emitted under the AI context structure for one-stop consumption |
+| `callees` | The 1-hop handler callees Noir already collects with `--include callee`, re-emitted under the AI context structure for one-stop consumption |
 | `sinks` | Likely dangerous operations inferred from the handler body or callee names (SQL, command execution, deserialization, template rendering, file I/O, redirects, etc.) |
 | `validators` | Input-validation and sanitization signals (schema validators, parameter coercion, allow-listing patterns) that mitigate sink risk |
 | `signals` | Other route-shape hints worth surfacing (state-changing methods without a detected guard, path-id usage suggesting object-level authorization concerns, file-upload behavior, etc.) |
@@ -48,13 +59,13 @@ The list is best-effort. Heuristic confidence is exposed on each entry so consum
 
 ```bash
 # Plain output with both 1-hop callees and the full AI context block
-noir -b . --include-callee --ai-context
+noir scan . --include callee --ai-context
 
 # JSON output suitable for LLM-driven SAST pipelines
-noir -b . --ai-context -f json -o noir-context.json
+noir scan . --ai-context -f json -o noir-context.json
 
 # OpenAPI export with `x-noir-ai-context` on every operation
-noir -b . --ai-context -f oas3 -o spec.json
+noir scan . --ai-context -f oas3 -o spec.json
 ```
 
 ## Completeness notes

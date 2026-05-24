@@ -10,8 +10,8 @@ sort_by = "weight"
 
 **증상:** Noir가 실행되지만 엔드포인트가 0개로 보고됩니다.
 
-- 올바른 디렉토리를 지정했는지 확인하세요: `noir -b ./your-app`
-- 프레임워크가 지원되는지 확인하세요: `noir --list-techs`
+- 올바른 디렉토리를 지정했는지 확인하세요: `noir scan ./your-app`
+- 프레임워크가 지원되는지 확인하세요: `noir list techs`
 - `--verbose`를 사용하여 어떤 기술이 감지되었는지 확인하세요
 - 프레임워크가 지원되지 않는 경우 [AI 기반 분석](@/get_started/ai_power/index.md)을 사용하세요
 
@@ -19,7 +19,7 @@ sort_by = "weight"
 
 **증상:** 대규모 코드베이스에서 Noir가 오래 걸립니다.
 
-- `--techs`로 특정 프레임워크만 스캔하세요: `noir -b . --techs rails`
+- `--techs`로 특정 프레임워크만 스캔하세요: `noir scan . --techs rails`
 - `--exclude-techs`로 불필요한 프레임워크를 건너뛰세요
 - AI 기반 분석은 응답을 캐시하므로 동일한 코드베이스에 대한 후속 실행은 더 빠릅니다
 
@@ -37,7 +37,7 @@ sort_by = "weight"
 
 **증상:** Docker로 실행 시 권한 거부 오류가 발생합니다.
 
-- 디렉토리가 올바르게 마운트되었는지 확인하세요: `docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest -b /tmp`
+- 디렉토리가 올바르게 마운트되었는지 확인하세요: `docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest scan /tmp`
 - SELinux 시스템에서는 볼륨 마운트에 `:z`를 추가하세요: `-v $(pwd):/tmp:z`
 
 ## 셸 자동완성이 작동하지 않음

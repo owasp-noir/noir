@@ -295,7 +295,26 @@ module Analyzer::Elixir
     end
 
     private def scoped_route_path(scope_prefix : String, route_path : String) : String
-      Noir::URLPath.join(scope_prefix, route_path)
+      Noir::URLPath.join(
+        normalize_elixir_interpolation(scope_prefix),
+        normalize_elixir_interpolation(route_path),
+      )
+    end
+
+    # Elixir double-quoted strings interpolate `#{expr}`, and the
+    # Phoenix Router DSL captures the literal characters between
+    # quotes. Without normalization, `get "/api/#{@version}/items"`
+    # produced URL `/api/#{@version}/items` with the `#{@…}` syntax
+    # leaking into the path. Rewrite each interpolation site to a
+    # `{name}` placeholder (stripping any leading `@` module-
+    # attribute sigil) so the path-parameter extractor recognises
+    # it and the URL template reads cleanly. Mirrors the Python
+    # f-string, Ruby `#{}`, PHP `$var`, and Crystal `#{}` fixes.
+    private def normalize_elixir_interpolation(path : String) : String
+      path.gsub(/\#\{([^}]+)\}/) do |_|
+        token = $~[1].strip.lstrip('@')
+        "{#{token}}"
+      end
     end
 
     private def scoped_controller(scope_module : String, controller : String) : String

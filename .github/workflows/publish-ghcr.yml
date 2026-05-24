@@ -142,9 +142,10 @@ jobs:
             # main push -> :main
             type=ref,event=branch
 
-            # GitHub Release -> v1.2.3, 1.2, latest
+            # GitHub Release -> v1.2.3, 1.2, 1, latest
             type=semver,pattern={{version}},enable=${{ github.event_name == 'release' }}
             type=semver,pattern={{major}}.{{minor}},enable=${{ github.event_name == 'release' }}
+            type=semver,pattern={{major}},enable=${{ github.event_name == 'release' }}
             type=raw,value=latest,enable=${{ github.event_name == 'release' }}
 
             # Manual dispatch -> input version + latest

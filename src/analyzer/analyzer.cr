@@ -246,9 +246,6 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
             end
     logger.sub "➔ AI Analyzer: Server=#{provider}, Model=#{model}"
     techs << "ai"
-  elsif (options["ollama"] != "") && (options["ollama_model"] != "")
-    logger.sub "➔ AI Analyzer: Ollama in use"
-    techs << "ai"
   end
 
   # Run tech analyzers concurrently to avoid long stalls from a single analyzer

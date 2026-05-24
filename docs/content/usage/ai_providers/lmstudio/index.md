@@ -20,7 +20,7 @@ Run local language models using [LM Studio](https://lmstudio.ai) for private cod
 Run Noir with LM Studio:
 
 ```bash
-noir -b ./spec/functional_test/fixtures/hahwul \
+noir scan ./spec/functional_test/fixtures/hahwul \
      --ai-provider=lmstudio \
      --ai-model <MODEL_NAME>
 ```

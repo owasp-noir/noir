@@ -20,7 +20,17 @@ class OutputBuilder
     @is_debug = any_to_bool(options["debug"])
     @is_verbose = any_to_bool(options["verbose"])
     @options = options
-    @is_color = any_to_bool(options["color"])
+    # Auto-disable color when STDOUT isn't a terminal — the `only-url`,
+    # `only-param`, `only-header`, `only-cookie`, and `only-tag`
+    # formats use `.colorize(...).toggle(@is_color)`, which (unlike a
+    # bare `.colorize`) bypasses Crystal's TTY auto-detect and emits
+    # ANSI codes even into pipes. `noir -f only-url | sort -u` ended up
+    # with `\e[93m/sign\e[39m` in the pipe, breaking the downstream
+    # tools these formats exist to feed.
+    # `--no-color` / `NO_COLOR` (handled at the router) still take
+    # precedence; this only flips off the default-on behavior when
+    # stdout is redirected.
+    @is_color = any_to_bool(options["color"]) && STDOUT.tty?
     @is_log = any_to_bool(options["nolog"])
     @output_file = options["output"].to_s
     @io = STDOUT

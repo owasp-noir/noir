@@ -19,6 +19,8 @@ paket = "paket"
 wrk = "wrk"
 # `mis-route` / `mis-classification` are intentional hyphenated forms in comments.
 mis = "mis"
+falsk = "falsk"
+nin = "nin"
 
 [files]
 extend-exclude = [

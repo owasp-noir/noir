@@ -15,13 +15,13 @@ Noir의 패시브 스캔은 정규 표현식과 문자열 매칭을 사용하여
 패시브 스캔을 수행하려면 Noir를 실행할 때 `-P` 또는 `--passive-scan` 플래그를 사용하세요:
 
 ```bash
-noir -b <BASE_PATH> -P
+noir scan <BASE_PATH> -P
 ```
 
 사용자 정의 규칙 세트를 사용하고 싶다면 `--passive-scan-path` 플래그로 규칙 파일 경로를 지정할 수 있습니다:
 
 ```bash
-noir -b <BASE_PATH> --passive-scan --passive-scan-path /path/to/your/rules.yml
+noir scan <BASE_PATH> --passive-scan --passive-scan-path /path/to/your/rules.yml
 ```
 
 ## 패시브 스캔 결과 이해하기

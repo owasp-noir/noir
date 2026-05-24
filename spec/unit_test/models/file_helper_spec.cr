@@ -87,10 +87,11 @@ describe "FileHelper" do
   end
 
   describe "get_public_files" do
-    it "finds files in public directories" do
+    it "finds files in public directories that sit next to a shard.yml" do
       helper = TestHelper.new
       locator = CodeLocator.instance
 
+      locator.push("file_map", "/app/shard.yml")
       locator.push("file_map", "/app/public/style.css")
       locator.push("file_map", "/app/public/script.js")
       locator.push("file_map", "/app/src/file.cr")
@@ -101,10 +102,12 @@ describe "FileHelper" do
       public_files.should contain("/app/public/script.js")
     end
 
-    it "handles nested public directories" do
+    it "handles nested public directories — each next to its own shard.yml" do
       helper = TestHelper.new
       locator = CodeLocator.instance
 
+      locator.push("file_map", "/app/shard.yml")
+      locator.push("file_map", "/app/modules/admin/shard.yml")
       locator.push("file_map", "/app/modules/admin/public/admin.css")
       locator.push("file_map", "/app/public/main.css")
 
@@ -112,10 +115,29 @@ describe "FileHelper" do
       public_files.size.should eq(2)
     end
 
+    it "ignores public/ directories that are NOT siblings of a shard.yml" do
+      # Regression for the docs-site false positive: a built static
+      # site at `docs/public/` lives alongside a Crystal fixture but
+      # doesn't itself have a shard.yml. Those files should not surface
+      # as Crystal endpoints.
+      helper = TestHelper.new
+      locator = CodeLocator.instance
+
+      locator.push("file_map", "/app/shard.yml")
+      locator.push("file_map", "/app/public/legitimate.css")  # under app/shard.yml — included
+      locator.push("file_map", "/app/docs/public/index.html") # no shard.yml in docs/ — skipped
+      locator.push("file_map", "/app/docs/public/sitemap.xml")
+      locator.push("file_map", "/app/docs/public/robots.txt")
+
+      public_files = helper.get_public_files("/app")
+      public_files.should eq(["/app/public/legitimate.css"])
+    end
+
     it "returns empty array if no public files" do
       helper = TestHelper.new
       locator = CodeLocator.instance
 
+      locator.push("file_map", "/app/shard.yml")
       locator.push("file_map", "/app/src/file.cr")
 
       public_files = helper.get_public_files("/app")

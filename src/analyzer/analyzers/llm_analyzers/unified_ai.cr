@@ -51,10 +51,6 @@ module Analyzer::AI
                  end
         raw_key = options["ai_key"]?.try(&.as_s)
         @api_key = (raw_key.nil? || raw_key.empty?) ? nil : raw_key
-      elsif options.has_key?("ollama") && !options["ollama"].as_s.empty?
-        @provider = options["ollama"].as_s
-        @model = options["ollama_model"].as_s
-        @api_key = nil
       else
         @provider = "ollama"
         @model = "llama3"
@@ -777,7 +773,13 @@ module Analyzer::AI
                    adapter.request_messages(messages, format)
                  end
 
-      LLM::Cache.store(disk_key, response)
+      # Skip caching empty responses. The adapters return "" when the
+      # remote LLM call fails (HTTP error, parse error, timeout). If
+      # we cached that we would replay the failure on every later
+      # scan with the same input until the user manually ran
+      # `noir cache clear` — much harder to recover from than just
+      # retrying the request the next time around.
+      LLM::Cache.store(disk_key, response) unless response.empty?
       response
     end
 

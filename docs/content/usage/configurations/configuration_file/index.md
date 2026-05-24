@@ -19,7 +19,15 @@ Use a `config.yaml` file to set default options for consistent scans.
 Settings in config file are defaults and can be overridden via command line. Use `--config-file <path>` to load a config from a non-default location:
 
 ```bash
-noir -b . --config-file ./ci/noir.yaml
+noir scan . --config-file ./ci/noir.yaml
+```
+
+You can also manage the config file directly through `noir config`:
+
+```bash
+noir config init   # create the default config (idempotent)
+noir config show   # print the active file
+noir config path   # print the resolved path
 ```
 
 ## Directory Structure
@@ -65,6 +73,8 @@ ai_model: "gpt-5.5"
 This is equivalent to running:
 
 ```bash
-noir -b /path/to/my/project -f json --exclude-codes "404,500" -T --include-callee --ai-context --ai-provider openai --ai-model gpt-5.5
+noir scan /path/to/my/project -f json --exclude-codes "404,500" -T \
+  --include callee --ai-context \
+  --ai-provider openai --ai-model gpt-5.5
 ```
 

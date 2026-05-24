@@ -17,17 +17,17 @@ sort_by = "weight"
 ### 특정 기술 포함
 
 ```bash
-noir -b . --techs rails
+noir scan . --techs rails
 ```
 
 ### 특정 기술 제외
 
 ```bash
-noir -b . --exclude-techs express,koa
+noir scan . --exclude-techs express,koa
 ```
 
 ### 사용 가능한 기술 나열
 
 ```bash
-noir --list-techs
+noir list techs
 ```

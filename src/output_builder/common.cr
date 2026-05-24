@@ -105,12 +105,21 @@ class OutputBuilderCommon < OutputBuilder
       context = endpoint.ai_context
       if any_to_bool(@options["ai_context"]) && !context.nil?
         unless context.empty?
-          r_buffer << "\n  ○ ai_context:"
-          append_ai_context_block(r_buffer, "guards", context.guards)
-          append_ai_context_block(r_buffer, "callees", context.callees)
-          append_ai_context_block(r_buffer, "sinks", context.sinks)
-          append_ai_context_block(r_buffer, "validators", context.validators)
-          append_ai_context_block(r_buffer, "signals", context.signals)
+          features = ai_context_feature_filter
+          visible = (features.includes?("guards") && !context.guards.empty?) ||
+                    (features.includes?("callee") && !context.callees.empty?) ||
+                    (features.includes?("sinks") && !context.sinks.empty?) ||
+                    (features.includes?("validators") && !context.validators.empty?) ||
+                    (features.includes?("signals") && !context.signals.empty?)
+
+          if visible
+            r_buffer << "\n  ○ ai_context:"
+            append_ai_context_block(r_buffer, "guards", context.guards) if features.includes?("guards")
+            append_ai_context_block(r_buffer, "callees", context.callees) if features.includes?("callee")
+            append_ai_context_block(r_buffer, "sinks", context.sinks) if features.includes?("sinks")
+            append_ai_context_block(r_buffer, "validators", context.validators) if features.includes?("validators")
+            append_ai_context_block(r_buffer, "signals", context.signals) if features.includes?("signals")
+          end
         end
       elsif any_to_bool(@options["include_callee"]) && !endpoint.callees.empty?
         r_buffer << "\n  ○ callees: "
@@ -124,6 +133,23 @@ class OutputBuilderCommon < OutputBuilder
 
       ob_puts r_buffer.to_s
     end
+  end
+
+  # Returns the set of AI-context category names that should be emitted.
+  # An empty/unset `ai_context_features` option means "all categories".
+  private def ai_context_feature_filter : Set(String)
+    all = Set{"guards", "callee", "sinks", "validators", "signals"}
+    raw = @options["ai_context_features"]?.try(&.to_s) || ""
+    return all if raw.empty?
+
+    filtered = Set(String).new
+    raw.split(',').each do |feature|
+      f = feature.strip
+      next if f.empty?
+      return all if f == "all"
+      filtered << f
+    end
+    filtered
   end
 
   private def append_ai_context_block(r_buffer : String::Builder, label : String, entries : Array(AIContextEntry))

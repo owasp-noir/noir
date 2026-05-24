@@ -20,13 +20,13 @@ Output results as SARIF v2.1.0 (Static Analysis Results Interchange Format). Thi
 Generate SARIF output:
 
 ```bash
-noir -b . -f sarif --no-log
+noir scan . -f sarif --no-log
 ```
 
 Save to file:
 
 ```bash
-noir -b . -f sarif -o results.sarif --no-log
+noir scan . -f sarif -o results.sarif --no-log
 ```
 
 ## Example Output
@@ -136,7 +136,7 @@ Upload SARIF results to [GitHub Code Scanning](https://docs.github.com/en/code-s
 
 ```bash
 # Generate SARIF output
-noir -b . -f sarif -o noir-results.sarif --no-log
+noir scan . -f sarif -o noir-results.sarif --no-log
 
 # Upload to GitHub (using GitHub CLI)
 gh api /repos/:owner/:repo/code-scanning/sarifs \
@@ -152,7 +152,7 @@ Add this job to `.gitlab-ci.yml` to surface findings in GitLab's Security Dashbo
 ```yaml
 noir_scan:
   script:
-    - noir -b . -f sarif -o gl-sast-report.json --no-log
+    - noir scan . -f sarif -o gl-sast-report.json --no-log
   artifacts:
     reports:
       sast: gl-sast-report.json
@@ -163,7 +163,7 @@ noir_scan:
 Publish the SARIF file as a build artifact in Azure Pipelines. The SARIF SAST Scans Tab extension picks it up automatically:
 
 ```yaml
-- script: noir -b . -f sarif -o noir.sarif --no-log
+- script: noir scan . -f sarif -o noir.sarif --no-log
   displayName: 'Run Noir Scan'
 
 - task: PublishBuildArtifacts@1

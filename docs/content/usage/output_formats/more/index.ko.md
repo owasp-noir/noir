@@ -13,7 +13,7 @@ sort_by = "weight"
 ### URL만
 
 ```bash
-noir -b . -f only-url
+noir scan . -f only-url
 ```
 
 ```
@@ -28,7 +28,7 @@ noir -b . -f only-url
 ### 매개변수만
 
 ```bash
-noir -b . -f only-param
+noir scan . -f only-param
 ```
 
 ```
@@ -41,7 +41,7 @@ grant_type
 ### 헤더만
 
 ```bash
-noir -b . -f only-header
+noir scan . -f only-header
 ```
 
 ```
@@ -52,7 +52,7 @@ Cookie
 ### 쿠키만
 
 ```bash
-noir -b . -f only-cookie
+noir scan . -f only-cookie
 ```
 
 ```
@@ -62,7 +62,7 @@ my_auth
 ### 태그만
 
 ```bash
-noir -b . -f only-tag -T
+noir scan . -f only-tag -T
 ```
 
 ```
@@ -74,7 +74,7 @@ websocket
 ## 마크다운 테이블
 
 ```bash
-noir -b . -f markdown-table
+noir scan . -f markdown-table
 ```
 
 | Endpoint    | Protocol | Params                                                              |
@@ -89,7 +89,7 @@ noir -b . -f markdown-table
 ## TOML
 
 ```bash
-noir -b . -f toml
+noir scan . -f toml
 ```
 
 ```toml
@@ -112,12 +112,12 @@ type = "json"
 value = ""
 ```
 
-설정 파일과 같은 형식이라 터미널에서 훑어보기 좋고, 엔드포인트를 다른 선언적 설정과 함께 프로젝트 설정에 붙여넣기에도 적합합니다. TOML 직렬화는 전체 엔드포인트 모델을 그대로 담으며 `--include-callee` 와 `--ai-context` 플래그가 켜져 있을 때 그 필드도 포함합니다. `--diff-path` 와 함께 `-f toml` 을 쓰면 diff 결과도 같은 형식으로 출력됩니다.
+설정 파일과 같은 형식이라 터미널에서 훑어보기 좋고, 엔드포인트를 다른 선언적 설정과 함께 프로젝트 설정에 붙여넣기에도 적합합니다. TOML 직렬화는 전체 엔드포인트 모델을 그대로 담으며 `--include callee` 와 `--ai-context` 플래그가 켜져 있을 때 그 필드도 포함합니다. `--diff-path` 와 함께 `-f toml` 을 쓰면 diff 결과도 같은 형식으로 출력됩니다.
 
 ## JSON Lines (JSONL)
 
 ```bash
-noir -b . -f jsonl
+noir scan . -f jsonl
 ```
 
 ```jsonl
@@ -131,7 +131,7 @@ noir -b . -f jsonl
 ## Postman 컬렉션
 
 ```bash
-noir -b . -f postman -u https://api.example.com
+noir scan . -f postman -u https://api.example.com
 ```
 
 Postman Collection v2.1 형식의 JSON 파일을 생성합니다. 출력을 저장하고 Postman에 가져와서 대화형 API 테스트를 수행할 수 있습니다.

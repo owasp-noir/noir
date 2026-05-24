@@ -7,7 +7,7 @@ template = "landing"
   <div class="hero-split">
     <div class="hero-text">
       <div class="hero-eyebrow">
-        <span class="hero-badge">v0.30.0</span>
+        <span class="hero-badge">v1.0.0</span>
         <span class="hero-badge hero-badge-owasp">OWASP Project</span>
       </div>
       <h1 class="hero-title">
@@ -18,7 +18,7 @@ template = "landing"
         <span class="hero-title-line hero-title-accent">Map the</span>
         <span class="hero-title-line hero-title-accent">Attack Surface.</span>
       </h1>
-      <p class="hero-desc">SAST tool that reads source and extracts endpoints, parameters, and hidden routes across 50+ frameworks. The inventory feeds three audiences: human reviewers, AI auditors, and DAST tools that need a real list of routes to scan.</p>
+      <p class="hero-desc">Discovers endpoints, parameters, and hidden routes from source code across 50+ frameworks. The inventory goes to reviewers, AI auditors, and DAST scanners that need a real route list.</p>
       <div class="hero-actions">
         <a href="./get_started/overview" class="hero-btn hero-btn-primary">
           <span>Get Started</span>
@@ -37,7 +37,7 @@ template = "landing"
           <span class="terminal-title">noir</span>
         </div>
         <div class="hero-terminal-body">
-          <div class="terminal-line"><span class="t-prompt">$</span> noir -b .</div>
+          <div class="terminal-line"><span class="t-prompt">$</span> noir scan .</div>
           <div class="terminal-line t-dim">  <span class="t-info">INFO</span> Detected 1 technologies: crystal_kemal</div>
           <div class="terminal-line t-dim">  <span class="t-info">INFO</span> Analysis Started. Code Analyzer: 1 in use</div>
           <div class="terminal-line"><span class="t-success">Finally identified 6 endpoints.</span> <span class="t-dim">in 0.0032s</span></div>
@@ -87,12 +87,12 @@ template = "landing"
       <div class="feature-cell feature-wide">
         <div class="feature-number">01</div>
         <h3>Endpoint Extraction</h3>
-        <p>Static analysis pulls endpoints, parameters, headers, and cookies out of source. Shadow APIs, deprecated routes, and undocumented handlers come out of the same pass &mdash; not a separate mode.</p>
+        <p>Static analysis pulls endpoints, parameters, headers, and cookies out of source. Shadow APIs, deprecated routes, and undocumented handlers come out of the same pass, not a separate mode.</p>
       </div>
       <div class="feature-cell">
         <div class="feature-number">02</div>
         <h3>Multi-Language</h3>
-        <p>Crystal, Ruby, Python, Go, Java, Kotlin, JS/TS, PHP, C#, and more &mdash; 50+ frameworks in a single binary. No plugins or per-language setup.</p>
+        <p>Crystal, Ruby, Python, Go, Java, Kotlin, JS/TS, PHP, C#, and more. 50+ frameworks in a single binary, no plugins or per-language setup.</p>
       </div>
       <div class="feature-cell">
         <div class="feature-number">03</div>
@@ -130,7 +130,7 @@ template = "landing"
         <div class="how-step-content">
           <h3>Point it at a codebase</h3>
           <p>Noir detects language, framework, and routing patterns on its own. No config to write.</p>
-          <div class="how-step-code">$ noir -b ./your-project</div>
+          <div class="how-step-code">$ noir scan ./your-project</div>
         </div>
       </div>
       <div class="how-step">
@@ -145,7 +145,7 @@ template = "landing"
         <div class="how-step-content">
           <h3>Hand off to humans, AI, or DAST</h3>
           <p>Export JSON, OpenAPI, or SARIF for human reviewers; pipe straight into ZAP, Burp, or Caido as a proxy target; or hand the inventory to an LLM-based code auditor as focused entrypoint context.</p>
-          <div class="how-step-code">$ noir -b . -f oas3 --send-proxy http://localhost:8090</div>
+          <div class="how-step-code">$ noir scan . -f oas3 --probe-via http://localhost:8090</div>
         </div>
       </div>
     </div>

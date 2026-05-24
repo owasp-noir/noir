@@ -260,9 +260,20 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
       # still have their project scanned. Only descendants of the base
       # are subject to pruning.
       ignored_dir_names = Set{
-        "node_modules", ".git", "dist", "build", "target",
-        "__pycache__", ".venv", "venv", ".idea", ".vscode",
-        "tmp", ".next", "out", "vendor",
+        # Source control / IDE / agent state
+        ".git", ".idea", ".vscode", ".claude",
+        # Language-specific dependency / build caches
+        "node_modules", "vendor", "__pycache__", ".venv", "venv",
+        ".pytest_cache", ".tox", ".gradle", ".bundle", ".dart_tool",
+        ".cargo", ".terraform",
+        # Common build / dist / cache outputs
+        "dist", "build", "target", "out", "tmp", ".cache",
+        ".next", ".nuxt", ".svelte-kit", ".turbo", ".parcel-cache",
+        ".serverless", ".expo",
+        # Test coverage / reports
+        "coverage", ".coverage",
+        # iOS / macOS noise
+        "Pods", "__MACOSX",
       }
 
       # User-supplied --exclude-path patterns (comma-separated globs).
@@ -287,6 +298,13 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
         stack = [base_path]
         until stack.empty?
           dir = stack.pop
+          # Crystal's vendor convention is `lib/` next to `shard.yml`
+          # (same shape as Node's node_modules / Ruby's vendor/bundle).
+          # The directory name `lib` is too generic to put in the global
+          # ignored set — Rails / Python / many other ecosystems use it
+          # for source. Resolve the ambiguity contextually: skip `lib/`
+          # only when a sibling `shard.yml` is present.
+          dir_has_shard = File.exists?(File.join(dir, "shard.yml"))
           begin
             Dir.each_child(dir) do |entry|
               full_path = File.join(dir, entry)
@@ -297,6 +315,10 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
                 # Subtree prune happens here. Entry name (not full path)
                 # so the base-as-node_modules case from #912 is safe.
                 if ignored_dir_names.includes?(entry)
+                  skipped_ignored_dirs += 1
+                  next
+                end
+                if entry == "lib" && dir_has_shard
                   skipped_ignored_dirs += 1
                   next
                 end
@@ -389,6 +411,16 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
   # never persist.
   detected_flags = Array(AtomicFlag).new(detector_list.size) { AtomicFlag.new }
 
+  # Resolve the severity threshold and prune the rule set once,
+  # before workers spawn. The previous shape did this lookup and
+  # comparison inside the per-file hot loop, costing one Hash
+  # lookup + downcase per (file × rule). With monorepo scans
+  # easily hitting 10k+ files and a few hundred rules, this is a
+  # noticeable accumulated cost for an answer that never changes
+  # mid-scan.
+  min_severity = options["passive_scan_severity"]?.try(&.to_s) || "high"
+  active_passive_scans = NoirPassiveScan.filter_rules_by_severity(passive_scans, min_severity)
+
   concurrency.times do
     wg.add(1)
     spawn do
@@ -429,12 +461,15 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
               end
             end
 
-            # Get the minimum severity threshold from options
-            min_severity = options["passive_scan_severity"]?.try(&.to_s) || "high"
-            results = NoirPassiveScan.detect_with_severity(file, content, passive_scans, logger, min_severity)
-            if results.size > 0
-              mutex.synchronize do
-                passive_result.concat(results)
+            # Severity is already filtered above; pass the pre-pruned
+            # rule list through and let `detect` short-circuit when
+            # it's empty (passive scan disabled or every rule pruned).
+            if !active_passive_scans.empty?
+              results = NoirPassiveScan.detect(file, content, active_passive_scans, logger)
+              if results.size > 0
+                mutex.synchronize do
+                  passive_result.concat(results)
+                end
               end
             end
           rescue File::NotFoundError

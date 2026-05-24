@@ -301,9 +301,22 @@ module Analyzer::CSharp
 
         in_class = true if line.includes?("class") && line.includes?("Controller")
         if in_class
+          # Stitch together a multi-line `[Http<Verb>(\n   "/path",\n
+          # Order = 1\n)]` attribute before running the
+          # single-line matcher. The `[Http*]` opener arrives without
+          # a closing paren on the same line, the path literal lives
+          # on a subsequent line; `update_http_context` per-line only
+          # saw `[HttpPost(` and recorded POST with an empty path.
+          attr_line, advance = stitch_multiline_attribute(lines, i)
+          line = attr_line if advance > 0
+
           http_method, action_route, found_attribute = update_http_context(line, http_method, action_route)
           explicit_endpoint_attribute ||= found_attribute
           non_action_attribute = true if line.includes?("[NonAction")
+
+          # Skip the continuation lines we just consumed; they're
+          # already folded into `line`.
+          i += advance if advance > 0
         end
 
         if in_class && potential_action_signature?(line)
@@ -350,6 +363,42 @@ module Analyzer::CSharp
 
         i += 1
       end
+    end
+
+    # Collapses a `[Http<Verb>(...)` / `[Route(...)]` attribute that
+    # was split across multiple lines into a single logical line so
+    # the single-line attribute regexes in `extract_attribute_route`
+    # can find the path literal. Returns `{joined_line, advance}`
+    # where `advance` is the number of *extra* lines consumed; the
+    # caller adds that to its loop index. A non-multi-line case
+    # returns `{line, 0}` so the existing fast path is preserved.
+    private def stitch_multiline_attribute(lines : Array(String), start : Int32) : Tuple(String, Int32)
+      line = lines[start]
+      return {line, 0} unless line =~ /\[(Http(Post|Get|Put|Delete|Patch|Head|Options)|Route)\b/
+
+      # The attribute closes when paren+bracket depth returns to
+      # zero. If the opening line is already balanced (paren and
+      # bracket both close on the same line), no stitching needed.
+      paren = line.count('(') - line.count(')')
+      bracket = line.count('[') - line.count(']')
+      return {line, 0} if paren <= 0 && bracket <= 0
+
+      joined = line.rstrip
+      idx = start + 1
+      # Cap the read-ahead at 8 lines — far beyond what a real-world
+      # attribute spans, but tight enough that a runaway file with
+      # unbalanced brackets can't blow up the scan.
+      max_read = (start + 8).clamp(0, lines.size - 1)
+      while idx <= max_read
+        nxt = lines[idx]
+        joined += " " + nxt.strip
+        paren += nxt.count('(') - nxt.count(')')
+        bracket += nxt.count('[') - nxt.count(']')
+        break if paren <= 0 && bracket <= 0
+        idx += 1
+      end
+
+      {joined, idx - start}
     end
 
     private def update_http_context(line : String, current_method : String, action_route : String) : Tuple(String, String, Bool)

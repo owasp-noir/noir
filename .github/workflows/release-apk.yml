@@ -46,15 +46,25 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', github.event.inputs.version) || github.event.workflow_run.head_branch }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', github.event.inputs.version) || github.event.workflow_run.head_sha }}
 
       - name: Get Version
         id: get_version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             RAW_VERSION="${{ github.event.inputs.version }}"
           else
-            RAW_VERSION="${{ github.event.workflow_run.head_branch }}"
+            # Try to resolve tag name from the latest release or tag on the exact commit
+            TAG_NAME=$(gh api repos/${{ github.repository }}/releases -q '.[0].tag_name' 2>/dev/null)
+            if [ -z "$TAG_NAME" ] || [ "$TAG_NAME" = "null" ]; then
+              TAG_NAME=$(git describe --tags --abbrev=0 --exact-match ${{ github.event.workflow_run.head_sha }} 2>/dev/null)
+            fi
+            if [ -z "$TAG_NAME" ]; then
+              TAG_NAME="${{ github.event.workflow_run.head_branch }}"
+            fi
+            RAW_VERSION="$TAG_NAME"
           fi
           VERSION="${RAW_VERSION#v}"
           echo "VERSION=$VERSION" >> $GITHUB_ENV

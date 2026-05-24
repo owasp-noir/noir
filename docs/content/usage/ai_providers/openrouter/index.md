@@ -18,7 +18,7 @@ Use [OpenRouter](https://openrouter.ai) to access multiple AI models (OpenAI, An
 Run Noir with OpenRouter:
 
 ```bash
-noir -b ./myapp \
+noir scan ./myapp \
      --ai-provider=openrouter \
      --ai-model=anthropic/claude-opus-4-7 \
      --ai-key=sk-or-...
@@ -28,7 +28,7 @@ Using environment variable:
 
 ```bash
 export NOIR_AI_KEY=sk-or-...
-noir -b ./myapp --ai-provider=openrouter --ai-model=openai/gpt-5.5
+noir scan ./myapp --ai-provider=openrouter --ai-model=openai/gpt-5.5
 ```
 
 OpenRouter provides:

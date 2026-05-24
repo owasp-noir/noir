@@ -11,7 +11,7 @@ sort_by = "weight"
 ## 기본 사용법
 
 ```bash
-noir -b . -f html -o report.html
+noir scan . -f html -o report.html
 ```
 
 ### 주요 기능

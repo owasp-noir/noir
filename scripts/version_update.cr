@@ -74,16 +74,6 @@ rescue ex
   false
 end
 
-# Update github-action/Dockerfile FROM tag
-def update_action_dockerfile_version(new_version : String) : Bool
-  content = File.read(ACTION_DOCKER)
-  File.write(ACTION_DOCKER, content.gsub(/(FROM\s+ghcr\.io\/owasp-noir\/noir:)v?[\d.]+/, "\\1#{new_version}"))
-  true
-rescue ex
-  STDERR.puts "  Error updating #{ACTION_DOCKER}: #{ex.message}"
-  false
-end
-
 # Update github-action/README.md uses pin
 def update_action_readme_version(new_version : String) : Bool
   content = File.read(ACTION_README)
@@ -190,7 +180,6 @@ updates = [
   {"snap/snapcraft.yaml", SNAPCRAFT_FILE, get_snapcraft_version, -> { update_snapcraft_version(new_version) }},
   {"docs/_index.md", DOCS_INDEX, get_docs_index_version(DOCS_INDEX), -> { update_docs_index_version(DOCS_INDEX, new_version) }},
   {"docs/_index.ko.md", DOCS_INDEX_KO, get_docs_index_version(DOCS_INDEX_KO), -> { update_docs_index_version(DOCS_INDEX_KO, new_version) }},
-  {"github-action/Dockerfile", ACTION_DOCKER, get_action_dockerfile_version, -> { update_action_dockerfile_version(new_version) }},
   {"github-action/README.md", ACTION_README, get_action_readme_version, -> { update_action_readme_version(new_version) }},
   {"how_to_release/index.md", RELEASE_DOC, get_release_doc_version(RELEASE_DOC), -> { update_release_doc_version(RELEASE_DOC, new_version) }},
   {"how_to_release/index.ko.md", RELEASE_DOC_KO, get_release_doc_version(RELEASE_DOC_KO), -> { update_release_doc_version(RELEASE_DOC_KO, new_version) }},

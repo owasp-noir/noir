@@ -90,12 +90,20 @@ module Analyzer::Php
                                        base_line : Int32 = 1) : Array(Endpoint)
       endpoints = [] of Endpoint
       route_groups = extract_route_groups(content)
+      # Pre-compute byte ranges that are inside PHP comments
+      # (`//`, `#`, `/* */`) or string literals (`'...'`, `"..."`).
+      # The per-loop verb scans below check each match against this
+      # set so a route-shaped pattern that lives in a docstring,
+      # a `// Route::get(...)` comment, or a `"Try Route::get(...)"`
+      # string doesn't surface as a real endpoint.
+      skip_ranges = compute_php_skip_ranges(content)
 
       # 1. Simple routes: Route::get, Route::post, etc.
       verb_regex = /Route::(get|post|put|patch|delete|options|head)\s*\(\s*['"]([^'"]+)['"]\s*,/mi
       pos = 0
       while route_match = content.match(verb_regex, pos)
-        if inside_laravel_group_body?(route_match.begin(0), route_groups)
+        if inside_laravel_group_body?(route_match.begin(0), route_groups) ||
+           inside_php_skip_range?(route_match.begin(0), skip_ranges)
           pos = route_match.end(0)
         else
           methods = [route_match[1].upcase]
@@ -118,7 +126,8 @@ module Analyzer::Php
       chained_verb_regex = /Route::((?:\w+\s*\([^;]*?\)\s*->\s*)+)(get|post|put|patch|delete|options|head)\s*\(\s*['"]([^'"]+)['"]\s*,/mi
       pos = 0
       while route_match = content.match(chained_verb_regex, pos)
-        if inside_laravel_group_body?(route_match.begin(0), route_groups)
+        if inside_laravel_group_body?(route_match.begin(0), route_groups) ||
+           inside_php_skip_range?(route_match.begin(0), skip_ranges)
           pos = route_match.end(0)
         else
           route_prefix = extract_group_prefix("Route::#{route_match[1]}")
@@ -142,7 +151,8 @@ module Analyzer::Php
       match_regex = /Route::match\s*\(\s*\[([^\]]+)\]\s*,\s*['"]([^'"]+)['"]\s*,/mi
       pos = 0
       while route_match = content.match(match_regex, pos)
-        if inside_laravel_group_body?(route_match.begin(0), route_groups)
+        if inside_laravel_group_body?(route_match.begin(0), route_groups) ||
+           inside_php_skip_range?(route_match.begin(0), skip_ranges)
           pos = route_match.end(0)
         else
           methods = extract_methods_from_array(route_match[1])
@@ -165,7 +175,8 @@ module Analyzer::Php
       any_regex = /Route::any\s*\(\s*['"]([^'"]+)['"]\s*,/mi
       pos = 0
       while route_match = content.match(any_regex, pos)
-        if inside_laravel_group_body?(route_match.begin(0), route_groups)
+        if inside_laravel_group_body?(route_match.begin(0), route_groups) ||
+           inside_php_skip_range?(route_match.begin(0), skip_ranges)
           pos = route_match.end(0)
         else
           methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
@@ -188,7 +199,8 @@ module Analyzer::Php
       # 2. Resource routes
       resource_matches = content.scan(/Route::resource\s*\(\s*['"]([^'"]+)['"][^)]*\)/mi)
       resource_matches.each do |match|
-        next if inside_laravel_group_body?(match.begin(0), route_groups)
+        next if inside_laravel_group_body?(match.begin(0), route_groups) ||
+                inside_php_skip_range?(match.begin(0), skip_ranges)
 
         resource_name = match[1]
         full_resource_path = build_full_path(prefix, resource_name)
@@ -198,7 +210,8 @@ module Analyzer::Php
 
       api_resource_matches = content.scan(/Route::apiResource\s*\(\s*['"]([^'"]+)['"][^)]*\)/mi)
       api_resource_matches.each do |match|
-        next if inside_laravel_group_body?(match.begin(0), route_groups)
+        next if inside_laravel_group_body?(match.begin(0), route_groups) ||
+                inside_php_skip_range?(match.begin(0), skip_ranges)
 
         resource_name = match[1]
         full_resource_path = build_full_path(prefix, resource_name)
@@ -331,6 +344,76 @@ module Analyzer::Php
       return 0 if pos <= 0
 
       content[0...pos].count('\n')
+    end
+
+    # Walk `content` once and return the byte ranges occupied by PHP
+    # comments (`//…`, `#…`, `/* … */`) and string literals
+    # (single- and double-quoted, with backslash escapes). The verb-
+    # scanning loops use `inside_php_skip_range?` to drop matches
+    # that fall inside any of these ranges — `// Route::get(...)` and
+    # `$x = "Route::get(...)"` were surfacing as real routes pre-fix.
+    private def compute_php_skip_ranges(content : String) : Array(Range(Int32, Int32))
+      ranges = [] of Range(Int32, Int32)
+      i = 0
+      size = content.size
+      while i < size
+        char = content[i]
+        next_char = i + 1 < size ? content[i + 1] : '\0'
+
+        if char == '/' && next_char == '/'
+          start = i
+          i += 2
+          while i < size && content[i] != '\n'
+            i += 1
+          end
+          ranges << (start..i - 1)
+        elsif char == '#'
+          start = i
+          i += 1
+          while i < size && content[i] != '\n'
+            i += 1
+          end
+          ranges << (start..i - 1)
+        elsif char == '/' && next_char == '*'
+          start = i
+          i += 2
+          while i < size - 1
+            if content[i] == '*' && content[i + 1] == '/'
+              i += 2
+              break
+            end
+            i += 1
+          end
+          ranges << (start..i - 1)
+        elsif char == '"' || char == '\''
+          quote = char
+          start = i
+          i += 1
+          escaped = false
+          while i < size
+            c = content[i]
+            if escaped
+              escaped = false
+            elsif c == '\\'
+              escaped = true
+            elsif c == quote
+              i += 1
+              break
+            end
+            i += 1
+          end
+          ranges << (start..i - 1)
+        else
+          i += 1
+        end
+      end
+      ranges
+    end
+
+    # True when `pos` falls inside any skip range. Cheap on the
+    # ~few-hundred-range count seen in real Laravel routes files.
+    private def inside_php_skip_range?(pos : Int32, ranges : Array(Range(Int32, Int32))) : Bool
+      ranges.any?(&.covers?(pos))
     end
 
     private def extract_route_groups(content : String) : Array(RouteGroup)

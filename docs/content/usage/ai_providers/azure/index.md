@@ -18,7 +18,7 @@ Use [Azure AI](https://azure.microsoft.com/en-us/products/ai-services) language 
 Run Noir with Azure AI:
 
 ```bash
-noir -b ./myapp \
+noir scan ./myapp \
      --ai-provider=azure \
      --ai-model=YOUR_MODEL_NAME \
      --ai-key=YOUR_API_KEY
@@ -30,7 +30,7 @@ Using environment variable:
 
 ```bash
 export NOIR_AI_KEY=YOUR_API_KEY
-noir -b ./myapp --ai-provider=azure --ai-model=YOUR_MODEL_NAME
+noir scan ./myapp --ai-provider=azure --ai-model=YOUR_MODEL_NAME
 ```
 
 Azure AI enables natural language endpoint descriptions, security vulnerability identification, and code quality suggestions.

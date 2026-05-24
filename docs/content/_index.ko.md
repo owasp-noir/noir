@@ -7,7 +7,7 @@ template = "landing"
   <div class="hero-split">
     <div class="hero-text">
       <div class="hero-eyebrow">
-        <span class="hero-badge">v0.30.0</span>
+        <span class="hero-badge">v1.0.0</span>
         <span class="hero-badge hero-badge-owasp">OWASP Project</span>
       </div>
       <h1 class="hero-title">
@@ -18,7 +18,7 @@ template = "landing"
         <span class="hero-title-line hero-title-accent">공격 표면을</span>
         <span class="hero-title-line hero-title-accent">매핑합니다.</span>
       </h1>
-      <p class="hero-desc">소스 코드를 읽어 50개 이상의 프레임워크에서 엔드포인트, 파라미터, 숨겨진 라우트를 뽑아내는 SAST 도구입니다. 추출한 인벤토리는 세 대상에게 전달됩니다 — 사람 리뷰어, AI 감사자, 그리고 실제 라우트 목록이 필요한 DAST 도구.</p>
+      <p class="hero-desc">50개 이상의 프레임워크 소스 코드를 분석해 엔드포인트, 파라미터, 숨겨진 라우트를 찾아냅니다. 결과는 리뷰어, AI 감사자, 실제 라우트가 필요한 DAST 스캐너에 그대로 전달됩니다.</p>
       <div class="hero-actions">
         <a href="./get_started/overview" class="hero-btn hero-btn-primary">
           <span>시작하기</span>
@@ -37,7 +37,7 @@ template = "landing"
           <span class="terminal-title">noir</span>
         </div>
         <div class="hero-terminal-body">
-          <div class="terminal-line"><span class="t-prompt">$</span> noir -b .</div>
+          <div class="terminal-line"><span class="t-prompt">$</span> noir scan .</div>
           <div class="terminal-line t-dim">  <span class="t-info">INFO</span> Detected 1 technologies: crystal_kemal</div>
           <div class="terminal-line t-dim">  <span class="t-info">INFO</span> Analysis Started. Code Analyzer: 1 in use</div>
           <div class="terminal-line"><span class="t-success">Finally identified 6 endpoints.</span> <span class="t-dim">in 0.0032s</span></div>
@@ -87,12 +87,12 @@ template = "landing"
       <div class="feature-cell feature-wide">
         <div class="feature-number">01</div>
         <h3>엔드포인트 추출</h3>
-        <p>정적 분석으로 소스에서 엔드포인트, 파라미터, 헤더, 쿠키를 끌어냅니다. Shadow API, 사장된 라우트, 문서화되지 않은 핸들러도 같은 패스에서 함께 나옵니다 &mdash; 별도의 모드가 아닙니다.</p>
+        <p>정적 분석으로 소스에서 엔드포인트, 파라미터, 헤더, 쿠키를 끌어냅니다. Shadow API, 사장된 라우트, 문서화되지 않은 핸들러도 같은 패스에서 함께 나옵니다. 별도의 모드가 아닙니다.</p>
       </div>
       <div class="feature-cell">
         <div class="feature-number">02</div>
         <h3>다중 언어</h3>
-        <p>Crystal, Ruby, Python, Go, Java, Kotlin, JS/TS, PHP, C# 등 &mdash; 단일 바이너리로 50개 이상의 프레임워크 지원. 플러그인이나 언어별 설정은 필요 없습니다.</p>
+        <p>Crystal, Ruby, Python, Go, Java, Kotlin, JS/TS, PHP, C# 등 50개 이상의 프레임워크를 단일 바이너리로 지원합니다. 플러그인이나 언어별 설정은 필요 없습니다.</p>
       </div>
       <div class="feature-cell">
         <div class="feature-number">03</div>
@@ -130,7 +130,7 @@ template = "landing"
         <div class="how-step-content">
           <h3>코드베이스를 지정</h3>
           <p>Noir가 언어, 프레임워크, 라우팅 패턴을 알아서 감지합니다. 작성할 설정은 없습니다.</p>
-          <div class="how-step-code">$ noir -b ./your-project</div>
+          <div class="how-step-code">$ noir scan ./your-project</div>
         </div>
       </div>
       <div class="how-step">
@@ -145,7 +145,7 @@ template = "landing"
         <div class="how-step-content">
           <h3>사람, AI, DAST에 전달</h3>
           <p>사람 리뷰어를 위해 JSON, OpenAPI, SARIF로 내보내거나, ZAP·Burp·Caido에 프록시 타깃으로 그대로 흘려보내거나, LLM 기반 코드 감사자에게 집중된 진입점 컨텍스트로 넘기면 됩니다.</p>
-          <div class="how-step-code">$ noir -b . -f oas3 --send-proxy http://localhost:8090</div>
+          <div class="how-step-code">$ noir scan . -f oas3 --probe-via http://localhost:8090</div>
         </div>
       </div>
     </div>

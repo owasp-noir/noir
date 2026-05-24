@@ -13,7 +13,7 @@ Extract a single type of data from scan results.
 ### URLs Only
 
 ```bash
-noir -b . -f only-url
+noir scan . -f only-url
 ```
 
 ```
@@ -28,7 +28,7 @@ noir -b . -f only-url
 ### Parameters Only
 
 ```bash
-noir -b . -f only-param
+noir scan . -f only-param
 ```
 
 ```
@@ -41,7 +41,7 @@ grant_type
 ### Headers Only
 
 ```bash
-noir -b . -f only-header
+noir scan . -f only-header
 ```
 
 ```
@@ -52,7 +52,7 @@ Cookie
 ### Cookies Only
 
 ```bash
-noir -b . -f only-cookie
+noir scan . -f only-cookie
 ```
 
 ```
@@ -62,7 +62,7 @@ my_auth
 ### Tags Only
 
 ```bash
-noir -b . -f only-tag -T
+noir scan . -f only-tag -T
 ```
 
 ```
@@ -74,7 +74,7 @@ websocket
 ## Markdown Table
 
 ```bash
-noir -b . -f markdown-table
+noir scan . -f markdown-table
 ```
 
 | Endpoint    | Protocol | Params                                                              |
@@ -89,7 +89,7 @@ noir -b . -f markdown-table
 ## TOML
 
 ```bash
-noir -b . -f toml
+noir scan . -f toml
 ```
 
 ```toml
@@ -112,12 +112,12 @@ type = "json"
 value = ""
 ```
 
-Configuration-style output that's easy to skim in a terminal or paste into a project config when you want to track endpoints alongside other declarative settings. The TOML serializer carries the full endpoint model (including `--include-callee` and `--ai-context` fields when those flags are enabled), and is also the format used by `--diff-path` output when combined with `-f toml`.
+Configuration-style output that's easy to skim in a terminal or paste into a project config when you want to track endpoints alongside other declarative settings. The TOML serializer carries the full endpoint model (including `--include callee` and `--ai-context` fields when those flags are enabled), and is also the format used by `--diff-path` output when combined with `-f toml`.
 
 ## JSON Lines (JSONL)
 
 ```bash
-noir -b . -f jsonl
+noir scan . -f jsonl
 ```
 
 ```jsonl
@@ -131,7 +131,7 @@ Useful for streaming large result sets and line-by-line processing.
 ## Postman Collection
 
 ```bash
-noir -b . -f postman -u https://api.example.com
+noir scan . -f postman -u https://api.example.com
 ```
 
 Generates a Postman Collection v2.1 JSON file. Save the output and import it into Postman for interactive API testing.

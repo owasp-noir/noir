@@ -2,6 +2,14 @@
 
 This GitHub Action allows you to run OWASP Noir security analysis in your CI/CD pipeline to detect attack surfaces by static analysis.
 
+> **For maintainers:** the action runs as a composite that `docker pull`s
+> the pre-built `ghcr.io/owasp-noir/noir:<tag>` image (built from the
+> repo-root `Dockerfile`) and invokes `entrypoint.sh` inside it. This
+> directory used to host a sibling `Dockerfile` that pulled the main
+> image and layered jq + entrypoint on top — that's now folded into
+> the main `Dockerfile` so there's a single image and no per-workflow
+> Dockerfile build.
+
 ## Features
 
 - **Endpoint Detection**: Automatically discovers endpoints in your application code
@@ -26,7 +34,7 @@ jobs:
 
       - name: Run OWASP Noir
         id: noir
-        uses: owasp-noir/noir@v0.30.0
+        uses: owasp-noir/noir@v1.0.0
         with:
           base_path: '.'
 
@@ -48,7 +56,7 @@ jobs:
 
       - name: Run OWASP Noir with Passive Scanning
         id: noir
-        uses: owasp-noir/noir@v0.30.0
+        uses: owasp-noir/noir@v1.0.0
         with:
           base_path: 'src'
           format: 'json'
@@ -98,8 +106,13 @@ jobs:
 
 | Output | Description |
 |--------|-------------|
-| `endpoints` | JSON formatted result of endpoint analysis |
-| `passive_results` | JSON formatted result of passive scan (if enabled) |
+| `endpoints` | The full Noir result document (`{"endpoints": [...], "passive_results": [...]}`) when `format` is `json` or `jsonl`. Empty for plain / yaml / oas / mermaid / etc. |
+| `passive_results` | JSON array of passive-scan findings when `format` is `json` / `jsonl`; otherwise `[]`. |
+
+For non-JSON formats the raw scan output is still written to the file
+under `output_file` (default `/tmp/noir_output.json`). Upload it with
+`actions/upload-artifact` instead of reading from
+`steps.<id>.outputs.endpoints`.
 
 ## Supported Technologies
 
@@ -110,14 +123,14 @@ OWASP Noir supports analysis of applications built with:
 - **API Formats**: REST, GraphQL, gRPC
 - **Frontend Frameworks**: React, Vue.js, Angular, Svelte
 
-For a complete list, run: `noir --list-techs`
+For a complete list, run: `noir list techs`
 
 ## Examples by Language/Framework
 
 ### Ruby on Rails
 
 ```yaml
-- uses: owasp-noir/noir@v0.30.0
+- uses: owasp-noir/noir@v1.0.0
   with:
     base_path: '.'
     techs: 'rails'
@@ -127,7 +140,7 @@ For a complete list, run: `noir --list-techs`
 ### Node.js/Express
 
 ```yaml
-- uses: owasp-noir/noir@v0.30.0
+- uses: owasp-noir/noir@v1.0.0
   with:
     base_path: 'src'
     techs: 'express'
@@ -137,7 +150,7 @@ For a complete list, run: `noir --list-techs`
 ### Python/Django
 
 ```yaml
-- uses: owasp-noir/noir@v0.30.0
+- uses: owasp-noir/noir@v1.0.0
   with:
     base_path: '.'
     techs: 'django'
@@ -166,7 +179,7 @@ For a complete list, run: `noir --list-techs`
 Enable debug output for troubleshooting:
 
 ```yaml
-- uses: owasp-noir/noir@v0.30.0
+- uses: owasp-noir/noir@v1.0.0
   with:
     base_path: '.'
     debug: 'true'

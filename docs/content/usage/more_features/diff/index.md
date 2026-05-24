@@ -9,7 +9,7 @@ sort_by = "weight"
 Compare two versions of a codebase to identify endpoint changes. Useful for code reviews, security assessments, and understanding feature impacts.
 
 ```bash
-noir -b <NEW_VERSION_PATH> --diff-path <OLD_VERSION_PATH>
+noir scan <NEW_VERSION_PATH> --diff-path <OLD_VERSION_PATH>
 ```
 
 ## Output

@@ -15,13 +15,13 @@ Noir는 OAS 2.0(Swagger)과 OAS 3.0을 모두 지원합니다.
 **OAS 3.0 (권장)**
 
 ```bash
-noir -b . -f oas3
+noir scan . -f oas3
 ```
 
 **OAS 2.0**
 
 ```bash
-noir -b . -f oas2
+noir scan . -f oas2
 ```
 
 ## 출력 예제

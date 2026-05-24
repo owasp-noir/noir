@@ -31,8 +31,6 @@ describe Analyzer::AI::Unified do
         "verbose"      => YAML::Any.new(false),
         "color"        => YAML::Any.new(false),
         "nolog"        => YAML::Any.new(false),
-        "ollama"       => YAML::Any.new(""),
-        "ollama_model" => YAML::Any.new(""),
         "ai_provider"  => YAML::Any.new("http://localhost:8000"),
         "ai_model"     => YAML::Any.new("test-model"),
         "ai_key"       => YAML::Any.new("test-key"),
@@ -45,17 +43,15 @@ describe Analyzer::AI::Unified do
 
     it "uses LLM.get_max_tokens if ai_max_token is not provided" do
       options = Hash{
-        "url"          => YAML::Any.new(""),
-        "debug"        => YAML::Any.new(false),
-        "verbose"      => YAML::Any.new(false),
-        "color"        => YAML::Any.new(false),
-        "nolog"        => YAML::Any.new(false),
-        "ollama"       => YAML::Any.new(""),
-        "ollama_model" => YAML::Any.new(""),
-        "ai_provider"  => YAML::Any.new("http://localhost:8000"),
-        "ai_model"     => YAML::Any.new("test-model"),
-        "ai_key"       => YAML::Any.new("test-key"),
-        "base"         => YAML::Any.new([YAML::Any.new(".")]),
+        "url"         => YAML::Any.new(""),
+        "debug"       => YAML::Any.new(false),
+        "verbose"     => YAML::Any.new(false),
+        "color"       => YAML::Any.new(false),
+        "nolog"       => YAML::Any.new(false),
+        "ai_provider" => YAML::Any.new("http://localhost:8000"),
+        "ai_model"    => YAML::Any.new("test-model"),
+        "ai_key"      => YAML::Any.new("test-key"),
+        "base"        => YAML::Any.new([YAML::Any.new(".")]),
       }
       analyzer = Analyzer::AI::Unified.new(options)
       analyzer.max_tokens.should eq(1024)
@@ -63,17 +59,15 @@ describe Analyzer::AI::Unified do
 
     it "allows acp provider without ai_model" do
       options = Hash{
-        "url"          => YAML::Any.new(""),
-        "debug"        => YAML::Any.new(false),
-        "verbose"      => YAML::Any.new(false),
-        "color"        => YAML::Any.new(false),
-        "nolog"        => YAML::Any.new(false),
-        "ollama"       => YAML::Any.new(""),
-        "ollama_model" => YAML::Any.new(""),
-        "ai_provider"  => YAML::Any.new("acp:codex"),
-        "ai_model"     => YAML::Any.new(""),
-        "ai_key"       => YAML::Any.new(""),
-        "base"         => YAML::Any.new([YAML::Any.new(".")]),
+        "url"         => YAML::Any.new(""),
+        "debug"       => YAML::Any.new(false),
+        "verbose"     => YAML::Any.new(false),
+        "color"       => YAML::Any.new(false),
+        "nolog"       => YAML::Any.new(false),
+        "ai_provider" => YAML::Any.new("acp:codex"),
+        "ai_model"    => YAML::Any.new(""),
+        "ai_key"      => YAML::Any.new(""),
+        "base"        => YAML::Any.new([YAML::Any.new(".")]),
       }
       analyzer = Analyzer::AI::Unified.new(options)
       analyzer.max_tokens.should eq(1024)

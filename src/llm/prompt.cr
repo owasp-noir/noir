@@ -335,6 +335,8 @@ module LLM
       "gpt-5.4-nano"         => 1000000,
       "gpt-5.5"              => 1000000,
       "gpt-5.5-pro"          => 1000000,
+      "gpt-5.5-mini"         => 1000000,
+      "gpt-5.5-nano"         => 1000000,
       "default"              => 8000,
     },
     "xai" => {
@@ -393,6 +395,8 @@ module LLM
       "gpt-5.4"              => 1000000,
       "gpt-5.4-mini"         => 1000000,
       "gpt-5.5"              => 1000000,
+      "gpt-5.5-pro"          => 1000000,
+      "gpt-5.5-mini"         => 1000000,
       "default"              => 8000,
     },
     "github" => {
@@ -461,7 +465,9 @@ module LLM
       "gemini-3-pro-preview"          => 2000000,
       "gemini-3.1-pro-preview"        => 2000000,
       "gemini-3-flash-preview"        => 1048576,
+      "gemini-3.1-flash-preview"      => 1048576,
       "gemini-3.1-flash-lite-preview" => 1048576,
+      "gemini-3.5-flash"              => 1048576,
       "default"                       => 32760,
     },
     "cohere" => {

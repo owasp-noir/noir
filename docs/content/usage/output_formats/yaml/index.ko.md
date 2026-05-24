@@ -11,7 +11,7 @@ sort_by = "weight"
 ## 사용법
 
 ```bash
-noir -b . -f yaml --no-log
+noir scan . -f yaml --no-log
 ```
 
 ## 출력 예제

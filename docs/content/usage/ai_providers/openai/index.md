@@ -1,12 +1,12 @@
 +++
 title = "Using Noir with OpenAI"
-description = "Connect Noir with OpenAI models like GPT-5.4 for AI-powered code analysis."
+description = "Connect Noir with OpenAI models like GPT-5.5 for AI-powered code analysis."
 weight = 4
 sort_by = "weight"
 
 +++
 
-Integrate Noir with [OpenAI](https://openai.com) to leverage language models like GPT-5.4 for advanced code analysis and endpoint detection.
+Integrate Noir with [OpenAI](https://openai.com) to leverage language models like GPT-5.5 for advanced code analysis and endpoint detection.
 
 ## Setup
 
@@ -18,7 +18,7 @@ Integrate Noir with [OpenAI](https://openai.com) to leverage language models lik
 Run Noir with OpenAI:
 
 ```bash
-noir -b ./spec/functional_test/fixtures/hahwul \
+noir scan ./spec/functional_test/fixtures/hahwul \
      --ai-provider=openai \
      --ai-model=gpt-5.5 \
      --ai-key=sk-...

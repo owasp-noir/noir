@@ -3,6 +3,8 @@ title = "Your First Scan"
 description = "Run your first scan with Noir and explore the results."
 weight = 3
 sort_by = "weight"
+prev_page_path = "/get_started/installation/"
+prev_page_label = "Install Noir"
 
 +++
 
@@ -15,31 +17,35 @@ Noir is installed. Let's take it for a spin! Point it at a project, see what it 
 Pick a project directory and scan it:
 
 ```bash
-noir -b /path/to/your/app
+noir scan /path/to/your/app
 ```
 
 Or if you're already inside the project:
 
 ```bash
-noir -b .
+noir scan .
 ```
 
 ![](./running.png)
 
 Noir reads the source files, detects which frameworks are in use, and prints every endpoint it finds: methods, paths, parameters, headers, and cookies.
 
+> **v0 compatibility:** the v0 form `noir -b ./app` still works
+> without changes. The router falls back to `scan` for any
+> invocation that starts with a flag.
+
 ## Check What Was Detected
 
-Curious which technologies Noir picked up? Add `--include-techs` to see them alongside the results:
+Curious which technologies Noir picked up? Add `--include techs` to see them alongside the results:
 
 ```bash
-noir -b . --include-techs
+noir scan . --include techs
 ```
 
 To see every technology Noir knows how to analyze:
 
 ```bash
-noir --list-techs
+noir list techs
 ```
 
 If your framework isn't listed, you can still use [AI-powered analysis](@/get_started/ai_power/index.md) to detect endpoints.
@@ -50,42 +56,42 @@ The default output is a human-readable table. Depending on your workflow, you mi
 
 ```bash
 # Machine-readable JSON for scripting and pipelines
-noir -b . -f json
+noir scan . -f json
 
 # YAML for easy reading and config-friendly workflows
-noir -b . -f yaml
+noir scan . -f yaml
 
 # OpenAPI spec, useful for generating API docs or feeding into tools
-noir -b . -f oas3
+noir scan . -f oas3
 
 # cURL commands you can run immediately against a live target
-noir -b . -f curl -u https://your-target.com
+noir scan . -f curl -u https://your-target.com
 ```
 
-See all available formats in the [Output Formats](@/usage/output_formats/_index.md) section.
+See all available formats with `noir list formats`, or in the [Output Formats](@/usage/output_formats/_index.md) section.
 
 ## Save Results to a File
 
 Instead of printing to the terminal, write the output to a file with `-o`:
 
 ```bash
-noir -b . -f json -o results.json
+noir scan . -f json -o results.json
 ```
 
 This is useful for diffing results between scans, feeding into CI pipelines, or sharing with your team.
 
 ## Trace Endpoints Back to Source
 
-Want to know exactly where an endpoint was defined? Add `--include-path` to show source file locations:
+Want to know exactly where an endpoint was defined? Add `--include path` to show source file locations:
 
 ```bash
-noir -b . --include-path
+noir scan . --include path
 ```
 
-Combine it with other options for a complete picture:
+Combine multiple enrichments with one flag:
 
 ```bash
-noir -b . --include-path --include-techs -f json -o results.json
+noir scan . --include path,techs -f json -o results.json
 ```
 
 ## Focus Your Scan
@@ -94,68 +100,71 @@ Large monorepos may contain many frameworks. You can narrow the scan to what mat
 
 ```bash
 # Run only the Rails and Django detectors (skip everything else)
-noir -b . --only-techs rails,django
+noir scan . --only-techs rails,django
 
 # Force-tag the project with these techs without running their detectors
-noir -b . --techs rails,django
+noir scan . --techs rails,django
 
 # Scan everything except Express
-noir -b . --exclude-techs express
+noir scan . --exclude-techs express
 
 # Skip files by glob (useful in monorepos, comma-separated)
-noir -b . --exclude-path "*_test.go,vendor/*,**/node_modules/**"
+noir scan . --exclude-path "*_test.go,vendor/*,**/node_modules/**"
 ```
 
 `--only-techs` and `--techs` look similar but do different things: `--only-techs` filters the detector list (faster scan, only those detectors run), while `--techs` adds techs to the result without running detection (useful when you already know the stack and want to skip discovery).
 
 ## Enrich the Output
 
-A few flags add extra context to each endpoint without changing the detection pipeline:
+`--include` adds per-endpoint detail to the plain output, and
+`--ai-context` attaches a review context for AI auditors.
 
 ```bash
 # Attach 1-hop handler callees (function/method calls inside the route body)
-noir -b . --include-callee
+noir scan . --include callee
 
 # Attach an AI-review-ready context (guards, callees, sinks, validators, signals)
-noir -b . --ai-context
+noir scan . --ai-context
+
+# Narrow the AI context to a few categories
+noir scan . --ai-context guards,sinks
 ```
 
 See [Callee Coverage](@/usage/supported/callee_coverage/index.md) and [AI Context](@/usage/supported/ai_context_coverage/index.md) for the data shape and per-framework support.
 
 ## Quick Reference
 
-| Flag | What it does |
-|---|---|
-| `-b <path>` | Directory to scan |
-| `-f <format>` | Output format (json, yaml, oas3, curl, etc.) |
-| `-o <file>` | Write output to a file |
-| `-u <url>` | Base URL for cURL/HTTPie output |
-| `--include-path` | Show source file locations |
-| `--include-techs` | Show detected technologies |
-| `--include-callee` | Attach 1-hop handler callees |
-| `--ai-context` | Attach guards, sinks, validators, and signals for AI review |
-| `--set-pvalue` / `--set-pvalue-<type>` | Fill parameter values in output (see [HTTP Client Commands](@/usage/output_formats/curl/index.md)) |
-| `--only-techs` | Run only these tech detectors (skip the rest) |
-| `--techs` | Force-tag these techs without running their detectors |
-| `--exclude-techs` | Skip these frameworks |
-| `--exclude-path` | Skip files matching a comma-separated glob list |
-| `--status-codes` | Probe each endpoint and attach the observed HTTP status code |
-| `--exclude-codes` | Drop endpoints whose probed status matches (comma-separated; pairs with `--status-codes`) |
-| `--config-file <path>` | Load default options from a YAML config file |
-| `--concurrency <N>` | Worker count (default: CPU cores) |
-| `--cache-disable` | Disable the LLM response cache for this run |
-| `--cache-clear` | Clear the LLM response cache before running |
-| `--verbose` | Detailed logging |
-| `--no-log` | Suppress all logs |
-| `--no-color` | Disable ANSI colors in plain output |
-| `--build-info` | Print noir / Crystal / LLVM versions and target triple |
-| `--help` | Full help |
-| `--help-all` | Full help with examples and environment variables |
+| Flag                  | What it does |
+|-----------------------|---|
+| positional paths      | One or more directories to scan (`noir scan ./api ./worker`) |
+| `-b <path>`           | Same as positional; v0-compatible |
+| `-f <format>`         | Output format (json, yaml, oas3, curl, etc.) |
+| `-o <file>`           | Write output to a file |
+| `-u <url>`            | Base URL for cURL/HTTPie output |
+| `--include LIST`      | Enrich plain output with `path`, `techs`, `callee` (comma-separated) |
+| `--ai-context [LIST]` | Attach AI review context (`guards`, `sinks`, `validators`, `signals`, `callee`) |
+| `--pvalue TYPE=VAL`   | Fill parameter values in output (TYPE: any / header / cookie / query / form / json / path) |
+| `--only-techs`        | Run only these tech detectors (skip the rest) |
+| `--techs`             | Force-tag these techs without running their detectors |
+| `--exclude-techs`     | Skip these frameworks |
+| `--exclude-path`      | Skip files matching a comma-separated glob list |
+| `--status-codes`      | Probe each endpoint and attach the observed HTTP status code |
+| `--exclude-codes`     | Drop endpoints whose probed status matches (comma-separated; pairs with `--status-codes`) |
+| `--config-file <path>`| Load default options from a YAML config file |
+| `--concurrency <N>`   | Worker count (default: CPU cores) |
+| `--cache-disable`     | Disable the LLM response cache for this run |
+| `--cache-clear`       | Clear the LLM response cache before running |
+| `--verbose`           | Detailed logging |
+| `--no-log`            | Suppress all logs |
+| `--no-color`          | Disable ANSI colors in plain output |
+
+For build details (Crystal / LLVM / target), run `noir version --verbose`. Run `noir help` for the top-level overview or `noir help <command>` for any command's full flag list.
 
 ---
 
 You've completed the Getting Started guide! Here's what to explore next:
 
+- **[CLI Commands](@/usage/cli_commands/_index.md)**: The full v1 subcommand reference (scan, list, cache, config, rules, and so on)
 - **[Configurations](@/usage/configurations/configuration_file/index.md)**: Set default options so you don't repeat flags every time
 - **[Output Formats](@/usage/output_formats/_index.md)**: Dive deeper into all output formats
 - **[Passive Scan](@/usage/passive_scan/_index.md)**: Scan for security issues like hardcoded secrets and misconfigurations

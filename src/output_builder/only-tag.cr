@@ -22,7 +22,11 @@ class OutputBuilderOnlyTag < OutputBuilder
       end
     end
 
-    tags.uniq.each do |tag|
+    # Dedup by tag name. `Tag.==` is field-wise (name + description +
+    # tagger), so two tags with the same `name` but different `tagger`
+    # or `description` would otherwise both be printed even though the
+    # output line only shows the name.
+    tags.uniq(&.name).each do |tag|
       ob_puts tag.name.colorize(:light_green).toggle(@is_color)
     end
   end

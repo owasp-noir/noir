@@ -17,17 +17,17 @@ Noir can include or exclude specific technologies during scanning, letting you f
 ### Include specific technologies
 
 ```bash
-noir -b . --techs rails
+noir scan . --techs rails
 ```
 
 ### Exclude specific technologies
 
 ```bash
-noir -b . --exclude-techs express,koa
+noir scan . --exclude-techs express,koa
 ```
 
 ### List available technologies
 
 ```bash
-noir --list-techs
+noir list techs
 ```

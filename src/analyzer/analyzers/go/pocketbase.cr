@@ -49,14 +49,16 @@ module Analyzer::Go
                       details = Details.new(PathInfo.new(path, index + 1))
                       if ts_hits = routes_by_line[index]?
                         ts_hits.each do |route|
-                          endpoint = Endpoint.new(route.path, route.verb, details)
-                          if entries = callees_by_route[route.line]?
-                            entries.each do |entry|
-                              name, callee_path, callee_line = entry
-                              endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+                          Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
+                            endpoint = Endpoint.new(route.path, verb, details)
+                            if entries = callees_by_route[route.line]?
+                              entries.each do |entry|
+                                name, callee_path, callee_line = entry
+                                endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+                              end
                             end
+                            result << endpoint
                           end
-                          result << endpoint
                         end
                       end
                     end

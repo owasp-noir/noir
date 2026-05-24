@@ -257,50 +257,50 @@ module Analyzer::Crystal
       # Amber route definitions with controller and action
       content.scan(/(?:^|[^.\w])get\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*\w+,\s*:(\w+)/) do |match|
         if match.size > 1
-          return Endpoint.new("#{match[1]}", "GET")
+          return Endpoint.new(normalize_crystal_interpolation(match[1]), "GET")
         end
       end
 
       content.scan(/(?:^|[^.\w])post\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*\w+,\s*:(\w+)/) do |match|
         if match.size > 1
-          return Endpoint.new("#{match[1]}", "POST")
+          return Endpoint.new(normalize_crystal_interpolation(match[1]), "POST")
         end
       end
 
       content.scan(/(?:^|[^.\w])put\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*\w+,\s*:(\w+)/) do |match|
         if match.size > 1
-          return Endpoint.new("#{match[1]}", "PUT")
+          return Endpoint.new(normalize_crystal_interpolation(match[1]), "PUT")
         end
       end
 
       content.scan(/(?:^|[^.\w])delete\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*\w+,\s*:(\w+)/) do |match|
         if match.size > 1
-          return Endpoint.new("#{match[1]}", "DELETE")
+          return Endpoint.new(normalize_crystal_interpolation(match[1]), "DELETE")
         end
       end
 
       content.scan(/(?:^|[^.\w])patch\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*\w+,\s*:(\w+)/) do |match|
         if match.size > 1
-          return Endpoint.new("#{match[1]}", "PATCH")
+          return Endpoint.new(normalize_crystal_interpolation(match[1]), "PATCH")
         end
       end
 
       content.scan(/(?:^|[^.\w])head\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*\w+,\s*:(\w+)/) do |match|
         if match.size > 1
-          return Endpoint.new("#{match[1]}", "HEAD")
+          return Endpoint.new(normalize_crystal_interpolation(match[1]), "HEAD")
         end
       end
 
       content.scan(/(?:^|[^.\w])options\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*\w+,\s*:(\w+)/) do |match|
         if match.size > 1
-          return Endpoint.new("#{match[1]}", "OPTIONS")
+          return Endpoint.new(normalize_crystal_interpolation(match[1]), "OPTIONS")
         end
       end
 
       # WebSocket support in Amber
       content.scan(/(?:^|[^.\w])ws\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*\w+,\s*:(\w+)/) do |match|
         if match.size > 1
-          endpoint = Endpoint.new("#{match[1]}", "GET")
+          endpoint = Endpoint.new(normalize_crystal_interpolation(match[1]), "GET")
           endpoint.protocol = "ws"
           return endpoint
         end
@@ -309,50 +309,50 @@ module Analyzer::Crystal
       # Also support simple route definitions without controller (fallback)
       content.scan(/(?:^|[^.\w])get\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
         if match.size > 1
-          return Endpoint.new("#{match[1]}", "GET")
+          return Endpoint.new(normalize_crystal_interpolation(match[1]), "GET")
         end
       end
 
       content.scan(/(?:^|[^.\w])post\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
         if match.size > 1
-          return Endpoint.new("#{match[1]}", "POST")
+          return Endpoint.new(normalize_crystal_interpolation(match[1]), "POST")
         end
       end
 
       content.scan(/(?:^|[^.\w])put\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
         if match.size > 1
-          return Endpoint.new("#{match[1]}", "PUT")
+          return Endpoint.new(normalize_crystal_interpolation(match[1]), "PUT")
         end
       end
 
       content.scan(/(?:^|[^.\w])delete\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
         if match.size > 1
-          return Endpoint.new("#{match[1]}", "DELETE")
+          return Endpoint.new(normalize_crystal_interpolation(match[1]), "DELETE")
         end
       end
 
       content.scan(/(?:^|[^.\w])patch\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
         if match.size > 1
-          return Endpoint.new("#{match[1]}", "PATCH")
+          return Endpoint.new(normalize_crystal_interpolation(match[1]), "PATCH")
         end
       end
 
       content.scan(/(?:^|[^.\w])head\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
         if match.size > 1
-          return Endpoint.new("#{match[1]}", "HEAD")
+          return Endpoint.new(normalize_crystal_interpolation(match[1]), "HEAD")
         end
       end
 
       content.scan(/(?:^|[^.\w])options\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
         if match.size > 1
-          return Endpoint.new("#{match[1]}", "OPTIONS")
+          return Endpoint.new(normalize_crystal_interpolation(match[1]), "OPTIONS")
         end
       end
 
       # WebSocket support in Amber
       content.scan(/(?:^|[^.\w])ws\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
         if match.size > 1
-          endpoint = Endpoint.new("#{match[1]}", "GET")
+          endpoint = Endpoint.new(normalize_crystal_interpolation(match[1]), "GET")
           endpoint.protocol = "ws"
           return endpoint
         end

@@ -11,8 +11,19 @@ Noir는 각 엔드포인트에 구조화된 **AI 리뷰 컨텍스트**를 붙일
 활성화하려면 `--ai-context`를 사용하세요:
 
 ```bash
-noir -b . --ai-context
+noir scan . --ai-context
 ```
+
+쉼표 구분 bucket 목록을 넘기면 원하는 카테고리만 남깁니다. 필터는 데이터 단에서 동작하므로 JSON / SARIF / YAML / Postman / OAS 모두 동일한 선택을 봅니다 (plain-text 렌더러만이 아니라).
+
+```bash
+noir scan . --ai-context=guards,sinks       # auth + 위험 sink 만
+noir scan . --ai-context=callee             # 1-hop handler callee 만
+noir scan . --ai-context=all                # "전부" 의 명시적 형태
+noir scan . --ai-context                    # bare 형태, 동일하게 "전부"
+```
+
+유효한 feature 이름: `guards`, `callee`, `sinks`, `validators`, `signals` (그리고 `all`). 대소문자 구분 없음.
 
 plain 출력에서는 비어있지 않은 컨텍스트를 가진 엔드포인트마다 `ai_context:` 블록이 추가됩니다. 모델 기반 출력에서는 다음 위치에 동일한 구조가 노출됩니다.
 
@@ -31,7 +42,7 @@ plain 출력에서는 비어있지 않은 컨텍스트를 가진 엔드포인트
 | 버킷 | 의미 |
 |---|---|
 | `guards` | 라우트에 감지된 인증/인가 게이트 (미들웨어, 데코레이터, `requires_auth`, 역할 체크 등) |
-| `callees` | `--include-callee`로 수집되는 1-hop 핸들러 callee를 AI 컨텍스트 구조 안에서 다시 노출 |
+| `callees` | `--include callee`로 수집되는 1-hop 핸들러 callee를 AI 컨텍스트 구조 안에서 다시 노출 |
 | `sinks` | 핸들러 본문이나 callee 이름에서 추론된 위험 가능 동작 (SQL, 명령 실행, 역직렬화, 템플릿 렌더링, 파일 I/O, 리다이렉트 등) |
 | `validators` | 입력 검증/정제 신호 (스키마 검증기, 파라미터 형 변환, 허용 목록 패턴). sink 위험을 줄여줄 수 있는 단서 |
 | `signals` | 그 외 라우트 형태 힌트 (가드 없는 상태 변경 메서드, object-level 인가 점검이 필요한 path-id 사용, 파일 업로드 동작 등) |
@@ -48,13 +59,13 @@ plain 출력에서는 비어있지 않은 컨텍스트를 가진 엔드포인트
 
 ```bash
 # 1-hop callee와 AI 컨텍스트 블록을 함께 출력
-noir -b . --include-callee --ai-context
+noir scan . --include callee --ai-context
 
 # LLM 기반 SAST 파이프라인용 JSON 출력
-noir -b . --ai-context -f json -o noir-context.json
+noir scan . --ai-context -f json -o noir-context.json
 
 # 오퍼레이션마다 `x-noir-ai-context`가 붙은 OpenAPI 내보내기
-noir -b . --ai-context -f oas3 -o spec.json
+noir scan . --ai-context -f oas3 -o spec.json
 ```
 
 ## 보완 메모

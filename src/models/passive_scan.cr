@@ -25,29 +25,41 @@ struct PassiveScan
   struct Matcher
     property type : String
     property patterns : Array(YAML::Any)
+    # Pre-stringified patterns. detect.cr's hot path used to call
+    # `pattern.to_s` per (file × line × matcher); the conversion is the
+    # same every call so we do it once at load time.
+    property string_patterns : Array(String)
     property condition : String
     property compiled_regex : Regex?
     property compiled_regexes : Array(Regex)?
+    # Sticky flag: true when this matcher's regexes failed to compile.
+    # detect.cr checks it to short-circuit instead of retrying the
+    # (already-broken) compilation on every line.
+    property? regex_compile_failed : Bool
 
     def initialize(yaml : YAML::Any)
       @type = yaml["type"].as_s
       @patterns = yaml["patterns"].as_a
+      @string_patterns = @patterns.map(&.to_s)
       @condition = yaml["condition"].as_s
+      @regex_compile_failed = false
 
       if @type == "regex"
         if @condition == "or"
           begin
-            @compiled_regex = Regex.union(@patterns.map { |p| Regex.new(p.to_s) })
+            @compiled_regex = Regex.union(@string_patterns.map { |p| Regex.new(p) })
           rescue ex
-            Log.warn { "Passive scan matcher regex compilation (or-union) failed: #{ex.message} (#{ex.class}); patterns=#{@patterns.map(&.to_s).inspect}" }
+            Log.warn { "Passive scan matcher regex compilation (or-union) failed: #{ex.message} (#{ex.class}); patterns=#{@string_patterns.inspect}" }
             @compiled_regex = nil
+            @regex_compile_failed = true
           end
         elsif @condition == "and"
           begin
-            @compiled_regexes = @patterns.map { |p| Regex.new(p.to_s) }
+            @compiled_regexes = @string_patterns.map { |p| Regex.new(p) }
           rescue ex
-            Log.warn { "Passive scan matcher regex compilation (and-case) failed: #{ex.message} (#{ex.class}); patterns=#{@patterns.map(&.to_s).inspect}" }
+            Log.warn { "Passive scan matcher regex compilation (and-case) failed: #{ex.message} (#{ex.class}); patterns=#{@string_patterns.inspect}" }
             @compiled_regexes = nil
+            @regex_compile_failed = true
           end
         end
       end
@@ -70,8 +82,14 @@ struct PassiveScan
     @techs = yaml["techs"].as_a
   end
 
+  # A rule is usable when it has an id, a non-empty info name, and at
+  # least one matcher. The earlier `@info != ""` check compared an
+  # Info struct against a String, which is always true and therefore a
+  # no-op; the rewrite checks `@info.name` instead so rules with an
+  # empty name (effectively unusable for SARIF / human output) are
+  # dropped during load.
   def valid?
-    @id != "" && @info != "" && !@matchers.empty?
+    !@id.empty? && !@info.name.empty? && !@matchers.empty?
   end
 end
 

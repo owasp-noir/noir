@@ -14,3 +14,8 @@ Lint/UselessAssign:
 # Allow common short block parameter names used throughout the codebase
 Naming/BlockParameterName:
   Enabled: false
+
+# Exclude spec files from Lint/NotNil warnings
+Lint/NotNil:
+  Excluded:
+    - "spec/**/*"

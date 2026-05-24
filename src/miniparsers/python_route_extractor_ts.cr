@@ -301,9 +301,29 @@ module Noir
     # concatenation inside one literal (`"foo" "bar"` is a separate story
     # at the argument level, not here).
     private def decode_string(string_node : LibTreeSitter::TSNode, source : String) : String
+      # Walk the string's children. A regular Python string has one
+      # `string_content` child; an f-string interleaves
+      # `string_content` with `interpolation` nodes. Pre-fix, the
+      # interpolation children were dropped entirely, so
+      # `f"/api/{VERSION}/items"` collapsed to "/api//items" (and
+      # then the optimizer normalized the double-slash) — the user's
+      # URL silently lost the path segment.
+      #
+      # Preserve interpolations as `{expr}` placeholders so:
+      #   * the path-parameter extractor downstream sees them and
+      #     adds the param to `params` (just like a Flask
+      #     `<int:id>` or FastAPI `{id}` would)
+      #   * the rendered URL keeps a faithful template of the route,
+      #     not a misleading partial.
       buf = String.build do |io|
         Noir::TreeSitter.each_named_child(string_node) do |child|
-          if Noir::TreeSitter.node_type(child) == "string_content"
+          case Noir::TreeSitter.node_type(child)
+          when "string_content"
+            io << Noir::TreeSitter.node_text(child, source)
+          when "interpolation"
+            # Source text of an interpolation includes the braces
+            # (`{VERSION}` / `{user.id}`) — write it back verbatim
+            # so the placeholder shape is preserved.
             io << Noir::TreeSitter.node_text(child, source)
           end
         end

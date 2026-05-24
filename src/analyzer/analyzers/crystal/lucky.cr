@@ -51,6 +51,10 @@ module Analyzer::Crystal
     end
 
     private def collect_public_dir_endpoints
+      # `get_public_files` scopes to `public/` directories that sit
+      # next to a `shard.yml`, so files in unrelated `*/public/`
+      # subtrees (e.g. a built docs site at `docs/public/`) no
+      # longer leak in as fake Lucky endpoints.
       get_public_files(@base_path).each do |file|
         # Extract the path after "/public/" regardless of depth
         if file =~ /\/public\/(.*)/
@@ -108,43 +112,43 @@ module Analyzer::Crystal
 
       content.scan(/(?:^|[^.\w])get\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
         if match.size > 1
-          return Endpoint.new("#{match[1]}", "GET")
+          return Endpoint.new(normalize_crystal_interpolation(match[1]), "GET")
         end
       end
 
       content.scan(/(?:^|[^.\w])post\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
         if match.size > 1
-          return Endpoint.new("#{match[1]}", "POST")
+          return Endpoint.new(normalize_crystal_interpolation(match[1]), "POST")
         end
       end
 
       content.scan(/(?:^|[^.\w])put\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
         if match.size > 1
-          return Endpoint.new("#{match[1]}", "PUT")
+          return Endpoint.new(normalize_crystal_interpolation(match[1]), "PUT")
         end
       end
 
       content.scan(/(?:^|[^.\w])delete\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
         if match.size > 1
-          return Endpoint.new("#{match[1]}", "DELETE")
+          return Endpoint.new(normalize_crystal_interpolation(match[1]), "DELETE")
         end
       end
 
       content.scan(/(?:^|[^.\w])patch\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
         if match.size > 1
-          return Endpoint.new("#{match[1]}", "PATCH")
+          return Endpoint.new(normalize_crystal_interpolation(match[1]), "PATCH")
         end
       end
 
       content.scan(/(?:^|[^.\w])trace\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
         if match.size > 1
-          return Endpoint.new("#{match[1]}", "TRACE")
+          return Endpoint.new(normalize_crystal_interpolation(match[1]), "TRACE")
         end
       end
 
       content.scan(/(?:^|[^.\w])ws\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
         if match.size > 1
-          endpoint = Endpoint.new("#{match[1]}", "GET")
+          endpoint = Endpoint.new(normalize_crystal_interpolation(match[1]), "GET")
           endpoint.protocol = "ws"
           return endpoint
         end

@@ -60,16 +60,20 @@ struct Endpoint
   end
 
   def params_to_hash
+    # Seed the six canonical buckets so consumers (mermaid, ==, etc.)
+    # can read `params_hash["query"]` without a `has_key?` guard.
+    # Auto-create any additional bucket on insert so a stray Param with
+    # an unconventional `param_type` (e.g. "websocket", framework-
+    # specific shapes) doesn't raise KeyError on write.
     params_hash = {} of String => Hash(String, String)
-    params_hash["query"] = {} of String => String
-    params_hash["json"] = {} of String => String
-    params_hash["form"] = {} of String => String
-    params_hash["header"] = {} of String => String
-    params_hash["cookie"] = {} of String => String
-    params_hash["path"] = {} of String => String
+    %w[query json form header cookie path].each do |type|
+      params_hash[type] = {} of String => String
+    end
 
     @params.each do |param|
-      params_hash[param.param_type][param.name] = param.value
+      type = param.param_type
+      params_hash[type] = {} of String => String unless params_hash.has_key?(type)
+      params_hash[type][param.name] = param.value
     end
 
     params_hash

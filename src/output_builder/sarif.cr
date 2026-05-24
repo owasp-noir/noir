@@ -42,7 +42,6 @@ class OutputBuilderSarif < OutputBuilder
 
         # Add endpoint results
         endpoints.each do |endpoint|
-          bake_endpoint(endpoint.url, endpoint.params)
           params_info = [] of String
 
           endpoint.params.each do |param|

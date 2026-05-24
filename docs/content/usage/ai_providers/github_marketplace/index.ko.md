@@ -18,7 +18,7 @@ sort_by = "weight"
 **GitHub API 사용**:
 
 ```bash
-noir -b ./spec/functional_test/fixtures/hahwul \
+noir scan ./spec/functional_test/fixtures/hahwul \
      --ai-provider=github \
      --ai-model=gpt-5.5 \
      --ai-key=github_pat_...
@@ -27,7 +27,7 @@ noir -b ./spec/functional_test/fixtures/hahwul \
 **Azure Inference API 사용** (Azure를 통해 제공되는 모델):
 
 ```bash
-noir -b ./spec/functional_test/fixtures/hahwul \
+noir scan ./spec/functional_test/fixtures/hahwul \
      --ai-provider=azure \
      --ai-model=gpt-5.5 \
      --ai-key=github_pat_...

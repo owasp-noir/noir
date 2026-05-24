@@ -17,13 +17,13 @@ Tagger는 기본적으로 비활성화되어 있습니다.
 **모든 태거 활성화**
 
 ```bash
-noir -b <BASE_PATH> -T
+noir scan <BASE_PATH> -T
 ```
 
-**특정 태거만 활성화** (`noir --list-taggers`로 목록 확인)
+**특정 태거만 활성화** (`noir list taggers`로 목록 확인)
 
 ```bash
-noir -b <BASE_PATH> --use-taggers hunt,oauth
+noir scan <BASE_PATH> --use-taggers hunt,oauth
 ```
 
 ## 출력

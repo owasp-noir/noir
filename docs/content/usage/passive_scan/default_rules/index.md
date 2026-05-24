@@ -37,13 +37,13 @@ Both options are also configurable via `~/.config/noir/config.yaml`.
 
 ```bash
 # Default behavior - check for updates and notify if behind
-noir -b /app -P
+noir scan /app -P
 
 # Auto-update rules on startup
-noir -b /app -P --passive-scan-auto-update
+noir scan /app -P --passive-scan-auto-update
 
 # Skip update checks completely
-noir -b /app -P --passive-scan-no-update-check
+noir scan /app -P --passive-scan-no-update-check
 ```
 
 ## Sample Output
@@ -64,7 +64,7 @@ When updates are available:
 ▲ Passive rules are 3 commits behind the latest version.
   ├── Run 'git pull' in ~/.config/noir/passive_rules/ to update
   ├── Or use 'git clone https://github.com/owasp-noir/noir-passive-rules.git ~/.config/noir/passive_rules/' to get the latest rules
-  ├── Or run 'noir -b . -P --passive-scan-auto-update' to auto-update on startup
+  ├── Or run 'noir scan . -P --passive-scan-auto-update' to auto-update on startup
 ```
 
 With auto-update enabled:

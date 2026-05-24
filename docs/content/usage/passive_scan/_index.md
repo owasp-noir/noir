@@ -13,13 +13,13 @@ Analyze code for potential security issues using predefined rules without active
 Run passive scan:
 
 ```bash
-noir -b <BASE_PATH> -P
+noir scan <BASE_PATH> -P
 ```
 
 Use custom rules:
 
 ```bash
-noir -b <BASE_PATH> --passive-scan --passive-scan-path /path/to/your/rules.yml
+noir scan <BASE_PATH> --passive-scan --passive-scan-path /path/to/your/rules.yml
 ```
 
 ### Filtering by Severity
@@ -35,13 +35,13 @@ Examples:
 
 ```bash
 # Critical only
-noir -b <BASE_PATH> -P --passive-scan-severity critical
+noir scan <BASE_PATH> -P --passive-scan-severity critical
 
 # Medium and above
-noir -b <BASE_PATH> -P --passive-scan-severity medium
+noir scan <BASE_PATH> -P --passive-scan-severity medium
 
 # All issues
-noir -b <BASE_PATH> -P --passive-scan-severity low
+noir scan <BASE_PATH> -P --passive-scan-severity low
 ```
 
 ## Output Format

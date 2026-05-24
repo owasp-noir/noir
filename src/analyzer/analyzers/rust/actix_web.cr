@@ -54,10 +54,12 @@ module Analyzer::Rust
           next unless builder_route
           route_path, methods = builder_route
           details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(call) + 1))
-          methods.each do |verb|
-            endpoint = Endpoint.new(route_path, verb, details)
-            extract_path_params(route_path, endpoint)
-            endpoints << endpoint
+          methods.each do |raw_verb|
+            RustEngine.fan_out_verbs(raw_verb).each do |verb|
+              endpoint = Endpoint.new(route_path, verb, details)
+              extract_path_params(route_path, endpoint)
+              endpoints << endpoint
+            end
           end
         end
       end

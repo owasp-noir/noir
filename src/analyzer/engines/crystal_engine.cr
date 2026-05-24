@@ -60,6 +60,18 @@ module Analyzer::Crystal
       end
     end
 
+    # Crystal `"…"` strings interpolate `#{expr}`. The Kemal/Lucky/
+    # Amber/Marten/Grip route extractors capture the literal
+    # characters between quotes, so `get "/api/#{VERSION}/items"`
+    # came out as `/api/#{VERSION}/items` with the `#{VERSION}`
+    # leaking into the URL. Rewrite it as `{name}` so the path-
+    # parameter extractor picks it up and the URL template reads
+    # cleanly. Mirrors the Python f-string, Ruby `#{}`, and PHP
+    # `$var` fixes earlier this pass.
+    protected def normalize_crystal_interpolation(path : String) : String
+      path.gsub(/\#\{([^}]+)\}/) { |_| "{#{$~[1].strip}}" }
+    end
+
     protected def attach_crystal_callees(endpoint : Endpoint, callees : Array(Noir::CrystalCalleeExtractor::Entry))
       Noir::CrystalCalleeExtractor.attach_to(endpoint, callees)
     end

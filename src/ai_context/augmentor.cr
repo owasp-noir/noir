@@ -7,6 +7,56 @@ module NoirAIContext
     Builder.new.apply(endpoints)
   end
 
+  # Clears AIContext buckets the user didn't request. Mirrors the
+  # plain-text builder's feature filter so JSON/YAML/SARIF/Postman/
+  # OAS — which serialize the struct directly — show the same
+  # subset the user asked for via `--ai-context=guards,sinks`.
+  # `features` follows the canonical bucket names: "guards",
+  # "callee", "sinks", "validators", "signals". An empty set or
+  # one containing every name is a no-op.
+  def apply_feature_filter(endpoints : Array(Endpoint), features : Set(String))
+    return endpoints if features.includes?("guards") &&
+                        features.includes?("callee") &&
+                        features.includes?("sinks") &&
+                        features.includes?("validators") &&
+                        features.includes?("signals")
+
+    # Endpoint is a struct (value type). `endpoints.each` iterates
+    # copies, so `endpoint.ai_context = …` would only mutate the
+    # copy and leave the original array entry untouched. The array
+    # bucket cleared on the copy *does* propagate because Array is
+    # reference-typed, but the `= nil` assignment to drop the whole
+    # context only sticks via index writeback.
+    endpoints.each_with_index do |endpoint, idx|
+      next if (context = endpoint.ai_context).nil?
+      context.guards.clear unless features.includes?("guards")
+      context.callees.clear unless features.includes?("callee")
+      context.sinks.clear unless features.includes?("sinks")
+      context.validators.clear unless features.includes?("validators")
+      context.signals.clear unless features.includes?("signals")
+      endpoint.ai_context = context.empty? ? nil : context
+      endpoints[idx] = endpoint
+    end
+    endpoints
+  end
+
+  # Parses the comma-separated `--ai-context=…` value into the set
+  # of bucket names that should survive the filter. Empty value or
+  # `"all"` means every bucket (the no-op set).
+  def parse_feature_set(raw : String) : Set(String)
+    all = Set{"guards", "callee", "sinks", "validators", "signals"}
+    return all if raw.empty?
+
+    filtered = Set(String).new
+    raw.split(',').each do |feature|
+      f = feature.strip
+      next if f.empty?
+      return all if f == "all"
+      filtered << f
+    end
+    filtered
+  end
+
   private class PatternDefinition
     getter kind : String
     getter description : String
@@ -76,6 +126,138 @@ module NoirAIContext
         name_patterns: [/\bhttp\b/i, /\bfetch\b/i, /\bclient\b/i, /\baxios\b/i],
         source_patterns: [/requests\.(get|post|put|delete)/i, /\bfetch\s*\(/i, /\baxios\./i, /\bhttp\.(Get|Post|NewRequest)/, /\bclient\.(get|post|request)/i]
       ),
+      # ----- New in v1.1 (--ai-context coverage expansion) -----
+      #
+      # XSS / unsafe-HTML output. Catches assignments and helpers that
+      # bypass the framework's auto-escaping (innerHTML, React's
+      # dangerouslySetInnerHTML, Rails' html_safe / raw, Django /
+      # Jinja's |safe + mark_safe / Markup, Vue's v-html, Svelte's
+      # {@html ...}).
+      PatternDefinition.new(
+        "xss",
+        "Potential XSS sink — unsafe HTML output bypassing the framework's auto-escaping",
+        75,
+        name_patterns: [/\bhtml_safe\b/i, /\bmark_safe\b/i, /\bdangerouslySetInnerHTML\b/, /\bformat_html\b/i],
+        source_patterns: [
+          /\.innerHTML\s*=/,
+          /\.outerHTML\s*=/,
+          /\bdocument\.write\s*\(/,
+          /\bdangerouslySetInnerHTML\b/,
+          /\{@html\b/,
+          /\bv-html\b/,
+          /\bMarkup\s*\(/,
+          /\bmark_safe\s*\(/,
+          /\|\s*safe\b/,
+          /\.html_safe\b/,
+          /\braw\s*\(/i,
+          /\bbypassSecurityTrust(Html|Script|Style|Url|ResourceUrl)\b/,
+        ]
+      ),
+      # Unsafe deserialization. RCE-class — anything that revives an
+      # attacker-controlled byte stream into a live object graph.
+      PatternDefinition.new(
+        "deserialization",
+        "Potential unsafe deserialization — attacker-controlled bytes revive into a live object graph (RCE class)",
+        86,
+        name_patterns: [/\bpickle\.loads\b/, /\bcPickle\.loads\b/, /\bdill\.loads\b/, /\bjsonpickle\.decode\b/, /\bunserialize\b/, /\bMarshal\.load\b/, /\breadObject\b/],
+        source_patterns: [
+          /\bpickle\.loads\s*\(/,
+          /\bcPickle\.loads\s*\(/,
+          /\bdill\.loads\s*\(/,
+          /\bjsonpickle\.decode\s*\(/,
+          /\byaml\.load\s*\(/, # yaml.load without SafeLoader
+          /\bMarshal\.load\s*\(/,
+          /\bunserialize\s*\(/,
+          /\bObjectInputStream\b.*\breadObject\b/m,
+          /\bXMLDecoder\b/,
+          /\bXStream\b.*\bfromXML\b/,
+          /\bBinaryFormatter\b.*\bDeserialize\b/,
+          /\bLosFormatter\b/,
+          /\bnode-serialize\b/,
+        ]
+      ),
+      # Server-side template injection. Distinct from template_render —
+      # SSTI specifically means the *template string itself* is built
+      # from user input. The patterns look for template-from-string
+      # constructors and `render_template_string`-style calls.
+      PatternDefinition.new(
+        "template_injection",
+        "Potential server-side template injection (SSTI) — template string itself may be attacker-controlled",
+        80,
+        name_patterns: [/\brender_template_string\b/, /\bfrom_string\b/, /\bTemplate\.compile\b/],
+        source_patterns: [
+          /\brender_template_string\s*\(/,
+          /\bEnvironment\(\)\.from_string\s*\(/,
+          /\bjinja2\.Template\s*\(/,
+          /\bERB\.new\s*\(/,
+          /\bLiquid::Template\.parse\s*\(/,
+          /\bHandlebars\.compile\s*\(/,
+          /\b_\.template\s*\(/,
+          /\bVelocity\.evaluate\s*\(/,
+        ]
+      ),
+      # In-process code evaluation. Sibling of command_exec but stays
+      # inside the runtime — eval / exec / Function() / instance_eval.
+      PatternDefinition.new(
+        "code_eval",
+        "Potential in-process code evaluation — attacker-controlled source executed by the runtime (RCE class)",
+        84,
+        name_patterns: [/\binstance_eval\b/, /\bclass_eval\b/, /\bcreate_function\b/],
+        source_patterns: [
+          /\beval\s*\(/,
+          /\bexec\s*\(/, # Python's exec (overlaps with shell exec but resolved by context)
+          /\bcompile\s*\([^)]*,\s*['"]exec['"]/,
+          /\bnew\s+Function\s*\(/,
+          /\bFunction\s*\([^)]*\)\s*\(/,
+          /\bsetTimeout\s*\(\s*['"]/, # setTimeout("string code", ...)
+          /\bsetInterval\s*\(\s*['"]/,
+          /\binstance_eval\s*\(/,
+          /\bclass_eval\s*\(/,
+          /\bbinding\.eval\s*\(/,
+          /\bcreate_function\s*\(/,
+          /\bassert\s*\(\s*\$/, # PHP assert($var) — eval-equivalent
+          /\bScriptEngine\b.*\beval\b/,
+        ]
+      ),
+      # Mass assignment — direct param/body → model write without
+      # explicit field allowlist. Tunes confidence down because well-
+      # structured apps with strong_params / DTO / Pydantic also
+      # surface this shape and aren't necessarily vulnerable.
+      PatternDefinition.new(
+        "mass_assignment",
+        "Potential mass-assignment — request params written into a model without an explicit field allowlist",
+        60,
+        name_patterns: [/\bupdate_attributes\b/, /\bassign_attributes\b/],
+        source_patterns: [
+          /\bupdate_attributes\s*\(/,
+          /\bassign_attributes\s*\(/,
+          /\.create\s*\(\s*params\b/,
+          /\.create\s*\(\s*req\.body\b/,
+          /\.update\s*\(\s*params\b/,
+          /\.update\s*\(\s*req\.body\b/,
+          /Object\.assign\s*\([^,]+,\s*req\.body\b/,
+          /_\.merge\s*\([^,]+,\s*req\.body\b/,
+        ]
+      ),
+      # Weak cryptography. Conservative — only flag when the snippet
+      # also looks security-relevant (password / token / signature /
+      # session). Plain MD5 on a cache key isn't worth flagging.
+      PatternDefinition.new(
+        "crypto_weak",
+        "Potential weak cryptographic primitive in a security-relevant context (MD5/SHA1 for auth, DES, ECB, non-CSPRNG random)",
+        56,
+        name_patterns: [/\bDigest::MD5\b/, /\bDigest::SHA1\b/, /\bhashlib\.md5\b/, /\bhashlib\.sha1\b/, /\bMessageDigest\.getInstance\b/],
+        source_patterns: [
+          /\bDigest::(MD5|SHA1)\b/,
+          /\bhashlib\.(md5|sha1)\s*\(/,
+          /\bMessageDigest\.getInstance\s*\(\s*['"](MD5|SHA-?1)['"]/,
+          /\bCipher\.(getInstance|new)\s*\(\s*['"]DES/,
+          /\bAES\/ECB\b/,
+          /\bMode::ECB\b/,
+          /\bRC4\b/,
+          /\bMath\.random\s*\(\s*\)/, # JS non-CSPRNG
+        ]
+      ),
     ] of PatternDefinition
 
     VALIDATOR_PATTERNS = [
@@ -93,28 +275,258 @@ module NoirAIContext
         name_patterns: [/\bsanitize\b/i, /\bescape\b/i, /\bencode\b/i, /\bnormalize\b/i, /\bclean\b/i],
         source_patterns: [/\bsanitize\w*\s*\(/i, /\bescape\w*\s*\(/i, /\bhtml_escape\b/i, /\bnormalize\w*\s*\(/i, /\bclean\w*\s*\(/i]
       ),
+      # Schema-based validation — Pydantic / Zod / Joi / marshmallow /
+      # JSON Schema. These give the strongest input-shape guarantee
+      # because they reject any field outside the declared schema.
+      # Worth a higher confidence than free-form validators.
+      PatternDefinition.new(
+        "schema_validation",
+        "Schema-based input validation (strong shape guarantee — rejects fields outside the declared schema)",
+        78,
+        name_patterns: [/\bBaseModel\b/, /\bparse_obj\b/, /\bmodel_validate\b/, /\bz\.object\b/, /\bjoi\.object\b/i, /\bjsonschema\b/i, /\bmarshmallow\b/i],
+        source_patterns: [
+          # Class definitions — `class X(BaseModel)` / `pydantic.BaseModel`
+          /\bclass\s+\w+\(\s*BaseModel\s*\)/,
+          /\bpydantic\.BaseModel\b/,
+          /\b\w+:\s*BaseModel\b/, # type hint `payload: BaseModel`
+          # Pydantic call-site validation — works whether the model
+          # is defined in the same file or imported.
+          /\.parse_obj\s*\(/,
+          /\.model_validate\s*\(/,
+          /\.parse_raw\s*\(/,
+          # Zod / Yup
+          /\bz\.(object|string|number|array)\s*\(/,
+          /\bschema\.parse\s*\(/,
+          /\bYup\.(object|string|number)\b/,
+          # Joi
+          /\bjoi\.object\s*\(/i,
+          /\bJoi\.validate\s*\(/,
+          # marshmallow
+          /\bSchema\(\)\.load\s*\(/,
+          # JSON Schema
+          /\bjsonschema\.validate\s*\(/,
+          /\bvalidate\s*\(\s*\w+,\s*schema\s*\)/i,
+        ]
+      ),
+      # Type coercion — parseInt / Integer / .to_i!. A weaker guard
+      # than schema validation but still useful evidence that the
+      # author considered the input type.
+      PatternDefinition.new(
+        "type_coercion",
+        "Type coercion on input — narrower than schema validation but still constrains the value",
+        50,
+        name_patterns: [/\bparseInt\b/, /\bparseFloat\b/, /\bInteger\b/, /\bFloat\b/, /\btoInt\b/, /\bto_i!\b/],
+        source_patterns: [
+          /\bparseInt\s*\(/,
+          /\bparseFloat\s*\(/,
+          /\bInteger\s*\(/,
+          /\bFloat\s*\(/,
+          /\b\.to_i!\b/,
+          /\b\.to_f!\b/,
+          /\bNumber\s*\(/,
+          /\bint\s*\(\s*request\./,
+        ]
+      ),
+      # Allowlist check — explicit `in ALLOWED` / `whitelist.include?`
+      # / `permitted_values.contains`. Often the cleanest defence for
+      # values where the legitimate set is small and known.
+      PatternDefinition.new(
+        "allowlist_check",
+        "Allowlist / membership check — value compared against a known-good fixed set",
+        62,
+        name_patterns: [/\bwhitelist\b/i, /\ballowlist\b/i, /\bpermitted_values\b/i],
+        source_patterns: [
+          /\bwhitelist\b/i,
+          /\ballowlist\b/i,
+          /\ballowed[_-]?values\b/i,
+          /\bpermitted_values\b/i,
+          /\bif\s+\w+\s+in\s+[A-Z_][A-Z0-9_]+\b/, # `if value in ALLOWED_*`
+          /\b\bALLOWED_[A-Z_]+\.(include|contains)/,
+          /\.include\?\s*\(\s*\w+\s*\)\s*(?:or|\|\|)/, # very loose, low priority
+          /\bin\s*\[[\w\s,'"]+\]/i,                    # `if v in ['a','b']`
+        ]
+      ),
     ] of PatternDefinition
 
-    GUARD_PATTERNS = [
+    # ----- Guards -----
+    #
+    # Split into four narrow groups so the LLM (and human reviewers)
+    # can tell *which* layer is protecting a route. A route with
+    # authentication but no authorization is a privilege-escalation
+    # candidate; a route with authentication but no CSRF protection
+    # is a cross-site request candidate; etc.
+    #
+    # The legacy single `guard` kind was too coarse: a `before_action
+    # :authenticate_user!` and a `before_action :authorize_admin!`
+    # would both surface as the same flat "guard", losing the
+    # distinction reviewers actually care about.
+
+    # Authentication guard — "verifies who you are". Login required,
+    # JWT verification, session check.
+    AUTH_GUARD_PATTERNS = [
       PatternDefinition.new(
-        "guard",
-        "Potential authz/authn guard inferred from nearby source",
-        52,
+        "auth_guard",
+        "Potential authentication guard — checks who the caller is",
+        56,
         source_patterns: [
           /passport\.authenticate/i,
           /expressjwt/i,
           /\bauthenticate\w*\b/i,
-          /\bauthorize\w*\b/i,
-          /\brequireAuth\b/i,
           /\bverifyToken\b/i,
-          /\bcheckPermission\b/i,
+          /\brequireAuth\b/i,
+          /\blogin_required\b/i,
+          /\bjwt_required\b/i,
           /Depends\s*\(\s*get_current_/i,
-          /Security\s*\(/i,
           /before_action\s+:\w*auth/i,
           /\.Use\s*\(\s*\w*Auth\w*/i,
         ]
       ),
     ] of PatternDefinition
+
+    # Authorization guard — "verifies what you can do". Role,
+    # permission, ability, policy checks. Distinct from authentication
+    # because the common security gap is "logged in but no further
+    # check" → horizontal / vertical privilege escalation.
+    AUTHZ_GUARD_PATTERNS = [
+      PatternDefinition.new(
+        "authz_guard",
+        "Potential authorization guard — checks what the authenticated caller may do",
+        60,
+        source_patterns: [
+          /\bauthorize\w*\b/i,
+          /\bcheckPermission\b/i,
+          /\bhasAuthority\b/i,
+          /\brequiresRole\b/i,
+          /\brole_required\b/i,
+          /\badmin_required\b/i,
+          /@PreAuthorize\b/,
+          /@RolesAllowed\b/,
+          /@Secured\b/,
+          /Security\s*\(/,
+          /\bPundit\b.*\bauthorize\b/i,
+          /\bcan\?\s*\(/,
+          /\b(can|cannot)\s+:[\w_!?]+/,
+          /\bability\.\w+/i,
+        ]
+      ),
+    ] of PatternDefinition
+
+    # CSRF protection. Different layer from authn/authz — protects
+    # against cross-site request forgery via tokens / SameSite cookies
+    # / origin checks. Absent on state-changing endpoints is usually
+    # worth a review note.
+    CSRF_GUARD_PATTERNS = [
+      PatternDefinition.new(
+        "csrf_guard",
+        "Potential CSRF protection — token check, SameSite cookie policy, or origin check",
+        70,
+        source_patterns: [
+          /\bprotect_from_forgery\b/,
+          /\bcsrf_token\b/,
+          /\bcsrfProtection\b/,
+          /\bCsrf(Token)?Filter\b/,
+          /\bCSRFGuard\b/,
+          /verify_authenticity_token/,
+          /@csrf_protect\b/,
+          /\bSameSite\b.*\bStrict\b/i,
+        ]
+      ),
+    ] of PatternDefinition
+
+    # Rate limiting / throttling. Often the only defence on
+    # credential-handling endpoints against credential stuffing /
+    # brute-force. Confidence is moderate because not every endpoint
+    # needs rate limiting (only credential / lookup-style ones).
+    RATE_LIMIT_GUARD_PATTERNS = [
+      PatternDefinition.new(
+        "rate_limit_guard",
+        "Potential rate-limit / throttling layer",
+        64,
+        source_patterns: [
+          /\bThrottle\b/,
+          /\bRateLimiter\b/,
+          /@limits?\s*\(/,
+          /@limiter\b/,
+          /\bflask[-_]limiter\b/i,
+          /\bslowapi\b/i,
+          /\bratelimit\b/i,
+          /\.throttle\s*\(/,
+          /Bucket(Token)?\b/,
+        ]
+      ),
+    ] of PatternDefinition
+
+    GUARD_PATTERN_GROUPS = [
+      AUTH_GUARD_PATTERNS,
+      AUTHZ_GUARD_PATTERNS,
+      CSRF_GUARD_PATTERNS,
+      RATE_LIMIT_GUARD_PATTERNS,
+    ]
+
+    # Negative protection: explicit CSRF bypass. Emit as a SIGNAL
+    # (not a guard) so the LLM knows protection is intentionally
+    # disabled here and the endpoint warrants extra scrutiny.
+    CSRF_EXEMPT_PATTERNS = [
+      PatternDefinition.new(
+        "csrf_exempt",
+        "Explicit CSRF protection bypass — review whether the exemption is justified",
+        80,
+        source_patterns: [
+          /@csrf_exempt\b/,
+          /\bcsrf_exempt\s*\(/,
+          /protect_from_forgery\s+with:\s*:null_session/,
+          /\.disable\s*\(\s*\.?csrf/i,
+          /csrfProtection:\s*false/i,
+          /@SuppressWarnings\(.*csrf.*\)/i,
+        ]
+      ),
+    ] of PatternDefinition
+
+    # JWT verification bypass — explicit "trust whatever we
+    # received without checking" shapes across pyjwt / jsonwebtoken
+    # / java-jwt / ruby-jwt. Each pattern is a single-line dead
+    # giveaway, surfaced as a sharp signal alongside csrf_exempt /
+    # cors_open. The kind is `jwt_unsafe` so consumers can sort it
+    # next to csrf_exempt.
+    JWT_UNSAFE_PATTERNS = [
+      PatternDefinition.new(
+        "jwt_unsafe",
+        "JWT verification is disabled or weakened — token contents become attacker-controlled",
+        82,
+        source_patterns: [
+          # pyjwt — `verify=False` / `verify_signature: False`
+          # (quoted in dict literals: `"verify_signature": False`).
+          # The optional `['"]?` before the colon handles JSON-style
+          # key quoting.
+          /\bjwt\.decode\s*\([^)]*verify\s*=\s*False/i,
+          /\bverify_signature['"]?\s*:\s*False/i,
+          /\bverify_signature\s*=\s*False/i,
+          # algorithm "none" — pyjwt / jsonwebtoken / java-jwt
+          /algorithms?['"]?\s*[:=]\s*\[?\s*['"]none['"]/i,
+          /algorithm['"]?\s*[:=]\s*['"]none['"]/i,
+          # jsonwebtoken (node) — ignoreExpiration weakens validation
+          /ignoreExpiration['"]?\s*:\s*true/i,
+          # java-jwt — Algorithm.none()
+          /Algorithm\.none\s*\(/,
+          # ruby-jwt — verify: false / verify => false
+          /\bJWT\.decode\s*\([^)]*verify\s*=>\s*false/i,
+          /\bJWT\.decode\s*\([^)]*verify:\s*false/i,
+        ]
+      ),
+    ] of PatternDefinition
+
+    # CORS open-with-credentials. Wildcard `*` origin combined with
+    # `credentials: true` is the textbook CORS misconfiguration —
+    # browsers actually block this combination at the spec level for
+    # security reasons, so seeing it in code means either the
+    # config is broken or the developer is reaching for something
+    # the spec forbids. Either way, worth a sharp signal.
+    #
+    # The check is order-independent across two regex windows so
+    # `origin: '*'` followed by `credentials: true` and the reverse
+    # both fire.
+    CORS_WILDCARD_PATTERN    = /\b(?:origin|origins?)\s*[:=]\s*['"]\*['"]/i
+    CORS_CREDENTIALS_PATTERN = /\b(?:credentials|allow[_-]?credentials|allowCredentials)\s*[:=]\s*(?:true|['"]true['"])/i
 
     PARAM_PATTERNS = [
       PatternDefinition.new(
@@ -147,6 +559,34 @@ module NoirAIContext
         70,
         name_patterns: [/\b(sort|order|filter|where|search|select|field|column)\b/i]
       ),
+      # PII (personally identifiable info). Worth a review note for
+      # storage / logging / retention even when no specific sink is
+      # nearby. Confidence high — these names rarely co-opt for
+      # unrelated purposes.
+      PatternDefinition.new(
+        "pii_input",
+        "Personally identifiable information; review storage, logging, retention, and access controls",
+        78,
+        name_patterns: [/\b(email|e[-_]?mail|phone|mobile|ssn|tax[_-]?id|dob|date[_-]?of[_-]?birth|birthdate|nin|national[_-]?id|passport|driver[_-]?license)\b/i]
+      ),
+      # Rich content fields. Common XSS source — body / description /
+      # comment / markdown almost always flow into a render path and
+      # need either escaping or a strict schema.
+      PatternDefinition.new(
+        "html_content_input",
+        "Rich-content input may flow into HTML output; review escaping or schema validation",
+        72,
+        name_patterns: [/\b(content|body|description|html|message|comment|note|memo|markdown|rich[_-]?text)\b/i]
+      ),
+      # Code / formula / template fields. High-risk XSS+SSTI+eval
+      # source class. If an endpoint accepts these names, the
+      # downstream sinks deserve closer scrutiny.
+      PatternDefinition.new(
+        "code_input",
+        "Code/script-like input often flows into eval, template, or interpreter sinks",
+        80,
+        name_patterns: [/\b(script|code|formula|expression|command|cmd|template|query[_-]?string)\b/i]
+      ),
     ] of PatternDefinition
 
     @file_cache : Hash(String, Array(String))
@@ -178,9 +618,381 @@ module NoirAIContext
       add_tag_entries(context, endpoint, anchor, route_snippet)
       add_callee_entries(context, endpoint)
       add_source_scan_entries(context, endpoint)
+      add_credential_from_source_signal(context, endpoint, anchor)
       add_missing_guard_signal(context, endpoint, anchor, route_snippet)
+      add_combination_signals(context, endpoint, anchor, route_snippet)
 
       context
+    end
+
+    # Derived signals that depend on multiple primary signals being
+    # present. Run last so every prior populate step has a chance to
+    # contribute.
+    private def add_combination_signals(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
+      add_open_redirect_signal(context, anchor, route_snippet)
+      add_ssrf_signal(context, anchor, route_snippet)
+      add_path_traversal_signal(context, anchor, route_snippet)
+      add_sensitive_response_signal(context, endpoint, anchor, route_snippet)
+      add_unsafe_method_signal(context, endpoint, anchor, route_snippet)
+      add_log_injection_signal(context, endpoint, anchor, route_snippet)
+      add_priority_review_signal(context, endpoint, anchor, route_snippet)
+    end
+
+    # SSRF candidate: handler has an outbound_http sink AND a URL-
+    # like input (redirect_input param covers url/uri/redirect/
+    # return/next/dest/callback — all the names that typically
+    # carry attacker-controlled URLs into server-side fetches).
+    private def add_ssrf_signal(context : AIContext, anchor : PathInfo?, route_snippet : String?)
+      return unless context.sinks.any? { |s| s.kind == "outbound_http" }
+      return unless context.signals.any? { |s| s.kind == "redirect_input" }
+      return if context.signals.any? { |s| s.kind == "ssrf" }
+
+      outbound = context.sinks.find! { |s| s.kind == "outbound_http" }
+      context.push_signal(AIContextEntry.new(
+        "ssrf",
+        outbound.name,
+        source: "heuristic",
+        description: "Handler makes an outbound HTTP request alongside a URL-like input — classic SSRF signature. Review whether the destination is validated against an allowlist of hosts/schemes.",
+        path: anchor.try(&.path) || outbound.path,
+        line: anchor.try(&.line) || outbound.line,
+        confidence: 72,
+        snippet: route_snippet || outbound.snippet
+      ))
+    end
+
+    # Path-traversal candidate: handler has a *code-derived* file_io
+    # sink AND a file-like input. The "code-derived" qualifier is
+    # what keeps this honest: the FileUpload tagger pushes a
+    # `file_io` sink to flag the endpoint as a file-handling route,
+    # but receiving a multipart upload doesn't itself imply that
+    # the file's PATH is attacker-controlled. The traversal pattern
+    # specifically wants `File.read(filename_from_user)` style sinks,
+    # not "endpoint accepts file content as bytes".
+    private def add_path_traversal_signal(context : AIContext, anchor : PathInfo?, route_snippet : String?)
+      code_derived_file_sink = context.sinks.find do |s|
+        s.kind == "file_io" && s.source != "FileUpload"
+      end
+      return unless code_derived_file_sink
+      return unless context.signals.any? { |s| s.kind == "file_input" }
+      return if context.signals.any? { |s| s.kind == "path_traversal" }
+
+      context.push_signal(AIContextEntry.new(
+        "path_traversal",
+        code_derived_file_sink.name,
+        source: "heuristic",
+        description: "Handler performs file I/O alongside a path/filename-like input. Review for `../` traversal and ensure the resolved path stays inside an allow-listed root.",
+        path: anchor.try(&.path) || code_derived_file_sink.path,
+        line: anchor.try(&.line) || code_derived_file_sink.line,
+        confidence: 68,
+        snippet: route_snippet || code_derived_file_sink.snippet
+      ))
+    end
+
+    # Concrete review-worthy signal kinds. These are the "this is
+    # actually scary" categories — not the structural ones
+    # (`route_definition`, `technology`, `path_param`) that every
+    # endpoint surfaces.
+    REVIEW_PRIORITY_SIGNAL_KINDS = Set{
+      "guard_absence",
+      "authz_absence",
+      "rate_limit_absence",
+      "idor_review",
+      "csrf_exempt",
+      "jwt_unsafe",
+      "cors_open",
+      "open_redirect",
+      "ssrf",
+      "path_traversal",
+      "sensitive_response",
+      "unsafe_method",
+      "log_injection",
+    }
+
+    # Categories whose mere presence is a security-review signal —
+    # used alongside concrete signals to compute the overall
+    # priority bucket.
+    PRIORITY_SCORING_SINK_BLACKLIST = Set{
+      "sql", "command_exec", "code_eval", "deserialization",
+      "template_injection", "xss", "mass_assignment", "crypto_weak",
+    }
+
+    # Roll-up "this endpoint deserves attention" hint. Counts the
+    # concrete review-worthy signals and sink kinds the augmentor
+    # already raised, and emits one of three buckets — high / medium
+    # / low — so an LLM (or a human triage pass) can sort the JSON
+    # output by priority without re-implementing the scoring.
+    #
+    # Confidence is fixed per bucket (high / medium / low) so the
+    # signal stays trivially filterable: `select(.confidence >= 80)`
+    # gives just the high-priority routes.
+    private def add_priority_review_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
+      return if context.signals.any? { |s| s.kind == "priority_review" }
+
+      review_signals = context.signals.count { |s| REVIEW_PRIORITY_SIGNAL_KINDS.includes?(s.kind) }
+      heavy_sinks = context.sinks.count { |s| PRIORITY_SCORING_SINK_BLACKLIST.includes?(s.kind) }
+
+      score = review_signals + heavy_sinks
+      # `csrf_exempt` / `jwt_unsafe` / `cors_open` / `open_redirect`
+      # are individually loud enough to bump the bucket even when
+      # other signals are quiet — explicit protection-bypass /
+      # well-known misconfiguration classes that don't need a
+      # second supporting signal to be worth surfacing.
+      #
+      # csrf_exempt is method-gated: CSRF only protects state-
+      # changing methods, so an @csrf_exempt decorator on a GET /
+      # HEAD endpoint (often the GET-side of a `methods=['GET',
+      # 'POST']` Flask split) has no security impact. Don't let it
+      # bump priority on those routes.
+      method_safe = SAFE_METHODS.includes?(endpoint.method)
+      sharp_signal = context.signals.any? do |s|
+        case s.kind
+        when "csrf_exempt"
+          !method_safe
+        when "open_redirect", "jwt_unsafe", "cors_open"
+          true
+        else
+          false
+        end
+      end
+      score += 1 if sharp_signal
+
+      return if score < 2 # don't pollute every endpoint with low-signal entries
+
+      # Threshold rationale: a "missing guard + dangerous sink" pair
+      # (e.g. guard_absence + sql sink, score=2) is the classic
+      # textbook signal. We want that to surface, but not as "high"
+      # — high is reserved for stacked risk (multiple missing
+      # protections AND a sink, or a sharp signal like csrf_exempt
+      # / open_redirect already screaming for attention).
+      bucket = if score >= 3 || (sharp_signal && score >= 2) || heavy_sinks >= 2
+                 {name: "high", confidence: 90,
+                  description: "High-priority review candidate — multiple risk signals stack on this endpoint (combination of missing guards, dangerous sinks, or explicit protection bypasses)."}
+               else
+                 {name: "medium", confidence: 70,
+                  description: "Medium-priority review candidate — at least one missing guard and one risky sink (or equivalent) co-occur on this endpoint."}
+               end
+
+      context.push_signal(AIContextEntry.new(
+        "priority_review",
+        bucket[:name],
+        source: "heuristic",
+        description: bucket[:description].as(String),
+        path: anchor.try(&.path),
+        line: anchor.try(&.line),
+        confidence: bucket[:confidence].as(Int32),
+        snippet: route_snippet
+      ))
+    end
+
+    # HTTP method intent vs implementation mismatch. A GET/HEAD
+    # endpoint that mutates server state through a callee
+    # (`User.create`, `record.destroy`, `db.delete`, …) is a textbook
+    # CSRF / side-effect-on-read bug — the verb says "safe / idempotent"
+    # but the code says otherwise.
+    SAFE_METHODS = Set{"GET", "HEAD", "OPTIONS"}
+
+    # Each verb may be followed by additional word chars
+    # (`destroy_all`, `createMany`, `deleteOne`, `updateUser`), so we
+    # don't anchor with a trailing `\b` — that would miss those
+    # suffixed forms because `_` and word continuation count as the
+    # same word in regex.
+    MUTATING_CALLEE_PATTERN = /\b(create|destroy|delete|update|save|insert|remove|drop|truncate|persist|flush|commit|rollback|set_)\w*/i
+
+    # Suppression for unsafe_method: route handlers that branch on
+    # `request.method` (Flask / Django) or `req.method` (Express,
+    # Node, Go's r.Method, Java's request.getMethod()) typically
+    # register a single route under multiple methods. Analyzers
+    # split that into one endpoint per method but share the
+    # callees list. The mutating callee in the GET endpoint is
+    # often the POST branch's call, not actually reachable via GET.
+    METHOD_DISPATCH_PATTERN = /(?:request\.method\s*==|req\.method\s*==|r\.Method\s*==|request\.getMethod\(\)\s*\.equals|\.match\(\s*['"](?:GET|POST|PUT|PATCH|DELETE)['"])/i
+
+    private def add_unsafe_method_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
+      return unless SAFE_METHODS.includes?(endpoint.method)
+      return if context.signals.any? { |s| s.kind == "unsafe_method" }
+
+      mutating = endpoint.callees.find(&.name.matches?(MUTATING_CALLEE_PATTERN))
+      return unless mutating
+
+      # If the handler dispatches on HTTP method internally, we
+      # can't tell from the callee list alone which branch the
+      # mutation lives in — better to skip the signal than fire it
+      # falsely. The augmentor would also emit it on the genuinely
+      # state-changing endpoint (POST/PUT/DELETE) for the same
+      # route, where it doesn't apply (state-change is expected).
+      if route_snippet && route_snippet.matches?(METHOD_DISPATCH_PATTERN)
+        return
+      end
+      endpoint.details.code_paths.each do |path_info|
+        scope = route_scope_snippet_for(path_info.path, path_info.line)
+        if scope && scope.matches?(METHOD_DISPATCH_PATTERN)
+          return
+        end
+      end
+
+      context.push_signal(AIContextEntry.new(
+        "unsafe_method",
+        "#{endpoint.method} → #{mutating.name}",
+        source: "heuristic",
+        description: "Safe-method (GET/HEAD/OPTIONS) endpoint invokes a state-changing callee; CSRF protections typically don't gate read methods, so a mutation through one is suspect.",
+        path: mutating.path || anchor.try(&.path),
+        line: mutating.line || anchor.try(&.line),
+        confidence: 56,
+        snippet: route_snippet
+      ))
+    end
+
+    # Log injection / sensitive data in logs. Catches the canonical
+    # "log user input or credential field directly" shape. False
+    # positives are bounded because both the log call AND a user-
+    # input reference (or credential noun) need to be on the same
+    # line / snippet window.
+    LOG_EMITTER_PATTERN = /\b(?:logger\.(?:info|warn|warning|error|debug|critical|fatal)|log\.(?:info|warn|warning|error|debug)|console\.(?:log|info|warn|error|debug)|print|puts|printf|System\.out\.println|Log\.[dwiev])\b/i
+
+    LOG_INPUT_OR_CRED_PATTERN = /\b(?:req\.body|req\.query|req\.params|request\.form|request\.json|request\.args|params\[|password|passwd|token|secret|api[_-]?key|jwt|session_id|access_token|refresh_token)\b/i
+
+    private def add_log_injection_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
+      return if context.signals.any? { |s| s.kind == "log_injection" }
+      return if endpoint.details.code_paths.empty?
+
+      endpoint.details.code_paths.each do |path_info|
+        scope = route_scope_snippet_for(path_info.path, path_info.line)
+        next unless scope
+        next unless scope.matches?(LOG_EMITTER_PATTERN)
+        next unless scope.matches?(LOG_INPUT_OR_CRED_PATTERN)
+
+        context.push_signal(AIContextEntry.new(
+          "log_injection",
+          "log+input",
+          source: "route_source",
+          description: "Handler logs request-controlled or credential-bearing data; review for log-injection (newline/control-char smuggling) and sensitive-data leakage into log sinks.",
+          path: path_info.path,
+          line: path_info.line,
+          confidence: 50,
+          snippet: scope
+        ))
+        return
+      end
+    end
+
+    # Open-redirect candidate: handler has a redirect sink AND
+    # accepts a redirect-like input (url / uri / next / dest /
+    # callback / return / continue). Either alone is normal; the
+    # combination is the textbook open-redirect signature.
+    private def add_open_redirect_signal(context : AIContext, anchor : PathInfo?, route_snippet : String?)
+      return unless context.sinks.any? { |s| s.kind == "redirect" }
+      return unless context.signals.any? { |s| s.kind == "redirect_input" }
+      return if context.signals.any? { |s| s.kind == "open_redirect" }
+
+      redirect_sink = context.sinks.find! { |s| s.kind == "redirect" }
+      context.push_signal(AIContextEntry.new(
+        "open_redirect",
+        redirect_sink.name,
+        source: "heuristic",
+        description: "Handler redirects using a user-controlled-looking input — classic open-redirect signature. Review whether the destination is validated against an allowlist.",
+        path: anchor.try(&.path) || redirect_sink.path,
+        line: anchor.try(&.line) || redirect_sink.line,
+        confidence: 72,
+        snippet: route_snippet || redirect_sink.snippet
+      ))
+    end
+
+    # Sensitive-response detection runs as a two-step check on the
+    # route-scope snippet:
+    #
+    #   1. RESPONSE_EMITTER_PATTERN — the snippet calls a response-
+    #      serializing helper (`res.json`, `jsonify`, `render json:`,
+    #      `to_json`, `JsonResponse`, …).
+    #   2. CREDENTIAL_KEY_IN_RESPONSE — the snippet also has a
+    #      credential noun *as a key* (followed by `:`, and not
+    #      preceded by a quote or word character — so the noun
+    #      appearing inside a string value like
+    #      `{ message: "Set X-API-KEY header" }` doesn't fire).
+    #
+    # Both have to match in the same scope. The earlier single-regex
+    # version was too loose and caught english prose mentioning
+    # credentials in response strings.
+    RESPONSE_EMITTER_PATTERN   = /\b(jsonify|res\.json|json_response|JsonResponse|render\s+json:|to_json|respond_with)\b/i
+    CREDENTIAL_KEY_IN_RESPONSE = /[^"'\w](password|passwd|token|secret|api[_-]?key|session_id|access_token|refresh_token|private_key)\s*:/i
+
+    private def add_sensitive_response_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
+      return if context.signals.any? { |s| s.kind == "sensitive_response" }
+      return if endpoint.details.code_paths.empty?
+
+      endpoint.details.code_paths.each do |path_info|
+        scope = route_scope_snippet_for(path_info.path, path_info.line)
+        next unless scope
+        next unless scope.matches?(RESPONSE_EMITTER_PATTERN)
+        if match = scope.match(CREDENTIAL_KEY_IN_RESPONSE)
+          field = match[1]? || "credential"
+          context.push_signal(AIContextEntry.new(
+            "sensitive_response",
+            field.downcase,
+            source: "route_source",
+            description: "Response body appears to include a credential-bearing field; review whether it's intentional and whether the field is stripped/masked for the caller's role.",
+            path: path_info.path,
+            line: path_info.line,
+            confidence: 68,
+            snippet: scope
+          ))
+          return
+        end
+      end
+    end
+
+    # Some analyzers (express's loose destructuring, Java route extractors
+    # that don't follow `@RequestBody Credentials c.password`, …) miss
+    # credential-bearing parameters at extract time. When that happens
+    # the param-based credential_input signal never fires and downstream
+    # heuristics like rate_limit_absence silently skip the route.
+    #
+    # As a backstop, scan the route-scope snippet for the canonical
+    # request-body destructuring shapes (`req.body.password`,
+    # `request.form['password']`, `{ password } = req.body`, …) and
+    # emit a credential_input signal with a slightly lower confidence
+    # than the param-based one. The kind is the same so downstream
+    # rate_limit_absence / guard_absence logic catches it transparently.
+    CREDENTIAL_SOURCE_PATTERNS = [
+      # JS/TS destructuring: `const { password, token } = req.body`
+      /(?:const|let|var)\s*\{[^}]*\b(password|passwd|token|secret|api[_-]?key|jwt|bearer)\b[^}]*\}\s*=\s*req\.body/i,
+      # JS member access: `req.body.password`, `req.body.token`, …
+      /\breq\.body\.(password|passwd|token|secret|api[_-]?key|jwt|bearer)\b/i,
+      # Python form/json access: `request.form['password']`, `request.json['token']`
+      /\brequest\.(form|json|data)\[\s*['"](password|passwd|token|secret|api[_-]?key|jwt|bearer)['"]/i,
+      # Python attribute access (FastAPI / DRF): `payload.password`,
+      # `credentials.token` — tighter scope so generic `.password`
+      # access doesn't fire.
+      /\b(payload|credentials|creds|input|body)\.(password|passwd|token|secret|api[_-]?key|jwt|bearer)\b/i,
+      # Java/Kotlin field access on a DTO marked @RequestBody: `c.password`
+      # is too generic alone; require the credential noun directly.
+      /\b(password|passwd|token|secret|api[_-]?key|jwt|bearer)\s*=\s*req\./i,
+    ]
+
+    private def add_credential_from_source_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?)
+      return if context.signals.any? { |s| s.kind == "credential_input" }
+      return if endpoint.details.code_paths.empty?
+
+      endpoint.details.code_paths.each do |path_info|
+        snippet = route_scope_snippet_for(path_info.path, path_info.line)
+        next unless snippet
+
+        CREDENTIAL_SOURCE_PATTERNS.each do |pattern|
+          if match = snippet.match(pattern)
+            captured = match[1]? || match[0]
+            context.push_signal(AIContextEntry.new(
+              "credential_input",
+              "source.#{captured.downcase}",
+              source: "route_source",
+              description: "Credential-like identifier observed in handler body (analyzer did not surface it as a parameter); review secret handling and auth bypass paths.",
+              path: path_info.path,
+              line: path_info.line,
+              confidence: 64,
+              snippet: snippet
+            ))
+            return # one credential_input from source is enough
+          end
+        end
+      end
     end
 
     private def add_route_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
@@ -388,8 +1200,14 @@ module NoirAIContext
       endpoint.details.code_paths.each do |path_info|
         route_scope = route_scope_snippet_for(path_info.path, path_info.line)
 
-        if context.guards.empty?
-          if guard = detect_from_patterns("", route_scope, GUARD_PATTERNS, path_info.path, path_info.line, "route_source")
+        # Try each guard category independently — a route can be
+        # protected by authn, authz, csrf, and rate-limit at once,
+        # and the LLM should see every layer that's present so it
+        # can reason about which one is missing.
+        GUARD_PATTERN_GROUPS.each do |patterns|
+          kind = patterns.first.kind
+          next if context.guards.any? { |g| g.kind == kind }
+          if guard = detect_from_patterns("", route_scope, patterns, path_info.path, path_info.line, "route_source")
             context.push_guard(guard)
           end
         end
@@ -397,14 +1215,60 @@ module NoirAIContext
         snippet = route_scope || snippet_for(path_info.path, path_info.line, SOURCE_SCAN_RADIUS)
         next if snippet.nil?
 
-        if context.sinks.empty?
-          if sink = detect_from_patterns("", snippet, SINK_PATTERNS, path_info.path, path_info.line, "route_source")
+        # Explicit CSRF bypass is a negative signal: protection is
+        # disabled here on purpose, but the reviewer should confirm
+        # the justification.
+        CSRF_EXEMPT_PATTERNS.each do |pattern|
+          next if context.signals.any? { |s| s.kind == "csrf_exempt" }
+          if entry = detect_single_pattern(pattern, "", snippet, path_info.path, path_info.line, "route_source")
+            context.push_signal(entry)
+          end
+        end
+
+        # JWT verification bypass — same family as csrf_exempt.
+        JWT_UNSAFE_PATTERNS.each do |pattern|
+          next if context.signals.any? { |s| s.kind == "jwt_unsafe" }
+          if entry = detect_single_pattern(pattern, "", snippet, path_info.path, path_info.line, "route_source")
+            context.push_signal(entry)
+          end
+        end
+
+        # CORS open-with-credentials: needs BOTH patterns in the
+        # snippet to be a real misconfiguration. A wildcard origin
+        # without credentials is fine (public APIs do this); a
+        # credentials-true config without a wildcard origin is fine
+        # (just sets a sensible CORS). It's the combination that
+        # bites.
+        unless context.signals.any? { |s| s.kind == "cors_open" }
+          if snippet.matches?(CORS_WILDCARD_PATTERN) && snippet.matches?(CORS_CREDENTIALS_PATTERN)
+            context.push_signal(AIContextEntry.new(
+              "cors_open",
+              "origin=* + credentials=true",
+              source: "route_source",
+              description: "CORS configured with wildcard origin AND credentials — browsers reject this combination at the spec level, so either the config is broken or the developer is intentionally weakening cross-origin policy. Either way, review.",
+              path: path_info.path,
+              line: path_info.line,
+              confidence: 84,
+              snippet: snippet
+            ))
+          end
+        end
+
+        # Try every sink pattern, not just the first. Stops at one
+        # match per `kind`, so the same SQL pattern firing twice won't
+        # double-emit but a route that's both `xss` and `sql` will
+        # surface both. Previously we capped the whole route at one
+        # sink, which silently dropped the second / third class.
+        SINK_PATTERNS.each do |pattern|
+          next if context.sinks.any? { |s| s.kind == pattern.kind }
+          if sink = detect_single_pattern(pattern, "", snippet, path_info.path, path_info.line, "route_source")
             context.push_sink(sink)
           end
         end
 
-        if context.validators.empty?
-          if validator = detect_from_patterns("", snippet, VALIDATOR_PATTERNS, path_info.path, path_info.line, "route_source")
+        VALIDATOR_PATTERNS.each do |pattern|
+          next if context.validators.any? { |v| v.kind == pattern.kind }
+          if validator = detect_single_pattern(pattern, "", snippet, path_info.path, path_info.line, "route_source")
             context.push_validator(validator)
           end
         end
@@ -413,9 +1277,58 @@ module NoirAIContext
 
     private def add_missing_guard_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
       return unless STATE_CHANGING_METHODS.includes?(endpoint.method)
+
+      has_authn = context.guards.any? { |g| g.kind == "auth_guard" }
+      has_authz = context.guards.any? { |g| g.kind == "authz_guard" }
+      has_rate_limit = context.guards.any? { |g| g.kind == "rate_limit_guard" }
+      path_id_param = endpoint.params.any? { |p| p.param_type == "path" && identifier_like?(p.name) }
+
+      # Authentication is present but no authorization check is —
+      # classic privilege escalation candidate. Especially noisy on
+      # routes that take a path identifier (could touch another
+      # user's object), but worth surfacing in either case.
+      if has_authn && !has_authz && path_id_param
+        context.push_signal(AIContextEntry.new(
+          "authz_absence",
+          endpoint.url,
+          source: "heuristic",
+          description: "Authenticated endpoint uses a path identifier with no authorization check detected; review for horizontal / vertical privilege escalation.",
+          path: anchor.try(&.path),
+          line: anchor.try(&.line),
+          confidence: 44,
+          snippet: route_snippet
+        ))
+      end
+
+      # Rate-limit absence is informational — only emit on
+      # credential-bearing endpoints where it actually matters (login,
+      # password reset, OTP). General state-changing endpoints don't
+      # always need rate limiting. Also accepts source-scanned
+      # credential_input signals (analyzer missed the param) so
+      # destructured login handlers still light up.
+      credential_param = endpoint.params.any? do |p|
+        PARAM_PATTERNS.find { |pattern| pattern.kind == "credential_input" }.try do |pattern|
+          matches_any?(p.name, pattern.name_patterns)
+        end
+      end
+      credential_signal = context.signals.any? { |s| s.kind == "credential_input" }
+      if (credential_param || credential_signal) && !has_rate_limit
+        context.push_signal(AIContextEntry.new(
+          "rate_limit_absence",
+          endpoint.url,
+          source: "heuristic",
+          description: "Credential-handling endpoint with no rate-limit / throttling layer detected; review for credential stuffing and brute-force exposure.",
+          path: anchor.try(&.path),
+          line: anchor.try(&.line),
+          confidence: 32,
+          snippet: route_snippet
+        ))
+      end
+
+      # Existing authn-absence flow (preserves v1.0 behaviour).
       return unless context.guards.empty?
 
-      if endpoint.params.any? { |param| param.param_type == "path" && identifier_like?(param.name) }
+      if path_id_param
         context.push_signal(AIContextEntry.new(
           "idor_review",
           endpoint.url,
@@ -458,27 +1371,42 @@ module NoirAIContext
                                      line : Int32?,
                                      source : String) : AIContextEntry?
       patterns.each do |pattern|
-        next if suppress_pattern_detection?(pattern.kind, name, snippet)
-
-        name_match = name_match_text(name, pattern.name_patterns)
-        snippet_match = snippet_match_text(snippet, pattern.source_patterns)
-        next unless name_match || snippet_match
-        next if source == "callee" && name_match.nil?
-
-        evidence_name = name_match || snippet_match || pattern.kind
-        return AIContextEntry.new(
-          pattern.kind,
-          evidence_name,
-          source: source,
-          description: pattern.description,
-          path: path,
-          line: line,
-          confidence: source == "route_source" ? pattern.confidence - 12 : pattern.confidence,
-          snippet: snippet
-        )
+        if entry = detect_single_pattern(pattern, name, snippet, path, line, source)
+          return entry
+        end
       end
 
       nil
+    end
+
+    # Single-pattern variant of `detect_from_patterns`. Pulled out so
+    # `add_source_scan_entries` can iterate every sink/validator
+    # pattern independently (one match per kind), where the legacy
+    # behaviour stopped at the first match across the whole list.
+    private def detect_single_pattern(pattern : PatternDefinition,
+                                      name : String,
+                                      snippet : String?,
+                                      path : String?,
+                                      line : Int32?,
+                                      source : String) : AIContextEntry?
+      return if suppress_pattern_detection?(pattern.kind, name, snippet)
+
+      name_match = name_match_text(name, pattern.name_patterns)
+      snippet_match = snippet_match_text(snippet, pattern.source_patterns)
+      return unless name_match || snippet_match
+      return if source == "callee" && name_match.nil?
+
+      evidence_name = name_match || snippet_match || pattern.kind
+      AIContextEntry.new(
+        pattern.kind,
+        evidence_name,
+        source: source,
+        description: pattern.description,
+        path: path,
+        line: line,
+        confidence: source == "route_source" ? pattern.confidence - 12 : pattern.confidence,
+        snippet: snippet
+      )
     end
 
     private def suppress_pattern_detection?(kind : String, name : String, snippet : String?) : Bool
@@ -493,6 +1421,30 @@ module NoirAIContext
       when "outbound_http"
         return true if name.starts_with?("request.")
         return true if name == "request"
+      when "crypto_weak"
+        # Weak hash primitives are common for non-security uses (cache
+        # keys, ETags, file fingerprints). Only flag when the snippet
+        # also mentions a security-relevant identifier — keeps the
+        # signal noise down for codebases that hash file paths or
+        # serialize cache state.
+        return true unless snippet
+        return false if snippet.matches?(/\b(password|passwd|secret|token|session|sign(ature)?|nonce|otp|cred(ential)?|jwt|hmac|salt|api[_-]?key)\b/i)
+        # AES/ECB and RC4 are weak regardless of context — keep the
+        # snippet match alone good enough for those.
+        return !snippet.matches?(/\bAES\/ECB\b|\bMode::ECB\b|\bRC4\b|\b['"]DES['"]?\b/)
+      when "code_eval"
+        return false unless snippet
+        # `compile(..., 'exec')` already has an explicit 'exec' marker
+        # in our regex; bare `compile()` from JSON/template tooling
+        # must not collide. Keep the targeted patterns above and skip
+        # generic compile() calls that didn't carry the 'exec' arg.
+        return true if name == "compile"
+      when "mass_assignment"
+        return false unless snippet
+        # If the snippet shows `.permit(` or `parse(`/`validate(` near
+        # the suspect call, the developer already gated it. Skip the
+        # warning in that case.
+        return snippet.matches?(/\.permit\s*\(/) || snippet.matches?(/\.(parse|validate)\s*\(/i)
       end
 
       false
@@ -573,20 +1525,75 @@ module NoirAIContext
       snippet.size > MAX_SNIPPET_CHARS ? snippet[0, MAX_SNIPPET_CHARS] : snippet
     end
 
+    # Maximum number of decorator / annotation lines to capture
+    # *before* path_info.line. Lets negative-protection markers
+    # (`@csrf_exempt`, `@PreAuthorize`, `@CrossOrigin`) reach the
+    # source-scan even when the analyzer sets path_line to the
+    # function `def` rather than the decorator above it.
+    MAX_LEAD_DECORATOR_LINES = 4
+
     private def route_scope_snippet_for(path : String?, line : Int32?) : String?
       return unless path && line
 
       lines = read_lines(path)
       return if line < 1 || line > lines.size
 
+      # Look back from path_line-1 for consecutive decorator /
+      # annotation lines and blank lines between them. Stops at the
+      # first line that's not a decorator / annotation / blank —
+      # that's the end of the preceding declaration boundary.
+      lead_lines = [] of String
+      back_idx = line - 2
+      MAX_LEAD_DECORATOR_LINES.times do
+        break if back_idx < 0
+        raw = lines[back_idx]
+        stripped = raw.strip
+        if stripped.empty? || stripped.starts_with?("@")
+          lead_lines.unshift("#{back_idx + 1}: #{stripped}")
+          back_idx -= 1
+        else
+          break
+        end
+      end
+
       start_idx = line - 1
-      selected = [] of String
+      selected = lead_lines
       brace_depth = 0
-      seen_block = false
       paren_balance = 0
+      # Block style starts as `nil` and locks in to one of:
+      #   :brace   — JS / Go / Java / Rust / C-family `{ ... }`
+      #   :ruby    — Ruby `def name` (ends on a line with `end` at
+      #              the same indent as `def`)
+      #   :python  — Python `def name():` / `class …:` (ends when a
+      #              non-blank line returns to ≤ the def's indent)
+      block_style : Symbol? = nil
+      # Indent of the `def` / `class` that triggered :python / :ruby
+      # mode. We use it to stop the capture when control returns to
+      # that column (= the next top-level statement / next decorator).
+      def_indent : Int32? = nil
 
       start_idx.upto(Math.min(start_idx + MAX_ROUTE_SCOPE_LINES - 1, lines.size - 1)) do |idx|
         raw_line = lines[idx]
+        line_indent = raw_line.size - raw_line.lstrip.size
+
+        # Indent-based end-of-block check for :python / :ruby. Runs
+        # BEFORE we append the line, so we don't bleed into the next
+        # function / decorator (the bug behind the django `/public/`
+        # false-positive — the next function's `@login_required`
+        # decorator was getting captured into the previous handler's
+        # scope).
+        if (def_idx = def_indent) && (style = block_style)
+          if (style == :python || style == :ruby) &&
+             !raw_line.strip.empty? && line_indent <= def_idx
+            # `end` on a line at def-column belongs to the def — keep
+            # it. Anything else at that column is the *next* statement.
+            stripped_check = raw_line.strip
+            if !(style == :ruby && stripped_check == "end")
+              break
+            end
+          end
+        end
+
         selected << "#{idx + 1}: #{raw_line.strip}"
 
         sanitized = raw_line.gsub(/(['"]).*?\1/, "\"\"")
@@ -595,13 +1602,41 @@ module NoirAIContext
         brace_depth += opens - closes
         paren_balance += sanitized.count('(') - sanitized.count(')')
 
-        seen_block ||= opens > 0 || sanitized.matches?(/\bdo\b/)
+        stripped = sanitized.strip
+        # Decorator / annotation lines (`@app.route(...)`, `@PostMapping(...)`,
+        # `@PreAuthorize(...)`) come *before* the actual route handler.
+        # Their trailing `)` is not end-of-statement — the handler is on
+        # the next line(s).
+        is_decorator = stripped.starts_with?("@")
 
-        if seen_block
+        # Lock in a block style on the first line that opens one. Once
+        # locked, later lines don't change the kind.
+        if block_style.nil?
+          if opens > 0 || sanitized.matches?(/\bdo\b/)
+            block_style = :brace
+          elsif !is_decorator && stripped.ends_with?(":")
+            block_style = :python
+            def_indent = line_indent
+          elsif !is_decorator && (stripped.matches?(/\b(def|class)\s+\w+/) || stripped.matches?(/\bfunction\s+\w+/))
+            block_style = :ruby
+            def_indent = line_indent
+          end
+        end
+
+        case block_style
+        when :brace
+          # JS-style: capture until braces close back to zero.
           break if brace_depth <= 0
+        when :python
+          # Indent guard runs at the top of the next iteration; no
+          # per-line break needed here.
+        when :ruby
+          # Stop after the matching `end` at the def's indent.
+          if def_indent == line_indent && stripped == "end"
+            break
+          end
         else
-          stripped = sanitized.strip
-          statement_done = stripped.ends_with?(";") || stripped.ends_with?(")") || stripped.ends_with?(" do")
+          statement_done = !is_decorator && (stripped.ends_with?(";") || stripped.ends_with?(")") || stripped.ends_with?(" do"))
           break if statement_done && paren_balance <= 0
         end
       end

@@ -218,4 +218,4 @@ jobs:
 
 - Docker 컨테이너에서 실행되어 일관된 동작 보장
 - 입력값은 CLI 플래그와 1:1 매핑
-- 지원 기술 목록: `noir --list-techs`
+- 지원 기술 목록: `noir list techs`

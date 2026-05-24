@@ -2776,3 +2776,68 @@ p:has(> .member-card) {
         height: 72px;
     }
 }
+
+/* Per-page prev/next navigation (learning-path footer). The HTML is
+   emitted by templates/_prev_next.html when a page declares
+   `prev_page` / `next_page` in front-matter. The grid keeps the
+   prev button left-aligned and the next button right-aligned even
+   when only one of the two is present (a placeholder span occupies
+   the empty slot). */
+.prev-next-nav {
+  margin: 3rem 0 0;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--color-border, #e5e7eb);
+}
+.prev-next-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+.prev-next-link {
+  display: flex;
+  flex-direction: column;
+  padding: 0.875rem 1rem;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 8px;
+  text-decoration: none;
+  color: var(--color-text, #111827);
+  transition: border-color 120ms ease, background 120ms ease, transform 80ms ease;
+}
+.prev-next-link:hover {
+  border-color: var(--color-accent, #2563eb);
+  background: var(--color-accent-surface, rgba(37, 99, 235, 0.06));
+}
+.prev-next-link:active {
+  transform: translateY(1px);
+}
+.prev-next-link.next {
+  text-align: right;
+  align-items: flex-end;
+}
+.prev-next-link.placeholder {
+  border: 1px dashed transparent;
+  background: transparent;
+  pointer-events: none;
+}
+.prev-next-direction {
+  font-size: 0.8rem;
+  color: var(--color-text-muted, #6b7280);
+  letter-spacing: 0.02em;
+}
+.prev-next-title {
+  font-weight: 600;
+  margin-top: 0.25rem;
+}
+
+@media (max-width: 600px) {
+  .prev-next-row {
+    grid-template-columns: 1fr;
+  }
+  .prev-next-link.next {
+    text-align: left;
+    align-items: flex-start;
+  }
+  .prev-next-link.placeholder {
+    display: none;
+  }
+}

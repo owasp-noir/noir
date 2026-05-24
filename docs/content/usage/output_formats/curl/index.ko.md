@@ -13,7 +13,7 @@ sort_by = "weight"
 [cURL](https://curl.se/)은 가장 널리 쓰이는 커맨드라인 HTTP 클라이언트입니다. 생성되는 명령어에는 `-i`(응답 헤더 포함), `-X`(HTTP 메서드), `-d`(요청 바디), `-H`(헤더), `--cookie`(쿠키) 등의 플래그가 적절히 들어갑니다.
 
 ```bash
-noir -b . -f curl -u https://www.example.com
+noir scan . -f curl -u https://www.example.com
 ```
 
 출력 예시
@@ -28,7 +28,7 @@ curl -i -X GET https://www.example.com/token -d "client_id=&redirect_url=&grant_
 [HTTPie](https://httpie.io/)는 cURL보다 직관적인 문법에 컬러 출력과 JSON 지원이 기본 내장된 HTTP 클라이언트입니다.
 
 ```bash
-noir -b . -f httpie -u https://www.example.com
+noir scan . -f httpie -u https://www.example.com
 ```
 
 출력 예시
@@ -43,7 +43,7 @@ http GET https://www.example.com/token "client_id=&redirect_url=&grant_type="
 Windows 환경이라면 별도 도구 설치 없이 바로 쓸 수 있는 [Invoke-WebRequest](https://learn.microsoft.com/ko-kr/powershell/module/microsoft.powershell.utility/invoke-webrequest) 명령어를 생성합니다.
 
 ```bash
-noir -b . -f powershell -u https://www.example.com
+noir scan . -f powershell -u https://www.example.com
 ```
 
 출력 예시
@@ -55,40 +55,48 @@ Invoke-WebRequest -Method GET -Uri "https://www.example.com/token" -Body "client
 
 ## 파라미터 값 채우기
 
-Noir는 기본적으로 파라미터 값을 비워두기 때문에(`x-api-key=`, `query=` …) 생성된 명령은 템플릿처럼 동작합니다. 그대로 실행하거나 퍼징 입력 시드를 만들고 싶다면 `--set-pvalue` 계열로 값을 미리 채울 수 있습니다.
+Noir는 기본적으로 파라미터 값을 비워두기 때문에(`x-api-key=`, `query=` …) 생성된 명령은 템플릿처럼 동작합니다. 그대로 실행하거나 퍼징 입력 시드를 만들고 싶다면 `--pvalue` 로 값을 미리 채울 수 있습니다.
 
-| 플래그 | 적용 범위 |
-|---|---|
-| `--set-pvalue VALUE` | 모든 파라미터 타입 |
-| `--set-pvalue-query VALUE` | 쿼리 스트링 |
-| `--set-pvalue-form VALUE` | 폼 바디 (`application/x-www-form-urlencoded`) |
-| `--set-pvalue-json VALUE` | JSON 바디 |
-| `--set-pvalue-header VALUE` | 요청 헤더 |
-| `--set-pvalue-cookie VALUE` | 쿠키 |
-| `--set-pvalue-path VALUE` | 경로 파라미터 |
+```
+--pvalue TYPE=VALUE     # 반복 가능
+```
+
+| `TYPE`            | 적용 범위                                              |
+|-------------------|-------------------------------------------------------|
+| `any` (생략 가능) | 모든 파라미터 타입                                     |
+| `query`           | 쿼리 스트링                                            |
+| `form`            | 폼 바디 (`application/x-www-form-urlencoded`)          |
+| `json`            | JSON 바디                                              |
+| `header`          | 요청 헤더                                              |
+| `cookie`          | 쿠키                                                  |
+| `path`            | 경로 파라미터                                          |
 
 `VALUE`는 두 가지 형태를 받습니다.
 
-| 형태 | 동작 |
-|---|---|
-| `<value>` | 대상 타입의 모든 파라미터에 사용 |
-| `<name>=<value>` 또는 `<name>:<value>` | 이름이 `<name>`인 파라미터에만 사용 |
+| 형태                                  | 동작                                                |
+|--------------------------------------|----------------------------------------------------|
+| `<value>`                            | 대상 타입의 모든 파라미터에 사용                     |
+| `<name>=<value>` 또는 `<name>:<value>` | 이름이 `<name>`인 파라미터에만 사용                 |
 
-모든 플래그는 반복 사용 가능하며, 동일 파라미터에 매치되면 타입별 규칙이 일반 `--set-pvalue`보다 우선합니다.
+`--pvalue` 는 반복 사용 가능하며, 동일 파라미터에 매치되면 타입별 규칙이 일반 `any` 스코프보다 우선합니다.
 
 ```bash
 # 모든 파라미터를 `test`로 채움
-noir -b . -f curl -u https://example.com --set-pvalue "test"
+noir scan . -f curl -u https://example.com --pvalue "test"
 
 # `Authorization` 헤더와 `id` 경로 파라미터에만 값 채움
-noir -b . -f curl -u https://example.com \
-  --set-pvalue-header "Authorization=Bearer xyz" \
-  --set-pvalue-path "id=42"
+noir scan . -f curl -u https://example.com \
+  --pvalue "header=Authorization=Bearer xyz" \
+  --pvalue "path=id=42"
 
-# 쿼리/폼은 기본 `1`이지만 `limit`은 항상 10
-noir -b . -f curl -u https://example.com \
-  --set-pvalue-query "1" \
-  --set-pvalue-query "limit=10"
+# 쿼리는 기본 `1`이지만 `limit`은 항상 10
+noir scan . -f curl -u https://example.com \
+  --pvalue "query=1" \
+  --pvalue "query=limit=10"
 ```
 
 같은 플래그는 HTTPie와 PowerShell 출력에도 적용되며, OpenAPI / Postman / JSON 등 값이 렌더링되는 다른 형식에도 전파됩니다.
+
+> **레거시:** v0 의 `--set-pvalue`, `--set-pvalue-query`, `--set-pvalue-header`
+> 등은 v1.x 에서 silent alias 로 그대로 동작합니다. 새 스크립트는 위의 통합된
+> `--pvalue TYPE=VALUE` 를 우선 사용하세요.

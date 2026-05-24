@@ -21,12 +21,11 @@ describe "--ai-context on Spring auth fixtures" do
 
     admin_context = endpoints.find! { |ep| ep.method == "GET" && ep.url == "/api/admin/users" }.ai_context
     admin_context = admin_context.should_not be_nil
-    admin_context.guards.size.should eq(1)
-    admin_context.guards[0].source.should eq("spring_auth")
+    admin_context.guards.map(&.source).should contain("spring_auth")
 
     delete_context = endpoints.find! { |ep| ep.method == "DELETE" && ep.url == "/api/posts/{id}" }.ai_context
     delete_context = delete_context.should_not be_nil
-    delete_context.guards.size.should eq(1)
+    delete_context.guards.map(&.source).should contain("spring_auth")
     delete_context.signals.map(&.kind).should contain("path_param")
     delete_context.signals.map(&.kind).should contain("state_change")
 

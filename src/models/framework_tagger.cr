@@ -20,8 +20,26 @@ class FrameworkTagger < Tagger
 
   def initialize(options : Hash(String, YAML::Any))
     super
-    @base_path = options["base"].to_s
+    @base_path = resolve_base_path(options)
     @file_cache = Hash(String, String).new
+  end
+
+  # The CLI always wraps `base` in an Array(YAML::Any), so calling
+  # `.to_s` on it produced strings like `["./app"]`. With that as the
+  # prefix every `get_files_by_prefix_and_extension(@base_path, …)`
+  # call quietly returned an empty list and the tagger never tagged
+  # anything. The existing specs hid this because they set
+  # `options["base"]` to a bare String. Handle both shapes so the
+  # production array path matches the same fixtures.
+  private def resolve_base_path(options : Hash(String, YAML::Any)) : String
+    raw = options["base"]?
+    return "" if raw.nil?
+
+    if arr = raw.as_a?
+      arr.first?.try(&.to_s) || ""
+    else
+      raw.to_s
+    end
   end
 
   def self.target_techs : Array(String)
