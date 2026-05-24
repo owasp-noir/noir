@@ -55,16 +55,22 @@ module Analyzer::Rust
 
           path_str, methods, handler_name = route
           path_str = join_paths(prefix, path_str) unless prefix.empty?
-          methods.each do |verb|
-            details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
-            endpoint = Endpoint.new(path_str, verb, details)
+          methods.each do |raw_verb|
+            # `axum::routing::any(handler)` and service mounts emit
+            # the verb "ANY" — fan out into the canonical seven so
+            # SARIF / Postman / OpenAPI consumers see real HTTP
+            # methods rather than a non-HTTP "ANY" string.
+            RustEngine.fan_out_verbs(raw_verb).each do |verb|
+              details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
+              endpoint = Endpoint.new(path_str, verb, details)
 
-            if include_callee && handler_name && (body_node = function_index[handler_name]?)
-              entries = Noir::RustCalleeExtractorTS.callees_in_body(body_node, source, path)
-              attach_rust_callees(endpoint, entries)
+              if include_callee && handler_name && (body_node = function_index[handler_name]?)
+                entries = Noir::RustCalleeExtractorTS.callees_in_body(body_node, source, path)
+                attach_rust_callees(endpoint, entries)
+              end
+
+              endpoints << endpoint
             end
-
-            endpoints << endpoint
           end
         end
 
@@ -92,16 +98,18 @@ module Analyzer::Rust
 
             path_str, methods, handler_name = route
             path_str = join_paths(active_prefix, path_str) unless active_prefix.empty?
-            methods.each do |verb|
-              details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
-              endpoint = Endpoint.new(path_str, verb, details)
+            methods.each do |raw_verb|
+              RustEngine.fan_out_verbs(raw_verb).each do |verb|
+                details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
+                endpoint = Endpoint.new(path_str, verb, details)
 
-              if include_callee && handler_name && (body_node = function_index[handler_name]?)
-                entries = Noir::RustCalleeExtractorTS.callees_in_body(body_node, source, path)
-                attach_rust_callees(endpoint, entries)
+                if include_callee && handler_name && (body_node = function_index[handler_name]?)
+                  entries = Noir::RustCalleeExtractorTS.callees_in_body(body_node, source, path)
+                  attach_rust_callees(endpoint, entries)
+                end
+
+                endpoints << endpoint
               end
-
-              endpoints << endpoint
             end
           end
 
