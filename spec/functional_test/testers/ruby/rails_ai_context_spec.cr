@@ -44,8 +44,12 @@ describe "--ai-context on Rails auth fixtures" do
     create_endpoint.details.code_paths.any? { |info| info.path.ends_with?(controller_suffix) && info.line == 13 }.should be_true
     create_context = create_endpoint.ai_context
     create_context = create_context.should_not be_nil
-    create_context.guards.size.should eq(1)
-    create_context.guards[0].source.should eq("ruby_auth")
+    # `create` carries two guards: the Devise `authenticate_user!`
+    # (an auth_guard) and a Pundit-style `authorize post` line
+    # surfaced as an authz_guard. The pair captures the
+    # auth-vs-authz distinction explicitly.
+    create_context.guards.map(&.kind).sort!.should eq(["auth_guard", "authz_guard"])
+    create_context.guards.any? { |g| g.source == "ruby_auth" }.should be_true
     create_endpoint.params.map(&.name).sort!.should eq(["body", "title"])
     create_context.signals.map(&.kind).should contain("state_change")
     create_context.signals.map(&.kind).should_not contain("identifier_input")

@@ -26,23 +26,26 @@ module FileHelper
   # Get public files (files that should be served as static content)
   #
   # Returns files that are inside a `public/` directory that is the
-  # *sibling* of a `shard.yml` — that's what a Crystal web project
-  # layout actually looks like. The previous shape matched any
-  # `*/public/*` substring under base_path, which had a real
-  # false-positive surface: a repo that hosts a Crystal framework
-  # fixture alongside an unrelated static site (e.g. a built docs
-  # directory at `docs/public/`) would have every file in the docs
-  # site surface as a framework endpoint.
-  def get_public_files(base_path : String) : Array(String)
+  # *sibling* of a manifest file (`shard.yml` for Crystal, `Gemfile`
+  # for Ruby/Rails). The previous shape matched any `*/public/*`
+  # substring under base_path, which had a real false-positive
+  # surface: a repo that hosts a Crystal framework fixture alongside
+  # an unrelated static site (e.g. a built docs directory at
+  # `docs/public/`) would have every file in the docs site surface
+  # as a framework endpoint. The previous fix scoped to `shard.yml`
+  # only, which broke Rails monorepos like `App/Gemfile` +
+  # `App/public/secret.html` — `App/public/*` no longer surfaced
+  # because there was no sibling `shard.yml`.
+  def get_public_files(base_path : String, anchors : Array(String) = ["shard.yml", "Gemfile"]) : Array(String)
     files = all_files
 
-    # Collect directories that are valid Crystal-project `public/`
-    # roots: each is the dirname of a `shard.yml` file under
-    # base_path, with `public/` appended. Cache once so the per-
-    # file filter below is O(1) instead of O(N) on the shard tree.
+    # Collect directories that are valid `public/` roots: each is
+    # the dirname of an anchor file under base_path, with `public/`
+    # appended. Cache once so the per-file filter below is O(1)
+    # instead of O(N) on the anchor tree.
     project_public_roots = Set(String).new
     files.each do |f|
-      next unless File.basename(f) == "shard.yml"
+      next unless anchors.includes?(File.basename(f))
       next unless f.starts_with?(base_path)
       project_public_roots << File.join(File.dirname(f), "public")
     end

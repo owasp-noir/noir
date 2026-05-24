@@ -21,25 +21,40 @@ module Analyzer::Ruby
     # endpoint found, or an empty endpoint if none match. Shared by Hanami
     # and Sinatra (Rails uses a different per-line-multi-match shape).
     def line_to_endpoint(content : String, details : Details? = nil) : Endpoint
+      # Anchor the verb to the start of the (stripped) line so a
+      # string literal that happens to *contain* a DSL verb stays
+      # out — `hint = "Try get '/from-string' do ... end"` was
+      # picking up `/from-string` as a real route pre-fix. Anything
+      # the Sinatra/Hanami DSL accepts is invoked at statement
+      # start (possibly after a block opener), so this is a tight
+      # constraint without false-negatives in the bundled fixtures.
+      leading = content.lstrip
       HTTP_VERBS.each do |verb|
-        # Reject method calls (`headers.delete 'content-length'`,
-        # `obj.get(:foo)`, …) that share a name with a DSL verb. The
-        # Sinatra route DSL always invokes the verb at a fresh
-        # statement boundary, never via a receiver. A negative
-        # lookbehind on `.` and word chars covers both
-        # `headers.delete` and `xdelete` (some unrelated identifier
-        # ending in the verb).
-        content.scan(/(?<![.\w])#{verb}\s*\(?\s*['"](.+?)['"]/) do |match|
-          if match.size > 1
-            if details
-              return Endpoint.new(match[1], verb.upcase, details)
-            else
-              return Endpoint.new(match[1], verb.upcase)
-            end
+        next unless leading.starts_with?(verb) &&
+                    (leading.size == verb.size ||
+                      !leading[verb.size].alphanumeric? &&
+                        leading[verb.size] != '_')
+
+        if m = leading.match(/^#{verb}\s*\(?\s*['"](.+?)['"]/)
+          path = normalize_ruby_interpolation(m[1])
+          if details
+            return Endpoint.new(path, verb.upcase, details)
+          else
+            return Endpoint.new(path, verb.upcase)
           end
         end
       end
       Endpoint.new("", "")
+    end
+
+    # Ruby's `"#{expr}"` interpolation in a route literal — e.g.
+    # `get "#{PREFIX}/items"` — used to leak the raw `#{PREFIX}`
+    # text into the URL. Rewrite it as a `{expr}` placeholder so
+    # downstream output formats see a sensible path template AND
+    # the path-parameter extractor can register the placeholder
+    # name. Same shape as the Python f-string fix.
+    private def normalize_ruby_interpolation(path : String) : String
+      path.gsub(/\#\{([^}]+)\}/) { |_| "{#{$~[1].strip}}" }
     end
 
     # Locate the directories that host a known framework anchor file
