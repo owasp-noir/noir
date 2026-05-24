@@ -4,262 +4,69 @@ All notable changes to [Noir](https://github.com/owasp-noir/noir) will be docume
 
 ## v1.0.0
 
-Two motivations for the major bump: noir's analyzer / tagger / passive-scan
-surface is now stable enough across the supported framework matrix to
-deserve a 1.x line, and the CLI moves from a flag-only layout to a
-verb-centric one (`noir scan` / `list` / `cache` / `config` / `rules` /
-`completion` / `version` / `help`). The verb introduction is the *only*
-intentional design break — every v0 invocation pattern (`noir -b ./app
-[flags]`) still works untouched, and the entire v0 → v1 cleanup was
-designed around preserving the v0 surface anywhere it could be preserved.
-See the [CLI commands reference](docs/content/usage/cli_commands/_index.md)
-for the full surface.
+Noir v1.0.0 introduces a stable 1.x release line across all analyzers, taggers, and passive-scan features. The CLI transitions to a verb-centric command structure (`scan`, `list`, `cache`, `config`, `rules`, `completion`, `version`, `help`) while preserving complete backward compatibility with v0 flags and syntax (e.g., `noir -b ./app`). For details, see the [CLI commands reference](docs/content/usage/cli_commands/_index.md).
 
 ### Added
-- New subcommand surface:
-  - `noir scan PATHS...` — positional paths plus every existing scan flag
-  - `noir list techs|taggers|formats` — built-in catalogs
-  - `noir cache info|clear|purge` — on-disk LLM response cache;
-    `purge <days>` drops entries older than N days
-  - `noir config show|edit|init|path` — user-level YAML configuration
-  - `noir rules list|update|path` — passive-scan rules repository
-  - `noir completion <zsh|bash|fish|elvish>` — shell completion script
-  - `noir version [--verbose]` — version number (or build details)
-  - `noir help [command]` — top-level overview / per-command help
-- `--pvalue TYPE=VAL` (repeatable): unified parameter-value flag covering
-  `any` / `header` / `cookie` / `query` / `form` / `json` / `path`
-- `--include LIST`: comma-separated enrichment toggle (`path,techs,callee`)
-- `--ai-context[=LIST]`: optional comma-separated filter narrowing the
-  emitted AI-context categories (`guards`, `sinks`, `validators`,
-  `signals`, `callee`) in plain output
-- `--no-color` (and the `NO_COLOR` env var) honored as a global flag
-  across every subcommand, not just `scan`
-- Elvish shell completion alongside zsh / bash / fish
-- Endpoint JSON output gains two additive fields: `callees`
-  (1-hop call graph populated by analyzers that surface it) and
-  `ai_context` (per-endpoint AI review context, present only when
-  `--ai-context` is enabled)
-- Docker image (`ghcr.io/owasp-noir/noir`) now ships the upstream
-  `noir-passive-rules` snapshot baked at `/opt/noir/passive_rules/`,
-  so `noir scan -P` works out of the box inside the container without
-  git or network. The user-managed `~/.config/noir/passive_rules/`
-  still wins when populated; `NOIR_BUNDLED_RULES_PATH` env var lets
-  packagers override the bundled location.
+- Verb-based CLI structure:
+  - `noir scan PATHS...` — Run endpoint scanning with positional paths.
+  - `noir list techs|taggers|formats` — List built-in catalogs.
+  - `noir cache info|clear|purge` — Manage on-disk LLM response cache.
+  - `noir config show|edit|init|path` — Manage user-level YAML configuration.
+  - `noir rules list|update|path` — Manage passive-scan rules.
+  - `noir completion <shell>` — Generate shell completion script (Zsh, Bash, Fish, Elvish).
+  - `noir version [--verbose]` — Show version and build details.
+  - `noir help [command]` — Show command-specific help documentation.
+- `--pvalue TYPE=VAL` (repeatable) flag to specify parameter values by type (`any`, `header`, `cookie`, `query`, `form`, `json`, `path`).
+- `--include LIST` flag for comma-separated enrichment toggles (`path`, `techs`, `callee`).
+- `--ai-context[=LIST]` flag to filter emitted AI-context categories (`guards`, `sinks`, `validators`, `signals`, `callee`).
+- `--no-color` flag (and `NO_COLOR` env var) support across all subcommands.
+- Elvish shell completion support.
+- JSON output fields `callees` (1-hop call graph) and `ai_context` (per-endpoint AI context when enabled).
+- Bundled `noir-passive-rules` snapshot in the Docker image at `/opt/noir/passive_rules/` for offline `-P` scanning out-of-the-box.
 
 ### Changed
-- Router default-routes any bare-flag invocation to `scan`, preserving
-  the v0 `noir -b ./app [flags]` shape for every CI pipeline, GitHub
-  Action, Dockerfile entrypoint, and shell alias.
-- Terminal v0 flags are silently rewritten to their v1 subcommand
-  equivalents: `--list-techs` → `noir list techs`,
-  `--list-taggers` → `noir list taggers`,
-  `--build-info` → `noir version --verbose`,
-  `--generate-completion SHELL` → `noir completion SHELL`,
-  `--help-all` → `noir help`.
-- Shell completion scripts are now subcommand-aware: `noir <TAB>`
-  completes verbs, `noir scan -<TAB>` completes scan flags.
-- Default `concurrency` scales with the host's CPU count
-  (`System.cpu_count.clamp(4, 32)`) instead of the v0 fixed `"20"`.
-  Explicit user configuration is still respected.
-- GitHub Action switched from `using: docker` (sibling Dockerfile
-  rebuilt on every call) to `using: composite` (docker pull a
-  pre-built ghcr image and run). `with:` inputs and outputs are
-  unchanged; the first invocation is faster since the jq install no
-  longer runs per workflow, and the image tag now tracks
-  `github.action_ref` automatically.
-- Docker image is self-contained: ships `jq`, `ca-certificates`,
-  `/entrypoint.sh`, the passive-rules snapshot, and GitHub Action
-  labels. The standalone `github-action/Dockerfile` was folded in.
-- `noir rules update` is no longer silent when rules are already up
-  to date — emits an explicit success / warning message every time.
-- AI provider model metadata refreshed for v1 (gemini-3.5-flash etc.
-  added to `MODEL_TOKEN_LIMITS`); unknown models surface a warning
-  instead of silently using the default cap.
-- Documentation updates across the homepage, getting-started guide,
-  troubleshooting, shell-completion, configuration, output-format, and
-  AI-provider pages to lead with the v1 idiom (v0 examples preserved
-  in compatibility callouts).
-- Deliver surface split into two semantic families. `noir scan -h`
-  now shows three sections: **PROBE** for active HTTP replay
-  against the discovered endpoints, **EXPORT** for shipping the
-  catalog to an external data store, and **LEGACY** for the v0
-  aliases that map onto them:
-    - `--send-req` → `--probe`
-    - `--send-proxy URL` → `--probe-via URL`
-    - `--with-headers VAL` → `--probe-header VAL`
-    - `--use-matchers VAL` → `--probe-match VAL`
-    - `--use-filters VAL` → `--probe-skip VAL`
-    - `--send-es URL` → `--export-es URL`
-  All v0 names remain accepted (silent aliases), so v0.x scripts
-  and Dockerfiles keep working. The rename clarifies that
-  match/skip/header only affect probing, not the stdout/`-o`
-  output.
-- EXPORT family grew two new targets:
-    - `--export-opensearch URL` — speaks the same HTTP protocol
-      as Elasticsearch, so it shares the SendElasticSearch
-      delivery class and the same internal key.
-    - `--export-webhook URL` — POSTs the endpoint catalog as a
-      single JSON document (`{endpoints, endpoint_count,
-      noir_version}`) to any webhook receiver. Slack incoming
-      webhooks, Discord, Zapier/n8n, and custom internal endpoints
-      all accept arbitrary JSON, so one contract covers the common
-      destinations. Network errors are swallowed at debug level so
-      a misconfigured URL doesn't crash the scan.
-- Internal option keys aligned with the v1 CLI surface:
-    - `send_req` → `probe`
-    - `send_proxy` → `probe_via`
-    - `send_es` → `export_es`
-    - `send_with_headers` → `probe_header`
-    - `use_matchers` → `probe_match`
-    - `use_filters` → `probe_skip`
-  v0 `config.yaml` files using the old keys are auto-migrated at
-  load time (`ConfigInitializer::LEGACY_CONFIG_KEY_MAP`). When
-  both a v0 and a v1 key are present in the same config file, the
-  v1 entry wins so explicit user intent isn't clobbered. The
-  default config template `noir config init` writes uses v1 keys
-  with v1-aligned comments.
+- Bare-flag invocations are automatically routed to the `scan` subcommand, maintaining full compatibility with v0 scripts.
+- Legacy flags are silently rewritten to their v1 equivalents (e.g., `--list-techs` → `noir list techs`, `--build-info` → `noir version --verbose`).
+- Shell completions are now fully aware of subcommands and scan-specific flags.
+- Default scanning concurrency now scales dynamically based on CPU core count (`System.cpu_count.clamp(4, 32)`).
+- GitHub Action migrated to `composite` action using pre-built Docker images, significantly reducing execution startup time.
+- Docker image is now fully self-contained, folding in the standalone GitHub Action Dockerfile and adding bundled passive rules.
+- `noir rules update` now emits feedback messages when rules are already up to date.
+- Refreshed AI provider metadata for newer models like `gemini-3.5-flash` with warnings for unknown models.
+- Updated documentation across all guides to emphasize the new v1 command structure.
+- Reorganized delivery and integration flags into **PROBE** (e.g., `--probe`, `--probe-via`) and **EXPORT** (e.g., `--export-es`, `--export-opensearch`, `--export-webhook`) families, preserving old v0 names as aliases.
+- Supported custom webhook payload exports via `--export-webhook URL` and OpenSearch exports via `--export-opensearch URL`.
+- Internal configuration keys aligned with v1 CLI surface, with automatic migration of legacy YAML config keys.
 
 ### Fixed
-- `--send-es URL` (Elasticsearch delivery) shipped empty POST bodies
-  on every call because Crest's `Request.execute` ignores `body:` and
-  only honors `form:`. Switched to `form: body, json: true` — payloads
-  now actually reach Elasticsearch.
-- Passive scan AND-branch logged "Detected" before per-line
-  confirmation, so rules whose whole-file gate passed but matched no
-  single line produced false-positive log entries with zero findings.
-- Passive scan OR-branch logged "Detected" once per individual hit,
-  flooding output on noisy rules. Now logs once per (rule × file).
-- Passive scan retried `Regex.new` on every line × file when a
-  matcher's regex failed to compile at load time. Failed compilations
-  are now sticky; later matches short-circuit to false.
-- Passive scan rules with empty `patterns` arrays no longer match
-  every file (the prior `matcher.patterns && Array#all?` shape made
-  an empty array act as "match everything").
-- `--with-headers "Authorization: Bearer x:y:z"` lost everything
-  after the first colon. Now splits on the first colon only so
-  multi-colon values survive.
-- Latent bugs in the Deliver layer (`apply_all` chaining, matcher
-  dedup, header propagation, ES header leakage, header parsing).
-- Latent bugs in the OutputBuilder layer.
-- Latent bugs in the Tagger layer.
-- Latent bugs in the Passive Scan layer (whole-content prefilter
-  misapplication, others).
-- Latent bugs in ConfigInitializer (legacy boolean parsing).
-- `noir cache clear` silently dropped partial-delete failures behind
-  a single count; now reports the failed count alongside `deleted`.
-- `LLM::Cache.store` was not atomic; a crash mid-write corrupted the
-  cache entry and forced a spurious retry on the next scan. Writes
-  now go through a `.tmp` sibling + `File.rename`.
-- `LLM::Cache.clear` / `stats` walked every file in the cache
-  directory, so any non-cache file dropped there could be wiped or
-  miscounted. Both now filter on `.json`.
-- `NOIR_CACHE_DISABLE` tolerates surrounding whitespace.
+- Fixed Elasticsearch delivery (`--send-es`) sending empty POST bodies due to Crest body handling issues.
+- Fixed false-positive log entries in passive scan AND-branch rules when whole-file gate passed but no line matched.
+- Silenced noisy "Detected" logs in passive scan OR-branch rules by logging once per rule/file combination.
+- Optimized passive scan regex matching by caching compilation failures instead of retrying regex compilation per line.
+- Fixed passive scan rules with empty pattern arrays matching every file.
+- Fixed header parsing logic (`--with-headers`) truncation on multi-colon values.
+- Fixed various bugs across Deliver, OutputBuilder, Tagger, Passive Scan, and ConfigInitializer layers.
+- Improved `noir cache clear` feedback to report the count of deletion failures.
+- Made `LLM::Cache.store` writes atomic via a temp file swap to prevent cache corruption.
+- Restructured `LLM::Cache` commands to filter strictly on `.json` files.
+- Allowed leading/trailing whitespace in `NOIR_CACHE_DISABLE` env var.
 
-### Analyzer accuracy
-Cross-language fuzzing pass surfaced two silent corruption
-patterns and a handful of framework-specific gaps. Output URLs
-for routes that exercise these patterns will differ from
-v0.30.0 — the new shape is always the correct one, but
-SARIF/Postman/OpenAPI diffs against an older snapshot can
-surprise you.
-
-- **String interpolation in route paths** preserved as a
-  `{name}` placeholder instead of being silently dropped or
-  leaking the language's raw syntax into the URL. The bug
-  shape was consistent across six languages; each is now
-  routed through a per-engine normalizer:
-    - Python (Flask / Django / FastAPI / Quart):
-      `f"/api/{VERSION}/items"` → previously dropped the
-      `{VERSION}` segment entirely (URL became `/api/items`);
-      now `/api/{VERSION}/items` + a `VERSION` path param.
-    - Ruby (Sinatra / Hanami / Rails inheritors):
-      `get "/api/#{PREFIX}/items"` — `#{PREFIX}` stayed as
-      literal text in the URL; now `{PREFIX}`.
-    - PHP (Laravel and PHP-engine subclasses):
-      `Route::get("/api/{$VERSION}/items", …)` — the
-      `{$VERSION}` / `${VERSION}` / `$VERSION` shapes all
-      leaked their `$` characters; now `{VERSION}`.
-    - Crystal (Kemal / Lucky / Amber / Marten / Grip): same
-      `#{}` template syntax as Ruby; same drop-and-leak; now
-      normalized.
-    - Elixir (Phoenix): `get "/api/#{@version}/items"` —
-      `#{@version}` leaked verbatim; now `{version}` (the `@`
-      module-attribute sigil is stripped).
-    - Kotlin (Ktor): tree-sitter Kotlin grammar uses
-      `interpolated_identifier` / `interpolated_expression`
-      child nodes the `decode_string_literal` walk used to
-      skip. Both shapes (`"$var"` short and `"${expr}"` long)
-      now produce `{name}` placeholders.
-
-- **`Any` / `All` verb fan-out** for method-agnostic
-  registrations. `axum::routing::any`, `r.Any` (Gin),
-  `e.Any` (Echo), `app.All` (Fiber), Beego's wildcard,
-  Goyave's `Route(…)`, gorilla/mux without `.Methods(...)`,
-  Chi's `Mount`, Pocketbase, Gozero, Fasthttp, and
-  actix-web's `web::route()` all used to emit a single
-  endpoint with the non-HTTP verb `"ANY"` — SARIF parsers,
-  Postman collection importers, and `--probe-via` HTTP
-  clients all rejected it. Now fans out into the seven
-  canonical methods (GET, POST, PUT, PATCH, DELETE, HEAD,
-  OPTIONS) so downstream tooling sees real HTTP methods.
-  Behavior matches Express's existing `app.all` expansion.
-  The Go gf analyzer keeps its documented `ALL → GET` fold
-  because the fixture deliberately asserts that shape; every
-  other Go and Rust analyzer fans out.
-
-- **Comment / string-literal route false positives** in
-  Ruby/PHP. `// Route::get('/x', …)` (comment), `# get '/x'`
-  (Ruby comment, already handled), and
-  `$hint = "Route::get('/x', …)"` (PHP string literal),
-  `hint = "get '/x' do ..."` (Ruby string literal) all used
-  to surface as live routes. Each loop now:
-    - For Sinatra/Hanami: anchors the verb to the start of
-      the stripped line so verbs inside string content can't
-      match.
-    - For Laravel: pre-computes byte ranges that fall inside
-      `//`, `#`, `/* */` comments or `"..."` / `'...'`
-      string literals, and each verb scan skips matches
-      inside any such range.
-
-- **ASP.NET multi-line attribute** stitching. Developers
-  routinely split long route attributes across lines for
-  readability (`[HttpPost(\n  "/path",\n  Order = 1\n)]`).
-  The per-line scanner only saw `[HttpPost(` and recorded
-  POST with an empty path, so the endpoint surfaced with
-  only the class-level prefix and the user's path was
-  silently lost. The attribute is now joined onto a single
-  logical line before the route regex runs.
-
-- **Rails `public/*.html` discovery in monorepos**.
-  `get_public_files` was scoped to `shard.yml` siblings
-  (Crystal-project layout) and missed `App/Gemfile` +
-  `App/public/secret.html` style Rails monorepos. The anchor
-  set now includes `Gemfile` so Rails apps under a non-root
-  directory surface their static assets again.
+### Analyzer Accuracy
+- **String Interpolation in Route Paths**: Standardized path normalization across Python, Ruby, PHP, Crystal, Elixir, and Kotlin/Ktor to properly parse interpolated variables as `{name}` placeholders rather than leaking syntax or dropping segments.
+- **`Any` / `All` Verb Fan-out**: Method-agnostic endpoints (e.g., Gin `r.Any`, Express `app.all`, Echo `e.Any`, Fiber `app.All`) are now expanded into seven canonical HTTP methods (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS) to improve compatibility with downstream tooling.
+- **False-Positive Prevention**: Avoided extracting routes from code comments and string literals in Ruby (Sinatra, Hanami) and PHP (Laravel) analyzers.
+- **ASP.NET Multi-line Attribute Stitching**: Supported multi-line ASP.NET routing attributes by joining split lines before applying route patterns.
+- **Monorepos Rails `public/*.html` Discovery**: Updated public directory resolution to locate static assets in Rails monorepos.
 
 ### Removed
-- `--ollama URL` and `--ollama-model NAME` (deprecated since 2024).
-  Use `--ai-provider ollama [--ai-model NAME]` instead — the CLI prints
-  a one-line migration hint if either flag is passed.
-- `github-action/Dockerfile` (folded into the repo-root `Dockerfile`).
+- Removed deprecated `--ollama URL` and `--ollama-model NAME` flags (use `--ai-provider ollama` instead).
+- Removed standalone `github-action/Dockerfile` (now unified in the repo-root `Dockerfile`).
 
 ### Compatibility
-- The legacy `--include-path`, `--include-techs`, `--include-callee`,
-  and the seven `--set-pvalue*` flags continue to work as silent
-  aliases throughout the v1.x line.
-- `noir` with no arguments now prints the top-level overview instead
-  of the v0 "Base path is required" error; scripts that intentionally
-  relied on the empty-args exit code should pass `noir scan` explicitly.
-- Endpoint JSON output is strictly additive — `callees` and
-  `ai_context` are new keys; every v0 field is preserved with the
-  same semantics. Strict-schema consumers (SARIF strict mode, etc.)
-  may need to allow the new keys.
-- Docker image tag conventions unchanged (`latest`, `1.0.0`, `1.0`,
-  `main`). Pinning the GitHub Action to `@v1.0.0` resolves to ghcr
-  tag `1.0.0` and ships the rules snapshot from that release.
-- `NOIR_HOME`, `NOIR_AI_KEY`, `NOIR_CACHE_DISABLE`, `NO_COLOR`, and
-  the on-disk paths under `~/.config/noir/` (passive_rules, cache/ai,
-  config.yaml) are unchanged from v0.
+- Legacy `--include-*` and `--set-pvalue*` flags remain fully supported as silent aliases in v1.x.
+- Executing `noir` with no arguments now displays the top-level CLI overview instead of raising an error.
+- Endpoint JSON output is backward-compatible with v0 and contains only additive fields (`callees`, `ai_context`).
+- Maintained existing Docker image tagging conventions and environmental variables (`NOIR_HOME`, `NOIR_AI_KEY`, `NO_COLOR`, etc.) as well as the config paths under `~/.config/noir/` (passive_rules, cache/ai, config.yaml).
 
 ## v0.30.0
 
