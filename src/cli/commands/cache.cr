@@ -44,9 +44,9 @@ module Noir::CLI::CacheCommand
   # so the validation rule can be exercised without going through
   # the `die` exit path.
   def self.parse_days(arg : String?) : Int32?
-    return nil if arg.nil?
+    return if arg.nil?
     days = arg.to_i?
-    return nil if days.nil? || days < 1 || days > MAX_PURGE_DAYS
+    return if days.nil? || days < 1 || days > MAX_PURGE_DAYS
     days
   end
 

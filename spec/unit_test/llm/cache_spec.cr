@@ -103,8 +103,7 @@ describe LLM::Cache do
 
   describe ".purge_older_than" do
     it "removes only entries older than the threshold" do
-      with_isolated_cache_dir do |home|
-        cache_dir = File.join(home, "cache", "ai")
+      with_isolated_cache_dir do |_|
         LLM::Cache.store("old", "old-content").should be_true
         LLM::Cache.store("new", "new-content").should be_true
 

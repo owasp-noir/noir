@@ -49,15 +49,15 @@ module Noir::CLI::HelpCommand
 
   def self.run(argv : Array(String))
     case route_for(argv)
-    in Route::TopLevel    then print_top_level
-    in Route::Scan        then ScanCommand.run(["--help"])
-    in Route::List        then ListCommand.print_help
-    in Route::Cache       then CacheCommand.print_help
-    in Route::Config      then ConfigCommand.print_help
-    in Route::Rules       then RulesCommand.print_help
-    in Route::Completion  then CompletionCommand.print_help
-    in Route::Version     then VersionCommand.print_help
-    in Route::Help        then print_top_level
+    in Route::TopLevel   then print_top_level
+    in Route::Scan       then ScanCommand.run(["--help"])
+    in Route::List       then ListCommand.print_help
+    in Route::Cache      then CacheCommand.print_help
+    in Route::Config     then ConfigCommand.print_help
+    in Route::Rules      then RulesCommand.print_help
+    in Route::Completion then CompletionCommand.print_help
+    in Route::Version    then VersionCommand.print_help
+    in Route::Help       then print_top_level
     in Route::Unknown
       Noir::CLI.die("Unknown command: #{argv.first}\nRun `noir help` to see available commands.")
     end

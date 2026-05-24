@@ -124,7 +124,7 @@ describe "FileHelper" do
       locator = CodeLocator.instance
 
       locator.push("file_map", "/app/shard.yml")
-      locator.push("file_map", "/app/public/legitimate.css") # under app/shard.yml — included
+      locator.push("file_map", "/app/public/legitimate.css")  # under app/shard.yml — included
       locator.push("file_map", "/app/docs/public/index.html") # no shard.yml in docs/ — skipped
       locator.push("file_map", "/app/docs/public/sitemap.xml")
       locator.push("file_map", "/app/docs/public/robots.txt")

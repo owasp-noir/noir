@@ -4,11 +4,11 @@ require "../../../src/miniparsers/python_callee_extractor"
 describe Noir::PythonCalleeExtractor do
   it "extracts identifier-form callees from a function body" do
     source = <<-PY
-    def show(id):
-        user = lookup_user(id)
-        record_audit(user)
-        return present(user)
-    PY
+      def show(id):
+          user = lookup_user(id)
+          record_audit(user)
+          return present(user)
+      PY
 
     names = Noir::PythonCalleeExtractor.calls_in(source).map(&.first)
     names.should contain("lookup_user")
@@ -18,11 +18,11 @@ describe Noir::PythonCalleeExtractor do
 
   it "extracts dotted attribute callees (a.b)" do
     source = <<-PY
-    def handler():
-        user = User.find(1)
-        flash.error("oops")
-        return render(user)
-    PY
+      def handler():
+          user = User.find(1)
+          flash.error("oops")
+          return render(user)
+      PY
 
     names = Noir::PythonCalleeExtractor.calls_in(source).map(&.first)
     names.should contain("User.find")
@@ -32,9 +32,9 @@ describe Noir::PythonCalleeExtractor do
 
   it "joins multi-segment attribute chains rooted on identifiers" do
     source = <<-PY
-    def handler():
-        return audit.log.write("show")
-    PY
+      def handler():
+          return audit.log.write("show")
+      PY
 
     names = Noir::PythonCalleeExtractor.calls_in(source).map(&.first)
     names.should contain("audit.log.write")
@@ -42,12 +42,12 @@ describe Noir::PythonCalleeExtractor do
 
   it "filters out builtins so they don't crowd the callee list" do
     source = <<-PY
-    def handler(items):
-        print(items)
-        n = len(items)
-        sorted_items = sorted(items)
-        return jsonify(sorted_items)
-    PY
+      def handler(items):
+          print(items)
+          n = len(items)
+          sorted_items = sorted(items)
+          return jsonify(sorted_items)
+      PY
 
     names = Noir::PythonCalleeExtractor.calls_in(source).map(&.first)
     # Builtins must be dropped …
@@ -60,10 +60,10 @@ describe Noir::PythonCalleeExtractor do
 
   it "drops bare-identifier dunder calls (__import__ / __subclasshook__)" do
     source = <<-PY
-    def handler():
-        __import__("os")
-        return user_lookup()
-    PY
+      def handler():
+          __import__("os")
+          return user_lookup()
+      PY
 
     # The dunder filter applies to identifier-form callees only.
     # Attribute-form dunders (e.g. `o.__init__()`) reach the callee
@@ -75,9 +75,9 @@ describe Noir::PythonCalleeExtractor do
 
   it "drops chained attribute calls rooted on another call (User.query.filter(args).first)" do
     source = <<-PY
-    def handler(args):
-        return User.query.filter(args).first()
-    PY
+      def handler(args):
+          return User.query.filter(args).first()
+      PY
 
     names = Noir::PythonCalleeExtractor.calls_in(source).map(&.first)
     # Inner identifier-rooted call is captured …
@@ -90,10 +90,10 @@ describe Noir::PythonCalleeExtractor do
 
   it "reports 0-based rows relative to the source snippet" do
     source = <<-PY
-    def handler():
-        result = lookup_user()
-        return present(result)
-    PY
+      def handler():
+          result = lookup_user()
+          return present(result)
+      PY
 
     rows = Noir::PythonCalleeExtractor.calls_in(source).to_h
     # `def handler():` is row 0, body lines start at row 1.

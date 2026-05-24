@@ -181,8 +181,8 @@ module LLM
             entries += 1
             bytes += info.size.to_i64
             mtime = info.modification_time
-            oldest = mtime if oldest.nil? || mtime < oldest.not_nil!
-            newest = mtime if newest.nil? || mtime > newest.not_nil!
+            oldest = oldest ? (mtime < oldest ? mtime : oldest) : mtime
+            newest = newest ? (mtime > newest ? mtime : newest) : mtime
           rescue e
             Log.debug { "Cache stats: failed to read #{fp}: #{e.message}" }
           end

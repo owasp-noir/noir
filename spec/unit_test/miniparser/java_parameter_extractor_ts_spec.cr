@@ -6,9 +6,9 @@ describe Noir::TreeSitterJavaParameterExtractor do
   describe ".extract_package_name" do
     it "returns the dotted package name from a declaration" do
       source = <<-JAVA
-      package com.example.api;
-      class A {}
-      JAVA
+        package com.example.api;
+        class A {}
+        JAVA
       Noir::TreeSitterJavaParameterExtractor.extract_package_name(source).should eq("com.example.api")
     end
 
@@ -20,11 +20,11 @@ describe Noir::TreeSitterJavaParameterExtractor do
   describe ".extract_imports" do
     it "returns each non-static import as an ImportDecl" do
       source = <<-JAVA
-      package com.example;
+        package com.example;
 
-      import com.example.dto.UserDto;
-      import com.example.dto.OrderDto;
-      JAVA
+        import com.example.dto.UserDto;
+        import com.example.dto.OrderDto;
+        JAVA
 
       imports = Noir::TreeSitterJavaParameterExtractor.extract_imports(source)
       paths = imports.map(&.path)
@@ -35,9 +35,9 @@ describe Noir::TreeSitterJavaParameterExtractor do
 
     it "flags star imports via wildcard?" do
       source = <<-JAVA
-      package com.example;
-      import com.example.dto.*;
-      JAVA
+        package com.example;
+        import com.example.dto.*;
+        JAVA
 
       imports = Noir::TreeSitterJavaParameterExtractor.extract_imports(source)
       imports.size.should eq(1)
@@ -47,10 +47,10 @@ describe Noir::TreeSitterJavaParameterExtractor do
 
     it "skips `import static …` since static imports don't contribute DTOs" do
       source = <<-JAVA
-      package com.example;
-      import static org.springframework.web.bind.MyMath.PI;
-      import com.example.dto.UserDto;
-      JAVA
+        package com.example;
+        import static org.springframework.web.bind.MyMath.PI;
+        import com.example.dto.UserDto;
+        JAVA
 
       imports = Noir::TreeSitterJavaParameterExtractor.extract_imports(source)
       imports.map(&.path).should eq(["com.example.dto.UserDto"])
@@ -60,16 +60,16 @@ describe Noir::TreeSitterJavaParameterExtractor do
   describe ".extract_class_fields" do
     it "captures public fields with their access modifier and setter status" do
       source = <<-JAVA
-      class UserDto {
-          public String name;
-          private int age;
-          public void setAge(int age) { this.age = age; }
-      }
-      JAVA
+        class UserDto {
+            public String name;
+            private int age;
+            public void setAge(int age) { this.age = age; }
+        }
+        JAVA
 
       fields = Noir::TreeSitterJavaParameterExtractor.extract_class_fields(source)["UserDto"]
-      name = fields.find(&.name.== "name").not_nil!
-      age = fields.find(&.name.== "age").not_nil!
+      name = fields.find!(&.name.== "name")
+      age = fields.find!(&.name.== "age")
 
       name.access_modifier.should eq("public")
       name.has_setter?.should be_false
@@ -82,33 +82,33 @@ describe Noir::TreeSitterJavaParameterExtractor do
 
     it "captures initializer text for fields with default values" do
       source = <<-JAVA
-      class UserDto {
-          public String name = "default";
-          public int age = 18;
-      }
-      JAVA
+        class UserDto {
+            public String name = "default";
+            public int age = 18;
+        }
+        JAVA
 
       fields = Noir::TreeSitterJavaParameterExtractor.extract_class_fields(source)["UserDto"]
-      name_field = fields.find(&.name.== "name").not_nil!
-      age_field = fields.find(&.name.== "age").not_nil!
+      name_field = fields.find!(&.name.== "name")
+      age_field = fields.find!(&.name.== "age")
       name_field.init_value.should contain("default")
       age_field.init_value.should eq("18")
     end
 
     it "omits classes that declare no fields" do
       source = <<-JAVA
-      class Empty {
-          public void method() {}
-      }
-      JAVA
+        class Empty {
+            public void method() {}
+        }
+        JAVA
       Noir::TreeSitterJavaParameterExtractor.extract_class_fields(source).has_key?("Empty").should be_false
     end
 
     it "indexes multiple classes in the same file separately" do
       source = <<-JAVA
-      class A { public String a; }
-      class B { public int b; }
-      JAVA
+        class A { public String a; }
+        class B { public int b; }
+        JAVA
 
       results = Noir::TreeSitterJavaParameterExtractor.extract_class_fields(source)
       results.keys.sort!.should eq(["A", "B"])
@@ -120,31 +120,31 @@ describe Noir::TreeSitterJavaParameterExtractor do
   describe ".extract_consumes" do
     it "returns \"json\" for APPLICATION_JSON_VALUE" do
       source = <<-JAVA
-      class C {
-          @PostMapping(value = "/x", consumes = MediaType.APPLICATION_JSON_VALUE)
-          public void m() {}
-      }
-      JAVA
+        class C {
+            @PostMapping(value = "/x", consumes = MediaType.APPLICATION_JSON_VALUE)
+            public void m() {}
+        }
+        JAVA
       Noir::TreeSitterJavaParameterExtractor.extract_consumes(source, "C", "m").should eq("json")
     end
 
     it "returns \"form\" for APPLICATION_FORM_URLENCODED_VALUE" do
       source = <<-JAVA
-      class C {
-          @PostMapping(value = "/x", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
-          public void m() {}
-      }
-      JAVA
+        class C {
+            @PostMapping(value = "/x", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
+            public void m() {}
+        }
+        JAVA
       Noir::TreeSitterJavaParameterExtractor.extract_consumes(source, "C", "m").should eq("form")
     end
 
     it "returns nil when no consumes attribute is set" do
       source = <<-JAVA
-      class C {
-          @PostMapping("/x")
-          public void m() {}
-      }
-      JAVA
+        class C {
+            @PostMapping("/x")
+            public void m() {}
+        }
+        JAVA
       Noir::TreeSitterJavaParameterExtractor.extract_consumes(source, "C", "m").should be_nil
     end
 
@@ -157,14 +157,14 @@ describe Noir::TreeSitterJavaParameterExtractor do
   describe ".extract_feign_client_classes" do
     it "captures every @FeignClient-annotated class/interface" do
       source = <<-JAVA
-      @FeignClient(name = "users")
-      interface UsersClient { @GetMapping("/u") String show(); }
+        @FeignClient(name = "users")
+        interface UsersClient { @GetMapping("/u") String show(); }
 
-      @FeignClient
-      interface OrdersClient {}
+        @FeignClient
+        interface OrdersClient {}
 
-      class Plain {}
-      JAVA
+        class Plain {}
+        JAVA
 
       result = Noir::TreeSitterJavaParameterExtractor.extract_feign_client_classes(source)
       result.includes?("UsersClient").should be_true
@@ -182,13 +182,13 @@ describe Noir::TreeSitterJavaParameterExtractor do
   describe ".extract_method_parameters" do
     it "picks up @RequestParam-annotated args as query params" do
       source = <<-JAVA
-      class Controller {
-          @GetMapping("/search")
-          public String search(@RequestParam String q, @RequestParam int page) {
-              return q;
-          }
-      }
-      JAVA
+        class Controller {
+            @GetMapping("/search")
+            public String search(@RequestParam String q, @RequestParam int page) {
+                return q;
+            }
+        }
+        JAVA
 
       params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
         source, "Controller", "search", "GET", nil,
@@ -204,13 +204,13 @@ describe Noir::TreeSitterJavaParameterExtractor do
       # not the params list — legacy behaviour preserved so v0 output
       # stays stable across the tree-sitter rewrite.
       source = <<-JAVA
-      class Controller {
-          @GetMapping("/users/{id}")
-          public String show(@PathVariable Long id) {
-              return id.toString();
-          }
-      }
-      JAVA
+        class Controller {
+            @GetMapping("/users/{id}")
+            public String show(@PathVariable Long id) {
+                return id.toString();
+            }
+        }
+        JAVA
 
       params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
         source, "Controller", "show", "GET", nil,
@@ -221,13 +221,13 @@ describe Noir::TreeSitterJavaParameterExtractor do
 
     it "picks up @RequestHeader-annotated args as header params" do
       source = <<-JAVA
-      class Controller {
-          @GetMapping("/x")
-          public String show(@RequestHeader("X-Trace") String trace) {
-              return trace;
-          }
-      }
-      JAVA
+        class Controller {
+            @GetMapping("/x")
+            public String show(@RequestHeader("X-Trace") String trace) {
+                return trace;
+            }
+        }
+        JAVA
 
       params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
         source, "Controller", "show", "GET", nil,

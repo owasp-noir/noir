@@ -255,7 +255,7 @@ describe NoirPassiveScan do
     it "emits one result per matching line even when multiple OR matchers fire" do
       logger = NoirLogger.new(false, false, false, true)
       rules = [
-        PassiveScan.new(YAML.parse(<<-YAML)),
+        PassiveScan.new(YAML.parse(<<-'YAML')),
           id: or-double-fire
           info:
             name: double fire
@@ -283,7 +283,7 @@ describe NoirPassiveScan do
       # Pre-fix the bait lines (1 and 3) each emitted 2 results
       # (word + regex). Post-fix exactly one per matching line.
       results.size.should eq(2)
-      results.map(&.line_number).sort.should eq([1, 3])
+      results.map(&.line_number).sort!.should eq([1, 3])
     end
   end
 
@@ -597,7 +597,7 @@ describe NoirPassiveScan do
       ]
       # The matcher must mark itself as compilation-failed so the
       # per-line loop short-circuits without retrying Regex.new.
-      rules[0].matchers[0].regex_compile_failed.should be_true
+      rules[0].matchers[0].regex_compile_failed?.should be_true
       results = NoirPassiveScan.detect("test.txt", "any\ncontent", rules, logger)
       results.size.should eq(0)
     end

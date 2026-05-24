@@ -413,7 +413,7 @@ module Analyzer::Php
     # True when `pos` falls inside any skip range. Cheap on the
     # ~few-hundred-range count seen in real Laravel routes files.
     private def inside_php_skip_range?(pos : Int32, ranges : Array(Range(Int32, Int32))) : Bool
-      ranges.any? { |r| r.covers?(pos) }
+      ranges.any?(&.covers?(pos))
     end
 
     private def extract_route_groups(content : String) : Array(RouteGroup)

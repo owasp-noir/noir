@@ -5,18 +5,18 @@ describe Noir::GoCalleeExtractor do
   describe ".collect_function_bodies" do
     it "indexes every top-level function declaration by name" do
       source = <<-GO
-      package handlers
+        package handlers
 
-      func Show(c *gin.Context) {
-        c.JSON(200, "ok")
-      }
+        func Show(c *gin.Context) {
+          c.JSON(200, "ok")
+        }
 
-      func Update(c *gin.Context) {
-        c.JSON(200, "ok")
-      }
+        func Update(c *gin.Context) {
+          c.JSON(200, "ok")
+        }
 
-      func helper() {}
-      GO
+        func helper() {}
+        GO
 
       bodies = Noir::GoCalleeExtractor.collect_function_bodies(source, "handlers.go")
       bodies.keys.sort!.should eq(["Show", "Update", "helper"])
@@ -28,10 +28,10 @@ describe Noir::GoCalleeExtractor do
       # Go itself rejects this at build time, but the extractor is
       # asked to be resilient against malformed snippets.
       source = <<-GO
-      package x
-      func Foo() { return }
-      func Foo() { return }
-      GO
+        package x
+        func Foo() { return }
+        func Foo() { return }
+        GO
 
       bodies = Noir::GoCalleeExtractor.collect_function_bodies(source, "x.go")
       bodies.size.should eq(1)
@@ -44,13 +44,13 @@ describe Noir::GoCalleeExtractor do
 
     it "records the 0-based start row of the func keyword" do
       source = <<-GO
-      package handlers
+        package handlers
 
 
-      func Show(c *gin.Context) {
-        c.JSON(200, "ok")
-      }
-      GO
+        func Show(c *gin.Context) {
+          c.JSON(200, "ok")
+        }
+        GO
 
       bodies = Noir::GoCalleeExtractor.collect_function_bodies(source, "handlers.go")
       bodies["Show"].start_row.should eq(3)
@@ -133,19 +133,19 @@ describe Noir::GoCalleeExtractor do
 
     it "walks an inline closure handler and reports its callees" do
       source = <<-GO
-      package main
+        package main
 
-      func register(app *gin.Engine) {
-        app.GET("/users", func(c *gin.Context) {
-          user := lookupUser(c)
-          c.JSON(200, user)
-        })
-      }
-      GO
+        func register(app *gin.Engine) {
+          app.GET("/users", func(c *gin.Context) {
+            user := lookupUser(c)
+            c.JSON(200, user)
+          })
+        }
+        GO
 
       # The `app.GET(...)` call sits on the row that has `app.GET`.
       # Find it dynamically — exact row depends on the heredoc.
-      target_row = source.lines.index { |l| l.includes?("app.GET(") }.not_nil!
+      target_row = source.lines.index!(&.includes?("app.GET("))
       callees = Noir::GoCalleeExtractor.callees_for_routes(
         source, "main.go", Set{target_row},
         Hash(String, Noir::GoCalleeExtractor::FunctionBody).new
@@ -161,18 +161,18 @@ describe Noir::GoCalleeExtractor do
 
     it "filters Go builtins out of the callee list" do
       source = <<-GO
-      package main
+        package main
 
-      func register(app *gin.Engine) {
-        app.GET("/items", func(c *gin.Context) {
-          n := len(items)
-          out := make([]int, 0)
-          c.JSON(200, n)
-        })
-      }
-      GO
+        func register(app *gin.Engine) {
+          app.GET("/items", func(c *gin.Context) {
+            n := len(items)
+            out := make([]int, 0)
+            c.JSON(200, n)
+          })
+        }
+        GO
 
-      target_row = source.lines.index { |l| l.includes?("app.GET(") }.not_nil!
+      target_row = source.lines.index!(&.includes?("app.GET("))
       callees = Noir::GoCalleeExtractor.callees_for_routes(
         source, "main.go", Set{target_row},
         Hash(String, Noir::GoCalleeExtractor::FunctionBody).new
@@ -186,19 +186,19 @@ describe Noir::GoCalleeExtractor do
 
     it "resolves a same-file identifier handler against local functions" do
       source = <<-GO
-      package main
+        package main
 
-      func showUser(c *gin.Context) {
-        user := lookupUser(c)
-        c.JSON(200, user)
-      }
+        func showUser(c *gin.Context) {
+          user := lookupUser(c)
+          c.JSON(200, user)
+        }
 
-      func register(app *gin.Engine) {
-        app.GET("/users", showUser)
-      }
-      GO
+        func register(app *gin.Engine) {
+          app.GET("/users", showUser)
+        }
+        GO
 
-      target_row = source.lines.index { |l| l.includes?("app.GET(") }.not_nil!
+      target_row = source.lines.index!(&.includes?("app.GET("))
       callees = Noir::GoCalleeExtractor.callees_for_routes(
         source, "main.go", Set{target_row},
         Hash(String, Noir::GoCalleeExtractor::FunctionBody).new

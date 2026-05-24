@@ -70,7 +70,7 @@ module Noir::CLI::Legacy
   # unchanged — this method intentionally narrow.
   def self.translate_flag_aliases(argv : Array(String)) : Array(String)
     argv.map do |arg|
-      if (eq_idx = arg.index('='))
+      if eq_idx = arg.index('=')
         name = arg[0...eq_idx]
         if replacement = LEGACY_FLAG_ALIASES[name]?
           "#{replacement}#{arg[eq_idx..]}"

@@ -35,7 +35,7 @@ struct PassiveScan
     # Sticky flag: true when this matcher's regexes failed to compile.
     # detect.cr checks it to short-circuit instead of retrying the
     # (already-broken) compilation on every line.
-    property regex_compile_failed : Bool
+    property? regex_compile_failed : Bool
 
     def initialize(yaml : YAML::Any)
       @type = yaml["type"].as_s

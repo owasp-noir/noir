@@ -165,7 +165,7 @@ module NoirAIContext
           /\bcPickle\.loads\s*\(/,
           /\bdill\.loads\s*\(/,
           /\bjsonpickle\.decode\s*\(/,
-          /\byaml\.load\s*\(/,         # yaml.load without SafeLoader
+          /\byaml\.load\s*\(/, # yaml.load without SafeLoader
           /\bMarshal\.load\s*\(/,
           /\bunserialize\s*\(/,
           /\bObjectInputStream\b.*\breadObject\b/m,
@@ -205,17 +205,17 @@ module NoirAIContext
         name_patterns: [/\binstance_eval\b/, /\bclass_eval\b/, /\bcreate_function\b/],
         source_patterns: [
           /\beval\s*\(/,
-          /\bexec\s*\(/,                  # Python's exec (overlaps with shell exec but resolved by context)
+          /\bexec\s*\(/, # Python's exec (overlaps with shell exec but resolved by context)
           /\bcompile\s*\([^)]*,\s*['"]exec['"]/,
           /\bnew\s+Function\s*\(/,
           /\bFunction\s*\([^)]*\)\s*\(/,
-          /\bsetTimeout\s*\(\s*['"]/,     # setTimeout("string code", ...)
+          /\bsetTimeout\s*\(\s*['"]/, # setTimeout("string code", ...)
           /\bsetInterval\s*\(\s*['"]/,
           /\binstance_eval\s*\(/,
           /\bclass_eval\s*\(/,
           /\bbinding\.eval\s*\(/,
           /\bcreate_function\s*\(/,
-          /\bassert\s*\(\s*\$/,           # PHP assert($var) — eval-equivalent
+          /\bassert\s*\(\s*\$/, # PHP assert($var) — eval-equivalent
           /\bScriptEngine\b.*\beval\b/,
         ]
       ),
@@ -255,7 +255,7 @@ module NoirAIContext
           /\bAES\/ECB\b/,
           /\bMode::ECB\b/,
           /\bRC4\b/,
-          /\bMath\.random\s*\(\s*\)/,                # JS non-CSPRNG
+          /\bMath\.random\s*\(\s*\)/, # JS non-CSPRNG
         ]
       ),
     ] of PatternDefinition
@@ -288,7 +288,7 @@ module NoirAIContext
           # Class definitions — `class X(BaseModel)` / `pydantic.BaseModel`
           /\bclass\s+\w+\(\s*BaseModel\s*\)/,
           /\bpydantic\.BaseModel\b/,
-          /\b\w+:\s*BaseModel\b/,                      # type hint `payload: BaseModel`
+          /\b\w+:\s*BaseModel\b/, # type hint `payload: BaseModel`
           # Pydantic call-site validation — works whether the model
           # is defined in the same file or imported.
           /\.parse_obj\s*\(/,
@@ -340,9 +340,9 @@ module NoirAIContext
           /\ballowlist\b/i,
           /\ballowed[_-]?values\b/i,
           /\bpermitted_values\b/i,
-          /\bif\s+\w+\s+in\s+[A-Z_][A-Z0-9_]+\b/,      # `if value in ALLOWED_*`
+          /\bif\s+\w+\s+in\s+[A-Z_][A-Z0-9_]+\b/, # `if value in ALLOWED_*`
           /\b\bALLOWED_[A-Z_]+\.(include|contains)/,
-          /\.include\?\s*\(\s*\w+\s*\)\s*(?:or|\|\|)/,  # very loose, low priority
+          /\.include\?\s*\(\s*\w+\s*\)\s*(?:or|\|\|)/, # very loose, low priority
           /\bin\s*\[[\w\s,'"]+\]/i,                    # `if v in ['a','b']`
         ]
       ),
@@ -525,7 +525,7 @@ module NoirAIContext
     # The check is order-independent across two regex windows so
     # `origin: '*'` followed by `credentials: true` and the reverse
     # both fire.
-    CORS_WILDCARD_PATTERN = /\b(?:origin|origins?)\s*[:=]\s*['"]\*['"]/i
+    CORS_WILDCARD_PATTERN    = /\b(?:origin|origins?)\s*[:=]\s*['"]\*['"]/i
     CORS_CREDENTIALS_PATTERN = /\b(?:credentials|allow[_-]?credentials|allowCredentials)\s*[:=]\s*(?:true|['"]true['"])/i
 
     PARAM_PATTERNS = [
@@ -647,7 +647,7 @@ module NoirAIContext
       return unless context.signals.any? { |s| s.kind == "redirect_input" }
       return if context.signals.any? { |s| s.kind == "ssrf" }
 
-      outbound = context.sinks.find { |s| s.kind == "outbound_http" }.not_nil!
+      outbound = context.sinks.find! { |s| s.kind == "outbound_http" }
       context.push_signal(AIContextEntry.new(
         "ssrf",
         outbound.name,
@@ -811,7 +811,7 @@ module NoirAIContext
       return unless SAFE_METHODS.includes?(endpoint.method)
       return if context.signals.any? { |s| s.kind == "unsafe_method" }
 
-      mutating = endpoint.callees.find { |c| c.name.matches?(MUTATING_CALLEE_PATTERN) }
+      mutating = endpoint.callees.find(&.name.matches?(MUTATING_CALLEE_PATTERN))
       return unless mutating
 
       # If the handler dispatches on HTTP method internally, we
@@ -884,7 +884,7 @@ module NoirAIContext
       return unless context.signals.any? { |s| s.kind == "redirect_input" }
       return if context.signals.any? { |s| s.kind == "open_redirect" }
 
-      redirect_sink = context.sinks.find { |s| s.kind == "redirect" }.not_nil!
+      redirect_sink = context.sinks.find! { |s| s.kind == "redirect" }
       context.push_signal(AIContextEntry.new(
         "open_redirect",
         redirect_sink.name,
@@ -912,7 +912,7 @@ module NoirAIContext
     # Both have to match in the same scope. The earlier single-regex
     # version was too loose and caught english prose mentioning
     # credentials in response strings.
-    RESPONSE_EMITTER_PATTERN = /\b(jsonify|res\.json|json_response|JsonResponse|render\s+json:|to_json|respond_with)\b/i
+    RESPONSE_EMITTER_PATTERN   = /\b(jsonify|res\.json|json_response|JsonResponse|render\s+json:|to_json|respond_with)\b/i
     CREDENTIAL_KEY_IN_RESPONSE = /[^"'\w](password|passwd|token|secret|api[_-]?key|session_id|access_token|refresh_token|private_key)\s*:/i
 
     private def add_sensitive_response_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
@@ -1389,12 +1389,12 @@ module NoirAIContext
                                       path : String?,
                                       line : Int32?,
                                       source : String) : AIContextEntry?
-      return nil if suppress_pattern_detection?(pattern.kind, name, snippet)
+      return if suppress_pattern_detection?(pattern.kind, name, snippet)
 
       name_match = name_match_text(name, pattern.name_patterns)
       snippet_match = snippet_match_text(snippet, pattern.source_patterns)
-      return nil unless name_match || snippet_match
-      return nil if source == "callee" && name_match.nil?
+      return unless name_match || snippet_match
+      return if source == "callee" && name_match.nil?
 
       evidence_name = name_match || snippet_match || pattern.kind
       AIContextEntry.new(

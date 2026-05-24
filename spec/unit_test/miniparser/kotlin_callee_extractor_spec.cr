@@ -20,17 +20,17 @@ describe Noir::KotlinCalleeExtractor do
   describe ".callees_in_method" do
     it "captures unqualified, qualified, this-, and static-receiver calls" do
       source = <<-KT
-      package app
+        package app
 
-      class UserController {
-          fun show(id: Long): String {
-              val user = service.findById(id)
-              this.validate(user)
-              return Renderer.html(user)
-          }
-          fun validate(u: Any) {}
-      }
-      KT
+        class UserController {
+            fun show(id: Long): String {
+                val user = service.findById(id)
+                this.validate(user)
+                return Renderer.html(user)
+            }
+            fun validate(u: Any) {}
+        }
+        KT
 
       callees = nil
       with_kotlin_root(source) do |root|
@@ -66,19 +66,19 @@ describe Noir::KotlinCalleeExtractor do
   describe ".callees_in_lambda (Ktor mode, skip_routing: true)" do
     it "treats nested verb DSL calls as route boundaries and skips their callees" do
       source = <<-KT
-      package app
+        package app
 
-      fun module() {
-          routing {
-              get("/users") {
-                  outerHelper()
-                  route("/admin") {
-                      adminOnly()
-                  }
-              }
-          }
-      }
-      KT
+        fun module() {
+            routing {
+                get("/users") {
+                    outerHelper()
+                    route("/admin") {
+                        adminOnly()
+                    }
+                }
+            }
+        }
+        KT
 
       callees = nil
       with_kotlin_root(source) do |root|
@@ -120,12 +120,12 @@ describe Noir::KotlinCalleeExtractor do
   describe ".callees_in_lambda (http4k mode, skip_routing: false)" do
     it "keeps calls named like routing verbs (http4k uses `bind` not nested route blocks)" do
       source = <<-KT
-      fun handler() {
-          val req = get()
-          val res = post("data")
-          return res
-      }
-      KT
+        fun handler() {
+            val req = get()
+            val res = post("data")
+            return res
+        }
+        KT
 
       callees = nil
       with_kotlin_root(source) do |root|

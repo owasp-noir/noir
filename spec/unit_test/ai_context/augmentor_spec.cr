@@ -971,8 +971,8 @@ describe "NoirAIContext" do
 
     context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
     context.signals.map(&.kind).should contain("unsafe_method")
-    context.signals.find(&.kind.== "unsafe_method").not_nil!.name.should contain("GET")
-    context.signals.find(&.kind.== "unsafe_method").not_nil!.name.should contain("User.destroy")
+    context.signals.find!(&.kind.== "unsafe_method").name.should contain("GET")
+    context.signals.find!(&.kind.== "unsafe_method").name.should contain("User.destroy")
   end
 
   it "does NOT emit unsafe_method for POST/PUT/DELETE handlers with mutating callees" do

@@ -30,10 +30,8 @@ module Analyzer::Ruby
       # constraint without false-negatives in the bundled fixtures.
       leading = content.lstrip
       HTTP_VERBS.each do |verb|
-        next unless leading.starts_with?(verb) &&
-                    (leading.size == verb.size ||
-                      !leading[verb.size].alphanumeric? &&
-                        leading[verb.size] != '_')
+        next if !leading.starts_with?(verb)
+        next if leading.size > verb.size && (leading[verb.size].alphanumeric? || leading[verb.size] == '_')
 
         if m = leading.match(/^#{verb}\s*\(?\s*['"](.+?)['"]/)
           path = normalize_ruby_interpolation(m[1])

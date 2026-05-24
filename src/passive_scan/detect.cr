@@ -103,7 +103,7 @@ module NoirPassiveScan
       # Compilation already failed at load time — there is no useful
       # work to do here, and retrying would just raise the same
       # exception on every line of every file.
-      return false if matcher.regex_compile_failed
+      return false if matcher.regex_compile_failed?
 
       case matcher.condition
       when "and"

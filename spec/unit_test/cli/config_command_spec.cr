@@ -135,7 +135,7 @@ describe "Noir::CLI::ConfigCommand.detect_legacy_keys" do
         - "/admin"
       YAML
     found = Noir::CLI::ConfigCommand.detect_legacy_keys(body)
-    found.keys.sort.should eq(%w[send_es send_proxy send_req send_with_headers use_filters use_matchers])
+    found.keys.sort!.should eq(%w[send_es send_proxy send_req send_with_headers use_filters use_matchers])
     found["send_req"].should eq("probe")
     found["send_with_headers"].should eq("probe_header")
     found["use_matchers"].should eq("probe_match")

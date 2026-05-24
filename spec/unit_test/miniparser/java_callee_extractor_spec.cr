@@ -14,16 +14,16 @@ describe Noir::JavaCalleeExtractor do
   describe ".callees_in_method" do
     it "captures unqualified, qualified, this-, and static-receiver calls inside the method body" do
       source = <<-JAVA
-      package app;
-      class UserController {
-        public String show(Long id) {
-          User user = service.findById(id);
-          this.validate(user);
-          return Renderer.html(user);
+        package app;
+        class UserController {
+          public String show(Long id) {
+            User user = service.findById(id);
+            this.validate(user);
+            return Renderer.html(user);
+          }
+          public void validate(User u) {}
         }
-        public void validate(User u) {}
-      }
-      JAVA
+        JAVA
 
       callees = [] of Tuple(String, String, Int32)
       with_java_root(source) do |root|
@@ -37,14 +37,14 @@ describe Noir::JavaCalleeExtractor do
       names.should contain("Renderer.html")
       # Every emitted callee should report the right file path so the
       # AI-context surface can deep-link back into source.
-      callees.each { |c| c[1].should eq("UserController.java") }
+      callees.each(&.[1].should(eq("UserController.java")))
     end
 
     it "returns an empty list when the class or method can't be found" do
       source = <<-JAVA
-      package app;
-      class A { public void m() {} }
-      JAVA
+        package app;
+        class A { public void m() {} }
+        JAVA
 
       callees = nil
       with_java_root(source) do |root|
@@ -68,12 +68,12 @@ describe Noir::JavaCalleeExtractor do
 
     it "drops chained-on-call receivers (filter().first → noisy duplicate)" do
       source = <<-JAVA
-      class Repo {
-        public User show() {
-          return query().first();
+        class Repo {
+          public User show() {
+            return query().first();
+          }
         }
-      }
-      JAVA
+        JAVA
 
       callees = nil
       with_java_root(source) do |root|
@@ -91,15 +91,15 @@ describe Noir::JavaCalleeExtractor do
 
     it "resolves unqualified calls and this.calls to the same-file declaration line" do
       source = <<-JAVA
-      class Controller {
-        public void entry() {
-          helper();
-          this.helper();
-          External.run();
+        class Controller {
+          public void entry() {
+            helper();
+            this.helper();
+            External.run();
+          }
+          public void helper() {}
         }
-        public void helper() {}
-      }
-      JAVA
+        JAVA
 
       callees = nil
       with_java_root(source) do |root|
@@ -126,14 +126,14 @@ describe Noir::JavaCalleeExtractor do
 
     it "leaves ambiguous (overloaded) names at the call site" do
       source = <<-JAVA
-      class Service {
-        public void entry() {
-          handle("x");
+        class Service {
+          public void entry() {
+            handle("x");
+          }
+          public void handle(String s) {}
+          public void handle(int n) {}
         }
-        public void handle(String s) {}
-        public void handle(int n) {}
-      }
-      JAVA
+        JAVA
 
       callees = nil
       with_java_root(source) do |root|
@@ -151,13 +151,13 @@ describe Noir::JavaCalleeExtractor do
   describe ".callees_in_body" do
     it "walks an arbitrary body node and emits each method_invocation" do
       source = <<-JAVA
-      class C {
-        public void m() {
-          a();
-          b.c();
+        class C {
+          public void m() {
+            a();
+            b.c();
+          }
         }
-      }
-      JAVA
+        JAVA
 
       callees = nil
       with_java_root(source) do |root|
