@@ -32,8 +32,14 @@ parts:
       # 2. Shards install production dependencies
       shards install --production
       
-      # 3. Compile high-portability static binary to preempt downstream client libyaml/libzstd dynamic library crashes
-      shards build --release --no-debug --production --static --link-flags="-lstdc++"
+      # 3. Create a linker wrapper to append -lstdc++ at the very end of the cc linking stage.
+      # This is required to resolve transitive C++ symbols from static libicuuc.a due to strict linker ordering.
+      echo '#!/bin/sh' > cc-wrapper
+      echo 'exec cc "$@" -lstdc++' >> cc-wrapper
+      chmod +x cc-wrapper
+      
+      # 4. Compile high-portability static binary to preempt downstream client libyaml/libzstd dynamic library crashes
+      CC="$(pwd)/cc-wrapper" shards build --release --no-debug --production --static
       cp ./bin/noir $CRAFT_PART_INSTALL/
     build-packages:
       - git
