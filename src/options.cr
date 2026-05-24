@@ -382,15 +382,24 @@ def run_options_parser
       noir_options["diff"] = YAML::Any.new(v)
     end
 
+    # Three flags act at different stages of the tech pipeline:
+    #   --techs       — bypass auto-detection, treat the listed techs
+    #                   as present
+    #   --only-techs  — let auto-detection run, but restrict the
+    #                   detector pool to these names
+    #   --exclude-techs — drop these techs from the final result
+    #                     (post-detection filter)
+    # Confusable surface from a quick read of `-h`; the descriptions
+    # below spell out the stage each flag attaches to.
     parser.separator "\n TECHNOLOGIES:".colorize(:blue)
-    parser.on "-t LIST", "--techs rails,php", "Enable specific technologies" do |v|
+    parser.on "-t LIST", "--techs rails,php", "Force-add techs and skip auto-detection (e.g. -t flask)" do |v|
       noir_options["techs"] = YAML::Any.new(v)
     end
-    parser.on "--exclude-techs LIST", "Exclude technologies" do |v|
-      noir_options["exclude_techs"] = YAML::Any.new(v)
-    end
-    parser.on "--only-techs LIST", "Run only specified tech detectors" do |v|
+    parser.on "--only-techs LIST", "Auto-detect, but consider only these tech detectors" do |v|
       noir_options["only_techs"] = YAML::Any.new(v)
+    end
+    parser.on "--exclude-techs LIST", "Drop these techs from the final result after detection" do |v|
+      noir_options["exclude_techs"] = YAML::Any.new(v)
     end
 
     parser.separator "\n CONFIG:".colorize(:blue)
