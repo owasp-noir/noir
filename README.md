@@ -73,6 +73,7 @@ From here:
 
 ## News & Updates
 
+* May 2026: Released **v1.0.0** — introducing a stable 1.x line across all analyzers, taggers, passive-scan, and a brand new verb-centric CLI structure.
 * May 2026: Refreshed the roadmap — Noir's goal is now to serve humans, AI auditors, and DAST tools equally as consumers of the same endpoint inventory.
 * August 2025: Presented at the OWASP Seoul Meetup. ([Open Source Gardening](https://owasp-noir.github.io/noir/community/media/#featured-owasp-seoul-aug-2025-open-source-gardening))
 * November 2024: Published a guest blog post ["Powering Up DAST with ZAP and Noir"](https://www.zaproxy.org/blog/2024-11-11-powering-up-dast-with-zap-and-noir/) on the ZAP blog.
