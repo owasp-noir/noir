@@ -33,7 +33,7 @@ parts:
       shards install --production
       
       # 3. Compile high-portability static binary to preempt downstream client libyaml/libzstd dynamic library crashes
-      shards build --release --no-debug --production --static
+      shards build --release --no-debug --production --static --link-flags="-lstdc++"
       cp ./bin/noir $CRAFT_PART_INSTALL/
     build-packages:
       - git
