@@ -1,7 +1,11 @@
-{% if page.params.prev_page or page.params.next_page %}
+{# `page.params` is undefined on pages that didn't declare any
+   custom front-matter fields (most of the docs). Gate on `is
+   defined` so the template stays a no-op for those pages
+   instead of raising a template error at build time. #}
+{% if page.params is defined and (page.params.prev_page is defined or page.params.next_page is defined) %}
 <nav class="prev-next-nav" aria-label="{% if page.language == "ko" %}페이지 이동{% else %}Page navigation{% endif %}">
   <div class="prev-next-row">
-    {% if page.params.prev_page %}
+    {% if page.params.prev_page is defined %}
       <a class="prev-next-link prev" href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}{{ page.params.prev_page.path }}">
         <span class="prev-next-direction">← {% if page.language == "ko" %}이전{% else %}Previous{% endif %}</span>
         <span class="prev-next-title">{{ page.params.prev_page.label }}</span>
@@ -10,7 +14,7 @@
       <span class="prev-next-link prev placeholder" aria-hidden="true"></span>
     {% endif %}
 
-    {% if page.params.next_page %}
+    {% if page.params.next_page is defined %}
       <a class="prev-next-link next" href="{{ base_url }}{% if page.language == "ko" %}/ko{% endif %}{{ page.params.next_page.path }}">
         <span class="prev-next-direction">{% if page.language == "ko" %}다음{% else %}Next{% endif %} →</span>
         <span class="prev-next-title">{{ page.params.next_page.label }}</span>
