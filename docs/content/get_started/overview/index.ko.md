@@ -3,7 +3,8 @@ title = "Noir란?"
 description = "OWASP Noir는 소스 코드에서 엔드포인트를 추출해, 사람 리뷰어, AI 감사자, DAST 스캐너에 공급하는 SAST 도구입니다."
 weight = 1
 sort_by = "weight"
-next_page = { path = "/get_started/installation/", label = "Noir 설치" }
+next_page_path = "/get_started/installation/"
+next_page_label = "Noir 설치"
 
 +++
 

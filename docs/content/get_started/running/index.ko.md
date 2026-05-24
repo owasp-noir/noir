@@ -3,7 +3,8 @@ title = "첫 번째 스캔"
 description = "Noir로 첫 번째 스캔을 실행하고 결과를 살펴봅니다."
 weight = 3
 sort_by = "weight"
-prev_page = { path = "/get_started/installation/", label = "Noir 설치" }
+prev_page_path = "/get_started/installation/"
+prev_page_label = "Noir 설치"
 
 +++
 
