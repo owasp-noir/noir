@@ -223,7 +223,7 @@ module Analyzer::Crystal
       %w[get post put patch delete options head].each do |method|
         if content.includes?("#{method} ") && content.includes?("\"")
           if match = content.match(/#{method}\s+['"](.+?)['"]/)
-            path = match[1]
+            path = normalize_crystal_interpolation(match[1])
             full_path = scope_prefix + path
             return Endpoint.new(full_path, method.upcase)
           end
@@ -238,7 +238,7 @@ module Analyzer::Crystal
 
       if content.includes?("ws ") && content.includes?("\"")
         if match = content.match(/ws\s+['"](.+?)['"]/)
-          path = match[1]
+          path = normalize_crystal_interpolation(match[1])
           full_path = scope_prefix + path
           endpoint = Endpoint.new(full_path, "GET")
           endpoint.protocol = "ws"

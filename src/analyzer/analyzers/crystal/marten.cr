@@ -208,7 +208,7 @@ module Analyzer::Crystal
       # Parse Marten route definitions: path "/route", Handler
       content.scan(/(?:^|[^.\w])path\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
         if match.size > 1
-          route = match[1].to_s
+          route = normalize_crystal_interpolation(match[1].to_s)
 
           # Extract HTTP methods from handler class patterns
           # For now, assume GET for routes, but could be enhanced to detect handler methods
