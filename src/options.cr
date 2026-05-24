@@ -263,8 +263,13 @@ def run_options_parser
     parser.on "--status-codes", "Display HTTP status codes" do
       noir_options["status_codes"] = YAML::Any.new(true)
     end
-    parser.on "--exclude-codes 404,500", "Exclude HTTP codes (comma-separated)" do |v|
-      noir_options["exclude_codes"] = YAML::Any.new(v)
+    parser.on "--exclude-codes 404,500", "Exclude HTTP codes (comma-separated; repeatable)" do |v|
+      # Accumulate same as --exclude-path / --use-taggers / -t etc.
+      # so users can repeat the flag (`--exclude-codes 404
+      # --exclude-codes 500`) without losing the first value.
+      existing = (noir_options["exclude_codes"]? || YAML::Any.new("")).to_s
+      combined = existing.empty? ? v : "#{existing},#{v}"
+      noir_options["exclude_codes"] = YAML::Any.new(combined)
     end
     parser.on "--exclude-path PATTERN", "Exclude files by glob (e.g. *.test.js,*_test.go; repeatable)" do |v|
       # Storage is a comma-separated string (the detector splits on
@@ -322,8 +327,16 @@ def run_options_parser
     parser.on "-T", "--use-all-taggers", "Activate all taggers" do
       noir_options["all_taggers"] = YAML::Any.new(true)
     end
-    parser.on "--use-taggers LIST", "Activate specific taggers (comma-separated)" do |v|
-      noir_options["use_taggers"] = YAML::Any.new(v)
+    parser.on "--use-taggers LIST", "Activate specific taggers (comma-separated; repeatable)" do |v|
+      # Same comma-storage pattern as --exclude-path: repeated flags
+      # accumulate into one comma list so the downstream parser
+      # (`NoirTaggers.run_tagger`) gets the union, not just the last
+      # `--use-taggers` value. Pre-fix `--use-taggers hunt
+      # --use-taggers cors` silently dropped `hunt` because the
+      # second assignment overwrote the first.
+      existing = (noir_options["use_taggers"]? || YAML::Any.new("")).to_s
+      combined = existing.empty? ? v : "#{existing},#{v}"
+      noir_options["use_taggers"] = YAML::Any.new(combined)
     end
 
     # PROBE — fire HTTP requests against the endpoints noir just
@@ -403,8 +416,21 @@ def run_options_parser
       validated = positive_int_or_die!("--ai-agent-max-steps", v)
       noir_options["ai_agent_max_steps"] = YAML::Any.new(validated)
     end
-    parser.on "--ai-native-tools-allowlist LIST", "Provider allowlist for native tool-calling (comma-separated, default: #{LLM::NativeToolCalling.default_allowlist_csv})" do |v|
-      noir_options["ai_native_tools_allowlist"] = YAML::Any.new(v)
+    parser.on "--ai-native-tools-allowlist LIST", "Provider allowlist for native tool-calling (comma-separated; repeatable; default: #{LLM::NativeToolCalling.default_allowlist_csv})" do |v|
+      # Accumulate so users can layer providers across multiple
+      # `--ai-native-tools-allowlist` invocations the same way they
+      # do for `--use-taggers`, `--exclude-techs`, etc. The default
+      # is the global CSV — once any user value arrives, replace
+      # the default before extending. Without this guard, the user's
+      # first `--ai-native-tools-allowlist openai` would land
+      # appended onto the default list ("openai,anthropic,gemini,…
+      # ,openai") instead of replacing it.
+      defaults_csv = LLM::NativeToolCalling.default_allowlist_csv
+      existing_any = noir_options["ai_native_tools_allowlist"]?
+      existing = existing_any.try(&.to_s) || ""
+      existing = "" if existing == defaults_csv
+      combined = existing.empty? ? v : "#{existing},#{v}"
+      noir_options["ai_native_tools_allowlist"] = YAML::Any.new(combined)
     end
     parser.on "--ai-max-token N", "Max tokens per request" do |v|
       validated = positive_int_or_die!("--ai-max-token", v)
@@ -429,14 +455,29 @@ def run_options_parser
     # (so detection can't find anything else) with `--techs flask`
     # (so flask still runs even if detection misses it).
     parser.separator "\n TECHNOLOGIES:".colorize(:blue)
-    parser.on "-t LIST", "--techs rails,php", "Add these techs to the analyzer set (in addition to auto-detected ones)" do |v|
-      noir_options["techs"] = YAML::Any.new(v)
+    # All three flags accept either a comma-separated list value
+    # (`-t flask,python_django`) or repeated invocations
+    # (`-t flask -t python_django`). Both shapes accumulate into
+    # the same comma-string storage that the detector splits on.
+    # Pre-fix the repeated form was last-write: `-t flask` got
+    # silently clobbered by a following `-t python_django`,
+    # masked only when auto-detection happened to re-surface the
+    # dropped tech. `--only-techs` and `--exclude-techs` had the
+    # same shape.
+    parser.on "-t LIST", "--techs rails,php", "Add these techs to the analyzer set (in addition to auto-detected ones; repeatable)" do |v|
+      existing = (noir_options["techs"]? || YAML::Any.new("")).to_s
+      combined = existing.empty? ? v : "#{existing},#{v}"
+      noir_options["techs"] = YAML::Any.new(combined)
     end
-    parser.on "--only-techs LIST", "Restrict auto-detection to these tech detectors" do |v|
-      noir_options["only_techs"] = YAML::Any.new(v)
+    parser.on "--only-techs LIST", "Restrict auto-detection to these tech detectors (repeatable)" do |v|
+      existing = (noir_options["only_techs"]? || YAML::Any.new("")).to_s
+      combined = existing.empty? ? v : "#{existing},#{v}"
+      noir_options["only_techs"] = YAML::Any.new(combined)
     end
-    parser.on "--exclude-techs LIST", "Drop these techs from the final result after detection" do |v|
-      noir_options["exclude_techs"] = YAML::Any.new(v)
+    parser.on "--exclude-techs LIST", "Drop these techs from the final result after detection (repeatable)" do |v|
+      existing = (noir_options["exclude_techs"]? || YAML::Any.new("")).to_s
+      combined = existing.empty? ? v : "#{existing},#{v}"
+      noir_options["exclude_techs"] = YAML::Any.new(combined)
     end
 
     parser.separator "\n CONFIG:".colorize(:blue)
