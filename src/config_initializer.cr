@@ -63,14 +63,28 @@ class ConfigInitializer
 
   @config_dir : String
   @config_file : String
+  @is_override : Bool
 
-  def initialize
-    # Define the config directory and file based on ENV variables
+  # `override_path` is the value of CLI `--config-file PATH`. When
+  # present, ConfigInitializer reads from that file instead of
+  # `$NOIR_HOME/config.yaml`. This makes `--config-file` flow
+  # through the same path as the default config — defaults < file <
+  # CLI — so a `base:` (or any other key) declared in the user's
+  # custom config file is actually applied. Pre-fix the
+  # `--config-file PATH` value was only used by validation and a
+  # post-CLI merge inside NoirRunner that re-overwrote everything
+  # the CLI had just set.
+  def initialize(override_path : String? = nil)
     @config_dir = get_home
 
-    @config_file = File.join(@config_dir, "config.yaml")
+    if override_path && !override_path.empty?
+      @config_file = override_path
+      @is_override = true
+    else
+      @config_file = File.join(@config_dir, "config.yaml")
+      @is_override = false
+    end
 
-    # Expand the path (in case of '~')
     @config_dir = File.expand_path(@config_dir)
     @config_file = File.expand_path(@config_file)
   end
@@ -80,7 +94,13 @@ class ConfigInitializer
     Dir.mkdir(@config_dir) unless Dir.exists?(@config_dir)
     Dir.mkdir("#{@config_dir}/passive_rules") unless Dir.exists?("#{@config_dir}/passive_rules")
 
-    # Create the config file if it doesn't exist
+    # Create the config file if it doesn't exist — but only when this
+    # is the *default* config path. When the user passed
+    # `--config-file PATH`, a missing file is a user error and is
+    # surfaced by CliValidation later; auto-creating a default
+    # template at the user-supplied path would silently mask the
+    # typo with a generated file.
+    return if @is_override
     File.write(@config_file, generate_config_file) unless File.exists?(@config_file)
   rescue e
     # Silent failures here made permission/disk-full problems during startup

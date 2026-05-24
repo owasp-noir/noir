@@ -139,4 +139,46 @@ describe ConfigInitializer do
       end
     end
   end
+
+  describe "override_path (CLI --config-file)" do
+    # Pre-fix, `--config-file PATH` was only used by validation and
+    # a post-CLI merge inside NoirRunner that re-overwrote every
+    # CLI value. Now ConfigInitializer reads the override path
+    # directly so the standard `defaults < file < CLI` precedence
+    # falls out of `OptionParser.parse` writing on top of the
+    # already-merged options.
+    it "reads from override_path when supplied" do
+      path = File.tempname("noir-cfg-override-")
+      File.write(path, "concurrency: 17\n")
+      begin
+        options = ConfigInitializer.new(path).read_config
+        options["concurrency"].to_s.should eq("17")
+      ensure
+        File.delete(path) if File.exists?(path)
+      end
+    end
+
+    it "applies the v0 LEGACY_CONFIG_KEY_MAP to override files too" do
+      path = File.tempname("noir-cfg-override-v0-")
+      File.write(path, "send_req: yes\n")
+      begin
+        options = ConfigInitializer.new(path).read_config
+        options["probe"].as_bool.should be_true
+        options.has_key?("send_req").should be_false
+      ensure
+        File.delete(path) if File.exists?(path)
+      end
+    end
+
+    it "does NOT auto-create the file when the override path is missing" do
+      # Default config path auto-creates a template on first run, but
+      # a missing user-supplied --config-file path is a typo — should
+      # surface as a CliValidation error, not silently get backfilled
+      # with a generated template at the user's chosen location.
+      path = "/tmp/noir-cfg-override-missing-#{Random.rand(1_000_000)}.yaml"
+      File.exists?(path).should be_false
+      ConfigInitializer.new(path).setup
+      File.exists?(path).should be_false
+    end
+  end
 end

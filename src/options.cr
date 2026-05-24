@@ -9,6 +9,32 @@ private def append_to_yaml_array(hash : Hash(String, YAML::Any), key : String, v
   hash[key] = YAML::Any.new(arr)
 end
 
+# Pre-scan ARGV for `--config-file PATH` / `--config-file=PATH` so
+# `run_options_parser` can hand the path to ConfigInitializer
+# before any YAML is read. Returns the last occurrence (matching
+# OptionParser's last-wins semantics for repeated value flags).
+# Doesn't strip the token from ARGV — OptionParser still sees it
+# and writes `config_file` into noir_options for downstream
+# CliValidation. Returns nil when the flag isn't present.
+private def scan_config_file_override(args : Array(String)) : String?
+  found : String? = nil
+  i = 0
+  while i < args.size
+    arg = args[i]
+    if arg == "--config-file"
+      if i + 1 < args.size
+        found = args[i + 1]
+        i += 2
+        next
+      end
+    elsif arg.starts_with?("--config-file=")
+      found = arg.split("=", 2)[1]
+    end
+    i += 1
+  end
+  found
+end
+
 # Validate a CLI flag value that needs to be a positive (>=1)
 # integer. `String#to_i` raises ArgumentError on non-numeric input
 # and silently produces 0 for "" — both surface as Crystal stack
@@ -175,8 +201,15 @@ private def base_help : String
 end
 
 def run_options_parser
-  config_init = ConfigInitializer.new
+  # Resolve `--config-file PATH` (if present in ARGV) before
+  # ConfigInitializer reads the file, so the user-supplied path
+  # becomes the source ConfigInitializer parses. Defaults < file <
+  # CLI flag falls out naturally because OptionParser writes CLI
+  # values on top of `noir_options` after the file is merged.
+  override_config_path = scan_config_file_override(ARGV)
+  config_init = ConfigInitializer.new(override_config_path)
   noir_options = config_init.read_config
+  noir_options["config_file"] = YAML::Any.new(override_config_path) if override_config_path
 
   extracted_args = extract_hidden_prompt_flags(noir_options)
 
@@ -233,8 +266,15 @@ def run_options_parser
     parser.on "--exclude-codes 404,500", "Exclude HTTP codes (comma-separated)" do |v|
       noir_options["exclude_codes"] = YAML::Any.new(v)
     end
-    parser.on "--exclude-path PATTERN", "Exclude files by glob (e.g. *.test.js,*_test.go)" do |v|
-      noir_options["exclude_path"] = YAML::Any.new(v)
+    parser.on "--exclude-path PATTERN", "Exclude files by glob (e.g. *.test.js,*_test.go; repeatable)" do |v|
+      # Storage is a comma-separated string (the detector splits on
+      # `,` per-file). Pre-fix, the second `--exclude-path` clobbered
+      # the first via plain `=`. Concatenate instead so users can
+      # repeat the flag OR pack patterns into one comma list — both
+      # shapes accumulate to the same final list.
+      existing = (noir_options["exclude_path"]? || YAML::Any.new("")).to_s
+      combined = existing.empty? ? v : "#{existing},#{v}"
+      noir_options["exclude_path"] = YAML::Any.new(combined)
     end
     parser.on "--include LIST", "Enrich plain output (comma-separated: path,techs,callee)" do |v|
       apply_include_list(noir_options, v)
