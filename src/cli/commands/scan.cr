@@ -201,6 +201,20 @@ module Noir::CLI::ScanCommand
       # endpoints", "Found N endpoints") into the JSON stdout when
       # the user explicitly asked for quiet output.
 
+      # Disable PROBE/EXPORT on the diff side. The diff scan is a
+      # detection-only pass — its sole purpose is to enumerate the
+      # *old* endpoints so the diff report can name what changed.
+      # Pre-fix, `--probe --diff-path X` fired HTTP requests against
+      # every base endpoint AND every old endpoint (so
+      # unchanged-but-present URLs got hit twice and removed-only
+      # URLs got hit once), and `--export-es --diff-path X` pushed
+      # the stale catalog into the index alongside the current one.
+      # Both surprised users running diff scans in CI.
+      diff_options["probe"] = YAML::Any.new(false)
+      diff_options["probe_via"] = YAML::Any.new("")
+      diff_options["export_es"] = YAML::Any.new("")
+      diff_options["export_webhook"] = YAML::Any.new("")
+
       app_diff = NoirRunner.new diff_options
       app.logger.info "Running Noir with Diff mode."
     end
