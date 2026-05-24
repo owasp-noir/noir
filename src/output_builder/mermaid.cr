@@ -1,5 +1,6 @@
 require "../models/output_builder"
 require "../models/endpoint"
+require "../models/passive_scan"
 
 class OutputBuilderMermaid < OutputBuilder
   def print(endpoints : Array(Endpoint))
@@ -7,10 +8,10 @@ class OutputBuilderMermaid < OutputBuilder
   end
 
   def print(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult))
-    build_mindmap(endpoints)
+    build_mindmap(endpoints, passive_results)
   end
 
-  private def build_mindmap(endpoints : Array(Endpoint))
+  private def build_mindmap(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult) = [] of PassiveScanResult)
     ob_puts "mindmap"
     ob_puts "  root((API))"
 
@@ -19,6 +20,22 @@ class OutputBuilderMermaid < OutputBuilder
 
     # Output the tree with proper formatting
     output_tree(tree, 2)
+
+    # Output passive scan findings as a separate branch
+    output_passive_results(passive_results, 2)
+  end
+
+  private def output_passive_results(passive_results : Array(PassiveScanResult), indent : Int32)
+    return if passive_results.empty?
+
+    branch_indent = "  " * indent
+    ob_puts "#{branch_indent}passive"
+    passive_results.each do |result|
+      finding_indent = "  " * (indent + 1)
+      location = "#{result.file_path}:#{result.line_number}"
+      label = "#{result.id} [#{result.info.severity}] #{location}"
+      ob_puts "#{finding_indent}#{sanitize_segment(label)}"
+    end
   end
 
   # Simple tree node structure
