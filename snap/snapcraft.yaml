@@ -48,6 +48,8 @@ parts:
       - libzstd-dev
       - pkg-config
       - libgc-dev
+      - liblzma-dev
+      - libicu-dev
     stage-packages:
       - libssl3
       - libxml2

@@ -26,7 +26,7 @@ jobs:
         uses: actions/checkout@v6
       - uses: canonical/action-build@v1
         id: build
-      - if: github.event_name == 'release'
+      - if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
         uses: snapcore/action-publish@master
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAP_STORE_LOGIN }}
