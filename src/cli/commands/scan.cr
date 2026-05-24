@@ -100,10 +100,39 @@ module Noir::CLI::ScanCommand
 
   private def self.normalize_url!(noir_options : Hash(String, YAML::Any))
     url = noir_options["url"].to_s
-    return if url.empty? || url.includes?("://")
+    return if url.empty?
 
-    STDERR.puts "WARNING: The protocol (http or https) is missing in the URL '#{url}'. Defaulting to 'https://'.".colorize(WARNING_COLOR)
-    noir_options["url"] = YAML::Any.new("https://#{url}")
+    # Protocol auto-fill when the user typed a bare host like
+    # `-u example.com`. The scheme check below then re-runs against
+    # the prepended form so a bare hostname falls through into the
+    # http/https-only validation cleanly.
+    unless url.includes?("://")
+      STDERR.puts "WARNING: The protocol (http or https) is missing in the URL '#{url}'. Defaulting to 'https://'.".colorize(WARNING_COLOR)
+      url = "https://#{url}"
+      noir_options["url"] = YAML::Any.new(url)
+    end
+
+    # `-u` is the base URL that gets prepended to every discovered
+    # path. Only http(s) make sense here — other schemes (file://,
+    # ftp://, …) were silently concatenated pre-fix and produced
+    # nonsense URLs like `file:///etc/passwd/sign`. Reject early.
+    lowered = url.downcase
+    unless lowered.starts_with?("http://") || lowered.starts_with?("https://")
+      Noir::CLI.die("-u/--url must use http:// or https:// (got '#{url}').")
+    end
+
+    # Strip `?query` and `#fragment` from the base URL — they're
+    # only valid at the end of a URL, so concatenating an endpoint
+    # path after them produces a malformed URL
+    # (`http://x?foo=bar/sign`). The user almost never meant to put
+    # them on the base; warn and drop them.
+    if (q = url.index('?')) || (f = url.index('#'))
+      cut = [q, f].compact.min
+      stripped = url[0...cut]
+      dropped = url[cut..]
+      STDERR.puts "WARNING: -u/--url should be a base URL — query string / fragment '#{dropped}' would corrupt the per-endpoint URL. Stripping.".colorize(WARNING_COLOR)
+      noir_options["url"] = YAML::Any.new(stripped)
+    end
   end
 
   private def self.validate_url_dependent_flags(noir_options : Hash(String, YAML::Any))
