@@ -15,3 +15,5 @@ Get up and running with Noir in three steps. By the end, you'll have scanned you
 | 3 | **[Your First Scan](running/)** | Run a scan and explore the results |
 
 Ready? Start with **[What is Noir?](overview/)**
+
+Upgrading from v0? See **[Migrating from v0 to v1](migrate_v0_to_v1/)** for the rename map, behavior changes, and the single explicit break.

@@ -14,4 +14,6 @@ sort_by = "weight"
 | 2 | **[Noir 설치](installation/)** | 시스템에 Noir 설치하기 |
 | 3 | **[첫 번째 스캔](running/)** | 스캔 실행하고 결과 살펴보기 |
 
-준비되셨나요? **[Noir란?](overview/)**부터 시작하세요.
+준비되셨나요? **[Noir란?](overview/)** 부터 시작하세요.
+
+v0 에서 업그레이드 중이신가요? **[v0 에서 v1 로 마이그레이션](migrate_v0_to_v1/)** 에 rename 매핑, behavior 변화, 하나뿐인 명시적 break 가 정리되어 있습니다.
