@@ -176,6 +176,7 @@ class NoirRunner
     if ai_context_enabled?
       @logger.success "Building aggregated AI context."
       NoirAIContext.apply(@endpoints)
+      apply_ai_context_feature_filter
     end
 
     # Run deliver
@@ -184,6 +185,18 @@ class NoirRunner
 
   private def ai_context_enabled? : Bool
     any_to_bool(@options["ai_context"]?)
+  end
+
+  # `--ai-context=guards,sinks` narrows the user's view. The
+  # augmentor populates every bucket anyway (patterns aren't scoped
+  # by category), so we trim after the fact. Json/yaml/sarif/postman/
+  # oas serialize the struct directly, which is why this trim has
+  # to happen at the data layer — the plain-text builder's filter
+  # alone left structured outputs leaking every bucket.
+  private def apply_ai_context_feature_filter
+    raw = @options["ai_context_features"]?.try(&.to_s) || ""
+    features = NoirAIContext.parse_feature_set(raw)
+    NoirAIContext.apply_feature_filter(@endpoints, features)
   end
 
   def update_status_codes

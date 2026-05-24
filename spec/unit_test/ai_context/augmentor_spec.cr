@@ -1525,3 +1525,87 @@ describe "NoirAIContext" do
     end
   end
 end
+
+# `--ai-context=…` used to filter the plain-text renderer only,
+# leaving JSON/YAML/SARIF/Postman/OAS emitting every bucket the
+# augmentor populated. The data-layer filter below trims the struct
+# directly so every output format inherits the same view of the
+# user's selection.
+describe "NoirAIContext.parse_feature_set" do
+  it "treats an empty string as the all-features set" do
+    set = NoirAIContext.parse_feature_set("")
+    %w[guards callee sinks validators signals].each { |f| set.includes?(f).should be_true }
+  end
+
+  it "treats 'all' as the all-features set even when mixed with other tokens" do
+    set = NoirAIContext.parse_feature_set("guards,all,sinks")
+    %w[guards callee sinks validators signals].each { |f| set.includes?(f).should be_true }
+  end
+
+  it "parses a comma-separated list of features" do
+    set = NoirAIContext.parse_feature_set("guards,sinks")
+    set.should eq(Set{"guards", "sinks"})
+  end
+
+  it "trims whitespace and drops empty entries" do
+    set = NoirAIContext.parse_feature_set("  guards , , sinks  ")
+    set.should eq(Set{"guards", "sinks"})
+  end
+end
+
+describe "NoirAIContext.apply_feature_filter" do
+  private_endpoint = ->(buckets : Hash(String, Int32)) do
+    ep = Endpoint.new("/x", "GET")
+    ctx = AIContext.new
+    buckets["guards"]?.try { |n| n.times { |i| ctx.push_guard(AIContextEntry.new("g", "g#{i}")) } }
+    buckets["callee"]?.try { |n| n.times { |i| ctx.push_callee(AIContextEntry.new("c", "c#{i}")) } }
+    buckets["sinks"]?.try { |n| n.times { |i| ctx.push_sink(AIContextEntry.new("s", "s#{i}")) } }
+    buckets["validators"]?.try { |n| n.times { |i| ctx.push_validator(AIContextEntry.new("v", "v#{i}")) } }
+    buckets["signals"]?.try { |n| n.times { |i| ctx.push_signal(AIContextEntry.new("sig", "sig#{i}")) } }
+    ep.ai_context = ctx
+    ep
+  end
+
+  # Endpoint is a struct (value type), so `[ep]` here is an array
+  # holding a *copy* of ep, and `apply_feature_filter` writes back
+  # into the array via `arr[idx] = endpoint`. Assertions read from
+  # the array, not the caller's local `ep`.
+  it "is a no-op when every feature is in the set" do
+    arr = [private_endpoint.call({"guards" => 1, "callee" => 1, "sinks" => 1, "validators" => 1, "signals" => 1})]
+    NoirAIContext.apply_feature_filter(arr, Set{"guards", "callee", "sinks", "validators", "signals"})
+    context = arr[0].ai_context.should_not be_nil
+    context.guards.size.should eq(1)
+    context.callees.size.should eq(1)
+    context.sinks.size.should eq(1)
+    context.validators.size.should eq(1)
+    context.signals.size.should eq(1)
+  end
+
+  it "clears buckets that aren't in the selected set" do
+    arr = [private_endpoint.call({"guards" => 2, "callee" => 2, "sinks" => 2, "validators" => 2, "signals" => 2})]
+    NoirAIContext.apply_feature_filter(arr, Set{"guards", "sinks"})
+    context = arr[0].ai_context.should_not be_nil
+    context.guards.size.should eq(2)
+    context.sinks.size.should eq(2)
+    context.callees.empty?.should be_true
+    context.validators.empty?.should be_true
+    context.signals.empty?.should be_true
+  end
+
+  it "nils the ai_context entirely when the filter empties every bucket" do
+    # If the user asks for `--ai-context=guards` and the endpoint
+    # has none, the struct ends up entirely empty — return it to
+    # `nil` so downstream output formats can decide whether to emit
+    # the field at all (sarif/oas3 condition on non-nil).
+    arr = [private_endpoint.call({"callee" => 1, "sinks" => 1})]
+    NoirAIContext.apply_feature_filter(arr, Set{"guards"})
+    arr[0].ai_context.should be_nil
+  end
+
+  it "leaves endpoints without an ai_context untouched" do
+    arr = [Endpoint.new("/y", "GET")]
+    arr[0].ai_context.should be_nil
+    NoirAIContext.apply_feature_filter(arr, Set{"guards"})
+    arr[0].ai_context.should be_nil
+  end
+end

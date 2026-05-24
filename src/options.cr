@@ -9,6 +9,20 @@ private def append_to_yaml_array(hash : Hash(String, YAML::Any), key : String, v
   hash[key] = YAML::Any.new(arr)
 end
 
+# Validate a CLI flag value that needs to be a positive (>=1)
+# integer. `String#to_i` raises ArgumentError on non-numeric input
+# and silently produces 0 for "" — both surface as Crystal stack
+# traces, which `--ai-max-token abc` used to do. Centralize the
+# guard so every numeric flag prints the same friendly error.
+private def positive_int_or_die!(flag : String, raw : String) : Int32
+  value = raw.to_i?
+  if value.nil? || value < 1
+    STDERR.puts "ERROR: Invalid #{flag} '#{raw}'. Must be a positive integer.".colorize(:yellow)
+    exit(1)
+  end
+  value
+end
+
 private def process_override_flag(
   flag : String, option_key : String,
   noir_options : Hash(String, YAML::Any),
@@ -346,13 +360,15 @@ def run_options_parser
       noir_options["ai_agent"] = YAML::Any.new(true)
     end
     parser.on "--ai-agent-max-steps N", "Max steps for AI agent loop (default: 20)" do |v|
-      noir_options["ai_agent_max_steps"] = YAML::Any.new(v.to_i)
+      validated = positive_int_or_die!("--ai-agent-max-steps", v)
+      noir_options["ai_agent_max_steps"] = YAML::Any.new(validated)
     end
     parser.on "--ai-native-tools-allowlist LIST", "Provider allowlist for native tool-calling (comma-separated, default: #{LLM::NativeToolCalling.default_allowlist_csv})" do |v|
       noir_options["ai_native_tools_allowlist"] = YAML::Any.new(v)
     end
     parser.on "--ai-max-token N", "Max tokens per request" do |v|
-      noir_options["ai_max_token"] = YAML::Any.new(v.to_i)
+      validated = positive_int_or_die!("--ai-max-token", v)
+      noir_options["ai_max_token"] = YAML::Any.new(validated)
     end
 
     parser.separator "\n DIFF:".colorize(:blue)
