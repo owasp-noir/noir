@@ -407,10 +407,31 @@ module Noir
     end
 
     private def decode_string_literal(node : LibTreeSitter::TSNode, source : String) : String
+      # Walk the string's children. A plain string has one
+      # `string_content` child; a Kotlin template string interleaves
+      # `string_content` with `interpolated_identifier` ("$var",
+      # short form) and `interpolated_expression` ("${expr}", long
+      # form) nodes. Pre-fix, the interpolation children were dropped
+      # entirely, so `"/api/$VERSION/items"` collapsed to
+      # `/api//items` (and the optimizer normalized the double-
+      # slash to `/api/items`) — the user's URL silently lost the
+      # path segment, just like the Python f-string bug.
+      #
+      # Wrap the interpolated identifier/expression in `{…}` so the
+      # placeholder is preserved and the downstream path-param
+      # extractor picks it up.
       buf = String.build do |io|
         Noir::TreeSitter.each_named_child(node) do |child|
-          if Noir::TreeSitter.node_type(child) == "string_content"
+          case Noir::TreeSitter.node_type(child)
+          when "string_content"
             io << Noir::TreeSitter.node_text(child, source)
+          when "interpolated_identifier", "interpolated_expression"
+            # node_text for these children is the identifier / inner
+            # expression with the leading `$` (and `{…}` for the
+            # expression form) already stripped by the grammar.
+            io << '{'
+            io << Noir::TreeSitter.node_text(child, source).strip
+            io << '}'
           end
         end
       end
