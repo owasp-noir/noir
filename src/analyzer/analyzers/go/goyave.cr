@@ -70,28 +70,31 @@ module Analyzer::Go
                       if ts_hits = routes_by_line[index]?
                         ts_hits.each do |route|
                           # Goyave's `.Route(...)` decorator accepts any
-                          # method; map it to a generic "ANY" like the
-                          # legacy analyzer did. All other verbs pass
-                          # through (already upcased by the extractor).
-                          verb = route.verb == "ROUTE" ? "ANY" : route.verb
+                          # method; treat it as the "any verb" wildcard
+                          # so `fan_out_verbs` expands into one endpoint
+                          # per HTTP method instead of a non-HTTP "ANY"
+                          # string.
+                          raw_verb = route.verb == "ROUTE" ? "ANY" : route.verb
                           # Strip type patterns from path params for the
                           # URL (e.g. `/product/{id:[0-9]+}` -> `/product/{id}`).
                           clean_path = route.path.gsub(/\{([a-zA-Z0-9_]+):[^}]+\}/, "{\\1}")
 
-                          new_endpoint = Endpoint.new(clean_path, verb, details)
-                          if entries = callees_by_route[route.line]?
-                            entries.each do |entry|
-                              name, callee_path, callee_line = entry
-                              new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+                          Noir::TreeSitterGoRouteExtractor.fan_out_verbs(raw_verb).each do |verb|
+                            new_endpoint = Endpoint.new(clean_path, verb, details)
+                            if entries = callees_by_route[route.line]?
+                              entries.each do |entry|
+                                name, callee_path, callee_line = entry
+                                new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+                              end
                             end
-                          end
-                          result << new_endpoint
-                          last_endpoint = new_endpoint
+                            result << new_endpoint
+                            last_endpoint = new_endpoint
 
-                          route.path.scan(/\{([a-zA-Z0-9_]+)(?::([^}]+))?\}/) do |match_data|
-                            param_name = match_data[1]
-                            param_pattern = match_data[2]?
-                            last_endpoint.params << Param.new(param_name, param_pattern || "", "path")
+                            route.path.scan(/\{([a-zA-Z0-9_]+)(?::([^}]+))?\}/) do |match_data|
+                              param_name = match_data[1]
+                              param_pattern = match_data[2]?
+                              last_endpoint.params << Param.new(param_name, param_pattern || "", "path")
+                            end
                           end
                         end
                       end

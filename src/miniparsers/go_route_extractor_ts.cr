@@ -26,6 +26,27 @@ module Noir
       "ANY", "Any", "All",
     }
 
+    # The seven canonical HTTP methods Gin's `r.Any`, Echo's `e.Any`,
+    # Beego's `*` route etc. all stand for. Used by analyzer-level
+    # fan-out (see `fan_out_verbs`).
+    ANY_FAN_OUT_VERBS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+
+    # Returns the list of verbs to emit for a given extracted route
+    # verb. `ANY` / `ALL` (case-insensitive — verbs are uppercased
+    # before they reach this helper) expand to every canonical HTTP
+    # method so downstream output formats list each method
+    # explicitly instead of carrying a non-HTTP "ANY" verb that
+    # tools like SARIF/Postman can't ingest. Anything else passes
+    # through as a single-element list.
+    def self.fan_out_verbs(verb : String) : Array(String)
+      case verb.upcase
+      when "ANY", "ALL"
+        ANY_FAN_OUT_VERBS
+      else
+        [verb]
+      end
+    end
+
     # Common non-router identifiers in Go code that expose `.Get(string)`
     # or `.Post(...)` style methods but emit *values*, not routes. The
     # selector-expression walk emits a verb route on every match of
