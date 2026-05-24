@@ -47,6 +47,7 @@ parts:
       - libgmp-dev
       - libzstd-dev
       - pkg-config
+      - libgc-dev
     stage-packages:
       - libssl3
       - libxml2
