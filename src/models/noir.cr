@@ -90,7 +90,7 @@ class NoirRunner
       end
 
       if !@options["passive_scan_path"].as_a.empty?
-        @logger.sub "├── Using custom passive rules."
+        @logger.sub "├── Using custom passive rules only (bundled rules skipped)."
         # Concatenate rules from every passive_scan_path. The previous
         # assignment (`@passive_scans = NoirPassiveScan.load_rules …`)
         # inside the loop silently dropped every path except the last

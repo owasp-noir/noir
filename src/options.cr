@@ -304,7 +304,7 @@ def run_options_parser
     parser.on "-P", "--passive-scan", "Enable passive security scan" do
       noir_options["passive_scan"] = YAML::Any.new(true)
     end
-    parser.on "--passive-scan-path PATH", "Path to passive scan rules" do |v|
+    parser.on "--passive-scan-path PATH", "Use a custom passive-rule directory (replaces the bundled rules; repeatable)" do |v|
       append_to_yaml_array(noir_options, "passive_scan_path", v)
     end
     parser.on "--passive-scan-severity LVL", "Min severity (critical|high|medium|low, default: high)" do |v|
