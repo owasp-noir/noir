@@ -49,12 +49,6 @@ private SCAN_FLAGS = %w[
   --export-es
   --export-opensearch
   --export-webhook
-  --send-req
-  --send-proxy
-  --send-es
-  --with-headers
-  --use-matchers
-  --use-filters
   --ai-provider
   --ai-model
   --ai-key
@@ -184,12 +178,6 @@ def generate_zsh_completion_script
             '--export-es[Index endpoints in Elasticsearch]:url:' \\
             '--export-opensearch[Index endpoints in OpenSearch]:url:' \\
             '--export-webhook[POST endpoint catalog as JSON]:url:' \\
-            '--send-req[v0 alias for --probe]' \\
-            '--send-proxy[v0 alias for --probe-via]:url:' \\
-            '--send-es[v0 alias for --export-es]:url:' \\
-            '--with-headers[v0 alias for --probe-header]:value:' \\
-            '--use-matchers[v0 alias for --probe-match]:value:' \\
-            '--use-filters[v0 alias for --probe-skip]:value:' \\
             '--ai-provider[AI provider prefix or URL]:provider:' \\
             '--ai-model[AI model name]:model:' \\
             '--ai-key[AI API key]:key:' \\
@@ -303,11 +291,11 @@ def generate_bash_completion_script
           COMPREPLY=( $(compgen -W "critical high medium low" -- "${cur}") )
           return 0
           ;;
-        -b|--base-path|-u|--url|-o|--output|--diff-path|--config-file|--passive-scan-path|--probe-via|--export-es|--export-opensearch|--export-webhook|--send-proxy|--send-es)
+        -b|--base-path|-u|--url|-o|--output|--diff-path|--config-file|--passive-scan-path|--probe-via|--export-es|--export-opensearch|--export-webhook)
           COMPREPLY=( $(compgen -f -- "${cur}") )
           return 0
           ;;
-        --probe-header|--probe-match|--probe-skip|--with-headers|--use-matchers|--use-filters|--use-taggers|--pvalue|--set-pvalue|--set-pvalue-header|--set-pvalue-cookie|--set-pvalue-query|--set-pvalue-form|--set-pvalue-json|--set-pvalue-path|-t|--techs|--exclude-techs|--only-techs|--exclude-codes|--exclude-path|--ai-provider|--ai-model|--ai-key|--ai-agent-max-steps|--ai-native-tools-allowlist|--ai-max-token|--concurrency)
+        --probe-header|--probe-match|--probe-skip|--use-taggers|--pvalue|--set-pvalue|--set-pvalue-header|--set-pvalue-cookie|--set-pvalue-query|--set-pvalue-form|--set-pvalue-json|--set-pvalue-path|-t|--techs|--exclude-techs|--only-techs|--exclude-codes|--exclude-path|--ai-provider|--ai-model|--ai-key|--ai-agent-max-steps|--ai-native-tools-allowlist|--ai-max-token|--concurrency)
           # value flags — no useful completion, just let the user type
           return 0
           ;;
@@ -402,9 +390,6 @@ def generate_fish_completion_script
     complete -c noir      -l export-es             -d 'Index endpoints in Elasticsearch' -r
     complete -c noir      -l export-opensearch     -d 'Index endpoints in OpenSearch' -r
     complete -c noir      -l export-webhook        -d 'POST endpoint catalog as JSON' -r
-    complete -c noir      -l send-req              -d 'v0 alias for --probe'
-    complete -c noir      -l send-proxy            -d 'v0 alias for --probe-via' -r
-    complete -c noir      -l send-es               -d 'v0 alias for --export-es' -r
     complete -c noir      -l ai-provider           -d 'AI provider prefix or URL' -r
     complete -c noir      -l ai-model              -d 'AI model name' -r
     complete -c noir      -l ai-key                -d 'AI API key' -r
@@ -460,8 +445,6 @@ def generate_elvish_completion_script
       -T --use-all-taggers --use-taggers
       --probe --probe-via --probe-header --probe-match --probe-skip
       --export-es --export-opensearch --export-webhook
-      --send-req --send-proxy --send-es
-      --with-headers --use-matchers --use-filters
       --ai-provider --ai-model --ai-key --ai-agent --ai-agent-max-steps
       --ai-native-tools-allowlist --ai-max-token
       --diff-path -t --techs --exclude-techs --only-techs

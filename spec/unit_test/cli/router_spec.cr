@@ -72,6 +72,63 @@ describe "Noir::CLI::Legacy.rewrite" do
   end
 end
 
+describe "Noir::CLI::Legacy.translate_flag_aliases" do
+  # The v0 deliver/probe flag tokens never reach the scan
+  # OptionParser — they're rewritten here, so `scan -h` stays free
+  # of a LEGACY section while old CI scripts keep parsing.
+  it "translates --send-req to --probe" do
+    Noir::CLI::Legacy.translate_flag_aliases(["--send-req"]).should eq(["--probe"])
+  end
+
+  it "translates value-bearing flags in the bare form" do
+    Noir::CLI::Legacy.translate_flag_aliases([
+      "--send-proxy", "http://localhost:8080",
+    ]).should eq(["--probe-via", "http://localhost:8080"])
+  end
+
+  it "translates value-bearing flags in the = form" do
+    Noir::CLI::Legacy.translate_flag_aliases([
+      "--send-proxy=http://localhost:8080",
+    ]).should eq(["--probe-via=http://localhost:8080"])
+  end
+
+  it "preserves a value containing `=` (e.g. URL with query string)" do
+    Noir::CLI::Legacy.translate_flag_aliases([
+      "--send-es=http://es:9200/_doc?id=42",
+    ]).should eq(["--export-es=http://es:9200/_doc?id=42"])
+  end
+
+  it "translates every v0 deliver token together" do
+    argv = [
+      "--send-req",
+      "--send-proxy", "http://localhost:8080",
+      "--send-es", "http://es:9200",
+      "--with-headers", "X-T: 1",
+      "--use-matchers", "/api",
+      "--use-filters", "/admin",
+    ]
+    expected = [
+      "--probe",
+      "--probe-via", "http://localhost:8080",
+      "--export-es", "http://es:9200",
+      "--probe-header", "X-T: 1",
+      "--probe-match", "/api",
+      "--probe-skip", "/admin",
+    ]
+    Noir::CLI::Legacy.translate_flag_aliases(argv).should eq(expected)
+  end
+
+  it "leaves unknown tokens untouched" do
+    argv = ["-b", "./app", "--probe", "-u", "http://x"]
+    Noir::CLI::Legacy.translate_flag_aliases(argv).should eq(argv)
+  end
+
+  it "is idempotent on v1-only input" do
+    argv = ["--probe", "--probe-via", "http://x", "--probe-header", "X: 1"]
+    Noir::CLI::Legacy.translate_flag_aliases(argv).should eq(argv)
+  end
+end
+
 describe "Noir::CLI::KNOWN_COMMANDS" do
   it "includes every v1 verb so the router can dispatch them" do
     %w[scan list cache config rules completion version help].each do |verb|

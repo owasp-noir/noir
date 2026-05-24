@@ -28,6 +28,22 @@ module Noir::CLI::Legacy
     "--version"      => ["version"],
   }
 
+  # v0 deliver/probe flag tokens, translated to their v1 equivalents
+  # before the scan OptionParser sees ARGV. Doing the swap here keeps
+  # the LEGACY block out of `scan -h` (and out of tab-completion)
+  # entirely — there's no shadow `parser.on` for each old flag name —
+  # while existing CI scripts and v0 Dockerfile entrypoints keep
+  # parsing without modification. Mirrors the YAML-side migration in
+  # `ConfigInitializer::LEGACY_CONFIG_KEY_MAP`.
+  LEGACY_FLAG_ALIASES = {
+    "--send-req"     => "--probe",
+    "--send-proxy"   => "--probe-via",
+    "--send-es"      => "--export-es",
+    "--with-headers" => "--probe-header",
+    "--use-matchers" => "--probe-match",
+    "--use-filters"  => "--probe-skip",
+  }
+
   # Returns a possibly-rewritten ARGV. If a terminal v0 flag is found,
   # the entire ARGV is replaced with the equivalent v1 invocation.
   def self.rewrite(argv : Array(String)) : Array(String)
@@ -45,5 +61,25 @@ module Noir::CLI::Legacy
       end
     end
     argv
+  end
+
+  # Walks ARGV and rewrites any v0 deliver/probe flag token to its v1
+  # equivalent. Handles both the bare form (`--send-proxy URL`) and
+  # the `=` form (`--send-proxy=URL`) so neither shape leaks the v0
+  # name into the OptionParser. Unknown tokens pass through
+  # unchanged — this method intentionally narrow.
+  def self.translate_flag_aliases(argv : Array(String)) : Array(String)
+    argv.map do |arg|
+      if (eq_idx = arg.index('='))
+        name = arg[0...eq_idx]
+        if replacement = LEGACY_FLAG_ALIASES[name]?
+          "#{replacement}#{arg[eq_idx..]}"
+        else
+          arg
+        end
+      else
+        LEGACY_FLAG_ALIASES[arg]? || arg
+      end
+    end
   end
 end

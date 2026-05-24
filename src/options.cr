@@ -273,10 +273,12 @@ def run_options_parser
     end
 
     # PROBE — fire HTTP requests against the endpoints noir just
-    # discovered (active replay). The v0 names `--send-req` /
-    # `--send-proxy` / `--with-headers` / `--use-matchers` /
-    # `--use-filters` are kept as silent aliases so existing CI
-    # scripts and v0.x Dockerfiles still parse.
+    # discovered (active replay). The v0 deliver flag names
+    # (`--send-req`, `--send-proxy`, `--with-headers`, `--use-matchers`,
+    # `--use-filters`) are rewritten to the v1 spellings in
+    # `Noir::CLI::Legacy.translate_flag_aliases` before this parser
+    # sees ARGV, so old CI scripts and Dockerfiles still parse
+    # without polluting `scan -h` with a LEGACY section.
     parser.separator "\n PROBE:".colorize(:blue)
     parser.on "--probe", "Fire HTTP requests at discovered endpoints (needs -u)" do
       noir_options["probe"] = YAML::Any.new(true)
@@ -310,30 +312,6 @@ def run_options_parser
     end
     parser.on "--export-webhook URL", "POST endpoint catalog as JSON to a webhook URL" do |v|
       noir_options["export_webhook"] = YAML::Any.new(v)
-    end
-
-    # v0 aliases — silent CLI flag aliases that write to the v1
-    # internal keys directly. The parallel config-file alias map lives
-    # in ConfigInitializer::LEGACY_CONFIG_KEY_MAP so a v0 config.yaml
-    # also keeps working.
-    parser.separator "\n LEGACY (v0 aliases, still work — prefer PROBE/EXPORT above):".colorize(:blue)
-    parser.on "--send-req", "alias for --probe" do
-      noir_options["probe"] = YAML::Any.new(true)
-    end
-    parser.on "--send-proxy URL", "alias for --probe-via" do |v|
-      noir_options["probe_via"] = YAML::Any.new(v)
-    end
-    parser.on "--send-es URL", "alias for --export-es" do |v|
-      noir_options["export_es"] = YAML::Any.new(v)
-    end
-    parser.on "--with-headers VAL", "alias for --probe-header" do |v|
-      append_to_yaml_array(noir_options, "probe_header", v)
-    end
-    parser.on "--use-matchers VAL", "alias for --probe-match" do |v|
-      append_to_yaml_array(noir_options, "probe_match", v)
-    end
-    parser.on "--use-filters VAL", "alias for --probe-skip" do |v|
-      append_to_yaml_array(noir_options, "probe_skip", v)
     end
 
     parser.separator "\n AI Integration:".colorize(:blue)

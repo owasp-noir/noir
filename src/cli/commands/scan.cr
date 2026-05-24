@@ -1,6 +1,7 @@
 require "colorize"
 require "yaml"
 require "../common"
+require "../legacy"
 require "../../options"
 require "../../cli_validation"
 require "../../banner"
@@ -35,8 +36,12 @@ module Noir::CLI::ScanCommand
   def self.run(argv : Array(String))
     # Stage ARGV through OptionParser (positional path discovery happens
     # inside `run_options_parser`). Dup `argv` upfront because callers
-    # commonly pass ARGV itself, which we are about to clear.
-    args_copy = argv.dup
+    # commonly pass ARGV itself, which we are about to clear. The v0
+    # deliver/probe flag tokens (`--send-req`, `--use-matchers`, etc.)
+    # are rewritten to their v1 equivalents *before* the parser runs,
+    # so the LEGACY surface never appears in `scan -h` and the parser
+    # itself only needs to know about one set of names.
+    args_copy = Noir::CLI::Legacy.translate_flag_aliases(argv.dup)
     saved = ARGV.dup
     begin
       ARGV.clear
