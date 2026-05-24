@@ -42,6 +42,16 @@ debug="${INPUT_DEBUG:-false}"
 concurrency="${INPUT_CONCURRENCY:-}"
 exclude_codes="${INPUT_EXCLUDE_CODES:-}"
 status_codes="${INPUT_STATUS_CODES:-false}"
+ai_provider="${INPUT_AI_PROVIDER:-}"
+ai_model="${INPUT_AI_MODEL:-}"
+ai_key="${INPUT_AI_KEY:-}"
+ai_agent="${INPUT_AI_AGENT:-false}"
+probe="${INPUT_PROBE:-false}"
+probe_via="${INPUT_PROBE_VIA:-}"
+export_es="${INPUT_EXPORT_ES:-}"
+export_webhook="${INPUT_EXPORT_WEBHOOK:-}"
+diff_path="${INPUT_DIFF_PATH:-}"
+no_log="${INPUT_NO_LOG:-true}"
 
 # ==============================================================================
 # Build noir argv safely
@@ -52,8 +62,9 @@ status_codes="${INPUT_STATUS_CODES:-false}"
 # values containing whitespace, quotes, or shell metacharacters can
 # never break out of their slot.
 
-set -- noir -b "$base_path" --no-log -f "$format" -o "$output_file"
+set -- noir -b "$base_path" -f "$format" -o "$output_file"
 
+[ "$no_log" = "true" ]  && set -- "$@" --no-log
 [ -n "$url" ]           && set -- "$@" -u "$url"
 [ -n "$techs" ]         && set -- "$@" -t "$techs"
 [ -n "$exclude_techs" ] && set -- "$@" --exclude-techs "$exclude_techs"
@@ -63,14 +74,23 @@ if [ "$passive_scan" = "true" ]; then
     [ -n "$passive_scan_severity" ] && set -- "$@" --passive-scan-severity "$passive_scan_severity"
 fi
 
-[ "$use_all_taggers" = "true" ] && set -- "$@" -T
-[ -n "$use_taggers" ]           && set -- "$@" --use-taggers "$use_taggers"
-[ "$include_path" = "true" ]    && set -- "$@" --include-path
-[ "$verbose" = "true" ]         && set -- "$@" --verbose
-[ "$debug" = "true" ]           && set -- "$@" -d
-[ -n "$concurrency" ]           && set -- "$@" --concurrency "$concurrency"
-[ -n "$exclude_codes" ]         && set -- "$@" --exclude-codes "$exclude_codes"
-[ "$status_codes" = "true" ]    && set -- "$@" --status-codes
+[ "$use_all_taggers" = "true" ]  && set -- "$@" -T
+[ -n "$use_taggers" ]            && set -- "$@" --use-taggers "$use_taggers"
+[ "$include_path" = "true" ]     && set -- "$@" --include-path
+[ "$verbose" = "true" ]          && set -- "$@" --verbose
+[ "$debug" = "true" ]            && set -- "$@" -d
+[ -n "$concurrency" ]            && set -- "$@" --concurrency "$concurrency"
+[ -n "$exclude_codes" ]          && set -- "$@" --exclude-codes "$exclude_codes"
+[ "$status_codes" = "true" ]     && set -- "$@" --status-codes
+[ -n "$ai_provider" ]            && set -- "$@" --ai-provider "$ai_provider"
+[ -n "$ai_model" ]               && set -- "$@" --ai-model "$ai_model"
+[ -n "$ai_key" ]                 && set -- "$@" --ai-key "$ai_key"
+[ "$ai_agent" = "true" ]         && set -- "$@" --ai-agent
+[ "$probe" = "true" ]            && set -- "$@" --probe
+[ -n "$probe_via" ]              && set -- "$@" --probe-via "$probe_via"
+[ -n "$export_es" ]              && set -- "$@" --export-es "$export_es"
+[ -n "$export_webhook" ]         && set -- "$@" --export-webhook "$export_webhook"
+[ -n "$diff_path" ]              && set -- "$@" --diff-path "$diff_path"
 
 # ==============================================================================
 # Execute

@@ -69,6 +69,46 @@ inputs:
     description: Display HTTP status codes for discovered endpoints (equivalent to --status-codes)
     required: false
     default: "false"
+  ai_provider:
+    description: Specify AI provider prefix or full custom URL (equivalent to --ai-provider)
+    required: false
+    default: ""
+  ai_model:
+    description: Specify AI model name (equivalent to --ai-model)
+    required: false
+    default: ""
+  ai_key:
+    description: Specify AI API key (equivalent to --ai-key)
+    required: false
+    default: ""
+  ai_agent:
+    description: Enable agentic AI workflow (equivalent to --ai-agent)
+    required: false
+    default: "false"
+  probe:
+    description: Fire HTTP requests at discovered endpoints (equivalent to --probe)
+    required: false
+    default: "false"
+  probe_via:
+    description: Route probes through this proxy URL (equivalent to --probe-via)
+    required: false
+    default: ""
+  export_es:
+    description: Index endpoints in Elasticsearch or OpenSearch (equivalent to --export-es)
+    required: false
+    default: ""
+  export_webhook:
+    description: POST endpoint catalog as JSON to a webhook URL (equivalent to --export-webhook)
+    required: false
+    default: ""
+  diff_path:
+    description: Old code version path for diff analysis (equivalent to --diff-path)
+    required: false
+    default: ""
+  no_log:
+    description: Hide execution progress/diagnostic logs and only show results (equivalent to --no-log)
+    required: false
+    default: "true"
 outputs:
   endpoints:
     description: Full Noir result document (`{"endpoints":[...],"passive_results":[...]}`) when format=json|jsonl. Empty otherwise.
@@ -136,6 +176,16 @@ runs:
           -e INPUT_CONCURRENCY="${{ inputs.concurrency }}" \
           -e INPUT_EXCLUDE_CODES="${{ inputs.exclude_codes }}" \
           -e INPUT_STATUS_CODES="${{ inputs.status_codes }}" \
+          -e INPUT_AI_PROVIDER="${{ inputs.ai_provider }}" \
+          -e INPUT_AI_MODEL="${{ inputs.ai_model }}" \
+          -e INPUT_AI_KEY="${{ inputs.ai_key }}" \
+          -e INPUT_AI_AGENT="${{ inputs.ai_agent }}" \
+          -e INPUT_PROBE="${{ inputs.probe }}" \
+          -e INPUT_PROBE_VIA="${{ inputs.probe_via }}" \
+          -e INPUT_EXPORT_ES="${{ inputs.export_es }}" \
+          -e INPUT_EXPORT_WEBHOOK="${{ inputs.export_webhook }}" \
+          -e INPUT_DIFF_PATH="${{ inputs.diff_path }}" \
+          -e INPUT_NO_LOG="${{ inputs.no_log }}" \
           --entrypoint /entrypoint.sh \
           "${{ steps.resolve.outputs.image }}"
 
