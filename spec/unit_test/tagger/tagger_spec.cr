@@ -21,6 +21,15 @@ describe "Tagger" do
     end
   end
 
+  # `--use-taggers Hunt` and `--use-taggers HUNT` used to error
+  # because the canonical names in `available_tagger_names` are
+  # lowercase. Users naturally try title-case or upper-case; force
+  # a case-insensitive match instead.
+  it "accepts tagger names regardless of case" do
+    NoirTaggers.unknown_tagger_names("HUNT,Cors,oAuth").should be_empty
+    NoirTaggers.unknown_tagger_names("Hunt,Bogus").should eq(["Bogus"])
+  end
+
   it "hunt_tagger" do
     noir_options = create_test_options
     expected_endpoints = [

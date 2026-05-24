@@ -585,10 +585,10 @@ INCLUDE_TARGETS = {
 
 def apply_include_list(noir_options : Hash(String, YAML::Any), spec : String)
   spec.split(',').reject(&.empty?).each do |raw|
-    target = raw.strip
+    target = raw.strip.downcase
     key = INCLUDE_TARGETS[target]?
     if key.nil?
-      STDERR.puts "ERROR: --include: unknown target '#{target}'. Valid: #{INCLUDE_TARGETS.keys.join(", ")}.".colorize(:yellow)
+      STDERR.puts "ERROR: --include: unknown target '#{raw.strip}'. Valid: #{INCLUDE_TARGETS.keys.join(", ")}.".colorize(:yellow)
       exit(1)
     end
     noir_options[key] = YAML::Any.new(true)
@@ -603,12 +603,16 @@ AI_CONTEXT_VALID_FEATURES = {"guards", "sinks", "validators", "signals", "callee
 def apply_ai_context(noir_options : Hash(String, YAML::Any), spec : String)
   noir_options["ai_context"] = YAML::Any.new(true)
 
-  list = spec.split(',').map(&.strip).reject(&.empty?)
+  raw_list = spec.split(',').map(&.strip).reject(&.empty?)
+  list = raw_list.map(&.downcase)
   return if list.empty? || list.includes?("all")
 
-  list.each do |feature|
+  list.each_with_index do |feature, idx|
     unless AI_CONTEXT_VALID_FEATURES.includes?(feature)
-      STDERR.puts "ERROR: --ai-context: unknown feature '#{feature}'. Valid: #{(AI_CONTEXT_VALID_FEATURES.to_a - ["all"]).join(", ")}.".colorize(:yellow)
+      # Echo the user's original spelling (not the lowercased form)
+      # in the error so a typo like `Sinkz` reads as the user wrote
+      # it.
+      STDERR.puts "ERROR: --ai-context: unknown feature '#{raw_list[idx]}'. Valid: #{(AI_CONTEXT_VALID_FEATURES.to_a - ["all"]).join(", ")}.".colorize(:yellow)
       exit(1)
     end
   end

@@ -175,7 +175,12 @@ module NoirTaggers
   def self.unknown_tagger_names(use_taggers : String) : Array(String)
     requested = use_taggers.split(",").map(&.strip).reject(&.empty?)
     valid_names = available_tagger_names
-    requested.reject { |name| valid_names.includes?(name) }
+    # Case-insensitive match: canonical names in `valid_names` are
+    # lowercase. `--use-taggers Hunt` and `--use-taggers HUNT` were
+    # rejected pre-fix even though the user clearly intended `hunt`;
+    # `noir list taggers` doesn't communicate that the names are
+    # case-sensitive either.
+    requested.reject { |name| valid_names.includes?(name.downcase) }
   end
 
   def self.validate_tagger_names!(use_taggers : String)
@@ -197,9 +202,10 @@ module NoirTaggers
       tagger_list << tagger[:runner].new(options)
     end
 
-    # Parsing use_taggers
-    use_taggers_arr = use_taggers.split(",")
-    use_taggers_arr = use_taggers_arr.map(&.strip)
+    # Parsing use_taggers — normalize to lowercase so case-insensitive
+    # input matches the lowercase canonical tagger names. Validation
+    # (`validate_tagger_names!` above) uses the same shape.
+    use_taggers_arr = use_taggers.split(",").map(&.strip.downcase)
 
     # Run taggers
     tagger_list.each do |tagger|
