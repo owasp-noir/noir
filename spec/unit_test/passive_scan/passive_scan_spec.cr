@@ -176,7 +176,7 @@ describe NoirPassiveScan do
       results[0].line_number.should eq(2)
     end
 
-    it "emits one result per matcher hit when several matchers fire on the same line" do
+    it "emits one result per matching line regardless of how many matchers fire on it" do
       logger = NoirLogger.new(false, false, false, true)
       rules = [
         PassiveScan.new(YAML.parse(<<-YAML)),
@@ -205,12 +205,13 @@ describe NoirPassiveScan do
       file_content = "alpha line\nalpha and beta both here\nbeta line"
       results = NoirPassiveScan.detect("test.txt", file_content, rules, logger)
 
-      # Three line hits, plus an extra hit on line 2 from the second matcher.
-      results.size.should eq(4)
-      # Line numbers must come back in ascending order — the single-pass
-      # walk over lines preserves natural ordering regardless of matcher
-      # composition.
-      results.map(&.line_number).should eq([1, 2, 2, 3])
+      # One finding per matching line — line 2 is a single result
+      # even though both `alpha` and `beta` matchers fire on it,
+      # because the rule already triggered for the same (rule × line)
+      # finding (the matchers are joined by `or`, so any hit is the
+      # whole-rule hit). Pre-fix this was 4 (duplicating line 2).
+      results.size.should eq(3)
+      results.map(&.line_number).should eq([1, 2, 3])
     end
 
     it "returns no results and takes the early-out when no matcher fires" do
@@ -242,6 +243,47 @@ describe NoirPassiveScan do
       results = NoirPassiveScan.detect("test.txt", file_content, rules, logger)
 
       results.size.should eq(0)
+    end
+
+    # Pre-fix this loop pushed one PassiveScanResult per matcher hit
+    # per line. Most secret-detection rules (aws-access-key,
+    # github-token, …) ship with both a `word` and a `regex` matcher
+    # joined by `or` so the bait line "AWS_ACCESS_KEY_ID = AKIA…"
+    # satisfied both — emitting the same finding twice per line.
+    # Verifies one entry per (rule × line), regardless of how many
+    # matchers fire on that line.
+    it "emits one result per matching line even when multiple OR matchers fire" do
+      logger = NoirLogger.new(false, false, false, true)
+      rules = [
+        PassiveScan.new(YAML.parse(<<-YAML)),
+          id: or-double-fire
+          info:
+            name: double fire
+            author: [test]
+            severity: critical
+            description: ...
+            reference: []
+          matchers-condition: or
+          matchers:
+            - type: word
+              patterns:
+                - SECRET
+              condition: or
+            - type: regex
+              patterns:
+                - SECRET\\s*=\\s*['"]?[A-Z0-9]+['"]?
+              condition: or
+          category: secret
+          techs: ['*']
+          YAML
+      ]
+      file_content = %(SECRET = "ABC123"\nunrelated line\nSECRET = "DEF456")
+      results = NoirPassiveScan.detect("test.txt", file_content, rules, logger)
+
+      # Pre-fix the bait lines (1 and 3) each emitted 2 results
+      # (word + regex). Post-fix exactly one per matching line.
+      results.size.should eq(2)
+      results.map(&.line_number).sort.should eq([1, 3])
     end
   end
 

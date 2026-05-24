@@ -55,6 +55,12 @@ module NoirPassiveScan
 
         index = 0
         file_content.each_line do |line|
+          # Stop at the first matcher that fires on this line. The
+          # previous shape pushed one `PassiveScanResult` per matcher
+          # hit — so a rule with both `word` and `regex` matchers
+          # joined by `or` (e.g. aws-access-key, github-token) would
+          # emit two duplicate entries for any line that happened to
+          # satisfy both matchers, even though it's the same finding.
           active_matchers.each do |matcher|
             if match_content?(line, matcher)
               unless detected_logged
@@ -62,6 +68,7 @@ module NoirPassiveScan
                 detected_logged = true
               end
               results << PassiveScanResult.new(rule, file_path, index + 1, line)
+              break
             end
           end
           index += 1
