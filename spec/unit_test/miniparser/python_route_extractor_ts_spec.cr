@@ -103,4 +103,37 @@ describe Noir::TreeSitterPythonRouteExtractor do
       {"/items", ["POST"], "create_item"},
     ])
   end
+
+  # f-strings used to silently drop their `{expr}` interpolation
+  # nodes, turning `f"/api/{VERSION}/items"` into `"/api//items"`
+  # (and after optimizer normalization, `"/api/items"`) — the
+  # user's path template lost a segment without any indication.
+  # Preserve the interpolation source text as the `{expr}`
+  # placeholder so the downstream path-param extractor picks it
+  # up and the rendered URL faithfully reflects the route.
+  it "preserves f-string interpolation as {expr} placeholders" do
+    source = <<-PY
+      VERSION = "v2"
+      @app.route(f"/api/{VERSION}/items")
+      def x(): pass
+
+      @app.route(f"/users/{user_id}/posts/{post_id}")
+      def y(): pass
+      PY
+
+    decos = Noir::TreeSitterPythonRouteExtractor.extract_decorations(source)
+    decos.map(&.path).should eq([
+      "/api/{VERSION}/items",
+      "/users/{user_id}/posts/{post_id}",
+    ])
+  end
+
+  it "leaves plain strings unaffected (no interpolation children)" do
+    source = <<-PY
+      @app.route("/static")
+      def x(): pass
+      PY
+    decos = Noir::TreeSitterPythonRouteExtractor.extract_decorations(source)
+    decos.map(&.path).should eq(["/static"])
+  end
 end
