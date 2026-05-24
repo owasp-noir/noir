@@ -9,6 +9,13 @@ class PhpEngineSpecHarness < Analyzer::Php::PhpEngine
   def method_body_after(content : String, start_pos : Int32) : Tuple(String, Int32)?
     extract_php_method_body_after(content, start_pos)
   end
+
+  # Exposes the protected helper so the spec below can lock in the
+  # `$var` / `{$var}` / `${var}` → `{var}` rewrite without going
+  # through a full Laravel route scan.
+  def interpolate(path : String) : String
+    normalize_php_interpolation(path)
+  end
 end
 
 describe Analyzer::Php::PhpEngine do
@@ -39,5 +46,19 @@ describe Analyzer::Php::PhpEngine do
       body.should contain("$this->json")
       body.should_not contain("class DemoController")
     end
+  end
+
+  # Pre-fix, PHP double-quoted-string interpolation leaked the
+  # `$` / `${}` / `{$}` characters into the rendered URL. Each
+  # shape now normalises to `{name}` so the path-parameter
+  # extractor recognises it.
+  it "rewrites $var, {$var}, ${var} interpolation into {var}" do
+    harness = PhpEngineSpecHarness.new(create_test_options)
+    harness.interpolate("/api/{$VERSION}/items").should eq("/api/{VERSION}/items")
+    harness.interpolate("/api/${VERSION}/items").should eq("/api/{VERSION}/items")
+    harness.interpolate("/api/$VERSION/items").should eq("/api/{VERSION}/items")
+    # Plain text and existing braces stay untouched.
+    harness.interpolate("/static/path").should eq("/static/path")
+    harness.interpolate("/items/{id}").should eq("/items/{id}")
   end
 end

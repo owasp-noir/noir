@@ -67,6 +67,9 @@ module Analyzer::Php
     # layer is introduced; kept here for now so Laravel/CakePHP/Symfony stop
     # duplicating it.
     protected def build_full_path(prefix : String, path : String) : String
+      prefix = normalize_php_interpolation(prefix)
+      path = normalize_php_interpolation(path)
+
       return prefix if path == "/" && !prefix.empty?
       return path if prefix.empty?
 
@@ -74,6 +77,20 @@ module Analyzer::Php
       full_path = full_path.gsub(/\/+/, "/")
       full_path = full_path.chomp('/') if full_path.size > 1
       full_path
+    end
+
+    # PHP double-quoted strings interpolate `$var`, `{$var}`, and
+    # `${var}`. The route extractor captures the literal characters
+    # between the quotes, so `"/api/{$VERSION}/items"` came out as
+    # `/api/{$VERSION}/items` with the `$` leaking into the URL.
+    # Rewrite each shape to `{name}` so the path-parameter
+    # extractor picks it up and the URL template reads cleanly.
+    # Same posture as the Python f-string and Ruby `#{}` fixes.
+    protected def normalize_php_interpolation(path : String) : String
+      path = path.gsub(/\$\{([A-Za-z_]\w*)\}/) { |_| "{#{$~[1]}}" }
+      path = path.gsub(/\{\$([A-Za-z_]\w*)\}/) { |_| "{#{$~[1]}}" }
+      path = path.gsub(/\$([A-Za-z_]\w*)/) { |_| "{#{$~[1]}}" }
+      path
     end
 
     protected def extract_brace_path_params(route_path : String) : Array(Param)
