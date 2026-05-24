@@ -1,7 +1,7 @@
 +++
 title = "Noir v1.0 — 메이저 버전, v0은 그대로"
 description = "왜 1.x로 갔는지, 그리고 호환을 어떻게 지켰는지."
-date = "2026-05-23"
+date = "2026-05-24"
 tags = ["release", "v1"]
 authors = ["hahwul"]
 template = "blog_post"

@@ -1,7 +1,7 @@
 +++
 title = "Noir v1.0 — Major bump, compat-first"
 description = "Why 1.x now, and how the v0 surface stayed intact."
-date = "2026-05-23"
+date = "2026-05-24"
 tags = ["release", "v1"]
 authors = ["hahwul"]
 template = "blog_post"

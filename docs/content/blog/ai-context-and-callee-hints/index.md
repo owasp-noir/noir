@@ -1,7 +1,7 @@
 +++
 title = "--ai-context and --include-callee — hint and sink for AI code review"
 description = "Two v1 flags that ship structured security context to AI source-code analysis instead of raw code."
-date = "2026-05-23"
+date = "2026-05-24"
 tags = ["v1", "ai-context", "callee", "design"]
 authors = ["hahwul"]
 template = "blog_post"

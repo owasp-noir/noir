@@ -1,7 +1,7 @@
 +++
 title = "--ai-context와 --include-callee — AI 코드 리뷰의 hint이자 sink"
 description = "AI 기반 소스 코드 분석에서 구조화된 보안 context를 흘려보내는 Noir의 두 플래그 이야기."
-date = "2026-05-23"
+date = "2026-05-24"
 tags = ["v1", "ai-context", "callee", "design"]
 authors = ["hahwul"]
 template = "blog_post"
