@@ -1,3 +1,4 @@
+require "colorize"
 require "./logger"
 require "../utils/utils"
 
@@ -28,9 +29,21 @@ class Deliver
       # (e.g. `Authorization: Bearer aaa:bbb`, `X-Time: 12:34:56`)
       # keep their full payload after the header name.
       colon_index = raw.index(':')
-      next if colon_index.nil?
+      if colon_index.nil?
+        # Pre-fix this dropped silently. A typo like
+        # `--probe-header "X-Auth tok123"` (missing colon) meant the
+        # auth never got sent and the user wondered why every probe
+        # returned 401.
+        STDERR.puts "WARNING: --probe-header value '#{raw}' is missing a ':' — expected 'Name: value' format. Skipping.".colorize(:yellow)
+        next
+      end
 
       name = raw[0...colon_index]
+      if name.empty?
+        STDERR.puts "WARNING: --probe-header value '#{raw}' has an empty header name (nothing before ':'). Skipping.".colorize(:yellow)
+        next
+      end
+
       value = raw[(colon_index + 1)..]
       value = value.lstrip(' ') unless value.empty?
       @headers[name] = value

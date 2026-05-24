@@ -228,4 +228,31 @@ describe "Deliver#initialize header parsing" do
     deliver = Deliver.new options
     deliver.headers["X-Bar"].should eq("tight-value")
   end
+
+  # Bad-input handling: pre-fix, a malformed --probe-header was
+  # silently dropped — `--probe-header "X-Auth tok123"` (missing
+  # colon) led to the auth never reaching the receiver and the user
+  # blaming the server. Now the entry is skipped *and* a stderr
+  # warning is emitted. The spec covers the survival of the
+  # well-formed entries; the warning text itself is covered by the
+  # functional smoke during dogfooding.
+  it "skips a header value with no colon (warning to stderr)" do
+    options["probe_header"] = YAML::Any.new([
+      YAML::Any.new("X-Good: yes"),
+      YAML::Any.new("X-No-Colon"),
+    ])
+    deliver = Deliver.new options
+    deliver.headers["X-Good"].should eq("yes")
+    deliver.headers.has_key?("X-No-Colon").should be_false
+  end
+
+  it "skips a header value with an empty name (warning to stderr)" do
+    options["probe_header"] = YAML::Any.new([
+      YAML::Any.new(":just-a-value"),
+      YAML::Any.new("X-Real: 1"),
+    ])
+    deliver = Deliver.new options
+    deliver.headers["X-Real"].should eq("1")
+    deliver.headers.has_key?("").should be_false
+  end
 end

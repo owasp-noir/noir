@@ -65,7 +65,34 @@ module Noir::CLI::ConfigCommand
     unless File.exists?(path)
       Noir::CLI.die("Config file does not exist: #{path}\nRun `noir config init` to create it.")
     end
-    puts File.read(path)
+    content = File.read(path)
+    puts content
+    warn_about_legacy_keys(content)
+  end
+
+  # Emit a stderr hint when v0 deliver/probe keys are present in the
+  # config file. The keys keep working (the migration runs at scan
+  # time), but a user running `noir config show` to verify their
+  # settings would otherwise see the raw v0 names and wonder why the
+  # v1 documentation doesn't match what's on disk.
+  def self.warn_about_legacy_keys(content : String, io : IO = STDERR)
+    legacy_keys = detect_legacy_keys(content)
+    return if legacy_keys.empty?
+
+    io.puts ""
+    io.puts "NOTE: v0 keys detected in this config file. They still work — noir auto-migrates them at load time — but the canonical v1 names are:".colorize(:yellow)
+    legacy_keys.each do |old_key, new_key|
+      io.puts "  #{old_key}  ->  #{new_key}".colorize(:yellow)
+    end
+  end
+
+  # Pure helper — given a config file's body, returns the v0 keys
+  # present in it as `{old_key => v1_key}`. Pulled out so the
+  # detection rule can be exercised without going through STDERR.
+  def self.detect_legacy_keys(content : String) : Hash(String, String)
+    ConfigInitializer::LEGACY_CONFIG_KEY_MAP.select do |old_key, _|
+      content =~ /^\s*#{Regex.escape(old_key)}\s*:/m
+    end
   end
 
   def self.init
