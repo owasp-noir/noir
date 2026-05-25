@@ -16,10 +16,18 @@ Noir is a single binary with no runtime dependencies. Homebrew is the quickest w
 
 ## Homebrew (macOS and Linux)
 
-The easiest option. Noir has an official [Homebrew formula](https://formulae.brew.sh/formula/noir), so `brew upgrade` keeps it up to date too.
+The easiest option. Noir has an official [Homebrew formula](https://formulae.brew.sh/formula/noir).
+
+To install:
 
 ```bash
 brew install noir
+```
+
+To update:
+
+```bash
+brew upgrade noir
 ```
 
 {% alert_info() %}
@@ -30,13 +38,23 @@ Shell completions for Zsh, Bash, and Fish are automatically installed.
 
 [Snap](https://snapcraft.io) packages work across most Linux distros and auto-update in the background.
 
+To install:
+
 ```bash
 sudo snap install noir
+```
+
+To update manually:
+
+```bash
+sudo snap refresh noir
 ```
 
 ## Docker
 
 Handy when you don't want to install anything on the host, or need Noir inside a CI/CD pipeline.
+
+To pull/update the latest image:
 
 ```bash
 docker pull ghcr.io/owasp-noir/noir:latest
@@ -52,10 +70,18 @@ Image tags follow the OCI/Docker convention without the `v` prefix, e.g. `:0.30.
 
 ## Nix
 
-If you use [Nix](https://nixos.org), install via Flakes:
+If you use [Nix](https://nixos.org), install via Flakes.
+
+To install:
 
 ```bash
 nix profile add github:owasp-noir/noir
+```
+
+To update:
+
+```bash
+nix profile upgrade github:owasp-noir/noir
 ```
 
 {% alert_info() %}
@@ -76,6 +102,8 @@ nix run github:owasp-noir/noir -- -h
 
 No package manager? Grab a prebuilt binary from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). Linux and macOS builds are provided.
 
+To install or update:
+
 1. Download the archive for your platform (e.g., `noir-linux-x86_64.tar.gz` or `noir-macos-universal.tar.gz`).
 2. Extract:
 
@@ -83,7 +111,7 @@ No package manager? Grab a prebuilt binary from [GitHub Releases](https://github
     tar xzf noir-*.tar.gz
     ```
 
-3. Move to a directory on your `PATH`:
+3. Move or overwrite the existing binary in your `PATH`:
 
     ```bash
     sudo mv noir /usr/local/bin/
@@ -99,6 +127,8 @@ No package manager? Grab a prebuilt binary from [GitHub Releases](https://github
 
 Debian/Ubuntu users can use the `.deb` package from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). It integrates with `dpkg`/`apt` like any other system package. Both `amd64` and `arm64` are provided.
 
+To install or update:
+
 1. Resolve the latest version and download:
 
     ```bash
@@ -106,7 +136,7 @@ Debian/Ubuntu users can use the `.deb` package from [GitHub Releases](https://gi
     wget "https://github.com/owasp-noir/noir/releases/download/v${VERSION}/noir_${VERSION}_amd64.deb"
     ```
 
-2. Install:
+2. Install or upgrade:
 
     ```bash
     sudo dpkg -i "noir_${VERSION}_amd64.deb"
@@ -126,7 +156,9 @@ Debian/Ubuntu users can use the `.deb` package from [GitHub Releases](https://gi
 
 ## Arch Linux (AUR)
 
-Noir is officially published on the [AUR](https://aur.archlinux.org/packages/noir). Install with your preferred AUR helper:
+Noir is officially published on the [AUR](https://aur.archlinux.org/packages/noir).
+
+To install or update:
 
 ```bash
 yay -S noir
@@ -135,6 +167,8 @@ yay -S noir
 ## RPM Package (.rpm)
 
 Fedora, RHEL, CentOS, openSUSE, and other RPM-based distros can use the `.rpm` package from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). Both `x86_64` and `aarch64` are provided.
+
+To install:
 
 1. Resolve the latest version and download:
 
@@ -155,6 +189,21 @@ Fedora, RHEL, CentOS, openSUSE, and other RPM-based distros can use the `.rpm` p
     sudo dnf install "./noir-${VERSION}.x86_64.rpm"
     ```
 
+To update:
+
+1. Download the latest version as shown in the install step.
+2. Upgrade:
+
+    ```bash
+    sudo rpm -U "noir-${VERSION}.x86_64.rpm"
+    ```
+
+    Or with `dnf`:
+
+    ```bash
+    sudo dnf upgrade "./noir-${VERSION}.x86_64.rpm"
+    ```
+
 3. Verify:
 
     ```bash
@@ -165,6 +214,8 @@ Fedora, RHEL, CentOS, openSUSE, and other RPM-based distros can use the `.rpm` p
 
 Alpine Linux users can use the `.apk` package from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). Both `x86_64` and `aarch64` are provided.
 
+To install or update:
+
 1. Resolve the latest version and download:
 
     ```bash
@@ -172,10 +223,10 @@ Alpine Linux users can use the `.apk` package from [GitHub Releases](https://git
     wget "https://github.com/owasp-noir/noir/releases/download/v${VERSION}/noir-${VERSION}-x86_64.apk"
     ```
 
-2. Install:
+2. Install or upgrade:
 
     ```bash
-    sudo apk add --allow-untrusted "noir-${VERSION}-x86_64.apk"
+    sudo apk add --upgrade --allow-untrusted "noir-${VERSION}-x86_64.apk"
     ```
 
 3. Verify:
@@ -191,6 +242,8 @@ For custom builds or contributing back to the project.
 {% alert_warning() %}
 Requires [Crystal](https://crystal-lang.org/install/) programming language installed.
 {% end %}
+
+To install:
 
 1.  **Clone the repository:**
 
@@ -212,6 +265,21 @@ Requires [Crystal](https://crystal-lang.org/install/) programming language insta
     ```
 
     The compiled binary is at `./bin/noir`.
+
+To update:
+
+1.  **Pull latest changes:**
+
+    ```bash
+    git pull
+    ```
+
+2.  **Install dependencies and rebuild:**
+
+    ```bash
+    shards install
+    shards build --release
+    ```
 
 ## Verify Your Installation
 
