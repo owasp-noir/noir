@@ -39,4 +39,35 @@ class UserController extends Controller
         $username = $request->post('username');
         $password = $request->post('password');
     }
+
+    // Test: Advanced request parameters: $this->request, Facades, getMore/postMore, superglobals
+    // Exposes: GET+POST /user/advanced
+    public function advanced()
+    {
+        // 1. $this->request->param
+        $admin_token = $this->request->param('admin_token');
+
+        // 2. Facades
+        $query_facade = Request::get('query_facade');
+        $x_header = \think\facade\Request::header('X-Facade-Header');
+
+        // 3. getMore & postMore (CRMEB-style)
+        $crmeb_get = $this->request->getMore([
+            ['crmeb_page', 1],
+            ['crmeb_limit', 10]
+        ]);
+        $crmeb_post = Util::postMore([
+            ['crmeb_form_field', '']
+        ]);
+
+        // 4. Parameter existence checks
+        $verbose = input('?verbose');
+
+        // 5. Superglobals & Server variables
+        $username_raw = $_POST['username_raw'];
+        $correlation = $_SERVER['HTTP_X_CORRELATION_ID'];
+
+        // 6. $request->only
+        $only_fields = $this->request->only(['email', 'phone']);
+    }
 }

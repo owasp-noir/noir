@@ -412,6 +412,7 @@ module Analyzer::Php
       # 1. input('name') or input('get.name')
       context.scan(/input\s*\(\s*['"](?:get\.|post\.|param\.)?([^'"\/]+)[^'"]*['"]/) do |match|
         name = match[1]
+        name = name[1..] if name.starts_with?('?')
         next if seen.includes?(name)
         param_type = if match[0].includes?("post.")
                        "form"
@@ -426,9 +427,9 @@ module Analyzer::Php
         seen.add(name)
       end
 
-      # 2. $request->param("name") or request()->param("name")
-      context.scan(/(?:\$request|request\(\))->(param|get|post|put|delete|patch|header|cookie)\s*\(\s*['"]([^'"]+)['"]/) do |match|
-        method_name = match[1]
+      # 2. $request->param("name"), $this->request->param("name"), request()->param("name"), Request::param("name")
+      context.scan(/(?:\$this->request|\$request|request\(\)|(?:\\?think\\facade\\)?Request)(?:->|::)(param|get|post|put|delete|patch|header|cookie)\s*\(\s*['"]([^'"]+)['"]/i) do |match|
+        method_name = match[1].downcase
         name = match[2]
         next if seen.includes?(name)
 
@@ -445,6 +446,61 @@ module Analyzer::Php
 
         params << Param.new(name, "", param_type)
         seen.add(name)
+      end
+
+      # 3. $_GET['name'], $_POST["name"], $_REQUEST['name'], $_COOKIE['name']
+      context.scan(/\$_(GET|POST|REQUEST|COOKIE)\s*\[\s*['"]([^'"]+)['"]\s*\]/i) do |match|
+        global_type = match[1].upcase
+        name = match[2]
+        next if seen.includes?(name)
+
+        param_type = case global_type
+                     when "POST"
+                       "form"
+                     when "COOKIE"
+                       "cookie"
+                     else
+                       "query"
+                     end
+
+        params << Param.new(name, "", param_type)
+        seen.add(name)
+      end
+
+      # 4. $_SERVER['HTTP_HEADER_NAME']
+      context.scan(/\$_SERVER\s*\[\s*['"]HTTP_([^'"]+)['"]\s*\]/i) do |match|
+        raw_header = match[1]
+        header_name = raw_header.split('_').map(&.capitalize).join('-')
+        next if seen.includes?(header_name)
+
+        params << Param.new(header_name, "", "header")
+        seen.add(header_name)
+      end
+
+      # 5. $request->only(['id', 'name']), Request::only(['id', 'name'])
+      context.scan(/(?:\$this->request|\$request|request\(\)|(?:\\?think\\facade\\)?Request)(?:->|::)only\s*\(\s*\[([\s\S]+?)\]\s*\)/i) do |match|
+        array_content = match[1]
+        array_content.scan(/['"]([^'"]+)['"]/).each do |m|
+          name = m[1]
+          next if seen.includes?(name)
+          param_type = context.includes?("post.") || context.includes?("->post(") || context.includes?("request()->post") || context.includes?("$_POST") || context.includes?("postMore") ? "form" : "query"
+          params << Param.new(name, "", param_type)
+          seen.add(name)
+        end
+      end
+
+      # 6. $this->request->getMore([['page', 1], ['limit', 20]]) or Util::getMore([...]) or Request::postMore([...])
+      context.scan(/(?:\$this->request|\$request|request\(\)|(?:\\?think\\facade\\)?Request|Util|Helper)(?:->|::)(getMore|postMore)\s*\(\s*\[([\s\S]+?)\]\s*\)/i) do |match|
+        method_name = match[1].downcase
+        array_content = match[2]
+        param_type = method_name.includes?("post") ? "form" : "query"
+
+        array_content.scan(/\[\s*['"]([^'"]+)['"]/).each do |m|
+          name = m[1]
+          next if seen.includes?(name)
+          params << Param.new(name, "", param_type)
+          seen.add(name)
+        end
       end
 
       params

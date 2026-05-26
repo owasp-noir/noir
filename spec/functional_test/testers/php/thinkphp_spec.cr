@@ -90,9 +90,35 @@ expected_endpoints = [
     Param.new("get_id", "", "query"),
     Param.new("name", "", "form"),
   ]),
+  Endpoint.new("/user/advanced", "GET", [
+    Param.new("verbose", "", "query"),
+    Param.new("admin_token", "", "query"),
+    Param.new("query_facade", "", "query"),
+    Param.new("X-Facade-Header", "", "header"),
+    Param.new("username_raw", "", "form"),
+    Param.new("X-Correlation-Id", "", "header"),
+    Param.new("email", "", "form"),
+    Param.new("phone", "", "form"),
+    Param.new("crmeb_page", "", "query"),
+    Param.new("crmeb_limit", "", "query"),
+    Param.new("crmeb_form_field", "", "form"),
+  ]),
+  Endpoint.new("/user/advanced", "POST", [
+    Param.new("verbose", "", "query"),
+    Param.new("admin_token", "", "query"),
+    Param.new("query_facade", "", "query"),
+    Param.new("X-Facade-Header", "", "header"),
+    Param.new("username_raw", "", "form"),
+    Param.new("X-Correlation-Id", "", "header"),
+    Param.new("email", "", "form"),
+    Param.new("phone", "", "form"),
+    Param.new("crmeb_page", "", "query"),
+    Param.new("crmeb_limit", "", "query"),
+    Param.new("crmeb_form_field", "", "form"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/php/thinkphp/", {
   :techs     => 2,
-  :endpoints => 27,
+  :endpoints => 29,
 }, expected_endpoints).perform_tests
