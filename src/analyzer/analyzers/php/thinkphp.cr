@@ -182,14 +182,18 @@ module Analyzer::Php
     private def generate_resource_endpoints(prefix : String, file_path : String, line : Int32) : Array(Endpoint)
       endpoints = [] of Endpoint
       prefix = prefix.strip('/')
+      base_path = prefix.empty? ? "/" : "/#{prefix}"
+      create_path = base_path == "/" ? "/create" : "#{base_path}/create"
+      member_path = base_path == "/" ? "/{id}" : "#{base_path}/{id}"
+      edit_path = base_path == "/" ? "/{id}/edit" : "#{base_path}/{id}/edit"
 
-      endpoints << Endpoint.new("/#{prefix}", "GET", [] of Param, Details.new(PathInfo.new(file_path, line)))
-      endpoints << Endpoint.new("/#{prefix}/create", "GET", [] of Param, Details.new(PathInfo.new(file_path, line)))
-      endpoints << Endpoint.new("/#{prefix}", "POST", [] of Param, Details.new(PathInfo.new(file_path, line)))
-      endpoints << Endpoint.new("/#{prefix}/{id}", "GET", [Param.new("id", "", "path")], Details.new(PathInfo.new(file_path, line)))
-      endpoints << Endpoint.new("/#{prefix}/{id}/edit", "GET", [Param.new("id", "", "path")], Details.new(PathInfo.new(file_path, line)))
-      endpoints << Endpoint.new("/#{prefix}/{id}", "PUT", [Param.new("id", "", "path")], Details.new(PathInfo.new(file_path, line)))
-      endpoints << Endpoint.new("/#{prefix}/{id}", "DELETE", [Param.new("id", "", "path")], Details.new(PathInfo.new(file_path, line)))
+      endpoints << Endpoint.new(base_path, "GET", [] of Param, Details.new(PathInfo.new(file_path, line)))
+      endpoints << Endpoint.new(create_path, "GET", [] of Param, Details.new(PathInfo.new(file_path, line)))
+      endpoints << Endpoint.new(base_path, "POST", [] of Param, Details.new(PathInfo.new(file_path, line)))
+      endpoints << Endpoint.new(member_path, "GET", [Param.new("id", "", "path")], Details.new(PathInfo.new(file_path, line)))
+      endpoints << Endpoint.new(edit_path, "GET", [Param.new("id", "", "path")], Details.new(PathInfo.new(file_path, line)))
+      endpoints << Endpoint.new(member_path, "PUT", [Param.new("id", "", "path")], Details.new(PathInfo.new(file_path, line)))
+      endpoints << Endpoint.new(member_path, "DELETE", [Param.new("id", "", "path")], Details.new(PathInfo.new(file_path, line)))
 
       endpoints
     end
