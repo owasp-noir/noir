@@ -255,7 +255,7 @@ module Analyzer::Php
       module_slug, controller_slug = info
 
       offset = 0
-      content.scan(/(?:^|[\s;{}])(?:public\s+)?function\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*\{/) do |match|
+      content.scan(/(?:^|[\s;{}])(?:public\s+)?function\s+([A-Za-z_]\w*)\s*\(([^)]*)\)(?:\s*:\s*[^{]+)?\s*\{/) do |match|
         action_name = match[1]
         param_sig = match[2]
         full_match = match[0]
@@ -346,7 +346,9 @@ module Analyzer::Php
       signature.split(',').each do |part|
         cleaned = part.strip
         next if cleaned.empty?
+        next if cleaned.includes?("Request ") || cleaned.includes?("\\Request ")
         if match = cleaned.match(/\$(\w+)/)
+          next if match[1].downcase == "request"
           params << Param.new(match[1], "", "query")
         end
       end
@@ -358,10 +360,18 @@ module Analyzer::Php
       seen = Set(String).new
 
       # 1. input('name') or input('get.name')
-      context.scan(/input\s*\(\s*['"](?:get\.|post\.|param\.)?([^'"]+)['"]/) do |match|
+      context.scan(/input\s*\(\s*['"](?:get\.|post\.|param\.)?([^'"\/]+)[^'"]*['"]/) do |match|
         name = match[1]
         next if seen.includes?(name)
-        param_type = context.includes?("post.") ? "form" : "query"
+        param_type = if match[0].includes?("post.")
+                       "form"
+                     elsif match[0].includes?("get.")
+                       "query"
+                     elsif context.includes?("post.") || context.includes?("->post(") || context.includes?("request()->post")
+                       "form"
+                     else
+                       "query"
+                     end
         params << Param.new(name, "", param_type)
         seen.add(name)
       end

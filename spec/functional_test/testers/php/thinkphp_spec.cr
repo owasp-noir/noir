@@ -42,6 +42,12 @@ expected_endpoints = [
   Endpoint.new("/user/view", "GET", [
     Param.new("id", "", "query"),
     Param.new("get_id", "", "query"),
+    Param.new("name", "", "form"),
+  ]),
+  Endpoint.new("/user/view", "POST", [
+    Param.new("id", "", "query"),
+    Param.new("get_id", "", "query"),
+    Param.new("name", "", "form"),
   ]),
   Endpoint.new("/user/create", "GET", [
     Param.new("username", "", "form"),
@@ -55,5 +61,5 @@ expected_endpoints = [
 
 FunctionalTester.new("fixtures/php/thinkphp/", {
   :techs     => 2,
-  :endpoints => 18,
+  :endpoints => 19,
 }, expected_endpoints).perform_tests

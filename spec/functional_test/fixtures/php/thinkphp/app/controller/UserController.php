@@ -3,29 +3,36 @@
 namespace app\controller;
 
 use think\Controller;
+use think\Request;
 
 class UserController extends Controller
 {
-    // Exposes: GET /user_controller/index (and fallback GET /user_controller)
+    // Test: Return type hint & input suffix (/d)
+    // Exposes: GET /user/index (and fallback GET /user)
     // Params: page (query), limit (query)
-    public function index()
+    public function index(): string
     {
-        $page = input('page');
+        $page = input('page/d');
         $limit = input('limit');
+        return "index";
     }
 
-    // Exposes: GET /user_controller/view
-    // Params: id (query), get_id (query)
+    // Test: signature input $id, input suffix (/s), mixed query (get.get_id/s) and form (post.name/a) parameters
+    // Exposes: GET+POST /user/view
+    // Params: id (query), get_id (query), name (form)
     public function view($id)
     {
-        $get_id = input('get.get_id');
+        $get_id = input('get.get_id/s');
+        $name = input('post.name/a');
     }
 
-    // Exposes: GET+POST /user_controller/create
+    // Test: Request object type-hint in signature
+    // Exposes: GET+POST /user/create
     // Params: username (form), password (form)
-    public function create()
+    // (Should NOT extract a query parameter named 'request'!)
+    public function create(Request $request)
     {
-        $username = request()->post('username');
-        $password = request()->post('password');
+        $username = $request->post('username');
+        $password = $request->post('password');
     }
 }
