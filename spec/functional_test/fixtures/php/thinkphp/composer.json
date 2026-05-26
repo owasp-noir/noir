@@ -1,0 +1,8 @@
+{
+    "name": "owasp-noir/mock-thinkphp",
+    "description": "Mock ThinkPHP project for Noir integration tests",
+    "require": {
+        "php": ">=7.2.5",
+        "topthink/framework": "^6.0.0"
+    }
+}

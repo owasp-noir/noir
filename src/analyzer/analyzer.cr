@@ -133,6 +133,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"php_lumen", Php::Lumen},
     {"php_slim", Php::Slim},
     {"php_symfony", Php::Symfony},
+    {"php_thinkphp", Php::ThinkPHP},
     {"php_yii", Php::Yii},
     {"python_aiohttp", Python::Aiohttp},
     {"python_django", Python::Django},
@@ -196,6 +197,7 @@ def filter_redundant_generic_techs(techs : Array(String)) : Array(String)
     "php_codeigniter",
     "php_hyperf",
     "php_slim",
+    "php_thinkphp",
     "php_yii",
   }
 
