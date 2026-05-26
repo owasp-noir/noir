@@ -116,9 +116,27 @@ expected_endpoints = [
     Param.new("crmeb_limit", "", "query"),
     Param.new("crmeb_form_field", "", "form"),
   ]),
+
+  # Route::any endpoint expectations
+  Endpoint.new("/any-route", "GET"),
+  Endpoint.new("/any-route", "POST"),
+  Endpoint.new("/any-route", "PUT"),
+  Endpoint.new("/any-route", "PATCH"),
+  Endpoint.new("/any-route", "DELETE"),
+  Endpoint.new("/any-route", "OPTIONS"),
+  Endpoint.new("/any-route", "HEAD"),
+
+  # Route::rule with '*' endpoint expectations
+  Endpoint.new("/rule-route", "GET"),
+  Endpoint.new("/rule-route", "POST"),
+  Endpoint.new("/rule-route", "PUT"),
+  Endpoint.new("/rule-route", "PATCH"),
+  Endpoint.new("/rule-route", "DELETE"),
+  Endpoint.new("/rule-route", "OPTIONS"),
+  Endpoint.new("/rule-route", "HEAD"),
 ]
 
 FunctionalTester.new("fixtures/php/thinkphp/", {
   :techs     => 2,
-  :endpoints => 29,
+  :endpoints => 43,
 }, expected_endpoints).perform_tests

@@ -2,6 +2,8 @@ require "../../engines/php_engine"
 
 module Analyzer::Php
   class ThinkPHP < PhpEngine
+    ALL_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
+
     private struct RouteGroup
       getter prefix, body, body_start, body_end
 
@@ -72,7 +74,7 @@ module Analyzer::Php
         normalized_path = normalize_route(full_path)
         route_line = base_line + newline_count_before(content, route_match.begin(0))
 
-        methods = verb == "ANY" ? ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"] : [verb]
+        methods = verb == "ANY" ? ALL_METHODS : [verb]
 
         handler_body, next_pos, body_start_line = extract_inline_closure_body(content, route_match.end(0), base_line)
 
@@ -250,7 +252,7 @@ module Analyzer::Php
     end
 
     private def extract_methods_from_string(methods_str : String) : Array(String)
-      return ["GET"] if methods_str == "*"
+      return ALL_METHODS if methods_str == "*"
       methods = [] of String
       methods_str.split('|').each do |m|
         methods << m.strip.upcase

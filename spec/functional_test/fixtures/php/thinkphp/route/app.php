@@ -19,3 +19,9 @@ Route::group('admin', function () {
     Route::get('dashboard', 'admin/Index/dashboard');
     Route::post('users', 'admin/User/save');
 });
+
+// 6. Route::any
+Route::any('any-route', 'index/anyRoute');
+
+// 7. Route::rule with '*' (any method)
+Route::rule('rule-route', 'index/ruleRoute', '*');
