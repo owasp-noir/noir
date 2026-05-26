@@ -72,7 +72,7 @@ module Analyzer::Php
         normalized_path = normalize_route(full_path)
         route_line = base_line + newline_count_before(content, route_match.begin(0))
 
-        methods = verb == "ANY" ? ["GET", "POST"] : [verb]
+        methods = verb == "ANY" ? ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"] : [verb]
 
         handler_body, next_pos, body_start_line = extract_inline_closure_body(content, route_match.end(0), base_line)
 
