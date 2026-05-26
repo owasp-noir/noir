@@ -15,13 +15,20 @@ module Analyzer::Php
       endpoints = [] of Endpoint
       return endpoints unless path.ends_with?(".php")
 
+      is_route = path.includes?("route/") || File.basename(path) == "route.php"
+      is_controller = path.includes?("controller/")
+
+      # PERFORMANCE OPTIMIZATION: Skip opening, reading, and parsing files that are
+      # neither explicit route definitions nor implicit controller classes.
+      return endpoints unless is_route || is_controller
+
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
       File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
         content = file.gets_to_end
 
         # 1. Explicit Route definitions
-        if path.includes?("route/") || File.basename(path) == "route.php"
+        if is_route
           # Determine base prefix from multi-app route files (e.g. app/shop/route/app.php -> prefix is "/shop")
           base_prefix = ""
           if path.includes?("app/") || path.includes?("application/")
@@ -39,7 +46,7 @@ module Analyzer::Php
         end
 
         # 2. Implicit Controller auto-routing
-        if path.includes?("controller/")
+        if is_controller
           endpoints.concat(analyze_controller(path, content, include_callee))
           endpoints.concat(analyze_annotation_routes(path, content, include_callee))
         end
