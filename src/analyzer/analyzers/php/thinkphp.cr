@@ -39,6 +39,7 @@ module Analyzer::Php
         # 2. Implicit Controller auto-routing
         if path.includes?("controller/")
           endpoints.concat(analyze_controller(path, content, include_callee))
+          endpoints.concat(analyze_annotation_routes(path, content, include_callee))
         end
       end
 
@@ -476,6 +477,59 @@ module Analyzer::Php
           true
         end
       end
+    end
+
+    private def analyze_annotation_routes(path : String, content : String, include_callee : Bool) : Array(Endpoint)
+      endpoints = [] of Endpoint
+
+      # Matches both #[Route("pattern", "method")] and /** @Route("pattern", "method") */
+      annotation_regex = /(?:#\[\s*\\?Route|@Route)\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*['"]([^'"]+)['"])?/mi
+
+      offset = 0
+      loop do
+        route_match = content.match(annotation_regex, offset)
+        break unless route_match
+
+        pattern = route_match[1]
+        normalized_path = normalize_route(pattern)
+        route_line = php_line_number_for_index(content, route_match.begin(0))
+
+        methods = ["GET"]
+        if method_str = route_match[2]?
+          methods = extract_methods_from_string(method_str)
+        end
+
+        match_start = route_match.begin(0)
+        method_body_info = extract_php_method_body_after(content, match_start)
+        method_body = method_body_info ? method_body_info[0] : ""
+
+        path_params = extract_path_params(pattern)
+        body_params = extract_request_params(method_body)
+
+        seen = Set(String).new(path_params.map(&.name))
+        body_params.each do |param|
+          next if seen.includes?(param.name)
+          path_params << param
+          seen.add(param.name)
+        end
+
+        params = dedup_params(path_params)
+        details = Details.new(PathInfo.new(path, route_line))
+
+        if route_match[2]?.nil?
+          methods = infer_methods_from_body(method_body)
+        end
+
+        methods.each do |method|
+          endpoint = Endpoint.new(normalized_path, method, params.dup, details.dup)
+          attach_action_callees(endpoint, method_body_info, path) if include_callee
+          endpoints << endpoint
+        end
+
+        offset = route_match.end(0)
+      end
+
+      endpoints
     end
 
     private def camel_to_snake(name : String) : String

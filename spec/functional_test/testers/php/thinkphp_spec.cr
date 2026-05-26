@@ -74,9 +74,25 @@ expected_endpoints = [
 
   # Test: Multi-app route prefix auto-extraction (/shop prefix)
   Endpoint.new("/shop/orders", "GET"),
+
+  # Test: Annotation/Attribute Routes inside controllers
+  Endpoint.new("/home", "GET", [
+    Param.new("page", "", "query"),
+    Param.new("limit", "", "query"),
+  ]),
+  Endpoint.new("/profile/{id}", "GET", [
+    Param.new("id", "", "path"),
+    Param.new("get_id", "", "query"),
+    Param.new("name", "", "form"),
+  ]),
+  Endpoint.new("/profile/{id}", "POST", [
+    Param.new("id", "", "path"),
+    Param.new("get_id", "", "query"),
+    Param.new("name", "", "form"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/php/thinkphp/", {
   :techs     => 2,
-  :endpoints => 24,
+  :endpoints => 27,
 }, expected_endpoints).perform_tests

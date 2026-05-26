@@ -7,9 +7,10 @@ use think\Request;
 
 class UserController extends Controller
 {
-    // Test: Return type hint & input suffix (/d)
-    // Exposes: GET /user/index (and fallback GET /user)
+    // Test: Return type hint & input suffix (/d) & Attribute Route
+    // Exposes: GET /user/index (and fallback GET /user), GET /home
     // Params: page (query), limit (query)
+    #[Route('home', 'GET')]
     public function index(): string
     {
         $page = input('page/d');
@@ -17,9 +18,12 @@ class UserController extends Controller
         return "index";
     }
 
-    // Test: signature input $id, input suffix (/s), mixed query (get.get_id/s) and form (post.name/a) parameters
-    // Exposes: GET+POST /user/view
-    // Params: id (query), get_id (query), name (form)
+    // Test: signature input $id, input suffix (/s), mixed query/form params & DocBlock Route
+    // Exposes: GET+POST /user/view, GET+POST /profile/:id
+    // Params: id (query/path), get_id (query), name (form)
+    /**
+     * @Route("profile/:id", "GET|POST")
+     */
     public function view($id)
     {
         $get_id = input('get.get_id/s');
