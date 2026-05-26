@@ -57,9 +57,26 @@ expected_endpoints = [
     Param.new("username", "", "form"),
     Param.new("password", "", "form"),
   ]),
+
+  # Test: Nested controller subdirectories (slash & dot mappings)
+  Endpoint.new("/admin/group/index", "GET", [
+    Param.new("id", "", "query"),
+  ]),
+  Endpoint.new("/admin.group/index", "GET", [
+    Param.new("id", "", "query"),
+  ]),
+  Endpoint.new("/admin/group", "GET", [
+    Param.new("id", "", "query"),
+  ]),
+  Endpoint.new("/admin.group", "GET", [
+    Param.new("id", "", "query"),
+  ]),
+
+  # Test: Multi-app route prefix auto-extraction (/shop prefix)
+  Endpoint.new("/shop/orders", "GET"),
 ]
 
 FunctionalTester.new("fixtures/php/thinkphp/", {
   :techs     => 2,
-  :endpoints => 19,
+  :endpoints => 24,
 }, expected_endpoints).perform_tests

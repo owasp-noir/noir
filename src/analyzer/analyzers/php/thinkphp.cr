@@ -20,7 +20,20 @@ module Analyzer::Php
 
         # 1. Explicit Route definitions
         if path.includes?("route/") || File.basename(path) == "route.php"
-          endpoints.concat(analyze_routes_content(content, "", path, include_callee))
+          # Determine base prefix from multi-app route files (e.g. app/shop/route/app.php -> prefix is "/shop")
+          base_prefix = ""
+          if path.includes?("app/") || path.includes?("application/")
+            segments = path.split('/')
+            route_idx = segments.index("route")
+            if route_idx && route_idx > 1
+              parent = segments[route_idx - 1]
+              if parent != "app" && parent != "application"
+                base_prefix = "/" + camel_to_snake(parent)
+              end
+            end
+          end
+
+          endpoints.concat(analyze_routes_content(content, base_prefix, path, include_callee))
         end
 
         # 2. Implicit Controller auto-routing
@@ -252,7 +265,7 @@ module Analyzer::Php
 
       info = extract_controller_info(path, content)
       return endpoints unless info
-      module_slug, controller_slug = info
+      module_slug, controller_slug_slash, controller_slug_dot = info
 
       offset = 0
       content.scan(/(?:^|[\s;{}])(?:public\s+)?function\s+([A-Za-z_]\w*)\s*\(([^)]*)\)(?:\s*:\s*[^{]+)?\s*\{/) do |match|
@@ -267,11 +280,16 @@ module Analyzer::Php
         offset = method_start + full_match.size
 
         action_slug = camel_to_snake(action_name)
-        route_path = if module_slug.empty?
-                       "/#{controller_slug}/#{action_slug}"
-                     else
-                       "/#{module_slug}/#{controller_slug}/#{action_slug}"
-                     end
+
+        # Build route paths for both slash and dot patterns
+        route_paths = [] of String
+        if module_slug.empty?
+          route_paths << "/#{controller_slug_slash}/#{action_slug}"
+          route_paths << "/#{controller_slug_dot}/#{action_slug}" if controller_slug_slash != controller_slug_dot
+        else
+          route_paths << "/#{module_slug}/#{controller_slug_slash}/#{action_slug}"
+          route_paths << "/#{module_slug}/#{controller_slug_dot}/#{action_slug}" if controller_slug_slash != controller_slug_dot
+        end
 
         params = extract_action_signature_params(param_sig)
 
@@ -290,19 +308,31 @@ module Analyzer::Php
         details = Details.new(PathInfo.new(path))
         methods = infer_methods_from_body(method_body)
 
-        methods.each do |method|
-          endpoint = Endpoint.new(route_path, method, params.dup, details.dup)
-          attach_action_callees(endpoint, method_body_info, path) if include_callee
-          endpoints << endpoint
+        route_paths.uniq.each do |route_path|
+          methods.each do |method|
+            endpoint = Endpoint.new(route_path, method, params.dup, details.dup)
+            attach_action_callees(endpoint, method_body_info, path) if include_callee
+            endpoints << endpoint
+          end
         end
 
         # Fallback root route for index action
         if action_slug == "index"
-          fallback_path = module_slug.empty? ? "/#{controller_slug}" : "/#{module_slug}/#{controller_slug}"
-          methods.each do |method|
-            endpoint = Endpoint.new(fallback_path, method, params.dup, details.dup)
-            attach_action_callees(endpoint, method_body_info, path) if include_callee
-            endpoints << endpoint
+          fallback_paths = [] of String
+          if module_slug.empty?
+            fallback_paths << "/#{controller_slug_slash}"
+            fallback_paths << "/#{controller_slug_dot}" if controller_slug_slash != controller_slug_dot
+          else
+            fallback_paths << "/#{module_slug}/#{controller_slug_slash}"
+            fallback_paths << "/#{module_slug}/#{controller_slug_dot}" if controller_slug_slash != controller_slug_dot
+          end
+
+          fallback_paths.uniq.each do |fallback_path|
+            methods.each do |method|
+              endpoint = Endpoint.new(fallback_path, method, params.dup, details.dup)
+              attach_action_callees(endpoint, method_body_info, path) if include_callee
+              endpoints << endpoint
+            end
           end
         end
       end
@@ -310,7 +340,7 @@ module Analyzer::Php
       endpoints
     end
 
-    private def extract_controller_info(path : String, content : String) : Tuple(String, String)?
+    private def extract_controller_info(path : String, content : String) : Tuple(String, String, String)?
       basename = File.basename(path, ".php")
       return unless basename.ends_with?("Controller") || content.includes?("class ")
 
@@ -329,14 +359,33 @@ module Analyzer::Php
       segments = path.split('/')
       controller_idx = segments.index("controller")
       module_slug = ""
+      subdirs = [] of String
+
       if controller_idx && controller_idx > 0
         parent = segments[controller_idx - 1]
         if parent != "app" && parent != "application"
           module_slug = camel_to_snake(parent)
         end
+
+        # Capture nested subdirectories under controller/
+        (controller_idx + 1...segments.size - 1).each do |i|
+          subdirs << camel_to_snake(segments[i])
+        end
       end
 
-      {module_slug, controller_slug}
+      controller_slug_slash = if subdirs.empty?
+                                controller_slug
+                              else
+                                subdirs.join('/') + "/" + controller_slug
+                              end
+
+      controller_slug_dot = if subdirs.empty?
+                              controller_slug
+                            else
+                              subdirs.join('.') + "." + controller_slug
+                            end
+
+      {module_slug, controller_slug_slash, controller_slug_dot}
     end
 
     private def extract_action_signature_params(signature : String) : Array(Param)
