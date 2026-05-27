@@ -1,5 +1,9 @@
 require "colorize"
 
+lib LibC
+  fun usleep(useconds : UInt32) : Int32
+end
+
 class NoirLogger
   SPINNER_FRAMES      = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
   SHIMMER_COLORS      = [159, 255, 250, 247, 245]
@@ -16,6 +20,8 @@ class NoirLogger
     HEADING
   end
 
+  @stdout_busy : Atomic(Int8)
+
   def initialize(debug : Bool, verbose : Bool, colorize : Bool, no_log : Bool, no_spinner : Bool = false)
     @debug = debug
     @verbose = verbose
@@ -24,6 +30,7 @@ class NoirLogger
     @no_spinner = no_spinner
     @output_mutex = Mutex.new
     @spinner_active = false
+    @stdout_busy = Atomic(Int8).new(0_i8)
   end
 
   def log(level : LogLevel, message : String)
@@ -65,22 +72,33 @@ class NoirLogger
 
     stop = Atomic(Int8).new(0_i8)
 
-    @output_mutex.synchronize do
-      @spinner_active = true
+    # Set @spinner_active thread-safely
+    while @stdout_busy.compare_and_set(0_i8, 1_i8, :acquire_release, :acquire)[1] == false
+      Fiber.yield
     end
+    @spinner_active = true
+    @stdout_busy.set(0_i8)
 
     thread = Thread.new do
       index = 0
       while stop.get == 0_i8
-        render_spinner(message, index)
-        index += 1
-        sleep 60.milliseconds
+        # Non-blocking lock try
+        _, success = @stdout_busy.compare_and_set(0_i8, 2_i8, :acquire_release, :acquire)
+        if success
+          render_spinner(message, index)
+          index += 1
+          @stdout_busy.set(0_i8)
+        end
+        LibC.usleep(60000_u32)
       end
 
-      @output_mutex.synchronize do
-        clear_spinner_line
-        @spinner_active = false
+      # Spin-acquire for final cleanup
+      while @stdout_busy.compare_and_set(0_i8, 2_i8, :acquire_release, :acquire)[1] == false
+        LibC.usleep(100_u32)
       end
+      clear_spinner_line
+      @spinner_active = false
+      @stdout_busy.set(0_i8)
     end
 
     begin
@@ -156,17 +174,22 @@ class NoirLogger
     frame = SPINNER_FRAMES[index % SPINNER_FRAMES.size]
     line = shimmer("#{frame} #{message}", index)
 
-    @output_mutex.synchronize do
-      STDERR.print "\r\e[2K#{line}"
-      STDERR.flush
-    end
+    STDERR.print "\r\e[2K#{line}"
+    STDERR.flush
   end
 
   private def write_stderr_line(message : String)
-    @output_mutex.synchronize do
-      clear_spinner_line if @spinner_active
-      STDERR.puts message
+    # Spin-acquire for the main fiber (cooperative yielding)
+    while @stdout_busy.compare_and_set(0_i8, 1_i8, :acquire_release, :acquire)[1] == false
+      Fiber.yield
     end
+
+    clear_spinner_line if @spinner_active
+    STDERR.puts message
+    STDERR.flush
+
+    @stdout_busy.set(0_i8)
+    nil
   end
 
   private def clear_spinner_line

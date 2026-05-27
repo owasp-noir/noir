@@ -19,9 +19,15 @@ module Analyzer::Go
       package_function_bodies = collect_package_function_bodies(file_contents)
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       begin
-        populate_channel_with_filtered_files(channel, [".go", ".api"])
-
         WaitGroup.wait do |wg|
+          # Producer — tracked by the WaitGroup
+          wg.spawn do
+            [".go", ".api"].each do |ext|
+              get_files_by_extension(ext).each { |file| channel.send(file) }
+            end
+            channel.close
+          end
+
           @options["concurrency"].to_s.to_i.times do
             wg.spawn do
               loop do

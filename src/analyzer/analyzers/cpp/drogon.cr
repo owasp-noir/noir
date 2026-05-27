@@ -27,12 +27,12 @@ module Analyzer::Cpp
 
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
       begin
-        populate_channel_with_filtered_files(channel, CPP_EXTENSIONS)
+        locator = CodeLocator.instance
+        files = CPP_EXTENSIONS.flat_map { |ext| locator.files_by_extension(ext) }
 
-        parallel_analyze(channel) do |path|
+        parallel_analyze(files) do |path|
           next if File.directory?(path)
           next unless File.exists?(path)
           next unless CPP_EXTENSIONS.any? { |ext| path.ends_with?(ext) }

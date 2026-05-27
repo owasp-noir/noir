@@ -57,40 +57,6 @@ module FileHelper
     end
   end
 
-  # Helper to populate a channel from file list instead of using Dir.glob
-  def populate_channel_with_files(channel : Channel(String))
-    files = all_files
-    spawn do
-      files.each do |file|
-        channel.send(file)
-      end
-      channel.close
-    end
-  end
-
-  # Helper to populate a channel with only files matching the given extension
-  def populate_channel_with_filtered_files(channel : Channel(String), extension : String)
-    files = get_files_by_extension(extension)
-    spawn do
-      files.each do |file|
-        channel.send(file)
-      end
-      channel.close
-    end
-  end
-
-  # Helper to populate a channel with files matching any of the given extensions
-  def populate_channel_with_filtered_files(channel : Channel(String), extensions : Array(String))
-    locator = CodeLocator.instance
-    files = extensions.flat_map { |ext| locator.files_by_extension(ext) }
-    spawn do
-      files.each do |file|
-        channel.send(file)
-      end
-      channel.close
-    end
-  end
-
   # Helper to get public directories content from anywhere in the project
   def get_public_dir_files(base_path : String, folder : String) : Array(String)
     # Get all files in the project

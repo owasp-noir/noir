@@ -15,12 +15,8 @@ module Analyzer::Javascript
     #
     # Name-consistent with the other engines' `parallel_file_scan` helpers.
     protected def parallel_file_scan(extensions : Array(String) = DEFAULT_EXTENSIONS, &block : String -> Nil) : Nil
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
-
       begin
-        populate_channel_with_files(channel)
-
-        parallel_analyze(channel) do |path|
+        parallel_analyze(all_files) do |path|
           next if File.directory?(path)
           next unless File.exists?(path)
           next unless extensions.any? { |ext| path.ends_with?(ext) }
