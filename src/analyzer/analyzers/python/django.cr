@@ -63,9 +63,13 @@ module Analyzer::Python
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       search_dir = @base_path
 
-      populate_channel_with_files(channel)
-
       WaitGroup.wait do |wg|
+        # Producer — tracked by the WaitGroup
+        wg.spawn do
+          all_files.each { |file| channel.send(file) }
+          channel.close
+        end
+
         @options["concurrency"].to_s.to_i.times do
           wg.spawn do
             loop do

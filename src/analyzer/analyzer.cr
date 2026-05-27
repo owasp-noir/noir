@@ -254,6 +254,9 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
   selected_techs = filter_redundant_generic_techs(techs).select { |t| analyzer.has_key?(t) }
   mutex = Mutex.new
 
+  # Pre-build extension index synchronously to avoid concurrent mutation in multiple threads/fibers
+  CodeLocator.instance.build_extension_index
+
   WaitGroup.wait do |wg|
     selected_techs.each do |tech|
       wg.spawn do

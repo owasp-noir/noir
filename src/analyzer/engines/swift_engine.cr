@@ -25,12 +25,8 @@ module Analyzer::Swift
     # `.swift` extension filter baked in. Subclasses that need a custom
     # scan shape can override `analyze` and call this helper directly.
     protected def parallel_file_scan(&block : String -> Nil) : Nil
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
-
       begin
-        populate_channel_with_files(channel)
-
-        parallel_analyze(channel) do |path|
+        parallel_analyze(all_files) do |path|
           next if File.directory?(path)
           next unless File.exists?(path) && File.extname(path) == ".swift"
           # Swift Package Manager convention parks tests under

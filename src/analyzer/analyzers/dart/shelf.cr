@@ -54,12 +54,10 @@ module Analyzer::Dart
       mutex = Mutex.new
       routers = {} of String => RouterInfo
 
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
-
       begin
-        populate_channel_with_filtered_files(channel, ".dart")
+        files = get_files_by_extension(".dart")
 
-        parallel_analyze(channel) do |path|
+        parallel_analyze(files) do |path|
           next unless path.ends_with?(".dart")
 
           content = begin
