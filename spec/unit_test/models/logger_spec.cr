@@ -101,6 +101,18 @@ describe "NoirLogger" do
       logger = NoirLogger.new(debug: false, verbose: true, colorize: false, no_log: false)
       logger.verbose_sub("verbose sub message")
     end
+
+    it "supports loading blocks" do
+      logger = NoirLogger.new(debug: false, verbose: false, colorize: false, no_log: false)
+      value = logger.loading("loading message") { 42 }
+      value.should eq(42)
+    end
+
+    it "supports loading blocks in no_log mode" do
+      logger = NoirLogger.new(debug: false, verbose: false, colorize: false, no_log: true)
+      value = logger.loading("loading message") { 42 }
+      value.should eq(42)
+    end
   end
 
   describe "colorize option" do

@@ -248,8 +248,11 @@ module Noir::CLI::ScanCommand
       app.logger.info "Running Noir with Diff mode."
     end
 
-    app.logger.info "Detecting technologies in the base directory."
-    app.detect
+    app.logger.loading "Detecting technologies in the base directory." do
+      app.detect
+    end
+
+    analysis_message = "Starting code analysis."
 
     if app.techs.empty?
       app.logger.warning "No technologies detected."
@@ -288,10 +291,12 @@ module Noir::CLI::ScanCommand
       app.techs = app.techs.reject do |tech|
         exclude_techs.any? { |t| NoirTechs.similar_to_tech(t).includes?(tech) }
       end
-      app.logger.info "Starting code analysis based on the detected technologies."
+      analysis_message = "Starting code analysis based on the detected technologies."
     end
 
-    app.analyze
+    app.logger.loading analysis_message do
+      app.analyze
+    end
     app.logger.success "Identified #{app.endpoints.size} endpoints in total."
 
     elapsed = Time.instant - start_time

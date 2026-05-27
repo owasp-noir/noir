@@ -236,7 +236,14 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
     end
   end
 
-  channel = Channel(Tuple(String, String)).new(Analyzer::DEFAULT_CONTENT_CHANNEL_CAPACITY)
+  # Resolve the severity threshold and prune the rule set once,
+  # before the reader/workers spawn. The previous shape did this
+  # lookup and comparison inside the per-file hot loop, costing one
+  # Hash lookup + downcase per (file × rule).
+  min_severity = options["passive_scan_severity"]?.try(&.to_s) || "high"
+  active_passive_scans = NoirPassiveScan.filter_rules_by_severity(passive_scans, min_severity)
+
+  channel = Channel(Tuple(String, String, Array(Int32))).new(Analyzer::DEFAULT_CONTENT_CHANNEL_CAPACITY)
   locator = CodeLocator.instance
   wg = WaitGroup.new
 
@@ -248,6 +255,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
   spawn do
     begin
       skipped_files = 0
+      skipped_content_reads = 0
       total_files = 0
       skipped_ignored_dirs = 0
 
@@ -355,14 +363,35 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
                 end
               end
 
-              if skip_reason = MediaFilter.skip_check(full_path, info: info)
+              if skip_reason = MediaFilter.skip_check(full_path, info: info, sniff_binary: false)
                 logger.debug "Skipping #{full_path}: #{skip_reason}"
                 skipped_files += 1
                 next
               end
 
+              candidate_detector_indices = [] of Int32
+              detector_list.each_with_index do |detector, idx|
+                candidate_detector_indices << idx if detector.applicable?(full_path)
+              end
+
+              if candidate_detector_indices.empty? && active_passive_scans.empty?
+                # Keep the path visible to analyzers without paying to
+                # read/cache content that neither detection nor passive
+                # scan will inspect. Analyzer reads still fall back to
+                # File.read when a file was not cached here.
+                locator.push("file_map", full_path)
+                skipped_content_reads += 1
+                next
+              end
+
               content = File.read(full_path, encoding: "utf-8", invalid: :skip)
-              channel.send({full_path, content})
+              if content.to_slice.includes?(0_u8)
+                logger.debug "Skipping #{full_path}: binary content (file is text-extension but bytes look binary)"
+                skipped_files += 1
+                next
+              end
+
+              channel.send({full_path, content, candidate_detector_indices})
               # Register the path in file_map and (budget permitting)
               # cache the content so analyzers can skip the re-read.
               locator.register_file(full_path, content)
@@ -383,6 +412,9 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
       if skipped_exclude_path > 0
         logger.info "Skipped #{skipped_exclude_path} files matching --exclude-path patterns"
       end
+      if skipped_content_reads > 0
+        logger.debug "Avoided content reads for #{skipped_content_reads} file(s) with no applicable detectors"
+      end
 
       stats = locator.content_cache_stats
       if stats[:budget] > 0
@@ -395,9 +427,6 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
       wg.done
     end
   end
-
-  # Log how many files were added to the file_map
-  logger.debug "Added #{locator.all("file_map").size} files to file_map"
 
   # Threads for receiving and processing the contents from the channel
   concurrency = options["concurrency"].to_s.to_i
@@ -412,16 +441,6 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
   # never persist.
   detected_flags = Array(AtomicFlag).new(detector_list.size) { AtomicFlag.new }
 
-  # Resolve the severity threshold and prune the rule set once,
-  # before workers spawn. The previous shape did this lookup and
-  # comparison inside the per-file hot loop, costing one Hash
-  # lookup + downcase per (file × rule). With monorepo scans
-  # easily hitting 10k+ files and a few hundred rules, this is a
-  # noticeable accumulated cost for an answer that never changes
-  # mid-scan.
-  min_severity = options["passive_scan_severity"]?.try(&.to_s) || "high"
-  active_passive_scans = NoirPassiveScan.filter_rules_by_severity(passive_scans, min_severity)
-
   concurrency.times do
     wg.add(1)
     spawn do
@@ -430,22 +449,16 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
           begin
             file_content = channel.receive?
             break if file_content.nil?
-            file, content = file_content
+            file, content, candidate_detector_indices = file_content
             logger.debug "Detecting: #{file}"
 
-            detector_list.each_with_index do |detector, idx|
+            candidate_detector_indices.each do |idx|
+              detector = detector_list[idx]
               # Skip detectors that have already matched, unless
               # the detector signals it has side effects in
               # `detect` (`idempotent? == false`) — see
               # `Detector#idempotent?` for the contract.
               next if detector.idempotent? && detected_flags[idx].get
-              # Cheap filename precheck: most detectors gate on a
-              # fixed extension or path component. Skipping the
-              # `detect` dispatch (and the regex / `includes?`
-              # work inside it) for non-applicable files cuts the
-              # detector pass on language-heavy trees by an order
-              # of magnitude.
-              next unless detector.applicable?(file)
               if detector.detect(file, content)
                 detected_flags[idx].set
                 newly_added = false
@@ -484,5 +497,6 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
   end
 
   wg.wait
+  logger.debug "Added #{locator.all("file_map").size} files to file_map"
   {techs.uniq, passive_result}
 end

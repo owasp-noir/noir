@@ -1,6 +1,10 @@
 require "colorize"
 
 class NoirLogger
+  SPINNER_FRAMES      = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+  SHIMMER_COLORS      = [159, 255, 250, 247, 245]
+  SHIMMER_BAND_RADIUS = SHIMMER_COLORS.size - 1
+
   enum LogLevel
     DEBUG
     VERBOSE
@@ -17,6 +21,8 @@ class NoirLogger
     @verbose = verbose
     @color_mode = colorize
     @no_log = no_log
+    @output_mutex = Mutex.new
+    @spinner_active = false
   end
 
   def log(level : LogLevel, message : String)
@@ -41,9 +47,47 @@ class NoirLogger
                "★".colorize(:yellow).toggle(@color_mode)
              end
 
-    STDERR.puts "#{prefix} #{message}"
+    write_stderr_line "#{prefix} #{message}"
 
     exit(1) if level == LogLevel::FATAL
+  end
+
+  def loading(message : String, &)
+    if @no_log
+      return yield
+    end
+
+    unless spinner_enabled?
+      info(message)
+      return yield
+    end
+
+    stop = Atomic(Int8).new(0_i8)
+
+    @output_mutex.synchronize do
+      @spinner_active = true
+    end
+
+    thread = Thread.new do
+      index = 0
+      while stop.get == 0_i8
+        render_spinner(message, index)
+        index += 1
+        sleep 60.milliseconds
+      end
+
+      @output_mutex.synchronize do
+        clear_spinner_line
+        @spinner_active = false
+      end
+    end
+
+    begin
+      yield
+    ensure
+      stop.set(1_i8)
+      thread.join
+    end
   end
 
   def puts(message)
@@ -68,7 +112,7 @@ class NoirLogger
 
   def sub(message)
     return if @no_log
-    STDERR.puts "  " + message
+    write_stderr_line "  " + message
   end
 
   def warning(message)
@@ -86,7 +130,7 @@ class NoirLogger
 
   def debug_sub(message)
     return if @no_log || !@debug
-    STDERR.puts "  " + message.to_s
+    write_stderr_line "  " + message.to_s
   end
 
   def verbose(message)
@@ -96,10 +140,57 @@ class NoirLogger
 
   def verbose_sub(message)
     return if @no_log || !@verbose
-    STDERR.puts "  " + message
+    write_stderr_line "  " + message
   end
 
   def fatal(message)
     log(LogLevel::FATAL, message)
+  end
+
+  private def spinner_enabled? : Bool
+    @color_mode && STDERR.tty?
+  end
+
+  private def render_spinner(message : String, index : Int32)
+    frame = SPINNER_FRAMES[index % SPINNER_FRAMES.size]
+    line = shimmer("#{frame} #{message}", index)
+
+    @output_mutex.synchronize do
+      STDERR.print "\r\e[2K#{line}"
+      STDERR.flush
+    end
+  end
+
+  private def write_stderr_line(message : String)
+    @output_mutex.synchronize do
+      clear_spinner_line if @spinner_active
+      STDERR.puts message
+    end
+  end
+
+  private def clear_spinner_line
+    STDERR.print "\r\e[2K"
+    STDERR.flush
+  end
+
+  private def shimmer(text : String, index : Int32) : String
+    chars = text.chars
+    return text if chars.empty?
+
+    travel = chars.size + SHIMMER_BAND_RADIUS * 2
+    highlight = index % travel - SHIMMER_BAND_RADIUS
+
+    String.build do |io|
+      chars.each_with_index do |char, char_index|
+        distance = (char_index - highlight).abs
+        color = if distance <= SHIMMER_BAND_RADIUS
+                  SHIMMER_COLORS[distance]
+                else
+                  SHIMMER_COLORS.last
+                end
+        io << "\e[38;5;" << color << "m" << char
+      end
+      io << "\e[0m"
+    end
   end
 end
