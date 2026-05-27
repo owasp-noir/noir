@@ -69,7 +69,7 @@ class NoirLogger
       @spinner_active = true
     end
 
-    thread = Thread.new do
+    spawn do
       index = 0
       while stop.get == 0_i8
         render_spinner(message, index)
@@ -87,7 +87,10 @@ class NoirLogger
       yield
     ensure
       stop.set(1_i8)
-      thread.join
+      # The animation fiber will exit on its next iteration or after its current
+      # sleep. Subsequent log output (which goes through the mutex) will clear
+      # any in-flight spinner frame via clear_spinner_line when @spinner_active
+      # is still true. No native thread is used, avoiding scheduler/GC races.
     end
   end
 
