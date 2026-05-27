@@ -1,0 +1,12 @@
+#!/usr/bin/env php
+<?php
+
+// Define application path
+define('APP_PATH', __DIR__ . '/app/');
+
+// Load autoloader
+require __DIR__ . '/vendor/autoload.php';
+
+// Run application console
+$app = new think\App();
+$app->console->run();
