@@ -296,6 +296,9 @@ def run_options_parser
     parser.on "--no-color", "Disable color output" do
       noir_options["color"] = YAML::Any.new(false)
     end
+    parser.on "--no-spinner", "Disable loading spinner animations" do
+      noir_options["no_spinner"] = YAML::Any.new(true)
+    end
     parser.on "--no-log", "Show only results" do
       noir_options["nolog"] = YAML::Any.new(true)
     end

@@ -113,6 +113,12 @@ describe "NoirLogger" do
       value = logger.loading("loading message") { 42 }
       value.should eq(42)
     end
+
+    it "supports disabling loading spinners" do
+      logger = NoirLogger.new(debug: false, verbose: false, colorize: true, no_log: false, no_spinner: true)
+      value = logger.loading("loading message") { 42 }
+      value.should eq(42)
+    end
   end
 
   describe "colorize option" do

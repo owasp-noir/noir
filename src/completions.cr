@@ -33,6 +33,7 @@ private SCAN_FLAGS = %w[
   --include-callee
   --ai-context
   --no-color
+  --no-spinner
   --no-log
   -P --passive-scan
   --passive-scan-path
@@ -162,6 +163,7 @@ def generate_zsh_completion_script
             '--ai-context[Include AI review context (guards,sinks,...)]::list:(guards sinks validators signals callee)' \\
             '--exclude-path[Exclude files by glob]:pattern:' \\
             '--no-color[Disable color output]' \\
+            '--no-spinner[Disable loading spinner animations]' \\
             '--no-log[Show only results]' \\
             '(-P --passive-scan)'{-P,--passive-scan}'[Enable passive security scan]' \\
             '--passive-scan-path[Custom passive rules path]:path:_files' \\
@@ -374,6 +376,7 @@ def generate_fish_completion_script
     complete -c noir      -l ai-native-tools-allowlist -d 'Provider allowlist for native tool-calling' -r
     complete -c noir      -l ai-max-token          -d 'Max tokens per request' -r
     complete -c noir      -l no-color              -d 'Disable color output'
+    complete -c noir      -l no-spinner            -d 'Disable loading spinner animations'
     complete -c noir      -l no-log                -d 'Show only results'
     complete -c noir -s P -l passive-scan          -d 'Enable passive scan'
     complete -c noir      -l passive-scan-path           -d 'Custom passive rules path' -r -F
@@ -439,7 +442,7 @@ def generate_elvish_completion_script
       --set-pvalue-form --set-pvalue-json --set-pvalue-path
       --status-codes --exclude-codes --exclude-path
       --include --include-path --include-techs --include-callee
-      --ai-context --no-color --no-log
+      --ai-context --no-color --no-spinner --no-log
       -P --passive-scan --passive-scan-path --passive-scan-severity
       --passive-scan-auto-update --passive-scan-no-update-check
       -T --use-all-taggers --use-taggers

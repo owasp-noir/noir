@@ -25,6 +25,7 @@ class NoirRunner
   @is_verbose : Bool
   @is_color : Bool
   @is_log : Bool
+  @no_spinner : Bool
   @concurrency : Int32
   @config_file : String
   @noir_home : String
@@ -68,9 +69,10 @@ class NoirRunner
     @is_verbose = any_to_bool(@options["verbose"])
     @is_color = any_to_bool(@options["color"])
     @is_log = any_to_bool(@options["nolog"])
+    @no_spinner = any_to_bool(@options["no_spinner"])
     @concurrency = @options["concurrency"].to_s.to_i
 
-    @logger = NoirLogger.new @is_debug, @is_verbose, @is_color, @is_log
+    @logger = NoirLogger.new @is_debug, @is_verbose, @is_color, @is_log, @no_spinner
 
     if ai_context_enabled?
       @options["include_callee"] = YAML::Any.new(true)

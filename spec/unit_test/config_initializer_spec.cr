@@ -49,6 +49,12 @@ describe ConfigInitializer do
     end
   end
 
+  it "coerces no_spinner config to Bool" do
+    with_noir_home("no_spinner: yes\n") do |options|
+      options["no_spinner"].should be_true
+    end
+  end
+
   it "normalizes a bare-string passive_scan_path into a single-element array" do
     with_noir_home("passive_scan_path: ./team-rules\n") do |options|
       arr = options["passive_scan_path"].as_a

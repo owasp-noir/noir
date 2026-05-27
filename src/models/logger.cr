@@ -16,11 +16,12 @@ class NoirLogger
     HEADING
   end
 
-  def initialize(debug : Bool, verbose : Bool, colorize : Bool, no_log : Bool)
+  def initialize(debug : Bool, verbose : Bool, colorize : Bool, no_log : Bool, no_spinner : Bool = false)
     @debug = debug
     @verbose = verbose
     @color_mode = colorize
     @no_log = no_log
+    @no_spinner = no_spinner
     @output_mutex = Mutex.new
     @spinner_active = false
   end
@@ -148,7 +149,7 @@ class NoirLogger
   end
 
   private def spinner_enabled? : Bool
-    @color_mode && STDERR.tty?
+    @color_mode && !@no_spinner && STDERR.tty?
   end
 
   private def render_spinner(message : String, index : Int32)
