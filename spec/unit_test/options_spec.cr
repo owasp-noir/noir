@@ -24,6 +24,11 @@ describe "default_options" do
     noir_options["ai_context"].should be_false
   end
 
+  it "has loading spinners enabled by default" do
+    noir_options = create_test_options
+    noir_options["no_spinner"].should be_false
+  end
+
   # Concurrency is auto-scaled to the host's CPU count, clamped to the
   # [4, 32] window. The exact value depends on the box the suite runs
   # on, so the spec asserts the window rather than a literal.
@@ -38,6 +43,21 @@ describe "default_options" do
 end
 
 describe "run_options_parser" do
+  it "supports --no-spinner" do
+    original_argv = ARGV.dup
+
+    ARGV.clear
+    ARGV.concat(["--no-spinner"])
+
+    begin
+      noir_options = run_options_parser()
+      noir_options["no_spinner"].should be_true
+    ensure
+      ARGV.clear
+      ARGV.concat(original_argv)
+    end
+  end
+
   it "supports multiple -b flags" do
     # Save original ARGV
     original_argv = ARGV.dup

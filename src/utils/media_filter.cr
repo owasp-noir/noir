@@ -111,7 +111,7 @@ module MediaFilter
   # When the caller has already obtained a `File::Info` (e.g. the
   # detector walker stats each entry with `follow_symlinks: false`), it
   # can be passed as `info` to skip the size stat entirely.
-  def self.skip_check(file_path : String, max_size : Int32 = MAX_FILE_SIZE, info : File::Info? = nil) : String?
+  def self.skip_check(file_path : String, max_size : Int32 = MAX_FILE_SIZE, info : File::Info? = nil, sniff_binary : Bool = true) : String?
     extension = File.extname(file_path).downcase
     return "media file (#{extension})" if MEDIA_EXTENSION_SET.includes?(extension)
 
@@ -141,7 +141,7 @@ module MediaFilter
     # Sample the first 512 bytes — that's enough to spot the NUL-byte
     # signature of binary blobs (object files, packed assets, etc.)
     # without re-reading the whole file content.
-    if binary_content_signature?(file_path)
+    if sniff_binary && binary_content_signature?(file_path)
       return "binary content (file is text-extension but bytes look binary)"
     end
 
@@ -167,13 +167,13 @@ module MediaFilter
   # Combined check - returns true if file should be skipped. Prefer
   # {skip_check} on hot paths: it returns the reason in the same call
   # so the caller does not re-stat to log.
-  def self.should_skip_file?(file_path : String, max_size : Int32 = MAX_FILE_SIZE, info : File::Info? = nil) : Bool
-    !skip_check(file_path, max_size, info).nil?
+  def self.should_skip_file?(file_path : String, max_size : Int32 = MAX_FILE_SIZE, info : File::Info? = nil, sniff_binary : Bool = true) : Bool
+    !skip_check(file_path, max_size, info, sniff_binary).nil?
   end
 
   # Get a human-readable reason why a file was skipped. Kept for
   # backwards compatibility; new callers should use {skip_check}.
-  def self.skip_reason(file_path : String, max_size : Int32 = MAX_FILE_SIZE, info : File::Info? = nil) : String?
-    skip_check(file_path, max_size, info)
+  def self.skip_reason(file_path : String, max_size : Int32 = MAX_FILE_SIZE, info : File::Info? = nil, sniff_binary : Bool = true) : String?
+    skip_check(file_path, max_size, info, sniff_binary)
   end
 end
