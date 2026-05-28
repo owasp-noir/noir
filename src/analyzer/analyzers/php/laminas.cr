@@ -105,18 +105,30 @@ module Analyzer::Php
       options_body = array_entry(entries, "options")
       options_entries = options_body ? parse_top_level_entries(options_body) : [] of PhpArrayEntry
 
-      route = string_entry(options_entries, "route") || string_entry(entries, "route")
       type_value = raw_entry(entries, "type") || ""
-      hostname = type_value.downcase.includes?("hostname")
-      normalized_route = route ? normalize_laminas_route_path(route, hostname) : nil
+      nested_route_info = array_entry(entries, "route").try { |route_body| route_entry_info(route_body) }
+      hostname = type_value.downcase.includes?("hostname") || (nested_route_info ? nested_route_info[:hostname] : false)
+
+      route = string_entry(options_entries, "route") || string_entry(entries, "route")
+      regex_spec = type_value.downcase.includes?("regex") ? string_entry(options_entries, "spec") : nil
+      normalized_route =
+        if route
+          normalize_laminas_route_path(route, hostname)
+        elsif regex_spec
+          normalize_laminas_regex_spec(regex_spec)
+        elsif nested_route_info
+          nested_route_info[:route_path]
+        end
 
       methods = extract_methods_from_entries(options_entries)
       methods = extract_methods_from_entries(entries) if methods.empty?
+      methods = nested_route_info[:methods] if methods.empty? && nested_route_info
 
       constraints = extract_constraints(options_entries)
+      constraints = nested_route_info[:constraints] if constraints.empty? && nested_route_info
       child_routes = array_entry(entries, "child_routes")
 
-      may_terminate = true
+      may_terminate = !type_value.downcase.includes?("part")
       if value = raw_entry(entries, "may_terminate")
         may_terminate = !value.downcase.includes?("false")
       end
@@ -134,7 +146,7 @@ module Analyzer::Php
     private def analyze_programmatic_routes(path : String, content : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
       details = Details.new(PathInfo.new(path))
-      working_content = content
+      working_content = strip_php_comments(content)
 
       verb_regex = /(\$\w+|\$this->\w+)->(get|post|put|patch|delete|options|head|any)\s*\(\s*(['"])(.*?)\3\s*,/im
       pos = 0
@@ -175,8 +187,7 @@ module Analyzer::Php
         if call_close
           call_content = working_content[(call_open + 1)...call_close]
           route_path = normalize_laminas_route_path(match[3])
-          methods = extract_http_methods(call_content)
-          methods = ["GET"] if methods.empty?
+          methods = extract_methods_from_route_call(call_content)
           params = extract_laminas_path_params(route_path)
 
           methods.each do |method|
@@ -253,10 +264,16 @@ module Analyzer::Php
       normalized = route.gsub("[", "").gsub("]", "")
       normalized = normalized.gsub(/\{(\w+):[^}]+\}/) { |_| "{#{$~[1]}}" }
       normalized = normalized.gsub(/:([A-Za-z_]\w*)/) { |_| "{#{$~[1]}}" }
+      normalized = normalized.gsub(/\{[^A-Za-z_][^}]*\}/, "")
       normalized = "/" + normalized unless normalized.starts_with?("/")
       normalized = normalized.gsub(/\/+/, "/")
       normalized = normalized.chomp('/') if normalized.size > 1
       normalize_php_interpolation(normalized)
+    end
+
+    private def normalize_laminas_regex_spec(spec : String) : String
+      normalized = spec.gsub(/%([A-Za-z_]\w*)%/) { |_| "{#{$~[1]}}" }
+      normalize_laminas_route_path(normalized)
     end
 
     private def extract_laminas_path_params(route_path : String, constraints = Hash(String, String).new) : Array(Param)
@@ -303,11 +320,62 @@ module Analyzer::Php
     end
 
     private def extract_http_methods(content : String) : Array(String)
+      return HTTP_METHODS if content.match(/HTTP_METHOD_ANY|METHOD_ANY/i)
+
       methods = [] of String
       content.scan(/['"]?(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)['"]?/i) do |match|
         methods << match[1].upcase
       end
       methods.uniq
+    end
+
+    private def extract_methods_from_route_call(call_content : String) : Array(String)
+      args = split_top_level_args(call_content)
+      method_arg = args[2]?
+      return HTTP_METHODS unless method_arg
+
+      stripped = method_arg.strip
+      return HTTP_METHODS if stripped.empty? || stripped.downcase == "null"
+
+      methods = extract_http_methods(stripped)
+      methods.empty? ? HTTP_METHODS : methods
+    end
+
+    private def split_top_level_args(content : String) : Array(String)
+      args = [] of String
+      start = 0
+      i = 0
+      depth = 0
+      in_string = false
+      quote = '\0'
+      escaped = false
+
+      while i < content.size
+        char = content[i]
+        if in_string
+          if escaped
+            escaped = false
+          elsif char == '\\'
+            escaped = true
+          elsif char == quote
+            in_string = false
+          end
+        elsif char == '\'' || char == '"'
+          in_string = true
+          quote = char
+        elsif char == '[' || char == '(' || char == '{'
+          depth += 1
+        elsif char == ']' || char == ')' || char == '}'
+          depth -= 1 if depth > 0
+        elsif char == ',' && depth == 0
+          args << content[start...i].strip
+          start = i + 1
+        end
+        i += 1
+      end
+
+      args << content[start...content.size].strip if start < content.size
+      args
     end
 
     private def parse_top_level_entries(content : String) : Array(PhpArrayEntry)
@@ -491,6 +559,69 @@ module Analyzer::Php
       end
 
       nil
+    end
+
+    private def strip_php_comments(content : String) : String
+      String.build do |io|
+        in_string = false
+        in_line_comment = false
+        in_block_comment = false
+        escaped = false
+        quote = '\0'
+        pos = 0
+
+        while pos < content.size
+          char = content[pos]
+          next_char = content[pos + 1]?
+
+          if in_line_comment
+            if char == '\n'
+              in_line_comment = false
+              io << char
+            else
+              io << ' '
+            end
+          elsif in_block_comment
+            if char == '*' && next_char == '/'
+              in_block_comment = false
+              io << "  "
+              pos += 1
+            elsif char == '\n'
+              io << char
+            else
+              io << ' '
+            end
+          elsif in_string
+            io << char
+            if escaped
+              escaped = false
+            elsif char == '\\'
+              escaped = true
+            elsif char == quote
+              in_string = false
+            end
+          elsif char == '/' && next_char == '/'
+            in_line_comment = true
+            io << "  "
+            pos += 1
+          elsif char == '/' && next_char == '*'
+            in_block_comment = true
+            io << "  "
+            pos += 1
+          elsif char == '#'
+            in_line_comment = true
+            io << ' '
+          elsif char == '"' || char == '\''
+            in_string = true
+            quote = char
+            io << char
+          else
+            io << char
+          end
+
+          pos += 1
+        end
+      end
     end
 
     private def skip_ws(content : String, pos : Int32) : Int32
