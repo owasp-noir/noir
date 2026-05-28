@@ -2,14 +2,34 @@ require "../../engines/perl_engine"
 
 module Analyzer::Perl
   class Catalyst < PerlEngine
-    HTTP_VERBS = %w[get post put delete patch options head]
+    HTTP_VERBS        = %w[get post put delete patch options head]
+    BARE_ATTR_VALUE   = "__NOIR_BARE_ATTR__"
+    HTTP_METHOD_ATTRS = {
+      "get"     => "GET",
+      "post"    => "POST",
+      "put"     => "PUT",
+      "delete"  => "DELETE",
+      "patch"   => "PATCH",
+      "option"  => "OPTIONS",
+      "options" => "OPTIONS",
+      "head"    => "HEAD",
+    }
+
+    private struct ControllerConfig
+      property namespace_override, path_override
+
+      def initialize(@namespace_override : String? = nil,
+                     @path_override : String? = nil)
+      end
+    end
 
     private struct RouteAction
-      property name, package_name, namespace, attrs, body, file_path, line
+      property name, package_name, namespace, path_prefix, attrs, body, file_path, line
 
       def initialize(@name : String,
                      @package_name : String,
                      @namespace : String,
+                     @path_prefix : String,
                      @attrs : Hash(String, Array(String)),
                      @body : String,
                      @file_path : String,
@@ -17,11 +37,22 @@ module Analyzer::Perl
       end
     end
 
+    def analyze
+      actions = [] of RouteAction
+      actions_mutex = Mutex.new
+      parallel_file_scan do |path|
+        next unless catalyst_source_file?(path)
+
+        file_actions = collect_actions(read_file_content(path), path)
+        actions_mutex.synchronize { actions.concat(file_actions) }
+      end
+
+      @result.concat(analyze_actions(actions))
+      @result
+    end
+
     def analyze_file(path : String) : Array(Endpoint)
-      ext = File.extname(path)
-      return [] of Endpoint unless ext == ".pl" || ext == ".pm" ||
-                                   ext == ".psgi" || ext == ".t"
-      return [] of Endpoint if perl_test_path?(path, ext)
+      return [] of Endpoint unless catalyst_source_file?(path)
 
       content = read_file_content(path)
       analyze_content(content, path)
@@ -29,13 +60,17 @@ module Analyzer::Perl
 
     def analyze_content(content : String, file_path : String) : Array(Endpoint)
       actions = collect_actions(content, file_path)
+      analyze_actions(actions)
+    end
+
+    private def analyze_actions(actions : Array(RouteAction)) : Array(Endpoint)
       actions_by_name = actions_by_name(actions)
       actions_by_private = actions_by_private(actions)
       rest_handlers = rest_handlers(actions, actions_by_name)
       endpoints = [] of Endpoint
 
       actions.each do |action|
-        next if rest_handler_action?(action)
+        next if rest_handler_action?(action, rest_handlers)
         next if attr_present?(action, "chained") && attr_present?(action, "captureargs")
         next unless dispatch_action?(action)
 
@@ -69,6 +104,7 @@ module Analyzer::Perl
     private def collect_actions(content : String, file_path : String) : Array(RouteAction)
       raw_lines = content.lines
       lines = sanitize_perl_lines(raw_lines)
+      package_configs = collect_controller_configs(lines)
       actions = [] of RouteAction
       package_name = ""
       index = 0
@@ -110,10 +146,13 @@ module Analyzer::Perl
         end
 
         attrs = parse_attrs(declaration)
+        config = package_configs[package_name]? || ControllerConfig.new
+        namespace = controller_namespace(package_name, config)
         actions << RouteAction.new(
           name,
           package_name,
-          controller_namespace(package_name),
+          namespace,
+          path_prefix(namespace, config),
           attrs,
           body_lines.join("\n"),
           file_path,
@@ -125,26 +164,84 @@ module Analyzer::Perl
       actions
     end
 
+    private def collect_controller_configs(lines : Array(String)) : Hash(String, ControllerConfig)
+      configs = {} of String => ControllerConfig
+      package_name = ""
+      index = 0
+
+      while index < lines.size
+        line = lines[index]
+        if package_match = line.match(/^\s*package\s+([A-Za-z_][A-Za-z0-9_:]*)\s*;/)
+          package_name = package_match[1]
+        end
+
+        unless line.includes?("__PACKAGE__->config")
+          index += 1
+          next
+        end
+
+        statement = line
+        while !statement.includes?(";") && index + 1 < lines.size
+          index += 1
+          statement += " " + lines[index].strip
+        end
+
+        namespace_override = config_value(statement, "namespace")
+        path_override = config_value(statement, "path")
+        if namespace_override || path_override
+          configs[package_name] = ControllerConfig.new(namespace_override, path_override)
+        end
+
+        index += 1
+      end
+
+      configs
+    end
+
+    private def config_value(statement : String, key : String) : String?
+      patterns = [
+        /#{key}\s*=>\s*q\{([^}]*)\}/,
+        /#{key}\s*=>\s*q\(([^)]*)\)/,
+        /#{key}\s*=>\s*q\/([^\/]*)\//,
+        /#{key}\s*=>\s*'([^']*)'/,
+        /#{key}\s*=>\s*"([^"]*)"/,
+      ]
+
+      patterns.each do |pattern|
+        if m = statement.match(pattern)
+          return clean_path_prefix(m[1])
+        end
+      end
+    end
+
     private def parse_attrs(declaration : String) : Hash(String, Array(String))
       attrs = {} of String => Array(String)
-      declaration.scan(/:\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(\s*([^)]+?)\s*\))?/) do |match|
+      attr_text = declaration.sub(/^\s*sub\s+[A-Za-z_][A-Za-z0-9_]*\b/, "")
+      attr_text = attr_text.split("{", 2)[0].split(";", 2)[0]
+      attr_text.scan(/:?\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(\s*([^)]+?)\s*\))?/) do |match|
         name = match[1].downcase
         attrs[name] ||= [] of String
-        attrs[name] << clean_attr_value(match[2]? || "")
+        if value = match[2]?
+          attrs[name] << clean_attr_value(value)
+        else
+          attrs[name] << BARE_ATTR_VALUE
+        end
       end
       attrs
     end
 
     private def direct_path(action : RouteAction) : String?
-      ns = namespace_path(action.namespace)
+      prefix = namespace_path(action.path_prefix)
 
       if attr_present?(action, "path")
         value = first_attr(action, "path")
+        value = "" if bare_attr_value?(value)
         return normalize_path(value) if value.starts_with?("/")
-        return join_url(ns, value)
+        return join_url(prefix, value)
       end
 
-      return join_url(ns, action.name) if attr_present?(action, "local")
+      return prefix.empty? ? "/" : normalize_path(prefix) if attr_present?(action, "index")
+      return join_url(prefix, action.name) if attr_present?(action, "local")
       return normalize_path(action.name) if attr_present?(action, "global")
 
       nil
@@ -167,7 +264,12 @@ module Analyzer::Perl
         end
       end
 
-      part = attr_present?(action, "pathpart") ? first_attr(action, "pathpart") : action.name
+      part = if attr_present?(action, "pathpart")
+               value = first_attr(action, "pathpart")
+               bare_attr_value?(value) ? action.name : value
+             else
+               action.name
+             end
       path = join_url(base, part)
       append_args(path, attr_values(action, "captureargs"), "#{action.name}_capture")
     end
@@ -175,8 +277,12 @@ module Analyzer::Perl
     private def methods_for_action(action : RouteAction, rest_handlers : Hash(String, RouteAction)) : Array(String)
       methods = [] of String
 
-      HTTP_VERBS.each do |verb|
-        methods << verb.upcase if attr_present?(action, verb)
+      HTTP_METHOD_ATTRS.each do |attr, method|
+        methods << method if attr_present?(action, attr)
+      end
+
+      attr_values(action, "method").each do |value|
+        methods_from_attr_value(value).each { |method| methods << method }
       end
 
       if methods.empty? && !rest_handlers.empty?
@@ -191,6 +297,7 @@ module Analyzer::Perl
       attr_present?(action, "path") ||
         attr_present?(action, "local") ||
         attr_present?(action, "global") ||
+        attr_present?(action, "index") ||
         attr_present?(action, "chained")
     end
 
@@ -200,8 +307,8 @@ module Analyzer::Perl
 
       actions.each do |action|
         next unless match = action.name.match(/^(.+)_([A-Z]+)$/)
-        method = match[2]
-        next unless HTTP_VERBS.includes?(method.downcase)
+        method = rest_handler_method(match[2])
+        next unless method
 
         base_key = "#{action.package_name}##{match[1]}"
         base_action = actions_by_name[base_key]?
@@ -219,9 +326,19 @@ module Analyzer::Perl
       attr_values(action, "actionclass").any?(&.downcase.includes?("rest"))
     end
 
-    private def rest_handler_action?(action : RouteAction) : Bool
-      return false unless match = action.name.match(/^(.+)_([A-Z]+)$/)
-      HTTP_VERBS.includes?(match[2].downcase)
+    private def rest_handler_action?(action : RouteAction,
+                                     rest_handlers : Hash(String, Hash(String, RouteAction))) : Bool
+      key = action_key(action)
+      rest_handlers.each_value do |handlers|
+        return true if handlers.any? { |_method, handler| action_key(handler) == key }
+      end
+      false
+    end
+
+    private def rest_handler_method(suffix : String) : String?
+      normalized = suffix.downcase
+      return "OPTIONS" if normalized == "option"
+      suffix if HTTP_VERBS.includes?(normalized)
     end
 
     private def resolve_chained_parent(action : RouteAction,
@@ -253,6 +370,7 @@ module Analyzer::Perl
 
     private def count_from_arg_spec(spec : String) : Int32?
       value = spec.strip
+      return if bare_attr_value?(value)
       return if value.empty?
       if number = value.to_i?
         return number
@@ -298,6 +416,17 @@ module Analyzer::Perl
       end
 
       params
+    end
+
+    private def methods_from_attr_value(value : String) : Array(String)
+      methods = [] of String
+      value.scan(/[A-Za-z]+/) do |match|
+        normalized = match[0].downcase
+        if method = HTTP_METHOD_ATTRS[normalized]?
+          methods << method
+        end
+      end
+      methods
     end
 
     private def push_unique_param(params : Array(Param), param : Param)
@@ -350,7 +479,15 @@ module Analyzer::Perl
       stripped
     end
 
-    private def controller_namespace(package_name : String) : String
+    private def bare_attr_value?(value : String) : Bool
+      value == BARE_ATTR_VALUE
+    end
+
+    private def controller_namespace(package_name : String, config : ControllerConfig) : String
+      if override = config.namespace_override
+        return clean_path_prefix(override)
+      end
+
       marker = "::Controller::"
       return "" unless package_name.includes?(marker)
 
@@ -360,12 +497,24 @@ module Analyzer::Perl
       namespace.split("::").map { |part| underscore(part) }.join("/")
     end
 
+    private def path_prefix(namespace : String, config : ControllerConfig) : String
+      if override = config.path_override
+        return clean_path_prefix(override)
+      end
+
+      namespace
+    end
+
     private def namespace_path(namespace : String) : String
       namespace.empty? ? "" : "/#{namespace}"
     end
 
     private def underscore(name : String) : String
       name.gsub(/([a-z0-9])([A-Z])/, "\\1_\\2").downcase
+    end
+
+    private def clean_path_prefix(value : String) : String
+      value.strip.gsub(/^\/+|\/+$/, "")
     end
 
     private def join_url(prefix : String, leaf : String) : String
@@ -387,6 +536,14 @@ module Analyzer::Perl
       return true if ext == ".t"
       return true if path.includes?("/t/")
       false
+    end
+
+    private def catalyst_source_file?(path : String) : Bool
+      ext = File.extname(path)
+      return false unless ext == ".pl" || ext == ".pm" ||
+                          ext == ".psgi" || ext == ".t"
+      return false if perl_test_path?(path, ext)
+      true
     end
 
     private def sanitize_perl_lines(lines : Array(String)) : Array(String)

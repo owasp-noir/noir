@@ -31,6 +31,22 @@ expected_endpoints = [
     Param.new("name", "", "form"),
     Param.new("metadata", "", "json"),
   ]),
+  Endpoint.new("/explicit-get", "GET"),
+  Endpoint.new("/blog/:root_capture", "GET", [
+    Param.new("root_capture", "", "path"),
+  ]),
+  Endpoint.new("/blog/:root_capture/comments", "GET", [
+    Param.new("root_capture", "", "path"),
+  ]),
+  Endpoint.new("/blog/:root_capture/archive", "GET", [
+    Param.new("root_capture", "", "path"),
+  ]),
+  Endpoint.new("/ops", "GET"),
+  Endpoint.new("/ops/dashboard", "GET"),
+  Endpoint.new("/ops/item/:arg", "POST", [
+    Param.new("arg", "", "path"),
+  ]),
+  Endpoint.new("/preflight", "OPTIONS"),
 ]
 
 FunctionalTester.new("fixtures/perl/catalyst/", {

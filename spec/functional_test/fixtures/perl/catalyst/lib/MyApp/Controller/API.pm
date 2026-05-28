@@ -21,4 +21,8 @@ sub item_POST {
     my $metadata = $c->request->body_data->{'metadata'};
 }
 
+sub report_GET : Path('/explicit-get') : Args(0) {
+    my ($self, $c) = @_;
+}
+
 1;
