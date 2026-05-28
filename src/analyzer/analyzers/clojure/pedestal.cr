@@ -15,6 +15,7 @@ module Analyzer::Clojure
       ":options" => "OPTIONS",
       ":trace"   => "TRACE",
       ":connect" => "CONNECT",
+      ":query"   => "QUERY",
       ":any"     => "ANY",
     }
 
@@ -180,7 +181,14 @@ module Analyzer::Clojure
     private def process_route_vector(source : String, vec_start : Int32, vec_end : Int32,
                                      prefix : String, path : String, seen : Set(String)) : Bool
       i = skip_ws_and_comments(source, vec_start + 1, vec_end)
-      return false if i >= vec_end || source.byte_at(i).unsafe_chr != '"'
+      if i >= vec_end || source.byte_at(i).unsafe_chr != '"'
+        if prefix.starts_with?("/")
+          walk_route_vector_body(source, i, vec_end, prefix, path, seen)
+          return true
+        end
+
+        return false
+      end
 
       str_end = skip_string(source, i, vec_end)
       return false if str_end <= i
@@ -195,7 +203,7 @@ module Analyzer::Clojure
       value_end = end_of_value(source, body_start, vec_end)
       if value_end > body_start
         token = source.byte_slice(body_start, value_end - body_start)
-        if method = HTTP_METHODS[token]?
+        if method = route_method(token)
           emit_endpoint(source, body_start, full_path, method, path, seen)
           return true
         end
@@ -224,6 +232,12 @@ module Analyzer::Clojure
           break if vec_end <= i
           process_route_vector(source, i, vec_end, route_path, path, seen)
           i = vec_end + 1
+        when '('
+          form_end = find_matching_delimiter(source, i, '(', ')', limit)
+          break if form_end <= i
+          handled = process_list(source, i, form_end, route_path, path, seen)
+          walk_forms(source, i + 1, form_end, route_path, path, seen) unless handled
+          i = form_end + 1
         else
           i = end_of_value(source, i, limit)
         end
@@ -241,7 +255,8 @@ module Analyzer::Clojure
     private def process_verbose_map(source : String, start : Int32, limit : Int32,
                                     prefix : String, path : String, seen : Set(String)) : Bool
       route_path = nil.as(String?)
-      path_pos = start
+      route_method = nil.as(String?)
+      method_pos = start
       verbs_range = nil.as(Tuple(Int32, Int32)?)
       children_range = nil.as(Tuple(Int32, Int32)?)
 
@@ -251,10 +266,15 @@ module Analyzer::Clojure
           if value_start < value_end && source.byte_at(value_start).unsafe_chr == '"'
             str_end = skip_string(source, value_start, value_end)
             route_path = decode_string_literal(source.byte_slice(value_start, str_end - value_start + 1))
-            path_pos = key_pos
           end
         when ":verbs"
           verbs_range = {value_start, value_end}
+        when ":method"
+          token, _ = read_form_token(source, value_start, value_end)
+          if method = route_method(token)
+            route_method = method
+            method_pos = key_pos
+          end
         when ":children"
           children_range = {value_start, value_end}
         end
@@ -269,6 +289,8 @@ module Analyzer::Clojure
         if v_start < v_end && source.byte_at(v_start).unsafe_chr == '{'
           process_method_map(source, v_start + 1, v_end - 1, full_path, path, seen)
         end
+      elsif method = route_method
+        emit_endpoint(source, method_pos, full_path, method, path, seen)
       end
 
       if range = children_range
@@ -276,7 +298,6 @@ module Analyzer::Clojure
         walk_forms(source, c_start, c_end, full_path, path, seen)
       end
 
-      emit_endpoint(source, path_pos, full_path, "ANY", path, seen) unless verbs_range
       true
     end
 
@@ -308,10 +329,18 @@ module Analyzer::Clojure
     private def process_method_map(source : String, start : Int32, limit : Int32,
                                    route_path : String, path : String, seen : Set(String))
       each_map_entry(source, start, limit) do |key, key_pos, _value_start, _value_end|
-        if method = HTTP_METHODS[key]?
+        if method = standard_method(key)
           emit_endpoint(source, key_pos, route_path, method, path, seen)
         end
       end
+    end
+
+    private def standard_method(token : String) : String?
+      HTTP_METHODS[token]?
+    end
+
+    private def route_method(token : String) : String?
+      standard_method(token)
     end
 
     private def each_map_entry(source : String, start : Int32, limit : Int32, &)
