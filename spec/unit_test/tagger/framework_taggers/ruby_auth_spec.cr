@@ -60,3 +60,45 @@ describe "RubyAuthTagger" do
     endpoint.tags.empty?.should be_true
   end
 end
+
+# Additional tests for Grape + Roda support (B target)
+describe "RubyAuthTagger (Grape/Roda)" do
+  grape_base = "#{__DIR__}/../../../functional_test/fixtures/ruby/grape"
+  grape_path = "#{grape_base}/app.rb"
+
+  roda_base = "#{__DIR__}/../../../functional_test/fixtures/ruby/roda"
+  roda_path = "#{roda_base}/app.rb"
+
+  it "detects Grape before { authenticate! } and helpers" do
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(grape_base)
+
+    details = Details.new(PathInfo.new(grape_path, 62)) # admin/dashboard get with before
+    details.technology = "ruby_grape"
+    endpoint = Endpoint.new("/admin/dashboard", "GET", [] of Param, details)
+
+    tagger = RubyAuthTagger.new(noir_options)
+    tagger.perform([endpoint])
+
+    endpoint.tags.empty?.should be_false
+    endpoint.tags[0].name.should eq("auth")
+    endpoint.tags[0].tagger.should eq("ruby_auth")
+  end
+
+  it "detects Roda rodauth.require_authentication and logged_in?" do
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(roda_base)
+
+    details = Details.new(PathInfo.new(roda_path, 58)) # dashboard route with rodauth.require_authentication
+    details.technology = "ruby_roda"
+    endpoint = Endpoint.new("/dashboard", "GET", [] of Param, details)
+
+    tagger = RubyAuthTagger.new(noir_options)
+    tagger.perform([endpoint])
+
+    endpoint.tags.empty?.should be_false
+    endpoint.tags[0].name.should eq("auth")
+    endpoint.tags[0].tagger.should eq("ruby_auth")
+    endpoint.tags[0].description.should match(/Rodauth|rodauth/i)
+  end
+end

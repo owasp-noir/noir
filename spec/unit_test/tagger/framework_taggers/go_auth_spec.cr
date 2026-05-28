@@ -119,3 +119,32 @@ describe "GoAuthTagger" do
     endpoint.tags.empty?.should be_true
   end
 end
+
+# Verify new Go framework targets (Hertz, Iris, GF) are supported by the same tagger
+describe "GoAuthTagger (expanded targets)" do
+  fixture_base = "#{__DIR__}/../../../functional_test/fixtures/go/gin_auth"
+  main_path = "#{fixture_base}/main.go"
+
+  %w[go_hertz go_iris go_gf].each do |tech|
+    it "accepts and runs with technology=#{tech}" do
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(fixture_base)
+
+      locator = CodeLocator.instance
+      Dir.glob("#{fixture_base}/**/*").each do |file|
+        next if File.directory?(file)
+        locator.push("file_map", file)
+      end
+
+      details = Details.new(PathInfo.new(main_path, 29))
+      details.technology = tech
+      endpoint = Endpoint.new("/dashboard", "GET", [] of Param, details)
+
+      tagger = GoAuthTagger.new(noir_options)
+      tagger.perform([endpoint])
+
+      endpoint.tags.empty?.should be_false
+      endpoint.tags[0].tagger.should eq("go_auth")
+    end
+  end
+end

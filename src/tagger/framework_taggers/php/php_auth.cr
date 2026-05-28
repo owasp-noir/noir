@@ -52,13 +52,33 @@ class PhpAuthTagger < FrameworkTagger
     {/\$_SERVER\[['"]PHP_AUTH_USER['"]/, "PHP HTTP Basic Auth"},
   ]
 
+  # Slim / Yii / CodeIgniter additional patterns
+  SLIM_YII_CI_PATTERNS = [
+    # Slim
+    {/\->add\s*\(\s*['"]?auth/i, "Slim auth middleware"},
+    {/\bAuthorization\b.*header/i, "Slim Authorization header check"},
+    # Yii
+    {/\bAccessControl\b/, "Yii AccessControl filter"},
+    {/\bAuthMethod\b/, "Yii AuthMethod"},
+    {/\bHttpBearerAuth\b/, "Yii HttpBearerAuth"},
+    {/\bCompositeAuth\b/, "Yii CompositeAuth"},
+    {/\bbeforeAction\b.*auth/i, "Yii beforeAction auth"},
+    # CodeIgniter (4+ filters, controller before)
+    {/->before\s*\(\s*['"]?auth/i, "CodeIgniter before auth filter"},
+    {/\$this->beforeFilter/i, "CodeIgniter beforeFilter"},
+    {/\bauthFilter\b/i, "CodeIgniter authFilter"},
+  ]
+
   def initialize(options : Hash(String, YAML::Any))
     super
     @name = "php_auth"
   end
 
   def self.target_techs : Array(String)
-    ["php_laravel", "php_symfony", "php_cakephp", "php_pure"]
+    [
+      "php_laravel", "php_symfony", "php_cakephp", "php_pure",
+      "php_slim", "php_yii", "php_codeigniter",
+    ]
   end
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
@@ -78,8 +98,9 @@ class PhpAuthTagger < FrameworkTagger
       next if line_num.nil?
       line_idx = line_num - 1
 
-      # Check route-level middleware (Laravel)
-      description = check_patterns_near_line(lines, line_idx, LARAVEL_ROUTE_MIDDLEWARE, 3)
+      # Check route-level middleware (Laravel + Slim groups etc.)
+      route_patterns = LARAVEL_ROUTE_MIDDLEWARE + SLIM_YII_CI_PATTERNS
+      description = check_patterns_near_line(lines, line_idx, route_patterns, 3)
       if description
         endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "php_auth"))
         return
@@ -170,7 +191,7 @@ class PhpAuthTagger < FrameworkTagger
       brace_count += current.count('{') - current.count('}')
       break if brace_count < 0
 
-      all_patterns = LARAVEL_AUTH_CHECKS + CAKEPHP_PATTERNS + GENERIC_PATTERNS
+      all_patterns = LARAVEL_AUTH_CHECKS + CAKEPHP_PATTERNS + GENERIC_PATTERNS + SLIM_YII_CI_PATTERNS
       all_patterns.each do |pattern, desc|
         return desc if stripped.matches?(pattern)
       end

@@ -30,6 +30,8 @@ expected_endpoints = [
     Param.new("org_id", "", "path"),
     Param.new("project_id", "", "path"),
   ]),
+  Endpoint.new("/dashboard", "GET"),
+  Endpoint.new("/profile", "GET"),
 ]
 
 FunctionalTester.new("fixtures/ruby/roda/", {

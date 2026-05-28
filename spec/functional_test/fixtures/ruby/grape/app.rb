@@ -53,4 +53,37 @@ class API < Grape::API
     get do
     end
   end
+
+  # Auth examples for grape_auth tagger testing
+  before { authenticate! }
+
+  resource :admin do
+    before { require_admin! }
+    get "dashboard" do
+      {ok: true}
+    end
+  end
+
+  http_basic do |username, password|
+    # basic auth example
+  end
+
+  get "secret" do
+    error!('Unauthorized', 401) unless current_user
+    {secret: true}
+  end
+
+  helpers do
+    def authenticate!
+      # ...
+    end
+
+    def require_admin!
+      # ...
+    end
+
+    def current_user
+      # ...
+    end
+  end
 end
