@@ -1,0 +1,7 @@
+{
+  "require": {
+    "php": "^8.1",
+    "laminas/laminas-mvc": "^3.7",
+    "mezzio/mezzio": "^3.19"
+  }
+}
