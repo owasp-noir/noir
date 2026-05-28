@@ -44,6 +44,7 @@ sudo apt install -y just
 src/
 ├── analyzer/analyzers/     # Endpoint/parameter analyzers by language/framework
 ├── detector/detectors/     # Technology detection by language/framework
+├── ext/                    # External C/C++ bindings (e.g., Tree-sitter integration)
 ├── output_builder/         # Output format generation (JSON, YAML, OAS, etc.)
 ├── models/                 # Data structures (includes delivers/, minilexer/)
 ├── llm/                    # AI/LLM integration (general/, ollama/)
@@ -88,8 +89,16 @@ An analyzer is composed of three layers. Keep them separate — a framework adap
 **Reference implementation**: `src/analyzer/analyzers/javascript/hono.cr` on top of `src/miniparsers/js_route_extractor.cr`. Hono is ~205 lines because it follows this split; contrast with analyzers that inline all three responsibilities and grow to 500–800 lines.
 
 **Current coverage**:
-- Language engines: PHP, Ruby, Rust, Elixir, Swift, Crystal, Scala (Akka + Scalatra), JavaScript/TypeScript, Python, Go. CSharp, Scala Play, Chi/Httprouter/Fasthttp (Go) stay on the `Analyzer` base because their flows orchestrate multiple phases or carry self-contained extraction that doesn't share with other analyzers.
-- Route extractors: JavaScript (`js_route_extractor.cr`, used by Hono, Express, Fastify, Koa, NestJS, Restify, and TypeScript NestJS) and Go (`go_route_extractor.cr`, wrapped by `GoEngine` and delegated to from eight analyzers). Python/Kotlin/Java have parsers but no dedicated route extractor yet.
+- Language engines: PHP, Ruby, Rust, Elixir, Swift, Crystal, Scala (Akka + Scalatra), JavaScript/TypeScript, Python, Go, Java, Kotlin, Perl. CSharp, Scala Play, and some others stay on the `Analyzer` base because their flows orchestrate multiple phases or carry self-contained extraction that doesn't share with other analyzers.
+- Route extractors:
+  - JavaScript/TypeScript: `js_route_extractor.cr` (used by Hono, Express, Fastify, Koa, NestJS, Restify, AdonisJS, Elysia, Hapi, etc.)
+  - High-fidelity Tree-sitter-based extractors (`*_route_extractor_ts.cr` and `*_parameter_extractor_ts.cr`) utilising vendored libtree-sitter bindings:
+    - Go: `go_route_extractor_ts.cr`
+    - Java: `java_route_extractor_ts.cr`, `java_parameter_extractor_ts.cr` (used by Spring, JAX-RS, Micronaut, etc.)
+    - Kotlin: `kotlin_route_extractor_ts.cr`, `kotlin_ktor_route_extractor_ts.cr`, `kotlin_parameter_extractor_ts.cr` (used by Spring, Ktor, etc.)
+    - Python: `python_route_extractor_ts.cr` (used by FastAPI, Flask, Django, etc.)
+    - Framework-specific AST extractors: `adonisjs_extractor_ts.cr`, `elysia_extractor_ts.cr`, `hapi_extractor_ts.cr`, `http4k_extractor_ts.cr`, `jaxrs_extractor_ts.cr`, `micronaut_extractor_ts.cr`, `jvm_lambda_dsl_extractor_ts.cr`
+  - Traditional / Callee Extractors: Used as a fallback or framework-specific extraction across languages (e.g., `cpp_callee_extractor.cr`, `crystal_callee_extractor.cr`, `go_callee_extractor.cr`, `js_callee_extractor.cr`, `ruby_callee_extractor.cr`, etc.).
 
 When adding a new framework in a language that already has an extractor, extend the extractor rather than re-parsing inline.
 
