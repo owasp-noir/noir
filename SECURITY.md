@@ -6,6 +6,8 @@ If you've found a security issue, please report it so we can address it promptly
 
 ### How to Report
 
+- **GitHub Security Advisories (Preferred)**: Report private vulnerabilities directly via [GitHub Security Advisories](https://github.com/owasp-noir/noir/security/advisories).
+
 - **General concerns**: Open a [GitHub issue](https://github.com/owasp-noir/noir/issues) with the `🛡️ security` label. Provide as much detail as possible to help us understand and fix the problem.
 
 - **Sensitive matters**: Email the noir team directly: hahwul (hahwul@gmail.com or h.lee@owasp.org) or ksg97031 (ksg97031@gmail.com or seonggi.kim@owasp.org). We handle these discreetly to ensure safety.
