@@ -38,6 +38,27 @@ class RubyAuthTagger < FrameworkTagger
     {/before\s+:authorize/, "Hanami authorize"},
   ]
 
+  # Grape patterns (before blocks, http_basic, helpers)
+  GRAPE_AUTH_PATTERNS = [
+    {/before\s+do.*authenticate/, "Grape before authenticate"},
+    {/before\s*\{\s*authenticate!/, "Grape authenticate!"},
+    {/before\s*\{\s*require_auth/, "Grape require_auth"},
+    {/http_basic\s+do/, "Grape http_basic auth"},
+    {/helpers\s+do.*authenticate/, "Grape helpers authenticate"},
+    {/\.error!\s*\(\s*['"]Unauthorized/, "Grape error! unauthorized"},
+  ]
+
+  # Roda / Rodauth patterns
+  RODA_AUTH_PATTERNS = [
+    {/rodauth\.require_authentication/, "Rodauth require_authentication"},
+    {/rodauth\.require_auth/, "Rodauth require_auth"},
+    {/rodauth\.logged_in\?/, "Rodauth logged_in?"},
+    {/rodauth\.authenticated\?/, "Rodauth authenticated?"},
+    {/r\.rodauth/, "Roda rodauth plugin"},
+    {/r\.halt\s+401/, "Roda 401 halt"},
+    {/authorize!/, "Roda authorize!"},
+  ]
+
   # skip_before_action marks public overrides
   SKIP_PATTERNS = [
     /skip_before_action\s+:authenticate/,
@@ -50,7 +71,7 @@ class RubyAuthTagger < FrameworkTagger
   end
 
   def self.target_techs : Array(String)
-    ["ruby_rails", "ruby_sinatra", "ruby_hanami"]
+    ["ruby_rails", "ruby_sinatra", "ruby_hanami", "ruby_grape", "ruby_roda"]
   end
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
@@ -86,6 +107,20 @@ class RubyAuthTagger < FrameworkTagger
 
       # Check Sinatra/Rack patterns in context
       description = check_sinatra_auth(lines, line_idx)
+      if description
+        endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "ruby_auth"))
+        return
+      end
+
+      # Check Grape patterns (before blocks, http_basic, etc.)
+      description = check_grape_auth(lines, line_idx)
+      if description
+        endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "ruby_auth"))
+        return
+      end
+
+      # Check Roda/Rodauth patterns
+      description = check_roda_auth(lines, line_idx)
       if description
         endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "ruby_auth"))
         return
@@ -193,5 +228,40 @@ class RubyAuthTagger < FrameworkTagger
     line = lines[line_idx].strip
     match = line.match(/def\s+(\w+)/)
     match ? match[1] : nil
+  end
+
+  private def check_grape_auth(lines : Array(String), route_line : Int32) : String?
+    # Grape uses before { } blocks, often near the top of the class or inside resource/namespace
+    start_idx = [route_line - 20, 0].max
+
+    (start_idx...route_line).each do |idx|
+      current = lines[idx].strip
+
+      GRAPE_AUTH_PATTERNS.each do |pattern, desc|
+        if current.matches?(pattern)
+          return desc
+        end
+      end
+    end
+
+    nil
+  end
+
+  private def check_roda_auth(lines : Array(String), route_line : Int32) : String?
+    # Roda uses route blocks; rodauth calls are usually inside the handler or just above
+    start_idx = [route_line - 12, 0].max
+    end_idx = [route_line + 8, lines.size - 1].min
+
+    (start_idx..end_idx).each do |idx|
+      current = lines[idx].strip
+
+      RODA_AUTH_PATTERNS.each do |pattern, desc|
+        if current.matches?(pattern)
+          return desc
+        end
+      end
+    end
+
+    nil
   end
 end

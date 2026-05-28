@@ -25,5 +25,5 @@ expected_endpoints = [
 
 FunctionalTester.new("fixtures/ruby/grape/", {
   :techs     => 1,
-  :endpoints => 9,
+  :endpoints => 11,
 }, expected_endpoints).perform_tests

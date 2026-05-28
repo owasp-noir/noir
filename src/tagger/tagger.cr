@@ -154,6 +154,11 @@ module NoirTaggers
       desc:   "Identifies Crystal framework authentication patterns (Kemal, Amber, Lucky)",
       runner: CrystalAuthTagger,
     },
+    hono_auth: {
+      name:   "Hono Auth Tagger",
+      desc:   "Identifies Hono authentication patterns (bearerAuth, jwt, basicAuth, custom middleware)",
+      runner: HonoAuthTagger,
+    },
   }
 
   def self.taggers
