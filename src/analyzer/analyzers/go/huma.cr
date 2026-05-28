@@ -59,10 +59,14 @@ module Analyzer::Go
 
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       begin
-        populate_channel_with_filtered_files(channel, ".go")
-
         mutex = Mutex.new
         WaitGroup.wait do |wg|
+          # Producer — tracked by the WaitGroup
+          wg.spawn do
+            get_files_by_extension(".go").each { |file| channel.send(file) }
+            channel.close
+          end
+
           @options["concurrency"].to_s.to_i.times do
             wg.spawn do
               loop do

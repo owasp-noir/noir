@@ -19,10 +19,12 @@ def initialize_analyzers(logger : NoirLogger)
     {"cpp_drogon", Cpp::Drogon},
     {"cpp_crow", Cpp::Crow},
     {"clojure_compojure", Clojure::Compojure},
+    {"clojure_pedestal", Clojure::Pedestal},
     {"clojure_reitit", Clojure::Reitit},
     {"clojure_ring", Clojure::Ring},
     {"cs_aspnet_mvc", CSharp::AspNetMvc},
     {"cs_aspnet_core_mvc", CSharp::AspNetCoreMvc},
+    {"cs_aspnet_core_minimal_api", CSharp::MinimalApis},
     {"cs_carter", CSharp::Carter},
     {"cs_fastendpoints", CSharp::FastEndpoints},
     {"crystal_amber", Crystal::Amber},
@@ -37,6 +39,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"elixir_phoenix", Elixir::Phoenix},
     {"elixir_plug", Elixir::Plug},
     {"fs_giraffe", Fsharp::Giraffe},
+    {"perl_catalyst", Perl::Catalyst},
     {"perl_mojolicious", Perl::Mojolicious},
     {"go_beego", Go::Beego},
     {"go_echo", Go::Echo},
@@ -75,8 +78,10 @@ def initialize_analyzers(logger : NoirLogger)
     {"java_quarkus", Java::Quarkus},
     {"java_spark", Java::Spark},
     {"java_spring", Java::Spring},
+    {"java_struts2", Java::Struts2},
     {"lua_lapis", Lua::Lapis},
     {"java_vertx", Java::Vertx},
+    {"java_wicket", Java::Wicket},
     {"js_adonisjs", Javascript::Adonisjs},
     {"js_apollo", Javascript::Apollo},
     {"js_astro", Javascript::Astro},
@@ -129,6 +134,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"php_cakephp", Php::CakePHP},
     {"php_codeigniter", Php::CodeIgniter},
     {"php_hyperf", Php::Hyperf},
+    {"php_laminas", Php::Laminas},
     {"php_laravel", Php::Laravel},
     {"php_lumen", Php::Lumen},
     {"php_slim", Php::Slim},
@@ -196,6 +202,7 @@ def filter_redundant_generic_techs(techs : Array(String)) : Array(String)
     "php_cakephp",
     "php_codeigniter",
     "php_hyperf",
+    "php_laminas",
     "php_slim",
     "php_thinkphp",
     "php_yii",
@@ -253,6 +260,9 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
   # Run tech analyzers concurrently to avoid long stalls from a single analyzer
   selected_techs = filter_redundant_generic_techs(techs).select { |t| analyzer.has_key?(t) }
   mutex = Mutex.new
+
+  # Pre-build extension index synchronously to avoid concurrent mutation in multiple threads/fibers
+  CodeLocator.instance.build_extension_index
 
   WaitGroup.wait do |wg|
     selected_techs.each do |tech|

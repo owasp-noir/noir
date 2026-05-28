@@ -115,7 +115,7 @@ expected_endpoints = [
 ]
 
 tester = FunctionalTester.new("fixtures/csharp/aspnet_core_mvc/", {
-  :techs     => 1,
+  :techs     => 2,
   :endpoints => expected_endpoints.size,
 }, expected_endpoints)
 

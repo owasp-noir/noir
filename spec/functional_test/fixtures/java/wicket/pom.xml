@@ -1,0 +1,9 @@
+<project>
+  <dependencies>
+    <dependency>
+      <groupId>org.apache.wicket</groupId>
+      <artifactId>wicket-core</artifactId>
+      <version>9.23.0</version>
+    </dependency>
+  </dependencies>
+</project>

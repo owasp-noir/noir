@@ -1,0 +1,2 @@
+requires 'Catalyst::Runtime', '5.90132';
+requires 'Catalyst::Controller::REST';

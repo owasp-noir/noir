@@ -35,12 +35,8 @@ module Analyzer::Rust
     # and call this helper directly; the default `analyze` above is the
     # simpler path.
     protected def parallel_file_scan(&block : String -> Nil) : Nil
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
-
       begin
-        populate_channel_with_files(channel)
-
-        parallel_analyze(channel) do |path|
+        parallel_analyze(all_files) do |path|
           next if File.directory?(path)
           next unless File.exists?(path) && File.extname(path) == ".rs"
           next if RustEngine.test_path?(path)

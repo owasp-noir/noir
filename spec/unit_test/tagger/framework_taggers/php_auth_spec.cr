@@ -58,3 +58,44 @@ describe "PhpAuthTagger" do
     endpoint.tags.empty?.should be_true
   end
 end
+
+# Light coverage for newly added PHP targets (Slim, Yii, CodeIgniter)
+describe "PhpAuthTagger (expanded targets)" do
+  slim_base = "#{__DIR__}/../../../functional_test/fixtures/php/slim"
+  slim_path = "#{slim_base}/index.php"
+
+  it "runs without error on php_slim technology" do
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(slim_base)
+
+    # Line 28 in slim fixture has X-Auth-Token header access (manual auth pattern)
+    details = Details.new(PathInfo.new(slim_path, 28))
+    details.technology = "php_slim"
+    endpoint = Endpoint.new("/users/{id}", "GET", [] of Param, details)
+
+    tagger = PhpAuthTagger.new(noir_options)
+    tagger.perform([endpoint])
+
+    # We don't assert a tag (fixture has manual header read, not strong declarative auth),
+    # but the tagger must not crash and must accept the tech.
+    true.should be_true
+  end
+
+  it "runs without error on php_yii and php_codeigniter technologies" do
+    noir_options = create_test_options
+    # Reuse slim dir as base (no real Yii/CI files needed for smoke test)
+    noir_options["base"] = YAML::Any.new(slim_base)
+
+    ["php_yii", "php_codeigniter"].each do |tech|
+      details = Details.new(PathInfo.new(slim_path, 10))
+      details.technology = tech
+      endpoint = Endpoint.new("/test", "GET", [] of Param, details)
+
+      tagger = PhpAuthTagger.new(noir_options)
+      # Should not raise
+      tagger.perform([endpoint])
+    end
+
+    true.should be_true
+  end
+end

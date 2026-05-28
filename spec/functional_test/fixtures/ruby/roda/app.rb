@@ -51,5 +51,21 @@ class App < Roda
         end
       end
     end
+
+    # Rodauth auth examples for ruby_auth tagger testing
+    r.rodauth
+
+    r.get "dashboard" do
+      rodauth.require_authentication
+      "dashboard"
+    end
+
+    r.get "profile" do
+      if rodauth.logged_in?
+        "profile"
+      else
+        r.halt 401
+      end
+    end
   end
 end

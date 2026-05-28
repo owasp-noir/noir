@@ -23,6 +23,8 @@ class CodeLocator
   @content_cache_used : Int64
   @content_cache_skipped : Int32
 
+  @lock : Mutex
+
   def initialize
     options = {"debug" => "false", "verbose" => "false", "color" => "true", "nolog" => "false"}
     @is_debug = any_to_bool(options["debug"])
@@ -41,6 +43,7 @@ class CodeLocator
     @content_cache_budget = resolve_content_cache_budget
     @content_cache_used = 0_i64
     @content_cache_skipped = 0
+    @lock = Mutex.new
   end
 
   private def resolve_content_cache_budget : Int64
@@ -115,15 +118,18 @@ class CodeLocator
   # Build extension index from file_map for fast lookups
   def build_extension_index
     return if @extension_index_built
-    @extension_index.clear
-    files = @a_map["file_map"]?
-    return unless files
-    files.each do |file|
-      ext = File.extname(file)
-      @extension_index[ext] ||= Array(String).new
-      @extension_index[ext] << file
+    @lock.synchronize do
+      return if @extension_index_built
+      @extension_index.clear
+      files = @a_map["file_map"]?
+      return unless files
+      files.each do |file|
+        ext = File.extname(file)
+        @extension_index[ext] ||= Array(String).new
+        @extension_index[ext] << file
+      end
+      @extension_index_built = true
     end
-    @extension_index_built = true
   end
 
   # Get files by extension using the index (O(1) lookup)

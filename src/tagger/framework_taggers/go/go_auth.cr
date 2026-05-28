@@ -36,6 +36,10 @@ class GoAuthTagger < FrameworkTagger
     /\b[Aa]dmin[Oo]nly\b/,
     /\b[Rr]ole[Cc]heck\b/,
     /\b[Pp]ermission[Cc]heck\b/,
+    # Hertz / Iris / GF specific
+    /\bHertzAuth\b/,
+    /\bIrisAuth\b/,
+    /\bGF[Aa]uth\b/,
   ]
 
   def initialize(options : Hash(String, YAML::Any))
@@ -49,6 +53,7 @@ class GoAuthTagger < FrameworkTagger
       "go_echo", "go_gin", "go_chi", "go_fiber",
       "go_beego", "go_mux", "go_fasthttp",
       "go_gozero", "go_goyave",
+      "go_hertz", "go_iris", "go_gf",
     ]
   end
 

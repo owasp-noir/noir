@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE struts PUBLIC
+  "-//Apache Software Foundation//DTD Struts Configuration 2.5//EN"
+  "https://struts.apache.org/dtds/struts-2.5.dtd">
+<struts>
+  <constant name="struts.convention.action.suffix" value="Controller"/>
+  <constant name="struts.convention.default.parent.package" value="rest-default"/>
+  <include file="admin-struts.xml"/>
+
+  <package name="base" namespace="/user" extends="struts-default">
+    <action name="list" class="com.example.actions.UserAction" method="list">
+      <result>/user/list.jsp</result>
+    </action>
+    <action name="edit" class="com.example.actions.UserAction" method="edit">
+      <result name="success">/user/edit.jsp</result>
+      <result name="input">/user/edit.jsp</result>
+    </action>
+    <action name="user_*" class="com.example.actions.UserAction" method="{1}">
+      <result>/user/{1}.jsp</result>
+    </action>
+  </package>
+
+  <package name="inherited" extends="base">
+    <action name="audit" class="com.example.actions.AuditAction" method="index"/>
+  </package>
+</struts>

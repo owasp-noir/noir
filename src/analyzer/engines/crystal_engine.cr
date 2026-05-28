@@ -17,12 +17,8 @@ module Analyzer::Crystal
     # Subclasses that need a custom scan shape can override `analyze`
     # (e.g. Amber/Kemal run a public-dir post-pass after the file walk).
     protected def parallel_file_scan(&block : String -> Nil) : Nil
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
-
       begin
-        populate_channel_with_files(channel)
-
-        parallel_analyze(channel) do |path|
+        parallel_analyze(all_files) do |path|
           next if File.directory?(path)
           next unless File.exists?(path) && File.extname(path) == ".cr"
           next if path.includes?("lib")

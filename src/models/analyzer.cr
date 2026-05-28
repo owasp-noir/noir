@@ -64,8 +64,21 @@ class Analyzer
     any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
   end
 
-  def parallel_analyze(channel : Channel(String), &block : String -> Nil)
+  # Preferred overload: accepts a file list and creates both the
+  # producer and worker fibers inside a single WaitGroup so every
+  # fiber is tracked.  The bare-`spawn` producer in the channel-based
+  # overload below was an orphan that could trigger "can't resume a
+  # running fiber" under Crystal ≥1.20's M:N scheduler when multiple
+  # analyzers ran concurrently.
+  def parallel_analyze(files : Array(String), &block : String -> Nil)
+    channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
     WaitGroup.wait do |wg|
+      # Producer — tracked by the WaitGroup
+      wg.spawn do
+        files.each { |file| channel.send(file) }
+        channel.close
+      end
+
       worker_count = @options["concurrency"].to_s.to_i
       worker_count = MAX_ANALYZER_WORKERS if worker_count > MAX_ANALYZER_WORKERS
       worker_count = 1 if worker_count < 1
@@ -115,9 +128,14 @@ class FileAnalyzer < Analyzer
 
   def analyze
     channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
-    populate_channel_with_files(channel)
 
     WaitGroup.wait do |wg|
+      # Producer — tracked by the WaitGroup
+      wg.spawn do
+        all_files.each { |file| channel.send(file) }
+        channel.close
+      end
+
       @options["concurrency"].to_s.to_i.times do
         wg.spawn do
           loop do

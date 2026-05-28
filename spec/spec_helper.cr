@@ -1,5 +1,6 @@
 require "spec"
 require "../src/config_initializer"
+require "../src/utils/utils"
 
 module Noir
   {% unless Noir.has_constant?("VERSION") %}

@@ -1,10 +1,10 @@
-# AGENTS.md - AI Agent Instructions for Hwaro Site
+# AGENTS.md - AI Agent Instructions for OWASP Noir Documentation Site
 
-This document provides instructions for AI agents working on this Hwaro-generated website.
+This document provides instructions for AI agents working on the OWASP Noir documentation site.
 
 ## Project Overview
 
-This is a static website built with [Hwaro](https://github.com/hahwul/hwaro), a fast and lightweight static site generator written in Crystal.
+The OWASP Noir documentation website is a static site built using [Hwaro](https://github.com/hahwul/hwaro), a fast and lightweight static site generator written in Crystal.
 
 ## Hwaro Usage
 

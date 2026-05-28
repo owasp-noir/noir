@@ -1,0 +1,7 @@
+{
+  "name": "hono-auth-fixture",
+  "version": "0.1.0",
+  "dependencies": {
+    "hono": "^4.0.0"
+  }
+}
