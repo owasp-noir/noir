@@ -19,6 +19,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"cpp_drogon", Cpp::Drogon},
     {"cpp_crow", Cpp::Crow},
     {"clojure_compojure", Clojure::Compojure},
+    {"clojure_pedestal", Clojure::Pedestal},
     {"clojure_reitit", Clojure::Reitit},
     {"clojure_ring", Clojure::Ring},
     {"cs_aspnet_mvc", CSharp::AspNetMvc},

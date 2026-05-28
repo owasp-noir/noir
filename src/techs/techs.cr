@@ -104,6 +104,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :clojure_pedestal => {
+      :framework => "Pedestal",
+      :language  => "Clojure",
+      :similar   => ["pedestal", "clojure-pedestal", "clojure_pedestal", "clj-pedestal", "io-pedestal"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => true,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :clojure_ring => {
       :framework => "Ring",
       :language  => "Clojure",
