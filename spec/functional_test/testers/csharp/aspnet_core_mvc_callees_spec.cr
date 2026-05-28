@@ -25,7 +25,7 @@ mapped_endpoint.push_callee(Callee.new("context.Response.WriteAsync", line: 15))
 mapped_endpoint.push_callee(Callee.new("SerializeOrder", line: 15))
 
 FunctionalTester.new("fixtures/csharp/aspnet_core_mvc_callees/", {
-  :techs     => 1,
+  :techs     => 2,
   :endpoints => 3,
 }, [
   show_endpoint,
