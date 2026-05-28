@@ -19,6 +19,11 @@
 (defn delete-job [_request] {:status 204 :body ""})
 (defn health-handler [_request] {:status 200 :body "ok"})
 (defn create-order [_request] {:status 201 :body "order"})
+(defn query-handler [_request] {:status 200 :body "query"})
+(defn expanded-handler [_request] {:status 200 :body "expanded"})
+(defn verbose-child-handler [_request] {:status 200 :body "verbose child"})
+(defn verbose-helper-handler [_request] {:status 200 :body "verbose helper"})
+(defn constrained-search [_request] {:status 200 :body "search"})
 
 (defroutes classic-routes
   [[["/" {:get home-page}
@@ -48,5 +53,27 @@
   [(route/get "/health" [] health-handler)
    (route/post "/api/orders" [] create-order)])
 
+(def query-verb-routes
+  (table/table-routes
+    {:verbs #{:get :query}}
+    [["/custom-query" :query query-handler]]))
+
+(def expanded-route-maps
+  [{:path "/expanded"
+    :method :get
+    :route-name :expanded
+    :interceptors [expanded-handler]}])
+
+(def verbose-parent-routes
+  [{:path "/verbose-parent"
+    :children [{:path "/child"
+                :verbs {:get verbose-child-handler}}
+               (route/get "/health" [] verbose-helper-handler)]}])
+
+(def constrained-child-routes
+  [["/search"
+    [^:constraints {:q #".+"}
+     {:get constrained-search}]]])
+
 (def service
-  {::http/routes [classic-routes table-routes map-routes helper-routes]})
+  {::http/routes [classic-routes table-routes map-routes helper-routes query-verb-routes expanded-route-maps verbose-parent-routes constrained-child-routes]})

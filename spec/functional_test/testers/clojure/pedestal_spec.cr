@@ -31,6 +31,11 @@ expected_endpoints = [
   ]),
   Endpoint.new("/health", "GET"),
   Endpoint.new("/api/orders", "POST"),
+  Endpoint.new("/custom-query", "QUERY"),
+  Endpoint.new("/expanded", "GET"),
+  Endpoint.new("/verbose-parent/child", "GET"),
+  Endpoint.new("/verbose-parent/health", "GET"),
+  Endpoint.new("/search", "GET"),
 ]
 
 FunctionalTester.new("fixtures/clojure/pedestal/", {
