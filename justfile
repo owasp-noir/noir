@@ -4,6 +4,7 @@ alias ds := docs-serve
 alias dsup := docs-supported
 alias vc := version-check
 alias vu := version-update
+alias bm := benchmark
 
 # List available tasks.
 default:
@@ -98,3 +99,9 @@ version-check:
 [group('development')]
 version-update VERSION="":
     @if [ -z "{{VERSION}}" ]; then crystal run scripts/version_update.cr; else crystal run scripts/version_update.cr -- {{VERSION}}; fi
+
+# Run benchmarks to compare global and local noir binaries on a large mock codebase.
+[group('development')]
+benchmark: build-release
+    crystal run scripts/benchmark.cr
+
