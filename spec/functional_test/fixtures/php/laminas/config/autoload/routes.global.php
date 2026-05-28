@@ -94,6 +94,42 @@ return [
                     ],
                 ],
             ],
+            'application' => [
+                'type' => Segment::class,
+                'options' => [
+                    'route' => '/application[/:action]',
+                ],
+            ],
+            'delimited' => [
+                'type' => Segment::class,
+                'options' => [
+                    'route' => '/locale/:locale{-}[-:slug]',
+                ],
+            ],
+            'download' => [
+                'type' => 'Regex',
+                'options' => [
+                    'regex' => '/download/(?<id>[0-9]+)(\.(?<format>(json|xml)))?',
+                    'spec' => '/download/%id%.%format%',
+                ],
+            ],
+            'part' => [
+                'type' => 'Part',
+                'route' => [
+                    'type' => Literal::class,
+                    'options' => [
+                        'route' => '/blog',
+                    ],
+                ],
+                'child_routes' => [
+                    'rss' => [
+                        'type' => Literal::class,
+                        'options' => [
+                            'route' => '/rss',
+                        ],
+                    ],
+                ],
+            ],
         ],
     ],
 ];
