@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<struts>
+  <package name="admin" namespace="/admin" extends="struts-default">
+    <action name="dashboard" class="com.example.actions.admin.DashboardAction">
+      <result name="success">/WEB-INF/admin/dashboard.jsp</result>
+      <result name="error">/WEB-INF/admin/error.jsp</result>
+    </action>
+    <action name="reports/*" class="com.example.actions.admin.ReportAction" method="{1}"/>
+  </package>
+</struts>
