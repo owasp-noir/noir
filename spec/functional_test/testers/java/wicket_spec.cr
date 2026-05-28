@@ -24,6 +24,19 @@ expected_endpoints = [
     Param.new("orderId", "", "path"),
   ]),
   Endpoint.new("/DefaultMountPage", "GET"),
+  Endpoint.new("/scanned/persons", "GET"),
+  Endpoint.new("/scanned/persons/{personId}", "DELETE", [
+    Param.new("personId", "", "path"),
+  ]),
+  Endpoint.new("/dashboards", "GET"),
+  Endpoint.new("/api/persons", "GET"),
+  Endpoint.new("/api/persons/{personId}", "DELETE", [
+    Param.new("personId", "", "path"),
+  ]),
+  Endpoint.new("/lambda/status", "GET"),
+  Endpoint.new("/lambda/items/{itemId}", "POST", [
+    Param.new("itemId", "", "path"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/java/wicket/", {

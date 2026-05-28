@@ -15,6 +15,10 @@ module Analyzer::Java
       "MountedMapper",
       "PackageMapper",
       "ResourceMapper",
+      "org.wicketstuff.rest",
+      "MethodMapping",
+      "ResourcePath",
+      "LambdaRestMounter",
     ]
 
     MAPPER_CLASSES = Set{
@@ -30,18 +34,31 @@ module Analyzer::Java
 
     PACKAGE_MAPPER_CLASSES  = Set{"PackageMapper"}
     RESOURCE_MAPPER_CLASSES = Set{"ResourceMapper"}
+    REST_LAMBDA_METHODS     = Set{"get", "post", "put", "delete", "patch", "head", "options", "trace"}
 
     alias FileInfo = NamedTuple(path: String, content: String, constants: Hash(String, String))
+    alias RestRoute = NamedTuple(path: String, method: String, file_path: String, line: Int32)
+    alias RestMount = NamedTuple(path: String, file_path: String, line: Int32)
 
     def analyze
       files = java_files_with_content
       page_mounts = Hash(String, Array(String)).new { |hash, key| hash[key] = [] of String }
+      rest_routes = Hash(String, Array(RestRoute)).new { |hash, key| hash[key] = [] of RestRoute }
+      rest_mounts = Hash(String, RestMount).new
       seen = Set(String).new
 
       files.each do |file|
+        collect_rest_resource_annotations(file, rest_routes, rest_mounts)
+      end
+
+      emit_resource_path_routes(rest_routes, rest_mounts, seen)
+
+      files.each do |file|
         collect_mount_path_annotations(file, page_mounts, seen)
-        collect_mount_calls(file, page_mounts, seen)
+        collect_mount_calls(file, page_mounts, rest_routes, seen)
         collect_mapper_mounts(file, page_mounts, seen)
+        collect_local_page_mount_helpers(file, page_mounts, seen)
+        collect_rest_lambda_mounts(file, seen)
       end
 
       files.each do |file|
@@ -104,6 +121,7 @@ module Analyzer::Java
 
     private def collect_mount_calls(file : FileInfo,
                                     page_mounts : Hash(String, Array(String)),
+                                    rest_routes : Hash(String, Array(RestRoute)),
                                     seen : Set(String))
       {"mountPage", "mountPackage", "mountResource"}.each do |method_name|
         scan_method_calls(file[:content], method_name) do |args, offset|
@@ -114,6 +132,18 @@ module Analyzer::Java
           next unless mount_path
 
           normalized = normalize_mount_path(mount_path)
+
+          if method_name == "mountResource"
+            if resource_class = rest_resource_class_name(args, rest_routes)
+              if routes = rest_routes[resource_class]?
+                routes.each do |route|
+                  add_endpoint(join_mount_paths(normalized, route[:path]), route[:file_path], route[:line], seen, route[:method])
+                end
+                next
+              end
+            end
+          end
+
           endpoint_path = method_name == "mountPackage" ? package_mount_path(normalized) : normalized
           add_endpoint(endpoint_path, file[:path], line_for_offset(file[:content], offset), seen)
 
@@ -151,6 +181,132 @@ module Analyzer::Java
         next if RESOURCE_MAPPER_CLASSES.includes?(mapper_class) || PACKAGE_MAPPER_CLASSES.includes?(mapper_class)
         if page_class = class_literal_name(arguments[1]?)
           page_mounts[page_class] << normalized unless page_mounts[page_class].includes?(normalized)
+        end
+      end
+    end
+
+    private def collect_local_page_mount_helpers(file : FileInfo,
+                                                 page_mounts : Hash(String, Array(String)),
+                                                 seen : Set(String))
+      helper_methods = local_page_mount_helpers(file[:content])
+      return if helper_methods.empty?
+
+      helper_methods.each do |method_name, indexes|
+        scan_method_calls(file[:content], method_name) do |args, offset|
+          arguments = split_arguments(args)
+          next unless arguments.size > indexes[0] && arguments.size > indexes[1]
+
+          mount_path = resolve_string_expression(arguments[indexes[0]], file[:constants])
+          next unless mount_path
+
+          normalized = normalize_mount_path(mount_path)
+          add_endpoint(normalized, file[:path], line_for_offset(file[:content], offset), seen)
+
+          if page_class = class_literal_name(arguments[indexes[1]]?)
+            page_mounts[page_class] << normalized unless page_mounts[page_class].includes?(normalized)
+          end
+        end
+      end
+    end
+
+    private def collect_rest_resource_annotations(file : FileInfo,
+                                                  rest_routes : Hash(String, Array(RestRoute)),
+                                                  rest_mounts : Hash(String, RestMount))
+      collect_resource_path_annotations(file, rest_mounts)
+
+      class_name = first_class_name(file[:content])
+      return if class_name.empty?
+
+      file[:content].scan(/@(?:[A-Za-z_][A-Za-z0-9_]*\.)*MethodMapping\b/) do |match|
+        marker = match.begin(0) || 0
+        after = match.end(0) || marker
+        args = ""
+        scan_from = skip_whitespace(file[:content], after)
+
+        if scan_from < file[:content].size && file[:content][scan_from] == '('
+          if close_idx = find_matching_paren(file[:content], scan_from)
+            args = file[:content][(scan_from + 1)...close_idx]
+          end
+        end
+
+        path, method = method_mapping_values(args, file[:constants])
+        rest_routes[class_name] << {
+          path:      normalize_mount_path(path),
+          method:    method,
+          file_path: file[:path],
+          line:      line_for_offset(file[:content], marker),
+        }
+      end
+    end
+
+    private def collect_resource_path_annotations(file : FileInfo,
+                                                  rest_mounts : Hash(String, RestMount))
+      file[:content].scan(/@(?:[A-Za-z_][A-Za-z0-9_]*\.)*ResourcePath\b/) do |match|
+        marker = match.begin(0) || 0
+        after = match.end(0) || marker
+        args = ""
+        scan_from = skip_whitespace(file[:content], after)
+
+        if scan_from < file[:content].size && file[:content][scan_from] == '('
+          if close_idx = find_matching_paren(file[:content], scan_from)
+            args = file[:content][(scan_from + 1)...close_idx]
+            scan_from = close_idx + 1
+          end
+        end
+
+        class_name = next_class_name(file[:content], scan_from)
+        next if class_name.empty?
+
+        if mount_path = first_annotation_path_value(args, file[:constants])
+          rest_mounts[class_name] = {
+            path:      normalize_mount_path(mount_path),
+            file_path: file[:path],
+            line:      line_for_offset(file[:content], marker),
+          }
+        end
+      end
+    end
+
+    private def emit_resource_path_routes(rest_routes : Hash(String, Array(RestRoute)),
+                                          rest_mounts : Hash(String, RestMount),
+                                          seen : Set(String))
+      rest_mounts.each do |class_name, mount|
+        routes = rest_routes[class_name]?
+        if routes && !routes.empty?
+          routes.each do |route|
+            add_endpoint(join_mount_paths(mount[:path], route[:path]), route[:file_path], route[:line], seen, route[:method])
+          end
+        else
+          add_endpoint(mount[:path], mount[:file_path], mount[:line], seen)
+        end
+      end
+    end
+
+    private def collect_rest_lambda_mounts(file : FileInfo, seen : Set(String))
+      scan_method_calls(file[:content], "mountRestResource") do |args, offset|
+        arguments = split_arguments(args)
+        next if arguments.size < 2
+
+        method = http_method_name(arguments[0])
+        path = resolve_string_expression(arguments[1], file[:constants])
+        next unless method && path
+
+        add_endpoint(normalize_mount_path(path), file[:path], line_for_offset(file[:content], offset), seen, method)
+      end
+
+      lambda_mounters = lambda_rest_mounter_variables(file[:content])
+      return if lambda_mounters.empty?
+
+      REST_LAMBDA_METHODS.each do |method_name|
+        lambda_mounters.each do |receiver|
+          scan_receiver_method_calls(file[:content], receiver, method_name) do |args, offset|
+            arguments = split_arguments(args)
+            next if arguments.empty?
+
+            if path = resolve_string_expression(arguments[0], file[:constants])
+              add_endpoint(normalize_mount_path(path), file[:path], line_for_offset(file[:content], offset), seen, method_name.upcase)
+            end
+          end
         end
       end
     end
@@ -197,7 +353,11 @@ module Analyzer::Java
     end
 
     private def add_endpoint(path : String, file_path : String, line : Int32, seen : Set(String))
-      endpoint = Endpoint.new(path, "GET", path_params(path), Details.new(PathInfo.new(file_path, line)))
+      add_endpoint(path, file_path, line, seen, "GET")
+    end
+
+    private def add_endpoint(path : String, file_path : String, line : Int32, seen : Set(String), method : String)
+      endpoint = Endpoint.new(path, method, path_params(path), Details.new(PathInfo.new(file_path, line)))
       key = endpoint_key(endpoint)
       return if seen.includes?(key)
 
@@ -239,6 +399,36 @@ module Analyzer::Java
 
       values = ["/#{class_name}"] if values.empty?
       values.uniq
+    end
+
+    private def method_mapping_values(args : String, constants : Hash(String, String)) : Tuple(String, String)
+      path = "/"
+      method = "GET"
+
+      split_arguments(args).each do |argument|
+        name, expression = split_named_argument(argument)
+        case name
+        when "", "value", "path"
+          if value = resolve_string_expression(expression, constants)
+            path = value
+          end
+        when "httpMethod", "method"
+          method = http_method_name(expression) || method
+        end
+      end
+
+      {path, method}
+    end
+
+    private def first_annotation_path_value(args : String, constants : Hash(String, String)) : String?
+      split_arguments(args).each do |argument|
+        name, expression = split_named_argument(argument)
+        next unless name.empty? || name == "value" || name == "path"
+
+        if value = resolve_string_expression(expression, constants)
+          return value
+        end
+      end
     end
 
     private def split_named_argument(argument : String) : Tuple(String, String)
@@ -311,6 +501,35 @@ module Analyzer::Java
       after < content.size && content[after] == '('
     end
 
+    private def scan_receiver_method_calls(content : String, receiver : String, method_name : String, &block : String, Int32 ->)
+      offset = 0
+      pattern = "#{receiver}.#{method_name}"
+      while marker = content.index(pattern, offset)
+        offset = marker + pattern.size
+        next unless receiver_method_call_at?(content, marker, receiver, method_name)
+
+        open_idx = skip_whitespace(content, marker + pattern.size)
+        next unless open_idx < content.size && content[open_idx] == '('
+
+        close_idx = find_matching_paren(content, open_idx)
+        next unless close_idx
+
+        block.call(content[(open_idx + 1)...close_idx], marker)
+      end
+    end
+
+    private def receiver_method_call_at?(content : String, marker : Int32, receiver : String, method_name : String) : Bool
+      before = marker.zero? ? '\0' : content[marker - 1]
+      return false if before.ascii_alphanumeric? || before == '_' || before == '$'
+
+      dot_idx = marker + receiver.size
+      return false unless dot_idx < content.size && content[dot_idx] == '.'
+
+      after = dot_idx + 1 + method_name.size
+      after = skip_whitespace(content, after)
+      after < content.size && content[after] == '('
+    end
+
     private def split_arguments(args : String) : Array(String)
       parts = [] of String
       start = 0
@@ -370,13 +589,26 @@ module Analyzer::Java
       normalized = path.strip
       normalized = normalized.gsub(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/, "{\\1}")
       normalized = normalized.gsub(/#\{([A-Za-z_][A-Za-z0-9_]*)\}/, "{\\1}")
+      normalized = normalized.gsub(/\{([A-Za-z_][A-Za-z0-9_]*):[^}]+\}/, "{\\1}")
       normalized = normalized.gsub(%r{/+}, "/")
       return "/" if normalized.empty?
       normalized.starts_with?("/") ? normalized : "/#{normalized}"
     end
 
+    private def join_mount_paths(base_path : String, child_path : String) : String
+      base = normalize_mount_path(base_path)
+      child = normalize_mount_path(child_path)
+      return base if child == "/"
+      return child if base == "/"
+      normalize_mount_path("#{base.rstrip('/')}/#{child.lstrip('/')}")
+    end
+
     private def package_mount_path(path : String) : String
       path == "/" ? "/**" : "#{path.rstrip('/')}/**"
+    end
+
+    private def first_class_name(content : String) : String
+      next_class_name(content, 0)
     end
 
     private def next_class_name(content : String, offset : Int32) : String
@@ -388,9 +620,102 @@ module Analyzer::Java
       ""
     end
 
+    private def rest_resource_class_name(source : String, rest_routes : Hash(String, Array(RestRoute))) : String?
+      source.scan(/\bnew\s+([A-Za-z_][A-Za-z0-9_.]*)\s*(?:<[^;()]*>)?\s*\(/) do |match|
+        class_name = match[1].split('.').last
+        return class_name if rest_routes.has_key?(class_name)
+      end
+
+      source.scan(/\b([A-Za-z_][A-Za-z0-9_.]*)\s*\.class\b/) do |match|
+        class_name = match[1].split('.').last
+        return class_name if rest_routes.has_key?(class_name)
+      end
+    end
+
+    private def http_method_name(expression : String) : String?
+      if match = expression.match(/\b(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|TRACE)\b/i)
+        match[1].upcase
+      end
+    end
+
+    private def lambda_rest_mounter_variables(content : String) : Set(String)
+      variables = Set(String).new
+      content.scan(/\b([A-Za-z_][A-Za-z0-9_]*)\s*=\s*new\s+(?:[A-Za-z_][A-Za-z0-9_]*\.)*LambdaRestMounter\s*\(/) do |match|
+        variables << match[1]
+      end
+      variables
+    end
+
+    private def local_page_mount_helpers(content : String) : Hash(String, Tuple(Int32, Int32))
+      helpers = Hash(String, Tuple(Int32, Int32)).new
+
+      content.scan(/\b(?:public|protected|private)\s+(?:static\s+)?[A-Za-z0-9_<>\[\]\s?,.&]+\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*\{/) do |match|
+        method_name = match[1]
+        open_idx = (match.end(0) || 1) - 1
+        close_idx = find_matching_brace(content, open_idx)
+        next unless close_idx
+
+        param_names = method_parameter_names(match[2])
+        next if param_names.empty?
+
+        body = content[(open_idx + 1)...close_idx]
+        if indexes = mounted_mapper_param_indexes(body, param_names)
+          helpers[method_name] = indexes
+          next
+        end
+
+        if indexes = mount_page_param_indexes(body, param_names)
+          helpers[method_name] = indexes
+        end
+      end
+
+      helpers
+    end
+
+    private def method_parameter_names(parameters : String) : Array(String)
+      split_arguments(parameters).compact_map do |parameter|
+        normalized = parameter.strip.gsub(/\s+/, " ")
+        if match = normalized.match(/\b([A-Za-z_][A-Za-z0-9_]*)\s*(?:\[\])?\s*$/)
+          match[1]
+        end
+      end
+    end
+
+    private def mounted_mapper_param_indexes(body : String, param_names : Array(String)) : Tuple(Int32, Int32)?
+      body.scan(/\bnew\s+(?:[A-Za-z_][A-Za-z0-9_]*\.)*MountedMapper\s*\(/) do |match|
+        open_idx = (match.end(0) || 1) - 1
+        close_idx = find_matching_paren(body, open_idx)
+        next unless close_idx
+
+        arguments = split_arguments(body[(open_idx + 1)...close_idx])
+        next if arguments.size < 2
+
+        path_index = param_names.index(arguments[0].strip)
+        class_index = param_names.index(arguments[1].strip)
+        return {path_index, class_index} if path_index && class_index
+      end
+      nil
+    end
+
+    private def mount_page_param_indexes(body : String, param_names : Array(String)) : Tuple(Int32, Int32)?
+      body.scan(/\bmountPage\s*\(/) do |match|
+        open_idx = (match.end(0) || 1) - 1
+        close_idx = find_matching_paren(body, open_idx)
+        next unless close_idx
+
+        arguments = split_arguments(body[(open_idx + 1)...close_idx])
+        next if arguments.size < 2
+
+        path_index = param_names.index(arguments[0].strip)
+        class_index = param_names.index(arguments[1].strip)
+        return {path_index, class_index} if path_index && class_index
+      end
+      nil
+    end
+
     private def resolve_string_expression(expression : String,
                                           constants : Hash(String, String)) : String?
-      parts = expression.split('+').map(&.strip).reject(&.empty?)
+      parts = split_string_concat_parts(expression)
       return if parts.empty?
 
       values = parts.compact_map do |part|
@@ -398,6 +723,46 @@ module Analyzer::Java
       end
 
       values.size == parts.size ? values.join : nil
+    end
+
+    private def split_string_concat_parts(expression : String) : Array(String)
+      parts = [] of String
+      start = 0
+      depth = 0
+      in_string = false
+      escape = false
+
+      expression.each_char_with_index do |char, index|
+        if in_string
+          if escape
+            escape = false
+          elsif char == '\\'
+            escape = true
+          elsif char == '"'
+            in_string = false
+          end
+          next
+        end
+
+        case char
+        when '"'
+          in_string = true
+        when '(', '[', '{'
+          depth += 1
+        when ')', ']', '}'
+          depth -= 1 if depth > 0
+        when '+'
+          if depth.zero?
+            part = expression[start...index].strip
+            parts << part unless part.empty?
+            start = index + 1
+          end
+        end
+      end
+
+      tail = expression[start..]?.try(&.strip)
+      parts << tail if tail && !tail.empty?
+      parts
     end
 
     private def resolve_string_part(part : String, constants : Hash(String, String)) : String?
@@ -466,6 +831,40 @@ module Analyzer::Java
         when '('
           depth += 1
         when ')'
+          depth -= 1
+          return index if depth.zero?
+        end
+        index += 1
+      end
+      nil
+    end
+
+    private def find_matching_brace(code : String, open_idx : Int32) : Int32?
+      depth = 1
+      index = open_idx + 1
+      in_string = false
+      escape = false
+
+      while index < code.size
+        char = code[index]
+        if in_string
+          if escape
+            escape = false
+          elsif char == '\\'
+            escape = true
+          elsif char == '"'
+            in_string = false
+          end
+          index += 1
+          next
+        end
+
+        case char
+        when '"'
+          in_string = true
+        when '{'
+          depth += 1
+        when '}'
           depth -= 1
           return index if depth.zero?
         end
