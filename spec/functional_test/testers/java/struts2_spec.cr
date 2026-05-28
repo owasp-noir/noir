@@ -15,6 +15,10 @@ expected_endpoints = [
   Endpoint.new("/orders/orders", "POST"),
   Endpoint.new("/orders/orders/:id", "PUT", [Param.new("id", "", "path")]),
   Endpoint.new("/orders/orders/:id", "DELETE", [Param.new("id", "", "path")]),
+  Endpoint.new("/person/list-people", "ANY"),
+  Endpoint.new("/annotated/default-annotated", "ANY"),
+  Endpoint.new("/multi-a/multi-namespace", "ANY"),
+  Endpoint.new("/multi-b/multi-namespace", "ANY"),
 ]
 
 FunctionalTester.new("fixtures/java/struts2/", {

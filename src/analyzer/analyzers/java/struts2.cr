@@ -59,8 +59,9 @@ module Analyzer::Java
       getter body : String
       getter body_offset : Int32
       getter line : Int32
+      getter? abstract : Bool
 
-      def initialize(@name, @package_name, @annotations, @header, @body, @body_offset, @line)
+      def initialize(@name, @package_name, @annotations, @header, @body, @body_offset, @line, @abstract)
       end
     end
 
@@ -87,8 +88,10 @@ module Analyzer::Java
         File.exists?(path) && path.ends_with?(".java") && !JavaEngine.test_path?(path)
       end
 
+      package_annotations = package_annotations_for(java_files)
+
       java_files.each do |path|
-        analyze_java_file(path, convention_config)
+        analyze_java_file(path, convention_config, package_annotations)
       end
 
       Fiber.yield
@@ -218,40 +221,69 @@ module Analyzer::Java
       ""
     end
 
-    private def analyze_java_file(path : String, config : ConventionConfig)
+    private def package_annotations_for(java_files : Array(String)) : Hash(String, String)
+      package_annotations = Hash(String, String).new
+      java_files.each do |path|
+        next unless File.basename(path) == "package-info.java"
+
+        content = read_file_content(path)
+        package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name(content)
+        next if package_name.empty?
+
+        if package_index = content.index(/\bpackage\s+#{Regex.escape(package_name)}\s*;/)
+          annotations = annotations_before(content, package_index)
+          package_annotations[package_name] = annotations unless annotations.empty?
+        end
+      rescue e : Exception
+        @logger.debug "Failed to parse Struts package annotations #{path}: #{e.message}"
+      end
+      package_annotations
+    end
+
+    private def analyze_java_file(path : String,
+                                  config : ConventionConfig,
+                                  package_annotations : Hash(String, String))
       content = read_file_content(path)
       return unless struts_java_source?(content, config)
 
       package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name(content)
       classes_in(content, package_name).each do |klass|
-        class_namespace = annotation_value(klass.annotations, "Namespace") || convention_namespace(klass.package_name, config)
+        next if klass.abstract?
+
+        namespaces = namespace_values(klass.annotations)
+        namespaces = namespace_values(package_annotations[klass.package_name]? || "") if namespaces.empty?
+        namespaces = [convention_namespace(klass.package_name, config)] if namespaces.empty?
+
         class_actions = action_paths_from_annotations(klass.annotations)
         class_action_base = convention_action_name(klass.name, config)
         class_has_action_annotation = !class_actions.empty?
-
-        class_actions.each do |action_path|
-          add_route(resolve_action_path(action_path, class_namespace), "ANY", path, klass.line)
-        end
-
         methods = methods_in(klass.body, klass.body_offset, content)
-        methods.each do |method|
-          action_paths = action_paths_from_annotations(method.annotations)
-          next if action_paths.empty?
 
-          action_paths.each do |action_path|
+        namespaces.each do |class_namespace|
+          class_actions.each do |action_path|
             resolved = action_path.empty? ? join_paths(class_namespace, class_action_base) : resolve_action_path(action_path, class_namespace)
-            add_route(resolved, "ANY", path, method.line)
+            add_route(resolved, "ANY", path, klass.line)
           end
-        end
 
-        next if class_has_action_annotation || methods.any? { |method| !action_paths_from_annotations(method.annotations).empty? }
-        next unless convention_action_class?(klass, config)
+          methods.each do |method|
+            action_paths = action_paths_from_annotations(method.annotations)
+            next if action_paths.empty?
 
-        base_path = join_paths(class_namespace, class_action_base)
-        if rest_controller?(klass, config)
-          add_rest_routes(path, base_path, methods)
-        else
-          add_route(base_path, "ANY", path, klass.line)
+            action_paths.each do |action_path|
+              resolved = action_path.empty? ? join_paths(class_namespace, class_action_base) : resolve_action_path(action_path, class_namespace)
+              add_route(resolved, "ANY", path, method.line)
+            end
+          end
+
+          next if class_has_action_annotation || methods.any? { |method| !action_paths_from_annotations(method.annotations).empty? }
+          next unless convention_action_class?(klass, config, package_annotations[klass.package_name]? || "")
+
+          base_path = join_paths(class_namespace, class_action_base)
+          if rest_controller?(klass, config)
+            add_rest_routes(path, base_path, methods)
+          else
+            add_route(base_path, "ANY", path, klass.line)
+          end
         end
       end
     rescue e : Exception
@@ -268,16 +300,17 @@ module Analyzer::Java
 
     private def classes_in(content : String, package_name : String) : Array(JavaClass)
       classes = [] of JavaClass
-      scanner = /(?:^|\n)\s*(?:public\s+|protected\s+|private\s+|abstract\s+|final\s+|static\s+)*class\s+([A-Za-z_][A-Za-z0-9_]*)([^{]*)\{/m
+      scanner = /(?:^|\n)\s*((?:public\s+|protected\s+|private\s+|abstract\s+|final\s+|static\s+)*)class\s+([A-Za-z_][A-Za-z0-9_]*)([^{]*)\{/m
       content.scan(scanner) do |match|
-        class_name = match[1]
+        modifiers = match[1]
+        class_name = match[2]
         start_offset = match.begin(0)
         open_brace = match.end(0) - 1
         close_brace = matching_brace(content, open_brace)
         next unless close_brace
 
         annotations = annotations_before(content, start_offset)
-        header = match[2]
+        header = match[3]
         body = content[(open_brace + 1)...close_brace]
         classes << JavaClass.new(
           class_name,
@@ -286,7 +319,8 @@ module Analyzer::Java
           header,
           body,
           open_brace + 1,
-          line_number_for(content, start_offset)
+          line_number_for(content, start_offset),
+          modifiers.includes?("abstract")
         )
       end
       classes
@@ -352,6 +386,16 @@ module Analyzer::Java
       nil
     end
 
+    private def namespace_values(annotations : String) : Array(String)
+      namespaces = [] of String
+      each_annotation_args(annotations, "Namespace") do |args|
+        if value = string_annotation_value(args, "value")
+          namespaces << normalize_namespace(value)
+        end
+      end
+      namespaces.uniq
+    end
+
     private def each_annotation_args(text : String, name : String, &)
       offset = 0
       needle = "@#{name}"
@@ -399,11 +443,12 @@ module Analyzer::Java
       content.gsub(/\\(["\\])/, "\\1")
     end
 
-    private def convention_action_class?(klass : JavaClass, config : ConventionConfig) : Bool
+    private def convention_action_class?(klass : JavaClass, config : ConventionConfig, package_annotations : String) : Bool
       suffix_match = config.action_suffixes.any? { |suffix| klass.name.ends_with?(suffix) }
       action_type = klass.header.includes?("ActionSupport") || klass.header.includes?("Action")
       return false unless suffix_match || action_type
       return true if annotation_value(klass.annotations, "Namespace")
+      return true unless namespace_values(package_annotations).empty?
       return true if config.action_packages.any? { |pkg| klass.package_name == pkg || klass.package_name.starts_with?("#{pkg}.") }
 
       parts = klass.package_name.split(".")
