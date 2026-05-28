@@ -233,7 +233,7 @@ module Analyzer::Python
           end
 
           open_status = single_comment_open || double_comment_open || single_quote_open || double_quote_open
-          if clear_line[0..(indent_size - 1)].strip == "" || open_status
+          if clear_line[0..(indent_size - 1)].strip.empty? || open_status
             end_index += line.size + 1
           else
             break

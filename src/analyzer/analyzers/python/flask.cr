@@ -334,7 +334,7 @@ module Analyzer::Python
                   end
                 end
 
-                if !class_name.empty?
+                unless class_name.empty?
                   # Extract methods list
                   methods = [] of ::String
                   methods_match = args_str.match /methods=[\[\(](.*?)[\]\)]/m

@@ -67,7 +67,7 @@ module Analyzer::Elixir
           scope_prefix = current_scope_prefix(scope_stack)
           scope_module = current_scope_module(scope_stack)
           line_to_endpoint(line, path, scope_prefix, scope_module).each do |endpoint|
-            next if endpoint.method == ""
+            next if endpoint.method.empty?
             endpoint.details = Details.new(PathInfo.new(path, index + 1))
             endpoints << endpoint
           end

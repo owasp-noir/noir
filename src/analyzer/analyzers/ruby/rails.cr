@@ -941,7 +941,7 @@ module Analyzer::Ruby
 
           if hm = line.match(/request\.headers\[\s*['"]([^'"]+)['"]\s*\]/)
             name = hm[1].strip
-            if !name.empty? && this_method != ""
+            if !name.empty? && !this_method.empty?
               params_method[this_method] ||= [] of Param
               params_method[this_method] << Param.new(name, "", "header")
             end
@@ -949,7 +949,7 @@ module Analyzer::Ruby
 
           line.scan(/cookies(?:\.(?:signed|encrypted))?\[\s*(?::(\w+)|['"]([^'"]+)['"])\s*\]/) do |cm|
             name = (cm[1]? || cm[2]?).to_s.strip
-            next if name.empty? || this_method == ""
+            next if name.empty? || this_method.empty?
             params_method[this_method] ||= [] of Param
             params_method[this_method] << Param.new(name, "", "cookie")
           end

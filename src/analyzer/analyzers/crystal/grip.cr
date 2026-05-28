@@ -35,7 +35,7 @@ module Analyzer::Crystal
 
         # Parse HTTP method calls
         endpoint = line_to_endpoint(line, current_scopes)
-        if endpoint.method != ""
+        unless endpoint.method.empty?
           endpoint.details = details
           attach_route_callees(endpoint, line, actions) if include_callee
           endpoints << endpoint
@@ -44,15 +44,15 @@ module Analyzer::Crystal
 
         # Parse parameters
         param = line_to_param(line)
-        if param.name != ""
-          if last_endpoint.method != ""
+        unless param.name.empty?
+          unless last_endpoint.method.empty?
             last_endpoint.push_param(param)
           end
         end
 
         # Parse WebSocket routes
         ws_endpoint = line_to_websocket(line, current_scopes)
-        if ws_endpoint.url != ""
+        unless ws_endpoint.url.empty?
           ws_endpoint.details = details
           attach_websocket_callees(ws_endpoint, line, actions) if include_callee
           endpoints << ws_endpoint

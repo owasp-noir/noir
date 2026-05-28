@@ -56,7 +56,7 @@ module Analyzer::Crystal
                                 split[1].gsub("(", "").gsub(")", "").gsub(" ", "").gsub("\"", "").gsub("'", "")
                               end
 
-              if public_folder != ""
+              unless public_folder.empty?
                 @public_folders << public_folder
               end
             end
@@ -74,7 +74,7 @@ module Analyzer::Crystal
         end
 
         # Check for end that closes a namespace
-        if !namespace_stack.empty?
+        unless namespace_stack.empty?
           if end_match = line.match(/^(\s*)end\b/)
             end_indent = end_match[1].size
             if end_indent == namespace_stack.last[:indent]
@@ -86,12 +86,12 @@ module Analyzer::Crystal
 
         # Parse endpoint
         endpoint = line_to_endpoint(line)
-        if endpoint.method != ""
+        unless endpoint.method.empty?
           # Build full path with namespace prefixes and mount path
           route_path = endpoint.url
           full_path = route_path
 
-          if !namespace_stack.empty?
+          unless namespace_stack.empty?
             # Combine all namespace prefixes
             ns_prefix = ""
             namespace_stack.each do |ns|
@@ -116,9 +116,9 @@ module Analyzer::Crystal
 
         # Parse params
         param = line_to_param(line)
-        if param.name != ""
+        unless param.name.empty?
           if le = last_endpoint
-            if le.method != ""
+            unless le.method.empty?
               le.push_param(param)
             end
           end

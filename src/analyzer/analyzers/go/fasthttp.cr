@@ -82,7 +82,7 @@ module Analyzer::Go
 
                 params = analyze_param_line(line)
                 params.each do |param|
-                  if param.name.size > 0 && last_endpoint.method != ""
+                  if param.name.size > 0 && !last_endpoint.method.empty?
                     unless last_endpoint.params.any? { |p| p.name == param.name && p.param_type == param.param_type }
                       last_endpoint.params << param
                     end

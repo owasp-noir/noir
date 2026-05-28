@@ -553,7 +553,7 @@ module Analyzer::CSharp
             candidate_line = lines[search_index]
             if candidate_line.includes?("[Route")
               route = extract_attribute_route(candidate_line, "Route", "")
-              return route if route != ""
+              return route unless route.empty?
             end
             search_index -= 1
           end

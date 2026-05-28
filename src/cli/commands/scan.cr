@@ -187,7 +187,7 @@ module Noir::CLI::ScanCommand
     provider = options["ai_provider"].to_s
     return false if provider.empty?
 
-    options["ai_model"].to_s != "" || provider.downcase.starts_with?("acp:")
+    !options["ai_model"].to_s.empty? || provider.downcase.starts_with?("acp:")
   end
 
   private def self.run_scan(noir_options : Hash(String, YAML::Any))
@@ -207,7 +207,7 @@ module Noir::CLI::ScanCommand
     end
 
     app_diff = nil
-    if noir_options["diff"] != ""
+    unless noir_options["diff"].to_s.empty?
       diff_path = noir_options["diff"].to_s
       # Validate the diff target exists — without this, a misspelled
       # `--diff-path` silently treats every current endpoint as
@@ -258,7 +258,7 @@ module Noir::CLI::ScanCommand
       app.logger.warning "No technologies detected."
       app.logger.sub "➔ If you know the technology, use the -t flag to specify it."
       app.logger.sub "➔ Browse the supported tech list with `noir list techs`."
-      if app.options["url"] != ""
+      if !app.options["url"].to_s.empty?
         app.logger.info "Falling back to file-based analysis because -u was set."
       elsif ai_provider_active?(app.options)
         app.logger.info "Falling back to AI-based analysis because --ai-provider was set."

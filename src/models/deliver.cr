@@ -53,7 +53,7 @@ class Deliver
       @matchers << matcher.to_s
     end
     @matchers.delete("")
-    if !@matchers.empty?
+    unless @matchers.empty?
       @logger.info "#{@matchers.size} matchers added."
     end
 
@@ -61,7 +61,7 @@ class Deliver
       @filters << filter.to_s
     end
     @filters.delete("")
-    if !@filters.empty?
+    unless @filters.empty?
       @logger.info "#{@filters.size} filters added."
     end
   end
@@ -71,12 +71,12 @@ class Deliver
     @logger.debug "Matchers: #{@matchers}"
     @logger.debug "Filters: #{@filters}"
 
-    if !@matchers.empty?
+    unless @matchers.empty?
       @logger.info "Applying matchers"
       result = apply_matchers(result)
     end
 
-    if !@filters.empty?
+    unless @filters.empty?
       @logger.info "Applying filters"
       result = apply_filters(result)
     end

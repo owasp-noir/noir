@@ -135,7 +135,7 @@ module Analyzer::Go
     # --- Adapter helpers (shared across Go framework adapters) ----------
 
     def add_param_to_endpoint(param : Param, endpoint : Endpoint)
-      if param.name.size > 0 && endpoint.method != "" && endpoint.url != ""
+      if param.name.size > 0 && !endpoint.method.empty? && !endpoint.url.empty?
         endpoint.params << param
       end
     end

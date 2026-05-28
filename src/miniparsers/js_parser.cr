@@ -1094,7 +1094,7 @@ module Noir
           options_idx += 1
         end
 
-        if !prefix.empty?
+        unless prefix.empty?
           # Look ahead for potential routes within the registered module
           ahead_idx = options_idx + 3 # Skip past the closing brace
           while ahead_idx < @tokens.size - 3

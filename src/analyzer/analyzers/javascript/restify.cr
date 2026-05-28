@@ -155,7 +155,7 @@ module Analyzer::Javascript
         file_content.each_line.with_index do |line, index|
           endpoint = line_to_endpoint(line, server_var_names, router_var_names)
 
-          if endpoint.method != ""
+          unless endpoint.method.empty?
             # Store the variable this endpoint is associated with
             endpoint_var = extract_endpoint_var(line)
 
@@ -163,7 +163,7 @@ module Analyzer::Javascript
             if !endpoint_var.empty? && router_base_paths.has_key?(endpoint_var)
               base_path = router_base_paths[endpoint_var]
               # Ensure proper path joining
-              if !base_path.empty?
+              unless base_path.empty?
                 if endpoint.url.starts_with?("/") && base_path.ends_with?("/")
                   endpoint.url = "#{base_path[0..-2]}#{endpoint.url}"
                 elsif !endpoint.url.starts_with?("/") && !base_path.ends_with?("/")
@@ -197,10 +197,8 @@ module Analyzer::Javascript
 
           # Get parameters from line
           param = line_to_param(line)
-          if param.name != ""
-            if last_endpoint.method != ""
-              last_endpoint.push_param(param)
-            end
+          unless param.name.empty? || last_endpoint.method.empty?
+            last_endpoint.push_param(param)
           end
         end
 
@@ -325,17 +323,17 @@ module Analyzer::Javascript
                 method_normalized = method == "del" ? "DELETE" : method.upcase
 
                 # Create full path with prefix if applicable
-                full_path = if !prefix.empty?
-                              if route_path.starts_with?("/") && prefix.ends_with?("/")
-                                "#{prefix[0..-2]}#{route_path}"
-                              elsif !route_path.starts_with?("/") && !prefix.ends_with?("/")
-                                "#{prefix}/#{route_path}"
-                              else
-                                "#{prefix}#{route_path}"
-                              end
-                            else
-                              route_path
-                            end
+                full_path = unless prefix.empty?
+                  if route_path.starts_with?("/") && prefix.ends_with?("/")
+                    "#{prefix[0..-2]}#{route_path}"
+                  elsif !route_path.starts_with?("/") && !prefix.ends_with?("/")
+                    "#{prefix}/#{route_path}"
+                  else
+                    "#{prefix}#{route_path}"
+                  end
+                else
+                  route_path
+                end
 
                 # Create endpoint and add to results
                 endpoint = Endpoint.new(full_path, method_normalized)
@@ -379,17 +377,17 @@ module Analyzer::Javascript
               method_normalized = method == "del" ? "DELETE" : method.upcase
 
               # Create full path with prefix if applicable
-              full_path = if !prefix.empty?
-                            if route_path.starts_with?("/") && prefix.ends_with?("/")
-                              "#{prefix[0..-2]}#{route_path}"
-                            elsif !route_path.starts_with?("/") && !prefix.ends_with?("/")
-                              "#{prefix}/#{route_path}"
-                            else
-                              "#{prefix}#{route_path}"
-                            end
-                          else
-                            route_path
-                          end
+              full_path = unless prefix.empty?
+                if route_path.starts_with?("/") && prefix.ends_with?("/")
+                  "#{prefix[0..-2]}#{route_path}"
+                elsif !route_path.starts_with?("/") && !prefix.ends_with?("/")
+                  "#{prefix}/#{route_path}"
+                else
+                  "#{prefix}#{route_path}"
+                end
+              else
+                route_path
+              end
 
               # Create endpoint and add to results
               endpoint = Endpoint.new(full_path, method_normalized)

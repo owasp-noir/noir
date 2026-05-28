@@ -238,7 +238,7 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
   logger.info "Analysis Started"
   logger.sub "➔ Code Analyzer: #{techs.size} in use"
 
-  if (options["ai_provider"] != "") && ((options["ai_model"] != "") || LLM::ACPClient.acp_provider?(options["ai_provider"].to_s))
+  if (!options["ai_provider"].to_s.empty?) && ((!options["ai_model"].to_s.empty?) || LLM::ACPClient.acp_provider?(options["ai_provider"].to_s))
     provider = options["ai_provider"].to_s
     raw_model = options["ai_model"].to_s
     model = if LLM::ACPClient.acp_provider?(provider)
@@ -276,7 +276,7 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
     end
   end
 
-  if options["url"] != ""
+  unless options["url"].to_s.empty?
     logger.sub "➔ File-based Analyzer: #{file_analyzer.hooks_count} hook#{'s' unless file_analyzer.hooks_count == 1} in use"
     result = result + file_analyzer.analyze
   end

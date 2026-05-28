@@ -146,7 +146,7 @@ class NoirRunner
     @endpoints = optimizer.optimize(@endpoints)
 
     # Set status code
-    if any_to_bool(@options["status_codes"]) || @options["exclude_codes"].to_s != ""
+    if any_to_bool(@options["status_codes"]) || !@options["exclude_codes"].to_s.empty?
       update_status_codes
     end
 
@@ -159,7 +159,7 @@ class NoirRunner
           @logger.debug "Tagger: #{tagger}"
         end
       end
-    elsif @options["use_taggers"] != ""
+    elsif !@options["use_taggers"].to_s.empty?
       @logger.success "Running #{@options["use_taggers"]} taggers."
       NoirTaggers.run_tagger @endpoints, @options, @options["use_taggers"].to_s
     elsif ai_context_enabled?
@@ -198,7 +198,7 @@ class NoirRunner
     final = [] of Endpoint
 
     exclude_codes = [] of Int32
-    if @options["exclude_codes"].to_s != ""
+    unless @options["exclude_codes"].to_s.empty?
       @options["exclude_codes"].to_s.split(",").each do |code|
         exclude_codes << code.strip.to_i
       end
@@ -206,15 +206,15 @@ class NoirRunner
 
     @endpoints.each do |endpoint|
       begin
-        if !endpoint.params.empty?
+        unless endpoint.params.empty?
           endpoint_hash = endpoint.params_to_hash
           is_json = false
-          body = if !endpoint_hash["json"].empty?
-                   is_json = true
-                   endpoint_hash["json"]
-                 else
-                   endpoint_hash["form"]
-                 end
+          body = unless endpoint_hash["json"].empty?
+            is_json = true
+            endpoint_hash["json"]
+          else
+            endpoint_hash["form"]
+          end
 
           response = perform_request(
             get_symbol(endpoint.method),
@@ -282,7 +282,7 @@ class NoirRunner
   end
 
   def deliver
-    if @probe_via != ""
+    unless @probe_via.empty?
       @logger.info "Probing endpoints through proxy #{@probe_via}."
       deliver = SendWithProxy.new(@options)
       deliver.run(@endpoints)
@@ -294,13 +294,13 @@ class NoirRunner
       deliver.run(@endpoints)
     end
 
-    if @export_es != ""
+    unless @export_es.empty?
       @logger.info "Exporting endpoints to Elasticsearch."
       deliver = SendElasticSearch.new(@options)
       deliver.run(@endpoints, @export_es)
     end
 
-    if @export_webhook != ""
+    unless @export_webhook.empty?
       @logger.info "Exporting endpoints to webhook #{@export_webhook}."
       deliver = SendWebhook.new(@options)
       deliver.run(@endpoints, @export_webhook)
@@ -393,7 +393,7 @@ class NoirRunner
   end
 
   def print_passive_results
-    if !@passive_results.empty?
+    unless @passive_results.empty?
       @logger.puts ""
       @logger.heading "Passive Results:"
       builder = OutputBuilderPassiveScan.new @options

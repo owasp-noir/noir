@@ -35,7 +35,7 @@ module Analyzer::Specification
         path = node["url"].as_s
         method = node["method"].as_s.upcase || "GET"
 
-        if path != ""
+        if !path.empty?
           uri = URI.parse(path)
           params = [] of Param
           if node.as_h.has_key?("data")

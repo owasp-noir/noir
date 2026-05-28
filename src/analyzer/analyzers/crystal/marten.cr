@@ -23,7 +23,7 @@ module Analyzer::Crystal
       lines.each_with_index do |line, index|
         # Parse route definitions
         endpoint = line_to_endpoint(line)
-        if endpoint.method != ""
+        unless endpoint.method.empty?
           details = Details.new(PathInfo.new(path, index + 1))
           endpoint.details = details
           attach_route_callees(endpoint, line) if include_callee?
@@ -33,8 +33,8 @@ module Analyzer::Crystal
 
         # Parse parameter usage
         param = line_to_param(line)
-        if param.name != ""
-          if last_endpoint.method != ""
+        unless param.name.empty?
+          unless last_endpoint.method.empty?
             last_endpoint.push_param(param)
           end
         end

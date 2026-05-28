@@ -9,7 +9,7 @@ class OutputBuilderCurl < OutputBuilder
       # Properly quote and escape the URL
       cmd = "curl -i -X '#{escape_shell(endpoint.method)}' '#{escape_shell(baked[:url])}'"
 
-      if baked[:body] != ""
+      unless baked[:body].empty?
         if baked[:body_type] == "json"
           # For JSON, use single quotes to avoid shell interpolation issues
           cmd += " -d '#{escape_shell(baked[:body])}'"

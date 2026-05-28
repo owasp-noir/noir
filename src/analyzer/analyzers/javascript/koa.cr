@@ -165,7 +165,7 @@ module Analyzer::Javascript
           end
 
           full_path = File.join(current_prefix, route_path)
-          full_path = "/" if full_path == "" # Handle empty path case
+          full_path = "/" if full_path.empty? # Handle empty path case
           full_path = "/#{full_path}" unless full_path.starts_with?('/')
 
           endpoint = Endpoint.new(full_path, http_method)

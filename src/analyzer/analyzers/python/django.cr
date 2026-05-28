@@ -182,7 +182,7 @@ module Analyzer::Python
             end
           end
 
-          if view == ""
+          if view.empty?
             endpoints << Endpoint.new(url, "GET", Details.new(route_path))
           else
             view = extract_wrapped_view_reference(view)
@@ -202,7 +202,7 @@ module Analyzer::Python
               end
             end
 
-            if filepath != "" && /^[a-zA-Z_][a-zA-Z0-9_]*$/.match(function_or_class_name)
+            if !filepath.empty? && /^[a-zA-Z_][a-zA-Z0-9_]*$/.match(function_or_class_name)
               extract_endpoints_from_file(url, filepath, function_or_class_name).each do |endpoint|
                 append_code_path(endpoint.details, route_path)
                 endpoints << endpoint
@@ -534,7 +534,7 @@ module Analyzer::Python
         end
 
         url = join_url_parts(django_urls.prefix, mount_route, route)
-        if view == ""
+        if view.empty?
           endpoints << Endpoint.new(url, "GET", Details.new(route_path))
           next
         end
@@ -1156,7 +1156,7 @@ module Analyzer::Python
     end
 
     private def ensure_trailing_slash(path : ::String) : ::String
-      return "/" if path == ""
+      return "/" if path.empty?
       path.ends_with?("/") ? path : "#{path}/"
     end
 
