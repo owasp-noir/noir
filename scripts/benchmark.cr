@@ -96,13 +96,19 @@ def measure_run(binary : String, args : Array(String)) : Float64
   (end_time - start_time).to_f
 end
 
-def run_benchmarks(global_bin : String, local_bin : String)
+def run_benchmarks(global_bin : String, local_bin : String, extra_args : Array(String))
   global_times = [] of Float64
   local_times = [] of Float64
 
+  scan_args = ["scan", BENCHMARK_DIR] + extra_args
+
+  unless extra_args.empty?
+    puts "Forwarding extra scan arguments: #{extra_args.join(" ")}"
+  end
+
   puts "\nWarming up cache (performing 1 unrecorded run)..."
-  measure_run(global_bin, ["scan", BENCHMARK_DIR])
-  measure_run(local_bin, ["scan", BENCHMARK_DIR])
+  measure_run(global_bin, scan_args)
+  measure_run(local_bin, scan_args)
 
   puts "Running benchmarks (performing #{RUNS} runs for each)..."
 
@@ -111,13 +117,13 @@ def run_benchmarks(global_bin : String, local_bin : String)
 
     # Global binary
     print "  Global (noir)... "
-    t_global = measure_run(global_bin, ["scan", BENCHMARK_DIR])
+    t_global = measure_run(global_bin, scan_args)
     global_times << t_global
     puts "#{t_global.round(4)}s"
 
     # Local binary
     print "  Local (./bin/noir)... "
-    t_local = measure_run(local_bin, ["scan", BENCHMARK_DIR])
+    t_local = measure_run(local_bin, scan_args)
     local_times << t_local
     puts "#{t_local.round(4)}s"
   end
@@ -173,7 +179,7 @@ end
 
 begin
   generate_mock_codebase
-  run_benchmarks(global_bin, local_bin)
+  run_benchmarks(global_bin, local_bin, ARGV)
 ensure
   cleanup_mock_codebase
 end

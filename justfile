@@ -5,6 +5,7 @@ alias dsup := docs-supported
 alias vc := version-check
 alias vu := version-update
 alias bm := benchmark
+alias bmf := benchmark-full
 
 # List available tasks.
 default:
@@ -104,4 +105,10 @@ version-update VERSION="":
 [group('development')]
 benchmark: build-release
     crystal run scripts/benchmark.cr
+
+# Run full benchmarks with multiple analysis flags (--include=path,techs,callee --ai-context -T).
+[group('development')]
+benchmark-full: build-release
+    crystal run scripts/benchmark.cr -- --include=path,techs,callee --ai-context -T
+
 
