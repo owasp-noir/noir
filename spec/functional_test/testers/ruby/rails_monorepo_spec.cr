@@ -15,6 +15,7 @@ expected_endpoints = [
     Param.new("context", "", "json"),
   ]),
   Endpoint.new("/posts/1", "PUT"),
+  Endpoint.new("/posts/1", "PATCH"),
   Endpoint.new("/posts/1", "DELETE"),
   Endpoint.new("/up", "GET"),
 ]

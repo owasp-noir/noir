@@ -819,6 +819,7 @@ module Analyzer::Ruby
           methods << "POST"
         when "update"
           methods << "PUT"
+          methods << "PATCH"
         when "destroy"
           methods << "DELETE"
         end
