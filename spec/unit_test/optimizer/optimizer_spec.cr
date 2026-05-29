@@ -54,6 +54,16 @@ describe "EndpointOptimizer" do
       result[1].url.should eq("/api/data")
     end
 
+    it "does not corrupt absolute URLs while normalizing slashes" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("https://api.example.com/v1/users", "GET"),
+      ]
+
+      result = optimizer.optimize_endpoints(endpoints)
+      result[0].url.should eq("https://api.example.com/v1/users")
+    end
+
     it "strips Spring inline regex constraints from path variables" do
       optimizer = EndpointOptimizer.new(logger, options)
       endpoints = [
