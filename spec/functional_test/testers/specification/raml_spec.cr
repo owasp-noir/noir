@@ -41,3 +41,49 @@ FunctionalTester.new("fixtures/specification/raml_nested/", {
   :techs     => 1,
   :endpoints => nested_endpoints.size,
 }, nested_endpoints).perform_tests
+
+advanced_endpoints = [
+  Endpoint.new("/api/{version}/users", "GET", [
+    Param.new("Authorization", "", "header"),
+    Param.new("page", "", "query"),
+    Param.new("per_page", "", "query"),
+    Param.new("version", "", "path"),
+  ]),
+  Endpoint.new("/api/{version}/users", "POST", [
+    Param.new("Authorization", "", "header"),
+    Param.new("name", "", "json"),
+    Param.new("email", "", "json"),
+    Param.new("version", "", "path"),
+  ]),
+  Endpoint.new("/api/{version}/users/{userId}", "GET", [
+    Param.new("Authorization", "", "header"),
+    Param.new("version", "", "path"),
+    Param.new("userId", "", "path"),
+  ]),
+  Endpoint.new("/api/{version}/users/{userId}", "PUT", [
+    Param.new("Authorization", "", "header"),
+    Param.new("name", "", "json"),
+    Param.new("status", "", "json"),
+    Param.new("version", "", "path"),
+    Param.new("userId", "", "path"),
+  ]),
+  Endpoint.new("/api/{version}/users/{userId}", "DELETE", [
+    Param.new("Authorization", "", "header"),
+    Param.new("version", "", "path"),
+    Param.new("userId", "", "path"),
+  ]),
+  Endpoint.new("/api/{version}/users/search", "GET", [
+    Param.new("q", "", "query"),
+    Param.new("version", "", "path"),
+  ]),
+  Endpoint.new("/api/{version}/reports", "GET", [
+    Param.new("from", "", "query"),
+    Param.new("to", "", "query"),
+    Param.new("version", "", "path"),
+  ]),
+]
+
+FunctionalTester.new("fixtures/specification/raml_advanced/", {
+  :techs     => 1,
+  :endpoints => advanced_endpoints.size,
+}, advanced_endpoints).perform_tests
