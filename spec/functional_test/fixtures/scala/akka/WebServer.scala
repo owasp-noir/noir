@@ -94,6 +94,24 @@ object WebServer {
               complete(s"Search results for: $query")
             }
           }
+        },
+        pathPrefix("orders") {
+          pathEndOrSingleSlash {
+            get(complete("orders")) ~
+            (post & entity(as[Item])) { item =>
+              complete(s"Created order: ${item.name}")
+            }
+          } ~
+          pathPrefix(JavaUUID) { orderId =>
+            pathSingleSlash {
+              delete(complete(s"Deleted order $orderId"))
+            } ~
+            (get & path("price")) {
+              parameter('currency) { currency =>
+                complete(s"Price for $orderId in $currency")
+              }
+            }
+          }
         }
       )
 

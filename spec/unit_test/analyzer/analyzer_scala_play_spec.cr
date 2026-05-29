@@ -62,4 +62,50 @@ describe "scala play analyzer" do
     Dir.delete(conf_dir) if conf_dir && Dir.exists?(conf_dir)
     Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
   end
+
+  it "resolves included routes relative to the including routes file" do
+    options = create_test_options
+
+    temp_dir = File.tempname("scala_play_multi_module_test")
+    module_a_conf = File.join(temp_dir, "module-a", "conf")
+    module_b_conf = File.join(temp_dir, "module-b", "conf")
+    Dir.mkdir_p(module_a_conf)
+    Dir.mkdir_p(module_b_conf)
+
+    a_routes = File.join(module_a_conf, "routes")
+    a_admin_routes = File.join(module_a_conf, "admin.routes")
+    b_routes = File.join(module_b_conf, "routes")
+    b_admin_routes = File.join(module_b_conf, "admin.routes")
+
+    File.write(a_routes, "-> /admin admin.Routes\n")
+    File.write(a_admin_routes, "GET /a controllers.Admin.a\n")
+    File.write(b_routes, "-> /admin admin.Routes\n")
+    File.write(b_admin_routes, "GET /b controllers.Admin.b\n")
+
+    CodeLocator.instance.clear_all
+    CodeLocator.instance.register_file(a_routes, File.read(a_routes))
+    CodeLocator.instance.register_file(a_admin_routes, File.read(a_admin_routes))
+    CodeLocator.instance.register_file(b_routes, File.read(b_routes))
+    CodeLocator.instance.register_file(b_admin_routes, File.read(b_admin_routes))
+
+    options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+    endpoints = Analyzer::Scala::Play.new(options).analyze
+
+    endpoints.map(&.url).should contain("/admin/a")
+    endpoints.map(&.url).should contain("/admin/b")
+    endpoints.map(&.url).should_not contain("/a")
+    endpoints.map(&.url).should_not contain("/b")
+  ensure
+    CodeLocator.instance.clear_all
+    [a_routes, a_admin_routes, b_routes, b_admin_routes].each do |path|
+      File.delete(path) if path && File.exists?(path)
+    end
+    Dir.delete(module_a_conf) if module_a_conf && Dir.exists?(module_a_conf)
+    Dir.delete(module_b_conf) if module_b_conf && Dir.exists?(module_b_conf)
+    module_a = temp_dir ? File.join(temp_dir, "module-a") : nil
+    module_b = temp_dir ? File.join(temp_dir, "module-b") : nil
+    Dir.delete(module_a) if module_a && Dir.exists?(module_a)
+    Dir.delete(module_b) if module_b && Dir.exists?(module_b)
+    Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
+  end
 end

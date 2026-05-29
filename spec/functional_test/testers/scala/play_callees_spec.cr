@@ -14,7 +14,7 @@ post_data.push_callee(Callee.new("Json.toJson"))
 
 FunctionalTester.new("fixtures/scala/play/", {
   :techs     => 1,
-  :endpoints => 17,
+  :endpoints => 19,
 }, [index, protected_endpoint, post_data], {
   "include_callee" => YAML::Any.new(true),
 }).perform_tests

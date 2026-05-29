@@ -21,3 +21,5 @@ GET /assets/*file controllers.Assets.at(path="/public", file)
 POST /multipart controllers.MissingController.multipart
 POST /xml controllers.MissingController.xml
 POST /whitespace controllers.MissingController.whitespace
+
+-> /admin admin.Routes
