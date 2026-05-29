@@ -40,4 +40,23 @@ namespace "/api" do
   post("/widgets") do
     request.env["HTTP_X_TRACE_ID"]
   end
+
+  route :get, :post, "/route_widgets" do
+    params.fetch(:token)
+  end
+
+  route :get, "/verb_named/:post" do
+    params[:id]
+  end
+end
+
+namespace "/v2" {
+  get "/widgets" do
+    params.fetch("cursor")
+  end
+}
+
+def helper_noise
+  params[:should_not_attach]
+  request.env["HTTP_SHOULD_NOT_ATTACH"]
 end
