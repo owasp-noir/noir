@@ -242,7 +242,9 @@ class EndpointOptimizer
     tmp = [] of Endpoint
     target_url = @options["url"].to_s
 
-    unless target_url.empty?
+    if target_url.empty?
+      endpoints
+    else
       @logger.sub "➔ Combining url and endpoints."
       @logger.debug_sub " + Before size: #{endpoints.size}"
 
@@ -267,8 +269,6 @@ class EndpointOptimizer
 
       @logger.debug_sub " + After size: #{tmp.size}"
       tmp
-    else
-      endpoints
     end
   end
 

@@ -206,15 +206,24 @@ class NoirRunner
 
     @endpoints.each do |endpoint|
       begin
-        unless endpoint.params.empty?
+        if endpoint.params.empty?
+          response = perform_request(
+            get_symbol(endpoint.method),
+            endpoint.url
+          )
+          endpoint.details.status_code = response.status_code
+          unless exclude_codes.includes?(response.status_code)
+            final << endpoint
+          end
+        else
           endpoint_hash = endpoint.params_to_hash
           is_json = false
-          body = unless endpoint_hash["json"].empty?
-            is_json = true
-            endpoint_hash["json"]
-          else
-            endpoint_hash["form"]
-          end
+          body = if endpoint_hash["json"].empty?
+                   endpoint_hash["form"]
+                 else
+                   is_json = true
+                   endpoint_hash["json"]
+                 end
 
           response = perform_request(
             get_symbol(endpoint.method),
@@ -222,15 +231,6 @@ class NoirRunner
             endpoint_hash["query"],
             body,
             is_json
-          )
-          endpoint.details.status_code = response.status_code
-          unless exclude_codes.includes?(response.status_code)
-            final << endpoint
-          end
-        else
-          response = perform_request(
-            get_symbol(endpoint.method),
-            endpoint.url
           )
           endpoint.details.status_code = response.status_code
           unless exclude_codes.includes?(response.status_code)

@@ -334,24 +334,7 @@ module Analyzer::Python
                   end
                 end
 
-                unless class_name.empty?
-                  # Extract methods list
-                  methods = [] of ::String
-                  methods_match = args_str.match /methods=[\[\(](.*?)[\]\)]/m
-                  if methods_match
-                    methods_str = methods_match[1]
-                    methods_str.scan(/['"]([A-Z]+)['"]/) do |method_match|
-                      methods << method_match[1]
-                    end
-                  end
-
-                  # Store class view registration
-                  class_view_info = Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String)).new(
-                    line_index, path, route_path, class_name, view_name, methods
-                  )
-                  @class_views[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String))
-                  @class_views[router_name] << class_view_info
-                else
+                if class_name.empty?
                   # Function-view registration:
                   #   app.add_url_rule("/x", "name", view_func=fn)
                   #   app.add_url_rule("/x", "name", view_func=fn, methods=["GET", "POST"])
@@ -412,6 +395,23 @@ module Analyzer::Python
 
                     result << endpoint
                   end
+                else
+                  # Extract methods list
+                  methods = [] of ::String
+                  methods_match = args_str.match /methods=[\[\(](.*?)[\]\)]/m
+                  if methods_match
+                    methods_str = methods_match[1]
+                    methods_str.scan(/['"]([A-Z]+)['"]/) do |method_match|
+                      methods << method_match[1]
+                    end
+                  end
+
+                  # Store class view registration
+                  class_view_info = Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String)).new(
+                    line_index, path, route_path, class_name, view_name, methods
+                  )
+                  @class_views[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String))
+                  @class_views[router_name] << class_view_info
                 end
               end
             end
