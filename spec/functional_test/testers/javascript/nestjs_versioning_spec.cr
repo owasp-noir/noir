@@ -12,8 +12,10 @@ expected_endpoints = [
     Param.new("body", "", "body"),
   ]),
   Endpoint.new("/health", "GET"),
+  Endpoint.new("/v2/dogs/override", "GET"),
 ]
 
 FunctionalTester.new("fixtures/javascript/nestjs_versioning/", {
-  :techs => 1,
+  :techs     => 1,
+  :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests

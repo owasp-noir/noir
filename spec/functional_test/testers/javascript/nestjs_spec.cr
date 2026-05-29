@@ -25,6 +25,20 @@ expected_endpoints = [
   Endpoint.new("/protected", "GET", [
     Param.new("authorization", "", "header"),
   ]),
+  # Decorators between the route decorator and method should not hide
+  # method params or request-object usage.
+  Endpoint.new("/admin/reports/:id", "GET", [
+    Param.new("id", "", "path"),
+    Param.new("include", "", "query"),
+    Param.new("x-token", "", "header"),
+  ]),
+  # FileInterceptor field names are the actual upload body surface.
+  Endpoint.new("/admin/upload", "POST", [
+    Param.new("avatar", "", "body"),
+    Param.new("file", "", "body"),
+  ]),
+  # Method-level URI versioning.
+  Endpoint.new("/v2/admin/versioned", "GET"),
 ]
 
 FunctionalTester.new("fixtures/javascript/nestjs/", {

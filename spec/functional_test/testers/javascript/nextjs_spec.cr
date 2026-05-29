@@ -46,6 +46,32 @@ expected_endpoints = [
     Param.new("password", "", "body"),
   ]),
 
+  # ---- Pages Router: switch(req.method) inference ----
+  Endpoint.new("/api/switch", "GET", [
+    Param.new("cursor", "", "query"),
+    Param.new("id", "", "body"),
+  ]),
+  Endpoint.new("/api/switch", "DELETE", [
+    Param.new("cursor", "", "query"),
+    Param.new("id", "", "body"),
+  ]),
+  # ---- Pages Router: unrelated HTTP-like switch cases should not suppress fallback methods ----
+  Endpoint.new("/api/unrelated-switch", "GET", [
+    Param.new("type", "", "query"),
+  ]),
+  Endpoint.new("/api/unrelated-switch", "POST", [
+    Param.new("type", "", "query"),
+  ]),
+  Endpoint.new("/api/unrelated-switch", "PUT", [
+    Param.new("type", "", "query"),
+  ]),
+  Endpoint.new("/api/unrelated-switch", "DELETE", [
+    Param.new("type", "", "query"),
+  ]),
+  Endpoint.new("/api/unrelated-switch", "PATCH", [
+    Param.new("type", "", "query"),
+  ]),
+
   # ---- App Router: /api/products (named GET + POST exports) ----
   Endpoint.new("/api/products", "GET", [
     Param.new("q", "", "query"),
@@ -81,6 +107,15 @@ expected_endpoints = [
     Param.new("file", "", "form"),
     Param.new("description", "", "form"),
   ]),
+  # ---- App Router: aliased form/cookie helpers and headers() ----
+  Endpoint.new("/api/profile", "POST", [
+    Param.new("avatar", "", "form"),
+    Param.new("session", "", "cookie"),
+    Param.new("x-forwarded-for", "", "header"),
+  ]),
+  # ---- App Router: commented method exports do not emit routes ----
+  Endpoint.new("/api/commented", "POST"),
+
   # ---- App Router: method-local params in the same route.ts ----
   Endpoint.new("/api/scoped", "GET", [
     Param.new("q", "", "query"),

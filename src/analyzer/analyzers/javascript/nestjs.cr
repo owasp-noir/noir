@@ -32,6 +32,7 @@ module Analyzer::Javascript
       global_prefix_mutex = Mutex.new
 
       parallel_file_scan(extensions) do |path|
+        next if ignored_nest_path?(path)
         analyze_nestjs_file(path, result, static_dirs, include_callee, global_prefix_holder, global_prefix_mutex)
       end
 
@@ -43,6 +44,12 @@ module Analyzer::Javascript
       apply_global_prefix(result, global_prefix_holder.first?)
 
       result
+    end
+
+    private def ignored_nest_path?(path : String) : Bool
+      path.includes?(".test.") || path.includes?(".spec.") ||
+        path.includes?("/__tests__/") || path.includes?("/__mocks__/") ||
+        path.includes?("/test/fixtures/") || path.includes?("/tests/fixtures/")
     end
 
     # Prepend the discovered `app.setGlobalPrefix('api')` value to
@@ -263,12 +270,7 @@ module Analyzer::Javascript
         # `/v1/cats/...`. Header/Media-Type versioning leaves the URL
         # untouched — we conservatively emit the v-prefixed variant
         # since URI is the most common shape in OSS Nest apps.
-        versions = controller_info[:versions]
-        if !versions.empty?
-          base_paths = expand_versions(base_paths, versions)
-        end
-
-        process_http_methods(controller_content, base_paths, path, result, include_callee, controller_start_line, literal_values)
+        process_http_methods(controller_content, base_paths, controller_info[:versions], path, result, include_callee, controller_start_line, literal_values)
       end
     end
 
@@ -572,7 +574,7 @@ module Analyzer::Javascript
       parts.reject(&.empty?)
     end
 
-    private def process_http_methods(class_content : String, base_paths : Array(String), file_path : String, result : Array(Endpoint), include_callee : Bool, controller_start_line : Int32, literal_values : Hash(String, Array(String)))
+    private def process_http_methods(class_content : String, base_paths : Array(String), controller_versions : Array(String), file_path : String, result : Array(Endpoint), include_callee : Bool, controller_start_line : Int32, literal_values : Hash(String, Array(String)))
       method_map = {
         "Get"     => ["GET"],
         "Post"    => ["POST"],
@@ -603,13 +605,24 @@ module Analyzer::Javascript
 
         route_paths = literal_paths_from_expression(class_content[(open_paren + 1)...close_paren].strip, literal_values)
         next unless route_paths
+        signature = method_signature_after_decorators(class_content, close_paren + 1)
+        next unless signature
+
+        decorator_block_start = method_decorator_block_start(class_content, decorator_start)
+        decorator_block = class_content[decorator_block_start...signature[:start_pos]]
+        method_versions = parse_method_versions(decorator_block)
+        effective_base_paths = if method_versions.empty?
+                                 controller_versions.empty? ? base_paths : expand_versions(base_paths, controller_versions)
+                               else
+                                 expand_versions(base_paths, method_versions)
+                               end
 
         # Resolve the decorator's line number inside the original
         # file: walk newlines from the class start to the
         # `class_content` offset where the decorator matched.
         decorator_line = controller_start_line + class_content[0...decorator_start].count('\n')
 
-        base_paths.each do |base_path|
+        effective_base_paths.each do |base_path|
           route_paths.each do |route_path|
             full_path = combine_paths(base_path, route_path)
             methods.each do |method|
@@ -617,8 +630,10 @@ module Analyzer::Javascript
               endpoint.details = Details.new(PathInfo.new(file_path, decorator_line))
 
               extract_path_parameters(full_path, endpoint)
-              extract_method_parameters(class_content, close_paren + 1, endpoint)
-              attach_method_callees(class_content, close_paren + 1, file_path, endpoint, controller_start_line) if include_callee
+              extract_decorator_parameters(signature[:params], endpoint)
+              extract_interceptor_parameters(decorator_block, endpoint)
+              extract_request_object_params(class_content, signature, endpoint)
+              attach_method_callees_from_signature(class_content, signature, file_path, endpoint, controller_start_line) if include_callee
 
               result << endpoint
             end
@@ -627,8 +642,128 @@ module Analyzer::Javascript
       end
     end
 
+    private def method_decorator_block_start(content : String, route_decorator_start : Int32) : Int32
+      idx = line_start_for_index(content, route_decorator_start)
+      block_start = idx
+
+      while idx > 0
+        previous_end = idx - 1
+        while previous_end >= 0 && content[previous_end] == '\n'
+          previous_end -= 1
+        end
+        break if previous_end < 0
+
+        previous_start = line_start_for_index(content, previous_end)
+        line = content[previous_start..previous_end].strip
+        break if line.empty? || line == "}" || line.ends_with?(";")
+
+        block_start = previous_start
+        idx = previous_start
+      end
+
+      block_start
+    end
+
+    private def line_start_for_index(content : String, index : Int32) : Int32
+      pos = index
+      while pos > 0 && content[pos - 1] != '\n'
+        pos -= 1
+      end
+      pos
+    end
+
+    private def parse_method_versions(text : String) : Array(String)
+      versions = [] of String
+      text.scan(/@Version\s*\(([\s\S]*?)\)/m) do |match|
+        expr = match[1].strip
+        if expr.starts_with?("[") && expr.ends_with?("]")
+          expr.scan(/['"]([^'"]+)['"]/) { |m| versions << m[1] unless versions.includes?(m[1]) }
+        elsif sm = expr.match(/^['"]([^'"]+)['"]$/)
+          versions << sm[1] unless versions.includes?(sm[1])
+        elsif im = expr.match(/^([A-Za-z_][\w.]*|\d+)$/)
+          versions << im[1] unless versions.includes?(im[1])
+        end
+      end
+      versions
+    end
+
+    private def method_signature_after_decorators(content : String, start_pos : Int32)
+      idx = skip_decorators_and_whitespace(content, start_pos)
+      section = content[idx..-1]
+      match = section.match(/\A\s*(?:(?:public|private|protected|static|async|readonly|override)\s+)*([A-Za-z_$][\w$]*)\s*\(/)
+      return unless match
+
+      open_paren = idx + match.end(0) - 1
+      close_paren = Noir::JSRouteExtractor.find_matching_paren(content, open_paren)
+      return unless close_paren
+
+      open_brace = content.index("{", close_paren)
+      return unless open_brace
+      close_brace = Noir::JSRouteExtractor.find_matching_brace(content, open_brace)
+
+      {
+        name:        match[1],
+        params:      content[(open_paren + 1)...close_paren],
+        start_pos:   idx,
+        open_paren:  open_paren,
+        close_paren: close_paren,
+        open_brace:  open_brace,
+        close_brace: close_brace,
+      }
+    end
+
+    private def skip_decorators_and_whitespace(content : String, start_pos : Int32) : Int32
+      idx = start_pos
+      loop do
+        while idx < content.size && content[idx].whitespace?
+          idx += 1
+        end
+        break if idx >= content.size || content[idx] != '@'
+
+        name_end = idx + 1
+        while name_end < content.size && (content[name_end].alphanumeric? || content[name_end] == '_' || content[name_end] == '$')
+          name_end += 1
+        end
+
+        scan = name_end
+        while scan < content.size && content[scan].whitespace?
+          scan += 1
+        end
+
+        if scan < content.size && content[scan] == '('
+          close = Noir::JSRouteExtractor.find_matching_paren(content, scan)
+          break unless close
+          idx = close + 1
+        else
+          newline = content.index('\n', scan)
+          idx = newline ? newline + 1 : content.size
+        end
+      end
+      idx
+    end
+
     private def attach_method_callees(content : String, start_pos : Int32, file_path : String, endpoint : Endpoint, controller_start_line : Int32)
-      body_info = extract_method_body(content, start_pos)
+      if signature = method_signature_after_decorators(content, start_pos)
+        attach_method_callees_from_signature(content, signature, file_path, endpoint, controller_start_line)
+      end
+    end
+
+    private def extract_method_body(content : String, start_pos : Int32) : Tuple(String, Int32)?
+      signature = method_signature_after_decorators(content, start_pos)
+      return unless signature
+      body_from_signature(content, signature)
+    end
+
+    private def body_from_signature(content : String, signature) : Tuple(String, Int32)?
+      close_brace = signature[:close_brace]
+      return unless close_brace
+      open_brace = signature[:open_brace]
+      return unless close_brace > open_brace
+      {content[(open_brace + 1)...close_brace], open_brace}
+    end
+
+    private def attach_method_callees_from_signature(content : String, signature, file_path : String, endpoint : Endpoint, controller_start_line : Int32)
+      body_info = body_from_signature(content, signature)
       return unless body_info
 
       body, open_brace_idx = body_info
@@ -639,55 +774,9 @@ module Analyzer::Javascript
       end
     end
 
-    private def extract_method_body(content : String, start_pos : Int32) : Tuple(String, Int32)?
-      method_section = content[start_pos..-1]
-      method_name_match = method_section.match(/\s*(\w+)\s*\(/)
-      return unless method_name_match
-
-      start_paren = start_pos + method_name_match.end
-      end_paren = Noir::JSRouteExtractor.find_matching_paren(content, start_paren - 1)
-      return unless end_paren
-
-      open_brace_idx = content.index("{", end_paren)
-      return unless open_brace_idx
-
-      close_brace_idx = Noir::JSRouteExtractor.find_matching_brace(content, open_brace_idx)
-      return unless close_brace_idx && close_brace_idx > open_brace_idx
-
-      {content[(open_brace_idx + 1)...close_brace_idx], open_brace_idx}
-    end
-
     private def extract_method_parameters(content : String, start_pos : Int32, endpoint : Endpoint)
-      # Find the method signature that immediately follows the decorator
-      method_section = content[start_pos..-1]
-
-      # Look for the method name first
-      method_name_match = method_section.match(/\s*(\w+)\s*\(/)
-
-      if method_name_match
-        start_paren = method_name_match.end
-
-        # Find the matching closing parenthesis for the method parameters
-        paren_count = 1
-        end_paren = start_paren
-        method_section[start_paren..-1].each_char_with_index do |char, index|
-          case char
-          when '('
-            paren_count += 1
-          when ')'
-            paren_count -= 1
-            if paren_count == 0
-              end_paren = start_paren + index
-              break
-            end
-          end
-        end
-
-        if end_paren > start_paren
-          method_params = method_section[start_paren...end_paren]
-          extract_decorator_parameters(method_params, endpoint)
-        end
-      end
+      signature = method_signature_after_decorators(content, start_pos)
+      extract_decorator_parameters(signature[:params], endpoint) if signature
     end
 
     private def extract_decorator_parameters(method_params : String, endpoint : Endpoint)
@@ -753,6 +842,42 @@ module Analyzer::Javascript
       end
       if method_params =~ /@UploadedFiles\s*\(\s*\)/
         push_unique_param(endpoint, Param.new("files", "", "body"))
+      end
+    end
+
+    private def extract_interceptor_parameters(decorator_block : String, endpoint : Endpoint)
+      decorator_block.scan(/(?:FileInterceptor|FilesInterceptor)\s*\(\s*['"`]([^'"`]+)['"`]/) do |match|
+        push_unique_param(endpoint, Param.new(match[1], "", "body")) if match.size > 0
+      end
+
+      decorator_block.scan(/FileFieldsInterceptor\s*\(\s*\[([\s\S]*?)\]/m) do |match|
+        match[1].scan(/\bname\s*:\s*['"`]([^'"`]+)['"`]/) do |field|
+          push_unique_param(endpoint, Param.new(field[1], "", "body")) if field.size > 0
+        end
+      end
+    end
+
+    private def extract_request_object_params(content : String, signature, endpoint : Endpoint)
+      body_info = body_from_signature(content, signature)
+      return unless body_info
+
+      body, _ = body_info
+      request_names = [] of String
+      signature[:params].scan(/@(Req|Request)\s*\(\s*\)\s*([A-Za-z_$][\w$]*)/) do |match|
+        request_names << match[2] unless request_names.includes?(match[2])
+      end
+      request_names << "req" if request_names.empty?
+
+      request_names.each do |name|
+        escaped = Regex.escape(name)
+        body.scan(/\b#{escaped}\.query\.(\w+)/) { |m| push_unique_param(endpoint, Param.new(m[1], "", "query")) }
+        body.scan(/\b#{escaped}\.query\s*\[\s*['"`]([^'"`]+)['"`]\s*\]/) { |m| push_unique_param(endpoint, Param.new(m[1], "", "query")) }
+        body.scan(/\b#{escaped}\.body\.(\w+)/) { |m| push_unique_param(endpoint, Param.new(m[1], "", "body")) }
+        body.scan(/\b#{escaped}\.body\s*\[\s*['"`]([^'"`]+)['"`]\s*\]/) { |m| push_unique_param(endpoint, Param.new(m[1], "", "body")) }
+        body.scan(/\b#{escaped}\.headers\.(\w+)/) { |m| push_unique_param(endpoint, Param.new(m[1], "", "header")) }
+        body.scan(/\b#{escaped}\.headers\s*\[\s*['"`]([^'"`]+)['"`]\s*\]/) { |m| push_unique_param(endpoint, Param.new(m[1], "", "header")) }
+        body.scan(/\b#{escaped}\.params\.(\w+)/) { |m| push_unique_param(endpoint, Param.new(m[1], "", "path")) }
+        body.scan(/\b#{escaped}\.params\s*\[\s*['"`]([^'"`]+)['"`]\s*\]/) { |m| push_unique_param(endpoint, Param.new(m[1], "", "path")) }
       end
     end
 
