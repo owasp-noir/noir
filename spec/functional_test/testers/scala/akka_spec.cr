@@ -24,6 +24,13 @@ expected_endpoints = [
     Param.new("X-API-Key", "", "header"),
   ]),
   Endpoint.new("/search", "POST", [Param.new("q", "", "query")]),
+  Endpoint.new("/orders", "GET"),
+  Endpoint.new("/orders", "POST", [Param.new("body", "Item", "json")]),
+  Endpoint.new("/orders/{orderId}", "DELETE", [Param.new("orderId", "", "path")]),
+  Endpoint.new("/orders/{orderId}/price", "GET", [
+    Param.new("orderId", "", "path"),
+    Param.new("currency", "", "query"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/scala/akka/", {

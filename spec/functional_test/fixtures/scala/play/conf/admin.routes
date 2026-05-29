@@ -1,0 +1,2 @@
+GET /stats controllers.Admin.stats(request: Request, format: Option[String] ?= "json")
+POST /jobs/:id controllers.Admin.enqueue(id: Long)

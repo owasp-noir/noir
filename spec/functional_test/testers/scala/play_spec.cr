@@ -41,6 +41,14 @@ expected_endpoints = [
   Endpoint.new("/whitespace", "POST", [
     Param.new("body", "", "json"),
   ]),
+  Endpoint.new("/admin/stats", "GET", [
+    Param.new("format", "json", "query"),
+    Param.new("X-Trace-Id", "", "header"),
+  ]),
+  Endpoint.new("/admin/jobs/:id", "POST", [
+    Param.new("id", "", "path"),
+    Param.new("body", "", "json"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/scala/play/", {
