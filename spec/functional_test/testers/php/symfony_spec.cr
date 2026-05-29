@@ -65,9 +65,10 @@ expected_endpoints = [
   Endpoint.new("/webhooks/{provider}", "POST", [
     Param.new("provider", "", "path"),
   ]),
+  Endpoint.new("/api/status-check", "GET"),
 ]
 
 FunctionalTester.new("fixtures/php/symfony/", {
   :techs     => 2,  # Detection still sees php_symfony and php_pure
-  :endpoints => 20, # Analysis suppresses redundant php_pure file endpoints
+  :endpoints => 21, # Analysis suppresses redundant php_pure file endpoints
 }, expected_endpoints).perform_tests

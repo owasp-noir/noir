@@ -212,22 +212,24 @@ module Analyzer::Php
           #   path: /api/users/{id}
           #   methods: [GET, POST]
 
-          route_matches = content.scan(/^\s*\w+:\s*\n\s*path:\s*["']?([^"'\n]+)["']?(?:\n\s*methods:\s*\[([^\]]+)\])?/m)
-          route_matches.each do |match|
-            route_path = match[1]
-            methods_str = match[2]?
+          yaml = YAML.parse(content)
+          if routes = yaml.as_h?
+            routes.each_value do |route|
+              route_h = route.as_h?
+              next unless route_h
 
-            if methods_str
-              methods = methods_str.split(",").map(&.strip.gsub(/["'\[\]]/, ""))
-            else
-              methods = ["GET"]
-            end
+              route_path = route_h[YAML::Any.new("path")]?.try(&.as_s?)
+              next unless route_path
 
-            params = extract_brace_path_params(route_path)
-            details = Details.new(PathInfo.new(path))
+              methods = extract_yaml_methods(route_h[YAML::Any.new("methods")]?)
+              methods = ["GET"] if methods.empty?
 
-            methods.each do |method|
-              endpoints << Endpoint.new(route_path, method.upcase, params, details)
+              params = extract_brace_path_params(route_path)
+              details = Details.new(PathInfo.new(path))
+
+              methods.each do |method|
+                endpoints << Endpoint.new(route_path, method.upcase, params, details)
+              end
             end
           end
         end
@@ -236,6 +238,18 @@ module Analyzer::Php
       end
 
       endpoints
+    end
+
+    private def extract_yaml_methods(node : YAML::Any?) : Array(String)
+      return [] of String unless node
+
+      if methods = node.as_a?
+        methods.compact_map(&.as_s?).reject(&.empty?)
+      elsif method = node.as_s?
+        method.empty? ? [] of String : [method]
+      else
+        [] of String
+      end
     end
 
     private def attach_method_callees(endpoint : Endpoint, method_body : Tuple(String, Int32)?, path : String)
