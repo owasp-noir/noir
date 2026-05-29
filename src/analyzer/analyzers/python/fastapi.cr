@@ -24,9 +24,11 @@ module Analyzer::Python
             import_modules = find_fastapi_imported_modules(current_base_path, path, source)
             codelines = source.split("\n")
             codelines.each_with_index do |original_line, index|
+              next if original_line.lstrip.starts_with?("#")
+
               effective_line = coalesce_constructor_call(codelines, index, original_line, "APIRouter")
               line = effective_line.gsub(" ", "")
-              match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:fastapi\.)?FastAPI\(/
+              match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:fastapi\.)?FastAPI\(/
               if !match.nil?
                 fastapi_instance_name = match[1]
                 unless include_router_map.has_key?(fastapi_instance_name)
@@ -48,7 +50,7 @@ module Analyzer::Python
               end
 
               # https://fastapi.tiangolo.com/tutorial/bigger-applications/
-              match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:fastapi\.)?APIRouter\(/
+              match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:fastapi\.)?APIRouter\(/
               if !match.nil?
                 prefix = ""
                 router_instance_name = match[1]
@@ -81,6 +83,8 @@ module Analyzer::Python
           codelines = source.split("\n")
           router_map.each do |instance_name, router_class|
             codelines.each_with_index do |line, index|
+              next if line.lstrip.starts_with?("#")
+
               # FastAPI route decorators routinely span multiple
               # lines:
               #

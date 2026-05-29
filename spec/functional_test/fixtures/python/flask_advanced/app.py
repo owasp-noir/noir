@@ -6,9 +6,10 @@ Flask test fixture for advanced features:
 """
 from flask import Flask, Blueprint, request, jsonify
 from flask.views import MethodView, View
+import flask
 import external_views
 
-app = Flask(__name__, static_url_path='/assets', static_folder='public')
+app: flask.Flask = flask.Flask(__name__, static_url_path='/assets', static_folder='public')
 
 # Blueprint with shortcut decorators
 bp = Blueprint('api', __name__, url_prefix='/api')
@@ -152,7 +153,7 @@ user_view = UserAPI.as_view('user_api')
 bp.add_url_rule('/users', view_func=user_view, methods=['GET', 'POST'])
 bp.add_url_rule('/users/<int:user_id>', view_func=user_view, methods=['GET', 'PUT', 'DELETE'])
 
-item_view = ItemAPI.as_view('item_api')
+item_view: View = ItemAPI.as_view('item_api')
 bp.add_url_rule('/items', view_func=item_view, methods=['GET', 'POST'])
 
 async_view = AsyncAPI.as_view('async_api')
@@ -190,12 +191,14 @@ bp.add_url_rule(
 bp.add_url_rule('/registered-search', 'registered_search', registered_search, methods=['GET'])
 bp.add_url_rule(rule='/registered-create', endpoint='registered_create', view_func=registered_create, methods=['POST'])
 bp.add_url_rule('/external-search', view_func=external_views.external_search, methods=['GET'])
+# bp.add_url_rule('/commented', view_func=registered_search, methods=['GET'])
 
 parent_bp.register_blueprint(nested_bp, url_prefix='/child')
 
 # Register blueprint
 app.register_blueprint(bp)
 app.register_blueprint(parent_bp, url_prefix='/mounted')
+# app.register_blueprint(bp, url_prefix='/commented')
 
 if __name__ == '__main__':
     app.run(debug=True)

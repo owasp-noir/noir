@@ -10,6 +10,7 @@ router = DefaultRouter()
 router.register(r'articles', views.ArticleViewSet, basename='article')
 router.register(r'media', views.MediaViewSet, basename='media')
 router.register(prefix=r'keyword-media', viewset=views.MediaViewSet, basename='keyword-media')
+# router.register(r'commented-media', views.MediaViewSet, basename='commented-media')
 direct_router = DefaultRouter()
 direct_router.register(r'direct-articles', views.ArticleViewSet, basename='direct-article')
 
@@ -46,6 +47,7 @@ extended_patterns = [
 ]
 
 urlpatterns = [
+    # path('commented/', views.local_report_list, name='commented'),
     path('api/', include(router.urls)),
     path('imported-api/', include(api_router.urls)),
     path('local/', include(local_patterns)),
@@ -123,5 +125,7 @@ urlpatterns = [
 ]
 urlpatterns = base_patterns + urlpatterns
 urlpatterns.extend(extended_patterns)
-urlpatterns += direct_router.urls
+urlpatterns.extend(
+    direct_router.urls
+)
 urlpatterns += imported_direct_router.urls
