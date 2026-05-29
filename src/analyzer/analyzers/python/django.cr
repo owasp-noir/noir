@@ -88,14 +88,18 @@ module Analyzer::Python
                 next if PythonEngine.python_test_path?(file)
                 if file.ends_with? ".py"
                   content = read_file_content(file)
-                  content.scan(REGEX_ROOT_URLCONF) do |match|
-                    next if match.size != 2
-                    dotted_as_urlconf = match[1].split(".")
-                    relative_path = "#{dotted_as_urlconf.join("/")}.py"
+                  content.each_line do |line|
+                    next if line.lstrip.starts_with?("#")
 
-                    Dir.glob("#{escape_glob_path(search_dir)}/**/#{relative_path}") do |filepath|
-                      basepath = filepath.split("/")[..-(dotted_as_urlconf.size + 1)].join("/")
-                      root_django_urls_list << DjangoUrls.new("", filepath, basepath)
+                    line.scan(REGEX_ROOT_URLCONF) do |match|
+                      next if match.size != 2
+                      dotted_as_urlconf = match[1].split(".")
+                      relative_path = "#{dotted_as_urlconf.join("/")}.py"
+
+                      Dir.glob("#{escape_glob_path(search_dir)}/**/#{relative_path}") do |filepath|
+                        basepath = filepath.split("/")[..-(dotted_as_urlconf.size + 1)].join("/")
+                        root_django_urls_list << DjangoUrls.new("", filepath, basepath)
+                      end
                     end
                   end
                 end
@@ -401,6 +405,7 @@ module Analyzer::Python
       lines = content.split("\n")
 
       lines.each_with_index do |line, index|
+        next if line.lstrip.starts_with?("#")
         next unless line.matches?(/\b(?:url|path|re_path|register)\s*\(/)
 
         logical_line = python_paren_delta(line) > 0 ? join_until_python_call_closes(lines, index, line) : line
@@ -461,6 +466,7 @@ module Analyzer::Python
       lines = content.split("\n")
 
       lines.each_with_index do |line, index|
+        next if line.lstrip.starts_with?("#")
         next unless line.includes?(".register(")
 
         logical_line = python_paren_delta(line) > 0 ? join_until_python_call_closes(lines, index, line) : line
@@ -587,20 +593,21 @@ module Analyzer::Python
 
     private def extract_drf_direct_router_names(content : ::String) : Array(::String)
       router_names = [] of ::String
+      scan_content = content.lines.reject(&.lstrip.starts_with?("#")).join("\n")
 
-      content.scan(/\burlpatterns\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\.urls\b/) do |match|
+      scan_content.scan(/\burlpatterns\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\.urls\b/) do |match|
         router_names << match[1] if match.size == 2
       end
 
-      content.scan(/\burlpatterns\s*\+=\s*([A-Za-z_][A-Za-z0-9_]*)\.urls\b/) do |match|
+      scan_content.scan(/\burlpatterns\s*\+=\s*([A-Za-z_][A-Za-z0-9_]*)\.urls\b/) do |match|
         router_names << match[1] if match.size == 2
       end
 
-      content.scan(/\burlpatterns\b[^\n]*\+\s*([A-Za-z_][A-Za-z0-9_]*)\.urls\b/) do |match|
+      scan_content.scan(/\burlpatterns\b[^\n]*\+\s*([A-Za-z_][A-Za-z0-9_]*)\.urls\b/) do |match|
         router_names << match[1] if match.size == 2
       end
 
-      content.scan(/\burlpatterns\s*\.\s*extend\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\.urls\s*\)/) do |match|
+      scan_content.scan(/\burlpatterns\s*\.\s*extend\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\.urls\s*\)/) do |match|
         router_names << match[1] if match.size == 2
       end
 

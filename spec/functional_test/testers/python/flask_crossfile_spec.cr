@@ -12,6 +12,7 @@ expected_endpoints = [
   Endpoint.new("/api/v2/items", "POST", [
     Param.new("name", "", "json"),
   ]),
+  Endpoint.new("/api/v3/reports", "GET"),
 ]
 
 FunctionalTester.new("fixtures/python/flask_crossfile/", {
