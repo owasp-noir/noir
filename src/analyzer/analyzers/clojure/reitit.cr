@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../../miniparsers/clojure_callee_extractor"
 require "../../../utils/utils"
 
 module Analyzer::Clojure
@@ -32,13 +33,15 @@ module Analyzer::Clojure
     }
 
     def analyze
+      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       all_files.each do |path|
         next unless clojure_file?(path)
 
         content = read_file_content(path)
         next unless reitit_source?(content)
 
-        walk_forms(content, 0, content.bytesize, "", path)
+        function_callees = include_callee ? Noir::ClojureCalleeExtractor.function_callees(content, path) : Hash(String, Array(Noir::ClojureCalleeExtractor::Entry)).new
+        walk_forms(content, 0, content.bytesize, "", path, include_callee, function_callees)
       end
 
       Fiber.yield
@@ -59,7 +62,13 @@ module Analyzer::Clojure
     # Iterate forms looking for route-shaped vectors. A vector is
     # route-shaped if its first non-ws element is either a path
     # string (`"/...."`) or another route vector (a list of routes).
-    private def walk_forms(source : String, start : Int32, limit : Int32, prefix : String, path : String)
+    private def walk_forms(source : String,
+                           start : Int32,
+                           limit : Int32,
+                           prefix : String,
+                           path : String,
+                           include_callee : Bool,
+                           function_callees : Hash(String, Array(Noir::ClojureCalleeExtractor::Entry)))
       i = start
       while i < limit
         c = source.byte_at(i).unsafe_chr
@@ -71,18 +80,18 @@ module Analyzer::Clojure
         when '('
           form_end = find_matching_delimiter(source, i, '(', ')', limit)
           break if form_end <= i
-          walk_forms(source, i + 1, form_end, prefix, path)
+          walk_forms(source, i + 1, form_end, prefix, path, include_callee, function_callees)
           i = form_end + 1
         when '['
           vec_end = find_matching_delimiter(source, i, '[', ']', limit)
           break if vec_end <= i
-          handled = try_process_routes(source, i, vec_end, prefix, path)
-          walk_forms(source, i + 1, vec_end, prefix, path) unless handled
+          handled = try_process_routes(source, i, vec_end, prefix, path, include_callee, function_callees)
+          walk_forms(source, i + 1, vec_end, prefix, path, include_callee, function_callees) unless handled
           i = vec_end + 1
         when '{'
           map_end = find_matching_delimiter(source, i, '{', '}', limit)
           break if map_end <= i
-          walk_forms(source, i + 1, map_end, prefix, path)
+          walk_forms(source, i + 1, map_end, prefix, path, include_callee, function_callees)
           i = map_end + 1
         else
           i += 1
@@ -90,7 +99,13 @@ module Analyzer::Clojure
       end
     end
 
-    private def try_process_routes(source : String, vec_start : Int32, vec_end : Int32, prefix : String, path : String) : Bool
+    private def try_process_routes(source : String,
+                                   vec_start : Int32,
+                                   vec_end : Int32,
+                                   prefix : String,
+                                   path : String,
+                                   include_callee : Bool,
+                                   function_callees : Hash(String, Array(Noir::ClojureCalleeExtractor::Entry))) : Bool
       inner_start = vec_start + 1
       i = skip_ws_and_comments(source, inner_start, vec_end)
       return false if i >= vec_end
@@ -102,7 +117,7 @@ module Analyzer::Clojure
         return false if str_end <= i
         route_path = decode_string_literal(source.byte_slice(i, str_end - i + 1))
         return false unless route_path.starts_with?("/")
-        process_route_vec(source, vec_start, vec_end, prefix, path)
+        process_route_vec(source, vec_start, vec_end, prefix, path, include_callee, function_callees)
         true
       when '['
         # List of routes: [["/a" ...] ["/b" ...]]
@@ -115,14 +130,20 @@ module Analyzer::Clojure
         return false if str_end <= j
         peek = decode_string_literal(source.byte_slice(j, str_end - j + 1))
         return false unless peek.starts_with?("/")
-        process_route_list(source, inner_start, vec_end, prefix, path)
+        process_route_list(source, inner_start, vec_end, prefix, path, include_callee, function_callees)
         true
       else
         false
       end
     end
 
-    private def process_route_list(source : String, start : Int32, limit : Int32, prefix : String, path : String)
+    private def process_route_list(source : String,
+                                   start : Int32,
+                                   limit : Int32,
+                                   prefix : String,
+                                   path : String,
+                                   include_callee : Bool,
+                                   function_callees : Hash(String, Array(Noir::ClojureCalleeExtractor::Entry)))
       i = start
       while i < limit
         i = skip_ws_and_comments(source, i, limit)
@@ -131,7 +152,7 @@ module Analyzer::Clojure
         if c == '['
           vec_end = find_matching_delimiter(source, i, '[', ']', limit)
           break if vec_end <= i
-          process_route_vec(source, i, vec_end, prefix, path)
+          process_route_vec(source, i, vec_end, prefix, path, include_callee, function_callees)
           i = vec_end + 1
         else
           i = end_of_value(source, i, limit)
@@ -139,7 +160,13 @@ module Analyzer::Clojure
       end
     end
 
-    private def process_route_vec(source : String, vec_start : Int32, vec_end : Int32, prefix : String, path : String)
+    private def process_route_vec(source : String,
+                                  vec_start : Int32,
+                                  vec_end : Int32,
+                                  prefix : String,
+                                  path : String,
+                                  include_callee : Bool,
+                                  function_callees : Hash(String, Array(Noir::ClojureCalleeExtractor::Entry)))
       i = skip_ws_and_comments(source, vec_start + 1, vec_end)
       return if i >= vec_end
       return unless source.byte_at(i).unsafe_chr == '"'
@@ -149,10 +176,16 @@ module Analyzer::Clojure
 
       route_path = decode_string_literal(source.byte_slice(i, str_end - i + 1))
       new_prefix = join_path(prefix, route_path)
-      walk_route_body(source, str_end + 1, vec_end, new_prefix, path)
+      walk_route_body(source, str_end + 1, vec_end, new_prefix, path, include_callee, function_callees)
     end
 
-    private def walk_route_body(source : String, start : Int32, limit : Int32, prefix : String, path : String)
+    private def walk_route_body(source : String,
+                                start : Int32,
+                                limit : Int32,
+                                prefix : String,
+                                path : String,
+                                include_callee : Bool,
+                                function_callees : Hash(String, Array(Noir::ClojureCalleeExtractor::Entry)))
       i = start
       while i < limit
         i = skip_ws_and_comments(source, i, limit)
@@ -162,12 +195,12 @@ module Analyzer::Clojure
         when '{'
           map_end = find_matching_delimiter(source, i, '{', '}', limit)
           break if map_end <= i
-          process_route_data_map(source, i + 1, map_end, prefix, path)
+          process_route_data_map(source, i + 1, map_end, prefix, path, include_callee, function_callees)
           i = map_end + 1
         when '['
           vec_end = find_matching_delimiter(source, i, '[', ']', limit)
           break if vec_end <= i
-          process_route_vec(source, i, vec_end, prefix, path)
+          process_route_vec(source, i, vec_end, prefix, path, include_callee, function_callees)
           i = vec_end + 1
         else
           i = end_of_value(source, i, limit)
@@ -175,7 +208,13 @@ module Analyzer::Clojure
       end
     end
 
-    private def process_route_data_map(source : String, start : Int32, limit : Int32, route_path : String, path : String)
+    private def process_route_data_map(source : String,
+                                       start : Int32,
+                                       limit : Int32,
+                                       route_path : String,
+                                       path : String,
+                                       include_callee : Bool,
+                                       function_callees : Hash(String, Array(Noir::ClojureCalleeExtractor::Entry)))
       i = start
       while i < limit
         i = skip_ws_and_comments(source, i, limit)
@@ -192,7 +231,7 @@ module Analyzer::Clojure
         val_end = end_of_value(source, v_start, limit)
 
         if method_name = HTTP_METHODS[key]?
-          emit_endpoint(source, key_start, v_start, val_end, route_path, method_name, path)
+          emit_endpoint(source, key_start, v_start, val_end, route_path, method_name, path, include_callee, function_callees)
         end
 
         i = val_end
@@ -200,7 +239,11 @@ module Analyzer::Clojure
     end
 
     private def emit_endpoint(source : String, key_pos : Int32, v_start : Int32, v_end : Int32,
-                              route_path : String, method : String, path : String)
+                              route_path : String,
+                              method : String,
+                              path : String,
+                              include_callee : Bool,
+                              function_callees : Hash(String, Array(Noir::ClojureCalleeExtractor::Entry)))
       endpoint = Endpoint.new(route_path, method, Details.new(PathInfo.new(path, line_number_for(source, key_pos))))
 
       extract_path_param_names(route_path).each do |name|
@@ -214,7 +257,122 @@ module Analyzer::Clojure
         end
       end
 
+      attach_method_callees(endpoint, source, v_start, v_end, path, function_callees) if include_callee
+
       @result << endpoint
+    end
+
+    private def attach_method_callees(endpoint : Endpoint,
+                                      source : String,
+                                      v_start : Int32,
+                                      v_end : Int32,
+                                      path : String,
+                                      function_callees : Hash(String, Array(Noir::ClojureCalleeExtractor::Entry)))
+      return if v_start >= v_end
+
+      if source.byte_at(v_start).unsafe_chr == '{'
+        map_end = find_matching_delimiter(source, v_start, '{', '}', v_end)
+        return unless map_end > v_start
+        attach_handler_map_callees(source, v_start + 1, map_end, endpoint, path, function_callees)
+      else
+        attach_handler_value(endpoint, source, v_start, v_end, path, function_callees)
+      end
+    end
+
+    private def attach_handler_map_callees(source : String,
+                                           start : Int32,
+                                           limit : Int32,
+                                           endpoint : Endpoint,
+                                           path : String,
+                                           function_callees : Hash(String, Array(Noir::ClojureCalleeExtractor::Entry)))
+      i = start
+      while i < limit
+        i = skip_ws_and_comments(source, i, limit)
+        break if i >= limit
+        key, after_key = read_symbol(source, i, limit)
+        if key.empty?
+          i = end_of_value(source, i, limit)
+          next
+        end
+
+        v_start = skip_ws_and_comments(source, after_key, limit)
+        break if v_start >= limit
+        val_end = end_of_value(source, v_start, limit)
+
+        attach_handler_value(endpoint, source, v_start, val_end, path, function_callees) if key == ":handler"
+        i = val_end
+      end
+    end
+
+    private def attach_handler_value(endpoint : Endpoint,
+                                     source : String,
+                                     value_start : Int32,
+                                     value_end : Int32,
+                                     path : String,
+                                     function_callees : Hash(String, Array(Noir::ClojureCalleeExtractor::Entry)))
+      token, _ = read_form_token(source, value_start, value_end)
+      return if token.empty?
+
+      if token.starts_with?('(')
+        body = source.byte_slice(value_start, value_end - value_start)
+        line = line_number_for(source, value_start)
+        Noir::ClojureCalleeExtractor.attach_to(endpoint, Noir::ClojureCalleeExtractor.callees_for_body(body, path, line))
+      elsif handler_name = normalized_handler_symbol(token)
+        if callees = function_callees[handler_name]?
+          Noir::ClojureCalleeExtractor.attach_to(endpoint, callees)
+        else
+          endpoint.push_callee(Callee.new(handler_name, path: path, line: line_number_for(source, value_start)))
+        end
+      end
+    end
+
+    private def normalized_handler_symbol(token : String) : String?
+      name = token
+      if name.starts_with?("#'")
+        name = name[2..]
+      elsif name.starts_with?('\'') || name.starts_with?('`')
+        name = name[1..]
+      end
+
+      return unless handler_symbol?(name)
+      function_name(name)
+    end
+
+    private def handler_symbol?(token : String) : Bool
+      return false if token.starts_with?(':')
+      return false if token.starts_with?('"')
+      return false if {"nil", "true", "false"}.includes?(token)
+      !!token.match(/^[A-Za-z_.*+!?<>=][\w.\-*+!?<>=\/]*$/)
+    end
+
+    private def function_name(symbol : String) : String
+      if index = symbol.rindex('/')
+        symbol[(index + 1)..]
+      else
+        symbol
+      end
+    end
+
+    private def read_form_token(source : String, start : Int32, limit : Int32) : Tuple(String, Int32)
+      i = skip_ws_and_comments(source, start, limit)
+      return {"", i} if i >= limit
+
+      case source.byte_at(i).unsafe_chr
+      when '"'
+        e = skip_string(source, i, limit)
+        {source.byte_slice(i, e - i + 1), skip_ws_and_comments(source, e + 1, limit)}
+      when '('
+        e = find_matching_delimiter(source, i, '(', ')', limit)
+        e > i ? {source.byte_slice(i, e - i + 1), skip_ws_and_comments(source, e + 1, limit)} : {"", i}
+      when '['
+        e = find_matching_delimiter(source, i, '[', ']', limit)
+        e > i ? {source.byte_slice(i, e - i + 1), skip_ws_and_comments(source, e + 1, limit)} : {"", i}
+      when '{'
+        e = find_matching_delimiter(source, i, '{', '}', limit)
+        e > i ? {source.byte_slice(i, e - i + 1), skip_ws_and_comments(source, e + 1, limit)} : {"", i}
+      else
+        read_symbol(source, i, limit)
+      end
     end
 
     private def extract_params_from_method_map(source : String, start : Int32, limit : Int32,
