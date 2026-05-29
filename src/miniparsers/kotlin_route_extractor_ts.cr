@@ -806,8 +806,13 @@ module Noir
     private def decode_string_literal(node : LibTreeSitter::TSNode, source : String) : String
       buf = String.build do |io|
         Noir::TreeSitter.each_named_child(node) do |child|
-          if Noir::TreeSitter.node_type(child) == "string_content"
+          case Noir::TreeSitter.node_type(child)
+          when "string_content"
             io << Noir::TreeSitter.node_text(child, source)
+          when "interpolated_identifier", "interpolated_expression"
+            io << '{'
+            io << Noir::TreeSitter.node_text(child, source).strip
+            io << '}'
           end
         end
       end

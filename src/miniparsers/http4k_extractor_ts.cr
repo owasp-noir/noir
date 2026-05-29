@@ -72,32 +72,81 @@ module Noir
       end
     end
 
-    def extract_routes(source : String, *, include_callees : Bool = false) : Array(Route)
+    def extract_routes(source : String, string_constants = Hash(String, String).new, *, include_callees : Bool = false) : Array(Route)
       routes = [] of Route
+      local_string_constants = extract_string_constants(source)
       Noir::TreeSitter.parse_kotlin(source) do |root|
-        walk(root, source, "", routes, 0, include_callees)
+        walk(root, source, "", routes, string_constants, local_string_constants, 0, include_callees)
       end
       routes
     end
 
+    def extract_string_constants(source : String) : Hash(String, String)
+      constants = Hash(String, String).new
+      package_name = ""
+      current_type = ""
+      current_depth = 0
+
+      source.each_line do |line|
+        if package_name.empty?
+          if match = line.match(/^\s*package\s+([A-Za-z_][A-Za-z0-9_.]*)/)
+            package_name = match[1]
+          end
+        end
+
+        if match = line.match(/^\s*(?:class|object|interface)\s+([A-Za-z_][A-Za-z0-9_]*)/)
+          current_type = match[1]
+          current_depth = 0
+        end
+
+        if match = line.match(/\b(?:const\s+)?val\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*String)?\s*=\s*"([^"]*)"/)
+          name = match[1]
+          value = match[2]
+          constants[name] ||= value
+          unless current_type.empty?
+            constants["#{current_type}.#{name}"] ||= value
+            constants["#{package_name}.#{current_type}.#{name}"] ||= value unless package_name.empty?
+          end
+        end
+
+        unless current_type.empty?
+          current_depth += line.count("{")
+          current_depth -= line.count("}")
+          if current_depth <= 0 && line.includes?("}")
+            current_type = ""
+            current_depth = 0
+          end
+        end
+      end
+
+      constants
+    end
+
     # ---- traversal --------------------------------------------------
 
-    private def walk(node : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32, include_callees : Bool)
+    private def walk(node : LibTreeSitter::TSNode,
+                     source : String,
+                     prefix : String,
+                     routes : Array(Route),
+                     string_constants : Hash(String, String),
+                     local_string_constants : Hash(String, String),
+                     depth : Int32,
+                     include_callees : Bool)
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
 
       ty = Noir::TreeSitter.node_type(node)
 
-      if ty == "infix_expression" && handle_bind(node, source, prefix, routes, depth, include_callees)
+      if ty == "infix_expression" && handle_bind(node, source, prefix, routes, string_constants, local_string_constants, depth, include_callees)
         return
       end
 
       if ty == "call_expression" && call_function_name(node, source) == "routes"
-        walk_routes_args(node, source, prefix, routes, depth, include_callees)
+        walk_routes_args(node, source, prefix, routes, string_constants, local_string_constants, depth, include_callees)
         return
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, source, prefix, routes, depth + 1, include_callees)
+        walk(child, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees)
       end
     end
 
@@ -108,7 +157,14 @@ module Noir
     #
     # Returns true when consumed; false otherwise so the caller can
     # fall through to the generic descent.
-    private def handle_bind(node : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32, include_callees : Bool) : Bool
+    private def handle_bind(node : LibTreeSitter::TSNode,
+                            source : String,
+                            prefix : String,
+                            routes : Array(Route),
+                            string_constants : Hash(String, String),
+                            local_string_constants : Hash(String, String),
+                            depth : Int32,
+                            include_callees : Bool) : Bool
       lhs, op, rhs = infix_parts(node, source)
       return false unless lhs && rhs
 
@@ -119,12 +175,12 @@ module Noir
         inner_lhs, inner_op, inner_rhs = infix_parts(lhs, source)
         return false unless inner_op == "bind"
         return false unless inner_lhs && inner_rhs
-        return false unless Noir::TreeSitter.node_type(inner_lhs) == "string_literal"
 
         verb = resolve_verb(inner_rhs, source)
         return false unless verb
 
-        path_text = decode_string_literal(inner_lhs, source)
+        path_text = resolve_string_value(inner_lhs, source, string_constants, local_string_constants)
+        return false unless path_text
         full = join_paths(prefix, path_text)
         line = Noir::TreeSitter.node_start_row(node)
 
@@ -155,13 +211,13 @@ module Noir
         routes << Route.new(verb, full, line, has_body, query, header, form, callees)
         true
       when "bind"
-        return false unless Noir::TreeSitter.node_type(lhs) == "string_literal"
         return false unless Noir::TreeSitter.node_type(rhs) == "call_expression"
         return false unless call_function_name(rhs, source) == "routes"
 
-        path_text = decode_string_literal(lhs, source)
+        path_text = resolve_string_value(lhs, source, string_constants, local_string_constants)
+        return false unless path_text
         new_prefix = join_paths(prefix, path_text)
-        walk_routes_args(rhs, source, new_prefix, routes, depth + 1, include_callees)
+        walk_routes_args(rhs, source, new_prefix, routes, string_constants, local_string_constants, depth + 1, include_callees)
         true
       else
         false
@@ -172,14 +228,21 @@ module Noir
     # Each argument is a `value_argument` wrapping an
     # `infix_expression` (the binding) or another nested `routes(...)`
     # call.
-    private def walk_routes_args(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32, include_callees : Bool)
+    private def walk_routes_args(call : LibTreeSitter::TSNode,
+                                 source : String,
+                                 prefix : String,
+                                 routes : Array(Route),
+                                 string_constants : Hash(String, String),
+                                 local_string_constants : Hash(String, String),
+                                 depth : Int32,
+                                 include_callees : Bool)
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
       args = call_value_arguments(call)
       return unless args
       Noir::TreeSitter.each_named_child(args) do |arg|
         next unless Noir::TreeSitter.node_type(arg) == "value_argument"
         Noir::TreeSitter.each_named_child(arg) do |child|
-          walk(child, source, prefix, routes, depth + 1, include_callees)
+          walk(child, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees)
         end
       end
     end
@@ -326,12 +389,44 @@ module Noir
     private def decode_string_literal(node : LibTreeSitter::TSNode, source : String) : String
       buf = String.build do |io|
         Noir::TreeSitter.each_named_child(node) do |child|
-          if Noir::TreeSitter.node_type(child) == "string_content"
+          case Noir::TreeSitter.node_type(child)
+          when "string_content"
             io << Noir::TreeSitter.node_text(child, source)
+          when "interpolated_identifier", "interpolated_expression"
+            io << '{'
+            io << Noir::TreeSitter.node_text(child, source).strip
+            io << '}'
           end
         end
       end
       buf
+    end
+
+    private def resolve_string_value(node : LibTreeSitter::TSNode,
+                                     source : String,
+                                     string_constants : Hash(String, String),
+                                     local_string_constants : Hash(String, String)) : String?
+      case Noir::TreeSitter.node_type(node)
+      when "string_literal"
+        decode_string_literal(node, source)
+      when "simple_identifier"
+        local_string_constants[Noir::TreeSitter.node_text(node, source)]?
+      when "navigation_expression"
+        text = Noir::TreeSitter.node_text(node, source)
+        local_string_constants[text]? || string_constants[text]?
+      when "parenthesized_expression"
+        Noir::TreeSitter.each_named_child(node) do |child|
+          return resolve_string_value(child, source, string_constants, local_string_constants)
+        end
+      when "additive_expression"
+        parts = [] of String
+        Noir::TreeSitter.each_named_child(node) do |child|
+          part = resolve_string_value(child, source, string_constants, local_string_constants)
+          return unless part
+          parts << part
+        end
+        parts.join
+      end
     end
 
     private def join_paths(prefix : String, suffix : String) : String

@@ -9,6 +9,19 @@ module Analyzer::Kotlin
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       file_list = all_files()
+      string_constants = Hash(String, String).new
+      file_list.each do |path|
+        next unless File.exists?(path)
+        next unless path.ends_with?(".#{KOTLIN_EXTENSION}")
+        next if KotlinEngine.test_path?(path)
+
+        Noir::TreeSitterKotlinKtorRouteExtractor.extract_string_constants(read_file_content(path)).each do |name, value|
+          next unless fully_qualified_constant?(name)
+
+          string_constants[name] ||= value
+        end
+      end
+
       file_list.each do |path|
         next unless File.exists?(path)
         next unless path.ends_with?(".#{KOTLIN_EXTENSION}")
@@ -17,7 +30,7 @@ module Analyzer::Kotlin
         content = read_file_content(path)
         next unless potential_ktor_route_file?(content)
 
-        Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(content, include_callees: include_callee).each do |route|
+        Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(content, string_constants, include_callees: include_callee).each do |route|
           @result << build_endpoint(route, path)
         end
       end
@@ -30,6 +43,10 @@ module Analyzer::Kotlin
       content.includes?("routing") ||
         content.includes?("io.ktor.server.routing") ||
         content.includes?("Route.")
+    end
+
+    private def fully_qualified_constant?(name : String) : Bool
+      name.count('.') >= 2
     end
 
     private def build_endpoint(route : Noir::TreeSitterKotlinKtorRouteExtractor::Route, path : String) : Endpoint
@@ -48,6 +65,8 @@ module Analyzer::Kotlin
 
       if rt = route.receive_type
         params << Param.new("body", rt, "json")
+      elsif route.has_body?
+        params << Param.new("body", "", "json")
       end
 
       route.query_params.each do |name|
@@ -57,6 +76,10 @@ module Analyzer::Kotlin
 
       route.header_params.each do |name|
         params << Param.new(name, "", "header")
+      end
+
+      route.form_params.each do |name|
+        params << Param.new(name, "", "form")
       end
 
       endpoint = Endpoint.new(route.path, route.verb, params, details)
