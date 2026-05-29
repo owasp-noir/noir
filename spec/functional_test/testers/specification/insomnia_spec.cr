@@ -43,3 +43,25 @@ FunctionalTester.new("fixtures/specification/insomnia/folders/", {
   :techs     => 1,
   :endpoints => 2,
 }, nil).perform_tests
+
+edge_endpoints = [
+  Endpoint.new("/users/{userId}", "GET", [
+    Param.new("include", "", "query"),
+    Param.new("page", "1", "query"),
+    Param.new("userId", "42", "path"),
+    Param.new("Authorization", "Bearer edge-token", "header"),
+  ]),
+  Endpoint.new("/sessions/:session_id", "POST", [
+    Param.new("session_id", "", "path"),
+    Param.new("username", "", "json"),
+    Param.new("password", "", "json"),
+  ]),
+  Endpoint.new("/status", "GET"),
+  Endpoint.new("/api/v1/relative", "GET"),
+  Endpoint.new("/diagnostics", "TRACE"),
+]
+
+FunctionalTester.new("fixtures/specification/insomnia/edgecases/", {
+  :techs     => 1,
+  :endpoints => edge_endpoints.size,
+}, edge_endpoints).perform_tests

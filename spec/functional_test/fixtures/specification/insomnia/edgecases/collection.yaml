@@ -1,0 +1,74 @@
+type: collection.insomnia.rest/5.0
+name: Insomnia Edge Cases
+meta:
+  id: wrk_edge
+  created: 1771459200000
+  modified: 1771459200000
+environments:
+  data:
+    hosts:
+      api: https://api.example.com
+    token: edge-token
+collection:
+  - name: HTTP
+    meta:
+      id: fld_http
+    children:
+      - name: User detail
+        meta:
+          id: req_user_detail
+        method: GET
+        url: "{{ _.hosts.api }}/users/{userId}?include=posts"
+        parameters:
+          - name: page
+            value: "1"
+          - name: disabled
+            value: skip
+            disabled: true
+        pathParameters:
+          - name: userId
+            value: "42"
+        headers:
+          - name: ""
+            value: skip
+          - name: Host
+            value: api.example.com
+        authentication:
+          type: bearer
+          token: "{{ token }}"
+      - name: Session
+        meta:
+          id: req_session
+        method: POST
+        url: /sessions/{{ session_id }}
+        body:
+          mimeType: application/json
+          text: '{"username":"alice","password":"secret"}'
+      - name: Host without scheme
+        meta:
+          id: req_host_without_scheme
+        method: GET
+        url: localhost:3000/status
+      - name: Relative without leading slash
+        meta:
+          id: req_relative_without_slash
+        method: GET
+        url: api/v1/relative
+      - name: Diagnostics trace
+        meta:
+          id: req_diagnostics_trace
+        method: TRACE
+        url: https://api.example.com/diagnostics
+      - name: WebSocket is not HTTP
+        meta:
+          id: ws-req_socket
+        url: ws://localhost:3000/socket
+        headers:
+          - name: X-Socket
+            value: skip
+      - name: GRPC is not HTTP
+        meta:
+          id: grpc_req
+        url: grpc://localhost:50051/example.Service/Call
+        body:
+          text: "{}"
