@@ -1,0 +1,61 @@
+#%RAML 1.0
+title: Advanced RAML API
+version: v2
+baseUri: https://api.example.com/api/{version}
+mediaType:
+  - application/json
+
+traits:
+  authenticated: !include traits/authenticated.raml
+  pageable:
+    queryParameters:
+      page:
+        type: integer
+      per_page:
+        type: integer
+
+resourceTypes:
+  collection: !include resourceTypes/collection.raml
+  member:
+    get:
+      is: [authenticated]
+    put:
+      is: [authenticated]
+      body:
+        type: UserUpdate
+
+types:
+  UserCreate:
+    properties:
+      name: string
+      email: string
+  UserUpdate: !include schemas/user_update.raml
+  ReportQuery:
+    properties:
+      from: string
+      to: string
+
+/users:
+  type: collection
+  get:
+    is: [pageable]
+  post:
+    body:
+      type: UserCreate
+  /{userId}:
+    type: member
+    uriParameters:
+      userId:
+        type: string
+    delete:
+      is: [authenticated]
+  /search:
+    get:
+      queryParameters:
+        q:
+          type: string
+
+/reports:
+  GET:
+    queryString:
+      type: ReportQuery
