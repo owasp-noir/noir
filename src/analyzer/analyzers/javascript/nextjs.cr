@@ -1,5 +1,6 @@
 require "../../engines/javascript_engine"
 require "../../../miniparsers/js_callee_extractor"
+require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Javascript
   class Nextjs < JavascriptEngine
@@ -12,6 +13,8 @@ module Analyzer::Javascript
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
       parallel_file_scan(EXTENSIONS) do |path|
+        next if ignored_next_path?(path)
+
         if app_router_file?(path)
           analyze_app_router_file(path, result, mutex, include_callee)
         elsif pages_router_file?(path)
@@ -22,6 +25,12 @@ module Analyzer::Javascript
       end
 
       result
+    end
+
+    private def ignored_next_path?(path : String) : Bool
+      path.includes?(".test.") || path.includes?(".spec.") ||
+        path.includes?("/__tests__/") || path.includes?("/__mocks__/") ||
+        path.includes?("/test/fixtures/") || path.includes?("/tests/fixtures/")
     end
 
     private def app_router_file?(path : String) : Bool
@@ -52,8 +61,9 @@ module Analyzer::Javascript
         logger.debug "Error reading file #{path}: #{e.message}"
         return
       end
+      sanitized = Noir::JSRouteExtractor.strip_js_comments(content)
 
-      methods = detect_pages_router_methods(content)
+      methods = detect_pages_router_methods(sanitized)
       default_body_info = include_callee ? extract_default_export_body(content) : nil
 
       methods.each do |method|
@@ -61,7 +71,7 @@ module Analyzer::Javascript
         endpoint.details = Details.new(PathInfo.new(path, 1))
 
         extract_path_params(url, endpoint)
-        extract_pages_router_params(content, endpoint)
+        extract_pages_router_params(sanitized, endpoint)
         if include_callee
           body_info = extract_exported_method_body(content, method) || default_body_info
           attach_callees(endpoint, path, body_info) if body_info
@@ -103,15 +113,17 @@ module Analyzer::Javascript
         logger.debug "Error reading file #{path}: #{e.message}"
         return
       end
+      sanitized = Noir::JSRouteExtractor.strip_js_comments(content)
 
-      methods = extract_app_router_methods(content)
+      methods = extract_app_router_methods(sanitized)
       return if methods.empty?
 
       methods.each do |method|
         endpoint = Endpoint.new(url, method)
         endpoint.details = Details.new(PathInfo.new(path, 1))
-        body_info = extract_exported_method_body(content, method)
-        param_source = body_info.try(&.[0]) || content
+        body_info = include_callee ? extract_exported_method_body(content, method) : nil
+        param_body_info = extract_exported_method_body(sanitized, method)
+        param_source = param_body_info.try(&.[0]) || sanitized
 
         extract_path_params(url, endpoint)
         extract_app_router_params(param_source, endpoint)
@@ -133,23 +145,26 @@ module Analyzer::Javascript
 
       # File must declare "use server" directive at the top
       return unless has_use_server_directive?(content)
+      sanitized = Noir::JSRouteExtractor.strip_js_comments(content)
 
       seen = Set(String).new
 
       # export async function NAME(args) { ... }
-      content.scan(/export\s+async\s+function\s+(\w+)\s*\(([^)]*)\)/) do |match|
+      sanitized.scan(/export\s+async\s+function\s+(\w+)\s*\(([^)]*)\)/) do |match|
         action_name = match[1]
         next if seen.includes?(action_name)
         seen << action_name
-        register_server_action(path, action_name, match[2], content, match, result, mutex, include_callee)
+        original_match = content.match(/export\s+async\s+function\s+#{Regex.escape(action_name)}\s*\(([^)]*)\)/)
+        register_server_action(path, action_name, match[2], sanitized, match, content, original_match, result, mutex, include_callee)
       end
 
       # export const NAME = async (args) => { ... }
-      content.scan(/export\s+const\s+(\w+)\s*=\s*async\s*\(([^)]*)\)/) do |match|
+      sanitized.scan(/export\s+const\s+(\w+)\s*=\s*async\s*\(([^)]*)\)/) do |match|
         action_name = match[1]
         next if seen.includes?(action_name)
         seen << action_name
-        register_server_action(path, action_name, match[2], content, match, result, mutex, include_callee)
+        original_match = content.match(/export\s+const\s+#{Regex.escape(action_name)}\s*=\s*async\s*\(([^)]*)\)/)
+        register_server_action(path, action_name, match[2], sanitized, match, content, original_match, result, mutex, include_callee)
       end
 
       # Note: `export default` actions are unaddressable by name, and
@@ -157,17 +172,19 @@ module Analyzer::Javascript
     end
 
     private def register_server_action(path : String, action_name : String, args : String,
-                                       content : String, match : Regex::MatchData,
+                                       sanitized : String, match : Regex::MatchData,
+                                       content : String, original_match : Regex::MatchData?,
                                        result : Array(Endpoint), mutex : Mutex, include_callee : Bool)
-      body_info = extract_action_body(content, match)
-      body = body_info.try(&.[0]) || ""
+      param_body_info = extract_action_body(sanitized, match)
+      body = param_body_info.try(&.[0]) || ""
+      callee_body_info = original_match ? extract_action_body(content, original_match) : nil
 
       url = "/" + action_name
       endpoint = Endpoint.new(url, "POST")
       endpoint.details = Details.new(PathInfo.new(path, 1))
 
       extract_server_action_params(args, body, endpoint)
-      attach_callees(endpoint, path, body_info) if include_callee && body_info
+      attach_callees(endpoint, path, callee_body_info) if include_callee && callee_body_info
 
       mutex.synchronize { result << endpoint }
     end
@@ -310,10 +327,41 @@ module Analyzer::Javascript
         inferred << method if HTTP_METHODS.includes?(method) && !inferred.includes?(method)
       end
 
+      infer_switch_method_cases(content).each do |method|
+        inferred << method if HTTP_METHODS.includes?(method) && !inferred.includes?(method)
+      end
+
+      content.scan(/\[\s*([^\]]+)\]\s*\.includes\s*\(\s*req\.method/) do |m|
+        m[1].scan(/['"]([A-Z]+)['"]/) do |mm|
+          method = mm[1]
+          inferred << method if HTTP_METHODS.includes?(method) && !inferred.includes?(method)
+        end
+      end
+
       return inferred unless inferred.empty?
 
       # Default-export handler — applies to ALL methods.
       ["GET", "POST", "PUT", "DELETE", "PATCH"]
+    end
+
+    private def infer_switch_method_cases(content : String) : Array(String)
+      methods = [] of String
+      content.scan(/switch\s*\(\s*(?:req|request)\.method\s*\)/) do |match|
+        match_end = match.end(0)
+        next unless match_end
+
+        open_brace = content.index("{", match_end)
+        next unless open_brace
+
+        close_brace = Noir::JSRouteExtractor.find_matching_brace(content, open_brace)
+        next unless close_brace
+
+        content[(open_brace + 1)...close_brace].scan(/case\s+['"]([A-Z]+)['"]\s*:/) do |case_match|
+          method = case_match[1]
+          methods << method if HTTP_METHODS.includes?(method) && !methods.includes?(method)
+        end
+      end
+      methods
     end
 
     private def extract_app_router_methods(content : String) : Array(String)
@@ -378,21 +426,21 @@ module Analyzer::Javascript
 
     private def extract_app_router_params(content : String, endpoint : Endpoint)
       # request.nextUrl.searchParams.get("X") or searchParams.get("X")
-      content.scan(/(?:searchParams|nextUrl\.searchParams)\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
+      content.scan(/(?:searchParams|nextUrl\.searchParams)\.(?:get|getAll|has)\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
         add_param(endpoint, m[1], "query")
       end
 
       # await request.json() — body present; try to extract field access patterns
       if content.includes?("request.json()") || content.includes?(".json()")
         # Destructured: const { foo, bar } = await request.json()
-        content.scan(/(?:const|let|var)\s*\{\s*([^}]+?)\s*\}\s*=\s*await\s+(?:request|req)\.json\s*\(\s*\)/) do |m|
+        content.scan(/(?:const|let|var)\s*\{\s*([^}]+?)\s*\}\s*=\s*(?:await\s+)?(?:request|req)\.json\s*\(\s*\)/) do |m|
           extract_simple_destructure_params(m[1]).each do |name|
             add_param(endpoint, name, "json")
           end
         end
 
         # Aliased: const body = await request.json(); then body.X or body["X"]
-        content.scan(/(?:const|let|var)\s+(\w+)\s*=\s*await\s+(?:request|req)\.json\s*\(\s*\)/) do |m|
+        content.scan(/(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?(?:request|req)\.json\s*\(\s*\)/) do |m|
           varname = m[1]
           escaped = Regex.escape(varname)
           content.scan(/\b#{escaped}\.(\w+)/) do |mm|
@@ -406,8 +454,15 @@ module Analyzer::Javascript
 
       # formData: const formData = await request.formData(); formData.get("name")
       if content.includes?("formData()")
-        content.scan(/formData\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
-          add_param(endpoint, m[1], "form")
+        form_vars = ["formData"]
+        content.scan(/(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?(?:request|req)\.formData\s*\(\s*\)/) do |m|
+          form_vars << m[1] unless form_vars.includes?(m[1])
+        end
+        form_vars.each do |varname|
+          escaped = Regex.escape(varname)
+          content.scan(/\b#{escaped}\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
+            add_param(endpoint, m[1], "form")
+          end
         end
       end
 
@@ -415,10 +470,19 @@ module Analyzer::Javascript
       content.scan(/(?:request|req)\.headers\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
         add_param(endpoint, m[1], "header")
       end
+      content.scan(/headers\(\)\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
+        add_param(endpoint, m[1], "header")
+      end
 
       # cookies().get("session") from next/headers
       content.scan(/cookies\(\)\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
         add_param(endpoint, m[1], "cookie")
+      end
+      content.scan(/(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?cookies\s*\(\s*\)/) do |m|
+        escaped = Regex.escape(m[1])
+        content.scan(/\b#{escaped}\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |mm|
+          add_param(endpoint, mm[1], "cookie")
+        end
       end
     end
 

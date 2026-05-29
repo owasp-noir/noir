@@ -31,3 +31,14 @@ export class HealthController {
     return { ok: true }
   }
 }
+
+// Method-level versioning overrides, rather than stacks on top of,
+// controller-level URI versioning.
+@Controller({ path: 'dogs', version: '1' })
+export class DogsController {
+  @Version('2')
+  @Get('override')
+  override() {
+    return []
+  }
+}

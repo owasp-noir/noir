@@ -31,6 +31,20 @@ expected_endpoints = [
     Param.new("authorization", "", "header"),
   ]),
 
+  # Catch-all dynamic route with getRouterParam and destructured query.
+  Endpoint.new("/api/blog/:slug", "GET", [
+    Param.new("slug", "", "path"),
+    Param.new("tag", "", "query"),
+  ]),
+
+  # Validated body/header helpers common in Nuxt/Nitro apps.
+  Endpoint.new("/api/profile", "POST", [
+    Param.new("username", "", "body"),
+    Param.new("email", "", "body"),
+    Param.new("authorization", "", "header"),
+    Param.new("user-agent", "", "header"),
+  ]),
+
   # Server route (without /api prefix) with cookie
   Endpoint.new("/auth", "ANY", [
     Param.new("session", "", "cookie"),
