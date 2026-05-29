@@ -207,13 +207,15 @@ class EndpointOptimizer
 
       # Duplicate check
       unless tiny_tmp.url.empty?
+        absolute_url = tiny_tmp.url.matches?(/\A[a-zA-Z][a-zA-Z0-9+.\-]*:\/\//)
+
         # Check start with slash
-        if tiny_tmp.url[0] != "/"
+        if !absolute_url && tiny_tmp.url[0] != "/"
           tiny_tmp.url = "/#{tiny_tmp.url}"
         end
 
         # Check double slash
-        tiny_tmp.url = tiny_tmp.url.gsub_repeatedly("//", "/")
+        tiny_tmp.url = tiny_tmp.url.gsub_repeatedly("//", "/") unless absolute_url
 
         key = {tiny_tmp.method, tiny_tmp.url}
 

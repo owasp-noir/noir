@@ -143,6 +143,7 @@ class FileAnalyzer < Analyzer
               path = channel.receive?
               break if path.nil?
               next if File.directory?(path)
+              next if skip_file_analyzer?(path)
 
               logger.debug "Analyzing: #{path}"
 
@@ -163,5 +164,10 @@ class FileAnalyzer < Analyzer
     end
 
     @result
+  end
+
+  private def skip_file_analyzer?(path : String) : Bool
+    har_files = CodeLocator.instance.all("har-path")
+    har_files.is_a?(Array(String)) && har_files.includes?(path)
   end
 end
