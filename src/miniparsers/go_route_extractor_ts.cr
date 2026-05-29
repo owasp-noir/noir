@@ -134,10 +134,24 @@ module Noir
       group_prefixes = external_groups.dup
       Noir::TreeSitter.parse_go(source) do |root|
         string_values = collect_string_values(root, source)
+        mux_chained_operands = Set(String).new
 
         walk(root) do |node|
           next unless group_assignment_node?(node)
           collect_group(node, source, group_prefixes, group_method, group_aliases, string_values)
+        end
+
+        if handlefunc_methods
+          walk(root) do |node|
+            next unless Noir::TreeSitter.node_type(node) == "call_expression"
+            next unless mux_route_chain_call?(node, source)
+            function = Noir::TreeSitter.field(node, "function")
+            next unless function
+            operand = Noir::TreeSitter.field(function, "operand")
+            next unless operand
+            next unless Noir::TreeSitter.node_type(operand) == "call_expression"
+            mux_chained_operands << node_key(operand)
+          end
         end
 
         walk(root) do |node|
@@ -146,7 +160,7 @@ module Noir
             routes << route
           elsif handle_method && (route = decode_handle_call(node, source, group_prefixes, handle_method))
             routes << route
-          elsif handlefunc_methods
+          elsif handlefunc_methods && !mux_chained_operands.includes?(node_key(node))
             # Mux's `.Methods(...)` can list several verbs at once
             # (`.Methods("GET", "POST")`), so the decoder returns an
             # array and we fan out into one Route per verb.
@@ -156,7 +170,7 @@ module Noir
           end
         end
       end
-      routes
+      dedupe_routes(routes)
     end
 
     # Extracts only `<name> := <parent>.<group_method>("/prefix")`
@@ -676,6 +690,27 @@ module Noir
       end
     end
 
+    private def node_key(node : LibTreeSitter::TSNode) : String
+      "#{LibTreeSitter.ts_node_start_byte(node)}:#{LibTreeSitter.ts_node_end_byte(node)}"
+    end
+
+    private def mux_route_chain_call?(call : LibTreeSitter::TSNode, source : String) : Bool
+      function = Noir::TreeSitter.field(call, "function")
+      return false unless function
+      return false unless Noir::TreeSitter.node_type(function) == "selector_expression"
+      field = Noir::TreeSitter.field(function, "field")
+      return false unless field
+
+      case Noir::TreeSitter.node_text(field, source)
+      when "Methods", "Queries", "HandleFunc", "Handle", "HandlerFunc", "Handler",
+           "Path", "Host", "Schemes", "Headers", "HeadersRegexp", "Name",
+           "MatcherFunc", "BuildOnly"
+        true
+      else
+        false
+      end
+    end
+
     private def group_assignment_node?(node : LibTreeSitter::TSNode) : Bool
       case Noir::TreeSitter.node_type(node)
       when "short_var_declaration", "assignment_statement", "var_spec"
@@ -1027,37 +1062,53 @@ module Noir
       )
     end
 
-    # Decode mux's `<router>.HandleFunc("/path", handler).Methods(...)`.
-    # The outer call is `.Methods(...)` whose operand is the
-    # `.HandleFunc(...)` call. Returns one Route per method listed, so
-    # `.Methods("GET", "POST")` emits both endpoints. Further chained
-    # calls like `.Queries(...)` wrap this one and are peeled back here
-    # before looking at the operand.
+    # Decode mux route chains:
+    #
+    #   * `<router>.HandleFunc("/path", handler).Methods(...)`
+    #   * `<router>.Handle("/path", handler).Methods(...)`
+    #   * `<router>.Methods(...).Path("/path").HandlerFunc(handler)`
+    #   * `<router>.Path("/path").Methods(...).Handler(handler)`
+    #
+    # Returns one Route per method listed, so `.Methods("GET", "POST")`
+    # emits both endpoints. Further chained calls like `.Queries(...)`,
+    # `.Name(...)`, `.Host(...)`, etc. are peeled back while collecting
+    # route metadata.
     private def decode_handlefunc_methods_call(call : LibTreeSitter::TSNode,
                                                source : String,
                                                groups : Hash(String, String)) : Array(Route)
       empty = [] of Route
 
-      # Walk back through any tail methods (`.Queries`, `.Host`, `.Schemes`)
-      # stacked on top of `.Methods(...)` until we either find the
-      # `.Methods(...)` call or give up. As we traverse, collect query-param
-      # names from any `.Queries(...)` call — mux uses odd-positioned
-      # strings as param names (`.Queries("type", "{type}", "page", "{page}")`
-      # declares `type` and `page`).
-      methods_call = call
+      current = call
+      raw_path = nil
+      handler_text = ""
+      verbs = [] of String
       query_params = [] of String
+      saw_registration = false
+      saw_methods = false
+      registration_line = Noir::TreeSitter.node_start_row(call)
+      router_name = nil
+
       loop do
-        fn = Noir::TreeSitter.field(methods_call, "function")
+        fn = Noir::TreeSitter.field(current, "function")
         return empty unless fn
         return empty unless Noir::TreeSitter.node_type(fn) == "selector_expression"
         fld = Noir::TreeSitter.field(fn, "field")
         return empty unless fld
         field_name = Noir::TreeSitter.node_text(fld, source)
+
         case field_name
         when "Methods"
-          break
+          saw_methods = true
+          if methods_args = Noir::TreeSitter.field(current, "arguments")
+            Noir::TreeSitter.each_named_child(methods_args) do |arg|
+              case Noir::TreeSitter.node_type(arg)
+              when "interpreted_string_literal", "raw_string_literal"
+                verbs << decode_string_literal(arg, source).upcase
+              end
+            end
+          end
         when "Queries"
-          if q_args = Noir::TreeSitter.field(methods_call, "arguments")
+          if q_args = Noir::TreeSitter.field(current, "arguments")
             idx = 0
             Noir::TreeSitter.each_named_child(q_args) do |arg|
               case Noir::TreeSitter.node_type(arg)
@@ -1067,66 +1118,66 @@ module Noir
               end
             end
           end
-          next_call = Noir::TreeSitter.field(fn, "operand")
-          return empty unless next_call
-          return empty unless Noir::TreeSitter.node_type(next_call) == "call_expression"
-          methods_call = next_call
-        when "Host", "Schemes", "Headers", "HeadersRegexp"
-          next_call = Noir::TreeSitter.field(fn, "operand")
-          return empty unless next_call
-          return empty unless Noir::TreeSitter.node_type(next_call) == "call_expression"
-          methods_call = next_call
+        when "HandleFunc", "Handle"
+          saw_registration = true
+          registration_line = Noir::TreeSitter.node_start_row(current)
+          if args = Noir::TreeSitter.field(current, "arguments")
+            Noir::TreeSitter.each_named_child(args) do |arg|
+              case Noir::TreeSitter.node_type(arg)
+              when "interpreted_string_literal", "raw_string_literal"
+                raw_path ||= decode_string_literal(arg, source)
+              else
+                handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty? && !raw_path.nil?
+              end
+            end
+          end
+        when "HandlerFunc", "Handler"
+          saw_registration = true
+          registration_line = Noir::TreeSitter.node_start_row(current)
+          if args = Noir::TreeSitter.field(current, "arguments")
+            Noir::TreeSitter.each_named_child(args) do |arg|
+              case Noir::TreeSitter.node_type(arg)
+              when "interpreted_string_literal", "raw_string_literal"
+                # Handler/HandlerFunc don't carry a path in mux's builder
+                # API, but ignore string args defensively.
+              else
+                handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty?
+              end
+            end
+          end
+        when "Path"
+          if args = Noir::TreeSitter.field(current, "arguments")
+            Noir::TreeSitter.each_named_child(args) do |arg|
+              case Noir::TreeSitter.node_type(arg)
+              when "interpreted_string_literal", "raw_string_literal"
+                raw_path ||= decode_string_literal(arg, source)
+                break
+              end
+            end
+          end
+        when "Host", "Schemes", "Headers", "HeadersRegexp", "Name", "MatcherFunc", "BuildOnly"
+          # Metadata/matcher chain; keep peeling.
+        else
+          return empty
+        end
+
+        operand = Noir::TreeSitter.field(fn, "operand")
+        return empty unless operand
+        case Noir::TreeSitter.node_type(operand)
+        when "identifier"
+          router_name = Noir::TreeSitter.node_text(operand, source)
+          break
+        when "call_expression"
+          current = operand
         else
           return empty
         end
       end
 
-      function = Noir::TreeSitter.field(methods_call, "function")
-      return empty unless function
+      return empty unless router_name && raw_path && saw_registration
+      return empty if handler_text.empty?
+      verbs << (saw_methods ? "GET" : "ANY") if verbs.empty?
 
-      handlefunc_call = Noir::TreeSitter.field(function, "operand")
-      return empty unless handlefunc_call
-      return empty unless Noir::TreeSitter.node_type(handlefunc_call) == "call_expression"
-
-      inner_function = Noir::TreeSitter.field(handlefunc_call, "function")
-      return empty unless inner_function
-      return empty unless Noir::TreeSitter.node_type(inner_function) == "selector_expression"
-
-      router_node = Noir::TreeSitter.field(inner_function, "operand")
-      inner_field = Noir::TreeSitter.field(inner_function, "field")
-      return empty unless router_node && inner_field
-      return empty unless Noir::TreeSitter.node_type(router_node) == "identifier"
-      return empty unless Noir::TreeSitter.node_text(inner_field, source) == "HandleFunc"
-
-      inner_args = Noir::TreeSitter.field(handlefunc_call, "arguments")
-      return empty unless inner_args
-
-      raw_path = nil
-      handler_text = ""
-      Noir::TreeSitter.each_named_child(inner_args) do |arg|
-        case Noir::TreeSitter.node_type(arg)
-        when "interpreted_string_literal", "raw_string_literal"
-          if raw_path.nil?
-            raw_path = decode_string_literal(arg, source)
-          end
-        else
-          handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty? && !raw_path.nil?
-        end
-      end
-      return empty unless raw_path
-
-      verbs = [] of String
-      if methods_args = Noir::TreeSitter.field(methods_call, "arguments")
-        Noir::TreeSitter.each_named_child(methods_args) do |arg|
-          case Noir::TreeSitter.node_type(arg)
-          when "interpreted_string_literal", "raw_string_literal"
-            verbs << decode_string_literal(arg, source).upcase
-          end
-        end
-      end
-      verbs << "GET" if verbs.empty?
-
-      router_name = Noir::TreeSitter.node_text(router_node, source)
       return [] of Route if NON_ROUTER_OPERANDS.includes?(router_name)
       resolved = if prefix = groups[router_name]?
                    join_paths(prefix, raw_path)
@@ -1134,10 +1185,29 @@ module Noir
                    raw_path
                  end
 
-      line = Noir::TreeSitter.node_start_row(handlefunc_call)
       verbs.uniq.map do |verb|
-        Route.new(router_name, verb, resolved, raw_path, handler_text, line, query_params.dup)
+        Route.new(router_name, verb, resolved, raw_path, handler_text, registration_line, query_params.dup)
       end
+    end
+
+    private def dedupe_routes(routes : Array(Route)) : Array(Route)
+      deduped = [] of Route
+      seen = Set(String).new
+      routes.each do |route|
+        key = String.build do |io|
+          io << route.line << '\0'
+          io << route.verb << '\0'
+          io << route.path << '\0'
+          io << route.handler << '\0'
+          route.query_params.each do |param|
+            io << param << '\0'
+          end
+        end
+        next if seen.includes?(key)
+        seen << key
+        deduped << route
+      end
+      deduped
     end
 
     # Return the first named child of `node`, or nil if there isn't one.

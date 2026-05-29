@@ -24,6 +24,11 @@ expected_endpoints = [
   Endpoint.new("/api/v1/health", "GET"),
   Endpoint.new("/static/test.txt", "GET"),
   Endpoint.new("/multiline", "GET"),
+  Endpoint.new("/handler-route", "POST"),
+  Endpoint.new("/builder-route", "PATCH"),
+  Endpoint.new("/builder-query", "GET", [
+    Param.new("type", "", "query"),
+  ]),
   # handlers.go: PUT method with path variable
   Endpoint.new("/items/{id}", "PUT", [
     Param.new("id", "", "path"),

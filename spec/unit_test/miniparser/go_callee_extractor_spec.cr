@@ -208,5 +208,59 @@ describe Noir::GoCalleeExtractor do
       names.should contain("lookupUser")
       names.should contain("c.JSON")
     end
+
+    it "resolves mux builder-chain HandlerFunc handlers" do
+      source = <<-GO
+        package main
+
+        func createUser(w http.ResponseWriter, r *http.Request) {
+          user := saveUser(r)
+          w.Write([]byte(user))
+        }
+
+        func register(r *mux.Router) {
+          r.Methods("POST").
+            Path("/users").
+            HandlerFunc(createUser)
+        }
+        GO
+
+      target_row = source.lines.index!(&.includes?("r.Methods(\"POST\")"))
+      callees = Noir::GoCalleeExtractor.callees_for_routes(
+        source, "main.go", Set{target_row},
+        Hash(String, Noir::GoCalleeExtractor::FunctionBody).new
+      )
+      names = callees[target_row].map(&.[0])
+
+      names.should contain("saveUser")
+      names.should contain("w.Write")
+    end
+
+    it "unwraps http.HandlerFunc wrappers in mux Handler chains" do
+      source = <<-GO
+        package main
+
+        func createUser(w http.ResponseWriter, r *http.Request) {
+          user := saveUser(r)
+          w.Write([]byte(user))
+        }
+
+        func register(r *mux.Router) {
+          r.Path("/users").
+            Methods("POST").
+            Handler(http.HandlerFunc(createUser))
+        }
+        GO
+
+      target_row = source.lines.index!(&.includes?("r.Path(\"/users\")"))
+      callees = Noir::GoCalleeExtractor.callees_for_routes(
+        source, "main.go", Set{target_row},
+        Hash(String, Noir::GoCalleeExtractor::FunctionBody).new
+      )
+      names = callees[target_row].map(&.[0])
+
+      names.should contain("saveUser")
+      names.should contain("w.Write")
+    end
   end
 end

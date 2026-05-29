@@ -150,7 +150,7 @@ module Noir::GoCalleeExtractor
         row = Noir::TreeSitter.node_start_row(node)
         next unless route_rows.includes?(row)
 
-        handler_arg = find_handler_arg(node, source)
+        handler_arg = find_handler_arg(node, source).try { |arg| unwrap_handler_arg(arg, source) }
         next unless handler_arg
 
         callees = [] of Tuple(String, String, Int32)
@@ -182,9 +182,15 @@ module Noir::GoCalleeExtractor
   # First non-string positional argument after a string-literal arg in a
   # verb-route call. Mirrors the convention used by
   # `TreeSitterGoRouteExtractor#decode_verb_call`.
+  #
+  # Mux builder chains are the exception: `.Path("/x").HandlerFunc(h)`
+  # carries the path and handler in different calls. When the routed call
+  # itself is `Handler` / `HandlerFunc`, the first non-string arg is the
+  # handler.
   private def find_handler_arg(call_node : LibTreeSitter::TSNode, source : String) : LibTreeSitter::TSNode?
     args = Noir::TreeSitter.field(call_node, "arguments")
     return unless args
+    handler_only = handler_only_call?(call_node, source)
     seen_path = false
     Noir::TreeSitter.each_named_child(args) do |arg|
       ty = Noir::TreeSitter.node_type(arg)
@@ -192,9 +198,44 @@ module Noir::GoCalleeExtractor
         seen_path = true
         next
       end
-      return arg if seen_path
+      return arg if seen_path || handler_only
     end
     nil
+  end
+
+  private def handler_only_call?(call_node : LibTreeSitter::TSNode, source : String) : Bool
+    function = Noir::TreeSitter.field(call_node, "function")
+    return false unless function
+    return false unless Noir::TreeSitter.node_type(function) == "selector_expression"
+    field = Noir::TreeSitter.field(function, "field")
+    return false unless field
+
+    case Noir::TreeSitter.node_text(field, source)
+    when "Handler", "HandlerFunc"
+      true
+    else
+      false
+    end
+  end
+
+  private def unwrap_handler_arg(arg : LibTreeSitter::TSNode, source : String) : LibTreeSitter::TSNode
+    return arg unless Noir::TreeSitter.node_type(arg) == "call_expression"
+
+    function = Noir::TreeSitter.field(arg, "function")
+    return arg unless function
+    return arg unless Noir::TreeSitter.node_type(function) == "selector_expression"
+
+    field = Noir::TreeSitter.field(function, "field")
+    return arg unless field
+    return arg unless Noir::TreeSitter.node_text(field, source) == "HandlerFunc"
+
+    args = Noir::TreeSitter.field(arg, "arguments")
+    return arg unless args
+    Noir::TreeSitter.each_named_child(args) do |child|
+      return child unless Noir::TreeSitter.node_type(child) == "interpreted_string_literal" ||
+                          Noir::TreeSitter.node_type(child) == "raw_string_literal"
+    end
+    arg
   end
 
   # Walk `body_node` for call expressions and append `(name, file_path,
