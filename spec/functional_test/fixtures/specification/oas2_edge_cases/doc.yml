@@ -1,0 +1,70 @@
+swagger: "2.0"
+info:
+  title: OAS2 Edge Cases
+  version: 1.0.0
+basePath: /api
+consumes:
+  - application/json
+paths:
+  /orders:
+    $ref: "#/x-paths/Orders"
+  /uploads:
+    post:
+      consumes:
+        - multipart/form-data
+      parameters:
+        - $ref: "#/parameters/UploadFile"
+        - name: description
+          in: formData
+          type: string
+      responses:
+        201:
+          description: Uploaded
+x-paths:
+  Orders:
+    parameters:
+      - $ref: "#/parameters/Tenant"
+    get:
+      parameters:
+        - name: state
+          in: query
+          type: string
+      responses:
+        200:
+          description: Orders
+    post:
+      parameters:
+        - name: order
+          in: body
+          schema:
+            type: array
+            items:
+              $ref: "#/definitions/OrderCreate"
+      responses:
+        201:
+          description: Created
+parameters:
+  Tenant:
+    name: X-Tenant
+    in: header
+    type: string
+  UploadFile:
+    name: file
+    in: formData
+    type: file
+definitions:
+  OrderCreate:
+    allOf:
+      - type: object
+        properties:
+          name:
+            type: string
+      - oneOf:
+          - type: object
+            properties:
+              expedited:
+                type: boolean
+          - type: object
+            properties:
+              gift_message:
+                type: string
