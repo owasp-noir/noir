@@ -194,4 +194,58 @@ describe Noir::TreeSitterGoRouteExtractor do
     routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
     routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/legit"}])
   end
+
+  it "extracts gorilla mux Handle routes and named tail chains" do
+    source = <<-GO
+      package main
+      func main() {
+          r := mux.NewRouter()
+          r.Handle("/handler", http.HandlerFunc(handler)).Methods("POST").Name("handler.create")
+          r.HandleFunc("/multi", handler).Methods("GET", "POST").Name("multi")
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source, handlefunc_methods: true)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/multi"},
+      {"POST", "/handler"},
+      {"POST", "/multi"},
+    ].sort)
+  end
+
+  it "extracts gorilla mux route builder chains" do
+    source = <<-GO
+      package main
+      func main() {
+          r := mux.NewRouter()
+          r.Methods("GET").Path("/builder").HandlerFunc(handler)
+          r.Path("/alternate").Methods("PATCH").Handler(http.HandlerFunc(handler))
+          r.Methods("GET").Path("/filtered").Queries("type", "{type}", "page", "{page}").HandlerFunc(handler)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source, handlefunc_methods: true)
+    routes.map { |r| {r.verb, r.path, r.query_params} }.sort_by! { |r| r[1] }.should eq([
+      {"PATCH", "/alternate", [] of String},
+      {"GET", "/builder", [] of String},
+      {"GET", "/filtered", ["type", "page"]},
+    ])
+  end
+
+  it "preserves wildcard methods for unconstrained gorilla mux routes" do
+    source = <<-GO
+      package main
+      func main() {
+          r := mux.NewRouter()
+          r.HandleFunc("/all", handler)
+          r.Path("/all-builder").HandlerFunc(handler)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source, handlefunc_methods: true)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"ANY", "/all"},
+      {"ANY", "/all-builder"},
+    ].sort)
+  end
 end
