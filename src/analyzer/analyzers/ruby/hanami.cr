@@ -15,10 +15,10 @@ module Analyzer::Ruby
           file.each_line.with_index do |line, index|
             details = Details.new(PathInfo.new(path, index + 1))
             endpoint = line_to_endpoint(line, details)
-            if endpoint.method != ""
+            unless endpoint.method.empty?
               # Extract action path from route
               action_path = extract_action_path(line, framework_root)
-              if action_path != ""
+              unless action_path.empty?
                 # Scan action file for parameters
                 scan_action_file(endpoint, action_path, include_callee)
               end

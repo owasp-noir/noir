@@ -40,7 +40,7 @@ class OutputBuilder
 
   def ob_puts(message)
     @io.puts message
-    if @output_file != ""
+    unless @output_file.empty?
       begin
         File.open(@output_file, output_file_mode) do |file|
           file.puts message
@@ -118,7 +118,7 @@ class OutputBuilder
           is_json = true
         end
 
-        if !param.tags.empty?
+        unless param.tags.empty?
           param.tags.each do |tag|
             final_tags << tag.name
           end

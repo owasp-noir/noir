@@ -143,7 +143,7 @@ module Analyzer::Go
     private def extract_param(line : String, regex : Regex, param_type : String, endpoint : Endpoint)
       if param_match = line.match(regex)
         param_name = param_match[1]
-        if param_name.size > 0 && endpoint.url != ""
+        if param_name.size > 0 && !endpoint.url.empty?
           endpoint.params << Param.new(param_name, "", param_type)
         end
       end

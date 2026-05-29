@@ -189,12 +189,12 @@ module Analyzer::Javascript
         endpoint = line_to_endpoint(line, router_detected)
 
         # Handle multi-line routes - check next line if route path is empty
-        if endpoint.method != "" && endpoint.url.empty? && index + 1 < lines.size
+        if !endpoint.method.empty? && endpoint.url.empty? && index + 1 < lines.size
           next_line = lines[index + 1]
           endpoint = line_to_endpoint_multiline(line, next_line, router_detected)
         end
 
-        if endpoint.method != ""
+        unless endpoint.method.empty?
           # Handle router.all by expanding to all HTTP methods
           if endpoint.method == "ALL"
             all_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
@@ -237,8 +237,8 @@ module Analyzer::Javascript
 
         # Get parameters from line
         param = line_to_param(line)
-        if param.name != ""
-          if last_endpoint.method != ""
+        unless param.name.empty?
+          unless last_endpoint.method.empty?
             last_endpoint.push_param(param)
           end
         end
@@ -651,11 +651,11 @@ module Analyzer::Javascript
       # Handle destructuring syntax
       if line =~ /(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*req\.body/
         param_list = $1.split(",").map(&.strip)
-        if !param_list.empty?
+        unless param_list.empty?
           param_list.each do |in_param|
             # Clean up any extra stuff like assignments or type annotations
             clean_param = in_param.split("=").first.strip.split(":").first.strip
-            return Param.new(clean_param, "", "json") if !clean_param.empty?
+            return Param.new(clean_param, "", "json") unless clean_param.empty?
           end
         end
       end

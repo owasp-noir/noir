@@ -38,7 +38,7 @@ class PythonParser
                  depth : Int32 = 0)
     @global_variables = Hash(String, GlobalVariables).new
     @basedir = File.dirname(@path)
-    while @basedir != "" && File.exists?(@basedir + "/__init__.py")
+    while !@basedir.empty? && File.exists?(@basedir + "/__init__.py")
       @basedir = File.dirname(@basedir)
     end
 

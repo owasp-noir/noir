@@ -137,7 +137,7 @@ module Analyzer::Javascript
           end
 
           line_to_params(line).each do |param|
-            if last_endpoint.method != ""
+            unless last_endpoint.method.empty?
               last_endpoint.push_param(param)
             end
           end

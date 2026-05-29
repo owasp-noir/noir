@@ -82,8 +82,7 @@ module Analyzer::Specification
       # Match HAR's filter semantics: only emit endpoints that fall
       # under the user-provided --url. Without a URL we cannot infer
       # what slice of the capture the user cares about.
-      return if @url == ""
-      return unless full_url.includes?(@url)
+      return if @url.empty? || !full_url.includes?(@url)
 
       endpoint_path = full_url.gsub(@url, "")
       endpoint = Endpoint.new(endpoint_path, method)

@@ -33,7 +33,7 @@ module Analyzer::Ruby
             end
 
             endpoint = line_to_endpoint(line)
-            if endpoint.method != ""
+            unless endpoint.method.empty?
               endpoint.url = sinatra_prefixed_path(prefix_stack, endpoint.url)
               details = Details.new(PathInfo.new(path, index + 1))
               endpoint.details = details
@@ -43,8 +43,8 @@ module Analyzer::Ruby
             end
 
             param = line_to_param(line)
-            if param.name != ""
-              if last_endpoint.method != ""
+            unless param.name.empty?
+              unless last_endpoint.method.empty?
                 last_endpoint.push_param(param)
               end
             end

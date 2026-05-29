@@ -141,7 +141,7 @@ module Analyzer::Javascript
         body_params = [] of Param
         config.each_line do |handler_line|
           p = line_to_param(handler_line)
-          body_params << p if p.name != "" && !body_params.any? { |bp| bp.name == p.name && bp.param_type == p.param_type }
+          body_params << p if !p.name.empty? && !body_params.any? { |bp| bp.name == p.name && bp.param_type == p.param_type }
         end
 
         methods.each do |http_method|
@@ -206,7 +206,7 @@ module Analyzer::Javascript
           # Also detect traditional function syntax for plugins
           if line =~ /(?:function\s+(\w+)\s*\(\s*(?:fastify|app|server)(?:\s*,\s*options)?\s*\)|(?:const|let|var)\s+(\w+)\s*=\s*function\s*\(\s*(?:fastify|app|server)(?:\s*,\s*options)?\s*\))/
             plugin_name = $1 || $2
-            plugin_functions[plugin_name] = true if !plugin_name.empty?
+            plugin_functions[plugin_name] = true unless plugin_name.empty?
           end
 
           # Detect plugin registration with prefix - more flexible pattern matching
@@ -251,7 +251,7 @@ module Analyzer::Javascript
 
           # Detect regular routes or routes within plugins
           endpoint = line_to_endpoint(line)
-          if endpoint.method != ""
+          unless endpoint.method.empty?
             # Apply plugin prefix if inside a plugin function
             if inside_plugin_function && !plugin_prefix.empty?
               # Handle path joining properly
@@ -272,10 +272,8 @@ module Analyzer::Javascript
 
           # Get parameters from line
           param = line_to_param(line)
-          if param.name != ""
-            if last_endpoint.method != ""
-              last_endpoint.push_param(param)
-            end
+          if !param.name.empty? && !last_endpoint.method.empty?
+            last_endpoint.push_param(param)
           end
         end
       end

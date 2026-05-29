@@ -17,7 +17,7 @@ class ZAP
   end
 
   def call(query : String)
-    if @apikey == ""
+    if @apikey.empty?
       HTTP::Client.get(query)
     else
       HTTP::Client.get(query, headers: {"X-ZAP-API-Key" => @apikey})

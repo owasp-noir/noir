@@ -25,7 +25,7 @@ module Analyzer::CSharp
 
             if line.includes? ");"
               maproute_check = false
-              if maproute_buffer != ""
+              unless maproute_buffer.empty?
                 buffer = maproute_buffer.gsub(/[\r\n]/, "")
                 buffer = buffer.gsub(/\s+/, "")
                 buffer.split(",").each do |item|

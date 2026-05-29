@@ -6,7 +6,7 @@ module Analyzer::Specification
       locator = CodeLocator.instance
       har_files = locator.all("har-path")
 
-      if har_files.is_a?(Array(String)) && @url != ""
+      if har_files.is_a?(Array(String)) && !@url.empty?
         har_files.each do |har_file|
           if File.exists?(har_file)
             data = HAR.from_file(har_file)

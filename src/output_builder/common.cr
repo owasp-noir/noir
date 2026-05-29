@@ -21,7 +21,7 @@ class OutputBuilderCommon < OutputBuilder
       r_buffer = String::Builder.new
       r_buffer << "\n#{r_method} #{r_url}"
 
-      if any_to_bool(@options["status_codes"]) || @options["exclude_codes"] != ""
+      if any_to_bool(@options["status_codes"]) || !@options["exclude_codes"].to_s.empty?
         status_color = :light_green
         status_code = endpoint.details.status_code
         if status_code
@@ -68,7 +68,7 @@ class OutputBuilderCommon < OutputBuilder
         r_buffer << "\n  ○ path: #{r_path_param}"
       end
 
-      if baked[:body] != ""
+      unless baked[:body].empty?
         r_body = baked[:body].colorize(:cyan).toggle(@is_color)
         r_buffer << "\n  ○ body: #{r_body}"
       end

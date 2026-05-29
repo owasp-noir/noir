@@ -33,7 +33,7 @@ class OutputBuilderPowershell < OutputBuilder
       end
 
       # Add body
-      if baked[:body] != ""
+      if !baked[:body].empty?
         if baked[:body_type] == "json"
           # Escape for PowerShell string
           escaped_body = escape_powershell(baked[:body])

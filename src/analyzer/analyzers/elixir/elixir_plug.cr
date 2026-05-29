@@ -17,7 +17,7 @@ module Analyzer::Elixir
       File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
         content = file.gets_to_end
         analyze_content(content, path).each do |endpoint|
-          endpoints << endpoint if endpoint.method != ""
+          endpoints << endpoint unless endpoint.method.empty?
         end
       end
       endpoints
@@ -51,7 +51,7 @@ module Analyzer::Elixir
 
         line_endpoints = line_to_endpoint(line.strip)
         line_endpoints.each do |endpoint|
-          if endpoint.method != ""
+          unless endpoint.method.empty?
             details = Details.new(PathInfo.new(file_path, index + 1))
             endpoint.details = details
 

@@ -192,7 +192,7 @@ module Analyzer::Specification
       json_obj = JSON.parse(content)
       base_path = ""
       begin
-        if json_obj["basePath"].to_s != ""
+        unless json_obj["basePath"].to_s.empty?
           base_path = json_obj["basePath"].to_s
         end
       rescue e
@@ -249,7 +249,7 @@ module Analyzer::Specification
       yaml_obj = YAML.parse(content)
       base_path = ""
       begin
-        if yaml_obj["basePath"].to_s != ""
+        unless yaml_obj["basePath"].to_s.empty?
           base_path = yaml_obj["basePath"].to_s
         end
       rescue e

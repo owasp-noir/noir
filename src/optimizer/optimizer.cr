@@ -206,7 +206,7 @@ class EndpointOptimizer
       end
 
       # Duplicate check
-      if tiny_tmp.url != ""
+      unless tiny_tmp.url.empty?
         # Check start with slash
         if tiny_tmp.url[0] != "/"
           tiny_tmp.url = "/#{tiny_tmp.url}"
@@ -242,7 +242,9 @@ class EndpointOptimizer
     tmp = [] of Endpoint
     target_url = @options["url"].to_s
 
-    if target_url != ""
+    if target_url.empty?
+      endpoints
+    else
       @logger.sub "➔ Combining url and endpoints."
       @logger.debug_sub " + Before size: #{endpoints.size}"
 
@@ -253,7 +255,7 @@ class EndpointOptimizer
         end
 
         tmp_endpoint.url = tmp_endpoint.url.gsub_repeatedly("//", "/")
-        if tmp_endpoint.url != ""
+        unless tmp_endpoint.url.empty?
           if target_url[-1] == '/' && tmp_endpoint.url[0] == '/'
             tmp_endpoint.url = tmp_endpoint.url[1..]
           elsif target_url[-1] != '/' && tmp_endpoint.url[0] != '/'
@@ -267,8 +269,6 @@ class EndpointOptimizer
 
       @logger.debug_sub " + After size: #{tmp.size}"
       tmp
-    else
-      endpoints
     end
   end
 
@@ -285,7 +285,7 @@ class EndpointOptimizer
       scans.each do |match|
         param = match[1].split(":")[0]
         new_value = apply_pvalue("path", param, "")
-        if new_value != ""
+        unless new_value.empty?
           new_endpoint.url = new_endpoint.url.gsub("{#{match[1]}}", new_value)
         end
 
@@ -299,7 +299,7 @@ class EndpointOptimizer
       scans = endpoint.url.scan(/\/:([^\/{}]+)/).flatten
       scans.each do |match|
         new_value = apply_pvalue("path", match[1], "")
-        if new_value != ""
+        unless new_value.empty?
           new_endpoint.url = new_endpoint.url.gsub(":#{match[1]}", new_value)
         end
 
@@ -328,7 +328,7 @@ class EndpointOptimizer
         end
 
         new_value = apply_pvalue("path", param, "")
-        if new_value != ""
+        unless new_value.empty?
           new_endpoint.url = new_endpoint.url.gsub("<#{match[1]}>", new_value)
         end
 
@@ -342,7 +342,7 @@ class EndpointOptimizer
       scans = endpoint.url.scan(/\/\*([^\/]+)/).flatten
       scans.each do |match|
         new_value = apply_pvalue("path", match[1], "")
-        if new_value != ""
+        unless new_value.empty?
           new_endpoint.url = new_endpoint.url.gsub("*#{match[1]}", new_value)
         end
 

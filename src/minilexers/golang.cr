@@ -28,13 +28,13 @@ class GolangLexer < MiniLexer
           @buffer = ""
         end
       when 61 # assign
-        if @buffer != "" && !@in_double_quote
+        if !@buffer.empty? && !@in_double_quote
           results << Token.new(@identifier, @buffer, index)
           results << Token.new(:assign, "=", index)
           @buffer = ""
         end
       when 10 # newline
-        if @buffer != ""
+        unless @buffer.empty?
           results << Token.new(@identifier, @buffer, index)
         end
         results << Token.new(:newline, "\n", index)

@@ -27,7 +27,7 @@ module Analyzer::Crystal
 
       lines.each_with_index do |line, index|
         endpoint = line_to_endpoint(line)
-        if endpoint.method != ""
+        unless endpoint.method.empty?
           details = Details.new(PathInfo.new(path, index + 1))
           endpoint.details = details
           attach_route_callees(endpoint, line, actions) if include_callee
@@ -36,8 +36,8 @@ module Analyzer::Crystal
         end
 
         param = line_to_param(line)
-        if param.name != ""
-          if last_endpoint.method != ""
+        unless param.name.empty?
+          unless last_endpoint.method.empty?
             last_endpoint.push_param(param)
           end
         end
@@ -60,7 +60,7 @@ module Analyzer::Crystal
                                 split[1].gsub("(", "").gsub(")", "").gsub(" ", "").gsub("\"", "").gsub("'", "")
                               end
 
-              if public_folder != ""
+              unless public_folder.empty?
                 @public_folders << public_folder
               end
             end

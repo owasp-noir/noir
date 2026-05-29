@@ -12,7 +12,7 @@ class OutputBuilderHttpie < OutputBuilder
       cmd = "http '#{escape_shell(endpoint.method)}' '#{escape_shell(baked[:url])}'"
 
       # For HTTPie, we need to handle JSON differently
-      if baked[:body] != ""
+      unless baked[:body].empty?
         if baked[:body_type] == "json"
           # Parse JSON and convert to HTTPie's key:=value syntax
           begin
@@ -61,7 +61,7 @@ class OutputBuilderHttpie < OutputBuilder
       end
 
       # Cookies: add as Cookie header
-      if !baked[:cookie].empty?
+      unless baked[:cookie].empty?
         cookie_value = baked[:cookie].join("; ")
         cmd += " 'Cookie:#{escape_shell(cookie_value)}'"
       end
