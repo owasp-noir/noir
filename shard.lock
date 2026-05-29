@@ -6,7 +6,7 @@ shards:
 
   ameba:
     git: https://github.com/crystal-ameba/ameba.git
-    version: 1.7.0-dev+git.commit.97296d4a1c6ca7308ba220671bc7aafecfcecab3
+    version: 1.7.0-dev+git.commit.9f217cd4cb673145be81135b763da3b79de083a4
 
   crest:
     git: https://github.com/mamantoha/crest.git
@@ -22,7 +22,7 @@ shards:
 
   http_proxy:
     git: https://github.com/mamantoha/http_proxy.git
-    version: 0.14.0
+    version: 0.15.1
 
   sarif:
     git: https://github.com/hahwul/sarif.cr.git
