@@ -963,6 +963,13 @@ module NoirAIContext
       # `credentials.token` — tighter scope so generic `.password`
       # access doesn't fire.
       /\b(payload|credentials|creds|input|body)\.(password|passwd|token|secret|api[_-]?key|jwt|bearer)\b/i,
+      # Go net/http and common framework helpers: `r.FormValue("password")`,
+      # `c.PostForm("token")`, `ctx.FormValue("secret")`, …
+      /\b(?:r|req|request)\.(?:FormValue|PostFormValue)\s*\(\s*['"](password|passwd|token|secret|api[_-]?key|jwt|bearer)['"]/i,
+      /\b(?:c|ctx|context)\.(?:PostForm|DefaultPostForm|FormValue|QueryParam)\s*\(\s*['"](password|passwd|token|secret|api[_-]?key|jwt|bearer)['"]/i,
+      # C# minimal APIs / controllers: `context.Request.Form["password"]`,
+      # `Request.Headers["Authorization"]`, …
+      /\b(?:context\.Request|HttpContext\.Request|Request)\.(?:Form|Query|Headers|Cookies)\s*\[\s*['"](password|passwd|token|secret|api[_-]?key|authorization|jwt|bearer)['"]/i,
       # Java/Kotlin field access on a DTO marked @RequestBody: `c.password`
       # is too generic alone; require the credential noun directly.
       /\b(password|passwd|token|secret|api[_-]?key|jwt|bearer)\s*=\s*req\./i,
@@ -1215,13 +1222,15 @@ module NoirAIContext
         snippet = route_scope || snippet_for(path_info.path, path_info.line, SOURCE_SCAN_RADIUS)
         next if snippet.nil?
 
-        # Explicit CSRF bypass is a negative signal: protection is
-        # disabled here on purpose, but the reviewer should confirm
-        # the justification.
-        CSRF_EXEMPT_PATTERNS.each do |pattern|
-          next if context.signals.any? { |s| s.kind == "csrf_exempt" }
-          if entry = detect_single_pattern(pattern, "", snippet, path_info.path, path_info.line, "route_source")
-            context.push_signal(entry)
+        # Explicit CSRF bypass is a negative signal. CSRF only
+        # protects state-changing methods, so suppress it on safe
+        # endpoints split out from multi-method handlers.
+        unless SAFE_METHODS.includes?(endpoint.method)
+          CSRF_EXEMPT_PATTERNS.each do |pattern|
+            next if context.signals.any? { |s| s.kind == "csrf_exempt" }
+            if entry = detect_single_pattern(pattern, "", snippet, path_info.path, path_info.line, "route_source")
+              context.push_signal(entry)
+            end
           end
         end
 
