@@ -27,7 +27,10 @@ jobs:
       - uses: peter-evans/create-pull-request@v8.1.1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "chore: update contributors"
+          commit-message: |
+            chore: update contributors
+
+            Co-authored-by: ksg97031 <ksg97031@gmail.com>
           title: "chore: update contributors"
           body: Automated update of `docs/static/CONTRIBUTORS.svg`.
           branch: chore/update-contributors
