@@ -64,4 +64,18 @@ describe "Detect Postman Collection" do
 
     instance.detect("not_postman.json", content).should be_false
   end
+
+  it "detects schema-less exports with a Postman id" do
+    content = <<-JSON
+      {
+        "info": {
+          "_postman_id": "12345678-1234-4321-8765-123456789012",
+          "name": "Schema-less Export"
+        },
+        "item": []
+      }
+      JSON
+
+    instance.detect("collection.json", content).should be_true
+  end
 end

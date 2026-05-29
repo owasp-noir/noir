@@ -14,9 +14,14 @@ module Detector::Specification
             schema = data["info"]["schema"].as_s
             if schema.includes?("schema.getpostman.com") || schema.includes?("schema.postman.com")
               check = true
-              locator = CodeLocator.instance
-              locator.push("postman-json", filename)
             end
+          elsif data["info"]? && data["info"]["_postman_id"]? && data["item"]?.try(&.as_a?)
+            check = true
+          end
+
+          if check
+            locator = CodeLocator.instance
+            locator.push("postman-json", filename)
           end
         rescue
         end
