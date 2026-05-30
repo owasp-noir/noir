@@ -21,6 +21,18 @@ class PostsController < ApplicationController
     render json: serialize_preview(preview)
   end
 
+  def implicit_preview
+    draft = PreviewBuilder.build(params[:draft])
+    AuditLog.write("implicit")
+    render json: serialize_preview(draft)
+  end
+
+  def implicit_preview_legacy
+    draft = PreviewBuilder.build(params[:draft])
+    AuditLog.write("legacy")
+    render json: serialize_preview(draft)
+  end
+
   private
 
   def post_params

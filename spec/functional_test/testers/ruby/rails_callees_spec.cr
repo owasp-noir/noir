@@ -26,6 +26,20 @@ preview_endpoint = Endpoint.new("/posts/preview", "GET").tap do |ep|
   ep.push_callee(Callee.new("serialize_preview", line: 21))
 end
 
+implicit_preview_endpoint = Endpoint.new("/posts/implicit_preview", "POST").tap do |ep|
+  ep.push_callee(Callee.new("PreviewBuilder.build", line: 25))
+  ep.push_callee(Callee.new("AuditLog.write", line: 26))
+  ep.push_callee(Callee.new("render", line: 27))
+  ep.push_callee(Callee.new("serialize_preview", line: 27))
+end
+
+legacy_implicit_preview_endpoint = Endpoint.new("/posts/implicit_preview_legacy", "POST").tap do |ep|
+  ep.push_callee(Callee.new("PreviewBuilder.build", line: 31))
+  ep.push_callee(Callee.new("AuditLog.write", line: 32))
+  ep.push_callee(Callee.new("render", line: 33))
+  ep.push_callee(Callee.new("serialize_preview", line: 33))
+end
+
 status_endpoint = Endpoint.new("/status", "GET").tap do |ep|
   ep.push_callee(Callee.new("Health.check", line: 3))
   ep.push_callee(Callee.new("render", line: 4))
@@ -47,6 +61,8 @@ expected_endpoints = [
   show_endpoint,
   create_endpoint,
   preview_endpoint,
+  implicit_preview_endpoint,
+  legacy_implicit_preview_endpoint,
   status_endpoint,
   ping_endpoint,
   ready_endpoint,
