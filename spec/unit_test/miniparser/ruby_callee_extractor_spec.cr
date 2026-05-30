@@ -56,9 +56,32 @@ describe Noir::RubyCalleeExtractor do
 
     callees = Noir::RubyCalleeExtractor.callees_for_body(body, "posts_controller.rb", 40)
     callees.map { |name, _, line| {name, line} }.should eq([
-      {"format.html", 40},
       {"redirect_to", 40},
       {"post_url", 40},
+    ])
+  end
+
+  it "skips Rails format DSL and simple attribute readers" do
+    body = <<-RUBY
+      @story.user_id
+      story.id
+      format.json { render json: story_url(@story) }
+      request.remote_ip
+      respond_to do |format|
+        format.html
+      end
+      response.status = 204
+      @story.save
+      @story.valid?
+      RUBY
+
+    callees = Noir::RubyCalleeExtractor.callees_for_body(body, "stories_controller.rb", 50)
+    callees.map { |name, _, line| {name, line} }.should eq([
+      {"render", 52},
+      {"story_url", 52},
+      {"response.status", 57},
+      {"@story.save", 58},
+      {"@story.valid?", 59},
     ])
   end
 end
