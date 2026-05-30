@@ -22,6 +22,18 @@ module Analyzer::Swift
       SwiftEngine.swift_test_path?(path)
     end
 
+    # SwiftPM parks resolved dependency sources under `.build/` (and Xcode
+    # under `.swiftpm/`). Scanning them pulls every transitive package's
+    # routes into the report — pure noise against the project under test.
+    def self.swift_vendor_path?(path : String) : Bool
+      path.includes?("/.build/") || path.starts_with?(".build/") ||
+        path.includes?("/.swiftpm/") || path.starts_with?(".swiftpm/")
+    end
+
+    private def swift_vendor_path?(path : String) : Bool
+      SwiftEngine.swift_vendor_path?(path)
+    end
+
     # `.swift` extension filter baked in. Subclasses that need a custom
     # scan shape can override `analyze` and call this helper directly.
     protected def parallel_file_scan(&block : String -> Nil) : Nil
@@ -37,6 +49,7 @@ module Analyzer::Swift
           # XCTest-style `*Tests.swift` filenames carry the same
           # signal — pick them both up.
           next if swift_test_path?(path)
+          next if swift_vendor_path?(path)
 
           begin
             block.call(path)

@@ -14,6 +14,10 @@ ameba.sh
 # tree-sitter build artifacts (compiled on demand from vendored source)
 src/ext/tree_sitter/**/*.o
 
+# SwiftPM build artifacts (SourceKit regenerates these inside Swift fixtures)
+.build/
+.swiftpm/
+
 # Ignore for Hwaro
 /docs/public/
 
