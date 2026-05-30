@@ -128,4 +128,55 @@ describe "OutputBuilderOas3" do
     form_body["content"]["application/x-www-form-urlencoded"]["schema"]["type"].as_s.should eq("object")
     form_body["content"]["application/x-www-form-urlencoded"]["schema"]["properties"].as_h.size.should eq(2)
   end
+
+  it "normalizes OpenAPI path and method edge cases" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+      "url"     => YAML::Any.new("https://api.example.com"),
+    }
+    builder = OutputBuilderOas3.new(options)
+    builder.io = IO::Memory.new
+
+    typed_path = Endpoint.new("/users/<int:user_id>", "ANY")
+    typed_path.push_param(Param.new("q", "", "query"))
+
+    optional_path = Endpoint.new("/accounts/:id{/:section}", "GET")
+    optional_path.push_param(Param.new("id", "", "path"))
+    optional_path.push_param(Param.new("section", "", "path"))
+    optional_path.push_param(Param.new("section", "", "path"))
+
+    mixed_body = Endpoint.new("/mixed", "POST")
+    mixed_body.push_param(Param.new("name", "", "json"))
+    mixed_body.push_param(Param.new("avatar", "", "form"))
+
+    unsupported = Endpoint.new("/jobs", "SUBSCRIBE")
+
+    builder.print([typed_path, optional_path, mixed_body, unsupported])
+    spec = JSON.parse(builder.io.to_s)
+    paths = spec["paths"]
+
+    paths.as_h.has_key?("/users/{user_id}").should be_true
+    paths["/users/{user_id}"].as_h.has_key?("any").should be_false
+    %w[get post put patch delete options head trace].each do |method|
+      paths["/users/{user_id}"].as_h.has_key?(method).should be_true
+    end
+
+    get_params = paths["/users/{user_id}"]["get"]["parameters"].as_a
+    get_params.any? { |p| p["in"].as_s == "path" && p["name"].as_s == "user_id" }.should be_true
+
+    paths.as_h.has_key?("/accounts/{id}/{section}").should be_true
+    optional_params = paths["/accounts/{id}/{section}"]["get"]["parameters"].as_a
+    optional_params.count { |p| p["in"].as_s == "path" && p["name"].as_s == "section" }.should eq(1)
+
+    content = paths["/mixed"]["post"]["requestBody"]["content"].as_h
+    content.has_key?("application/json").should be_true
+    content.has_key?("application/x-www-form-urlencoded").should be_true
+
+    paths["/jobs"].as_h.has_key?("subscribe").should be_false
+    paths["/jobs"]["x-noir-unsupported-methods"].as_a.should contain(JSON::Any.new("SUBSCRIBE"))
+  end
 end
