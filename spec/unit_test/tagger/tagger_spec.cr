@@ -212,4 +212,62 @@ describe "Tagger" do
       end
     end
   end
+
+  it "pii_tagger" do
+    noir_options = create_test_options
+    expected_endpoints = [
+      Endpoint.new("/api/kyc", "POST", [
+        Param.new("ssn", "", "json"),
+      ]),
+    ]
+    NoirTaggers.run_tagger(expected_endpoints, noir_options, "pii")
+    expected_endpoints.each do |endpoint|
+      endpoint.tags.empty?.should be_false
+      endpoint.tags.each do |tag|
+        tag.name.should eq("pii")
+      end
+    end
+  end
+
+  it "admin_tagger" do
+    noir_options = create_test_options
+    expected_endpoints = [
+      Endpoint.new("/admin/users", "GET"),
+    ]
+    NoirTaggers.run_tagger(expected_endpoints, noir_options, "admin")
+    expected_endpoints.each do |endpoint|
+      endpoint.tags.empty?.should be_false
+      endpoint.tags.each do |tag|
+        tag.name.should eq("admin")
+      end
+    end
+  end
+
+  it "payment_tagger" do
+    noir_options = create_test_options
+    expected_endpoints = [
+      Endpoint.new("/api/checkout", "POST"),
+    ]
+    NoirTaggers.run_tagger(expected_endpoints, noir_options, "payment")
+    expected_endpoints.each do |endpoint|
+      endpoint.tags.empty?.should be_false
+      endpoint.tags.each do |tag|
+        tag.name.should eq("payment")
+      end
+    end
+  end
+
+  it "webhook_tagger" do
+    noir_options = create_test_options
+    expected_endpoints = [
+      Endpoint.new("/webhooks/stripe", "POST"),
+    ]
+    NoirTaggers.run_tagger(expected_endpoints, noir_options, "webhook")
+    expected_endpoints.each do |endpoint|
+      endpoint.tags.empty?.should be_false
+      endpoint.tags.each do |tag|
+        tag.name.should eq("webhook")
+      end
+    end
+  end
 end
