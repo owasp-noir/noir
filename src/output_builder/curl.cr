@@ -6,35 +6,37 @@ class OutputBuilderCurl < OutputBuilder
     endpoints.each do |endpoint|
       baked = bake_endpoint(endpoint.url, endpoint.params)
 
-      # Properly quote and escape the URL
-      cmd = "curl -i -X '#{escape_shell(endpoint.method)}' '#{escape_shell(baked[:url])}'"
+      parts = ["curl", "-i", "-X", shell_quote(endpoint.method), shell_quote(baked[:url])]
 
       unless baked[:body].empty?
         if baked[:body_type] == "json"
-          # For JSON, use single quotes to avoid shell interpolation issues
-          cmd += " -d '#{escape_shell(baked[:body])}'"
-          cmd += " -H 'Content-Type: application/json'"
+          parts << "--data-raw"
+          parts << shell_quote(baked[:body])
+          parts << "-H"
+          parts << shell_quote("Content-Type: application/json")
         else
-          # For form data, escape properly
-          cmd += " -d '#{escape_shell(baked[:body])}'"
-          cmd += " -H 'Content-Type: application/x-www-form-urlencoded'"
+          parts << "--data-raw"
+          parts << shell_quote(baked[:body])
+          parts << "-H"
+          parts << shell_quote("Content-Type: application/x-www-form-urlencoded")
         end
       end
 
       baked[:header].each do |header|
-        cmd += " -H '#{escape_shell(header)}'"
+        parts << "-H"
+        parts << shell_quote(header)
       end
 
       baked[:cookie].each do |cookie|
-        cmd += " --cookie '#{escape_shell(cookie)}'"
+        parts << "--cookie"
+        parts << shell_quote(cookie)
       end
 
-      ob_puts cmd
+      ob_puts parts.join(" ")
     end
   end
 
-  # Escape special characters for shell (using single quotes)
-  private def escape_shell(str : String) : String
-    str.gsub("'", "'\\''")
+  private def shell_quote(str : String) : String
+    "'#{str.gsub("'", "'\\''")}'"
   end
 end
