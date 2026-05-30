@@ -32,6 +32,21 @@ describe "OutputBuilderCurl" do
 
     endpoints = [endpoint1, endpoint2, endpoint3]
     builder.print(endpoints)
-    puts builder.io.to_s
+    output = builder.io.to_s
+    lines = output.split("\n").reject(&.empty?)
+
+    get_line = lines[0]
+    get_line.should eq("curl -i -X 'GET' '/test?id=1' --cookie 'session=abc123'")
+
+    post_line = lines[1]
+    post_line.should start_with("curl -i -X 'POST' '/api/users'")
+    post_line.should contain("--data-raw '{\"username\":\"test\",\"email\":\"test@example.com\"}'")
+    post_line.should contain("-H 'Content-Type: application/json'")
+    post_line.should contain("-H 'x-api-key: key123'")
+
+    put_line = lines[2]
+    put_line.should start_with("curl -i -X 'PUT' '/api/products'")
+    put_line.should contain("--data-raw 'name=Updated Product&price=99.99'")
+    put_line.should contain("-H 'Content-Type: application/x-www-form-urlencoded'")
   end
 end
