@@ -298,4 +298,32 @@ describe "Tagger" do
       end
     end
   end
+
+  it "api_docs_tagger" do
+    noir_options = create_test_options
+    expected_endpoints = [
+      Endpoint.new("/swagger-ui.html", "GET"),
+    ]
+    NoirTaggers.run_tagger(expected_endpoints, noir_options, "api_docs")
+    expected_endpoints.each do |endpoint|
+      endpoint.tags.empty?.should be_false
+      endpoint.tags.each do |tag|
+        tag.name.should eq("api_docs")
+      end
+    end
+  end
+
+  it "account_recovery_tagger" do
+    noir_options = create_test_options
+    expected_endpoints = [
+      Endpoint.new("/auth/forgot-password", "POST"),
+    ]
+    NoirTaggers.run_tagger(expected_endpoints, noir_options, "account_recovery")
+    expected_endpoints.each do |endpoint|
+      endpoint.tags.empty?.should be_false
+      endpoint.tags.each do |tag|
+        tag.name.should eq("account_recovery")
+      end
+    end
+  end
 end
