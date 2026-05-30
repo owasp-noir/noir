@@ -63,6 +63,43 @@ module Analyzer::Go
       end
 
       files_by_dir.each do |dir, paths|
+        # Detect group-variable names that resolve to DIFFERENT prefixes
+        # across files of the same package. These are almost always
+        # function-local names (`r`, `g`, `api`, ...) reused across
+        # separate handler functions, not genuinely shared package
+        # groups. Each name's binding is computed from its OWN file only
+        # (empty external map) so the decision is immune to cross-file
+        # pollution. Conflicting names are excluded from the shared map
+        # below — propagating them would let one function's local binding
+        # contaminate another's routes. (Observed in go-admin:
+        # `r := v1.Group("/dept")` in one handler file leaked a spurious
+        # `/dept` prefix onto `v1` and therefore onto every route in the
+        # package: `/dept/api/v1/...`.) Each file still re-derives these
+        # names locally during route extraction, so same-file resolution
+        # is unaffected.
+        ambiguous = Set(String).new
+        local_values = Hash(String, String).new
+        paths.each do |path|
+          content = file_contents[path]?
+          next if content.nil?
+          # Root engine/router names (`r := gin.New()`,
+          # `func(r *gin.Engine)`) must never carry a cross-file prefix.
+          # A same-named local group in a sibling file (e.g.
+          # `r := v1.Group("/sysjob")`) would otherwise leak its prefix
+          # onto the root and pollute `v1 := r.Group("/api/v1")`
+          # (observed: `/sysjob/api/v1/...`).
+          Noir::TreeSitterGoRouteExtractor.extract_engine_names(content).each { |n| ambiguous << n }
+          Noir::TreeSitterGoRouteExtractor.extract_groups(content, group_method: group_method).each do |k, v|
+            next if ambiguous.includes?(k)
+            if (existing = local_values[k]?) && existing != v
+              ambiguous << k
+              local_values.delete(k)
+            else
+              local_values[k] = v
+            end
+          end
+        end
+
         groups = Hash(String, String).new
         loop do
           prev_size = groups.size
@@ -70,7 +107,10 @@ module Analyzer::Go
             content = file_contents[path]?
             next if content.nil?
             found = Noir::TreeSitterGoRouteExtractor.extract_groups(content, groups, group_method)
-            found.each { |k, v| groups[k] ||= v }
+            found.each do |k, v|
+              next if ambiguous.includes?(k)
+              groups[k] ||= v
+            end
           end
           break if groups.size == prev_size
         end

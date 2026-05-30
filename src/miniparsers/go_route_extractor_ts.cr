@@ -202,6 +202,91 @@ module Noir
       group_prefixes
     end
 
+    # Framework constructors that mint a *root* router/engine — the
+    # receiver they're assigned to carries no path prefix. A name bound
+    # to one of these is the application root, never a sub-group.
+    ENGINE_CONSTRUCTORS = Set{"New", "Default", "NewRouter"}
+
+    # Engine/root type names (final identifier of the parameter type,
+    # pointer stripped). A parameter of one of these types is the root
+    # router handed in by the caller — `gin.Engine`, `echo.Echo`,
+    # `fiber.App`, `chi.Mux`/`mux.Router` (the last shares `Router` with
+    # group types, so it's intentionally omitted to avoid excluding
+    # genuine group params).
+    ENGINE_PARAM_TYPES = Set{"Engine", "Echo", "App", "Mux"}
+
+    # Collects names that denote a *root* engine/router rather than a
+    # path-bearing group:
+    #
+    #   r := gin.New()            / r := gin.Default()
+    #   r := chi.NewRouter()      / e := echo.New()
+    #   func setup(r *gin.Engine) / func setup(e *echo.Echo)
+    #
+    # The cross-file group pre-pass excludes these so a same-named local
+    # group in a sibling file (e.g. `r := v1.Group("/sysjob")`) can't
+    # leak a prefix onto the root and contaminate every route in the
+    # package. Each file still resolves its own `r` locally during route
+    # extraction; this only governs what crosses file boundaries.
+    def extract_engine_names(source : String) : Set(String)
+      names = Set(String).new
+      Noir::TreeSitter.parse_go(source) do |root|
+        walk(root) do |node|
+          case Noir::TreeSitter.node_type(node)
+          when "short_var_declaration", "assignment_statement", "var_spec"
+            collect_engine_assignment(node, source, names)
+          when "parameter_declaration"
+            collect_engine_param(node, source, names)
+          end
+        end
+      end
+      names
+    end
+
+    # `<name> := <pkg>.New()` / `.Default()` / `.NewRouter()` → root name.
+    private def collect_engine_assignment(node : LibTreeSitter::TSNode,
+                                          source : String,
+                                          names : Set(String))
+      left = Noir::TreeSitter.field(node, "left")
+      right = Noir::TreeSitter.field(node, "right")
+      if Noir::TreeSitter.node_type(node) == "var_spec"
+        left = Noir::TreeSitter.field(node, "name")
+        right = Noir::TreeSitter.field(node, "value")
+      end
+      return unless left && right
+
+      name_node = identifier_or_first_child(left)
+      rhs_node = first_named_child(right)
+      return unless name_node && rhs_node
+      return unless Noir::TreeSitter.node_type(name_node) == "identifier"
+      return unless Noir::TreeSitter.node_type(rhs_node) == "call_expression"
+
+      function = Noir::TreeSitter.field(rhs_node, "function")
+      return unless function
+      return unless Noir::TreeSitter.node_type(function) == "selector_expression"
+      field = Noir::TreeSitter.field(function, "field")
+      return unless field
+      return unless ENGINE_CONSTRUCTORS.includes?(Noir::TreeSitter.node_text(field, source))
+
+      names << Noir::TreeSitter.node_text(name_node, source)
+    end
+
+    # `func f(<name> *gin.Engine)` / `(<name> *echo.Echo)` → root name.
+    private def collect_engine_param(node : LibTreeSitter::TSNode,
+                                     source : String,
+                                     names : Set(String))
+      name_node = Noir::TreeSitter.field(node, "name")
+      type_node = Noir::TreeSitter.field(node, "type")
+      return unless name_node && type_node
+      return unless Noir::TreeSitter.node_type(name_node) == "identifier"
+
+      type_text = Noir::TreeSitter.node_text(type_node, source)
+      # Strip pointer / package qualifier: `*gin.Engine` -> `Engine`.
+      final = type_text.lchop('*').split('.').last
+      return unless ENGINE_PARAM_TYPES.includes?(final)
+
+      names << Noir::TreeSitter.node_text(name_node, source)
+    end
+
     # Chi-style extractor: walks the AST with a prefix stack so
     # `r.Route("/api", func(r chi.Router) { r.Get("/users", h) })`
     # resolves to `/api/users`. Handles arbitrarily-nested `.Route` blocks
