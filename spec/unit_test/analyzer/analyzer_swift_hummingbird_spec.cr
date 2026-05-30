@@ -84,4 +84,67 @@ describe "swift hummingbird analyzer" do
     File.delete(temp_file) if temp_file && File.exists?(temp_file)
     Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
   end
+
+  it "ignores look-alike calls on non-router receivers" do
+    options = create_test_options
+    instance = Analyzer::Swift::Hummingbird.new(options)
+
+    temp_dir = File.tempname("swift_hummingbird_receiver_test")
+    Dir.mkdir_p(temp_dir)
+    temp_file = File.join(temp_dir, "routes.swift")
+
+    File.write(temp_file, <<-SWIFT)
+      import Hummingbird
+
+      func routes(_ router: Router<BasicRequestContext>) {
+          let level = environment.get("LOG_LEVEL")
+          let token = sessionStorage.get(key: "session")
+          _ = try await repository.delete(id: identifier)
+          _ = try await database.schema("todos").delete()
+
+          router.get("ping") { _, _ in "pong" }
+      }
+      SWIFT
+
+    endpoints = instance.analyze_file(temp_file)
+    endpoints.map(&.url).should eq(["/ping"])
+    endpoints.map(&.method).should eq(["GET"])
+  ensure
+    File.delete(temp_file) if temp_file && File.exists?(temp_file)
+    Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
+  end
+
+  it "resolves fluent builder chains, .on, head and ws verbs" do
+    options = create_test_options
+    instance = Analyzer::Swift::Hummingbird.new(options)
+
+    temp_dir = File.tempname("swift_hummingbird_chain_test")
+    Dir.mkdir_p(temp_dir)
+    temp_file = File.join(temp_dir, "routes.swift")
+
+    File.write(temp_file, <<-SWIFT)
+      import Hummingbird
+
+      func routes(_ router: Router<BasicRequestContext>) {
+          router.group("api")
+              .get("items", use: listItems)
+              .post("items", use: createItems)
+
+          router.on("legacy", method: .GET) { _, _ in "ok" }
+          router.head("health") { _, _ in .ok }
+          router.ws("live") { _, _ in .upgrade([:]) }
+      }
+      SWIFT
+
+    endpoints = instance.analyze_file(temp_file)
+    pairs = endpoints.map { |e| {e.method, e.url} }
+    pairs.should contain({"GET", "/api/items"})
+    pairs.should contain({"POST", "/api/items"})
+    pairs.should contain({"GET", "/legacy"})
+    pairs.should contain({"HEAD", "/health"})
+    pairs.should contain({"GET", "/live"})
+  ensure
+    File.delete(temp_file) if temp_file && File.exists?(temp_file)
+    Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
+  end
 end
