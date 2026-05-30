@@ -161,6 +161,51 @@ describe Noir::TreeSitterGoRouteExtractor do
     ])
   end
 
+  it "peels .Use(...) middleware chains before the verb call" do
+    # Gin's `RouterGroup.Use(...)` / `Engine.Use(...)` return the
+    # receiver, so `r.Use(mw).GET(...)` and
+    # `r.Group("/x").Use(mw).POST(...)` are valid. The verb's operand is
+    # the `.Use(...)` call; without peeling it the routes were dropped.
+    source = <<-GO
+      package main
+      func main() {
+          g := gin.New()
+          g.Use(logMW).GET("/ping", pong)
+          g.Group("/user").Use(authMW).POST("/", createUser)
+          g.Group("/").Use(reqMW).POST("/message", createMsg)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/ping"},
+      {"POST", "/message"},
+      {"POST", "/user/"},
+    ].sort)
+  end
+
+  it "collects group declarations whose RHS ends in a .Use(...) chain" do
+    # `v1 := r.Group("/v1").Use(mw)` — the `.Use(...)` wraps the real
+    # `.Group(...)` call. The group name must still bind to `/v1` so the
+    # verb routes registered on `v1` later resolve with the prefix.
+    source = <<-GO
+      package main
+      func main() {
+          r := gin.Default()
+          v1 := r.Group("/v1").Use(authMW)
+          v1.GET("/users", listUsers)
+          v2 := r.Group("/v2").Use(a).Use(b)
+          v2.POST("/items", addItem)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/v1/users"},
+      {"POST", "/v2/items"},
+    ].sort)
+  end
+
   it "collects group assignments from var declarations and later assignments" do
     source = <<-GO
       package main
