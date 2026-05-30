@@ -161,6 +161,35 @@ describe Noir::TreeSitterGoRouteExtractor do
     ])
   end
 
+  it "detects root engine/router names from constructors and engine-typed params" do
+    source = <<-GO
+      package main
+
+      func boot() {
+          r := gin.New()
+          e := echo.New()
+          mux := chi.NewRouter()
+          v1 := r.Group("/api/v1")
+          v1.GET("/users", h)
+      }
+
+      func register(app *gin.Engine, grp *gin.RouterGroup) {
+          grp.GET("/posts", h)
+      }
+      GO
+
+    names = Noir::TreeSitterGoRouteExtractor.extract_engine_names(source)
+    # Constructors (r/e/mux) and the *gin.Engine param (app) are roots;
+    # `grp` is a *gin.RouterGroup (a real group param) and `v1` is a
+    # derived group — neither is an engine.
+    names.includes?("r").should be_true
+    names.includes?("e").should be_true
+    names.includes?("mux").should be_true
+    names.includes?("app").should be_true
+    names.includes?("grp").should be_false
+    names.includes?("v1").should be_false
+  end
+
   it "peels .Use(...) middleware chains before the verb call" do
     # Gin's `RouterGroup.Use(...)` / `Engine.Use(...)` return the
     # receiver, so `r.Use(mw).GET(...)` and
