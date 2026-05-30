@@ -819,9 +819,10 @@ module Noir
       buf
     end
 
-    # Trailing-slash semantics match Spring's runtime and mirror the
-    # Java extractor: `prefix + "" = prefix/` so `@GetMapping("")` on
-    # a class-prefixed route emits `/prefix/`.
+    # Empty-path semantics mirror the Java extractor: a bare method
+    # mapping collapses onto the class prefix, so `@RequestMapping("/api")`
+    # + `@GetMapping` (no path) maps to `/api`, not `/api/` (see the
+    # empty-path branch below).
     private def join_paths(prefix : String, path : String) : String
       return path if prefix.empty?
       # A bare method mapping (`@GetMapping` with no path arg) on a class

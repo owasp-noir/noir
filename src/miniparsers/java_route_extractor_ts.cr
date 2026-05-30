@@ -1180,9 +1180,9 @@ module Noir
     # `/items/{id}` even though neither segment has a leading slash.
     #
     # Empty method path (`@PostMapping` with no argument, or
-    # `@GetMapping("")`) emits `prefix/` — matches Spring's runtime
-    # behaviour and the legacy analyzer's `File.join("/prefix", "")`
-    # trailing-slash convention.
+    # `@GetMapping("")`) collapses onto the class prefix — Spring absorbs
+    # the empty segment, so `@RequestMapping("/api")` + `@GetMapping`
+    # maps to `/api`, not `/api/` (see the empty-path branch below).
     private def join_paths(prefix : String, path : String) : String
       return path if prefix.empty?
       # A bare method mapping (`@GetMapping` / `@GetMapping("")`) on a
