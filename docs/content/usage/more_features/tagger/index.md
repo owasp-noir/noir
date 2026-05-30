@@ -64,3 +64,19 @@ Tags appear in the `tags` array at both the endpoint level and the parameter lev
   ]
 }
 ```
+
+## Tag categories
+
+Taggers span several kinds of security-relevant signal. Run `noir list taggers` for the full, up-to-date list.
+
+- **Parameter vulnerability classes** — `hunt` flags individual parameters that match known-risky names (`sqli`, `ssrf`, `idor`, `file-inclusion`, `command-injection`, …).
+- **Protocol / interface** — `graphql`, `soap`, `websocket`, `mcp`, `cors`.
+- **Authentication & tokens** — `oauth`, `jwt`, plus the framework-aware auth taggers (Spring Security, Django, Express, …).
+- **Endpoint sensitivity & purpose** — classify *what an endpoint is for* so reviewers can prioritize the highest-stakes surface:
+  - `pii` — handles personally identifiable information (SSN, card data, contact details); review for data exposure and over-collection.
+  - `admin` — administrative or privileged routes (`/admin`, privilege-mutating parameters); prime targets for broken access control and privilege escalation.
+  - `payment` — payment / financial transaction endpoints; review for amount/price tampering, currency confusion, and IDOR on financial records.
+  - `webhook` — inbound webhook / callback endpoints; verify signature validation, replay protection, and SSRF on outbound calls.
+  - `file_upload` — file upload endpoints; review for unrestricted upload, path traversal, and malicious file handling.
+
+Endpoint-level tags also feed the AI context as signals, enriching the per-endpoint summary that AI reviewers consume.

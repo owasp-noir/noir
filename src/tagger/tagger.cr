@@ -51,6 +51,26 @@ module NoirTaggers
       desc:   "Identifies file upload endpoints",
       runner: FileUploadTagger,
     },
+    pii: {
+      name:   "PII Tagger",
+      desc:   "Identifies endpoints handling personally identifiable information",
+      runner: PiiTagger,
+    },
+    admin: {
+      name:   "Admin Tagger",
+      desc:   "Identifies administrative and privileged endpoints",
+      runner: AdminTagger,
+    },
+    payment: {
+      name:   "Payment Tagger",
+      desc:   "Identifies payment and financial transaction endpoints",
+      runner: PaymentTagger,
+    },
+    webhook: {
+      name:   "Webhook Tagger",
+      desc:   "Identifies inbound webhook and callback endpoints",
+      runner: WebhookTagger,
+    },
   }
 
   HasFrameworkTaggers = {
