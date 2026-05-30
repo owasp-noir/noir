@@ -5,12 +5,13 @@ module Analyzer::Scala
   class Play < Analyzer
     # Stores parsed controller methods with their parameters
     alias ControllerMethod = NamedTuple(headers: Array(String), cookies: Array(String), body_type: String?, callees: Array(Noir::ScalaCalleeExtractor::Entry))
-    alias MethodBody = NamedTuple(signature: String, body: String)
+    alias MethodRegion = NamedTuple(signature: String, body: String, body_start: Int32)
 
     def analyze
       file_list = all_files()
       routes_files = [] of String
       scala_files = [] of String
+      @scala_paths = [] of String
 
       # First pass: find all routes files and Scala controller files
       file_list.each do |path|
@@ -26,8 +27,9 @@ module Analyzer::Scala
 
         if path.ends_with?("routes") || path.ends_with?("routes.conf") || path.includes?("/conf/routes")
           routes_files << path
-        elsif path.ends_with?(".scala") && path.includes?("/controllers/")
-          scala_files << path
+        elsif path.ends_with?(".scala")
+          @scala_paths << path
+          scala_files << path if path.includes?("/controllers/")
         end
       end
 
@@ -47,12 +49,23 @@ module Analyzer::Scala
       @result
     end
 
+    # All `.scala` paths in the scan, used to resolve SIRD/SimpleRouter
+    # classes referenced from `->` include lines that are not routes files.
+    @scala_paths = [] of String
+
     # Parse Scala controller files to extract header, cookie, and body parameters
     private def parse_controller_files(scala_files : Array(String)) : Hash(String, ControllerMethod)
       controller_methods = Hash(String, ControllerMethod).new
+      want_callees = callees_needed?
 
       scala_files.each do |path|
         content = read_file_content(path)
+        # Length-preserving copy with strings/comments blanked out. Braces,
+        # colons and `def` keywords that live inside literals or comments are
+        # turned into spaces, so the structural scan below never trips on
+        # them. Indices computed on `structure` map 1:1 onto `content`, so the
+        # body text handed to the callee extractor is always real source.
+        structure = blank_non_code(content)
 
         # Extract package name
         package_name = ""
@@ -60,37 +73,34 @@ module Analyzer::Scala
           package_name = pkg_match[1]
         end
 
-        # Find all classes/objects in the file. Play controllers commonly carry
-        # constructor injection before `extends`.
-        class_regex = /(?:class|object)\s+(\w+)[^{}]*\{/
-        class_matches = content.scan(class_regex)
-
-        class_matches.each do |class_match|
-          class_name = class_match[1]
-          next if class_name.empty?
-
-          # Find where this class starts
-          class_start_idx = content.index(/(?:class|object)\s+#{Regex.escape(class_name)}/)
-          next unless class_start_idx
-
-          # Get content from class start
-          class_content = content[class_start_idx..]
+        # Find every class/object/trait. Modern Play controllers are written
+        # in Scala 3 with significant indentation (`class Foo(...) extends
+        # Bar:`) and no braces, so brace-based detection misses them entirely.
+        declarations = class_declarations(structure)
+        declarations.each_with_index do |decl, decl_index|
+          class_name, class_start = decl
+          class_end = decl_index + 1 < declarations.size ? declarations[decl_index + 1][1] : content.size
+          class_struct = structure[class_start...class_end]
+          class_src = content[class_start...class_end]
 
           # Find all def methods in the class. Route files decide whether a
           # method is externally reachable, so parsing custom ActionBuilder
           # wrappers here improves controller parameter enrichment without
           # adding standalone endpoints.
-          method_regex = /def\s+(\w+)(?:\s*\([^)]*\))?(?:\s*:\s*[^=]+)?\s*=/
-          class_content.scan(method_regex) do |match|
+          seen_methods = Set(String).new
+          class_struct.scan(/\bdef\s+(\w+)/) do |match|
             method_name = match[1]
-            full_method_name = package_name.empty? ? "#{class_name}.#{method_name}" : "#{package_name}.#{class_name}.#{method_name}"
+            next unless seen_methods.add?(method_name)
 
-            # Find the method body (from def to the matching closing brace)
-            method = extract_method_body(class_content, method_name)
-            next unless method
+            # Delimit the method body by indentation + bracket balance so that
+            # both brace blocks (`= Action { ... }`) and Scala 3 colon blocks
+            # (`= Open:` / `= AuthOrScoped():`) are captured precisely, instead
+            # of grabbing a later sibling method's brace block.
+            region = extract_method_body(class_struct, class_src, method_name)
+            next unless region
 
-            method_body = method[:body]
-            method_signature = method[:signature]
+            method_body = region[:body]
+            method_signature = region[:signature]
 
             headers = [] of String
             cookies = [] of String
@@ -118,17 +128,24 @@ module Analyzer::Scala
 
             # Extract body type: request.body.asJson, request.body.asFormUrlEncoded, parse.json, parse.form
             body_source = "#{method_signature}\n#{method_body}"
-            if body_source.match(/request\s*\.\s*body\s*\.\s*asJson|parse\s*\.\s*json|Json\s*\.\s*parse|\.body\s*\.\s*asJson/)
+            if body_source.match(/request\s*\.\s*body\s*\.\s*asJson|parse\s*\.\s*json|Json\s*\.\s*parse|\.body\s*\.\s*asJson|\.body\s*\.\s*asOpt|\.body\s*\.\s*as\s*\[/)
               body_type = "json"
-            elsif body_source.match(/request\s*\.\s*body\s*\.\s*as(?:FormUrlEncoded|MultipartFormData)|parse\s*\.\s*form/)
+            elsif body_source.match(/request\s*\.\s*body\s*\.\s*as(?:FormUrlEncoded|MultipartFormData)|parse\s*\.\s*(?:form|multipartFormData|tolerantFormUrlEncoded)/)
               body_type = "form"
-            elsif body_source.match(/request\s*\.\s*body\s*\.\s*asXml/)
+            elsif body_source.match(/request\s*\.\s*body\s*\.\s*asXml|parse\s*\.\s*(?:xml|tolerantXml)/)
               body_type = "xml"
-            elsif body_source.match(/request\s*\.\s*body\s*\.\s*as(?:Text|Raw|Bytes)|parse\s*\.\s*text/)
+            elsif body_source.match(/request\s*\.\s*body\s*\.\s*as(?:Text|Raw|Bytes)|parse\s*\.\s*(?:text|raw|tolerantText)/)
               body_type = "body"
             end
 
-            callees = callees_needed? ? Noir::ScalaCalleeExtractor.callees_for_body(method_body, path, line_number_for_method_body(content, class_start_idx, method_name)) : [] of Noir::ScalaCalleeExtractor::Entry
+            full_method_name = package_name.empty? ? "#{class_name}.#{method_name}" : "#{package_name}.#{class_name}.#{method_name}"
+
+            callees = if want_callees
+                        start_line = line_at(content, class_start + region[:body_start])
+                        Noir::ScalaCalleeExtractor.callees_for_body(method_body, path, start_line)
+                      else
+                        [] of Noir::ScalaCalleeExtractor::Entry
+                      end
             controller_methods[full_method_name] = {headers: headers, cookies: cookies, body_type: body_type, callees: callees}
           end
         end
@@ -137,43 +154,213 @@ module Analyzer::Scala
       controller_methods
     end
 
-    # Extract method body from content
-    private def extract_method_body(content : String, method_name : String) : MethodBody?
-      # Find method start and the first action block. Handles `Action`,
-      # `Action.async`, parser variants, and custom action builders such as
-      # `AuthenticatedAction { request => ... }`.
-      method_start_regex = /def\s+#{Regex.escape(method_name)}(?:\s*\([^)]*\))?(?:\s*:\s*[^=]+)?\s*=/
-      match = content.match(method_start_regex)
+    # Blank out strings and comments while preserving the byte length and line
+    # structure of the source, so structural offsets stay aligned.
+    private def blank_non_code(content : String) : String
+      block_depth = 0
+      in_multiline_string = false
+      builder = String::Builder.new
+      lines = content.split('\n')
+      lines.each_with_index do |line, index|
+        stripped, block_depth, in_multiline_string = Noir::ScalaCalleeExtractor.strip_non_code_with_state(line, block_depth, in_multiline_string)
+        builder << stripped
+        builder << '\n' unless index == lines.size - 1
+      end
+      builder.to_s
+    end
+
+    # Locate class/object/trait declarations (Scala 2 brace style and Scala 3
+    # indentation style alike). Returns {name, start_offset} pairs in order.
+    private def class_declarations(structure : String) : Array(Tuple(String, Int32))
+      decls = [] of Tuple(String, Int32)
+      structure.scan(/(?:\A|\n)[ \t]*((?:(?:final|sealed|abstract|case|implicit|private|protected|open)[ \t]+)*(?:class|object|trait)[ \t]+(\w+))/) do |match|
+        name = match[2]
+        next if name.empty?
+        decls << {name, match.begin(1) || 0}
+      end
+      decls
+    end
+
+    # Extract a method's signature and body. The body excludes the leading
+    # action-builder wrapper (`Action`, `Open`, `Auth`, custom builders) so it
+    # is not reported as a callee, matching brace-style behavior.
+    private def extract_method_body(structure : String, source : String, method_name : String) : MethodRegion?
+      match = structure.match(/\bdef\s+#{Regex.escape(method_name)}(?![A-Za-z0-9_$])/)
       return unless match
+      def_start = match.begin(0) || 0
+      cursor = match.end(0)
+      return unless cursor
 
-      search_start = match.end
-      return unless search_start
+      def_line_start = structure.rindex('\n', def_start)
+      def_line_start = def_line_start ? def_line_start + 1 : 0
+      def_line_end = structure.index('\n', def_start) || structure.size
+      base_indent = leading_indent_of(structure[def_line_start...def_line_end])
 
-      opening_brace = content.index('{', search_start)
-      return unless opening_brace
+      region_end = method_region_end(structure, def_line_start, base_indent)
 
-      next_method = content.index(/\ndef\s+\w+/, search_start)
-      return if next_method && next_method < opening_brace
+      # The `=` that introduces the body: skip type params, parameter lists and
+      # default-value `=` (all of which sit inside brackets), and ignore `=>`.
+      eq_index = locate_body_eq(structure, cursor, region_end)
 
-      start_index = opening_brace + 1
-
-      # Find matching closing brace
-      brace_count = 1
-      end_index = start_index
-      while end_index < content.size && brace_count > 0
-        case content[end_index]
-        when '{'
-          brace_count += 1
-        when '}'
-          brace_count -= 1
+      # Find the body separator: the first top-level `{` (brace block) or an
+      # end-of-line `:` (Scala 3 indented block).
+      search_from = eq_index ? eq_index + 1 : cursor
+      sep_index = nil
+      sep_kind = :expr
+      depth = 0
+      i = search_from
+      while i < region_end
+        c = structure[i]
+        if depth == 0
+          if c == '{'
+            sep_index = i
+            sep_kind = :brace
+            break
+          elsif c == ':' && rest_of_line_blank?(structure, i + 1, region_end)
+            sep_index = i
+            sep_kind = :colon
+            break
+          end
         end
-        end_index += 1
+        case c
+        when '(', '[', '{' then depth += 1
+        when ')', ']', '}' then depth -= 1 if depth > 0
+        end
+        i += 1
       end
 
-      signature_start = match.begin || 0
-      signature = content[signature_start..opening_brace]
-      body = content[start_index...end_index - 1]
-      {signature: signature, body: body}
+      case sep_kind
+      when :brace
+        open_brace = sep_index.not_nil!
+        close = matching_brace(structure, open_brace)
+        body_start = open_brace + 1
+        body_end = close || region_end
+        {signature: source[def_start..open_brace], body: source[body_start...body_end], body_start: body_start}
+      when :colon
+        colon = sep_index.not_nil!
+        body_start = colon + 1
+        {signature: source[def_start..colon], body: source[body_start...region_end], body_start: body_start}
+      else
+        # Single-expression body (`def foo = bar(x)`). Without a `=` there is no
+        # value body to parse (e.g. an abstract def).
+        return unless eq_index
+        body_start = skip_whitespace(structure, eq_index + 1, region_end)
+        {signature: source[def_start..eq_index], body: source[body_start...region_end], body_start: body_start}
+      end
+    end
+
+    # Walk forward from the def line; the region ends at the first non-blank
+    # line that dedents to <= the def's indentation while no bracket is open.
+    private def method_region_end(structure : String, def_line_start : Int32, base_indent : Int32) : Int32
+      size = structure.size
+      depth = 0
+      first_line = true
+      line_start = def_line_start
+      while line_start < size
+        line_end = structure.index('\n', line_start) || size
+        line = structure[line_start...line_end]
+        unless first_line
+          if depth == 0 && !line.strip.empty? && leading_indent_of(line) <= base_indent
+            return line_start
+          end
+        end
+        depth += bracket_delta(line)
+        depth = 0 if depth < 0
+        first_line = false
+        line_start = line_end + 1
+      end
+      size
+    end
+
+    # Index of the top-level `=` that begins the method body, or nil.
+    private def locate_body_eq(structure : String, from : Int32, region_end : Int32) : Int32?
+      depth = 0
+      i = from
+      while i < region_end
+        c = structure[i]
+        if depth == 0
+          if c == '='
+            nxt = structure[i + 1]?
+            # Guard the index explicitly: Crystal's `[-1]?` wraps to the last
+            # char rather than returning nil.
+            prv = i > 0 ? structure[i - 1]? : nil
+            return i if nxt != '>' && nxt != '=' && prv != '=' && prv != '!' && prv != '<' && prv != '>'
+          elsif c == '{'
+            # Brace-only body (procedure syntax `def foo { ... }`): no `=`.
+            return nil
+          end
+        end
+        case c
+        when '(', '[', '{' then depth += 1
+        when ')', ']', '}' then depth -= 1 if depth > 0
+        end
+        i += 1
+      end
+      nil
+    end
+
+    # Index of the brace matching the one at `open_index`, or nil.
+    private def matching_brace(structure : String, open_index : Int32) : Int32?
+      depth = 0
+      i = open_index
+      size = structure.size
+      while i < size
+        case structure[i]
+        when '{' then depth += 1
+        when '}'
+          depth -= 1
+          return i if depth == 0
+        end
+        i += 1
+      end
+      nil
+    end
+
+    private def rest_of_line_blank?(structure : String, from : Int32, region_end : Int32) : Bool
+      i = from
+      while i < region_end
+        c = structure[i]
+        break if c == '\n'
+        return false unless c == ' ' || c == '\t' || c == '\r'
+        i += 1
+      end
+      true
+    end
+
+    private def skip_whitespace(structure : String, from : Int32, region_end : Int32) : Int32
+      i = from
+      while i < region_end
+        c = structure[i]
+        break unless c == ' ' || c == '\t' || c == '\n' || c == '\r'
+        i += 1
+      end
+      i
+    end
+
+    private def leading_indent_of(line : String) : Int32
+      count = 0
+      line.each_char do |c|
+        break unless c == ' ' || c == '\t'
+        count += 1
+      end
+      count
+    end
+
+    private def bracket_delta(text : String) : Int32
+      delta = 0
+      text.each_char do |c|
+        case c
+        when '(', '[', '{' then delta += 1
+        when ')', ']', '}' then delta -= 1
+        end
+      end
+      delta
+    end
+
+    private def line_at(content : String, index : Int32) : Int32
+      return 1 if index <= 0
+      limit = index > content.size ? content.size : index
+      content[0, limit].count('\n') + 1
     end
 
     # Process a Play routes file
@@ -199,6 +386,10 @@ module Analyzer::Scala
           include_target = include_match[2]
           if included_path = resolve_included_routes_file(include_target, routes_by_key, path)
             process_routes_file(included_path, controller_methods, routes_by_key, join_paths(prefix, include_prefix), seen)
+          elsif router = resolve_sird_router(include_target)
+            # The include target is a programmatic SIRD router class
+            # (`-> /v1/posts v1.post.PostRouter`), not a routes file.
+            process_sird_router(router, join_paths(prefix, include_prefix))
           end
           next
         end
@@ -512,12 +703,91 @@ module Analyzer::Scala
       end
     end
 
-    private def line_number_for_method_body(content : String, class_start_idx : Int32, method_name : String) : Int32
-      if method_start = content.index(/def\s+#{Regex.escape(method_name)}(?:\s*\([^)]*\))?(?:\s*:\s*[^=]+)?\s*=/, class_start_idx)
-        return content[0, method_start].count('\n') + 1
+    # Resolve an `->` include target to a programmatic SIRD router class file.
+    # Play lets routes delegate to a `SimpleRouter`/`Router` whose routing is a
+    # PartialFunction (`-> /v1/posts v1.post.PostRouter`); these never resolve
+    # to a `.routes` file, so the routes-file pass alone misses every endpoint.
+    private def resolve_sird_router(target : String) : NamedTuple(path: String, content: String, class_name: String)?
+      return if @scala_paths.empty?
+
+      key = target.split(/\s|\(/).first.strip.lchop("@")
+      class_name = key.split(".").last
+      return if class_name.empty?
+
+      filename = "#{class_name}.scala"
+      @scala_paths.each do |path|
+        next unless File.basename(path) == filename
+        content = read_file_content(path)
+        next unless content.match(/\b(?:class|object|trait)\s+#{Regex.escape(class_name)}\b/)
+        next unless content.includes?("SimpleRouter") ||
+                    content.includes?("Router.from") ||
+                    content.includes?("routing.sird") ||
+                    content.match(/extends\s+[\w.]*Router\b/)
+        return {path: path, content: content, class_name: class_name}
       end
 
-      1
+      nil
+    end
+
+    # Emit endpoints for a SIRD router's `routes` PartialFunction.
+    private def process_sird_router(router : NamedTuple(path: String, content: String, class_name: String), prefix : String)
+      source = router[:content]
+      structure = blank_non_code(source)
+      block = extract_router_routes_block(structure, source)
+      return unless block
+
+      body = block[:body]
+      body_start = block[:start]
+
+      # Each case maps an HTTP method + SIRD path pattern to a controller
+      # action, e.g. `case GET(p"/$id") => controller.show(id)`.
+      body.scan(/case\s+(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*\(\s*p"([^"]*)"/) do |match|
+        method = match[1]
+        url_path, params = normalize_sird_path(match[2])
+        full_path = join_paths(prefix, url_path)
+        full_path = "/" if full_path.empty?
+
+        line = line_at(source, body_start + (match.begin(0) || 0))
+        endpoint = create_endpoint(full_path, method, router[:path], line)
+        params.each do |param_name|
+          unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
+            endpoint.push_param(Param.new(param_name, "", "path"))
+          end
+        end
+        @result << endpoint
+      end
+    end
+
+    # Locate the brace block of a router's `routes` member.
+    private def extract_router_routes_block(structure : String, source : String) : NamedTuple(body: String, start: Int32)?
+      match = structure.match(/(?:override\s+)?(?:def|val|lazy\s+val)\s+routes\b/)
+      return unless match
+      search_from = match.end(0)
+      return unless search_from
+
+      open_brace = structure.index('{', search_from)
+      return unless open_brace
+      close = matching_brace(structure, open_brace)
+      return unless close
+
+      {body: source[(open_brace + 1)...close], start: open_brace + 1}
+    end
+
+    # Convert a SIRD `p"..."` path pattern to a `:param` URL and collect its
+    # path params. Handles `$name`, `${name}` and `$name<regex>` interpolations.
+    private def normalize_sird_path(pattern : String) : Tuple(String, Array(String))
+      params = [] of String
+      url = pattern.gsub(/\$\{(\w+)\}|\$(\w+)(?:<[^>]*>)?/) do |_|
+        name = $~[1]? || $~[2]?
+        if name
+          params << name
+          ":#{name}"
+        else
+          $~[0]
+        end
+      end
+      url = "/#{url}" unless url.starts_with?("/")
+      {url, params}
     end
 
     # Create an endpoint with the given path and method
