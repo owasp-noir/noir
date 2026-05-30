@@ -2,6 +2,7 @@ from django.urls import include, path, re_path
 from rest_framework.routers import DefaultRouter
 from django.views.decorators.cache import cache_page
 
+from . import imported_urls as imported_blog_urls
 from . import views
 from .api_router import api_router, direct_imported_router as imported_direct_router
 
@@ -50,6 +51,7 @@ urlpatterns = [
     # path('commented/', views.local_report_list, name='commented'),
     path('api/', include(router.urls)),
     path('imported-api/', include(api_router.urls)),
+    path('module-include/', include(imported_blog_urls)),
     path('local/', include(local_patterns)),
     path('namespaced/', include((namespace_patterns, app_name), namespace='nested')),
     path(

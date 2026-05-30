@@ -18,20 +18,38 @@ module Analyzer::Python
     # under any of these patterns ships with `python -m pytest` or
     # `python -m unittest` and never serves real traffic in
     # production. Centralized so every analyzer can opt in via
-    # `next if PythonEngine.python_test_path?(path)`.
+    # `next if PythonEngine.python_test_path?(path, @base_path)`.
     #
-    #   * `/tests/`          — pytest discovery default (Django,
-    #                          Litestar, FastAPI all use it)
+    #   * `/tests/`, `/test/` — pytest discovery defaults and common
+    #                           framework fixture packages (Django,
+    #                           Litestar, FastAPI all use variants)
     #   * `tests.py`         — the legacy Django per-app test module
     #   * `test_*.py`        — unittest / pytest default discovery
     #   * `*_test.py`        — pytest-go style suffix (rare in Python,
     #                          but cheap to include)
-    def self.python_test_path?(path : String) : Bool
-      return true if path.includes?("/tests/")
+    def self.python_test_path?(path : String, base_path : String? = nil) : Bool
+      relative_path = path_for_test_convention_match(path, base_path)
+      return true if relative_path.includes?("/tests/")
+      return true if relative_path.starts_with?("tests/")
+      return true if relative_path.includes?("/test/")
+      return true if relative_path.starts_with?("test/")
       base = File.basename(path)
       return true if base == "tests.py"
       return true if base.starts_with?("test_") && base.ends_with?(".py")
       base.ends_with?("_test.py")
+    end
+
+    private def self.path_for_test_convention_match(path : String, base_path : String?) : String
+      if base_path.nil? || base_path.empty?
+        return File.basename(path)
+      end
+
+      expanded_path = File.expand_path(path)
+      expanded_base = File.expand_path(base_path)
+      return File.basename(path) unless expanded_path == expanded_base || expanded_path.starts_with?(expanded_base + File::SEPARATOR)
+
+      relative = expanded_path[expanded_base.size..].lchop(File::SEPARATOR)
+      relative.empty? ? File.basename(path) : relative
     end
 
     # Parses the definition of a function from the source lines starting at a given index

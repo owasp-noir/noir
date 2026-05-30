@@ -25,7 +25,7 @@ module Analyzer::Python
         python_files.each do |path|
           next unless path.starts_with?(base_dir_prefix) || path == current_base_path
           next if path.includes?("/site-packages/")
-          next if PythonEngine.python_test_path?(path)
+          next if PythonEngine.python_test_path?(path, @base_path)
 
           source = read_file_content(path)
           next unless source.includes?("starlette")

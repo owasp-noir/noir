@@ -318,6 +318,34 @@ describe Noir::ImportGraph::Python do
       end
     end
 
+    it "resolves aliased imported modules before classifying package type" do
+      with_tmpdir do |root|
+        Dir.mkdir_p(File.join(root, "pkg"))
+        target = File.join(root, "pkg", "urls.py")
+        from_file = File.join(root, "main.py")
+        File.write(target, "")
+        content = "from pkg import urls as pkg_urls\n"
+        File.write(from_file, content)
+
+        result = Noir::ImportGraph::Python.find_imported_modules(root, from_file, content)
+        result["pkg_urls"].should eq({target, Noir::ImportGraph::Python::PackageType::FILE})
+      end
+    end
+
+    it "resolves aliased relative modules" do
+      with_tmpdir do |root|
+        Dir.mkdir_p(File.join(root, "pkg"))
+        target = File.join(root, "pkg", "urls.py")
+        from_file = File.join(root, "pkg", "main.py")
+        File.write(target, "")
+        content = "from . import urls as local_urls\n"
+        File.write(from_file, content)
+
+        result = Noir::ImportGraph::Python.find_imported_modules(root, from_file, content)
+        result["local_urls"].should eq({target, Noir::ImportGraph::Python::PackageType::FILE})
+      end
+    end
+
     it "resolves relative imports `from . import x` against the file's directory" do
       with_tmpdir do |root|
         Dir.mkdir_p(File.join(root, "pkg"))

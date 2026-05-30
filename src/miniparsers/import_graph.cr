@@ -331,7 +331,15 @@ module Noir::ImportGraph::Python
 
     py_path = ""
     is_positive_travel = false
-    dotted_as_names_split = dotted_as_names.split(".")
+    alias_name = nil
+    import_path = dotted_as_names.strip
+    if import_path.includes?(" as ")
+      import_path, alias_name = import_path.split(/\s+as\s+/, 2)
+      import_path = import_path.strip
+      alias_name = alias_name.strip
+    end
+
+    dotted_as_names_split = import_path.split(".")
 
     dotted_as_names_split.each_with_index do |names, index|
       travel_package_path = File.join(package_path, names)
@@ -354,7 +362,6 @@ module Noir::ImportGraph::Python
         import = name.strip
         next if import.empty?
 
-        alias_name = nil
         if import.includes?(" as ")
           import, alias_name = import.split(" as ")
         end
