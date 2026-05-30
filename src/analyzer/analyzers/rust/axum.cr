@@ -53,9 +53,9 @@ module Analyzer::Rust
           route = extract_route(node, source)
           next unless route
 
-          path_str, methods, handler_name = route
+          path_str, handlers = route
           path_str = join_paths(prefix, path_str) unless prefix.empty?
-          methods.each do |raw_verb|
+          handlers.each do |raw_verb, handler_name|
             # `axum::routing::any(handler)` and service mounts emit
             # the verb "ANY" — fan out into the canonical seven so
             # SARIF / Postman / OpenAPI consumers see real HTTP
@@ -64,8 +64,8 @@ module Analyzer::Rust
               details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
               endpoint = Endpoint.new(path_str, verb, details)
 
-              if include_callee && handler_name && (body_node = function_index[handler_name]?)
-                entries = Noir::RustCalleeExtractorTS.callees_in_body(body_node, source, path)
+              if include_callee && handler_name
+                entries = callee_entries_for_handler(function_index, source, path, handler_name)
                 attach_rust_callees(endpoint, entries)
               end
 
@@ -96,15 +96,15 @@ module Analyzer::Rust
             route = extract_route(node, source)
             next unless route
 
-            path_str, methods, handler_name = route
+            path_str, handlers = route
             path_str = join_paths(active_prefix, path_str) unless active_prefix.empty?
-            methods.each do |raw_verb|
+            handlers.each do |raw_verb, handler_name|
               RustEngine.fan_out_verbs(raw_verb).each do |verb|
                 details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
                 endpoint = Endpoint.new(path_str, verb, details)
 
-                if include_callee && handler_name && (body_node = function_index[handler_name]?)
-                  entries = Noir::RustCalleeExtractorTS.callees_in_body(body_node, source, path)
+                if include_callee && handler_name
+                  entries = callee_entries_for_handler(function_index, source, path, handler_name)
                   attach_rust_callees(endpoint, entries)
                 end
 
@@ -129,12 +129,22 @@ module Analyzer::Rust
     # how to read. `route_service`, `nest_service`, and the two
     # `fallback*` variants surface in roughly half of all real-world
     # axum apps (static-file mounts, SPA fallbacks, websocket upgrades).
-    ROUTER_EMIT_NAMES = Set{"route", "route_service", "nest_service", "fallback", "fallback_service"}
+    ROUTER_EMIT_NAMES = Set{
+      "route", "route_service", "nest_service", "fallback", "fallback_service",
+    }
+
+    BUILDER_ROUTE_EMIT_NAMES = Set{
+      "get", "post", "put", "delete", "patch", "head", "options", "any",
+      "unauthenticated_get", "unauthenticated_post", "unauthenticated_put",
+      "unauthenticated_delete", "unauthenticated_patch", "unauthenticated_head",
+      "unauthenticated_options", "unauthenticated_any",
+    }
 
     private def router_emit?(call : LibTreeSitter::TSNode, source : String) : Bool
       name = field_call_name(call, source)
       return false unless name
-      ROUTER_EMIT_NAMES.includes?(name)
+      return true if ROUTER_EMIT_NAMES.includes?(name)
+      BUILDER_ROUTE_EMIT_NAMES.includes?(name) && route_builder_receiver?(call, source)
     end
 
     # Walks Axum router builder chains with an active path prefix.
@@ -330,7 +340,42 @@ module Analyzer::Rust
       field ? Noir::TreeSitter.node_text(field, source) : nil
     end
 
-    # Returns `{path, http_methods, handler_name?}` for a valid
+    private def route_builder_receiver?(call : LibTreeSitter::TSNode, source : String) : Bool
+      fn_node = Noir::TreeSitter.field(call, "function")
+      return false unless fn_node && Noir::TreeSitter.node_type(fn_node) == "field_expression"
+
+      receiver = Noir::TreeSitter.field(fn_node, "value")
+      receiver ? route_builder_chain?(receiver, source) : false
+    end
+
+    private def route_builder_chain?(node : LibTreeSitter::TSNode, source : String) : Bool
+      case Noir::TreeSitter.node_type(node)
+      when "call_expression"
+        return true if route_builder_constructor_call?(node, source)
+
+        fn_node = Noir::TreeSitter.field(node, "function")
+        return false unless fn_node && Noir::TreeSitter.node_type(fn_node) == "field_expression"
+
+        field = Noir::TreeSitter.field(fn_node, "field")
+        receiver = Noir::TreeSitter.field(fn_node, "value")
+        return false unless field && receiver
+
+        field_name = Noir::TreeSitter.node_text(field, source)
+        BUILDER_ROUTE_EMIT_NAMES.includes?(field_name) && route_builder_chain?(receiver, source)
+      else
+        false
+      end
+    end
+
+    private def route_builder_constructor_call?(call : LibTreeSitter::TSNode, source : String) : Bool
+      fn_node = Noir::TreeSitter.field(call, "function")
+      return false unless fn_node
+
+      text = Noir::TreeSitter.node_text(fn_node, source)
+      !!text.match(/(?:^|::)[A-Za-z_]\w*(?:RouteBuilder|RouterBuilder)::new$/)
+    end
+
+    # Returns `{path, [{http_method, handler_name?}, ...]}` for a valid
     # router-emit call, or `nil` when the shape doesn't match.
     # Dispatches by the field-call name:
     # * `route(path, verb(handler))` — usual case; returns one or
@@ -341,7 +386,7 @@ module Analyzer::Rust
     # * `fallback(handler)` / `fallback_service(svc)` — catch-all
     #   registration; we emit at `/*` so the endpoint surfaces in
     #   downstream tooling without colliding with a real path.
-    private def extract_route(call : LibTreeSitter::TSNode, source : String) : Tuple(String, Array(String), String?)?
+    private def extract_route(call : LibTreeSitter::TSNode, source : String) : Tuple(String, Array(Tuple(String, String?)))?
       kind = field_call_name(call, source)
       return unless kind
 
@@ -353,8 +398,7 @@ module Analyzer::Rust
         return if named.size < 2
         path = string_literal_text(named[0], source)
         return unless path
-        methods, handler = decode_handler(named[1], source)
-        {path, methods, handler}
+        {path, decode_handler(named[1], source)}
       when "route_service"
         args = Noir::TreeSitter.field(call, "arguments")
         return unless args
@@ -362,7 +406,7 @@ module Analyzer::Rust
         return if named.size < 1
         path = string_literal_text(named[0], source)
         return unless path
-        {path, [SERVICE_METHOD], nil}
+        {path, [{SERVICE_METHOD, nil.as(String?)}]}
       when "nest_service"
         args = Noir::TreeSitter.field(call, "arguments")
         return unless args
@@ -370,7 +414,7 @@ module Analyzer::Rust
         return if named.size < 1
         prefix = string_literal_text(named[0], source)
         return unless prefix
-        {join_paths(prefix, "/*"), [SERVICE_METHOD], nil}
+        {join_paths(prefix, "/*"), [{SERVICE_METHOD, nil.as(String?)}]}
       when "fallback", "fallback_service"
         args = Noir::TreeSitter.field(call, "arguments")
         return unless args
@@ -378,48 +422,67 @@ module Analyzer::Rust
         # Router-level `.fallback(handler)` (one arg) and the rare
         # path-scoped `.fallback("/api/*", handler)` (two args, only
         # available on `MethodRouter`) — bail on anything else.
-        handler = named.last?.try { |n| identifier_text(n, source) }
-        {"/*", [SERVICE_METHOD], handler}
+        handler = named.last?.try { |n| callable_text(n, source) }
+        {"/*", [{SERVICE_METHOD, handler}]}
+      else
+        extract_builder_route(kind, call, source)
       end
     end
 
-    private def identifier_text(node : LibTreeSitter::TSNode, source : String) : String?
-      return Noir::TreeSitter.node_text(node, source) if Noir::TreeSitter.node_type(node) == "identifier"
+    private def extract_builder_route(kind : String,
+                                      call : LibTreeSitter::TSNode,
+                                      source : String) : Tuple(String, Array(Tuple(String, String?)))?
+      verb = builder_route_verb(kind)
+      return unless verb
+
+      named = named_arguments(call)
+      return if named.size < 2
+
+      path = string_literal_text(named[0], source)
+      return unless path
+
+      handler = callable_text(named[1], source)
+      {path, [{verb, handler}]}
+    end
+
+    private def builder_route_verb(kind : String) : String?
+      name = kind.starts_with?("unauthenticated_") ? kind["unauthenticated_".size..] : kind
+      return name.upcase if HTTP_VERBS.includes?(name)
       nil
     end
 
-    # `get(handler)` → `{["GET"], "handler"}`.
-    # `get(handler).post(other)` → `{["GET", "POST"], "handler"}`.
+    # `get(handler)` → `{[{"GET", "handler"}]}`.
+    # `get(handler).post(other)` → `{[{"GET", "handler"}, {"POST", "other"}]}`.
     # The chain is left-folded by tree-sitter, so we walk back from
     # the outermost call to the innermost `get(...)` collecting verbs
-    # in declaration order. The handler captured is the FIRST
-    # handler in the chain — every verb routes to *its own* handler
-    # in real Axum code, but the legacy regex analyzer only tracked
-    # one and we keep that behaviour for callee attribution. Falls
+    # in declaration order. Every verb keeps its own handler so
+    # callee / AI-context output does not leak one method's body onto
+    # its sibling method at the same path. Falls
     # back to a single GET endpoint when the shape doesn't match.
-    private def decode_handler(node : LibTreeSitter::TSNode, source : String) : Tuple(Array(String), String?)
-      methods = [] of String
-      handler : String? = nil
+    private def decode_handler(node : LibTreeSitter::TSNode, source : String) : Array(Tuple(String, String?))
+      handlers = [] of Tuple(String, String?)
 
       cursor = node
       while Noir::TreeSitter.node_type(cursor) == "call_expression"
         fn_node = Noir::TreeSitter.field(cursor, "function")
         break unless fn_node
         case Noir::TreeSitter.node_type(fn_node)
-        when "identifier"
+        when "identifier", "scoped_identifier"
           # Innermost: `get(handler)`.
-          verb = Noir::TreeSitter.node_text(fn_node, source).downcase
+          verb = Noir::TreeSitter.node_text(fn_node, source).split("::").last.downcase
           if HTTP_VERBS.includes?(verb)
-            methods.unshift(verb.upcase)
+            handlers.unshift({verb.upcase, first_callable_argument(cursor, source)})
           end
-          handler ||= first_identifier_argument(cursor, source)
           break
         when "field_expression"
-          # Chained: `<inner>.post(...)`. Field is the verb.
+          # Chained: `<inner>.post(...)`. Field is the verb. Non-verb
+          # layers (`.layer(...)`, `.route_layer(...)`) are transparent.
           field = Noir::TreeSitter.field(fn_node, "field")
           if field
             verb = Noir::TreeSitter.node_text(field, source).downcase
-            methods.unshift(verb.upcase) if HTTP_VERBS.includes?(verb)
+            if HTTP_VERBS.includes?(verb)
+              handlers.unshift({verb.upcase, first_callable_argument(cursor, source)})
+            end
           end
           inner = Noir::TreeSitter.field(fn_node, "value")
           break unless inner
@@ -429,17 +492,29 @@ module Analyzer::Rust
         end
       end
 
-      methods << "GET" if methods.empty?
-      {methods, handler}
+      handlers << {"GET", nil.as(String?)} if handlers.empty?
+      handlers
     end
 
-    private def first_identifier_argument(call : LibTreeSitter::TSNode, source : String) : String?
+    private def first_callable_argument(call : LibTreeSitter::TSNode, source : String) : String?
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
       Noir::TreeSitter.each_named_child(args) do |child|
-        return Noir::TreeSitter.node_text(child, source) if Noir::TreeSitter.node_type(child) == "identifier"
+        if text = callable_text(child, source)
+          return text
+        end
       end
       nil
+    end
+
+    private def callable_text(node : LibTreeSitter::TSNode, source : String) : String?
+      case Noir::TreeSitter.node_type(node)
+      when "identifier", "scoped_identifier"
+        Noir::TreeSitter.node_text(node, source)
+      when "generic_function"
+        inner = Noir::TreeSitter.field(node, "function")
+        inner ? callable_text(inner, source) : nil
+      end
     end
 
     private def named_arguments(call : LibTreeSitter::TSNode) : Array(LibTreeSitter::TSNode)
@@ -486,18 +561,125 @@ module Analyzer::Rust
 
     private def build_function_index(root : LibTreeSitter::TSNode, source : String) : Hash(String, LibTreeSitter::TSNode)
       index = {} of String => LibTreeSitter::TSNode
-      walk(root) do |node|
-        next unless Noir::TreeSitter.node_type(node) == "function_item"
+      build_function_index(root, source, [] of String, index)
+      index
+    end
+
+    private def build_function_index(node : LibTreeSitter::TSNode,
+                                     source : String,
+                                     scope : Array(String),
+                                     index : Hash(String, LibTreeSitter::TSNode))
+      case Noir::TreeSitter.node_type(node)
+      when "function_item"
         name_node = Noir::TreeSitter.field(node, "name")
         body_node = Noir::TreeSitter.field(node, "body")
-        next unless name_node && body_node
+        return unless name_node && body_node
+
         name = Noir::TreeSitter.node_text(name_node, source)
-        # First occurrence wins. axum handlers are rarely overloaded
-        # in the same file and the legacy analyzer behaved the same
-        # way (first `fn name` match in the line scan).
-        index[name] = body_node unless index.has_key?(name)
+        if scope.empty?
+          index[name] = body_node unless index.has_key?(name)
+        else
+          qualified_name = "#{scope.join("::")}::#{name}"
+          index[qualified_name] = body_node unless index.has_key?(qualified_name)
+        end
+      when "mod_item"
+        name_node = Noir::TreeSitter.field(node, "name")
+        body_node = Noir::TreeSitter.field(node, "body")
+        return unless name_node && body_node
+
+        nested_scope = scope + [Noir::TreeSitter.node_text(name_node, source)]
+        Noir::TreeSitter.each_named_child(body_node) do |child|
+          build_function_index(child, source, nested_scope, index)
+        end
+      else
+        Noir::TreeSitter.each_named_child(node) do |child|
+          build_function_index(child, source, scope, index)
+        end
       end
-      index
+    end
+
+    private def callee_entries_for_handler(index : Hash(String, LibTreeSitter::TSNode),
+                                           source : String,
+                                           path : String,
+                                           handler_name : String) : Array(Noir::RustCalleeExtractor::Entry)
+      if body_node = function_body_for_handler(index, handler_name)
+        return Noir::RustCalleeExtractorTS.callees_in_body(body_node, source, path)
+      end
+
+      external_handler_callees(handler_name, path)
+    end
+
+    private def function_body_for_handler(index : Hash(String, LibTreeSitter::TSNode), handler_name : String) : LibTreeSitter::TSNode?
+      return index[handler_name]? if index.has_key?(handler_name)
+      return if handler_name.includes?("::")
+
+      index[handler_name]?
+    end
+
+    private def external_handler_callees(handler_name : String, current_path : String) : Array(Noir::RustCalleeExtractor::Entry)
+      parts = handler_name.split("::").reject(&.empty?)
+      return [] of Noir::RustCalleeExtractor::Entry if parts.size < 2
+
+      function_name = parts.last
+      module_parts = parts[0...-1]
+
+      candidate_module_paths(current_path, module_parts).each do |candidate|
+        next unless File.exists?(candidate)
+
+        source = read_file_content(candidate)
+        entries = [] of Noir::RustCalleeExtractor::Entry
+        Noir::TreeSitter.parse_rust(source) do |root|
+          index = build_function_index(root, source)
+          if body_node = index[function_name]?
+            entries = Noir::RustCalleeExtractorTS.callees_in_body(body_node, source, candidate)
+          end
+        end
+        return entries
+      end
+
+      [] of Noir::RustCalleeExtractor::Entry
+    end
+
+    private def candidate_module_paths(current_path : String, module_parts : Array(String)) : Array(String)
+      return [] of String if module_parts.empty?
+
+      base_dir, parts = module_base_dir(current_path, module_parts)
+      return [] of String if parts.empty?
+
+      module_path = parts.join("/")
+      [
+        File.join(base_dir, "#{module_path}.rs"),
+        File.join(base_dir, module_path, "mod.rs"),
+      ]
+    end
+
+    private def module_base_dir(current_path : String, module_parts : Array(String)) : Tuple(String, Array(String))
+      first = module_parts.first
+      rest = module_parts[1..]? || [] of String
+
+      case first
+      when "crate"
+        {crate_src_dir(current_path), rest}
+      when "self"
+        {current_module_dir(current_path), rest}
+      when "super"
+        {File.dirname(current_module_dir(current_path)), rest}
+      else
+        {current_module_dir(current_path), module_parts}
+      end
+    end
+
+    private def current_module_dir(current_path : String) : String
+      File.dirname(current_path)
+    end
+
+    private def crate_src_dir(current_path : String) : String
+      marker = "/src/"
+      if idx = current_path.rindex(marker)
+        current_path[0, idx + marker.size - 1]
+      else
+        File.dirname(current_path)
+      end
     end
 
     private def walk(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)

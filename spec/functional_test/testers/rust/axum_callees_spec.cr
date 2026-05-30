@@ -20,10 +20,37 @@ create_user = Endpoint.new("/users", "POST").tap do |ep|
   ep.push_callee(Callee.new("Json", line: 32))
 end
 
+read_account = Endpoint.new("/account", "GET").tap do |ep|
+  ep.push_callee(Callee.new("AccountService::read", line: 48))
+  ep.push_callee(Callee.new("Json", line: 49))
+end
+
+update_account = Endpoint.new("/account", "PUT").tap do |ep|
+  ep.push_callee(Callee.new("AccountService::update", line: 54))
+  ep.push_callee(Callee.new("AuditLog::write_update", line: 55))
+end
+
+builder_get = Endpoint.new("/builder", "GET").tap do |ep|
+  ep.push_callee(Callee.new("BuilderService::read", line: 60))
+end
+
+builder_public = Endpoint.new("/builder-public", "POST").tap do |ep|
+  ep.push_callee(Callee.new("BuilderService::create", line: 64))
+end
+
+scoped = Endpoint.new("/scoped", "GET").tap do |ep|
+  ep.push_callee(Callee.new("RightService::hit", line: 85))
+end
+
 expected_endpoints = [
   home,
   profile,
   create_user,
+  read_account,
+  update_account,
+  builder_get,
+  builder_public,
+  scoped,
 ]
 
 FunctionalTester.new("fixtures/rust/axum_callees/", {
