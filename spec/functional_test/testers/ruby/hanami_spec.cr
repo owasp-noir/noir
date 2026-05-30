@@ -1,6 +1,7 @@
 require "../../func_spec.cr"
 
 expected_endpoints = [
+  Endpoint.new("/", "GET"),
   Endpoint.new("/books", "GET", [
     Param.new("page", "", "query"),
     Param.new("limit", "", "query"),
