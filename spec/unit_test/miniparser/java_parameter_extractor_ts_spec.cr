@@ -115,6 +115,52 @@ describe Noir::TreeSitterJavaParameterExtractor do
       results["A"].first.name.should eq("a")
       results["B"].first.name.should eq("b")
     end
+
+    it "treats every field on a Lombok @Data class as setter-backed" do
+      # Lombok synthesises the setters at compile time, so the source
+      # has none — without special-casing the annotation a `@Data` DTO
+      # would expand to zero body params.
+      source = <<-JAVA
+        import lombok.Data;
+        @Data
+        class PhotoRequest {
+            private String title;
+            private String url;
+            private Long albumId;
+        }
+        JAVA
+
+      fields = Noir::TreeSitterJavaParameterExtractor.extract_class_fields(source)["PhotoRequest"]
+      fields.map(&.name).should eq(["title", "url", "albumId"])
+      fields.all?(&.has_setter?).should be_true
+    end
+
+    it "recognises @Setter and @Value as field-binding annotations" do
+      ["@Setter", "@Value"].each do |lombok_ann|
+        source = lombok_ann + "\nclass Dto {\n    private String name;\n}\n"
+        fields = Noir::TreeSitterJavaParameterExtractor.extract_class_fields(source)["Dto"]
+        fields.find!(&.name.== "name").has_setter?.should be_true
+      end
+    end
+
+    it "excludes static fields (constants are never request params)" do
+      # `serialVersionUID` and `public static` config keys must not be
+      # surfaced as body parameters, even on a Lombok @Data class where
+      # every instance field becomes settable.
+      source = <<-JAVA
+        import lombok.Data;
+        @Data
+        class Category {
+            private static final long serialVersionUID = 1L;
+            public static final String TYPE = "category";
+            private Long id;
+            private String name;
+        }
+        JAVA
+
+      fields = Noir::TreeSitterJavaParameterExtractor.extract_class_fields(source)["Category"]
+      fields.map(&.name).should eq(["id", "name"])
+    end
   end
 
   describe ".extract_consumes" do
@@ -245,6 +291,35 @@ describe Noir::TreeSitterJavaParameterExtractor do
         Hash(String, Array(Noir::TreeSitterJavaParameterExtractor::FieldInfo)).new
       )
       params.should be_empty
+    end
+
+    it "expands a Lombok @RequestBody DTO into one param per field" do
+      # End-to-end: a `@Data` request DTO has no source-level setters,
+      # yet every field must surface as a body param. Regression guard
+      # for the common Spring shape where this previously yielded `[]`.
+      dto_source = <<-JAVA
+        import lombok.Data;
+        @Data
+        class PostRequest {
+            private String title;
+            private String body;
+            private Long categoryId;
+        }
+        JAVA
+      class_fields = Noir::TreeSitterJavaParameterExtractor.extract_class_fields(dto_source)
+
+      controller = <<-JAVA
+        class PostController {
+            @PostMapping("/posts")
+            public String add(@RequestBody PostRequest req) { return ""; }
+        }
+        JAVA
+
+      params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+        controller, "PostController", "add", "POST", "json", class_fields
+      )
+      params.map(&.name).should eq(["title", "body", "categoryId"])
+      params.all? { |p| p.param_type == "json" }.should be_true
     end
   end
 end

@@ -1185,7 +1185,16 @@ module Noir
     # trailing-slash convention.
     private def join_paths(prefix : String, path : String) : String
       return path if prefix.empty?
-      return "#{prefix.rstrip('/')}/" if path.empty?
+      # A bare method mapping (`@GetMapping` / `@GetMapping("")`) on a
+      # class mapped to `/api/polls` resolves to `/api/polls` in Spring,
+      # NOT `/api/polls/` — the empty segment is absorbed into the class
+      # prefix. Mirror the jaxrs/quarkus/micronaut extractors and drop
+      # the trailing slash here; only a class prefix that is itself all
+      # slashes (`@RequestMapping("/")`) keeps the root `/`.
+      if path.empty?
+        trimmed = prefix.rstrip('/')
+        return trimmed.empty? ? "/" : trimmed
+      end
       trimmed_prefix = prefix.rstrip('/')
       trimmed_path = path.lstrip('/')
       "#{trimmed_prefix}/#{trimmed_path}"

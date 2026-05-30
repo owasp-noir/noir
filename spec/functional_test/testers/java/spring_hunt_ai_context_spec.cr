@@ -19,7 +19,7 @@ describe "--ai-context Hunt signals on Spring fixtures" do
 
     endpoints = app.endpoints
 
-    create_context = endpoints.find! { |ep| ep.method == "POST" && ep.url == "/items/" }.ai_context
+    create_context = endpoints.find! { |ep| ep.method == "POST" && ep.url == "/items" }.ai_context
     create_context = create_context.should_not be_nil
     create_context.signals.map(&.kind).should_not contain("idor")
     create_context.signals.map(&.kind).should_not contain("identifier_input")

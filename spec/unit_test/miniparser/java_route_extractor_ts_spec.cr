@@ -167,9 +167,11 @@ describe Noir::TreeSitterJavaRouteExtractor do
       JAVA
 
     routes = Noir::TreeSitterJavaRouteExtractor.extract_routes(source)
+    # A bare method path on `/api` collapses to `/api` (no trailing
+    # slash) — Spring absorbs the empty segment into the class prefix.
     routes.map { |r| {r.verb, r.path} }.should eq([
       {"GET", ""},
-      {"GET", "/api/"},
+      {"GET", "/api"},
       {"GET", "/health"},
       {"GET", "/api/health"},
     ])
