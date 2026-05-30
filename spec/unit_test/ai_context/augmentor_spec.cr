@@ -63,6 +63,34 @@ describe "NoirAIContext" do
     end
   end
 
+  it "expands a truncated source-scan match to the full call label" do
+    source = <<-CODE
+      @router.get(
+          "/", dependencies=[Depends(get_current_active_superuser)]
+      )
+      def read_items() -> Any:
+          return []
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/items", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 2))
+      details.technology = "python_fastapi"
+      endpoint.details = details
+
+      endpoints = NoirAIContext.apply([endpoint])
+      context = endpoints[0].ai_context.should_not be_nil
+
+      # The guard regex only anchors on `Depends(get_current_`; the
+      # evidence label must be extended to the real call rather than
+      # surfaced as the truncated fragment.
+      guard = context.guards.find { |g| g.name.starts_with?("Depends") }
+      guard = guard.should_not be_nil
+      guard.name.should eq("Depends(get_current_active_superuser)")
+    end
+  end
+
   it "prefers idor review over generic guard absence on unguarded identifier routes" do
     source = <<-CODE
       post "/projects/:id/rotate" do

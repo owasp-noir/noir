@@ -17,6 +17,9 @@ expected_endpoints = [
   Endpoint.new("/api/users/profile", "GET", [Param.new("q", "", "query")]),
   Endpoint.new("/api/items/{item_id}", "GET", [Param.new("item_id", "", "path")]),
   Endpoint.new("/api/secure/admin/dashboard", "GET"),
+  # `@router.get("")` on the `/users`-prefixed router resolves to the
+  # prefix with no trailing slash (Router.join empty-path handling).
+  Endpoint.new("/api/users", "GET"),
 ]
 
 FunctionalTester.new("fixtures/python/fastapi_nested_routers/", {
