@@ -218,7 +218,15 @@ module Analyzer::Python
         double_quote_open, single_quote_open = [false, false]
         double_comment_open, single_comment_open = [false, false]
         end_index = lines[0].size + 1
-        lines[1..].each do |line|
+        # A `def`/`class` signature frequently wraps across lines, with
+        # the closing `)` and a `-> T:` return annotation sitting at
+        # column 0 — at or below the body's indent. Those header lines
+        # must not be mistaken for the block terminator, or the entire
+        # body (and every callee in it) is dropped. Modern FastAPI
+        # handlers (`def read_items(\n  session: Dep,\n) -> Any:`) hit
+        # this on nearly every endpoint.
+        header_span = python_signature_line_span(lines)
+        lines[1..].each_with_index do |line, body_idx|
           line_index = 0
           clear_line = line
           while line_index < line.size
@@ -251,7 +259,12 @@ module Analyzer::Python
           end
 
           open_status = single_comment_open || double_comment_open || single_quote_open || double_quote_open
-          if clear_line[0..(indent_size - 1)].strip.empty? || open_status
+          # `body_idx` is 0-based within `lines[1..]`, so absolute line
+          # `body_idx + 1`. While that is still inside the multi-line
+          # signature, keep the line unconditionally.
+          if body_idx + 1 < header_span
+            end_index += line.size + 1
+          elsif clear_line[0..(indent_size - 1)].strip.empty? || open_status
             end_index += line.size + 1
           else
             break
@@ -263,6 +276,43 @@ module Analyzer::Python
       end
 
       nil
+    end
+
+    # Number of physical lines a `def`/`class` signature occupies at the
+    # head of `lines`, i.e. up to and including the line that carries the
+    # suite-introducing `:` at bracket depth 0. A single-line header
+    # returns 1. Used by `parse_code_block` to avoid treating a wrapped
+    # signature's continuation lines (notably the `) -> T:` closer at
+    # column 0) as the end of the body.
+    def python_signature_line_span(lines : Array(::String)) : Int32
+      depth = 0
+      in_quote = nil
+      escaped = false
+      lines.each_with_index do |line, idx|
+        line.each_char do |ch|
+          if in_quote
+            if escaped
+              escaped = false
+            elsif ch == '\\'
+              escaped = true
+            elsif ch == in_quote
+              in_quote = nil
+            end
+            next
+          end
+          case ch
+          when '\'', '"'
+            in_quote = ch
+          when '(', '[', '{'
+            depth += 1
+          when ')', ']', '}'
+            depth -= 1 if depth > 0
+          when ':'
+            return idx + 1 if depth == 0
+          end
+        end
+      end
+      1
     end
 
     # Returns the literal value from a string if it represents a number or a quoted string

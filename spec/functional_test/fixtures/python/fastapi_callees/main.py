@@ -52,3 +52,16 @@ def profile():
 def remove_order(order_id: int):
     audit_log(order_id)
     return {"deleted": order_id}
+
+
+# Multi-line typed signature whose `) -> dict:` closer sits at column 0.
+# Pre-fix, parse_code_block mistook that line for the block terminator
+# and dropped the whole body, so no callees were extracted.
+@app.get("/reports")
+def list_reports(
+    limit: int = 0,
+    offset: int = 0,
+) -> dict:
+    user = save_user("report")
+    audit_log(user)
+    return {"ok": True}
