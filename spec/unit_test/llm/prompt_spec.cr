@@ -109,6 +109,10 @@ describe LLM do
         xai["grok-4.1-fast"].should eq(2000000)
       end
 
+      it "includes grok-build-0.1 with 256000 tokens" do
+        xai["grok-build-0.1"].should eq(256000)
+      end
+
       it "has default of 8000" do
         xai["default"].should eq(8000)
       end
@@ -147,6 +151,10 @@ describe LLM do
 
       it "includes claude-opus-4-7 with 200000 tokens" do
         anthropic["claude-opus-4-7"].should eq(200000)
+      end
+
+      it "includes claude-opus-4-8 with 1000000 tokens" do
+        anthropic["claude-opus-4-8"].should eq(1000000)
       end
 
       it "has default of 100000" do
