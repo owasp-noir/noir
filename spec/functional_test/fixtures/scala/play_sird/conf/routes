@@ -1,0 +1,3 @@
+->     /v1/posts      v1.post.PostRouter
+
+GET    /health        controllers.HealthController.check
