@@ -81,6 +81,15 @@ module Noir
       "slog",
     }
 
+    # Chain methods that return the receiving router/group unchanged —
+    # middleware registration. Gin's `RouterGroup.Use(...)` and
+    # `Engine.Use(...)` (and Fiber's `app.Use(...)`) return `IRoutes`,
+    # so `r.Use(mw).GET("/x", h)` and `r.Group("/api").Use(mw).POST(...)`
+    # are valid, common shapes. They don't add a path segment, so the
+    # operand walk peels them and resolves the prefix against the
+    # underlying router/group rather than dropping the route entirely.
+    PASSTHROUGH_CHAIN_METHODS = Set{"Use"}
+
     # A static-file route: URL `url_prefix` serves files from disk
     # location `disk_path`.
     struct StaticPath
@@ -808,6 +817,24 @@ module Noir
       return unless parent_node && field_node
       method_name = Noir::TreeSitter.node_text(field_node, source)
 
+      # Peel trailing middleware pass-through calls so
+      # `v1 := r.Group("/v1").Use(mw)` is recognised as a group
+      # declaration for `v1` — the `.Use(...)` wraps the real
+      # `.Group(...)` call without contributing a path segment.
+      while PASSTHROUGH_CHAIN_METHODS.includes?(method_name) &&
+            Noir::TreeSitter.node_type(parent_node) == "call_expression"
+        inner_function = Noir::TreeSitter.field(parent_node, "function")
+        break unless inner_function
+        break unless Noir::TreeSitter.node_type(inner_function) == "selector_expression"
+        inner_parent = Noir::TreeSitter.field(inner_function, "operand")
+        inner_field = Noir::TreeSitter.field(inner_function, "field")
+        break unless inner_parent && inner_field
+        rhs_node = parent_node
+        parent_node = inner_parent
+        field_node = inner_field
+        method_name = Noir::TreeSitter.node_text(field_node, source)
+      end
+
       # Goyave's zero-arg `v1 := api.Group()` is an "alias" declaration —
       # v1 inherits api's prefix without adding its own. We resolve these
       # immediately when the parent prefix is known.
@@ -984,6 +1011,16 @@ module Noir
       return unless field && parent
 
       method_name = Noir::TreeSitter.node_text(field, source)
+
+      # Middleware pass-through (`.Use(...)`): the receiver is returned
+      # unchanged, so skip this link and resolve the prefix against the
+      # parent. Without this, a `r.Group("/x").Use(mw).GET(...)` chain
+      # (the verb's operand is the `.Use(...)` call) would resolve to
+      # nil and the route would be dropped.
+      if PASSTHROUGH_CHAIN_METHODS.includes?(method_name)
+        return router_operand_info(parent, source, groups, group_method, group_aliases, string_values)
+      end
+
       return unless method_name == group_method || group_aliases.includes?(method_name)
 
       prefix = ""
