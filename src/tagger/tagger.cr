@@ -76,6 +76,11 @@ module NoirTaggers
       desc:   "Identifies cryptographic operation endpoints (encryption, signing, hashing, key management)",
       runner: CryptoTagger,
     },
+    debug: {
+      name:   "Debug Tagger",
+      desc:   "Identifies debug, diagnostic, and internal-only endpoints (debug consoles, profilers, actuator, pprof, internal APIs)",
+      runner: DebugTagger,
+    },
   }
 
   HasFrameworkTaggers = {

@@ -284,4 +284,18 @@ describe "Tagger" do
       end
     end
   end
+
+  it "debug_tagger" do
+    noir_options = create_test_options
+    expected_endpoints = [
+      Endpoint.new("/actuator/env", "GET"),
+    ]
+    NoirTaggers.run_tagger(expected_endpoints, noir_options, "debug")
+    expected_endpoints.each do |endpoint|
+      endpoint.tags.empty?.should be_false
+      endpoint.tags.each do |tag|
+        tag.name.should eq("debug")
+      end
+    end
+  end
 end

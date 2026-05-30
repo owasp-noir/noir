@@ -78,6 +78,7 @@ Taggers span several kinds of security-relevant signal. Run `noir list taggers` 
   - `payment` — payment / financial transaction endpoints; review for amount/price tampering, currency confusion, and IDOR on financial records.
   - `webhook` — inbound webhook / callback endpoints; verify signature validation, replay protection, and SSRF on outbound calls.
   - `crypto` — cryptographic operation endpoints (encryption/decryption, signing, hashing, key management); review for weak or obsolete algorithms, padding/signing oracles, static IV/salt reuse, and key exposure.
+  - `debug` — debug, diagnostic, and internal-only endpoints (debug consoles/toggles, profilers, actuator/management, pprof, heap/thread dumps, `/internal` APIs); should not be publicly reachable — review for information exposure and unsafe diagnostic actions.
   - `file_upload` — file upload endpoints; review for unrestricted upload, path traversal, and malicious file handling.
 
 Endpoint-level tags also feed the AI context as signals, enriching the per-endpoint summary that AI reviewers consume.
