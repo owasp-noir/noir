@@ -85,7 +85,7 @@ describe "NoirAIContext" do
       # The guard regex only anchors on `Depends(get_current_`; the
       # evidence label must be extended to the real call rather than
       # surfaced as the truncated fragment.
-      guard = context.guards.find { |g| g.name.starts_with?("Depends") }
+      guard = context.guards.find(&.name.starts_with?("Depends"))
       guard = guard.should_not be_nil
       guard.name.should eq("Depends(get_current_active_superuser)")
     end

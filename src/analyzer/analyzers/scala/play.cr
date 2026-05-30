@@ -231,15 +231,19 @@ module Analyzer::Scala
 
       case sep_kind
       when :brace
-        open_brace = sep_index.not_nil!
-        close = matching_brace(structure, open_brace)
-        body_start = open_brace + 1
-        body_end = close || region_end
-        {signature: source[def_start..open_brace], body: source[body_start...body_end], body_start: body_start}
+        # `sep_index` is always set when `sep_kind` is `:brace`/`:colon`; the
+        # `if` narrows the type so we avoid `not_nil!`.
+        if open_brace = sep_index
+          close = matching_brace(structure, open_brace)
+          body_start = open_brace + 1
+          body_end = close || region_end
+          {signature: source[def_start..open_brace], body: source[body_start...body_end], body_start: body_start}
+        end
       when :colon
-        colon = sep_index.not_nil!
-        body_start = colon + 1
-        {signature: source[def_start..colon], body: source[body_start...region_end], body_start: body_start}
+        if colon = sep_index
+          body_start = colon + 1
+          {signature: source[def_start..colon], body: source[body_start...region_end], body_start: body_start}
+        end
       else
         # Single-expression body (`def foo = bar(x)`). Without a `=` there is no
         # value body to parse (e.g. an abstract def).
@@ -287,7 +291,7 @@ module Analyzer::Scala
             return i if nxt != '>' && nxt != '=' && prv != '=' && prv != '!' && prv != '<' && prv != '>'
           elsif c == '{'
             # Brace-only body (procedure syntax `def foo { ... }`): no `=`.
-            return nil
+            return
           end
         end
         case c
