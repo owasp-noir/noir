@@ -20,7 +20,7 @@ Run Noir with OpenRouter:
 ```bash
 noir scan ./myapp \
      --ai-provider=openrouter \
-     --ai-model=anthropic/claude-opus-4-7 \
+     --ai-model=anthropic/claude-opus-4-8 \
      --ai-key=sk-or-...
 ```
 

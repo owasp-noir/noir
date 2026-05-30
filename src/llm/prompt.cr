@@ -353,6 +353,7 @@ module LLM
       "grok-4.3"                  => 2000000,
       "grok-code-fast"            => 2000000,
       "grok-code-fast-1"          => 2000000,
+      "grok-build-0.1"            => 256000,
       "default"                   => 8000,
     },
     "anthropic" => {
@@ -375,6 +376,7 @@ module LLM
       "claude-opus-4-5"    => 200000,
       "claude-opus-4-6"    => 200000,
       "claude-opus-4-7"    => 200000,
+      "claude-opus-4-8"    => 1000000,
       "default"            => 100000,
     },
     "azure" => {
