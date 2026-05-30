@@ -464,6 +464,14 @@ def extended_report(request):
 
     return HttpResponse("extended")
 
+async def keyword_route(request):
+    value = request.GET.get('value')
+    return HttpResponse(value)
+
+def inline_nested(request):
+    nested = request.GET.get('nested')
+    return HttpResponse(nested)
+
 def server_error_view(request, template_name='blog/error_page.html'):
     return render(request,
                   template_name,

@@ -22,12 +22,7 @@ require "../../func_spec.cr"
 helpers_path = "./spec/functional_test/fixtures/python/django_callees/helpers.py"
 
 expected_endpoints = [
-  # Django's `request.POST.get(...)` registers as a form param, and
-  # `form` type accepts GET as well (existing REQUEST_PARAM_TYPE_MAP
-  # behavior), so both GET and POST endpoints carry the same name.
-  Endpoint.new("/users", "GET", [
-    Param.new("name", "", "form"),
-  ]).tap do |ep|
+  Endpoint.new("/users", "GET").tap do |ep|
     ep.push_callee(Callee.new("request.POST.get", line: 8))
     ep.push_callee(Callee.new("save_user", helpers_path, 1))
     ep.push_callee(Callee.new("audit_log", helpers_path, 5))

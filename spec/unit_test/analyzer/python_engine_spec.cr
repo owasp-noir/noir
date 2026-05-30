@@ -1,4 +1,5 @@
 require "../../spec_helper"
+require "../../../src/models/code_locator"
 require "../../../src/analyzer/engines/python_engine"
 
 class PythonEngineSpecHarness < Analyzer::Python::PythonEngine
@@ -18,6 +19,16 @@ class PythonEngineSpecHarness < Analyzer::Python::PythonEngine
 end
 
 describe Analyzer::Python::PythonEngine do
+  it "treats singular Python test fixture directories as non-production code" do
+    Analyzer::Python::PythonEngine.python_test_path?("/repo/wagtail/test/urls.py", "/repo/wagtail").should be_true
+    Analyzer::Python::PythonEngine.python_test_path?("/repo/src/oscar/test/factories/urls.py", "/repo/src/oscar").should be_true
+  end
+
+  it "does not treat parent test directories outside the scan root as Python tests" do
+    Analyzer::Python::PythonEngine.python_test_path?("/tmp/test/myapp/app/views.py", "/tmp/test/myapp").should be_false
+    Analyzer::Python::PythonEngine.python_test_path?("/tmp/test/myapp/tests/views.py", "/tmp/test/myapp").should be_true
+  end
+
   it "keeps call-site coordinates when a Python callee definition is unreachable" do
     options = create_test_options
     options["include_callee"] = YAML::Any.new(true)
