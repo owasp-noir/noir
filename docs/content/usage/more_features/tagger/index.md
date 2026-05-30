@@ -77,6 +77,7 @@ Taggers span several kinds of security-relevant signal. Run `noir list taggers` 
   - `admin` — administrative or privileged routes (`/admin`, privilege-mutating parameters); prime targets for broken access control and privilege escalation.
   - `payment` — payment / financial transaction endpoints; review for amount/price tampering, currency confusion, and IDOR on financial records.
   - `webhook` — inbound webhook / callback endpoints; verify signature validation, replay protection, and SSRF on outbound calls.
+  - `crypto` — cryptographic operation endpoints (encryption/decryption, signing, hashing, key management); review for weak or obsolete algorithms, padding/signing oracles, static IV/salt reuse, and key exposure.
   - `file_upload` — file upload endpoints; review for unrestricted upload, path traversal, and malicious file handling.
 
 Endpoint-level tags also feed the AI context as signals, enriching the per-endpoint summary that AI reviewers consume.

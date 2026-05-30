@@ -71,6 +71,11 @@ module NoirTaggers
       desc:   "Identifies inbound webhook and callback endpoints",
       runner: WebhookTagger,
     },
+    crypto: {
+      name:   "Crypto Tagger",
+      desc:   "Identifies cryptographic operation endpoints (encryption, signing, hashing, key management)",
+      runner: CryptoTagger,
+    },
   }
 
   HasFrameworkTaggers = {
