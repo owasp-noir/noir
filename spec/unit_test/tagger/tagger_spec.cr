@@ -270,4 +270,18 @@ describe "Tagger" do
       end
     end
   end
+
+  it "crypto_tagger" do
+    noir_options = create_test_options
+    expected_endpoints = [
+      Endpoint.new("/api/encrypt", "POST"),
+    ]
+    NoirTaggers.run_tagger(expected_endpoints, noir_options, "crypto")
+    expected_endpoints.each do |endpoint|
+      endpoint.tags.empty?.should be_false
+      endpoint.tags.each do |tag|
+        tag.name.should eq("crypto")
+      end
+    end
+  end
 end
