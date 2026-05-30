@@ -1476,11 +1476,45 @@ module NoirAIContext
 
       patterns.each do |pattern|
         if match = snippet.match(pattern)
-          return normalize_label(match[0])
+          return normalize_label(expand_match_label(snippet, match))
         end
       end
 
       nil
+    end
+
+    # A source-scan regex usually matches only the leading anchor of a
+    # construct (`Depends(get_current_` for the real
+    # `Depends(get_current_active_superuser)`). Surfacing that truncated
+    # fragment as the evidence name reads as a bug. Extend the match
+    # rightward to finish a trailing identifier and to close a single
+    # still-open `(`, so the label is the actual call. `normalize_label`
+    # still caps the length, so a runaway argument list can't bloat it.
+    private def expand_match_label(snippet : String, match : Regex::MatchData) : String
+      start = match.begin
+      finish = match.end
+      return match[0] if start.nil? || finish.nil?
+
+      while finish < snippet.size && (snippet[finish].alphanumeric? || snippet[finish] == '_')
+        finish += 1
+      end
+
+      fragment = snippet[start...finish]
+      open_parens = fragment.count('(') - fragment.count(')')
+      if open_parens > 0
+        depth = open_parens
+        idx = finish
+        while idx < snippet.size && depth > 0
+          case snippet[idx]
+          when '(' then depth += 1
+          when ')' then depth -= 1
+          end
+          idx += 1
+        end
+        finish = idx
+      end
+
+      snippet[start...finish]
     end
 
     private def matches_any?(name : String, patterns : Array(Regex)) : Bool
