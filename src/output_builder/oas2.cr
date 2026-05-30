@@ -1,61 +1,52 @@
 require "../models/output_builder"
 require "../models/endpoint"
-require "uri"
+require "./oas_common"
 require "json"
 
 class OutputBuilderOas2 < OutputBuilder
+  include OutputBuilderOasCommon
+
   def print(endpoints : Array(Endpoint))
     paths = {} of String => Hash(String, JSON::Any)
 
     endpoints.each do |endpoint|
       parameters = [] of Hash(String, JSON::Any)
-      has_body = false
       consumes = [] of String
       cookie_names = [] of String
+      json_properties = {} of String => JSON::Any
+      has_form = false
 
       endpoint.params.each do |param|
         case param.param_type
         when "json"
           # JSON body parameters should be represented as a body parameter in OAS2
-          has_body = true
+          json_properties[param.name] = JSON::Any.new({
+            "type" => JSON::Any.new("string"),
+          } of String => JSON::Any)
           consumes << "application/json" unless consumes.includes?("application/json")
         when "form"
           # Form data parameters
-          parameters << {
-            "name"     => JSON::Any.new(param.name),
-            "in"       => JSON::Any.new("formData"),
-            "type"     => JSON::Any.new("string"),
-            "required" => JSON::Any.new(false),
-          }
+          has_form = true
+          append_unique_parameter(parameters, swagger_parameter(param.name, "formData", false))
           consumes << "application/x-www-form-urlencoded" unless consumes.includes?("application/x-www-form-urlencoded")
         when "header"
           # Header parameters
-          parameters << {
-            "name"     => JSON::Any.new(param.name),
-            "in"       => JSON::Any.new("header"),
-            "type"     => JSON::Any.new("string"),
-            "required" => JSON::Any.new(false),
-          }
+          append_unique_parameter(parameters, swagger_parameter(param.name, "header", false))
         when "path"
           # Path parameters
-          parameters << {
-            "name"     => JSON::Any.new(param.name),
-            "in"       => JSON::Any.new("path"),
-            "type"     => JSON::Any.new("string"),
-            "required" => JSON::Any.new(true),
-          }
+          append_unique_parameter(parameters, swagger_parameter(param.name, "path", true))
         when "cookie"
           # Collect cookie names for later
           cookie_names << param.name
         else
           # Default to query parameter
-          parameters << {
-            "name"     => JSON::Any.new(param.name),
-            "in"       => JSON::Any.new("query"),
-            "type"     => JSON::Any.new("string"),
-            "required" => JSON::Any.new(false),
-          }
+          append_unique_parameter(parameters, swagger_parameter(param.name, "query", false))
         end
+      end
+
+      oas_path = normalize_oas_path(endpoint.url)
+      path_template_names(oas_path).each do |name|
+        append_unique_parameter(parameters, swagger_parameter(name, "path", true))
       end
 
       # Add single Cookie header parameter if cookies exist
@@ -72,15 +63,23 @@ class OutputBuilderOas2 < OutputBuilder
       end
 
       # Add body parameter for JSON content
-      if has_body
-        parameters << {
+      # OAS2 does not allow body and formData parameters in the same operation.
+      # If both are present, keep the formData shape because it preserves the
+      # concrete field names as request parameters.
+      if !json_properties.empty? && !has_form
+        append_unique_parameter(parameters, {
           "name"     => JSON::Any.new("body"),
           "in"       => JSON::Any.new("body"),
           "required" => JSON::Any.new(false),
           "schema"   => JSON::Any.new({
-            "type" => JSON::Any.new("object"),
+            "type"       => JSON::Any.new("object"),
+            "properties" => JSON::Any.new(json_properties),
           } of String => JSON::Any),
-        }
+        } of String => JSON::Any)
+      end
+
+      if has_form
+        consumes.reject! { |content_type| content_type == "application/json" }
       end
 
       # Build operation object
@@ -101,31 +100,38 @@ class OutputBuilderOas2 < OutputBuilder
       add_noir_callees_extension(operation, endpoint)
       add_noir_ai_context_extension(operation, endpoint)
 
-      # Convert path parameters from :param to {param} format for OAS2
-      uri = URI.parse(endpoint.url)
-      oas_path = uri.path.gsub(/:(\w+)/, "{\\1}")
-      oas_path = oas_path.gsub(/<[^:>]+:(\w+)>/, "{\\1}") # Handle <type:param> format
-
       # Initialize path if not exists
       unless paths.has_key?(oas_path)
         paths[oas_path] = {} of String => JSON::Any
       end
 
       # Add method to path
-      paths[oas_path][endpoint.method.downcase] = JSON::Any.new(operation)
+      methods = operation_methods(endpoint.method)
+      if methods.empty?
+        add_unsupported_method_extension(paths[oas_path], endpoint.method)
+      else
+        methods.each do |method|
+          add_operation(paths[oas_path], method, operation)
+        end
+      end
     end
 
+    url_parts = swagger_url_parts(@options["url"]?.try(&.to_s) || "")
     oas2_hash = {
       "swagger" => JSON::Any.new("2.0"),
       "info"    => JSON::Any.new({
         "title"   => JSON::Any.new("Generated by Noir"),
         "version" => JSON::Any.new("1.0.0"),
       } of String => JSON::Any),
-      "basePath" => JSON::Any.new("/"),
-      "schemes"  => JSON::Any.new([JSON::Any.new("http"), JSON::Any.new("https")]),
+      "basePath" => JSON::Any.new(url_parts[:base_path]),
+      "schemes"  => JSON::Any.new(url_parts[:schemes].map { |scheme| JSON::Any.new(scheme) }),
       "produces" => JSON::Any.new([JSON::Any.new("application/json")]),
       "paths"    => JSON::Any.new(paths.transform_values { |v| JSON::Any.new(v) }),
     } of String => JSON::Any
+
+    if host = url_parts[:host]
+      oas2_hash["host"] = JSON::Any.new(host)
+    end
 
     ob_puts JSON::Any.new(oas2_hash).to_pretty_json
   end

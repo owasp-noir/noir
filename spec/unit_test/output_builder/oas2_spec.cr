@@ -116,4 +116,51 @@ describe "OutputBuilderOas2" do
     post_form_op.as_h.has_key?("consumes").should be_true
     post_form_op["consumes"].as_a.should contain(JSON::Any.new("application/x-www-form-urlencoded"))
   end
+
+  it "normalizes Swagger path, method, and host edge cases" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+      "url"     => YAML::Any.new("https://api.example.com/v1"),
+    }
+    builder = OutputBuilderOas2.new(options)
+    builder.io = IO::Memory.new
+
+    typed_path = Endpoint.new("/users/<int:user_id>", "ANY")
+    typed_path.push_param(Param.new("q", "", "query"))
+
+    mixed_body = Endpoint.new("/mixed", "POST")
+    mixed_body.push_param(Param.new("name", "", "json"))
+    mixed_body.push_param(Param.new("avatar", "", "form"))
+
+    unsupported = Endpoint.new("/jobs", "SUBSCRIBE")
+
+    builder.print([typed_path, mixed_body, unsupported])
+    spec = JSON.parse(builder.io.to_s)
+    paths = spec["paths"]
+
+    spec["host"].as_s.should eq("api.example.com")
+    spec["basePath"].as_s.should eq("/v1")
+    spec["schemes"].as_a.should eq([JSON::Any.new("https")])
+
+    paths.as_h.has_key?("/users/{user_id}").should be_true
+    paths["/users/{user_id}"].as_h.has_key?("any").should be_false
+    %w[get post put patch delete options head trace].each do |method|
+      paths["/users/{user_id}"].as_h.has_key?(method).should be_true
+    end
+
+    get_params = paths["/users/{user_id}"]["get"]["parameters"].as_a
+    get_params.any? { |p| p["in"].as_s == "path" && p["name"].as_s == "user_id" }.should be_true
+
+    mixed_params = paths["/mixed"]["post"]["parameters"].as_a
+    mixed_params.any? { |p| p["in"].as_s == "formData" && p["name"].as_s == "avatar" }.should be_true
+    mixed_params.any? { |p| p["in"].as_s == "body" }.should be_false
+    paths["/mixed"]["post"]["consumes"].as_a.should eq([JSON::Any.new("application/x-www-form-urlencoded")])
+
+    paths["/jobs"].as_h.has_key?("subscribe").should be_false
+    paths["/jobs"]["x-noir-unsupported-methods"].as_a.should contain(JSON::Any.new("SUBSCRIBE"))
+  end
 end
