@@ -79,6 +79,8 @@ noir scan <BASE_PATH> --use-taggers hunt,oauth
   - `webhook` — 인바운드 웹훅/콜백 엔드포인트. 서명 검증, 재전송 방어, 아웃바운드 호출의 SSRF 검토 대상.
   - `crypto` — 암호화 연산 엔드포인트(암복호화, 서명, 해시, 키 관리). 약하거나 구식인 알고리즘, 패딩/서명 오라클, 정적 IV/salt 재사용, 키 노출 검토 대상.
   - `debug` — 디버그·진단·내부 전용 엔드포인트(디버그 콘솔/토글, 프로파일러, actuator/management, pprof, heap/thread dump, `/internal` API). 외부에 노출되면 안 되며, 정보 노출 및 위험한 진단 동작 검토 대상.
+  - `api_docs` — API 문서/스키마 엔드포인트(Swagger, OpenAPI, GraphiQL, ReDoc, WSDL). 전체 API 표면을 드러내고 인증 없이 노출되는 경우가 많음. 비인증 노출 및 정보 유출 검토 대상.
+  - `account_recovery` — 자격증명 관리·계정 복구 엔드포인트(비밀번호 재설정/변경, 이메일 변경, MFA/OTP, 인증). 전형적인 계정 탈취 표면 — 리셋 토큰 유출, reset 링크 host-header 인젝션, 계정 열거, 레이트리밋 부재 검토 대상.
   - `file_upload` — 파일 업로드 엔드포인트. 무제한 업로드, 경로 탐색, 악성 파일 처리 검토 대상.
 
 엔드포인트 레벨 태그는 AI 컨텍스트에도 신호로 전달되어, AI 리뷰어가 사용하는 엔드포인트별 요약을 더욱 풍부하게 만듭니다.

@@ -81,6 +81,16 @@ module NoirTaggers
       desc:   "Identifies debug, diagnostic, and internal-only endpoints (debug consoles, profilers, actuator, pprof, internal APIs)",
       runner: DebugTagger,
     },
+    api_docs: {
+      name:   "API Docs Tagger",
+      desc:   "Identifies API documentation/schema endpoints (Swagger, OpenAPI, GraphiQL, ReDoc, WSDL)",
+      runner: ApiDocsTagger,
+    },
+    account_recovery: {
+      name:   "Account Recovery Tagger",
+      desc:   "Identifies credential-management and account-recovery endpoints (password reset/change, MFA/OTP, verification)",
+      runner: AccountRecoveryTagger,
+    },
   }
 
   HasFrameworkTaggers = {
