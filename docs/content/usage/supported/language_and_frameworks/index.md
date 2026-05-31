@@ -46,6 +46,33 @@ Each card below lists a framework's supported features. **Route** covers endpoin
     </div>
   </article>
   <article class="tech-card">
+    <h3 class="tech-card-title">ASP.NET Core Minimal API</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
     <h3 class="tech-card-title">ASP.NET MVC</h3>
     <div class="tech-card-row">
       <span class="tech-card-label">Route</span>
@@ -205,6 +232,33 @@ Each card below lists a framework's supported features. **Route** covers endpoin
         <span class="tech-chip off">static</span>
         <span class="tech-chip off">websocket</span>
         <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title">Pedestal</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip off">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip off">body</span>
+        <span class="tech-chip off">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip off">callee</span>
       </div>
     </div>
     <div class="tech-card-row">
@@ -802,7 +856,7 @@ Each card below lists a framework's supported features. **Route** covers endpoin
     <div class="tech-card-row">
       <span class="tech-card-label">AI Context</span>
       <div class="tech-card-chips">
-        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">guards</span>
         <span class="tech-chip on">sinks</span>
         <span class="tech-chip on">validators</span>
         <span class="tech-chip on">signals</span>
@@ -883,7 +937,7 @@ Each card below lists a framework's supported features. **Route** covers endpoin
     <div class="tech-card-row">
       <span class="tech-card-label">AI Context</span>
       <div class="tech-card-chips">
-        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">guards</span>
         <span class="tech-chip on">sinks</span>
         <span class="tech-chip on">validators</span>
         <span class="tech-chip on">signals</span>
@@ -937,7 +991,7 @@ Each card below lists a framework's supported features. **Route** covers endpoin
     <div class="tech-card-row">
       <span class="tech-card-label">AI Context</span>
       <div class="tech-card-chips">
-        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">guards</span>
         <span class="tech-chip on">sinks</span>
         <span class="tech-chip on">validators</span>
         <span class="tech-chip on">signals</span>
@@ -1175,6 +1229,60 @@ Each card below lists a framework's supported features. **Route** covers endpoin
 ## Java
 
 <div class="tech-grid">
+  <article class="tech-card">
+    <h3 class="tech-card-title">Apache Struts 2</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip off">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip off">body</span>
+        <span class="tech-chip off">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title">Apache Wicket</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip off">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip off">body</span>
+        <span class="tech-chip off">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip on">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
   <article class="tech-card">
     <h3 class="tech-card-title">Armeria</h3>
     <div class="tech-card-row">
@@ -1491,7 +1599,7 @@ Each card below lists a framework's supported features. **Route** covers endpoin
         <span class="tech-chip off">cookie</span>
         <span class="tech-chip off">static</span>
         <span class="tech-chip off">websocket</span>
-        <span class="tech-chip off">callee</span>
+        <span class="tech-chip on">callee</span>
       </div>
     </div>
     <div class="tech-card-row">
@@ -1545,7 +1653,7 @@ Each card below lists a framework's supported features. **Route** covers endpoin
         <span class="tech-chip off">cookie</span>
         <span class="tech-chip off">static</span>
         <span class="tech-chip off">websocket</span>
-        <span class="tech-chip off">callee</span>
+        <span class="tech-chip on">callee</span>
       </div>
     </div>
     <div class="tech-card-row">
@@ -1572,7 +1680,7 @@ Each card below lists a framework's supported features. **Route** covers endpoin
         <span class="tech-chip on">cookie</span>
         <span class="tech-chip off">static</span>
         <span class="tech-chip off">websocket</span>
-        <span class="tech-chip off">callee</span>
+        <span class="tech-chip on">callee</span>
       </div>
     </div>
     <div class="tech-card-row">
@@ -1653,7 +1761,7 @@ Each card below lists a framework's supported features. **Route** covers endpoin
         <span class="tech-chip off">cookie</span>
         <span class="tech-chip off">static</span>
         <span class="tech-chip off">websocket</span>
-        <span class="tech-chip off">callee</span>
+        <span class="tech-chip on">callee</span>
       </div>
     </div>
     <div class="tech-card-row">
@@ -1707,7 +1815,7 @@ Each card below lists a framework's supported features. **Route** covers endpoin
         <span class="tech-chip on">cookie</span>
         <span class="tech-chip off">static</span>
         <span class="tech-chip off">websocket</span>
-        <span class="tech-chip off">callee</span>
+        <span class="tech-chip on">callee</span>
       </div>
     </div>
     <div class="tech-card-row">
@@ -1740,7 +1848,7 @@ Each card below lists a framework's supported features. **Route** covers endpoin
     <div class="tech-card-row">
       <span class="tech-card-label">AI Context</span>
       <div class="tech-card-chips">
-        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">guards</span>
         <span class="tech-chip on">sinks</span>
         <span class="tech-chip on">validators</span>
         <span class="tech-chip on">signals</span>
@@ -2133,7 +2241,7 @@ Each card below lists a framework's supported features. **Route** covers endpoin
     <div class="tech-card-row">
       <span class="tech-card-label">AI Context</span>
       <div class="tech-card-chips">
-        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">guards</span>
         <span class="tech-chip on">sinks</span>
         <span class="tech-chip on">validators</span>
         <span class="tech-chip on">signals</span>
@@ -2161,6 +2269,33 @@ Each card below lists a framework's supported features. **Route** covers endpoin
       <span class="tech-card-label">AI Context</span>
       <div class="tech-card-chips">
         <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title">Laminas</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
         <span class="tech-chip on">sinks</span>
         <span class="tech-chip on">validators</span>
         <span class="tech-chip on">signals</span>
@@ -2268,7 +2403,7 @@ Each card below lists a framework's supported features. **Route** covers endpoin
     <div class="tech-card-row">
       <span class="tech-card-label">AI Context</span>
       <div class="tech-card-chips">
-        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">guards</span>
         <span class="tech-chip on">sinks</span>
         <span class="tech-chip on">validators</span>
         <span class="tech-chip on">signals</span>
@@ -2277,6 +2412,33 @@ Each card below lists a framework's supported features. **Route** covers endpoin
   </article>
   <article class="tech-card">
     <h3 class="tech-card-title">Symfony</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title">ThinkPHP</h3>
     <div class="tech-card-row">
       <span class="tech-card-label">Route</span>
       <div class="tech-card-chips">
@@ -2322,7 +2484,7 @@ Each card below lists a framework's supported features. **Route** covers endpoin
     <div class="tech-card-row">
       <span class="tech-card-label">AI Context</span>
       <div class="tech-card-chips">
-        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">guards</span>
         <span class="tech-chip on">sinks</span>
         <span class="tech-chip on">validators</span>
         <span class="tech-chip on">signals</span>
@@ -2334,6 +2496,60 @@ Each card below lists a framework's supported features. **Route** covers endpoin
 ## Perl
 
 <div class="tech-grid">
+  <article class="tech-card">
+    <h3 class="tech-card-title">Catalyst</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title">Dancer2</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
   <article class="tech-card">
     <h3 class="tech-card-title">Mojolicious</h3>
     <div class="tech-card-row">
@@ -2354,7 +2570,7 @@ Each card below lists a framework's supported features. **Route** covers endpoin
     <div class="tech-card-row">
       <span class="tech-card-label">AI Context</span>
       <div class="tech-card-chips">
-        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">guards</span>
         <span class="tech-chip on">sinks</span>
         <span class="tech-chip on">validators</span>
         <span class="tech-chip on">signals</span>
@@ -2742,7 +2958,7 @@ Each card below lists a framework's supported features. **Route** covers endpoin
     <div class="tech-card-row">
       <span class="tech-card-label">AI Context</span>
       <div class="tech-card-chips">
-        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">guards</span>
         <span class="tech-chip on">sinks</span>
         <span class="tech-chip on">validators</span>
         <span class="tech-chip on">signals</span>
@@ -2823,7 +3039,7 @@ Each card below lists a framework's supported features. **Route** covers endpoin
     <div class="tech-card-row">
       <span class="tech-card-label">AI Context</span>
       <div class="tech-card-chips">
-        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">guards</span>
         <span class="tech-chip on">sinks</span>
         <span class="tech-chip on">validators</span>
         <span class="tech-chip on">signals</span>
@@ -3178,7 +3394,7 @@ Each card below lists a framework's supported features. **Route** covers endpoin
         <span class="tech-chip on">cookie</span>
         <span class="tech-chip off">static</span>
         <span class="tech-chip off">websocket</span>
-        <span class="tech-chip off">callee</span>
+        <span class="tech-chip on">callee</span>
       </div>
     </div>
     <div class="tech-card-row">
@@ -3431,7 +3647,7 @@ Each card below lists a framework's supported features. **Route** covers endpoin
         <span class="tech-chip on">cookie</span>
         <span class="tech-chip on">static</span>
         <span class="tech-chip off">websocket</span>
-        <span class="tech-chip off">callee</span>
+        <span class="tech-chip on">callee</span>
       </div>
     </div>
     <div class="tech-card-row">
@@ -3458,7 +3674,7 @@ Each card below lists a framework's supported features. **Route** covers endpoin
         <span class="tech-chip off">cookie</span>
         <span class="tech-chip on">static</span>
         <span class="tech-chip on">websocket</span>
-        <span class="tech-chip off">callee</span>
+        <span class="tech-chip on">callee</span>
       </div>
     </div>
     <div class="tech-card-row">
