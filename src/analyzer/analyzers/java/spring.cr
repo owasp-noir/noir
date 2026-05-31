@@ -333,6 +333,11 @@ module Analyzer::Java
 
         content = read_file_content(path)
         next unless content.includes?(spring_web_bind_package)
+        # Composed (meta) mapping annotations are declared as Java
+        # annotation types (`@interface`). A file without one cannot
+        # contribute to this index, so skip the tree-sitter parse for
+        # the (overwhelming) majority of regular controller classes.
+        next unless content.includes?("@interface")
 
         Noir::TreeSitter.parse_java(content) do |root|
           package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name_from(root, content)
@@ -357,6 +362,12 @@ module Analyzer::Java
         next if JavaEngine.test_path?(path)
 
         content = read_file_content(path)
+        # Only Java interface declarations carry inheritable controller
+        # routes here (Feign, Spring HTTP Interface, and OpenAPI-style
+        # `*Api` interfaces). Files with no `interface` keyword — the
+        # bulk of controller classes — can't contribute, so skip the
+        # parse before the annotation gate below.
+        next unless content.includes?("interface")
         next unless content.includes?(spring_web_bind_package) || http_exchange_bindings?(content, http_exchange_package) ||
                     content.includes?("@RequestMapping") ||
                     content.includes?("@GetMapping") || content.includes?("@PostMapping")
