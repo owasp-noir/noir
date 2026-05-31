@@ -268,11 +268,13 @@ module Noir::GoCalleeExtractor
     end
   end
 
-  # Re-parse a sibling-file function body for cross-file identifier
-  # handler resolution. Wraps the captured `function_declaration` text
-  # in a `package` line so tree-sitter Go can parse it as a complete
-  # `source_file`; the wrap adds exactly one row, which we subtract via
-  # `start_row - 1` to map walked rows back to the original file.
+  # Re-parse a sibling-file function/method body for cross-file handler
+  # resolution. Wraps the captured declaration text in a `package` line so
+  # tree-sitter Go can parse it as a complete `source_file`; the wrap adds
+  # exactly one row, which we subtract via `start_row - 1` to map walked
+  # rows back to the original file. Handles both `function_declaration`
+  # (bare-identifier handlers) and `method_declaration` (controller-method
+  # handlers, e.g. Beego's `web.Router("/x", &Ctrl{}, "get:Method")`).
   private def calls_in_external(fn : FunctionBody,
                                 external_functions : Hash(String, FunctionBody)) : Array(Tuple(String, String, Int32))
     sink = [] of Tuple(String, String, Int32)
@@ -280,7 +282,8 @@ module Noir::GoCalleeExtractor
     line_offset = fn.start_row - 1
     Noir::TreeSitter.parse_go(wrapped) do |root|
       Noir::TreeSitter.each_named_child(root) do |child|
-        next unless Noir::TreeSitter.node_type(child) == "function_declaration"
+        ty = Noir::TreeSitter.node_type(child)
+        next unless ty == "function_declaration" || ty == "method_declaration"
         if body = Noir::TreeSitter.field(child, "body")
           walk_calls_in_node(body, wrapped, fn.file_path, sink, line_offset, external_functions)
           break
@@ -288,6 +291,38 @@ module Noir::GoCalleeExtractor
       end
     end
     sink
+  end
+
+  # Public entry for walking a captured function/method body and
+  # returning its 1-hop callees. Used by analyzers (Beego controller
+  # routing) that resolve a handler to a `FunctionBody` outside the
+  # standard route-row flow.
+  def callees_in_body(fn : FunctionBody,
+                      external_functions : Hash(String, FunctionBody) = Hash(String, FunctionBody).new) : Array(Tuple(String, String, Int32))
+    calls_in_external(fn, external_functions)
+  end
+
+  # Collects top-level `method_declaration` bodies keyed by method name.
+  # The value is a list because a name can be defined on several receiver
+  # types in one package; callers that need an unambiguous resolution
+  # should require `size == 1`. Used to attach callees to controller-style
+  # routes whose handler is referenced by method name only.
+  def collect_method_bodies(source : String, file_path : String) : Hash(String, Array(FunctionBody))
+    bodies = Hash(String, Array(FunctionBody)).new
+    Noir::TreeSitter.parse_go(source) do |root|
+      Noir::TreeSitter.each_named_child(root) do |child|
+        next unless Noir::TreeSitter.node_type(child) == "method_declaration"
+        name_node = Noir::TreeSitter.field(child, "name")
+        next unless name_node
+        name = Noir::TreeSitter.node_text(name_node, source)
+        (bodies[name] ||= [] of FunctionBody) << FunctionBody.new(
+          Noir::TreeSitter.node_text(child, source),
+          file_path,
+          Noir::TreeSitter.node_start_row(child),
+        )
+      end
+    end
+    bodies
   end
 
   # Render a callee's textual name. Identifiers come back verbatim;

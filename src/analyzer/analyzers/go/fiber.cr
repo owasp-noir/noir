@@ -7,7 +7,7 @@ module Analyzer::Go
     def analyze
       # Source Analysis
       public_dirs = [] of (Hash(String, String))
-      package_groups, file_contents = collect_package_groups_ts
+      package_groups, file_contents = collect_package_groups_ts(import_marker: IMPORT_MARKER)
       # Pre-pass for cross-file identifier-handler resolution (see Gin).
       package_function_bodies = collect_package_function_bodies(file_contents)
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
