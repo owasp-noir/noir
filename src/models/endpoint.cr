@@ -42,7 +42,11 @@ struct Endpoint
     @internal = internal
   end
 
+  # Dedup by (name, tagger) like push_callee/push_param do for their
+  # collections, so re-tagging the same target (e.g. a match in two
+  # code_paths) can't surface a duplicate "auth auth" in the text output.
   def add_tag(tag : Tag)
+    return if @tags.any? { |existing| existing.name == tag.name && existing.tagger == tag.tagger }
     @tags << tag
   end
 
@@ -117,7 +121,11 @@ struct Param
     @param_type = value
   end
 
+  # Dedup by (name, tagger) like push_callee/push_param do for their
+  # collections, so re-tagging the same target (e.g. a match in two
+  # code_paths) can't surface a duplicate "auth auth" in the text output.
   def add_tag(tag : Tag)
+    return if @tags.any? { |existing| existing.name == tag.name && existing.tagger == tag.tagger }
     @tags << tag
   end
 end

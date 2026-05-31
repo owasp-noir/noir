@@ -123,4 +123,17 @@ describe "Endpoint equality" do
       endpoint.callees.size.should eq 2
     end
   end
+
+  describe "#add_tag" do
+    it "dedups by (name, tagger) but keeps distinct tags" do
+      endpoint = Endpoint.new("/tagged", "GET")
+      endpoint.add_tag(Tag.new("auth", "desc", "django_auth"))
+      endpoint.add_tag(Tag.new("auth", "desc again", "django_auth")) # dup (name, tagger)
+      endpoint.add_tag(Tag.new("auth", "desc", "spring_auth"))       # different tagger
+      endpoint.add_tag(Tag.new("jwt", "desc", "JWT"))                # different name
+
+      endpoint.tags.size.should eq 3
+      endpoint.tags.count { |t| t.name == "auth" && t.tagger == "django_auth" }.should eq 1
+    end
+  end
 end

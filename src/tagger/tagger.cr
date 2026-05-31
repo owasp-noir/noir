@@ -252,16 +252,34 @@ module NoirTaggers
     # (`validate_tagger_names!` above) uses the same shape.
     use_taggers_arr = use_taggers.split(",").map(&.strip.downcase)
 
-    # Run taggers
+    logger = build_logger(options)
+
+    # Run taggers. A single tagger raising must not abort the rest of the
+    # tagging pass (or, for framework taggers below, tear down the whole
+    # program from inside a fiber) — degrade to "this tagger failed".
     tagger_list.each do |tagger|
-      tagger.perform(endpoints) if use_taggers_arr.includes?(tagger.name) || use_taggers_arr.includes?("all")
+      next unless use_taggers_arr.includes?(tagger.name) || use_taggers_arr.includes?("all")
+      begin
+        tagger.perform(endpoints)
+      rescue ex
+        logger.warning "Tagger '#{tagger.name}' failed: #{ex.message}"
+      end
     end
 
     # Run framework taggers (tech-aware, only instantiated when matching endpoints exist)
-    run_framework_taggers(endpoints, options, use_taggers_arr)
+    run_framework_taggers(endpoints, options, use_taggers_arr, logger)
   end
 
-  private def self.run_framework_taggers(endpoints : Array(Endpoint), options : Hash(String, YAML::Any), use_taggers_arr : Array(String))
+  private def self.build_logger(options : Hash(String, YAML::Any)) : NoirLogger
+    NoirLogger.new(
+      any_to_bool(options["debug"]),
+      any_to_bool(options["verbose"]),
+      any_to_bool(options["color"]),
+      any_to_bool(options["nolog"])
+    )
+  end
+
+  private def self.run_framework_taggers(endpoints : Array(Endpoint), options : Hash(String, YAML::Any), use_taggers_arr : Array(String), logger : NoirLogger)
     # Group endpoints by technology for efficient dispatch
     endpoints_by_tech = Hash(String, Array(Endpoint)).new
 
@@ -297,7 +315,11 @@ module NoirTaggers
         local_endpoints = matching_endpoints
 
         wg.spawn do
-          local_instance.perform(local_endpoints)
+          begin
+            local_instance.perform(local_endpoints)
+          rescue ex
+            logger.warning "Framework tagger '#{local_instance.name}' failed: #{ex.message}"
+          end
         end
       end
     end
