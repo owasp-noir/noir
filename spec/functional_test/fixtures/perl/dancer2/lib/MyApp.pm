@@ -75,6 +75,25 @@ any '/wildcard' => sub {
     return "matches every verb";
 };
 
+# `any ['delete']` — full HTTP spelling (Dancer2 normalizes it like `del`),
+# so this is a DELETE-only route, not an expand-to-everything fallback.
+any ['delete'] => '/cache' => sub {
+    return "cache cleared";
+};
+
+# `any ['head']` — HEAD-only route via the list form.
+any ['head'] => '/heartbeat' => sub {
+    return "";
+};
+
+# Bare `any` with a legacy `param`: read verbs (GET/HEAD/OPTIONS) bucket it
+# as a query param, write verbs (POST/PUT/DELETE/PATCH) as a form param —
+# resolved per generated method.
+any '/notify' => sub {
+    my $msg = param('message');
+    return "queued";
+};
+
 # --- wildcards & regex routes ---------------------------------------------
 
 get '/files/*' => sub {

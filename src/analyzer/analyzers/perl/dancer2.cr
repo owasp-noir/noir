@@ -26,8 +26,12 @@ module Analyzer::Perl
   # `cookies`, `request->header`, `upload`) as well as the legacy
   # `param`/`params` helpers.
   class Dancer2 < PerlEngine
-    HTTP_VERBS  = %w[get post put del patch options]
-    ANY_METHODS = %w[GET POST PUT DELETE PATCH OPTIONS HEAD]
+    # Verb spellings accepted inside an `any [...]` method list. Dancer2
+    # normalizes `del` to `delete` and registers HEAD alongside GET, so the
+    # arrayref form takes both the route-keyword spelling (`del`) and the
+    # HTTP-method spelling (`delete`, `head`).
+    ANY_LIST_VERBS = %w[get head post put del delete patch options]
+    ANY_METHODS    = %w[GET POST PUT DELETE PATCH OPTIONS HEAD]
 
     VERB_STRING_RE  = /^\s*(get|post|put|patch|options|del)\s+(['"])([^'"]*)\2/
     VERB_QR_RE      = /^\s*(get|post|put|patch|options|del)\s+qr\s*(?:\{([^}]*)\}|\/((?:[^\/\\]|\\.)*)\/|!([^!]*)!|#([^#]*)#|\(([^)]*)\))/
@@ -97,13 +101,17 @@ module Analyzer::Perl
         body = body_for_route(content, route, search_limit, named_bodies)
 
         path_params = extract_path_params(route.url)
-        body_params = body ? extract_params_from_body(body[0], primary_method(route.methods)) : [] of Param
 
         route.methods.each do |method|
           endpoint = Endpoint.new(route.url, method)
           endpoint.details = Details.new(PathInfo.new(file_path, route.line_index + 1))
           path_params.each { |param| push_unique_param(endpoint, param) }
-          body_params.each { |param| push_unique_param(endpoint, param) }
+          # Legacy `param`/`params` accessors bucket by HTTP method (query
+          # vs form), so an `any` route's params must be resolved per
+          # generated method rather than once for the first method.
+          if body
+            extract_params_from_body(body[0], method).each { |param| push_unique_param(endpoint, param) }
+          end
 
           if include_callee && body
             Noir::PerlCalleeExtractor.attach_to(
@@ -205,16 +213,12 @@ module Analyzer::Perl
       v == "del" ? "DELETE" : v.upcase
     end
 
-    private def primary_method(methods : Array(String)) : String
-      methods.first? || "GET"
-    end
-
     private def methods_from_list(spec : String) : Array(String)
       methods = [] of String
       spec.scan(/[A-Za-z]+/) do |m|
         token = m[0].downcase
         next if token == "qw"
-        methods << http_method(token) if HTTP_VERBS.includes?(token)
+        methods << http_method(token) if ANY_LIST_VERBS.includes?(token)
       end
       methods.uniq
     end

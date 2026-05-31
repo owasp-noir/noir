@@ -86,7 +86,10 @@ class PerlAuthTagger < FrameworkTagger
       limit = [idx + 4, lines.size - 1].min
       while j <= limit
         io << lines[j] << ' '
-        break if lines[j].includes?("sub") || lines[j].includes?(';')
+        # Stop at the handler body (`sub`) or end of statement. Match `sub`
+        # as a keyword, not a substring, so paths like `/subscription`
+        # don't end the scan before a wrapper on the following line.
+        break if lines[j].matches?(/\bsub\b/) || lines[j].includes?(';')
         j += 1
       end
     end
@@ -125,10 +128,20 @@ class PerlAuthTagger < FrameworkTagger
       end_idx = [idx + 15, lines.size - 1].min
       (idx..end_idx).each do |i|
         if lines[i].matches?(GLOBAL_GUARD_KEYWORDS)
-          return "Dancer2 hook before guard"
+          return global_guard_description(line)
         end
       end
     end
     nil
+  end
+
+  # Name the guard after the block that introduced it: Catalyst uses
+  # `sub auto` / `sub begin`, Dancer2 uses `hook before` / `before => sub`.
+  private def global_guard_description(block_start : String) : String
+    if block_start.matches?(/\bsub\s+auto\b|\bsub\s+begin\b/)
+      "Catalyst auto/begin guard"
+    else
+      "Dancer2 hook before guard"
+    end
   end
 end

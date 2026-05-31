@@ -23,6 +23,18 @@ expected_endpoints = [
   Endpoint.new("/wildcard", "PATCH"),
   Endpoint.new("/wildcard", "OPTIONS"),
   Endpoint.new("/wildcard", "HEAD"),
+  # any with single-element method lists (`delete`/`head` spellings) → that
+  # verb only, not an expand-to-everything fallback
+  Endpoint.new("/cache", "DELETE"),
+  Endpoint.new("/heartbeat", "HEAD"),
+  # bare any + legacy `param` → query for read verbs, form for write verbs
+  Endpoint.new("/notify", "GET", [Param.new("message", "", "query")]),
+  Endpoint.new("/notify", "POST", [Param.new("message", "", "form")]),
+  Endpoint.new("/notify", "PUT", [Param.new("message", "", "form")]),
+  Endpoint.new("/notify", "DELETE", [Param.new("message", "", "form")]),
+  Endpoint.new("/notify", "PATCH", [Param.new("message", "", "form")]),
+  Endpoint.new("/notify", "OPTIONS", [Param.new("message", "", "query")]),
+  Endpoint.new("/notify", "HEAD", [Param.new("message", "", "query")]),
   # wildcard + regex routes
   Endpoint.new("/files/*", "GET"),
   Endpoint.new("/ticket/(?<code>[0-9]+)", "GET", [Param.new("code", "", "path")]),

@@ -1,9 +1,9 @@
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
-def perl_auth_tag_for(path, line, options)
+def perl_auth_tag_for(path, line, options, tech = "perl_dancer2")
   details = Details.new(PathInfo.new(path, line))
-  details.technology = "perl_dancer2"
+  details.technology = tech
   endpoint = Endpoint.new("/x", "GET", [] of Param, details)
   PerlAuthTagger.new(options).perform([endpoint])
   endpoint
@@ -57,5 +57,22 @@ describe "PerlAuthTagger" do
     endpoint.tags.empty?.should be_false
     endpoint.tags[0].name.should eq("auth")
     endpoint.tags[0].description.should contain("hook before")
+  end
+
+  # 29: get '/subscription' =>
+  # 30:     require_login sub {
+  it "follows a multi-line wrapper past a path containing `sub`" do
+    endpoint = perl_auth_tag_for(app_path, 29, create_test_options)
+    endpoint.tags.empty?.should be_false
+    endpoint.tags[0].description.should contain("require_login")
+  end
+
+  it "labels a Catalyst `sub auto` global guard as Catalyst, not Dancer2" do
+    catalyst_path = "#{__DIR__}/../../../functional_test/fixtures/perl/catalyst_auth/lib/Admin.pm"
+    endpoint = perl_auth_tag_for(catalyst_path, 13, create_test_options, "perl_catalyst")
+    endpoint.tags.empty?.should be_false
+    endpoint.tags[0].name.should eq("auth")
+    endpoint.tags[0].description.should contain("Catalyst")
+    endpoint.tags[0].description.should_not contain("Dancer2")
   end
 end

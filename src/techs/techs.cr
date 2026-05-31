@@ -504,7 +504,7 @@ module NoirTechs
     :perl_dancer2 => {
       :framework => "Dancer2",
       :language  => "Perl",
-      :similar   => ["dancer2", "perl-dancer2", "perl_dancer2", "dancer", "perldancer"],
+      :similar   => ["dancer2", "perl-dancer2", "perl_dancer2"],
       :supported => {
         :endpoint => true,
         :method   => true,

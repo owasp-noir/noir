@@ -24,4 +24,11 @@ get '/public' => sub {
     return "public, no auth required";
 };
 
+# Multi-line declaration whose path contains the substring "sub": the
+# wrapper scan must keep reading to the next line to find require_login.
+get '/subscription' =>
+    require_login sub {
+        return "subscription";
+    };
+
 1;
