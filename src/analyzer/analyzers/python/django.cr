@@ -43,6 +43,24 @@ module Analyzer::Python
         end
       end
 
+      # Fall back to scanning `urls.py` modules directly when the
+      # ROOT_URLCONF-anchored pass above produced nothing. Reusable
+      # Django apps and libraries (Wagtail, DRF, …) — and any project
+      # scanned at the app level — ship `urls.py` files with
+      # `urlpatterns` but no project `settings.py` declaring
+      # `ROOT_URLCONF`, so the anchored pass finds no root and the
+      # whole app silently maps to zero endpoints. Treating each
+      # unvisited, non-test `urls.py` as its own routing root recovers
+      # those routes (app-relative, since there is no host-project
+      # mount prefix to apply). Gated on an empty result so every
+      # project that DOES expose a ROOT_URLCONF keeps its fully
+      # prefixed paths and sees no behavior change.
+      if endpoints.empty?
+        extract_endpoints_from_orphan_urlconfs.each do |endpoint|
+          endpoints << endpoint
+        end
+      end
+
       # Find static files
       begin
         static_prefix = "#{@base_path}/static/"
@@ -52,6 +70,62 @@ module Analyzer::Python
         end
       rescue e
         logger.debug e
+      end
+
+      endpoints
+    end
+
+    # Treat every unvisited, non-test `urls.py` (or `urls/` package
+    # module) carrying a `urlpatterns` as its own routing root. Used
+    # only as a fallback when no ROOT_URLCONF anchor exists, so the
+    # paths are app-relative — there is no host project to supply a
+    # mount prefix. `extract_endpoints` marks each file (and anything
+    # it `include()`s) visited, so a module pulled in by another is
+    # not processed twice.
+    private def extract_endpoints_from_orphan_urlconfs : Array(Endpoint)
+      endpoints = [] of Endpoint
+
+      candidates = all_files.select do |file|
+        next false unless file.ends_with?(".py")
+        next false if file.includes?("/site-packages/")
+        next false if PythonEngine.python_test_path?(file, @base_path)
+        File.basename(file) == "urls.py" || file.includes?("/urls/")
+      end
+
+      # Shallower paths first so a parent urlconf is processed before
+      # the modules it includes, keeping include() prefixes attached
+      # to the more specific routes where a parent exists in-tree.
+      candidates.sort_by! { |file| {file.count('/'), file} }
+
+      # Dotted include() targets (`include("app.sub.urls")`) and
+      # `from app.sub import urls` resolve against the scan root.
+      @django_base_path = @base_path
+
+      # Dedup by canonical (expanded) path. `all_files` entries and the
+      # paths `extract_endpoints` records when it follows an `include()`
+      # can spell the same file differently (`./` prefix, trailing or
+      # doubled slashes) depending on how the base path was passed, so a
+      # plain string compare would re-process a module a parent urlconf
+      # already pulled in — surfacing its routes a second time without
+      # the include() prefix.
+      visited = Set(::String).new
+      @visited_url_paths.each_key { |key| visited << File.expand_path(key) }
+
+      candidates.each do |file|
+        expanded = File.expand_path(file)
+        next if visited.includes?(expanded)
+        begin
+          content = read_file_content(file)
+        rescue
+          next
+        end
+        next unless content.includes?("urlpatterns")
+
+        django_urls = DjangoUrls.new("", file, @base_path)
+        extract_endpoints(django_urls).each do |endpoint|
+          endpoints << endpoint
+        end
+        @visited_url_paths.each_key { |key| visited << File.expand_path(key) }
       end
 
       endpoints
