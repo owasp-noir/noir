@@ -3,6 +3,14 @@ require "../../../src/optimizer/llm_optimizer"
 require "../../../src/models/endpoint"
 require "../../../src/models/logger"
 
+# Expose the private LLM-response application path so the FP/FN guards
+# on the correction step can be tested without a live adapter.
+class LLMEndpointOptimizer
+  def __test_apply(endpoint : Endpoint, response : String) : Endpoint
+    apply_llm_optimizations(endpoint, response)
+  end
+end
+
 describe "LLMEndpointOptimizer" do
   options = create_test_options
   logger = NoirLogger.new(false, false, false, false)
@@ -98,6 +106,29 @@ describe "LLMEndpointOptimizer" do
       result[0].params.size.should eq(2)
       result[0].params[0].name.should eq("id")
       result[0].params[1].name.should eq("post_id")
+    end
+  end
+
+  describe "LLM response correction guards" do
+    guard_logger = NoirLogger.new(false, false, false, false)
+
+    it "applies a clean URL rewrite and drops garbage params" do
+      optimizer = LLMEndpointOptimizer.new(guard_logger, create_test_options)
+      endpoint = Endpoint.new("/users/USR123", "GET")
+      response = %({"optimized_url":"/users/{id}","optimized_params":[{"name":"id","param_type":"path","value":""},{"name":"bad name","param_type":"query","value":""}]})
+
+      result = optimizer.__test_apply(endpoint, response)
+      result.url.should eq("/users/{id}")
+      result.params.map(&.name).should eq(["id"])
+    end
+
+    it "rejects a corrupting URL rewrite that leaks whitespace" do
+      optimizer = LLMEndpointOptimizer.new(guard_logger, create_test_options)
+      endpoint = Endpoint.new("/users/{id}", "GET")
+      response = %({"optimized_url":"/GET /users/{id}","optimized_params":[]})
+
+      result = optimizer.__test_apply(endpoint, response)
+      result.url.should eq("/users/{id}")
     end
   end
 

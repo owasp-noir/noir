@@ -17,6 +17,37 @@ describe LLM do
     LLM::ANALYZE_PROMPT.should contain("Input Code:")
   end
 
+  it "ANALYZE_PROMPT carries FN/FP accuracy guidance" do
+    # Full-path resolution is the biggest false-negative lever; the
+    # "only code that serves it" rule is the biggest false-positive
+    # lever. Assert both survive future prompt edits.
+    LLM::ANALYZE_PROMPT.should contain("FULL request path")
+    LLM::ANALYZE_PROMPT.should contain("SEPARATE endpoint object")
+    LLM::ANALYZE_PROMPT.should contain("Do not invent")
+  end
+
+  it "BUNDLE_ANALYZE_PROMPT carries accuracy guidance and cross-file hint" do
+    LLM::BUNDLE_ANALYZE_PROMPT.should contain("FULL request path")
+    LLM::BUNDLE_ANALYZE_PROMPT.should contain("cross-reference files")
+    LLM::BUNDLE_ANALYZE_PROMPT.should contain("Bundle of files:")
+  end
+
+  it "FILTER_PROMPT biases toward recall" do
+    LLM::FILTER_PROMPT.should contain("Favor recall")
+  end
+
+  it "AGENT_PROMPT instructs full-path resolution and no fabrication" do
+    LLM::AGENT_PROMPT.should contain("FULL request path")
+    LLM::AGENT_PROMPT.should contain("Do not fabricate")
+  end
+
+  it "system prompts steer full-path, per-method, no-fabrication" do
+    LLM::SYSTEM_ANALYZE.should contain("full request paths")
+    LLM::SYSTEM_ANALYZE.should contain("never fabricate")
+    LLM::SYSTEM_BUNDLE.should contain("full request paths")
+    LLM::SYSTEM_FILTER.should contain("Favor recall")
+  end
+
   it "has an ANALYZE_FORMAT constant" do
     LLM::ANALYZE_FORMAT.should_not be_nil
     LLM::ANALYZE_FORMAT.should contain("\"name\": \"analyze_endpoints\"")
@@ -366,6 +397,21 @@ describe LLM do
 
     it "has a top-level default for unknown provider fallback" do
       LLM::MODEL_TOKEN_LIMITS["default"].as(Int32).should eq(4000)
+    end
+  end
+
+  describe "acp_max_tokens?" do
+    it "gives ACP agent providers a generous budget, not the 4000 default" do
+      LLM.acp_max_tokens?("acp:gemini").should eq(LLM::ACP_DEFAULT_MAX_TOKENS)
+      LLM.acp_max_tokens?("acp:codex").should eq(LLM::ACP_DEFAULT_MAX_TOKENS)
+      LLM.acp_max_tokens?("ACP:Claude").should eq(LLM::ACP_DEFAULT_MAX_TOKENS)
+      LLM::ACP_DEFAULT_MAX_TOKENS.should be > 4000
+    end
+
+    it "returns nil for non-ACP providers" do
+      LLM.acp_max_tokens?("openai").should be_nil
+      LLM.acp_max_tokens?("ollama").should be_nil
+      LLM.acp_max_tokens?("https://api.openai.com").should be_nil
     end
   end
 end
