@@ -132,7 +132,7 @@ class AspnetAuthTagger < FrameworkTagger
       end
     end
 
-    return nil if statement.matches?(MINIMAL_API_ALLOW_ANON)
+    return if statement.matches?(MINIMAL_API_ALLOW_ANON)
     return "ASP.NET .RequireAuthorization()" if statement.matches?(MINIMAL_API_REQUIRE_AUTH)
 
     nil
