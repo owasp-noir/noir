@@ -140,6 +140,12 @@ expected_endpoints << annotated_search_get
 annotated_health_head = Endpoint.new("/annotated/health", "HEAD")
 expected_endpoints << annotated_health_head
 
+# GET /annotated/files/{*filePath} — rest-path capture binds `filePath`
+# as a single path param (no `*filePath`, no spurious query param).
+annotated_files_get = Endpoint.new("/annotated/files/{*filePath}", "GET")
+annotated_files_get.push_param(Param.new("filePath", "", "path"))
+expected_endpoints << annotated_files_get
+
 # OPTIONS /annotated/cors with header: Origin
 annotated_cors_options = Endpoint.new("/annotated/cors", "OPTIONS")
 annotated_cors_options.push_param(Param.new("Origin", "", "header"))
@@ -160,6 +166,12 @@ expected_endpoints << mounted_detail_get
 mounted_create_post = Endpoint.new("/mounted/create", "POST")
 mounted_create_post.push_param(Param.new("title", "", "json"))
 expected_endpoints << mounted_create_post
+
+# DocExampleService.java: only the real builder route is detected.
+# The Server.builder() chains inside the Javadoc comment and the Java
+# text block (/doc-comment-route, /api/comment-thrift, /doc-textblock-route)
+# must NOT surface as endpoints.
+expected_endpoints << Endpoint.new("/real/ping", "ANY")
 
 FunctionalTester.new("fixtures/java/armeria/", {
   :techs     => 1,

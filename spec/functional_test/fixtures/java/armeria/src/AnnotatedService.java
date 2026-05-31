@@ -62,6 +62,14 @@ public class AnnotatedService {
         return HttpResponse.of("");
     }
 
+    // Rest-path capture: `{*filePath}` binds the remainder of the path to
+    // the `filePath` path variable — not a query parameter, and the name
+    // must not carry the leading asterisk.
+    @Get("/annotated/files/{*filePath}")
+    public HttpResponse serveFile(@Param String filePath) {
+        return HttpResponse.of("file");
+    }
+
     // Inner class for RequestObject
     public static class User {
         public String name;

@@ -285,7 +285,12 @@ class EndpointOptimizer
       # Handle {param} patterns
       scans = endpoint.url.scan(/\/\{([^}]+)\}/).flatten
       scans.each do |match|
-        param = match[1].split(":")[0]
+        # Strip a leading `*` from catch-all path variables. Spring,
+        # Armeria and ASP.NET all spell the rest-of-path capture as
+        # `{*name}` (e.g. `/files/{*path}`); the parameter is named
+        # `name`, not `*name`.
+        param = match[1].split(":")[0].lstrip('*')
+        next if param.empty?
         new_value = apply_pvalue("path", param, "")
         unless new_value.empty?
           new_endpoint.url = new_endpoint.url.gsub("{#{match[1]}}", new_value)
@@ -355,6 +360,11 @@ class EndpointOptimizer
       # Handle /*param patterns (wildcard/glob parameters)
       scans = endpoint.url.scan(/\/\*([^\/]+)/).flatten
       scans.each do |match|
+        # Only named splats are parameters (`/files/*path` -> `path`).
+        # A bare glob like Armeria's `glob:/glob/**` captures `*`, and
+        # a gRPC resource template leaves a trailing `}` — neither is a
+        # real parameter name.
+        next unless valid_path_param_name?(match[1])
         new_value = apply_pvalue("path", match[1], "")
         unless new_value.empty?
           new_endpoint.url = new_endpoint.url.gsub("*#{match[1]}", new_value)
