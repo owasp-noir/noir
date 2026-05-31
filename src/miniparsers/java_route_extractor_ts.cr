@@ -184,6 +184,13 @@ module Noir
           return
         end
 
+        # An `abstract` base is never mapped directly — its routes only
+        # exist through a concrete subclass (resolved separately via the
+        # inherited-route index). Walk into it for nested types but don't
+        # emit its own method routes, otherwise an un-prefixed phantom
+        # endpoint (e.g. `GET /list` for `BaseController.list`) leaks.
+        is_abstract = ty == "class_declaration" && abstract_class?(node, source)
+
         class_name = class_simple_name(node, source)
         mapping = class_mapping(node, source, constants, class_name, meta_mappings)
         class_prefixes = mapping.paths
@@ -201,7 +208,7 @@ module Noir
           Noir::TreeSitter.each_named_child(body) do |member|
             case Noir::TreeSitter.node_type(member)
             when "method_declaration"
-              collect_method_routes(member, source, class_name, prefixes, verbs, params, routes, constants, meta_mappings)
+              collect_method_routes(member, source, class_name, prefixes, verbs, params, routes, constants, meta_mappings) unless is_abstract
             when "class_declaration", "interface_declaration"
               walk_classes(member, source, prefixes, verbs, params, routes, constants, meta_mappings)
             end
@@ -223,20 +230,26 @@ module Noir
                                       depth : Int32 = 0)
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
 
+      # Both interfaces and `abstract` base classes can declare routes
+      # that a concrete controller inherits, so index either under its
+      # simple name.
       ty = Noir::TreeSitter.node_type(node)
-      if ty == "interface_declaration"
-        interface_name = class_simple_name(node, source)
-        mapping = class_mapping(node, source, constants, interface_name, meta_mappings)
+      indexable = ty == "interface_declaration" || (ty == "class_declaration" && abstract_class?(node, source))
+      if indexable
+        type_name = class_simple_name(node, source)
+        mapping = class_mapping(node, source, constants, type_name, meta_mappings)
         prefixes = mapping.paths
         prefixes = [""] if prefixes.empty?
 
         if body = Noir::TreeSitter.field(node, "body")
           Noir::TreeSitter.each_named_child(body) do |member|
             next unless Noir::TreeSitter.node_type(member) == "method_declaration"
-            collect_method_routes(member, source, interface_name, prefixes, mapping.verbs, mapping.params, routes[interface_name], constants, meta_mappings)
+            collect_method_routes(member, source, type_name, prefixes, mapping.verbs, mapping.params, routes[type_name], constants, meta_mappings)
           end
         end
-        return
+        # Interfaces never enclose a controller; an abstract class might
+        # nest one, so keep descending for the class case.
+        return if ty == "interface_declaration"
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
@@ -254,6 +267,13 @@ module Noir
 
       if Noir::TreeSitter.node_type(node) == "class_declaration"
         interface_names = implemented_interface_names(node, source)
+        # A concrete controller can also inherit `@*Mapping` methods from
+        # an `abstract` base class (generic CRUD bases are common). Treat
+        # the superclass exactly like an implemented interface — its
+        # routes are resolved from the same index.
+        if superclass = superclass_name(node, source)
+          interface_names << superclass unless interface_names.includes?(superclass)
+        end
         if !interface_names.empty? && spring_controller_class?(node, source)
           class_name = class_simple_name(node, source)
           mapping = class_mapping(node, source, constants, class_name, meta_mappings)
@@ -332,6 +352,50 @@ module Noir
       end
       names.uniq!
       names
+    end
+
+    # An `abstract class` is never instantiated as a controller, so its
+    # `@*Mapping` methods are only ever served through a concrete
+    # subclass. We use this both to suppress the base's standalone routes
+    # and to index it as an inheritable route source.
+    private def abstract_class?(decl : LibTreeSitter::TSNode, source : String) : Bool
+      return false unless mods = find_modifiers(decl)
+      Noir::TreeSitter.node_text(mods, source).split.includes?("abstract")
+    end
+
+    # Simple name of the `extends` superclass, or nil. Type-parameter
+    # bounds (`<T extends Number>`) are stripped first so they aren't
+    # mistaken for the superclass, and the body `{` is located after the
+    # `class` keyword so a `{}` inside a class-level annotation argument
+    # doesn't truncate the header early.
+    private def superclass_name(class_decl : LibTreeSitter::TSNode, source : String) : String?
+      header = Noir::TreeSitter.node_text(class_decl, source)
+      keyword = header.index(/\bclass\b/) || 0
+      if body_start = header.index('{', keyword)
+        header = header[...body_start]
+      end
+      header = strip_angle_sections(header)
+      return unless match = header.match(/\bextends\s+([A-Za-z_][A-Za-z0-9_.]*)/)
+
+      type_name = match[1]
+      if idx = type_name.rindex('.')
+        type_name[(idx + 1)..]
+      else
+        type_name
+      end
+    end
+
+    private def strip_angle_sections(text : String) : String
+      String.build do |io|
+        depth = 0
+        text.each_char do |ch|
+          case ch
+          when '<' then depth += 1
+          when '>' then depth -= 1 if depth > 0
+          else          io << ch if depth == 0
+          end
+        end
+      end
     end
 
     private def split_top_level_commas(text : String) : Array(String)

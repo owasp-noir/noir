@@ -126,6 +126,12 @@ expected_endpoints = [
     Param.new("region", "", "query"),
   ]),
   Endpoint.new("/api/v3/items/bulk", "POST", [Param.new("tenant", "", "query")]),
+  # CrudReportController.java extends AbstractCrudController.java — the
+  # abstract base's @GetMapping routes are inherited under the `/crud`
+  # prefix, and the base must NOT emit un-prefixed `/list` or `/{id}`.
+  Endpoint.new("/crud", "POST"),
+  Endpoint.new("/crud/list", "GET"),
+  Endpoint.new("/crud/{id}", "GET", [Param.new("id", "", "path")]),
 ]
 
 FunctionalTester.new("fixtures/java/spring/", {

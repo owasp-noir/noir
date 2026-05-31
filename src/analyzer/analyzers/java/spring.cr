@@ -362,12 +362,12 @@ module Analyzer::Java
         next if JavaEngine.test_path?(path)
 
         content = read_file_content(path)
-        # Only Java interface declarations carry inheritable controller
-        # routes here (Feign, Spring HTTP Interface, and OpenAPI-style
-        # `*Api` interfaces). Files with no `interface` keyword — the
-        # bulk of controller classes — can't contribute, so skip the
-        # parse before the annotation gate below.
-        next unless content.includes?("interface")
+        # Inheritable routes come from Java interfaces (Feign, Spring HTTP
+        # Interface, OpenAPI-style `*Api`) and from `abstract` base
+        # classes that concrete controllers extend. Files with neither
+        # keyword — the bulk of controller classes — can't contribute, so
+        # skip the parse before the annotation gate below.
+        next unless content.includes?("interface") || content.includes?("abstract")
         next unless content.includes?(spring_web_bind_package) || http_exchange_bindings?(content, http_exchange_package) ||
                     content.includes?("@RequestMapping") ||
                     content.includes?("@GetMapping") || content.includes?("@PostMapping")
