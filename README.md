@@ -36,7 +36,7 @@ The inventory feeds three audiences:
 
 ## What Noir does
 
-- **Endpoint extraction.** Static analysis across 50+ frameworks. Returns endpoints, parameters, headers, cookies, and the source files they came from.
+- **Endpoint extraction.** Static analysis across [50+ frameworks](https://owasp-noir.github.io/noir/usage/supported/language_and_frameworks/). Returns endpoints, parameters, headers, cookies, and the source files they came from.
 - **LLM fallback.** Hand unsupported frameworks (or one-off custom routing) to OpenAI / Ollama / etc. when static rules don't apply.
 - **Output for the next stage.** JSON, YAML, OpenAPI, SARIF, cURL, Postman, HTML — whichever format the next tool in the pipeline reads.
 - **DAST integration.** Pipe directly into ZAP, Burp Suite, or Caido as a proxy target, or export OpenAPI for them to import.
