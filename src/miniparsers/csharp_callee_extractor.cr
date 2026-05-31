@@ -6,7 +6,7 @@ module Noir::CSharpCalleeExtractor
   alias Entry = Tuple(String, String, Int32)
 
   RESERVED = Set{
-    "as", "await", "base", "case", "catch", "checked", "default",
+    "as", "async", "await", "base", "case", "catch", "checked", "default",
     "delegate", "do", "else", "event", "explicit", "finally",
     "fixed", "for", "foreach", "if", "implicit", "is", "lock",
     "nameof", "new", "operator", "return", "sizeof", "switch",
@@ -15,7 +15,33 @@ module Noir::CSharpCalleeExtractor
 
   ROUTE_BUILDER_METHODS = Set{
     "Map", "MapGet", "MapPost", "MapPut", "MapDelete", "MapPatch",
-    "MapHead", "MapOptions", "MapMethods",
+    "MapHead", "MapOptions", "MapMethods", "MapGroup",
+  }
+
+  # Fluent route-builder metadata calls (`.WithName(...)`, `.Produces(...)`,
+  # `[ProducesResponseType(...)]`, …) and API-versioning helpers configure
+  # the endpoint registration — they aren't handler behavior, so they're
+  # noise in the callee/ai-context surface. Matched on the trailing segment.
+  ROUTE_METADATA_METHODS = Set{
+    "WithName", "WithSummary", "WithDescription", "WithTags", "WithOpenApi",
+    "WithMetadata", "WithDisplayName", "WithGroupName", "WithOrder",
+    "Produces", "ProducesProblem", "ProducesValidationProblem",
+    "ProducesResponseType", "Accepts", "RequireAuthorization", "AllowAnonymous",
+    "RequireCors", "RequireHost", "RequireRateLimiting", "DisableRateLimiting",
+    "CacheOutput", "DisableAntiforgery", "ExcludeFromDescription",
+    "AddEndpointFilter", "AddEndpointFilterFactory", "WithRequestTimeout",
+    "MapToApiVersion", "HasApiVersion", "HasDeprecatedApiVersion",
+    "IsApiVersionNeutral", "ReportApiVersions", "WithApiVersionSet",
+    "NewVersionedApi",
+  }
+
+  # Parameter-binding / documentation attributes (`[FromHeader(...)]`,
+  # `[AsParameters]`, `[Description(...)]`, …). They sit inside a lambda's
+  # parameter list, so the line scanner sees them as calls — they aren't.
+  BINDING_ATTRIBUTES = Set{
+    "FromQuery", "FromRoute", "FromBody", "FromHeader", "FromForm",
+    "FromServices", "FromKeyedServices", "AsParameters", "Description",
+    "DefaultValue", "Required", "BindRequired", "BindNever",
   }
 
   CALL_REGEX = /((?:[A-Za-z_][\w]*)(?:\s*\.\s*[A-Za-z_][\w]*)*)\s*(?:<[^>\n]+>)?\s*\(/
@@ -66,6 +92,8 @@ module Noir::CSharpCalleeExtractor
     last = name.split('.').last
     return true if RESERVED.includes?(last)
     return true if ROUTE_BUILDER_METHODS.includes?(last)
+    return true if ROUTE_METADATA_METHODS.includes?(last)
+    return true if BINDING_ATTRIBUTES.includes?(last)
 
     false
   end

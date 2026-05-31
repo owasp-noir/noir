@@ -179,7 +179,7 @@ module Analyzer::CSharp
             action_name = extract_action_name(signature)
             unless action_name.empty?
               parameters = extract_parameters(signature, http_method)
-              body_block = extract_method_block(lines, end_index)
+              body_block, body_line, skip_first = extract_callable_body(lines, end_index)
               body_params = extract_params_from_block(body_block)
               parameters = merge_params(parameters, body_params, http_method)
               effective_action_route = action_route
@@ -196,7 +196,7 @@ module Analyzer::CSharp
                   endpoint.params << param
                 end
 
-                attach_csharp_callees(endpoint, body_block, file, end_index + 1, include_callee, skip_first_line: true)
+                attach_csharp_callees(endpoint, body_block, file, body_line + 1, include_callee, skip_first_line: skip_first)
                 @result << endpoint
               end
 
@@ -312,7 +312,17 @@ module Analyzer::CSharp
     end
 
     private def extract_controller_name(content : String) : String
-      match = content.match(/class\s+(\w+)Controller\s*:\s*[\w<>\s,]*Controller\w*/)
+      # Any class whose name ends in `Controller` is a controller in ASP.NET
+      # Core, regardless of its base list — so we no longer require a
+      # `: Controller`/`: ControllerBase` suffix. This covers:
+      #   * POCO controllers with no base class (`class UsersController { }`),
+      #   * custom base classes (`: BaseApiController`),
+      #   * C# 12 primary constructors (`class ArticlesController(IMediator m)`),
+      #   * generic controllers (`class CrudController<T>`).
+      # The enclosing file is already filtered to `*Controller.cs`, so the
+      # match is unambiguous. `\b` after `Controller` avoids matching
+      # `FooControllerOptions`-style helper types.
+      match = content.match(/\bclass\s+(\w+)Controller\b/)
       return "" unless match
       match[1]
     end
@@ -326,10 +336,10 @@ module Analyzer::CSharp
     private def extract_parameters(signature : String, http_method : String) : Array(Param)
       parameters = [] of Param
 
-      match = signature.match(/\((.*)\)/m)
-      return parameters unless match
+      param_list = extract_balanced_param_list(signature)
+      return parameters unless param_list
 
-      param_list = match[1].strip
+      param_list = param_list.strip
       return parameters if param_list.empty?
 
       default_param_type = default_param_type(http_method)
@@ -341,6 +351,16 @@ module Analyzer::CSharp
 
         if match = cleaned_def.match(/(\w+)\s*(?:=\s*[^,]+)?\s*$/)
           param_name = match[1]
+
+          # A complex/interface action parameter with no explicit `[FromX]`
+          # attribute that names a DI service (an injected repository, the
+          # DbContext, a MediatR sender, …) is not request input — model
+          # binding never produces one. Dropping it removes a recurring FP.
+          if param_type.nil?
+            type_token = cleaned_def.sub(/\b#{Regex.escape(param_name)}\b\s*(?:=\s*[^,]+)?\s*$/, "").strip.split(/\s+/).last?
+            next if type_token && Common.csharp_service_type?(type_token)
+          end
+
           parameters << Param.new(param_name, "", param_type || default_param_type)
         end
       end
