@@ -1,3 +1,4 @@
+require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
@@ -146,5 +147,31 @@ describe "GoAuthTagger (expanded targets)" do
       endpoint.tags.empty?.should be_false
       endpoint.tags[0].tagger.should eq("go_auth")
     end
+  end
+
+  it "finds chained .Use() middleware separated from the route by a blank line" do
+    tmpdir = File.tempname("go_blank")
+    Dir.mkdir_p(tmpdir)
+    file = File.join(tmpdir, "main.go")
+    File.write(file, [
+      "api := r.Group(\"/api\")",
+      "api.Use(AuthMiddleware())",
+      "",
+      "api.GET(\"/profile\", func(c *gin.Context) {",
+      "    c.JSON(200, gin.H{})",
+      "})",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    details = Details.new(PathInfo.new(file, 4))
+    details.technology = "go_gin"
+    endpoint = Endpoint.new("/api/profile", "GET", [] of Param, details)
+
+    GoAuthTagger.new(noir_options).perform([endpoint])
+    endpoint.tags.empty?.should be_false
+    endpoint.tags[0].description.should contain("AuthMiddleware")
+
+    FileUtils.rm_rf(tmpdir)
   end
 end

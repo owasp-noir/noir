@@ -72,7 +72,7 @@ class GoAuthTagger < FrameworkTagger
   private def pre_scan_middleware_scopes
     @middleware_scopes.clear
 
-    files = get_files_by_prefix_and_extension(@base_path, ".go")
+    files = collect_files_by_extension(".go")
     files.each do |file|
       content = read_file(file)
       next if content.nil?
@@ -163,7 +163,10 @@ class GoAuthTagger < FrameworkTagger
       check_idx = line_idx - 1
       while check_idx >= 0 && check_idx >= line_idx - 5
         above_line = lines[check_idx].strip
-        break if above_line.empty?
+        # Allow a single blank line directly above the route (Go style
+        # often separates a chained `.Use(...)` from the route with one);
+        # only stop once we're past that first line.
+        break if above_line.empty? && check_idx < line_idx - 1
 
         USE_AUTH_MIDDLEWARE_PATTERNS.each do |pattern|
           match = above_line.match(pattern)

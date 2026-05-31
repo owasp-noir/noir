@@ -116,6 +116,44 @@ describe "ExpressAuthTagger" do
     FileUtils.rm_rf(tmpdir)
   end
 
+  it "scans auth config under a SECOND base path (multi-root regression)" do
+    base1 = File.tempname("express_base1")
+    base2 = File.tempname("express_base2")
+    Dir.mkdir_p(base1)
+    Dir.mkdir_p(base2)
+    # app.use auth config lives only under the second base path.
+    File.write(File.join(base2, "auth.js"), "app.use('/admin', requireAuth);")
+    routes = File.join(base2, "routes.js")
+    File.write(routes, [
+      "app.get('/admin/panel', (req, res) => {",
+      "  res.json({});",
+      "});",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new([YAML::Any.new(base1), YAML::Any.new(base2)])
+
+    locator = CodeLocator.instance
+    [base1, base2].each do |b|
+      Dir.glob("#{b}/**/*").each do |file|
+        next if File.directory?(file)
+        locator.push("file_map", file)
+      end
+    end
+
+    details = Details.new(PathInfo.new(routes, 1))
+    details.technology = "js_express"
+    endpoint = Endpoint.new("/admin/panel", "GET", [] of Param, details)
+
+    ExpressAuthTagger.new(noir_options).perform([endpoint])
+
+    endpoint.tags.empty?.should be_false
+    endpoint.tags[0].description.should contain("app.use()")
+
+    FileUtils.rm_rf(base1)
+    FileUtils.rm_rf(base2)
+  end
+
   it "does not tag unprotected routes" do
     noir_options = create_test_options
     noir_options["base"] = YAML::Any.new(fixture_base)

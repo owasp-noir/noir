@@ -16,30 +16,47 @@ class FrameworkTagger < Tagger
   include FileHelper
 
   @base_path : String
+  @base_paths : Array(String)
   @file_cache : Hash(String, String)
 
   def initialize(options : Hash(String, YAML::Any))
     super
-    @base_path = resolve_base_path(options)
+    @base_paths = resolve_base_paths(options)
+    @base_path = @base_paths.first
     @file_cache = Hash(String, String).new
   end
 
-  # The CLI always wraps `base` in an Array(YAML::Any), so calling
-  # `.to_s` on it produced strings like `["./app"]`. With that as the
-  # prefix every `get_files_by_prefix_and_extension(@base_path, …)`
-  # call quietly returned an empty list and the tagger never tagged
-  # anything. The existing specs hid this because they set
-  # `options["base"]` to a bare String. Handle both shapes so the
-  # production array path matches the same fixtures.
-  private def resolve_base_path(options : Hash(String, YAML::Any)) : String
+  # `base` is built as a flat Array(YAML::Any) and `-b PATH` / positional
+  # args are repeatable (`noir scan ./a ./b`), so every other consumer
+  # reads ALL of them. Collapsing to the first path made framework-tagger
+  # pre-scans miss auth config/middleware living under any later base —
+  # a silent false negative for multi-root scans. Resolve every base path
+  # (and keep `@base_path` as the first for callers that still want one).
+  #
+  # An empty/nil `base` falls back to `[""]`: `get_files_by_prefix_and_extension`
+  # treats `""` as "match every path", preserving the prior no-filter
+  # behaviour. Bare-String `base` (used by specs) is handled too.
+  private def resolve_base_paths(options : Hash(String, YAML::Any)) : Array(String)
     raw = options["base"]?
-    return "" if raw.nil?
+    return [""] if raw.nil?
 
     if arr = raw.as_a?
-      arr.first?.try(&.to_s) || ""
+      paths = arr.map(&.to_s).reject(&.empty?)
+      paths.empty? ? [""] : paths
     else
-      raw.to_s
+      [raw.to_s]
     end
+  end
+
+  # Collect files with the given extension across every configured base
+  # path, so a multi-root scan sees auth config under all of them.
+  def collect_files_by_extension(extension : String) : Array(String)
+    files = [] of String
+    @base_paths.each do |base|
+      files.concat(get_files_by_prefix_and_extension(base, extension))
+    end
+    files.uniq!
+    files
   end
 
   def self.target_techs : Array(String)

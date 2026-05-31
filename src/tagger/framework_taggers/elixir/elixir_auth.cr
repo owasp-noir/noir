@@ -60,7 +60,7 @@ class ElixirAuthTagger < FrameworkTagger
   end
 
   private def pre_scan_router_pipelines
-    files = get_files_by_prefix_and_extension(@base_path, ".ex")
+    files = collect_files_by_extension(".ex")
     files.each do |file|
       content = read_file(file)
       next if content.nil?

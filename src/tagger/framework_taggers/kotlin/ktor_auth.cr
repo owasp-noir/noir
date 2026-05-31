@@ -39,7 +39,7 @@ class KtorAuthTagger < FrameworkTagger
   private def pre_scan_auth_blocks
     @auth_scopes.clear
 
-    files = get_files_by_prefix_and_extension(@base_path, ".kt")
+    files = collect_files_by_extension(".kt")
     files.each do |file|
       content = read_file(file)
       next if content.nil?
