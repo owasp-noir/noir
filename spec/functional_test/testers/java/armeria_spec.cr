@@ -161,6 +161,12 @@ mounted_create_post = Endpoint.new("/mounted/create", "POST")
 mounted_create_post.push_param(Param.new("title", "", "json"))
 expected_endpoints << mounted_create_post
 
+# DocExampleService.java: only the real builder route is detected.
+# The Server.builder() chains inside the Javadoc comment and the Java
+# text block (/doc-comment-route, /api/comment-thrift, /doc-textblock-route)
+# must NOT surface as endpoints.
+expected_endpoints << Endpoint.new("/real/ping", "ANY")
+
 FunctionalTester.new("fixtures/java/armeria/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,

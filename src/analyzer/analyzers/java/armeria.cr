@@ -59,7 +59,19 @@ module Analyzer::Java
                                 else
                                   Hash(String, String).new
                                 end
+                    # Built lazily on the first builder-chain match: marks
+                    # char offsets that live inside a string literal or
+                    # comment so we can ignore `Server.builder()...build()`
+                    # chains that only appear in documentation strings or
+                    # `@Description` examples (a real FP source in Kotlin
+                    # docs and Java text blocks).
+                    non_code_mask = nil.as(Array(Bool)?)
                     content.scan(REGEX_SERVER_CODE_BLOCK) do |server_codeblock_match|
+                      start = server_codeblock_match.begin(0)
+                      if start
+                        mask = (non_code_mask ||= build_non_code_mask(content))
+                        next if start < mask.size && mask[start]
+                      end
                       server_codeblock = server_codeblock_match[0]
 
                       collect_service_routes(server_codeblock, constants, details, service_with_routes_index)
@@ -568,6 +580,84 @@ module Analyzer::Java
       tail = expr[start..]?.to_s.strip
       args << tail unless tail.empty?
       args
+    end
+
+    # Marks character offsets that fall inside a string literal or a
+    # comment. Used to reject `Server.builder()...build()` chains that
+    # only appear inside documentation — e.g. an `@Description` value or
+    # a Java text block / Kotlin raw string showing example code. Handles
+    # `//` line comments, `/* */` block comments, triple-quoted strings,
+    # double-quoted strings and char literals (with `\` escapes).
+    private def build_non_code_mask(content : String) : Array(Bool)
+      chars = content.chars
+      n = chars.size
+      mask = Array(Bool).new(n, false)
+      i = 0
+      while i < n
+        c = chars[i]
+        nxt = i + 1 < n ? chars[i + 1] : '\0'
+
+        if c == '/' && nxt == '/'
+          while i < n && chars[i] != '\n'
+            mask[i] = true
+            i += 1
+          end
+          next
+        end
+
+        if c == '/' && nxt == '*'
+          mask[i] = true
+          mask[i + 1] = true
+          i += 2
+          while i < n
+            if chars[i] == '*' && i + 1 < n && chars[i + 1] == '/'
+              mask[i] = true
+              mask[i + 1] = true
+              i += 2
+              break
+            end
+            mask[i] = true
+            i += 1
+          end
+          next
+        end
+
+        if c == '"' && nxt == '"' && i + 2 < n && chars[i + 2] == '"'
+          mask[i] = mask[i + 1] = mask[i + 2] = true
+          i += 3
+          while i < n
+            if chars[i] == '"' && i + 2 < n && chars[i + 1] == '"' && chars[i + 2] == '"'
+              mask[i] = mask[i + 1] = mask[i + 2] = true
+              i += 3
+              break
+            end
+            mask[i] = true
+            i += 1
+          end
+          next
+        end
+
+        if c == '"' || c == '\''
+          mask[i] = true
+          i += 1
+          while i < n
+            ch = chars[i]
+            if ch == '\\'
+              mask[i] = true
+              mask[i + 1] = true if i + 1 < n
+              i += 2
+              next
+            end
+            mask[i] = true
+            i += 1
+            break if ch == c
+          end
+          next
+        end
+
+        i += 1
+      end
+      mask
     end
 
     private def find_matching_delimiter(code : String,
