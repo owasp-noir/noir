@@ -39,7 +39,15 @@ module Analyzer::Go
     # The fixpoint handles the `routes.go` calling `v1.GET(...)` under a
     # `v1 := r.Group("/v1")` declared in `main.go` case — iterate until
     # no new entries land. In-file declarations win over external ones.
-    def collect_package_groups_ts(group_method : String = "Group") : Tuple(Hash(String, Hash(String, String)), Hash(String, String))
+    # `import_marker`, when given, restricts the cross-file group/engine
+    # pre-pass to files that actually import the framework. Group
+    # variables (`v1 := r.Group("/v1")`) and root-engine bindings only
+    # ever appear in framework-importing files, so skipping the rest
+    # avoids parsing unrelated `.go` files — a large saving in mixed
+    # repos (e.g. an example monorepo where most dirs use other routers).
+    # `file_contents` is still populated for every file so the per-file
+    # route pass and callee pre-pass keep their read cache.
+    def collect_package_groups_ts(group_method : String = "Group", import_marker : String? = nil) : Tuple(Hash(String, Hash(String, String)), Hash(String, String))
       package_groups = Hash(String, Hash(String, String)).new
       files_by_dir = Hash(String, Array(String)).new
       file_contents = Hash(String, String).new
@@ -63,6 +71,13 @@ module Analyzer::Go
       end
 
       files_by_dir.each do |dir, paths|
+        relevant = if import_marker
+                     paths.select { |p| (c = file_contents[p]?) && c.includes?(import_marker) }
+                   else
+                     paths
+                   end
+        next if relevant.empty?
+
         # Detect group-variable names that resolve to DIFFERENT prefixes
         # across files of the same package. These are almost always
         # function-local names (`r`, `g`, `api`, ...) reused across
@@ -77,19 +92,23 @@ module Analyzer::Go
         # package: `/dept/api/v1/...`.) Each file still re-derives these
         # names locally during route extraction, so same-file resolution
         # is unaffected.
+        #
+        # Root engine/router names (`r := gin.New()`, `func(r
+        # *gin.Engine)`) are folded into the same parse and likewise added
+        # to `ambiguous` so a same-named local group in a sibling file
+        # (e.g. `r := v1.Group("/sysjob")`) can't leak its prefix onto the
+        # root and pollute `v1 := r.Group("/api/v1")` (observed:
+        # `/sysjob/api/v1/...`).
         ambiguous = Set(String).new
         local_values = Hash(String, String).new
-        paths.each do |path|
+        own_groups_by_file = Hash(String, Hash(String, String)).new
+        relevant.each do |path|
           content = file_contents[path]?
           next if content.nil?
-          # Root engine/router names (`r := gin.New()`,
-          # `func(r *gin.Engine)`) must never carry a cross-file prefix.
-          # A same-named local group in a sibling file (e.g.
-          # `r := v1.Group("/sysjob")`) would otherwise leak its prefix
-          # onto the root and pollute `v1 := r.Group("/api/v1")`
-          # (observed: `/sysjob/api/v1/...`).
-          Noir::TreeSitterGoRouteExtractor.extract_engine_names(content).each { |n| ambiguous << n }
-          Noir::TreeSitterGoRouteExtractor.extract_groups(content, group_method: group_method).each do |k, v|
+          names, own = Noir::TreeSitterGoRouteExtractor.extract_engine_names_and_groups(content, group_method)
+          names.each { |n| ambiguous << n }
+          own_groups_by_file[path] = own
+          own.each do |k, v|
             next if ambiguous.includes?(k)
             if (existing = local_values[k]?) && existing != v
               ambiguous << k
@@ -101,18 +120,29 @@ module Analyzer::Go
         end
 
         groups = Hash(String, String).new
-        loop do
-          prev_size = groups.size
-          paths.each do |path|
-            content = file_contents[path]?
-            next if content.nil?
-            found = Noir::TreeSitterGoRouteExtractor.extract_groups(content, groups, group_method)
-            found.each do |k, v|
-              next if ambiguous.includes?(k)
-              groups[k] ||= v
-            end
+        if relevant.size == 1
+          # A single-file package can't propagate prefixes across files,
+          # so its own-file groups (already parsed above) are final — skip
+          # the cross-file fixpoint and its redundant re-parse entirely.
+          own = own_groups_by_file[relevant.first]?
+          own.try &.each do |k, v|
+            next if ambiguous.includes?(k)
+            groups[k] = v
           end
-          break if groups.size == prev_size
+        else
+          loop do
+            prev_size = groups.size
+            relevant.each do |path|
+              content = file_contents[path]?
+              next if content.nil?
+              found = Noir::TreeSitterGoRouteExtractor.extract_groups(content, groups, group_method)
+              found.each do |k, v|
+                next if ambiguous.includes?(k)
+                groups[k] ||= v
+              end
+            end
+            break if groups.size == prev_size
+          end
         end
         package_groups[dir] = groups unless groups.empty?
       end
@@ -152,6 +182,66 @@ module Analyzer::Go
     # or an empty map when the directory has no captured functions.
     def ts_function_bodies_for_directory(package_function_bodies : Hash(String, Hash(String, Noir::GoCalleeExtractor::FunctionBody)), dir : String) : Hash(String, Noir::GoCalleeExtractor::FunctionBody)
       package_function_bodies[dir]? || Hash(String, Noir::GoCalleeExtractor::FunctionBody).new
+    end
+
+    # --- Beego controller-method pre-pass --------------------------------
+    #
+    # Builds a per-directory `{controller_type => [http_verb_methods]}` map
+    # so mapping-less `web.Router("/x", &Ctrl{})` registrations resolve to
+    # the exact methods the controller implements. Keyed by directory
+    # because Beego controllers and their router registrations share a Go
+    # package (== directory); a controller defined in a sibling file is
+    # still found.
+    def collect_package_controller_methods(file_contents : Hash(String, String)) : Hash(String, Hash(String, Array(String)))
+      result = Hash(String, Hash(String, Array(String))).new
+      file_contents.each do |path, content|
+        # Cheap gate: a file with controller methods must contain a method
+        # receiver. gofmt always writes those as `func (recv Type) Name(`,
+        # so files without `func (` can't define controller methods and
+        # are skipped before paying for a tree-sitter parse.
+        next unless content.includes?("func (")
+        methods = Noir::TreeSitterGoRouteExtractor.extract_controller_methods(content)
+        next if methods.empty?
+        dir = File.dirname(path)
+        dir_map = (result[dir] ||= Hash(String, Array(String)).new)
+        methods.each do |type_name, names|
+          list = (dir_map[type_name] ||= [] of String)
+          names.each { |n| list << n unless list.includes?(n) }
+        end
+      end
+      result
+    end
+
+    # Returns the cross-file controller-method map for the given
+    # directory, or an empty map.
+    def ts_controller_methods_for_directory(package_controller_methods : Hash(String, Hash(String, Array(String))), dir : String) : Hash(String, Array(String))
+      package_controller_methods[dir]? || Hash(String, Array(String)).new
+    end
+
+    # Per-directory `{method_name => [FunctionBody, ...]}` map for
+    # controller-style routes whose handler is referenced by method name
+    # (Beego's `web.Router("/x", &Ctrl{}, "get:Method")`). Lets the
+    # analyzer walk the controller method's body for callees even though
+    # the registration call doesn't pass the handler as an argument.
+    # Gated on `callees_needed?` so default scans pay nothing.
+    def collect_package_controller_method_bodies(file_contents : Hash(String, String)) : Hash(String, Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody)))
+      result = Hash(String, Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody))).new
+      return result unless callees_needed?
+      file_contents.each do |path, content|
+        next unless content.includes?("func (")
+        methods = Noir::GoCalleeExtractor.collect_method_bodies(content, path)
+        next if methods.empty?
+        dir = File.dirname(path)
+        dir_map = (result[dir] ||= Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody)).new)
+        methods.each do |name, list|
+          (dir_map[name] ||= [] of Noir::GoCalleeExtractor::FunctionBody).concat(list)
+        end
+      end
+      result
+    end
+
+    def ts_controller_method_bodies_for_directory(package_controller_method_bodies : Hash(String, Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody))), dir : String) : Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody))
+      package_controller_method_bodies[dir]? || Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody)).new
     end
 
     # Read every `.go` file once into a `{path => source}` hash. Used by

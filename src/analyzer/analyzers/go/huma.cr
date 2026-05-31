@@ -20,6 +20,22 @@ module Analyzer::Go
       "cookie" => "cookie",
     }
 
+    # Huma v2's typed convenience helpers — `huma.Get(api, "/path",
+    # handler)` and friends — register an operation without the verbose
+    # `huma.Register(api, huma.Operation{...}, handler)` literal. The verb
+    # is the method name; the path is the SECOND argument (the first is
+    # the API/group). Mapped here so the call walker can decode them
+    # alongside `huma.Register`.
+    SUGAR_VERBS = {
+      "huma.Get"     => "GET",
+      "huma.Post"    => "POST",
+      "huma.Put"     => "PUT",
+      "huma.Patch"   => "PATCH",
+      "huma.Delete"  => "DELETE",
+      "huma.Head"    => "HEAD",
+      "huma.Options" => "OPTIONS",
+    }
+
     private struct StructField
       property name : String
       property tag : String
@@ -113,28 +129,47 @@ module Analyzer::Go
         walk_calls(root) do |call|
           func = Noir::TreeSitter.field(call, "function")
           next if func.nil?
-          next unless Noir::TreeSitter.node_text(func, source) == "huma.Register"
+          func_text = Noir::TreeSitter.node_text(func, source)
+          sugar_verb = SUGAR_VERBS[func_text]?
+          next unless func_text == "huma.Register" || sugar_verb
 
           args = Noir::TreeSitter.field(call, "arguments")
           next if args.nil?
 
-          op_node = nil_arg = nil
-          handler_node = nil_arg
-          arg_index = 0
-          Noir::TreeSitter.each_named_child(args) do |arg|
-            case arg_index
-            when 1
-              op_node = arg
-            when 2
-              handler_node = arg
+          # `route_path` keeps an empty-string default (a sugar call with
+          # too few args leaves it unset); `method` is assigned on every
+          # branch below, so it needs no initializer.
+          route_path = ""
+          handler_node : LibTreeSitter::TSNode? = nil
+
+          if sugar_verb
+            # huma.Get(api, "/path", handler) — path@1, handler@2.
+            method = sugar_verb
+            arg_index = 0
+            Noir::TreeSitter.each_named_child(args) do |arg|
+              case arg_index
+              when 1 then route_path = decode_string_value(arg, source) || ""
+              when 2 then handler_node = arg
+              end
+              arg_index += 1
             end
-            arg_index += 1
+          else
+            # huma.Register(api, huma.Operation{...}, handler) —
+            # Operation literal@1, handler@2.
+            op_node : LibTreeSitter::TSNode? = nil
+            arg_index = 0
+            Noir::TreeSitter.each_named_child(args) do |arg|
+              case arg_index
+              when 1 then op_node = arg
+              when 2 then handler_node = arg
+              end
+              arg_index += 1
+            end
+            operation_arg = op_node
+            next if operation_arg.nil?
+            method, route_path = decode_operation(operation_arg, source)
           end
 
-          operation_arg = op_node
-          next if operation_arg.nil?
-
-          method, route_path = decode_operation(operation_arg, source)
           next if method.empty? || route_path.empty?
 
           row = Noir::TreeSitter.node_start_row(call) + 1

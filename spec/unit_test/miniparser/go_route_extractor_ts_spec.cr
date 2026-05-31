@@ -322,4 +322,98 @@ describe Noir::TreeSitterGoRouteExtractor do
       {"ANY", "/all-builder"},
     ].sort)
   end
+
+  it "does not mint phantom routes from verb-named value helpers" do
+    # A cache's `Put`/`Get` and similar value helpers share a verb name
+    # but take a context/receiver as their first argument, not a URL.
+    # The path must be the FIRST positional argument of a verb call, so
+    # these must produce no routes.
+    source = <<-GO
+      package main
+      func main() {
+          c.Put(context.Background(), "hello", "world", time.Minute)
+          bm.Get(ctx, "name")
+          store.Delete(ctx, "key")
+          r.GET("/real", handler)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/real"}])
+  end
+
+  it "extracts beego controller routes with explicit method mappings" do
+    source = <<-GO
+      package main
+      func main() {
+          web.Router("/health", ctrl, "get:Health")
+          web.Router("/update", ctrl, "post:Update")
+          web.Router("/getOrPost", ctrl, "get,post:GetOrPost")
+          web.Router("/multi", ctrl, "get:Read;delete:Remove")
+          web.Router("/any", ctrl, "*:Any")
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_beego_routes(source)
+    routes.map { |r| {r.verb, r.path, r.handler} }.sort!.should eq([
+      {"ANY", "/any", "Any"},
+      {"DELETE", "/multi", "Remove"},
+      {"GET", "/getOrPost", "GetOrPost"},
+      {"GET", "/health", "Health"},
+      {"GET", "/multi", "Read"},
+      {"POST", "/getOrPost", "GetOrPost"},
+      {"POST", "/update", "Update"},
+    ].sort)
+  end
+
+  it "resolves mapping-less beego controller routes from implemented methods" do
+    source = <<-GO
+      package main
+      func main() {
+          ctrl := &MainController{}
+          web.Router("/", ctrl)
+          web.Router("/inline", &OtherController{})
+      }
+      func (c *MainController) Get()  {}
+      func (c *MainController) Post() {}
+      func (c *MainController) Helper() {}
+      func (c *OtherController) Delete() {}
+      GO
+
+    methods = Noir::TreeSitterGoRouteExtractor.extract_controller_methods(source)
+    methods["MainController"].sort.should eq(["Get", "Post"])
+    methods["OtherController"].should eq(["Delete"])
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_beego_routes(source, methods)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"DELETE", "/inline"},
+      {"GET", "/"},
+      {"POST", "/"},
+    ].sort)
+  end
+
+  it "falls back to GET for beego controllers it can't resolve" do
+    source = <<-GO
+      package main
+      func main() {
+          web.Router("/external", &controllers.UserController{})
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_beego_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/external"}])
+  end
+
+  it "ignores Router calls on non-beego operands" do
+    source = <<-GO
+      package main
+      func main() {
+          db.Router("/not-a-route", handler)
+          web.Router("/yes", &C{})
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_beego_routes(source)
+    routes.map { |r| r.path }.should eq(["/yes"])
+  end
 end

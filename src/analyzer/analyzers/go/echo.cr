@@ -7,7 +7,7 @@ module Analyzer::Go
     def analyze
       # Source Analysis
       public_dirs = [] of (Hash(String, String))
-      package_groups, file_contents = collect_package_groups_ts
+      package_groups, file_contents = collect_package_groups_ts(import_marker: IMPORT_MARKER)
       # Pre-pass for cross-file identifier-handler resolution. Built
       # once per analyze() so each per-file callee pass only does an
       # O(1) lookup into `package_function_bodies` rather than re-
