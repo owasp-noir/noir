@@ -404,6 +404,30 @@ describe Noir::TreeSitterGoRouteExtractor do
     routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/external"}])
   end
 
+  it "does not fan out a cross-package controller using a same-named local type" do
+    # A qualified `&controllers.UserController{}` is cross-package; even
+    # though THIS package defines a `UserController` with Get+Post, the
+    # qualified route must take the unresolved fallback (single GET), not
+    # borrow the local type's methods.
+    source = <<-GO
+      package main
+      func main() {
+          web.Router("/local", &UserController{})
+          web.Router("/external", &controllers.UserController{})
+      }
+      func (c *UserController) Get()  {}
+      func (c *UserController) Post() {}
+      GO
+
+    methods = Noir::TreeSitterGoRouteExtractor.extract_controller_methods(source)
+    routes = Noir::TreeSitterGoRouteExtractor.extract_beego_routes(source, methods)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/external"},
+      {"GET", "/local"},
+      {"POST", "/local"},
+    ].sort)
+  end
+
   it "ignores Router calls on non-beego operands" do
     source = <<-GO
       package main

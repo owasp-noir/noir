@@ -1560,16 +1560,22 @@ module Noir
       composite_literal_type_name(node, source)
     end
 
-    # Find a `composite_literal` at or under `node` and return its type
-    # name with any package qualifier and pointer stripped
-    # (`&pkg.Ctrl{}` → `Ctrl`).
+    # Find a `composite_literal` at or under `node` and return its
+    # (pointer-stripped) LOCAL type name. A package-qualified literal
+    # (`&pkg.Ctrl{}`) returns nil: in Go a qualified type always lives in
+    # another package, so its methods are never in this directory's
+    # controller-method map. Returning nil routes such a route to the
+    # unresolved-controller fallback instead of mis-matching a local type
+    # that happens to share the final identifier (`Ctrl`).
     private def composite_literal_type_name(node : LibTreeSitter::TSNode,
                                             source : String) : String?
       comp = find_composite_literal(node)
       return unless comp
       type_node = Noir::TreeSitter.field(comp, "type") || first_named_child(comp)
       return unless type_node
-      final_type_identifier(type_node, source)
+      text = Noir::TreeSitter.node_text(type_node, source).lchop('*')
+      return if text.includes?('.')
+      text
     end
 
     private def find_composite_literal(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
