@@ -22,6 +22,9 @@ class ApiCtrl : public drogon::HttpController<ApiCtrl>
     ADD_METHOD_TO(ApiCtrl::ping, "/ping", Get, Post);
     // Absolute regex path.
     ADD_METHOD_VIA_REGEX(ApiCtrl::legacy, "/legacy/(.*)", Get);
+    // Regex with `?` metacharacters must be preserved verbatim (not treated
+    // as a query-string separator).
+    ADD_METHOD_VIA_REGEX(ApiCtrl::grouped, "/grp/(?:a|b)/(.*)?", Get);
     METHOD_LIST_END
 
     void root(const HttpRequestPtr &req,
@@ -46,6 +49,12 @@ class ApiCtrl : public drogon::HttpController<ApiCtrl>
 
     void legacy(const HttpRequestPtr &req,
                 std::function<void(const HttpResponsePtr &)> &&callback)
+    {
+        callback(HttpResponse::newHttpResponse());
+    }
+
+    void grouped(const HttpRequestPtr &req,
+                 std::function<void(const HttpResponsePtr &)> &&callback)
     {
         callback(HttpResponse::newHttpResponse());
     }

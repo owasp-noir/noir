@@ -541,10 +541,13 @@ module Analyzer::Cpp
     #   {3:p3}        → p3                  (index : name)
     #   {id}          → id                  (named)
     private def normalize_drogon_path(raw : String, via_regex : Bool = false) : Tuple(String, Array(Param), Array(Param))
+      # Regex routes are kept verbatim: `?` is a quantifier / `(?:...)` group,
+      # not the query-string separator, so neither splitting nor placeholder
+      # rewriting applies.
+      return {raw, [] of Param, [] of Param} if via_regex
+
       path_part, _, query = raw.partition('?')
       query_params = extract_query_params(query)
-
-      return {path_part, [] of Param, query_params} if via_regex
 
       path_params = [] of Param
       counter = 0

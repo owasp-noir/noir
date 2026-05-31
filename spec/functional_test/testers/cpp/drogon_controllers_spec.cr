@@ -26,6 +26,8 @@ expected_endpoints = [
   drogon_ctrl_endpoint("/ping", "POST"),
   # ADD_METHOD_VIA_REGEX → absolute regex path.
   drogon_ctrl_endpoint("/legacy/(.*)", "GET"),
+  # Regex `?` metacharacters preserved verbatim (not split as a query string).
+  drogon_ctrl_endpoint("/grp/(?:a|b)/(.*)?", "GET"),
   # WS_PATH_ADD → websocket endpoint.
   drogon_ctrl_endpoint("/chat", "GET", "ws"),
   # Multi-line registerHandler whose query-string constraint becomes a param.
@@ -48,7 +50,15 @@ describe "Drogon controller routing edge cases" do
     tester.app.endpoints.any? { |e| e.url == "/ghost" }.should be_false
   end
 
-  it "strips the query string from the registered path" do
-    tester.app.endpoints.any? { |e| e.url.includes?("?") }.should be_false
+  it "strips the query-string constraint from a registerHandler path" do
+    # `/search?q={}` becomes `/search` with `q` as a query param.
+    tester.app.endpoints.any? { |e| e.url == "/search?q={}" }.should be_false
+    search = tester.app.endpoints.find { |e| e.url == "/search" && e.method == "GET" }
+    search.should_not be_nil
+    search.as(Endpoint).params.any? { |p| p.name == "q" && p.param_type == "query" }.should be_true
+  end
+
+  it "keeps `?` metacharacters in regex routes verbatim" do
+    tester.app.endpoints.any? { |e| e.url == "/grp/(?:a|b)/(.*)?" }.should be_true
   end
 end
