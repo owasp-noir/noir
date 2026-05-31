@@ -1,5 +1,6 @@
 require "../../engines/javascript_engine"
 require "../../../miniparsers/js_callee_extractor"
+require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Javascript
   class Nextjs < JavascriptEngine
@@ -47,7 +48,7 @@ module Analyzer::Javascript
       url = normalize_url(url)
 
       begin
-        content = read_file_content(path)
+        content = read_and_strip_comments(path)
       rescue e
         logger.debug "Error reading file #{path}: #{e.message}"
         return
@@ -98,7 +99,7 @@ module Analyzer::Javascript
       url = normalize_url(url)
 
       begin
-        content = read_file_content(path)
+        content = read_and_strip_comments(path)
       rescue e
         logger.debug "Error reading file #{path}: #{e.message}"
         return
@@ -125,7 +126,7 @@ module Analyzer::Javascript
 
     private def analyze_server_actions_file(path : String, result : Array(Endpoint), mutex : Mutex, include_callee : Bool)
       begin
-        content = read_file_content(path)
+        content = read_and_strip_comments(path)
       rescue e
         logger.debug "Error reading file #{path}: #{e.message}"
         return
@@ -545,6 +546,11 @@ module Analyzer::Javascript
       url = url.sub(/\/+$/, "") unless url == "/"
       url = "/" if url.empty?
       url
+    end
+
+    private def read_and_strip_comments(path : String) : String
+      raw_content = read_file_content(path)
+      Noir::JSRouteExtractor.strip_js_comments(raw_content)
     end
   end
 end

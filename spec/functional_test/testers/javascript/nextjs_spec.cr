@@ -105,6 +105,20 @@ FunctionalTester.new("fixtures/javascript/nextjs/", {
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests
 
+describe "Next.js comment filtering" do
+  it "does not emit endpoints for commented-out exports (// and /* */)" do
+    options = ConfigInitializer.new.default_options
+    options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/javascript/nextjs/")])
+    options["nolog"] = YAML::Any.new(true)
+
+    app = NoirRunner.new(options)
+    app.detect
+    app.analyze
+
+    app.endpoints.none? { |ep| ep.url == "/api/commented" }.should be_true
+  end
+end
+
 describe "Next.js App Router method-local params" do
   it "does not leak GET query params onto POST handlers in the same route file" do
     options = ConfigInitializer.new.default_options
