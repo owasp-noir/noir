@@ -12,8 +12,8 @@ class ScalaAuthTagger < FrameworkTagger
     {/SubjectPresent/, "Play Deadbolt SubjectPresent"},
     {/Restrict\s*\(/, "Play Deadbolt Restrict"},
     {/Dynamic\s*\(/, "Play Deadbolt Dynamic"},
-    {/silhouette\.\w+\.SecuredAction/, "Play Silhouette SecuredAction"},
-    {/silhouette\.\w+\.UserAwareAction/, "Play Silhouette UserAwareAction"},
+    {/silhouette\.SecuredAction/, "Play Silhouette SecuredAction"},
+    {/silhouette\.UserAwareAction/, "Play Silhouette UserAwareAction"},
   ]
 
   # Akka HTTP auth directives
