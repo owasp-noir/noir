@@ -1,3 +1,4 @@
+require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
@@ -123,6 +124,29 @@ describe "PythonMiscAuthTagger" do
     tagger.perform([endpoint])
 
     endpoint.tags.empty?.should be_true
+  end
+
+  it "does not tag on a bare current_user mention above the handler (false-positive regression)" do
+    tmpdir = File.tempname("tornado_fp")
+    Dir.mkdir_p(tmpdir)
+    file = File.join(tmpdir, "app.py")
+    File.write(file, [
+      "class PublicHandler(tornado.web.RequestHandler):",
+      "    # current_user is set elsewhere from a token",
+      "    def get(self):",
+      "        self.write('public')",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    details = Details.new(PathInfo.new(file, 3))
+    details.technology = "python_tornado"
+    endpoint = Endpoint.new("/public", "GET", [] of Param, details)
+
+    PythonMiscAuthTagger.new(noir_options).perform([endpoint])
+    endpoint.tags.empty?.should be_true
+
+    FileUtils.rm_rf(tmpdir)
   end
 
   it "returns correct target_techs" do

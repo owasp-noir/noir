@@ -48,7 +48,12 @@ class PhpAuthTagger < FrameworkTagger
 
   # Generic PHP auth patterns
   GENERIC_PATTERNS = [
-    {/session_start\s*\(\).*\$_SESSION\[['"]user/, "PHP session auth"},
+    # The previous `session_start().*$_SESSION['user` required both tokens
+    # on one physical line; under the per-line body scan that essentially
+    # never matched. Key on a guarded `$_SESSION['user...]` access instead
+    # (isset/!isset/empty), which is the actual auth signal and excludes a
+    # bare `session_start();` bootstrap used on public pages too.
+    {/(?:isset|empty|!\s*isset)\s*\(\s*\$_SESSION\s*\[\s*['"]user/, "PHP session user guard"},
     {/\$_SERVER\[['"]PHP_AUTH_USER['"]/, "PHP HTTP Basic Auth"},
   ]
 

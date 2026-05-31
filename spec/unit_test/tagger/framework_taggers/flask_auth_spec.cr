@@ -1,5 +1,28 @@
+require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
+
+private def flask_detect(decorator : String) : Endpoint
+  tmpdir = File.tempname("flask_auth_extra")
+  Dir.mkdir_p(tmpdir)
+  app = File.join(tmpdir, "app.py")
+  File.write(app, [
+    "@app.route('/secret')",
+    decorator,
+    "def secret():",
+    "    return 'ok'",
+  ].join("\n"))
+
+  noir_options = create_test_options
+  noir_options["base"] = YAML::Any.new(tmpdir)
+  details = Details.new(PathInfo.new(app, 3))
+  details.technology = "python_flask"
+  endpoint = Endpoint.new("/secret", "GET", [] of Param, details)
+
+  FlaskAuthTagger.new(noir_options).perform([endpoint])
+  FileUtils.rm_rf(tmpdir)
+  endpoint
+end
 
 describe "FlaskAuthTagger" do
   fixture_base = "#{__DIR__}/../../../functional_test/fixtures/python/flask_auth"
@@ -60,5 +83,29 @@ describe "FlaskAuthTagger" do
     tagger.perform([endpoint])
 
     endpoint.tags.empty?.should be_true
+  end
+
+  it "detects bare @jwt_required (no parentheses)" do
+    endpoint = flask_detect("@jwt_required")
+    endpoint.tags.empty?.should be_false
+    endpoint.tags[0].description.should contain("jwt_required")
+  end
+
+  it "detects @jwt_required() call form" do
+    endpoint = flask_detect("@jwt_required()")
+    endpoint.tags.empty?.should be_false
+    endpoint.tags[0].description.should contain("jwt_required")
+  end
+
+  it "detects flask-security @auth_required" do
+    endpoint = flask_detect("@auth_required('token', 'session')")
+    endpoint.tags.empty?.should be_false
+    endpoint.tags[0].description.should contain("auth_required")
+  end
+
+  it "detects flask-security @permission_required" do
+    endpoint = flask_detect("@permission_required('admin')")
+    endpoint.tags.empty?.should be_false
+    endpoint.tags[0].description.should contain("permission_required")
   end
 end

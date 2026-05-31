@@ -6,9 +6,15 @@ class FlaskAuthTagger < FrameworkTagger
     {/\@login_required/, "flask-login login_required"},
     {/\@roles_required\s*\(/, "flask-security roles_required"},
     {/\@roles_accepted\s*\(/, "flask-security roles_accepted"},
-    {/\@jwt_required\s*\(/, "flask-jwt-extended jwt_required"},
+    # `\b` matches both the bare `@jwt_required` and the `@jwt_required()`
+    # call form, both idiomatic in flask-jwt-extended.
+    {/\@jwt_required\b/, "flask-jwt-extended jwt_required"},
     {/\@jwt_optional\s*\(/, "flask-jwt-extended jwt_optional"},
     {/\@fresh_jwt_required\s*\(/, "flask-jwt-extended fresh_jwt_required"},
+    {/\@auth_required\s*\(/, "flask-security auth_required"},
+    {/\@http_auth_required\b/, "flask-security http_auth_required"},
+    {/\@token_auth_required\b/, "flask-security token_auth_required"},
+    {/\@permission_required\s*\(/, "flask-security/principal permission_required"},
     {/\@auth\.login_required/, "flask-httpauth login_required"},
     {/\@auth\.verify_password/, "flask-httpauth verify_password"},
     {/\@token_auth\.login_required/, "flask-httpauth token_auth"},
