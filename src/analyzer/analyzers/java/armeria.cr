@@ -980,7 +980,10 @@ module Analyzer::Java
       return params unless fparams
 
       path_param_names = Set(String).new
-      url_path.scan(/\{(\w+)\}/) do |match|
+      # `\*?` also matches Armeria's rest-path capture `{*name}` so a
+      # matching `@Param name` is recognised as a path variable rather
+      # than emitted as a spurious query parameter.
+      url_path.scan(/\{\*?(\w+)\}/) do |match|
         path_param_names << match[1] if match.size > 1
       end
 
@@ -1097,8 +1100,9 @@ module Analyzer::Java
     end
 
     # Extract path parameters from URLs like /users/{userId} or /items/{itemId}/comments
+    # (`\*?` also captures the rest-path form `{*name}` as `name`).
     private def extract_path_parameters(url : String, endpoint : Endpoint)
-      url.scan(/\{(\w+)\}/) do |match|
+      url.scan(/\{\*?(\w+)\}/) do |match|
         if match.size > 0
           param_name = match[1]
           # Only add if not already present
