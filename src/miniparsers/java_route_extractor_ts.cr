@@ -363,38 +363,23 @@ module Noir
       Noir::TreeSitter.node_text(mods, source).split.includes?("abstract")
     end
 
-    # Simple name of the `extends` superclass, or nil. Type-parameter
-    # bounds (`<T extends Number>`) are stripped first so they aren't
-    # mistaken for the superclass, and the body `{` is located after the
-    # `class` keyword so a `{}` inside a class-level annotation argument
-    # doesn't truncate the header early.
+    # Simple name of the `extends` superclass, or nil. Read straight from
+    # the tree-sitter `superclass` field so neither class-level annotation
+    # arguments nor `<T extends Number>` type-parameter bounds can confuse
+    # the parse; generic arguments on the parent type (`Parent<T>`) are
+    # stripped, and a qualified name keeps only its last segment.
     private def superclass_name(class_decl : LibTreeSitter::TSNode, source : String) : String?
-      header = Noir::TreeSitter.node_text(class_decl, source)
-      keyword = header.index(/\bclass\b/) || 0
-      if body_start = header.index('{', keyword)
-        header = header[...body_start]
-      end
-      header = strip_angle_sections(header)
-      return unless match = header.match(/\bextends\s+([A-Za-z_][A-Za-z0-9_.]*)/)
+      return unless superclass = Noir::TreeSitter.field(class_decl, "superclass")
+      return unless LibTreeSitter.ts_node_named_child_count(superclass) > 0
 
-      type_name = match[1]
-      if idx = type_name.rindex('.')
-        type_name[(idx + 1)..]
+      type_node = LibTreeSitter.ts_node_named_child(superclass, 0_u32)
+      name = strip_generic_arguments(Noir::TreeSitter.node_text(type_node, source))
+      return if name.empty?
+
+      if idx = name.rindex('.')
+        name[(idx + 1)..]
       else
-        type_name
-      end
-    end
-
-    private def strip_angle_sections(text : String) : String
-      String.build do |io|
-        depth = 0
-        text.each_char do |ch|
-          case ch
-          when '<' then depth += 1
-          when '>' then depth -= 1 if depth > 0
-          else          io << ch if depth == 0
-          end
-        end
+        name
       end
     end
 
