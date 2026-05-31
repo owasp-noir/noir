@@ -143,7 +143,12 @@ class LLMEndpointOptimizer < EndpointOptimizer
     # Apply URL optimizations if suggested
     if optimization_data.has_key?("optimized_url")
       new_url = optimization_data["optimized_url"].as_s
-      if new_url != endpoint.url && !new_url.empty? && new_url.starts_with?("/")
+      # Only accept a rewrite that is a real path. Without this guard a
+      # model that returns prose, a code fragment, or a "/GET /x"-style
+      # string (anything that merely starts with "/") would clobber a
+      # correct URL — corrupting the endpoint (a false positive) and
+      # losing the original (a false negative) in one step.
+      if new_url != endpoint.url && !new_url.empty? && new_url.starts_with?("/") && plausible_rewrite_url?(new_url)
         @logger.debug_sub "  - URL optimized: #{endpoint.url} → #{new_url}"
         optimized_endpoint.url = new_url
       end
@@ -155,6 +160,11 @@ class LLMEndpointOptimizer < EndpointOptimizer
       optimization_data["optimized_params"].as_a.each do |param_data|
         param_obj = param_data.as_h
         name = param_obj["name"].as_s
+        # Drop names that carry whitespace/control chars or are absurdly
+        # long — the model captured a description, not an identifier.
+        # Mirrors the guard Analyzer::AI::Unified applies to its own
+        # responses so the correction step can't reintroduce param FPs.
+        next unless valid_optimized_param_name?(name)
         # Normalize whatever string the LLM returns to one of the
         # canonical param types so we don't end up with rogue values
         # like "uri" or "Querystring" propagating into the endpoint
@@ -219,13 +229,28 @@ class LLMEndpointOptimizer < EndpointOptimizer
     end
   end
 
-  VALID_PARAM_TYPES = %w[query json form header cookie path]
+  VALID_PARAM_TYPES        = %w[query json form header cookie path]
+  MAX_REWRITE_URL_LENGTH   = 2048
+  MAX_OPTIMIZED_PARAM_NAME =  128
 
   # Coerce an LLM-supplied param_type string to one of the canonical
   # values; anything outside the list falls back to "query".
   private def normalize_param_type(raw : String) : String
     normalized = raw.downcase
     VALID_PARAM_TYPES.includes?(normalized) ? normalized : "query"
+  end
+
+  # A rewritten URL must look like a served path: no raw whitespace,
+  # control chars, or markdown noise, and within a sane length bound.
+  # Shares the shape check with Analyzer::AI::Unified so the correction
+  # phase can't reintroduce what the identification phase rejected.
+  private def plausible_rewrite_url?(url : String) : Bool
+    LLM.clean_token?(url, MAX_REWRITE_URL_LENGTH)
+  end
+
+  # A param name is an identifier-ish token, not a sentence.
+  private def valid_optimized_param_name?(name : String) : Bool
+    LLM.clean_token?(name, MAX_OPTIMIZED_PARAM_NAME)
   end
 
   # LLM response format for optimization. The canonical prompt text

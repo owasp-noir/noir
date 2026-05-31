@@ -22,10 +22,22 @@ module Analyzer::AI
     AGENT_DEFAULT_FILE_PATTERN         = "*.{go,py,js,ts,java,rb,php,cs,cr,kt,rs,swift,scala,graphql}"
     VALID_METHODS                      = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"]
     VALID_PARAM_TYPES                  = ["query", "json", "form", "header", "cookie", "path"]
-    IGNORE_EXTENSIONS                  = [".css", ".xml", ".json", ".yml", ".yaml", ".md", ".jpg", ".jpeg", ".png", ".gif", ".svg", ".ico",
-                                          ".eot", ".ttf", ".woff", ".woff2", ".otf", ".mp3", ".mp4", ".avi", ".mov", ".webm", ".zip", ".tar",
-                                          ".gz", ".7z", ".rar", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv",
-                                          ".log", ".sql", ".bak", ".swp", ".jar"] of String
+    MAX_ENDPOINT_URL_LENGTH            = 2048
+    MAX_PARAM_NAME_LENGTH              =  128
+    # Bare URL tokens the LLM emits when it has nothing real to report
+    # (schema echoes, "no endpoint" stand-ins). Compared case-folded
+    # against the whole path with a single leading slash stripped, so a
+    # legitimate nested route like `/example/users` is never rejected —
+    # only a URL that IS one of these placeholders is dropped.
+    PLACEHOLDER_URLS = Set{
+      "url", "uri", "endpoint", "n/a", "na", "none", "null", "nil",
+      "undefined", "your_endpoint", "your-endpoint", "path/to/endpoint",
+      "...", "<url>", "<endpoint>", "<path>",
+    }
+    IGNORE_EXTENSIONS = [".css", ".xml", ".json", ".yml", ".yaml", ".md", ".jpg", ".jpeg", ".png", ".gif", ".svg", ".ico",
+                         ".eot", ".ttf", ".woff", ".woff2", ".otf", ".mp3", ".mp4", ".avi", ".mov", ".webm", ".zip", ".tar",
+                         ".gz", ".7z", ".rar", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv",
+                         ".log", ".sql", ".bak", ".swp", ".jar"] of String
 
     @provider : String
     @model : String
@@ -191,7 +203,28 @@ module Analyzer::AI
 
       begin
         filtered = JSON.parse(response.to_s)
-        filtered["files"].as_a.map(&.as_s)
+        selected = filtered["files"].as_a.map(&.as_s)
+
+        # Keep only real, in-scope source files. The model sometimes
+        # echoes directories, hallucinated paths, or ignorable assets;
+        # analyzing those is wasted work and can mask the recall guard
+        # below.
+        selected = selected.select do |path|
+          File.file?(path) &&
+            !ignore_extensions.includes?(File.extname(path)) &&
+            path_within_base?(path)
+        end
+
+        # Recall guard: an over-aggressive (or empty/garbage) filter
+        # would silently zero out AI results — every endpoint in the
+        # dropped files becomes a false negative. Fall back to scanning
+        # all source files rather than returning nothing.
+        if selected.empty?
+          logger.debug_sub "AI::Filter returned no usable files; analyzing all source files"
+          return get_all_source_files
+        end
+
+        selected
       rescue e : Exception
         logger.debug "Error parsing filter response: #{e.message}"
         get_all_source_files
@@ -254,7 +287,7 @@ module Analyzer::AI
 
     private def create_endpoint_from_json(ep : JSON::Any, default_path : String) : Endpoint?
       url = extract_endpoint_url(ep)
-      return if url.empty?
+      return unless plausible_endpoint_url?(url)
 
       method = normalize_http_method(safe_json_string(ep, "method", "GET"))
       path_info = build_path_info(ep, default_path)
@@ -264,17 +297,41 @@ module Analyzer::AI
       Endpoint.new(url, method, params, details)
     end
 
+    # Reject obviously-hallucinated URLs before they become endpoints.
+    # The LLM occasionally returns prose, a "METHOD /path" description, a
+    # schema echo, or a stray placeholder instead of a real path; those
+    # leak whitespace, control chars, or match a known placeholder token.
+    # Real request paths carry none of these signals, so this stays
+    # high-precision: it removes false positives without dropping any
+    # legitimate endpoint.
+    private def plausible_endpoint_url?(url : String) : Bool
+      return false unless LLM.clean_token?(url, MAX_ENDPOINT_URL_LENGTH)
+      # `lstrip('/')` collapses an all-slash URL to "" — that is the
+      # root path ("/"), which is a legitimate endpoint, so only the
+      # placeholder-token comparison uses the stripped form.
+      bare = url.lstrip('/').downcase
+      !PLACEHOLDER_URLS.includes?(bare)
+    end
+
+    # A parameter name is an identifier-ish token. Drop names that carry
+    # whitespace/control chars (the model captured a description) or that
+    # are absurdly long — both are false-positive params that would
+    # otherwise ride along on an otherwise-valid endpoint.
+    private def plausible_param_name?(name : String) : Bool
+      LLM.clean_token?(name, MAX_PARAM_NAME_LENGTH)
+    end
+
     private def create_param_from_json(param : JSON::Any) : Param?
       case param.raw
       when String
         name = param.as_s.strip
-        return if name.empty?
+        return unless plausible_param_name?(name)
         Param.new(name, "", "query")
       when Hash
         name = safe_json_string(param, "name", "").strip
         name = safe_json_string(param, "key", "").strip if name.empty?
         name = safe_json_string(param, "param", "").strip if name.empty?
-        return if name.empty?
+        return unless plausible_param_name?(name)
 
         param_type = safe_json_string(param, "param_type", "").strip
         param_type = safe_json_string(param, "type", "").strip if param_type.empty?
@@ -759,7 +816,13 @@ module Analyzer::AI
     end
 
     private def call_llm_with_cache(kind : String, system_prompt : String, payload : String, format : String, adapter : LLM::Adapter) : String
-      disk_key = LLM::Cache.key(@provider, @model, kind, format, payload)
+      # Fold the system prompt into the cache key. The remote request
+      # is driven by both the system and user prompts, so keying on the
+      # payload alone would replay a stale response after a system-prompt
+      # change (e.g. tightened FP/FN guidance) until the user manually
+      # cleared the cache. The system prompt is only mixed into the key,
+      # never sent twice.
+      disk_key = LLM::Cache.key(@provider, @model, kind, format, "#{system_prompt}\n#{payload}")
 
       if cached = LLM::Cache.fetch(disk_key)
         return cached
