@@ -97,10 +97,31 @@ module Analyzer::Java
       servlet_methods
     end
 
-    private def extract_params(content : String) : Array(Param)
+    # Container- and framework-managed request attributes. These are
+    # populated by the servlet engine, filters or the MVC layer — never
+    # by user input — so `request.getAttribute("javax.servlet....")`
+    # must not be reported as a request parameter.
+    INTERNAL_ATTRIBUTE_PREFIXES = [
+      "javax.servlet.", "jakarta.servlet.",
+      "javax.faces.", "jakarta.faces.",
+      "org.springframework.", "org.apache.",
+      "org.eclipse.jetty.", "org.glassfish.",
+      "com.sun.", "weblogic.", "io.undertow.",
+    ]
+
+    def internal_servlet_attribute?(name : String) : Bool
+      INTERNAL_ATTRIBUTE_PREFIXES.any? { |prefix| name.starts_with?(prefix) }
+    end
+
+    def extract_params(content : String) : Array(Param)
       params = [] of Param
 
-      content.scan(/request\s*\.\s*get(?:Parameter|ParameterValues|Attribute)\s*\(\s*["']([^"']+)["']\s*\)/) do |match|
+      content.scan(/request\s*\.\s*get(?:Parameter|ParameterValues)\s*\(\s*["']([^"']+)["']\s*\)/) do |match|
+        add_param(params, match[1], "query")
+      end
+
+      content.scan(/request\s*\.\s*getAttribute\s*\(\s*["']([^"']+)["']\s*\)/) do |match|
+        next if internal_servlet_attribute?(match[1])
         add_param(params, match[1], "query")
       end
 
@@ -273,7 +294,12 @@ module Analyzer::Java
       request_receivers.each do |receiver|
         receiver_pattern = Regex.escape(receiver)
 
-        content.scan(/#{receiver_pattern}\s*\.\s*get(?:Parameter|ParameterValues|Attribute)\s*\(\s*["']([^"']+)["']\s*\)/) do |match|
+        content.scan(/#{receiver_pattern}\s*\.\s*get(?:Parameter|ParameterValues)\s*\(\s*["']([^"']+)["']\s*\)/) do |match|
+          add_param(params, match[1], request_param_type)
+        end
+
+        content.scan(/#{receiver_pattern}\s*\.\s*getAttribute\s*\(\s*["']([^"']+)["']\s*\)/) do |match|
+          next if internal_servlet_attribute?(match[1])
           add_param(params, match[1], request_param_type)
         end
 
