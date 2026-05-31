@@ -137,6 +137,60 @@ module Noir::CppCalleeExtractor
     1 + source.to_slice[0, index].count('\n'.ord.to_u8)
   end
 
+  # Returns a copy of `source` with every `//` and `/* */` comment replaced by
+  # spaces. String/char literals are preserved verbatim and newlines are kept,
+  # so byte offsets and line numbers stay identical to the original. This lets
+  # macro/route scanners run without matching commented-out (or documentation)
+  # code. ASCII-oriented, matching the rest of the offset handling here.
+  def strip_comments(source : String) : String
+    bytes = source.to_slice.dup
+    size = bytes.size
+    i = 0
+
+    while i < size
+      char = bytes[i].unsafe_chr
+
+      if char == '"' || char == '\''
+        quote = char
+        i += 1
+        while i < size
+          c = bytes[i].unsafe_chr
+          if c == '\\'
+            i += 2
+            next
+          elsif c == quote
+            break
+          end
+          i += 1
+        end
+        i += 1
+      elsif char == '/' && i + 1 < size && bytes[i + 1].unsafe_chr == '/'
+        while i < size && bytes[i].unsafe_chr != '\n'
+          bytes[i] = ' '.ord.to_u8
+          i += 1
+        end
+      elsif char == '/' && i + 1 < size && bytes[i + 1].unsafe_chr == '*'
+        bytes[i] = ' '.ord.to_u8
+        bytes[i + 1] = ' '.ord.to_u8
+        i += 2
+        while i < size
+          if bytes[i].unsafe_chr == '*' && i + 1 < size && bytes[i + 1].unsafe_chr == '/'
+            bytes[i] = ' '.ord.to_u8
+            bytes[i + 1] = ' '.ord.to_u8
+            i += 2
+            break
+          end
+          bytes[i] = ' '.ord.to_u8 unless bytes[i].unsafe_chr == '\n'
+          i += 1
+        end
+      else
+        i += 1
+      end
+    end
+
+    String.new(bytes)
+  end
+
   private def scan_line(line : String, file_path : String, line_number : Int32, entries : Array(Entry))
     candidates = [] of Tuple(Int32, String)
 
