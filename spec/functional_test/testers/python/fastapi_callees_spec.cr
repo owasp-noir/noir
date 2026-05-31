@@ -46,6 +46,15 @@ expected_endpoints = [
   Endpoint.new("/internal/reports", "GET").tap do |ep|
     ep.push_callee(Callee.new("db.fetch_report", db_path, 9))
   end,
+
+  # 6. GET /reports — multi-line typed signature (`) -> dict:` at
+  #    column 0). The handler body (and its callees) used to be
+  #    dropped because parse_code_block treated the signature closer
+  #    as the end of the block.
+  Endpoint.new("/reports", "GET").tap do |ep|
+    ep.push_callee(Callee.new("save_user", db_path, 1))
+    ep.push_callee(Callee.new("audit_log", db_path, 5))
+  end,
 ]
 
 FunctionalTester.new("fixtures/python/fastapi_callees/", {

@@ -151,5 +151,55 @@ describe "FileUploadTagger" do
       endpoint.tags.size.should eq(1)
       endpoint.tags[0].name.should eq("file_upload")
     end
+
+    it "tags PATCH endpoint with avatar body parameter" do
+      tagger = FileUploadTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/users/me/avatar", "PATCH", [
+        Param.new("avatar", "", "body"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("file_upload")
+    end
+
+    it "tags multipart content-type header values" do
+      tagger = FileUploadTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/profile", "POST", [
+        Param.new("Content-Type", "multipart/form-data; boundary=abc", "header"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("file_upload")
+    end
+
+    it "does not tag non-multipart content-type headers" do
+      tagger = FileUploadTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/profile", "POST", [
+        Param.new("Content-Type", "application/json", "header"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(0)
+    end
+
+    it "does not tag GET media endpoints as uploads" do
+      tagger = FileUploadTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/users/123/avatar", "GET", [
+        Param.new("avatar", "", "query"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(0)
+    end
   end
 end

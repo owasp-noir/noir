@@ -4,17 +4,36 @@ module LLM
   SHARED_RULES       = "Output only JSON. No explanations. method in [GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD]. param_type in [query, json, form, header, cookie, path]."
   AGENT_SHARED_RULES = "Output only JSON. No markdown fences. Use only the defined action names. Do not guess endpoints without reading code."
 
-  SYSTEM_FILTER  = "#{SHARED_RULES} Given a list of file paths, return JSON with property files: string[] of likely endpoints (no directories)."
-  SYSTEM_ANALYZE = "#{SHARED_RULES} Given source code, return JSON with endpoints: [{url, method, params:[{name, param_type, value}]}]."
-  SYSTEM_BUNDLE  = "#{SHARED_RULES} Given a bundle of files, include endpoints from ALL files; return the same JSON schema."
+  # Shared accuracy guidance injected into the endpoint-extraction
+  # prompts. Centralised so the classic, bundle, and agentic paths all
+  # apply the same FN/FP rules:
+  #   - Full-path resolution kills the biggest false-negative source
+  #     (sub-routes whose prefix lives in a parent router/controller).
+  #   - One-object-per-method stops verb collapsing.
+  #   - The "only code that actually serves it" rule kills the biggest
+  #     false-positive source (example/comment/test/outbound URLs).
+  ENDPOINT_GUIDANCE = <<-RULES
+    Accuracy rules:
+    - Report the FULL request path a client calls. Resolve and prepend every route prefix, router/blueprint group, controller base path, or mount point (e.g. group "/api/v1" + route "/users" => "/api/v1/users").
+    - Emit a SEPARATE endpoint object for each HTTP method a route handles; never merge methods.
+    - Capture every parameter with the correct param_type: query, json (request body), form, header, cookie, or path (a URL placeholder such as {id} or :id).
+    - Include only endpoints THIS code defines or serves. Ignore URLs that appear only in comments, documentation, string examples, tests, or outbound calls to third-party services.
+    - Do not invent, guess, or pad endpoints. If the code defines none, return an empty endpoints list.
+    RULES
+
+  SYSTEM_FILTER  = "#{SHARED_RULES} Given a list of file paths, return JSON with property files: string[] of files that may define or serve endpoints (no directories). Favor recall: when unsure, include the file."
+  SYSTEM_ANALYZE = "#{SHARED_RULES} Given source code, return JSON with endpoints: [{url, method, params:[{name, param_type, value}]}]. Report full request paths (resolve route prefixes), one object per HTTP method, and never fabricate endpoints."
+  SYSTEM_BUNDLE  = "#{SHARED_RULES} Given a bundle of files, include endpoints from ALL files; return the same JSON schema. Report full request paths (resolve route prefixes), one object per HTTP method, and never fabricate endpoints."
   SYSTEM_AGENT   = "#{AGENT_SHARED_RULES} You are OWASP Noir Advanced Endpoint Discovery Agent. Use iterative tool actions until enough evidence is collected, then finalize."
 
   FILTER_PROMPT = <<-PROMPT
-    Analyze the following list of file paths and identify which files are likely to represent endpoints, including API endpoints, web pages, or static resources.
+    Analyze the following list of file paths and identify which files are likely to define or serve endpoints, including API endpoints, web pages, route/controller definitions, or static resources.
 
     Guidelines:
     - Focus only on individual files.
     - Do not include directories.
+    - Favor recall over precision: when a file might define routes, controllers, handlers, or served content, include it. Missing a route-bearing file loses endpoints permanently.
+    - Exclude only files that clearly cannot serve endpoints (lock files, build artifacts, images, binaries).
     - Do not include any explanations, comments, or additional text.
     - Output only the JSON result.
     - Return the result strictly in valid JSON format according to the schema provided below.
@@ -48,7 +67,9 @@ module LLM
   ANALYZE_PROMPT = <<-PROMPT
     Analyze the provided source code to extract details about the endpoints and their parameters.
 
-    Guidelines:
+    #{ENDPOINT_GUIDANCE}
+
+    Output format:
     - The "method" field should strictly use one of these values: "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD".
     - The "param_type" must strictly use one of these values: "query", "json", "form", "header", "cookie", "path".
     - Do not include any explanations, comments, or additional text.
@@ -113,7 +134,10 @@ module LLM
   BUNDLE_ANALYZE_PROMPT = <<-PROMPT
     Analyze the following bundle of source code files to extract details about the endpoints and their parameters.
 
-    Guidelines:
+    #{ENDPOINT_GUIDANCE}
+    - A route prefix may be declared in one file and consumed in another within the same bundle; cross-reference files to resolve the full path.
+
+    Output format:
     - The "method" field should strictly use one of these values: "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD".
     - The "param_type" must strictly use one of these values: "query", "json", "form", "header", "cookie", "path".
     - Include endpoints from ALL files in the bundle.
@@ -139,6 +163,9 @@ module LLM
     - First inspect project structure with list_directory or grep.
     - Never assume endpoint existence from filenames only.
     - Read source files before finalizing.
+    - Resolve the FULL request path: follow route prefixes, router/blueprint groups, controller base paths, and mount points back to their declaration before recording a URL.
+    - Emit a separate endpoint for each HTTP method a route handles, and capture query/json/form/header/cookie/path parameters.
+    - Include only endpoints the code actually serves; ignore URLs found only in comments, docs, tests, or outbound third-party calls. Do not fabricate endpoints.
     - Use finalize only when confident enough.
     - Keep endpoint method to [GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD].
     - Use param_type in [query, json, form, header, cookie, path].
@@ -353,6 +380,7 @@ module LLM
       "grok-4.3"                  => 2000000,
       "grok-code-fast"            => 2000000,
       "grok-code-fast-1"          => 2000000,
+      "grok-build-0.1"            => 256000,
       "default"                   => 8000,
     },
     "anthropic" => {
@@ -375,6 +403,7 @@ module LLM
       "claude-opus-4-5"    => 200000,
       "claude-opus-4-6"    => 200000,
       "claude-opus-4-7"    => 200000,
+      "claude-opus-4-8"    => 1000000,
       "default"            => 100000,
     },
     "azure" => {
@@ -491,6 +520,39 @@ module LLM
     "default" => 4000,
   }
 
+  # Bundling budget for ACP agent providers ("acp:gemini",
+  # "acp:codex", "acp:claude", …). These proxy to large-context
+  # frontier models whose exact id we don't control, so they aren't
+  # keys in MODEL_TOKEN_LIMITS. Falling through to the generic 4000-
+  # token global default would shard a project into many tiny bundles
+  # and break the cross-file context the bundle analyzer relies on to
+  # resolve route prefixes (a false-negative source). 128k is a safe
+  # lower bound across the current ACP agents.
+  ACP_DEFAULT_MAX_TOKENS = 128_000
+
+  # Returns the ACP bundling budget for an `acp:<agent>` provider, or
+  # nil for non-ACP providers. Kept as a standalone pure function so it
+  # stays testable even though `get_max_tokens` is monkeypatched in the
+  # analyzer specs.
+  def self.acp_max_tokens?(provider : String) : Int32?
+    provider.downcase.starts_with?("acp:") ? ACP_DEFAULT_MAX_TOKENS : nil
+  end
+
+  # Shared shape check for LLM-supplied endpoint URLs and parameter
+  # names. A served path or an identifier never carries raw whitespace,
+  # control characters, or markdown backticks, and stays within a sane
+  # length bound — their presence means the model captured prose or a
+  # code fragment instead. Both the AI analyzer (identification) and
+  # the LLM optimizer (correction) call this so a hallucinated value
+  # can't ride through either phase. Token-specific rules (placeholder
+  # words for URLs) stay at the call site.
+  def self.clean_token?(value : String, max_length : Int32) : Bool
+    return false if value.empty?
+    return false if value.size > max_length
+    return false if value.includes?('`')
+    !value.each_char.any? { |c| c.ascii_whitespace? || c.control? }
+  end
+
   # Estimate the number of tokens in a string
   # This is a rough estimate using 1 token ≈ 4 characters for English text
   def self.estimate_tokens(text : String) : Int32
@@ -504,6 +566,13 @@ module LLM
   # Get the maximum token limit for a given provider and model
   def self.get_max_tokens(provider : String, model : String) : Int32
     provider = provider.downcase
+
+    # ACP agent providers don't appear in MODEL_TOKEN_LIMITS; give them
+    # a generous, model-agnostic bundling budget instead of the tiny
+    # global default.
+    if acp = acp_max_tokens?(provider)
+      return acp
+    end
 
     # Extract just the provider name if URL was provided
     if provider.includes?("://") || provider.includes?(".")

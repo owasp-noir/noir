@@ -3,7 +3,7 @@ require "../../models/endpoint"
 
 class HuntParamTagger < Tagger
   PATH_ALLOWED_TAGS     = Set{"idor", "file-inclusion"}
-  BODY_LIKE_PARAM_TYPES = Set{"json", "form"}
+  BODY_LIKE_PARAM_TYPES = Set{"json", "form", "body"}
 
   TAG_DEFINITIONS = {
     "ssti" => {
@@ -61,11 +61,14 @@ class HuntParamTagger < Tagger
     return false unless tag_name == "idor"
     return false unless BODY_LIKE_PARAM_TYPES.includes?(param.param_type)
 
-    param.name == "id"
+    param.name.downcase == "id"
   end
 
   private def tag_matches_param_name?(tag_name : String, words : Array(String), param : Param) : Bool
-    return true if words.includes?(param.name)
+    # Word lists are lowercase; param names in the wild are frequently
+    # cased (ID, URL, userId). Normalize so `--use-taggers hunt` doesn't
+    # silently miss case variants the way other taggers don't.
+    return true if words.includes?(param.name.downcase)
     return false unless tag_name == "idor"
     return false unless param.param_type == "path"
 

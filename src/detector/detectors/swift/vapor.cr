@@ -6,14 +6,16 @@ module Detector::Swift
       # Check if this is a Package.swift file
       return false unless filename.includes?("Package.swift")
 
-      # Look for vapor package dependency with more specific pattern
-      # Matches patterns like: .package(url: "https://github.com/vapor/vapor.git", ...)
-      check = file_contents.includes?("dependencies")
-      check = check && (file_contents.includes?("vapor/vapor") ||
-                        (file_contents.includes?("vapor") &&
-                         file_contents.includes?(".package(")))
+      # Require the Vapor framework itself, not just any package from the
+      # `vapor/*` org. Hummingbird apps routinely pull `vapor/fluent-kit`,
+      # `vapor/fluent-sqlite-driver`, `vapor/jwt-kit`, etc. — matching a
+      # bare "vapor" substring there falsely tagged those projects as Vapor
+      # and produced phantom endpoints from the Vapor analyzer.
+      return false unless file_contents.includes?("dependencies")
 
-      check
+      file_contents.includes?("vapor/vapor") ||
+        file_contents.includes?(%(package: "vapor")) ||
+        file_contents.includes?(%(name: "Vapor"))
     end
 
     def applicable?(filename : String) : Bool

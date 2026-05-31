@@ -40,6 +40,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"elixir_plug", Elixir::Plug},
     {"fs_giraffe", Fsharp::Giraffe},
     {"perl_catalyst", Perl::Catalyst},
+    {"perl_dancer2", Perl::Dancer2},
     {"perl_mojolicious", Perl::Mojolicious},
     {"go_beego", Go::Beego},
     {"go_echo", Go::Echo},

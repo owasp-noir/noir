@@ -1,34 +1,32 @@
 require "../../../models/analyzer"
+require "uri"
 
 module Analyzer::Specification
   class Oas3 < Analyzer
     HTTP_METHODS = {"get", "post", "put", "delete", "patch", "options", "head", "trace"}
 
-    def get_base_path(servers)
-      base_path = @url
-      servers.as_a.each do |server_obj|
-        if server_obj["url"].to_s.starts_with?("http")
-          user_uri = URI.parse(@url)
-          source_uri = URI.parse(server_obj["url"].to_s)
-          if user_uri.host == source_uri.host
-            base_path = @url + source_uri.path
-            break
-          end
-        end
-      end
+    def get_base_path(servers : JSON::Any)
+      server_base_path(servers.as_a.map { |server_obj| server_url_json(server_obj) })
+    end
 
-      base_path
+    def get_base_path(servers : YAML::Any)
+      server_base_path(servers.as_a.map { |server_obj| server_url_yaml(server_obj) })
     end
 
     # Maps an OAS3 request-body content type to a Noir param type.
     private def param_type_for_content(content_type : String) : String?
-      case content_type
-      when .starts_with?("application/json")
+      media_type = content_type.split(';', 2).first.strip.downcase
+      case media_type
+      when "application/json"
         "json"
       when "application/x-www-form-urlencoded"
         "form"
       when .starts_with?("multipart/form-data")
         "form"
+      else
+        if media_type.ends_with?("+json")
+          "json"
+        end
       end
     end
 
@@ -57,6 +55,69 @@ module Analyzer::Specification
       node
     end
 
+    private def add_param(params : Array(Param), name : String, param_type : String)
+      return if name.empty?
+      param = Param.new(name, "", param_type)
+      params << param unless params.includes?(param)
+    end
+
+    private def server_url_json(server_obj : JSON::Any) : String
+      url = server_obj["url"]?.try(&.as_s?) || ""
+      if variables = server_obj["variables"]?.try(&.as_h?)
+        variables.each do |name, variable_obj|
+          default = variable_obj["default"]?.try(&.as_s?)
+          url = url.gsub("{#{name}}", default) if default
+        end
+      end
+      url
+    end
+
+    private def server_url_yaml(server_obj : YAML::Any) : String
+      url = server_obj[YAML::Any.new("url")]?.try(&.as_s?) || ""
+      if variables_node = server_obj[YAML::Any.new("variables")]?
+        if variables = variables_node.as_h?
+          variables.each do |name, variable_obj|
+            default = variable_obj[YAML::Any.new("default")]?.try(&.as_s?)
+            url = url.gsub("{#{name}}", default) if default
+          end
+        end
+      end
+      url
+    end
+
+    private def server_base_path(server_urls : Array(String)) : String
+      server_urls.each do |server_url|
+        next if server_url.empty?
+
+        if server_url.starts_with?("http")
+          next if @url.empty?
+          user_uri = URI.parse(@url)
+          source_uri = URI.parse(server_url)
+          return combine_base_url(source_uri.path) if user_uri.host == source_uri.host
+        elsif server_url.starts_with?("/")
+          return combine_base_url(server_url)
+        else
+          return combine_base_url("/#{server_url}")
+        end
+      rescue
+        next
+      end
+
+      @url
+    end
+
+    private def combine_base_url(path : String) : String
+      return @url if path.empty?
+      return path if @url.empty?
+      if @url.ends_with?("/") && path.starts_with?("/")
+        @url + path[1..]
+      elsif !@url.ends_with?("/") && !path.starts_with?("/")
+        "#{@url}/#{path}"
+      else
+        @url + path
+      end
+    end
+
     # Walks an OAS3 schema, emitting one Param per top-level property.
     # Follows `$ref` and flattens `allOf` so referenced/composed schemas
     # surface their members.
@@ -70,14 +131,26 @@ module Analyzer::Specification
         return
       end
 
+      if items = schema["items"]?
+        collect_schema_props_json(root, items, param_type, params, seen)
+      end
+
       if props = schema["properties"]?.try(&.as_h?)
         props.each do |name, _|
-          params << Param.new(name.to_s, "", param_type)
+          add_param(params, name.to_s, param_type)
         end
       end
 
       if all_of = schema["allOf"]?.try(&.as_a?)
         all_of.each { |s| collect_schema_props_json(root, s, param_type, params, seen) }
+      end
+
+      if one_of = schema["oneOf"]?.try(&.as_a?)
+        one_of.each { |s| collect_schema_props_json(root, s, param_type, params, seen) }
+      end
+
+      if any_of = schema["anyOf"]?.try(&.as_a?)
+        any_of.each { |s| collect_schema_props_json(root, s, param_type, params, seen) }
       end
     end
 
@@ -93,10 +166,14 @@ module Analyzer::Specification
         return
       end
 
+      if items_node = schema[YAML::Any.new("items")]?
+        collect_schema_props_yaml(root, items_node, param_type, params, seen)
+      end
+
       if props_node = schema[YAML::Any.new("properties")]?
         if props = props_node.as_h?
           props.each do |name, _|
-            params << Param.new(name.to_s, "", param_type)
+            add_param(params, name.to_s, param_type)
           end
         end
       end
@@ -104,6 +181,18 @@ module Analyzer::Specification
       if all_of_node = schema[YAML::Any.new("allOf")]?
         if all_of = all_of_node.as_a?
           all_of.each { |s| collect_schema_props_yaml(root, s, param_type, params, seen) }
+        end
+      end
+
+      if one_of_node = schema[YAML::Any.new("oneOf")]?
+        if one_of = one_of_node.as_a?
+          one_of.each { |s| collect_schema_props_yaml(root, s, param_type, params, seen) }
+        end
+      end
+
+      if any_of_node = schema[YAML::Any.new("anyOf")]?
+        if any_of = any_of_node.as_a?
+          any_of.each { |s| collect_schema_props_yaml(root, s, param_type, params, seen) }
         end
       end
     end
@@ -121,11 +210,11 @@ module Analyzer::Specification
       return if name.empty?
       case location
       when "query"
-        params << Param.new(name, "", "query")
+        add_param(params, name, "query")
       when "header"
-        params << Param.new(name, "", "header")
+        add_param(params, name, "header")
       when "cookie"
-        params << Param.new(name, "", "cookie")
+        add_param(params, name, "cookie")
       end
     end
 
@@ -144,12 +233,31 @@ module Analyzer::Specification
       return if name.empty?
       case location
       when "query"
-        params << Param.new(name, "", "query")
+        add_param(params, name, "query")
       when "header"
-        params << Param.new(name, "", "header")
+        add_param(params, name, "header")
       when "cookie"
-        params << Param.new(name, "", "cookie")
+        add_param(params, name, "cookie")
       end
+    end
+
+    private def resolve_path_item_json(root : JSON::Any, path_obj : JSON::Any, seen : Set(String) = Set(String).new) : JSON::Any
+      return path_obj unless path_obj_h = path_obj.as_h?
+      return path_obj unless ref = path_obj_h["$ref"]?.try(&.as_s?)
+      return path_obj if seen.includes?(ref)
+      seen << ref
+      resolved = resolve_ref_json(root, ref)
+      resolved ? resolve_path_item_json(root, resolved, seen) : path_obj
+    end
+
+    private def resolve_path_item_yaml(root : YAML::Any, path_obj : YAML::Any, seen : Set(String) = Set(String).new) : YAML::Any
+      return path_obj unless path_obj_h = path_obj.as_h?
+      return path_obj unless ref_node = path_obj_h[YAML::Any.new("$ref")]?
+      return path_obj unless ref = ref_node.as_s?
+      return path_obj if seen.includes?(ref)
+      seen << ref
+      resolved = resolve_ref_yaml(root, ref)
+      resolved ? resolve_path_item_yaml(root, resolved, seen) : path_obj
     end
 
     private def extract_request_body_json(root : JSON::Any, request_body : JSON::Any, params : Array(Param))
@@ -239,8 +347,9 @@ module Analyzer::Specification
     private def process_paths_json(json_obj : JSON::Any, base_path : String, details : Details, source : String)
       paths = json_obj["paths"].as_h
       paths.each do |path, path_obj|
+        path_item = resolve_path_item_json(json_obj, path_obj)
         path_level_params = [] of Param
-        if path_obj_h = path_obj.as_h?
+        if path_obj_h = path_item.as_h?
           if shared = path_obj_h["parameters"]?.try(&.as_a?)
             shared.each do |param_obj|
               extract_param_json(json_obj, param_obj, path_level_params)
@@ -248,7 +357,7 @@ module Analyzer::Specification
           end
         end
 
-        path_obj.as_h.each do |method, method_obj|
+        path_item.as_h.each do |method, method_obj|
           next unless HTTP_METHODS.includes?(method.to_s.downcase)
           params = path_level_params.dup
 
@@ -287,8 +396,9 @@ module Analyzer::Specification
     private def process_paths_yaml(yaml_obj : YAML::Any, base_path : String, details : Details, source : String)
       paths = yaml_obj["paths"].as_h
       paths.each do |path, path_obj|
+        path_item = resolve_path_item_yaml(yaml_obj, path_obj)
         path_level_params = [] of Param
-        if path_obj_h = path_obj.as_h?
+        if path_obj_h = path_item.as_h?
           if shared_node = path_obj_h[YAML::Any.new("parameters")]?
             if shared = shared_node.as_a?
               shared.each do |param_obj|
@@ -298,7 +408,7 @@ module Analyzer::Specification
           end
         end
 
-        path_obj.as_h.each do |method, method_obj|
+        path_item.as_h.each do |method, method_obj|
           next unless HTTP_METHODS.includes?(method.to_s.downcase)
           params = path_level_params.dup
 

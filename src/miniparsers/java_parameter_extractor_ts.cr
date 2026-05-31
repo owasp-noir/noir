@@ -30,6 +30,15 @@ module Noir
     # `request.getParameter("x")` / `request.getHeader("x")` calls.
     SERVLET_REQUEST_TYPES = Set{"HttpServletRequest"}
 
+    # Lombok class-level annotations that synthesise setters (or an
+    # all-args constructor) for every instance field at compile time.
+    # The generated members never appear in source, so a DTO annotated
+    # with one of these binds its fields from a request body even though
+    # no explicit `setX(...)` method is visible. Treat every non-static
+    # field on such a class as settable — otherwise the extremely common
+    # `@Data`-annotated Spring DTO yields zero body parameters.
+    LOMBOK_FIELD_BINDING_ANNOTATIONS = Set{"Data", "Setter", "Value"}
+
     # Spring `HttpHeaders` constant → canonical header name. Matches
     # the table the legacy analyzer maintained; necessary because
     # tree-sitter reports the constant as a `field_access` node
@@ -87,7 +96,8 @@ module Noir
         class_name = Noir::TreeSitter.node_text(name_node, source)
         body = Noir::TreeSitter.field(decl, "body")
         next unless body
-        fields = collect_class_fields(body, source)
+        lombok_setters = lombok_field_binding?(decl, source)
+        fields = collect_class_fields(body, source, lombok_setters)
         results[class_name] = fields unless fields.empty?
       end
       results
@@ -370,7 +380,9 @@ module Noir
 
     # ---- class field introspection ------------------------------------
 
-    private def collect_class_fields(body : LibTreeSitter::TSNode, source : String) : Array(FieldInfo)
+    private def collect_class_fields(body : LibTreeSitter::TSNode,
+                                     source : String,
+                                     lombok_setters : Bool = false) : Array(FieldInfo)
       # First pass: collect field declarations.
       declared = [] of Tuple(String, String, String) # name, access, init_value
       setter_targets = Set(String).new
@@ -378,6 +390,12 @@ module Noir
       Noir::TreeSitter.each_named_child(body) do |member|
         case Noir::TreeSitter.node_type(member)
         when "field_declaration"
+          # Static fields are class constants (`serialVersionUID`,
+          # `public static final` config keys), never instance state a
+          # request body populates — skip them. This also keeps Lombok
+          # `@Data` from promoting constants to params, since Lombok
+          # never synthesises accessors for static fields.
+          next if field_static?(member, source)
           access = modifier_access(member, source)
           type_node = Noir::TreeSitter.field(member, "type")
           _ = type_node
@@ -403,8 +421,32 @@ module Noir
       end
 
       declared.map do |name, access, init|
-        FieldInfo.new(name, access, setter_targets.includes?(name), init)
+        has_setter = lombok_setters || setter_targets.includes?(name)
+        FieldInfo.new(name, access, has_setter, init)
       end
+    end
+
+    # True when `decl` carries a Lombok class annotation that synthesises
+    # field accessors (`@Data` / `@Setter` / `@Value`). Such a class
+    # exposes every instance field to request-body binding even though no
+    # `setX(...)` method is written out in source.
+    private def lombok_field_binding?(decl : LibTreeSitter::TSNode, source : String) : Bool
+      each_annotation_on(decl, source) do |name|
+        return true if LOMBOK_FIELD_BINDING_ANNOTATIONS.includes?(name)
+      end
+      false
+    end
+
+    # True when a `field_declaration`'s modifier list includes `static`.
+    private def field_static?(decl : LibTreeSitter::TSNode, source : String) : Bool
+      mods = find_modifiers(decl)
+      return false unless mods
+      count = LibTreeSitter.ts_node_child_count(mods)
+      count.times do |i|
+        child = LibTreeSitter.ts_node_child(mods, i.to_u32)
+        return true if Noir::TreeSitter.node_text(child, source) == "static"
+      end
+      false
     end
 
     # Return the first access modifier keyword in `decl`'s modifiers,

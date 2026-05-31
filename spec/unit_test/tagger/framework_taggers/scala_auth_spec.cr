@@ -1,3 +1,4 @@
+require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
@@ -113,6 +114,33 @@ describe "ScalaAuthTagger" do
     tagger.perform([endpoint])
 
     endpoint.tags.empty?.should be_true
+  end
+
+  it "detects Play Silhouette SecuredAction (regression for phantom-segment regex)" do
+    noir_options = create_test_options
+    tmpdir = File.tempname("scala_silhouette")
+    Dir.mkdir_p(tmpdir)
+    ctrl = File.join(tmpdir, "Controller.scala")
+    File.write(ctrl, [
+      "class HomeController @Inject() (silhouette: Silhouette[DefaultEnv]) {",
+      "  def index = silhouette.SecuredAction { implicit request =>",
+      "    Ok(\"secret\")",
+      "  }",
+      "}",
+    ].join("\n"))
+    noir_options["base"] = YAML::Any.new(tmpdir)
+
+    details = Details.new(PathInfo.new(ctrl, 2))
+    details.technology = "scala_play"
+    endpoint = Endpoint.new("/", "GET", [] of Param, details)
+
+    tagger = ScalaAuthTagger.new(noir_options)
+    tagger.perform([endpoint])
+
+    endpoint.tags.empty?.should be_false
+    endpoint.tags[0].description.should contain("Silhouette")
+
+    FileUtils.rm_rf(tmpdir)
   end
 
   it "returns correct target_techs" do

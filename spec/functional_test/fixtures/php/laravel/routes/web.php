@@ -20,6 +20,8 @@ Route::get('/', function () {
 });
 
 Route::get('/dashboard', [UserController::class, 'dashboard'])->name('dashboard');
+Route::view('/terms', 'terms');
+Route::redirect('/legacy-dashboard', '/dashboard');
 
 Route::get('/users', [UserController::class, 'index']);
 Route::post('/users', [UserController::class, 'store']);
@@ -27,7 +29,14 @@ Route::get('/users/{id}', [UserController::class, 'show']);
 Route::put('/users/{id}', [UserController::class, 'update']);
 Route::delete('/users/{id}', [UserController::class, 'destroy']);
 
+// Route::resource('phantoms', ProductController::class)
 Route::resource('products', ProductController::class);
+Route::resource('photos', ProductController::class)
+    ->only(['index', 'show'])
+    ->parameters(['photos' => 'photo']);
+Route::apiResource('admin/widgets', ProductController::class)
+    ->except(['destroy'])
+    ->parameters(['widgets' => 'widget']);
 
 Route::group(['prefix' => 'admin'], function () {
     Route::get('/settings', function () {

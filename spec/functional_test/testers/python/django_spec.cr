@@ -45,6 +45,12 @@ expected_endpoints = [
     Param.new("state", "", "form"),
     Param.new("media_id", "", "path"),
   ]),
+  Endpoint.new("/module-include/keyword-route/", "GET", [
+    Param.new("value", "", "query"),
+  ]),
+  Endpoint.new("/module-include/inline/nested/", "GET", [
+    Param.new("nested", "", "query"),
+  ]),
   Endpoint.new("/direct-articles/", "GET", [
     Param.new("status", "", "query"),
   ]),
@@ -86,7 +92,7 @@ expected_endpoints = [
   Endpoint.new("/combined/", "GET", [
     Param.new("owner", "", "query"),
   ]),
-  Endpoint.new("/extended/", "GET", [Param.new("token", "", "form")]),
+  Endpoint.new("/extended/", "GET"),
   Endpoint.new("/extended/", "POST", [Param.new("token", "", "form")]),
   Endpoint.new("/", "GET"),
   Endpoint.new("/page/<int:page>/", "GET", [
@@ -127,7 +133,7 @@ expected_endpoints = [
   Endpoint.new("/upload", "GET", [Param.new("sign", "", "query"), Param.new("sign", "", "query"), Param.new("X_FORWARDED_FOR", "", "header"), Param.new("X_REAL_IP", "", "header")]),
   Endpoint.new("/upload", "POST", [Param.new("sign", "", "query"), Param.new("X_FORWARDED_FOR", "", "header"), Param.new("X_REAL_IP", "", "header")]),
   Endpoint.new("/not_found", "GET", [Param.new("app_type", "", "cookie")]),
-  Endpoint.new("/test", "GET", [Param.new("test_param", "", "form")]),
+  Endpoint.new("/test", "GET"),
   Endpoint.new("/test", "POST", [Param.new("test_param", "", "form")]),
   Endpoint.new("/test", "PUT", [Param.new("test_param", "", "form")]),
   Endpoint.new("/test", "PATCH", [Param.new("test_param", "", "form")]),

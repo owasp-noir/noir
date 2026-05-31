@@ -27,6 +27,7 @@ describe "Output Builders Edge Cases" do
 
     # Should properly escape single quotes for shell
     output.should contain("curl -i -X 'POST'")
+    output.should contain("--data-raw '{\"message\":\"Hello '\\''World'\\''\"")
     output.should contain("Content-Type: application/json")
   end
 
@@ -49,9 +50,36 @@ describe "Output Builders Edge Cases" do
     builder.print([endpoint])
     output = builder.io.to_s
 
-    # Should use HTTPie's JSON syntax
+    # Should use HTTPie's JSON string syntax and shell-escape values
     output.should contain("http 'POST'")
-    output.should contain(":=")
+    output.should contain("'message=Hello '\\''World'\\'''")
+    output.should_not contain("message:=")
+  end
+
+  it "prints httpie form requests as form data" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHttpie.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/api/test", "POST")
+    endpoint.push_param(Param.new("display_name", "Jane Doe", "form"))
+    endpoint.push_param(Param.new("note", "rock and roll", "form"))
+    endpoint.push_param(Param.new("token", "a+b", "form"))
+
+    builder.print([endpoint])
+    output = builder.io.to_s
+
+    output.should contain("http --form 'POST' '/api/test'")
+    output.should contain("'display_name=Jane Doe'")
+    output.should contain("'note=rock and roll'")
+    output.should contain("'token=a+b'")
+    output.should_not contain("'token=a b'")
   end
 
   it "handles special characters in powershell" do

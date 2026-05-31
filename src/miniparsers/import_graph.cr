@@ -285,6 +285,14 @@ module Noir::ImportGraph::Python
           imports = content[(offset + round_bracket_index + 1)..(index - 1)].strip
         end
 
+        # Drop inline comments (`from x import y  # noqa: F401`,
+        # `from . import (\n a,  # used by Z\n b)`). Left in place the
+        # `#…` text became part of the last imported name/alias and
+        # corrupted resolution. Stripping per-line (up to the newline)
+        # keeps the multi-line parenthesised form intact; import
+        # statements never carry a legitimate `#` outside a comment.
+        imports = imports.gsub(/#[^\n]*/, "")
+
         # `..` resolves to file's parent dir; `.` to file's dir.
         if from_import.starts_with?("..")
           package_path = File.join(file_base_path, "..")
@@ -331,9 +339,24 @@ module Noir::ImportGraph::Python
 
     py_path = ""
     is_positive_travel = false
-    dotted_as_names_split = dotted_as_names.split(".")
+    alias_name = nil
+    import_path = dotted_as_names.strip
+    if import_path.includes?(" as ")
+      import_path, alias_name = import_path.split(/\s+as\s+/, 2)
+      import_path = import_path.strip
+      alias_name = alias_name.strip
+    end
 
-    dotted_as_names_split.each_with_index do |names, index|
+    dotted_as_names_split = import_path.split(".")
+
+    dotted_as_names_split.each_with_index do |segment, index|
+      # The final segment can carry an `… as alias` suffix
+      # (`from pkg import module as alias`). Strip it before building
+      # the filesystem path, otherwise `pkg/module as alias.py` never
+      # matches and the import silently resolves to an empty path —
+      # which broke every `from .articles import api as articles`
+      # style module-alias re-export (seen on fastapi-realworld).
+      names = segment.includes?(" as ") ? segment.split(" as ", 2)[0].strip : segment
       travel_package_path = File.join(package_path, names)
 
       py_guess = "#{travel_package_path}.py"
@@ -354,7 +377,6 @@ module Noir::ImportGraph::Python
         import = name.strip
         next if import.empty?
 
-        alias_name = nil
         if import.includes?(" as ")
           import, alias_name = import.split(" as ")
         end

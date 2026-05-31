@@ -17,6 +17,37 @@ describe LLM do
     LLM::ANALYZE_PROMPT.should contain("Input Code:")
   end
 
+  it "ANALYZE_PROMPT carries FN/FP accuracy guidance" do
+    # Full-path resolution is the biggest false-negative lever; the
+    # "only code that serves it" rule is the biggest false-positive
+    # lever. Assert both survive future prompt edits.
+    LLM::ANALYZE_PROMPT.should contain("FULL request path")
+    LLM::ANALYZE_PROMPT.should contain("SEPARATE endpoint object")
+    LLM::ANALYZE_PROMPT.should contain("Do not invent")
+  end
+
+  it "BUNDLE_ANALYZE_PROMPT carries accuracy guidance and cross-file hint" do
+    LLM::BUNDLE_ANALYZE_PROMPT.should contain("FULL request path")
+    LLM::BUNDLE_ANALYZE_PROMPT.should contain("cross-reference files")
+    LLM::BUNDLE_ANALYZE_PROMPT.should contain("Bundle of files:")
+  end
+
+  it "FILTER_PROMPT biases toward recall" do
+    LLM::FILTER_PROMPT.should contain("Favor recall")
+  end
+
+  it "AGENT_PROMPT instructs full-path resolution and no fabrication" do
+    LLM::AGENT_PROMPT.should contain("FULL request path")
+    LLM::AGENT_PROMPT.should contain("Do not fabricate")
+  end
+
+  it "system prompts steer full-path, per-method, no-fabrication" do
+    LLM::SYSTEM_ANALYZE.should contain("full request paths")
+    LLM::SYSTEM_ANALYZE.should contain("never fabricate")
+    LLM::SYSTEM_BUNDLE.should contain("full request paths")
+    LLM::SYSTEM_FILTER.should contain("Favor recall")
+  end
+
   it "has an ANALYZE_FORMAT constant" do
     LLM::ANALYZE_FORMAT.should_not be_nil
     LLM::ANALYZE_FORMAT.should contain("\"name\": \"analyze_endpoints\"")
@@ -109,6 +140,10 @@ describe LLM do
         xai["grok-4.1-fast"].should eq(2000000)
       end
 
+      it "includes grok-build-0.1 with 256000 tokens" do
+        xai["grok-build-0.1"].should eq(256000)
+      end
+
       it "has default of 8000" do
         xai["default"].should eq(8000)
       end
@@ -147,6 +182,10 @@ describe LLM do
 
       it "includes claude-opus-4-7 with 200000 tokens" do
         anthropic["claude-opus-4-7"].should eq(200000)
+      end
+
+      it "includes claude-opus-4-8 with 1000000 tokens" do
+        anthropic["claude-opus-4-8"].should eq(1000000)
       end
 
       it "has default of 100000" do
@@ -358,6 +397,38 @@ describe LLM do
 
     it "has a top-level default for unknown provider fallback" do
       LLM::MODEL_TOKEN_LIMITS["default"].as(Int32).should eq(4000)
+    end
+  end
+
+  describe "acp_max_tokens?" do
+    it "gives ACP agent providers a generous budget, not the 4000 default" do
+      LLM.acp_max_tokens?("acp:gemini").should eq(LLM::ACP_DEFAULT_MAX_TOKENS)
+      LLM.acp_max_tokens?("acp:codex").should eq(LLM::ACP_DEFAULT_MAX_TOKENS)
+      LLM.acp_max_tokens?("ACP:Claude").should eq(LLM::ACP_DEFAULT_MAX_TOKENS)
+      LLM::ACP_DEFAULT_MAX_TOKENS.should be > 4000
+    end
+
+    it "returns nil for non-ACP providers" do
+      LLM.acp_max_tokens?("openai").should be_nil
+      LLM.acp_max_tokens?("ollama").should be_nil
+      LLM.acp_max_tokens?("https://api.openai.com").should be_nil
+    end
+  end
+
+  describe "clean_token?" do
+    it "accepts identifier-like and path-like tokens" do
+      LLM.clean_token?("/api/v1/users", 2048).should be_true
+      LLM.clean_token?("user_id", 128).should be_true
+      LLM.clean_token?("X-Api-Key", 128).should be_true
+    end
+
+    it "rejects empty, whitespace, control, backtick, and oversized tokens" do
+      LLM.clean_token?("", 128).should be_false
+      LLM.clean_token?("a b", 128).should be_false
+      LLM.clean_token?("a\tb", 128).should be_false
+      LLM.clean_token?("a\nb", 128).should be_false
+      LLM.clean_token?("a`b", 128).should be_false
+      LLM.clean_token?("x" * 200, 128).should be_false
     end
   end
 end

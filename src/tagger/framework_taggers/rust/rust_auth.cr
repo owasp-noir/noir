@@ -70,7 +70,7 @@ class RustAuthTagger < FrameworkTagger
   private def pre_scan_middleware_scopes
     @middleware_scopes.clear
 
-    files = get_files_by_prefix_and_extension(@base_path, ".rs")
+    files = collect_files_by_extension(".rs")
     files.each do |file|
       content = read_file(file)
       next if content.nil?

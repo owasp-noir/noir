@@ -87,6 +87,62 @@ describe Noir::TreeSitterKotlinKtorRouteExtractor do
     ])
   end
 
+  it "resolves constant and templated route paths" do
+    source = <<-KT
+      package com.example
+
+      object Paths {
+          const val API = "/api"
+      }
+
+      const val USERS = "/users"
+
+      routing {
+          route(Paths.API + "/v1") {
+              get(USERS) { }
+              get("/tenants/$tenantId/items") { }
+          }
+      }
+      KT
+
+    constants = Noir::TreeSitterKotlinKtorRouteExtractor.extract_string_constants(source)
+    routes = Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(source, constants)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/api/v1/users"},
+      {"GET", "/api/v1/tenants/{tenantId}/items"},
+    ])
+  end
+
+  it "does not resolve route paths from project-wide bare constants" do
+    source = <<-KT
+      routing {
+          get(USERS) { }
+          route(API) {
+              get("/nested") { }
+          }
+      }
+      KT
+
+    routes = Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(source, {
+      "USERS" => "/wrong-users",
+      "API"   => "/wrong-api",
+    })
+    routes.should be_empty
+  end
+
+  it "does not drop qualifiers when resolving route constants" do
+    source = <<-KT
+      routing {
+          get(Other.API) { }
+      }
+      KT
+
+    routes = Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(source, {
+      "API" => "/wrong",
+    })
+    routes.should be_empty
+  end
+
   it "treats install(RoutingRoot) as a routing entry point" do
     source = <<-KT
       fun Application.module() {
@@ -181,6 +237,30 @@ describe Noir::TreeSitterKotlinKtorRouteExtractor do
 
       route = Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(source).first
       route.header_params.should eq(["X-API-Key", "Authorization"])
+    end
+
+    it "captures common query, header, body, and form access variants" do
+      source = <<-KT
+        routing {
+            post("/profile") {
+                val query = call.request.queryParameters["preview"]
+                val page = call.request.queryParameters.get("page")
+                val id = call.parameters.get("id")
+                val apiKey = call.request.headers.get("X-API-Key")
+                val auth = call.request.header("Authorization")
+                val form = call.receiveParameters()
+                val email = form["email"]
+                val phone = form.get("phone")
+                val body = call.receiveText()
+            }
+        }
+        KT
+
+      route = Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(source).first
+      route.has_body?.should be_true
+      route.query_params.should eq(["preview", "page", "id"])
+      route.header_params.should eq(["X-API-Key", "Authorization"])
+      route.form_params.should eq(["email", "phone"])
     end
 
     it "ignores params on sibling routes" do

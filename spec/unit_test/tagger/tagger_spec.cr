@@ -212,4 +212,118 @@ describe "Tagger" do
       end
     end
   end
+
+  it "pii_tagger" do
+    noir_options = create_test_options
+    expected_endpoints = [
+      Endpoint.new("/api/kyc", "POST", [
+        Param.new("ssn", "", "json"),
+      ]),
+    ]
+    NoirTaggers.run_tagger(expected_endpoints, noir_options, "pii")
+    expected_endpoints.each do |endpoint|
+      endpoint.tags.empty?.should be_false
+      endpoint.tags.each do |tag|
+        tag.name.should eq("pii")
+      end
+    end
+  end
+
+  it "admin_tagger" do
+    noir_options = create_test_options
+    expected_endpoints = [
+      Endpoint.new("/admin/users", "GET"),
+    ]
+    NoirTaggers.run_tagger(expected_endpoints, noir_options, "admin")
+    expected_endpoints.each do |endpoint|
+      endpoint.tags.empty?.should be_false
+      endpoint.tags.each do |tag|
+        tag.name.should eq("admin")
+      end
+    end
+  end
+
+  it "payment_tagger" do
+    noir_options = create_test_options
+    expected_endpoints = [
+      Endpoint.new("/api/checkout", "POST"),
+    ]
+    NoirTaggers.run_tagger(expected_endpoints, noir_options, "payment")
+    expected_endpoints.each do |endpoint|
+      endpoint.tags.empty?.should be_false
+      endpoint.tags.each do |tag|
+        tag.name.should eq("payment")
+      end
+    end
+  end
+
+  it "webhook_tagger" do
+    noir_options = create_test_options
+    expected_endpoints = [
+      Endpoint.new("/webhooks/stripe", "POST"),
+    ]
+    NoirTaggers.run_tagger(expected_endpoints, noir_options, "webhook")
+    expected_endpoints.each do |endpoint|
+      endpoint.tags.empty?.should be_false
+      endpoint.tags.each do |tag|
+        tag.name.should eq("webhook")
+      end
+    end
+  end
+
+  it "crypto_tagger" do
+    noir_options = create_test_options
+    expected_endpoints = [
+      Endpoint.new("/api/encrypt", "POST"),
+    ]
+    NoirTaggers.run_tagger(expected_endpoints, noir_options, "crypto")
+    expected_endpoints.each do |endpoint|
+      endpoint.tags.empty?.should be_false
+      endpoint.tags.each do |tag|
+        tag.name.should eq("crypto")
+      end
+    end
+  end
+
+  it "debug_tagger" do
+    noir_options = create_test_options
+    expected_endpoints = [
+      Endpoint.new("/actuator/env", "GET"),
+    ]
+    NoirTaggers.run_tagger(expected_endpoints, noir_options, "debug")
+    expected_endpoints.each do |endpoint|
+      endpoint.tags.empty?.should be_false
+      endpoint.tags.each do |tag|
+        tag.name.should eq("debug")
+      end
+    end
+  end
+
+  it "api_docs_tagger" do
+    noir_options = create_test_options
+    expected_endpoints = [
+      Endpoint.new("/swagger-ui.html", "GET"),
+    ]
+    NoirTaggers.run_tagger(expected_endpoints, noir_options, "api_docs")
+    expected_endpoints.each do |endpoint|
+      endpoint.tags.empty?.should be_false
+      endpoint.tags.each do |tag|
+        tag.name.should eq("api_docs")
+      end
+    end
+  end
+
+  it "account_recovery_tagger" do
+    noir_options = create_test_options
+    expected_endpoints = [
+      Endpoint.new("/auth/forgot-password", "POST"),
+    ]
+    NoirTaggers.run_tagger(expected_endpoints, noir_options, "account_recovery")
+    expected_endpoints.each do |endpoint|
+      endpoint.tags.empty?.should be_false
+      endpoint.tags.each do |tag|
+        tag.name.should eq("account_recovery")
+      end
+    end
+  end
 end

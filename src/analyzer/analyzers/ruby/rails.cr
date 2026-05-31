@@ -358,6 +358,11 @@ module Analyzer::Ruby
               ctrl_path = find_controller_file(framework_root, ctrl_name, stack)
               action_name = action
               action_params = params_for_action(ctrl_path, action, verb)
+            elsif inferred = infer_implicit_controller_action(path, rest, current_controller_scope(stack))
+              ctrl_name, action = inferred
+              ctrl_path = find_controller_file(framework_root, ctrl_name, stack)
+              action_name = action
+              action_params = params_for_action(ctrl_path, action, verb)
             elsif parent = parent_resources_frame(stack)
               if action = infer_action_from_path(path)
                 ctrl_path = parent.controller_path
@@ -393,6 +398,10 @@ module Analyzer::Ruby
             action_name = nil.as(String?)
             if ctrl_action
               ctrl_name, action = ctrl_action
+              ctrl_path = find_controller_file(framework_root, ctrl_name, stack)
+              action_name = action
+            elsif inferred = infer_implicit_controller_action(path, rest, current_controller_scope(stack))
+              ctrl_name, action = inferred
               ctrl_path = find_controller_file(framework_root, ctrl_name, stack)
               action_name = action
             end
@@ -819,6 +828,7 @@ module Analyzer::Ruby
           methods << "POST"
         when "update"
           methods << "PUT"
+          methods << "PATCH"
         when "destroy"
           methods << "DELETE"
         end
@@ -1169,6 +1179,51 @@ module Analyzer::Ruby
         end
       end
       nil
+    end
+
+    # Rails allows compact declarations such as `post "stories/preview"`
+    # which route to `StoriesController#preview`. These still need controller
+    # resolution so params/callees/AI context attach to the emitted endpoint.
+    private def infer_implicit_controller_action(path : String, rest : String,
+                                                 scoped_controller : String? = nil) : Tuple(String, String)?
+      return if explicit_route_destination?(rest)
+
+      segments = static_route_segments(path)
+      return if segments.empty?
+
+      if scoped_controller
+        action = segments.last
+        return unless valid_action_name?(action)
+        return {scoped_controller, action}
+      end
+
+      return if segments.size < 2
+      action = segments.last
+      return unless valid_action_name?(action)
+
+      {segments[0, segments.size - 1].join("/"), action}
+    end
+
+    private def explicit_route_destination?(rest : String) : Bool
+      !!rest.match(/^\s*['"][^'"]+['"]\s*=>/) ||
+        !!rest.match(/\bto\s*:/) ||
+        !!rest.match(/:?to\s*=>/) ||
+        !!rest.match(/:?controller\s*(?:=>|:)/) ||
+        !!rest.match(/:?action\s*(?:=>|:)/)
+    end
+
+    private def static_route_segments(path : String) : Array(String)
+      path.lchop('/').split('/').map do |segment|
+        segment = segment.split('.', 2)[0]
+        return [] of String if segment.empty?
+        return [] of String if segment.includes?(':') || segment.includes?('*')
+        return [] of String if segment.includes?('(') || segment.includes?(')')
+        segment
+      end
+    end
+
+    private def valid_action_name?(name : String) : Bool
+      !!name.match(/\A[A-Za-z_]\w*[!?=]?\z/)
     end
 
     # Resolve `ctrl#action` to a controller file. When the route lives inside a

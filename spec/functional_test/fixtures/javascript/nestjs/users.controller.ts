@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Put, Delete, Param, Query, Body, Headers } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Param, Query, Body, Headers, Req, UploadedFile, UseGuards, UseInterceptors, Version } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 
 @Controller('users')
 export class UserController {
@@ -37,6 +38,29 @@ export class UserController {
 export class ProtectedController {
   @Get()
   getProtected(@Headers('authorization') auth: string) {
+    return {};
+  }
+}
+
+@Controller('admin')
+export class AdminController {
+  @Get('reports/:id')
+  @UseGuards(AuthGuard)
+  report(@Param('id') id: string, @Req() req: any) {
+    const include = req.query.include;
+    const token = req.headers['x-token'];
+    return { id, include, token };
+  }
+
+  @Post('upload')
+  @UseInterceptors(FileInterceptor('avatar'))
+  upload(@UploadedFile() file: any) {
+    return { file };
+  }
+
+  @Version('2')
+  @Get('versioned')
+  versioned() {
     return {};
   }
 }

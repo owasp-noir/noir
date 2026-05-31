@@ -323,17 +323,17 @@ module Analyzer::Javascript
                 method_normalized = method == "del" ? "DELETE" : method.upcase
 
                 # Create full path with prefix if applicable
-                full_path = unless prefix.empty?
-                  if route_path.starts_with?("/") && prefix.ends_with?("/")
-                    "#{prefix[0..-2]}#{route_path}"
-                  elsif !route_path.starts_with?("/") && !prefix.ends_with?("/")
-                    "#{prefix}/#{route_path}"
-                  else
-                    "#{prefix}#{route_path}"
-                  end
-                else
-                  route_path
-                end
+                full_path = if prefix.empty?
+                              route_path
+                            else
+                              if route_path.starts_with?("/") && prefix.ends_with?("/")
+                                "#{prefix[0..-2]}#{route_path}"
+                              elsif !route_path.starts_with?("/") && !prefix.ends_with?("/")
+                                "#{prefix}/#{route_path}"
+                              else
+                                "#{prefix}#{route_path}"
+                              end
+                            end
 
                 # Create endpoint and add to results
                 endpoint = Endpoint.new(full_path, method_normalized)
@@ -377,17 +377,17 @@ module Analyzer::Javascript
               method_normalized = method == "del" ? "DELETE" : method.upcase
 
               # Create full path with prefix if applicable
-              full_path = unless prefix.empty?
-                if route_path.starts_with?("/") && prefix.ends_with?("/")
-                  "#{prefix[0..-2]}#{route_path}"
-                elsif !route_path.starts_with?("/") && !prefix.ends_with?("/")
-                  "#{prefix}/#{route_path}"
-                else
-                  "#{prefix}#{route_path}"
-                end
-              else
-                route_path
-              end
+              full_path = if prefix.empty?
+                            route_path
+                          else
+                            if route_path.starts_with?("/") && prefix.ends_with?("/")
+                              "#{prefix[0..-2]}#{route_path}"
+                            elsif !route_path.starts_with?("/") && !prefix.ends_with?("/")
+                              "#{prefix}/#{route_path}"
+                            else
+                              "#{prefix}#{route_path}"
+                            end
+                          end
 
               # Create endpoint and add to results
               endpoint = Endpoint.new(full_path, method_normalized)

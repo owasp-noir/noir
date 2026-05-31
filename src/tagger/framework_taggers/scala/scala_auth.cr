@@ -12,8 +12,8 @@ class ScalaAuthTagger < FrameworkTagger
     {/SubjectPresent/, "Play Deadbolt SubjectPresent"},
     {/Restrict\s*\(/, "Play Deadbolt Restrict"},
     {/Dynamic\s*\(/, "Play Deadbolt Dynamic"},
-    {/silhouette\.\w+\.SecuredAction/, "Play Silhouette SecuredAction"},
-    {/silhouette\.\w+\.UserAwareAction/, "Play Silhouette UserAwareAction"},
+    {/silhouette\.SecuredAction/, "Play Silhouette SecuredAction"},
+    {/silhouette\.UserAwareAction/, "Play Silhouette UserAwareAction"},
   ]
 
   # Akka HTTP auth directives
@@ -57,6 +57,9 @@ class ScalaAuthTagger < FrameworkTagger
       lines = content.split("\n")
       line_num = path_info.line
       next if line_num.nil?
+      # Skip stale/out-of-range line refs: a line beyond the content we
+      # read would crash the lines[idx] walks below with IndexError.
+      next if line_num < 1 || line_num > lines.size
       line_idx = line_num - 1
 
       # Check route definition and surrounding context

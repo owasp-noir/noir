@@ -22,7 +22,10 @@ class CrystalAuthTagger < FrameworkTagger
     {/include Auth::RequireSignIn/, "Lucky Auth::RequireSignIn"},
     {/include Auth::AllowGuests/, "Lucky Auth::AllowGuests"},
     {/before require_sign_in/, "Lucky require_sign_in before action"},
-    {/current_user/, "Lucky current_user check"},
+    # A bare `current_user` reference (e.g. `UserSerializer.new(current_user)`
+    # in a handler body) is not sign-in enforcement; it false-positived on
+    # any action that merely reads the user. The real signals above
+    # (RequireSignIn / require_sign_in) cover Lucky auth.
   ]
 
   # Grip/Marten auth patterns
@@ -55,6 +58,9 @@ class CrystalAuthTagger < FrameworkTagger
       lines = content.split("\n")
       line_num = path_info.line
       next if line_num.nil?
+      # Skip stale/out-of-range line refs: a line beyond the content we
+      # read would crash the lines[idx] walks below with IndexError.
+      next if line_num < 1 || line_num > lines.size
       line_idx = line_num - 1
 
       # Check for auth patterns in enclosing scope

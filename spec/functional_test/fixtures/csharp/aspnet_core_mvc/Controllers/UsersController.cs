@@ -32,6 +32,12 @@ namespace Demo.Controllers
             return repository.List(filter);
         }
 
+        [HttpGet("search")]
+        public IActionResult Search(string keyword, IUserRepository repository)
+        {
+            return Ok(repository.List(keyword));
+        }
+
         [NonAction]
         public Task<UserDto> LoadUser([FromQuery] string id)
         {

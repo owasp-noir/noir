@@ -1,3 +1,4 @@
+require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
@@ -64,5 +65,58 @@ describe "AspnetAuthTagger" do
     endpoint.tags.empty?.should be_false
     endpoint.tags[0].name.should eq("auth")
     endpoint.tags[0].description.should contain("Roles")
+  end
+
+  describe "Minimal API fluent .RequireAuthorization()" do
+    it "detects .RequireAuthorization() chained on the route statement" do
+      noir_options = create_test_options
+      tmpdir = File.tempname("aspnet_minimal")
+      Dir.mkdir_p(tmpdir)
+      program = File.join(tmpdir, "Program.cs")
+      File.write(program, [
+        "var app = builder.Build();",
+        "app.MapGet(\"/secret\", () => \"hi\")",
+        "   .RequireAuthorization();",
+        "app.MapGet(\"/open\", () => \"hi\");",
+        "app.Run();",
+      ].join("\n"))
+      noir_options["base"] = YAML::Any.new(tmpdir)
+
+      details = Details.new(PathInfo.new(program, 2))
+      details.technology = "cs_aspnet_core_minimal_api"
+      endpoint = Endpoint.new("/secret", "GET", [] of Param, details)
+
+      tagger = AspnetAuthTagger.new(noir_options)
+      tagger.perform([endpoint])
+
+      endpoint.tags.empty?.should be_false
+      endpoint.tags[0].description.should contain("RequireAuthorization")
+
+      FileUtils.rm_rf(tmpdir)
+    end
+
+    it "does not tag a route whose chain opts out via .AllowAnonymous()" do
+      noir_options = create_test_options
+      tmpdir = File.tempname("aspnet_minimal_anon")
+      Dir.mkdir_p(tmpdir)
+      program = File.join(tmpdir, "Program.cs")
+      File.write(program, [
+        "var app = builder.Build();",
+        "app.MapGet(\"/open\", () => \"hi\").AllowAnonymous();",
+        "app.Run();",
+      ].join("\n"))
+      noir_options["base"] = YAML::Any.new(tmpdir)
+
+      details = Details.new(PathInfo.new(program, 2))
+      details.technology = "cs_aspnet_core_minimal_api"
+      endpoint = Endpoint.new("/open", "GET", [] of Param, details)
+
+      tagger = AspnetAuthTagger.new(noir_options)
+      tagger.perform([endpoint])
+
+      endpoint.tags.empty?.should be_true
+
+      FileUtils.rm_rf(tmpdir)
+    end
   end
 end

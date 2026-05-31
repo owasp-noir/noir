@@ -1,4 +1,6 @@
+require "../../spec_helper"
 require "../../../src/techs/techs"
+require "../../../src/tagger/tagger"
 
 describe "Similar to tech" do
   it "basic" do
@@ -41,5 +43,15 @@ describe "Context support metadata" do
     NoirTechs.context_supported?("oas3", "callee").should be_false
     NoirTechs.context_supported?("oas3", "sinks").should be_false
     NoirTechs.context_supported?("oas3", "signals").should be_false
+  end
+
+  it "marks every framework auth tagger target as guard-supported" do
+    target_techs = NoirTaggers.framework_taggers.values.flat_map do |tagger|
+      tagger[:runner].target_techs
+    end.uniq!
+
+    target_techs.each do |tech|
+      NoirTechs.context_supported?(tech, "guards").should be_true
+    end
   end
 end

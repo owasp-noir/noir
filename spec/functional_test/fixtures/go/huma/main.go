@@ -48,6 +48,12 @@ type DeleteUserInput struct {
 
 type DeleteUserOutput struct{}
 
+type HealthInput struct {
+	Verbose bool `query:"verbose"`
+}
+
+type HealthOutput struct{}
+
 type User struct {
 	ID    string `json:"id"`
 	Name  string `json:"name"`
@@ -86,6 +92,16 @@ func registerRoutes(api huma.API) {
 		Path:        "/users/{id}",
 	}, func(ctx context.Context, input *DeleteUserInput) (*DeleteUserOutput, error) {
 		return &DeleteUserOutput{}, nil
+	})
+
+	// Huma v2 typed convenience helpers — the path is the SECOND
+	// argument (the first is the API), the verb is the method name.
+	huma.Get(api, "/health", func(ctx context.Context, input *HealthInput) (*HealthOutput, error) {
+		return &HealthOutput{}, nil
+	})
+
+	huma.Patch(api, "/users/{id}", func(ctx context.Context, input *GetUserInput) (*GetUserOutput, error) {
+		return &GetUserOutput{}, nil
 	})
 }
 

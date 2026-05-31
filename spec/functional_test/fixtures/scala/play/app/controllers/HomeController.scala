@@ -80,3 +80,14 @@ class Assets extends BaseController {
     Ok(s"Asset $path/$file")
   }
 }
+
+class Admin extends BaseController {
+  def stats(request: Request, format: Option[String]) = AuthenticatedAction { request =>
+    val trace = request.headers.get("X-Trace-Id")
+    Ok(s"admin stats $format")
+  }
+
+  def enqueue(id: Long) = Action.async(parse.json) { implicit request =>
+    Future.successful(Ok(s"queued $id"))
+  }
+}

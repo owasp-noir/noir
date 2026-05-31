@@ -42,15 +42,17 @@ module Analyzer::Scala
 
           block_content = block[0]
           block_end = block[2]
+          route_scope = "#{stripped_line}\n#{block_content}"
 
           HTTP_METHODS.each do |method|
-            if block_content =~ /\b#{method}\s*\{/
+            method_param_scopes = extract_method_param_scopes(route_scope, method)
+            unless method_param_scopes.empty?
               endpoint = create_endpoint(full_path, method.upcase, path)
 
               extract_path_params(endpoint, full_path)
 
               # Extract additional parameters from the block
-              extract_params_from_block(endpoint, block_content)
+              extract_params_from_block(endpoint, method_param_scopes.join("\n"))
               attach_method_callees(endpoint, lines, index, block_end, method, path) if include_callee
 
               endpoints << endpoint
@@ -58,19 +60,21 @@ module Analyzer::Scala
           end
         end
 
-        if stripped_line.includes?("pathEnd") || stripped_line.includes?("pathEndOrSingleSlash")
+        if stripped_line.includes?("pathEnd") || stripped_line.includes?("pathEndOrSingleSlash") || stripped_line.includes?("pathSingleSlash")
           full_path = prefix_stack.empty? ? "/" : prefix_stack.join("")
           block = extract_block_from_index(lines, index)
           next unless block
 
           block_content = block[0]
           block_end = block[2]
+          route_scope = "#{stripped_line}\n#{block_content}"
 
           HTTP_METHODS.each do |method|
-            if block_content =~ /\b#{method}\s*\{/
+            method_param_scopes = extract_method_param_scopes(route_scope, method)
+            unless method_param_scopes.empty?
               endpoint = create_endpoint(full_path, method.upcase, path)
               extract_path_params(endpoint, full_path)
-              extract_params_from_block(endpoint, block_content)
+              extract_params_from_block(endpoint, method_param_scopes.join("\n"))
               attach_method_callees(endpoint, lines, index, block_end, method, path) if include_callee
               endpoints << endpoint
             end
@@ -146,12 +150,42 @@ module Analyzer::Scala
         endpoint.push_param(Param.new(match[1], "", "query"))
       end
 
+      # Extract symbol parameters: parameter('name) { ... }
+      block.scan(/parameter\s*\(\s*'(\w+)/) do |match|
+        param_name = match[1]
+        unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
+          endpoint.push_param(Param.new(param_name, "", "query"))
+        end
+      end
+
+      # Extract Symbol("name") parameters.
+      block.scan(/parameter\s*\(\s*Symbol\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
+        param_name = match[1]
+        unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
+          endpoint.push_param(Param.new(param_name, "", "query"))
+        end
+      end
+
       # Extract multiple parameters: parameters("name", "age") or parameters("name", "age".optional)
       if params_match = block.match(/parameters\s*\(([^)]+)\)/)
         params_content = params_match[1]
         params_content.scan(/['"](\w+)['"]/) do |match|
           param_name = match[1]
           # Avoid duplicating parameters already added
+          unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
+            endpoint.push_param(Param.new(param_name, "", "query"))
+          end
+        end
+
+        params_content.scan(/'(\w+)/) do |match|
+          param_name = match[1]
+          unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
+            endpoint.push_param(Param.new(param_name, "", "query"))
+          end
+        end
+
+        params_content.scan(/Symbol\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
+          param_name = match[1]
           unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
             endpoint.push_param(Param.new(param_name, "", "query"))
           end
@@ -181,11 +215,142 @@ module Analyzer::Scala
       match[1]
     end
 
+    private def extract_method_param_scopes(content : String, method : String) : Array(String)
+      scopes = [] of String
+      regex = /(?<![.\w])#{Regex.escape(method)}(?![\w])/
+      search_from = 0
+
+      while match = content.match(regex, search_from)
+        method_start = match.begin || search_from
+        method_end = match.end || method_start
+        next_index = skip_whitespace(content, method_end)
+
+        if next_index < content.size
+          case content[next_index]
+          when '{'
+            if block = balanced_slice(content, next_index, '{', '}')
+              scopes << block
+            end
+          when '('
+            if args = balanced_slice(content, next_index, '(', ')')
+              scope = args
+              after_args = skip_whitespace(content, next_index + args.size)
+              if after_args < content.size && content[after_args] == '{'
+                if block = balanced_slice(content, after_args, '{', '}')
+                  scope = "#{scope}\n#{block}"
+                end
+              end
+              scopes << scope
+            end
+          else
+            if chain_block = chained_directive_scope(content, method_start)
+              scopes << chain_block
+            end
+          end
+        elsif method_end == content.size
+          scopes << method
+        end
+
+        search_from = method_end
+      end
+
+      scopes
+    end
+
+    private def chained_directive_scope(content : String, method_start : Int32) : String?
+      opening_brace = next_unquoted_char(content, '{', method_start)
+      return unless opening_brace
+
+      header = content[method_start...opening_brace]
+      return unless header.includes?("&")
+      block = balanced_slice(content, opening_brace, '{', '}') || content[opening_brace..]
+
+      "#{header}\n#{block}"
+    end
+
+    private def skip_whitespace(content : String, index : Int32) : Int32
+      i = index
+      while i < content.size && content[i].whitespace?
+        i += 1
+      end
+      i
+    end
+
+    private def next_unquoted_char(content : String, needle : Char, start : Int32) : Int32?
+      in_string = false
+      quote = '\0'
+      escape = false
+      i = start
+
+      while i < content.size
+        char = content[i]
+        if in_string
+          if escape
+            escape = false
+          elsif char == '\\'
+            escape = true
+          elsif char == quote
+            in_string = false
+          end
+        else
+          case char
+          when '"', '\''
+            in_string = true
+            quote = char
+          else
+            return i if char == needle
+            return if char == '~' || char == ','
+          end
+        end
+        i += 1
+      end
+
+      nil
+    end
+
+    private def balanced_slice(content : String, start : Int32, open_char : Char, close_char : Char) : String?
+      return unless start < content.size && content[start] == open_char
+
+      depth = 0
+      in_string = false
+      quote = '\0'
+      escape = false
+      i = start
+
+      while i < content.size
+        char = content[i]
+        if in_string
+          if escape
+            escape = false
+          elsif char == '\\'
+            escape = true
+          elsif char == quote
+            in_string = false
+          end
+        else
+          case char
+          when '"', '\''
+            in_string = true
+            quote = char
+          else
+            depth += 1 if char == open_char
+            if char == close_char
+              depth -= 1
+              return content[start..i] if depth == 0
+            end
+          end
+        end
+        i += 1
+      end
+
+      nil
+    end
+
     private def akka_path_from_args(args : String, param_names : Array(String)) : String
       segments = [] of String
       param_index = 0
 
-      args.scan(/"([^"]+)"|(IntNumber|LongNumber|Segment|Remaining|JavaUUID)/) do |match|
+      args.scan(/"([^"]+)"|(IntNumber|LongNumber|DoubleNumber|HexIntNumber|Segment|Segments|Remaining|RemainingPath|Rest|JavaUUID)/) do |match|
         if literal = match[1]?
           segments.concat(literal.split('/').reject(&.empty?))
         elsif match[2]?

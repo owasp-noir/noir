@@ -90,5 +90,18 @@ describe "CorsTagger" do
 
       endpoint.tags.size.should eq(1)
     end
+
+    it "does not tag a non-header param named origin (e.g. a query param)" do
+      tagger = CorsTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/flights", "GET", [
+        Param.new("origin", "JFK", "query"),
+        Param.new("destination", "LAX", "query"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(0)
+    end
   end
 end

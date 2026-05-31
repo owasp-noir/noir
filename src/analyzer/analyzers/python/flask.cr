@@ -49,12 +49,12 @@ module Analyzer::Python
         python_files.each do |path|
           next unless path.starts_with?(base_dir_prefix) || path == current_base_path
           next if path.includes?("/site-packages/")
-          next if PythonEngine.python_test_path?(path)
+          next if PythonEngine.python_test_path?(path, @base_path)
           @logger.debug "Analyzing #{path}"
 
           file_content = fetch_file_content(path)
           lines = file_content.lines
-          if lines.any?(&.includes?("flask"))
+          if flask_relevant_source?(file_content)
             api_instances = Hash(::String, ::String).new
             path_api_instances[path] = api_instances
             view_assignments = Hash(::String, ::String).new # Maps view_var -> ClassName (per-file scope)
@@ -79,10 +79,12 @@ module Analyzer::Python
             end
 
             lines.each_with_index do |original_line, line_index|
+              next if original_line.lstrip.starts_with?("#")
+
               line = original_line.gsub(" ", "") # remove spaces for easier regex matching
 
               # Identify Flask instance assignments
-              flask_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:flask\.)?Flask\(/
+              flask_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:flask\.)?Flask\(/
               if flask_match
                 flask_instance_name = flask_match[1]
                 api_instances[flask_instance_name] ||= ""
@@ -112,7 +114,7 @@ module Analyzer::Python
 
               # Api from flask instance
               flask_instances.each do |_flask_instance_name, _prefix|
-                api_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:flask_restx\.)?Api\((app=)?#{_flask_instance_name}/
+                api_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:flask_restx\.)?Api\((app=)?#{_flask_instance_name}/
                 if api_match
                   api_instance_name = api_match[1]
                   api_instances[api_instance_name] ||= _prefix
@@ -121,7 +123,7 @@ module Analyzer::Python
 
               # Api from blueprint instance
               blueprint_prefixes.each do |_blueprint_instance_name, _prefix|
-                api_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:flask_restx\.)?Api\((app=)?#{_blueprint_instance_name}/
+                api_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:flask_restx\.)?Api\((app=)?#{_blueprint_instance_name}/
                 if api_match
                   api_instance_name = api_match[1]
                   api_instances[api_instance_name] ||= _prefix
@@ -216,7 +218,7 @@ module Analyzer::Python
 
               # Identify view assignments: view_var = ClassName.as_view('name')
               # Note: spaces are already removed from line at this point
-              view_assign_match = line.match /(#{PYTHON_VAR_NAME_REGEX})=(#{PYTHON_VAR_NAME_REGEX})\.as_view\(/
+              view_assign_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(#{PYTHON_VAR_NAME_REGEX})\.as_view\(/
               if view_assign_match
                 view_var = view_assign_match[1]
                 class_name = view_assign_match[2]
@@ -334,24 +336,7 @@ module Analyzer::Python
                   end
                 end
 
-                unless class_name.empty?
-                  # Extract methods list
-                  methods = [] of ::String
-                  methods_match = args_str.match /methods=[\[\(](.*?)[\]\)]/m
-                  if methods_match
-                    methods_str = methods_match[1]
-                    methods_str.scan(/['"]([A-Z]+)['"]/) do |method_match|
-                      methods << method_match[1]
-                    end
-                  end
-
-                  # Store class view registration
-                  class_view_info = Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String)).new(
-                    line_index, path, route_path, class_name, view_name, methods
-                  )
-                  @class_views[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String))
-                  @class_views[router_name] << class_view_info
-                else
+                if class_name.empty?
                   # Function-view registration:
                   #   app.add_url_rule("/x", "name", view_func=fn)
                   #   app.add_url_rule("/x", "name", view_func=fn, methods=["GET", "POST"])
@@ -412,6 +397,23 @@ module Analyzer::Python
 
                     result << endpoint
                   end
+                else
+                  # Extract methods list
+                  methods = [] of ::String
+                  methods_match = args_str.match /methods=[\[\(](.*?)[\]\)]/m
+                  if methods_match
+                    methods_str = methods_match[1]
+                    methods_str.scan(/['"]([A-Z]+)['"]/) do |method_match|
+                      methods << method_match[1]
+                    end
+                  end
+
+                  # Store class view registration
+                  class_view_info = Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String)).new(
+                    line_index, path, route_path, class_name, view_name, methods
+                  )
+                  @class_views[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String))
+                  @class_views[router_name] << class_view_info
                 end
               end
             end
@@ -425,9 +427,8 @@ module Analyzer::Python
         blueprint_info.each do |blueprint_name, blueprint_prefix|
           if path_api_instances.has_key?(path)
             api_instances = path_api_instances[path]
-            if api_instances.has_key?(blueprint_name)
-              api_instances[blueprint_name] = File.join(blueprint_prefix, api_instances[blueprint_name])
-            end
+            own_prefix = api_instances[blueprint_name]? || ""
+            api_instances[blueprint_name] = File.join(blueprint_prefix, own_prefix)
           end
         end
       end
@@ -728,6 +729,14 @@ module Analyzer::Python
     # resolver can locate imported modules relative to the right root.
     private def base_path_for(file_path : ::String) : ::String
       base_paths.find { |bp| file_path.starts_with?(bp) } || base_paths[0]? || ""
+    end
+
+    private def flask_relevant_source?(source : ::String) : Bool
+      return true if source.includes?("flask")
+      return true if source.matches?(/^\s*@\s*#{DOT_NATION}\s*\.\s*(?:route|get|post|put|patch|delete|head|options|trace)\s*\(/m)
+      return true if source.matches?(/\b#{DOT_NATION}\s*\.\s*(?:add_url_rule|register_blueprint)\s*\(/)
+
+      false
     end
 
     private def extract_flask_static_url_path(constructor_line : ::String) : ::String?

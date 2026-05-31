@@ -376,6 +376,8 @@ module NoirAIContext
           /\brequireAuth\b/i,
           /\blogin_required\b/i,
           /\bjwt_required\b/i,
+          /\brequire_login\b/i,
+          /\blogged_in_user\b/i,
           /Depends\s*\(\s*get_current_/i,
           /before_action\s+:\w*auth/i,
           /\.Use\s*\(\s*\w*Auth\w*/i,
@@ -399,6 +401,10 @@ module NoirAIContext
           /\brequiresRole\b/i,
           /\brole_required\b/i,
           /\badmin_required\b/i,
+          /\brequire_role\b/i,
+          /\brequire_any_role\b/i,
+          /\brequire_all_roles\b/i,
+          /\buser_has_role\b/i,
           /@PreAuthorize\b/,
           /@RolesAllowed\b/,
           /@Secured\b/,
@@ -963,6 +969,13 @@ module NoirAIContext
       # `credentials.token` — tighter scope so generic `.password`
       # access doesn't fire.
       /\b(payload|credentials|creds|input|body)\.(password|passwd|token|secret|api[_-]?key|jwt|bearer)\b/i,
+      # Go net/http and common framework helpers: `r.FormValue("password")`,
+      # `c.PostForm("token")`, `ctx.FormValue("secret")`, …
+      /\b(?:r|req|request)\.(?:FormValue|PostFormValue)\s*\(\s*['"](password|passwd|token|secret|api[_-]?key|jwt|bearer)['"]/i,
+      /\b(?:c|ctx|context)\.(?:PostForm|DefaultPostForm|FormValue|QueryParam)\s*\(\s*['"](password|passwd|token|secret|api[_-]?key|jwt|bearer)['"]/i,
+      # C# minimal APIs / controllers: `context.Request.Form["password"]`,
+      # `Request.Headers["Authorization"]`, …
+      /\b(?:context\.Request|HttpContext\.Request|Request)\.(?:Form|Query|Headers|Cookies)\s*\[\s*['"](password|passwd|token|secret|api[_-]?key|authorization|jwt|bearer)['"]/i,
       # Java/Kotlin field access on a DTO marked @RequestBody: `c.password`
       # is too generic alone; require the credential noun directly.
       /\b(password|passwd|token|secret|api[_-]?key|jwt|bearer)\s*=\s*req\./i,
@@ -1215,13 +1228,15 @@ module NoirAIContext
         snippet = route_scope || snippet_for(path_info.path, path_info.line, SOURCE_SCAN_RADIUS)
         next if snippet.nil?
 
-        # Explicit CSRF bypass is a negative signal: protection is
-        # disabled here on purpose, but the reviewer should confirm
-        # the justification.
-        CSRF_EXEMPT_PATTERNS.each do |pattern|
-          next if context.signals.any? { |s| s.kind == "csrf_exempt" }
-          if entry = detect_single_pattern(pattern, "", snippet, path_info.path, path_info.line, "route_source")
-            context.push_signal(entry)
+        # Explicit CSRF bypass is a negative signal. CSRF only
+        # protects state-changing methods, so suppress it on safe
+        # endpoints split out from multi-method handlers.
+        unless SAFE_METHODS.includes?(endpoint.method)
+          CSRF_EXEMPT_PATTERNS.each do |pattern|
+            next if context.signals.any? { |s| s.kind == "csrf_exempt" }
+            if entry = detect_single_pattern(pattern, "", snippet, path_info.path, path_info.line, "route_source")
+              context.push_signal(entry)
+            end
           end
         end
 
@@ -1467,11 +1482,45 @@ module NoirAIContext
 
       patterns.each do |pattern|
         if match = snippet.match(pattern)
-          return normalize_label(match[0])
+          return normalize_label(expand_match_label(snippet, match))
         end
       end
 
       nil
+    end
+
+    # A source-scan regex usually matches only the leading anchor of a
+    # construct (`Depends(get_current_` for the real
+    # `Depends(get_current_active_superuser)`). Surfacing that truncated
+    # fragment as the evidence name reads as a bug. Extend the match
+    # rightward to finish a trailing identifier and to close a single
+    # still-open `(`, so the label is the actual call. `normalize_label`
+    # still caps the length, so a runaway argument list can't bloat it.
+    private def expand_match_label(snippet : String, match : Regex::MatchData) : String
+      start = match.begin
+      finish = match.end
+      return match[0] if start.nil? || finish.nil?
+
+      while finish < snippet.size && (snippet[finish].alphanumeric? || snippet[finish] == '_')
+        finish += 1
+      end
+
+      fragment = snippet[start...finish]
+      open_parens = fragment.count('(') - fragment.count(')')
+      if open_parens > 0
+        depth = open_parens
+        idx = finish
+        while idx < snippet.size && depth > 0
+          case snippet[idx]
+          when '(' then depth += 1
+          when ')' then depth -= 1
+          end
+          idx += 1
+        end
+        finish = idx
+      end
+
+      snippet[start...finish]
     end
 
     private def matches_any?(name : String, patterns : Array(Regex)) : Bool

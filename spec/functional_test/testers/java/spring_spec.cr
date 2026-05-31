@@ -56,7 +56,7 @@ expected_endpoints = [
     Param.new("id", "", "path"),
     Param.new("view", "", "query"),
   ]),
-  Endpoint.new("/api/catalog/", "POST", [
+  Endpoint.new("/api/catalog", "POST", [
     Param.new("title", "", "json"),
     Param.new("count", "", "json"),
   ]),
@@ -72,7 +72,7 @@ expected_endpoints = [
   # ItemController.java
   Endpoint.new("/items/{id}", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/items/json/{id}", "GET", [Param.new("id", "", "path")]),
-  Endpoint.new("/items/", "POST", [Param.new("id", "", "form"), Param.new("name", "", "form")]),
+  Endpoint.new("/items", "POST", [Param.new("id", "", "form"), Param.new("name", "", "form")]),
   Endpoint.new("/items/update/{id}", "PUT", [Param.new("id", "", "path"), Param.new("id", "", "json"), Param.new("name", "", "json")]),
   Endpoint.new("/items/delete/{id}", "DELETE", [Param.new("id", "", "path")]),
   Endpoint.new("/items/requestmap/put", "PUT"),
@@ -99,22 +99,22 @@ expected_endpoints = [
   Endpoint.new("/items2/edit/", "PUT", [Param.new("id", "", "json"), Param.new("name", "", "json")]),
   Endpoint.new("/items2/{id}/thePath", "GET", [Param.new("id", "", "path")]),
   # EmptyController.java
-  Endpoint.new("/empty/", "GET", [Param.new("tenant", "", "query")]),
+  Endpoint.new("/empty", "GET", [Param.new("tenant", "", "query")]),
   Endpoint.new("/empty/filtered", "GET", [
     Param.new("tenant", "", "query"),
     Param.new("mode", "full", "query"),
     Param.new("X-Client", "mobile", "header"),
   ]),
   # MyController.java
-  Endpoint.new("/api/v1/test/", "GET"),
+  Endpoint.new("/api/v1/test", "GET"),
   # TApiResponses.java
-  Endpoint.new("/multi/annotation/", "GET"),
+  Endpoint.new("/multi/annotation", "GET"),
   # TRequestHeader.java
-  Endpoint.new("/request/header/", "GET"),
+  Endpoint.new("/request/header", "GET"),
   # DuplicateParameter.java
   Endpoint.new("/duplicate/parameter/{token}/test", "DELETE", [Param.new("token", "", "path")]),
   # ThrowsMultiException.java
-  Endpoint.new("/throws/multi/exception/", "GET"),
+  Endpoint.new("/throws/multi/exception", "GET"),
   # InventoryClient.java
   Endpoint.new("/api/v2/items/{id}/stock", "PATCH", [Param.new("id", "", "path"), Param.new("quantity", "", "json")]),
   Endpoint.new("/api/v2/items", "GET", [Param.new("category", "", "query")]),
@@ -126,6 +126,12 @@ expected_endpoints = [
     Param.new("region", "", "query"),
   ]),
   Endpoint.new("/api/v3/items/bulk", "POST", [Param.new("tenant", "", "query")]),
+  # CrudReportController.java extends AbstractCrudController.java — the
+  # abstract base's @GetMapping routes are inherited under the `/crud`
+  # prefix, and the base must NOT emit un-prefixed `/list` or `/{id}`.
+  Endpoint.new("/crud", "POST"),
+  Endpoint.new("/crud/list", "GET"),
+  Endpoint.new("/crud/{id}", "GET", [Param.new("id", "", "path")]),
 ]
 
 FunctionalTester.new("fixtures/java/spring/", {

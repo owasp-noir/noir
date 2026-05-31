@@ -22,6 +22,7 @@ expected_endpoints = [
   Endpoint.new("/admin/reports/1", "GET"),
   Endpoint.new("/admin/reports", "POST"),
   Endpoint.new("/admin/reports/1", "PUT"),
+  Endpoint.new("/admin/reports/1", "PATCH"),
   Endpoint.new("/admin/reports/1", "DELETE"),
 
   # member/collection actions on namespaced resource. #1359: action-scoped
@@ -81,6 +82,7 @@ expected_endpoints = [
   Endpoint.new("/internal/statements/1", "GET"),
   Endpoint.new("/internal/statements", "POST"),
   Endpoint.new("/internal/statements/1", "PUT"),
+  Endpoint.new("/internal/statements/1", "PATCH"),
 
   # resources :scans, controller: "billing/scans", only: [:index]
   Endpoint.new("/scans", "GET"),
@@ -108,6 +110,7 @@ expected_endpoints = [
   Endpoint.new("/posts/1", "GET"),
   Endpoint.new("/posts", "POST"),
   Endpoint.new("/posts/1", "PUT"),
+  Endpoint.new("/posts/1", "PATCH"),
   Endpoint.new("/posts/1", "DELETE"),
   Endpoint.new("/posts/1/comments", "GET"),
   Endpoint.new("/posts/1/comments/1", "GET"),
@@ -154,18 +157,18 @@ expected_endpoints = [
 # /scans/1) and devise_for emits its full route set.
 total_endpoints = 1 +  # root
                   2 +  # `#{base_c_route}` interpolation resolved to 2 routes
-                  5 +  # admin/reports
+                  6 +  # admin/reports
                   4 +  # admin/refunds member (change_status, purge, update_metadata) + collection (new_list)
                   1 +  # admin/monitor/heartbeat (namespaced `to:`)
                   2 +  # namespace path override reports
                   2 +  # scope module/path explicit routes
                   1 +  # controller block route
                   2 +  # api/items only:[index,show]
-                  4 +  # internal/statements except:[destroy]
+                  5 +  # internal/statements except:[destroy]
                   1 +  # /scans only:[index] via controller override
                   2 +  # multiline resources options
                   3 +  # inline collection/member/new custom routes
-                  5 +  # posts
+                  6 +  # posts
                   4 +  # posts/1/comments + nested likes from concern
                   2 +  # /up + /ping
                   20 + # devise_for :users

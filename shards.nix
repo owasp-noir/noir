@@ -6,8 +6,8 @@
   };
   "ameba" = {
     url = "https://github.com/crystal-ameba/ameba.git";
-    rev = "97296d4a1c6ca7308ba220671bc7aafecfcecab3";
-    sha256 = "1qabkl2dvfirwgncy2csrkaqy2rwb6fyy4wmgcdwqsaq2y5asq1z";
+    rev = "9f217cd4cb673145be81135b763da3b79de083a4";
+    sha256 = "12asj3r4b9v338vdhfhhasghxx803hnlfdq4vagxldc9vygnkxmg";
   };
   "crest" = {
     url = "https://github.com/mamantoha/crest.git";
@@ -26,8 +26,8 @@
   };
   "http_proxy" = {
     url = "https://github.com/mamantoha/http_proxy.git";
-    rev = "v0.14.0";
-    sha256 = "1sbbf6rm1g7yn6n4v0f9q1a1j2gmrgdw583m9pr3d9kc10kfcn6n";
+    rev = "v0.15.1";
+    sha256 = "0kchwffxxlxjsjafqymajrvdy98rvn6mc9682qainl4kxk1amgim";
   };
   "sarif" = {
     url = "https://github.com/hahwul/sarif.cr.git";

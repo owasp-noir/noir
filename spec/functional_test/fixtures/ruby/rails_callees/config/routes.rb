@@ -8,4 +8,7 @@ Rails.application.routes.draw do
   get "status", to: "monitor#status"
   get "ping", to: "monitor#ping"
   get "ready", to: "monitor#ready"
+
+  post "posts/implicit_preview", format: "json"
+  post "posts/implicit_preview_legacy", :format => "json"
 end

@@ -6,7 +6,7 @@ module Analyzer::Python
 
     def analyze
       include_router_map = Hash(::String, Hash(::String, Router)).new
-      fastapi_base_file : ::String = ""
+      fastapi_app_instances = [] of Tuple(::String, ::String)
 
       begin
         # Iterate through all Python files in all base paths. Pulls from
@@ -18,37 +18,44 @@ module Analyzer::Python
           python_files.each do |path|
             next unless path.starts_with?(base_dir_prefix) || path == current_base_path
             next if path.includes?("/site-packages/")
-            next if PythonEngine.python_test_path?(path)
+            next if PythonEngine.python_test_path?(path, @base_path)
             source = read_file_content(path)
 
             import_modules = find_fastapi_imported_modules(current_base_path, path, source)
             codelines = source.split("\n")
             codelines.each_with_index do |original_line, index|
+              next if original_line.lstrip.starts_with?("#")
+
               effective_line = coalesce_constructor_call(codelines, index, original_line, "APIRouter")
               line = effective_line.gsub(" ", "")
-              match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:fastapi\.)?FastAPI\(/
+              match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:fastapi\.)?FastAPI\(/
               if !match.nil?
                 fastapi_instance_name = match[1]
-                unless include_router_map.has_key?(fastapi_instance_name)
-                  if include_router_map.has_key?(path)
-                    include_router_map[path][fastapi_instance_name] ||= Router.new("")
-                  else
-                    include_router_map[path] = {fastapi_instance_name => Router.new("")}
-                  end
-
-                  # base path
-                  fastapi_base_file = path
-                  @fastapi_base_path = Path.new(File.dirname(path)).parent.to_s
-                  # Don't `break` — a single file can declare both
-                  # `app = FastAPI()` and one or more
-                  # `router = APIRouter(prefix="/api")` instances,
-                  # and the APIRouter detection further down must
-                  # still run on the remaining lines.
+                if include_router_map.has_key?(path)
+                  include_router_map[path][fastapi_instance_name] ||= Router.new("")
+                else
+                  include_router_map[path] = {fastapi_instance_name => Router.new("")}
                 end
+
+                # Record every FastAPI app instance as a routing root.
+                # A single project frequently mounts several apps
+                # (`app`, `api`, `frontend` in Netflix/dispatch) and a
+                # stray `app = FastAPI()` may even live in a deep helper
+                # module — seeding prefix configuration from ALL of
+                # them (below) keeps that helper's instance from
+                # hijacking the one true base file.
+                #
+                # Don't `break` — a single file can declare both
+                # `app = FastAPI()` and one or more
+                # `router = APIRouter(prefix="/api")` instances, and the
+                # APIRouter detection further down must still run on the
+                # remaining lines.
+                app_key = {path, fastapi_instance_name}
+                fastapi_app_instances << app_key unless fastapi_app_instances.includes?(app_key)
               end
 
               # https://fastapi.tiangolo.com/tutorial/bigger-applications/
-              match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:fastapi\.)?APIRouter\(/
+              match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:fastapi\.)?APIRouter\(/
               if !match.nil?
                 prefix = ""
                 router_instance_name = match[1]
@@ -71,8 +78,26 @@ module Analyzer::Python
         logger.debug e.message
       end
 
+      # Anchor the package root on the SHALLOWEST app file. The
+      # `parent-of-dirname` heuristic only yields the correct base for
+      # an entrypoint sitting directly under the top package
+      # (`<root>/<pkg>/main.py`); a nested helper app
+      # (`<root>/<pkg>/auth/permissions.py`) points the base one level
+      # too deep and breaks every absolute import (`from pkg.api import
+      # …`). The real entrypoint is virtually always the shallowest.
+      unless fastapi_app_instances.empty?
+        primary_app_file = fastapi_app_instances.map(&.first).min_by { |p| {p.count('/'), p.size} }
+        @fastapi_base_path = Path.new(File.dirname(primary_app_file)).parent.to_s
+      end
+
       begin
-        configure_router_prefix(fastapi_base_file, include_router_map)
+        # Seed prefix configuration from every FastAPI app instance,
+        # sharing one `visited` set so a router included by more than
+        # one app is configured exactly once.
+        prefix_visited = Set(::String).new
+        fastapi_app_instances.each do |app_file, app_instance|
+          configure_router_prefix(app_file, include_router_map, "", app_instance, prefix_visited)
+        end
 
         include_router_map.each do |path, router_map|
           source = read_file_content(path)
@@ -81,6 +106,8 @@ module Analyzer::Python
           codelines = source.split("\n")
           router_map.each do |instance_name, router_class|
             codelines.each_with_index do |line, index|
+              next if line.lstrip.starts_with?("#")
+
               # FastAPI route decorators routinely span multiple
               # lines:
               #
@@ -333,7 +360,8 @@ module Analyzer::Python
     def configure_router_prefix(file : ::String,
                                 include_router_map : Hash(::String, Hash(::String, Router)),
                                 router_prefix : ::String = "",
-                                target_instance_name : ::String? = nil)
+                                target_instance_name : ::String? = nil,
+                                visited : Set(::String) = Set(::String).new)
       return if file.empty? || !File.exists?(file)
 
       # Parse the source file for router configuration
@@ -341,6 +369,13 @@ module Analyzer::Python
       import_modules = find_fastapi_imported_modules(@fastapi_base_path, file, source)
       include_router_map[file].each do |instance_name, router_class|
         next if target_instance_name && instance_name != target_instance_name
+
+        # Each (file, router) is configured at most once. Without this
+        # guard the new local-router recursion below (and any app that
+        # includes the same router from two parents) would re-prepend
+        # the inherited prefix and could recurse forever on a cyclic
+        # include graph.
+        next unless visited.add?("#{file}::#{instance_name}")
 
         # PREPEND the inherited prefix to the router's own. The
         # initial pass captures `APIRouter(prefix="/users")`, so
@@ -387,8 +422,15 @@ module Analyzer::Python
           # Register router's prefix recursively
           prefix = router_class.join(prefix)
           if router_instance_name.count(".") == 0
-            if local_router = include_router_map[file][router_instance_name]?
-              local_router.prefix = combine_router_prefixes(prefix, local_router.prefix)
+            if include_router_map[file].has_key?(router_instance_name)
+              # A router included from the SAME file (e.g. dispatch's
+              # `api_router.include_router(authenticated_organization_api_router)`).
+              # Recurse so the included router's OWN `include_router`
+              # calls are processed under the inherited prefix —
+              # previously we only set its prefix and stopped, which
+              # dropped every grand-child route's prefix
+              # (`/{organization}/cases/...` collapsed to `/...`).
+              configure_router_prefix(file, include_router_map, prefix, router_instance_name, visited)
               next
             end
 
@@ -396,14 +438,24 @@ module Analyzer::Python
             import_module_path = import_modules[router_instance_name].first
 
             next unless include_router_map.has_key?(import_module_path)
-            configure_router_prefix(import_module_path, include_router_map, prefix, router_instance_name)
+            # The local name is frequently an alias
+            # (`from .api import router as api_router`). The target
+            # file registers the router under its ORIGINAL symbol
+            # (`router`), so translate the alias back before recursing.
+            # Passing the alias straight through made the
+            # `target_instance_name` filter never match, silently
+            # dropping the ENTIRE sub-router prefix tree — the dominant
+            # FastAPI accuracy bug on real apps (fastapi-realworld,
+            # Netflix/dispatch) that lean on `import router as X`.
+            target_name = resolve_original_import_name(source, router_instance_name, include_router_map[import_module_path])
+            configure_router_prefix(import_module_path, include_router_map, prefix, target_name, visited)
           elsif router_instance_name.count(".") == 1
             module_name, imported_router_instance_name = router_instance_name.split(".")
             next unless import_modules.has_key?(module_name)
             import_module_path = import_modules[module_name].first
 
             next unless include_router_map.has_key?(import_module_path)
-            configure_router_prefix(import_module_path, include_router_map, prefix, imported_router_instance_name)
+            configure_router_prefix(import_module_path, include_router_map, prefix, imported_router_instance_name, visited)
           end
         end
       end
@@ -442,6 +494,41 @@ module Analyzer::Python
         i += 1
       end
       pieces.join(' ')
+    end
+
+    # Translate a locally-used router name back to the symbol it is
+    # registered under inside the imported file's `target_map`
+    # (instance name → Router). Real FastAPI apps overwhelmingly wire
+    # sub-routers with `from .pkg import router as pkg_router` and then
+    # `parent.include_router(pkg_router, ...)`. The imported file
+    # registers the router under its ORIGINAL name (`router`), so the
+    # alias has to be resolved before recursing — otherwise
+    # `configure_router_prefix`'s `target_instance_name` filter never
+    # matches and every prefix below that include is lost.
+    #
+    # Resolution order, each guarded against `target_map`'s real keys:
+    #   1. The local name already names a router in the target file.
+    #   2. An `<orig> as <local>` import line maps the alias back.
+    #   3. The target file declares exactly one router — the include
+    #      can only mean that one.
+    # Falls back to the local name (the prior behaviour) otherwise.
+    private def resolve_original_import_name(importing_source : ::String,
+                                             local_name : ::String,
+                                             target_map : Hash(::String, Router)) : ::String
+      return local_name if target_map.has_key?(local_name)
+
+      importing_source.each_line do |raw|
+        stripped = raw.lstrip
+        next unless stripped.starts_with?("from ") || stripped.starts_with?("import ")
+        if match = stripped.match(/\b(#{PYTHON_VAR_NAME_REGEX})\s+as\s+#{Regex.escape(local_name)}\b/)
+          original = match[1]
+          return original if target_map.has_key?(original)
+        end
+      end
+
+      return target_map.first_key if target_map.size == 1
+
+      local_name
     end
 
     private def extract_include_router_target(args : ::String) : ::String
@@ -1127,6 +1214,14 @@ module Analyzer::Python
     end
 
     def join(url : ::String) : ::String
+      # An empty route path adds nothing beyond the prefix:
+      # `APIRouter(prefix="/user")` + `@router.get("")` resolves to
+      # `/user`, NOT `/user/`. (A literal `"/"` route still keeps its
+      # trailing slash, e.g. `prefix="/items"` + `"/"` → `/items/`.)
+      # Without this guard every `""`-path route in a prefixed router
+      # surfaced with a spurious trailing slash (fastapi-realworld).
+      return @prefix if url.empty? && !@prefix.empty?
+
       url = url[1..] if prefix.ends_with?("/") && url.starts_with?("/")
       url = "/#{url}" unless prefix.ends_with?("/") || url.starts_with?("/")
 

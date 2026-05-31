@@ -30,47 +30,85 @@ module Analyzer::Specification
       node
     end
 
+    private def add_param(params : Array(Param), name : String, param_type : String)
+      return if name.empty?
+      param = Param.new(name, "", param_type)
+      params << param unless params.includes?(param)
+    end
+
     # Walks a body schema and emits a Param per top-level property.
-    private def collect_body_props_json(root : JSON::Any, schema : JSON::Any, param_type : String, params : Array(Param))
+    private def collect_body_props_json(root : JSON::Any, schema : JSON::Any, param_type : String, params : Array(Param), seen : Set(String) = Set(String).new)
       if ref = schema["$ref"]?.try(&.as_s?)
+        return if seen.includes?(ref)
+        seen << ref
         if resolved = resolve_ref_json(root, ref)
-          collect_body_props_json(root, resolved, param_type, params)
+          collect_body_props_json(root, resolved, param_type, params, seen)
         end
         return
       end
 
+      if items = schema["items"]?
+        collect_body_props_json(root, items, param_type, params, seen)
+      end
+
       if props = schema["properties"]?.try(&.as_h?)
         props.each do |name, _|
-          params << Param.new(name.to_s, "", param_type)
+          add_param(params, name.to_s, param_type)
         end
       end
 
       if all_of = schema["allOf"]?.try(&.as_a?)
-        all_of.each { |s| collect_body_props_json(root, s, param_type, params) }
+        all_of.each { |s| collect_body_props_json(root, s, param_type, params, seen) }
+      end
+
+      if one_of = schema["oneOf"]?.try(&.as_a?)
+        one_of.each { |s| collect_body_props_json(root, s, param_type, params, seen) }
+      end
+
+      if any_of = schema["anyOf"]?.try(&.as_a?)
+        any_of.each { |s| collect_body_props_json(root, s, param_type, params, seen) }
       end
     end
 
-    private def collect_body_props_yaml(root : YAML::Any, schema : YAML::Any, param_type : String, params : Array(Param))
+    private def collect_body_props_yaml(root : YAML::Any, schema : YAML::Any, param_type : String, params : Array(Param), seen : Set(String) = Set(String).new)
       if ref_node = schema[YAML::Any.new("$ref")]?
         if ref = ref_node.as_s?
+          return if seen.includes?(ref)
+          seen << ref
           if resolved = resolve_ref_yaml(root, ref)
-            collect_body_props_yaml(root, resolved, param_type, params)
+            collect_body_props_yaml(root, resolved, param_type, params, seen)
           end
         end
         return
       end
 
+      if items_node = schema[YAML::Any.new("items")]?
+        collect_body_props_yaml(root, items_node, param_type, params, seen)
+      end
+
       if props_node = schema[YAML::Any.new("properties")]?
         if props = props_node.as_h?
           props.each do |name, _|
-            params << Param.new(name.to_s, "", param_type)
+            add_param(params, name.to_s, param_type)
           end
         end
       end
 
       if all_of_node = schema[YAML::Any.new("allOf")]?
         if all_of = all_of_node.as_a?
-          all_of.each { |s| collect_body_props_yaml(root, s, param_type, params) }
+          all_of.each { |s| collect_body_props_yaml(root, s, param_type, params, seen) }
+        end
+      end
+
+      if one_of_node = schema[YAML::Any.new("oneOf")]?
+        if one_of = one_of_node.as_a?
+          one_of.each { |s| collect_body_props_yaml(root, s, param_type, params, seen) }
+        end
+      end
+
+      if any_of_node = schema[YAML::Any.new("anyOf")]?
+        if any_of = any_of_node.as_a?
+          any_of.each { |s| collect_body_props_yaml(root, s, param_type, params, seen) }
         end
       end
     end
@@ -106,11 +144,11 @@ module Analyzer::Specification
         return if name.empty?
         case location
         when "query"
-          params << Param.new(name, "", "query")
+          add_param(params, name, "query")
         when "header"
-          params << Param.new(name, "", "header")
+          add_param(params, name, "header")
         when "form", "formData"
-          params << Param.new(name, "", "form")
+          add_param(params, name, "form")
         end
       end
     end
@@ -136,13 +174,32 @@ module Analyzer::Specification
         return if name.empty?
         case location
         when "query"
-          params << Param.new(name, "", "query")
+          add_param(params, name, "query")
         when "header"
-          params << Param.new(name, "", "header")
+          add_param(params, name, "header")
         when "form", "formData"
-          params << Param.new(name, "", "form")
+          add_param(params, name, "form")
         end
       end
+    end
+
+    private def resolve_path_item_json(root : JSON::Any, path_obj : JSON::Any, seen : Set(String) = Set(String).new) : JSON::Any
+      return path_obj unless path_obj_h = path_obj.as_h?
+      return path_obj unless ref = path_obj_h["$ref"]?.try(&.as_s?)
+      return path_obj if seen.includes?(ref)
+      seen << ref
+      resolved = resolve_ref_json(root, ref)
+      resolved ? resolve_path_item_json(root, resolved, seen) : path_obj
+    end
+
+    private def resolve_path_item_yaml(root : YAML::Any, path_obj : YAML::Any, seen : Set(String) = Set(String).new) : YAML::Any
+      return path_obj unless path_obj_h = path_obj.as_h?
+      return path_obj unless ref_node = path_obj_h[YAML::Any.new("$ref")]?
+      return path_obj unless ref = ref_node.as_s?
+      return path_obj if seen.includes?(ref)
+      seen << ref
+      resolved = resolve_ref_yaml(root, ref)
+      resolved ? resolve_path_item_yaml(root, resolved, seen) : path_obj
     end
 
     private def consumes_json(root : JSON::Any, method_obj : JSON::Any) : Array(String)
@@ -203,19 +260,21 @@ module Analyzer::Specification
       begin
         paths = json_obj["paths"].as_h
         paths.each do |path, path_obj|
-          path_level_params = [] of Param
-          if path_obj_h = path_obj.as_h?
+          path_item = resolve_path_item_json(json_obj, path_obj)
+          path_level_params = [] of JSON::Any
+          if path_obj_h = path_item.as_h?
             if shared = path_obj_h["parameters"]?.try(&.as_a?)
-              shared.each do |param_obj|
-                extract_param_json(json_obj, param_obj, [] of String, path_level_params)
-              end
+              path_level_params.concat(shared)
             end
           end
 
-          path_obj.as_h.each do |method, method_obj|
+          path_item.as_h.each do |method, method_obj|
             next unless HTTP_METHODS.includes?(method.to_s.downcase)
-            params = path_level_params.dup
+            params = [] of Param
             consumes = consumes_json(json_obj, method_obj)
+            path_level_params.each do |param_obj|
+              extract_param_json(json_obj, param_obj, consumes, params)
+            end
 
             if method_params = method_obj["parameters"]?.try(&.as_a?)
               method_params.each do |param_obj|
@@ -260,21 +319,23 @@ module Analyzer::Specification
       begin
         paths = yaml_obj["paths"].as_h
         paths.each do |path, path_obj|
-          path_level_params = [] of Param
-          if path_obj_h = path_obj.as_h?
+          path_item = resolve_path_item_yaml(yaml_obj, path_obj)
+          path_level_params = [] of YAML::Any
+          if path_obj_h = path_item.as_h?
             if shared_node = path_obj_h[YAML::Any.new("parameters")]?
               if shared = shared_node.as_a?
-                shared.each do |param_obj|
-                  extract_param_yaml(yaml_obj, param_obj, [] of String, path_level_params)
-                end
+                path_level_params.concat(shared)
               end
             end
           end
 
-          path_obj.as_h.each do |method, method_obj|
+          path_item.as_h.each do |method, method_obj|
             next unless HTTP_METHODS.includes?(method.to_s.downcase)
-            params = path_level_params.dup
+            params = [] of Param
             consumes = consumes_yaml(yaml_obj, method_obj)
+            path_level_params.each do |param_obj|
+              extract_param_yaml(yaml_obj, param_obj, consumes, params)
+            end
 
             if method_params_node = method_obj[YAML::Any.new("parameters")]?
               if method_params = method_params_node.as_a?

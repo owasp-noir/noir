@@ -48,7 +48,12 @@ class PhpAuthTagger < FrameworkTagger
 
   # Generic PHP auth patterns
   GENERIC_PATTERNS = [
-    {/session_start\s*\(\).*\$_SESSION\[['"]user/, "PHP session auth"},
+    # The previous `session_start().*$_SESSION['user` required both tokens
+    # on one physical line; under the per-line body scan that essentially
+    # never matched. Key on a guarded `$_SESSION['user...]` access instead
+    # (isset/!isset/empty), which is the actual auth signal and excludes a
+    # bare `session_start();` bootstrap used on public pages too.
+    {/(?:isset|empty|!\s*isset)\s*\(\s*\$_SESSION\s*\[\s*['"]user/, "PHP session user guard"},
     {/\$_SERVER\[['"]PHP_AUTH_USER['"]/, "PHP HTTP Basic Auth"},
   ]
 
@@ -96,6 +101,9 @@ class PhpAuthTagger < FrameworkTagger
       lines = content.split("\n")
       line_num = path_info.line
       next if line_num.nil?
+      # Skip stale/out-of-range line refs: a line beyond the content we
+      # read would crash the lines[idx] walks below with IndexError.
+      next if line_num < 1 || line_num > lines.size
       line_idx = line_num - 1
 
       # Check route-level middleware (Laravel + Slim groups etc.)

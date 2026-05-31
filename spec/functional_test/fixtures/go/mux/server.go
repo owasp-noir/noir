@@ -56,7 +56,7 @@ func main() {
 
 	// Static file serving
 	r.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("./static/"))))
-	
+
 	// Test multi-line route definition
 	r.HandleFunc(
 		"/multiline",
@@ -64,6 +64,19 @@ func main() {
 			fmt.Fprintf(w, "multiline")
 		},
 	).Methods("GET")
+
+	// Handler route and route-builder chains common in larger mux apps
+	r.Handle("/handler-route", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "handler route")
+	})).Methods("POST").Name("handler.create")
+
+	r.Methods("PATCH").Path("/builder-route").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "builder route")
+	})
+
+	r.Path("/builder-query").Methods("GET").Queries("type", "{type}").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "builder query")
+	})
 
 	http.ListenAndServe(":8080", r)
 }

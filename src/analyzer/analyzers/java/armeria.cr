@@ -54,16 +54,30 @@ module Analyzer::Java
                     # Server.builder()-style routes (regex-scoped — the
                     # builder chain isn't worth a dedicated TS walk yet).
                     details = Details.new(PathInfo.new(path))
-                    constants = if path.ends_with?(".java")
-                                  Noir::TreeSitterJavaRouteExtractor.extract_string_constants(content)
-                                else
-                                  Hash(String, String).new
-                                end
+                    # Both the string-constant table (a full tree-sitter
+                    # parse) and the non-code mask (a char walk) are only
+                    # needed once a `Server.builder()...build()` chain is
+                    # actually present. Most files are annotated services
+                    # with no builder chain at all, so build both lazily
+                    # on the first match to avoid parsing every file twice.
+                    #
+                    # The mask marks char offsets inside string literals or
+                    # comments, letting us drop builder chains that only
+                    # appear in documentation (e.g. a Kotlin `@Description`
+                    # value or a Java text block) — a real FP source.
+                    non_code_mask = nil.as(Array(Bool)?)
+                    constants = nil.as(Hash(String, String)?)
                     content.scan(REGEX_SERVER_CODE_BLOCK) do |server_codeblock_match|
+                      start = server_codeblock_match.begin(0)
+                      if start
+                        mask = (non_code_mask ||= build_non_code_mask(content))
+                        next if start < mask.size && mask[start]
+                      end
                       server_codeblock = server_codeblock_match[0]
 
-                      collect_service_routes(server_codeblock, constants, details, service_with_routes_index)
-                      collect_builder_routes(server_codeblock, constants, details)
+                      resolved_constants = constants ||= (path.ends_with?(".java") ? Noir::TreeSitterJavaRouteExtractor.extract_string_constants(content) : Hash(String, String).new)
+                      collect_service_routes(server_codeblock, resolved_constants, details, service_with_routes_index)
+                      collect_builder_routes(server_codeblock, resolved_constants, details)
                     end
                   end
                 rescue File::NotFoundError
@@ -570,6 +584,84 @@ module Analyzer::Java
       args
     end
 
+    # Marks character offsets that fall inside a string literal or a
+    # comment. Used to reject `Server.builder()...build()` chains that
+    # only appear inside documentation — e.g. an `@Description` value or
+    # a Java text block / Kotlin raw string showing example code. Handles
+    # `//` line comments, `/* */` block comments, triple-quoted strings,
+    # double-quoted strings and char literals (with `\` escapes).
+    private def build_non_code_mask(content : String) : Array(Bool)
+      chars = content.chars
+      n = chars.size
+      mask = Array(Bool).new(n, false)
+      i = 0
+      while i < n
+        c = chars[i]
+        nxt = i + 1 < n ? chars[i + 1] : '\0'
+
+        if c == '/' && nxt == '/'
+          while i < n && chars[i] != '\n'
+            mask[i] = true
+            i += 1
+          end
+          next
+        end
+
+        if c == '/' && nxt == '*'
+          mask[i] = true
+          mask[i + 1] = true
+          i += 2
+          while i < n
+            if chars[i] == '*' && i + 1 < n && chars[i + 1] == '/'
+              mask[i] = true
+              mask[i + 1] = true
+              i += 2
+              break
+            end
+            mask[i] = true
+            i += 1
+          end
+          next
+        end
+
+        if c == '"' && nxt == '"' && i + 2 < n && chars[i + 2] == '"'
+          mask[i] = mask[i + 1] = mask[i + 2] = true
+          i += 3
+          while i < n
+            if chars[i] == '"' && i + 2 < n && chars[i + 1] == '"' && chars[i + 2] == '"'
+              mask[i] = mask[i + 1] = mask[i + 2] = true
+              i += 3
+              break
+            end
+            mask[i] = true
+            i += 1
+          end
+          next
+        end
+
+        if c == '"' || c == '\''
+          mask[i] = true
+          i += 1
+          while i < n
+            ch = chars[i]
+            if ch == '\\'
+              mask[i] = true
+              mask[i + 1] = true if i + 1 < n
+              i += 2
+              next
+            end
+            mask[i] = true
+            i += 1
+            break if ch == c
+          end
+          next
+        end
+
+        i += 1
+      end
+      mask
+    end
+
     private def find_matching_delimiter(code : String,
                                         open_idx : Int32,
                                         open_char : Char,
@@ -888,7 +980,10 @@ module Analyzer::Java
       return params unless fparams
 
       path_param_names = Set(String).new
-      url_path.scan(/\{(\w+)\}/) do |match|
+      # `\*?` also matches Armeria's rest-path capture `{*name}` so a
+      # matching `@Param name` is recognised as a path variable rather
+      # than emitted as a spurious query parameter.
+      url_path.scan(/\{\*?(\w+)\}/) do |match|
         path_param_names << match[1] if match.size > 1
       end
 
@@ -1005,8 +1100,9 @@ module Analyzer::Java
     end
 
     # Extract path parameters from URLs like /users/{userId} or /items/{itemId}/comments
+    # (`\*?` also captures the rest-path form `{*name}` as `name`).
     private def extract_path_parameters(url : String, endpoint : Endpoint)
-      url.scan(/\{(\w+)\}/) do |match|
+      url.scan(/\{\*?(\w+)\}/) do |match|
         if match.size > 0
           param_name = match[1]
           # Only add if not already present

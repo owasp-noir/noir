@@ -1,3 +1,4 @@
+require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
@@ -97,5 +98,56 @@ describe "PhpAuthTagger (expanded targets)" do
     end
 
     true.should be_true
+  end
+
+  describe "session user guard (regression for never-match session pattern)" do
+    it "detects a guarded $_SESSION['user'] access in the handler body" do
+      tmpdir = File.tempname("php_session_guard")
+      Dir.mkdir_p(tmpdir)
+      file = File.join(tmpdir, "handler.php")
+      File.write(file, [
+        "<?php",
+        "function dashboard() {",
+        "    if (!isset($_SESSION['user_id'])) { header('Location: /login'); exit; }",
+        "    echo 'secret';",
+        "}",
+      ].join("\n"))
+
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      details = Details.new(PathInfo.new(file, 2))
+      details.technology = "php_pure"
+      endpoint = Endpoint.new("/dashboard", "GET", [] of Param, details)
+
+      PhpAuthTagger.new(noir_options).perform([endpoint])
+      endpoint.tags.empty?.should be_false
+      endpoint.tags[0].description.should contain("session user guard")
+
+      FileUtils.rm_rf(tmpdir)
+    end
+
+    it "does not tag a bare session_start() bootstrap" do
+      tmpdir = File.tempname("php_session_bare")
+      Dir.mkdir_p(tmpdir)
+      file = File.join(tmpdir, "public.php")
+      File.write(file, [
+        "<?php",
+        "function home() {",
+        "    session_start();",
+        "    echo 'welcome';",
+        "}",
+      ].join("\n"))
+
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      details = Details.new(PathInfo.new(file, 2))
+      details.technology = "php_pure"
+      endpoint = Endpoint.new("/", "GET", [] of Param, details)
+
+      PhpAuthTagger.new(noir_options).perform([endpoint])
+      endpoint.tags.empty?.should be_true
+
+      FileUtils.rm_rf(tmpdir)
+    end
   end
 end

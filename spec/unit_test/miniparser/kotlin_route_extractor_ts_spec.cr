@@ -156,11 +156,12 @@ describe Noir::TreeSitterKotlinRouteExtractor do
     routes.map(&.path).should eq(["/api/users"])
   end
 
-  it "emits prefix/ when the method path is empty" do
+  it "collapses an empty method path onto the class prefix" do
     # Kotlin Spring controllers routinely do
     # `@RequestMapping("/api/article")` on the class and `@GetMapping`
-    # (no path arg) on a method, expecting `/api/article/` for the
-    # handler. Matches the Java Spring behaviour pinned down in #1291.
+    # (no path arg) on a method. Spring absorbs the empty segment, so
+    # the handler maps to `/api/article` (no trailing slash). Matches
+    # the Java Spring behaviour.
     source = <<-KT
       @RequestMapping("/api/article")
       class ArticleController {
@@ -170,7 +171,7 @@ describe Noir::TreeSitterKotlinRouteExtractor do
       KT
 
     routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes(source)
-    routes.map(&.path).should eq(["/api/article/"])
+    routes.map(&.path).should eq(["/api/article"])
   end
 
   it "extracts Spring Cloud Gateway PredicateSpec helper routes" do

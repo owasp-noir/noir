@@ -133,5 +133,43 @@ describe "JwtTagger" do
       endpoint.tags.size.should eq(1)
       endpoint.tags[0].name.should eq("jwt")
     end
+
+    it "tags bearer authorization values without a second token parameter" do
+      tagger = JwtTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/profile", "GET", [
+        Param.new("Authorization", "Bearer eyJhbGciOiJIUzI1NiJ9.payload.signature", "header"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("jwt")
+    end
+
+    it "tags auth routes with custom token header names" do
+      tagger = JwtTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/login", "POST", [
+        Param.new("x-api-token", "", "header"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("jwt")
+    end
+
+    it "does not tag CSRF-only token parameters" do
+      tagger = JwtTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/auth/session", "POST", [
+        Param.new("csrf_token", "", "form"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(0)
+    end
   end
 end

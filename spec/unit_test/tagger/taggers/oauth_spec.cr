@@ -57,7 +57,7 @@ describe "OAuthTagger" do
     it "tags with exactly 3 matching parameters" do
       tagger = OAuthTagger.new(default_tagger_options)
 
-      endpoint = Endpoint.new("/oauth/token", "POST", [
+      endpoint = Endpoint.new("/api/integrations/token", "POST", [
         Param.new("grant_type", "client_credentials", "form"),
         Param.new("client_id", "my-app", "form"),
         Param.new("client_secret", "secret", "form"),
@@ -101,10 +101,9 @@ describe "OAuthTagger" do
       endpoint2.tags.size.should eq(0)
     end
 
-    it "is case-sensitive for parameter matching" do
+    it "normalizes parameter names for matching" do
       tagger = OAuthTagger.new(default_tagger_options)
 
-      # OAuth parameter names are case-sensitive
       endpoint = Endpoint.new("/oauth/token", "POST", [
         Param.new("GRANT_TYPE", "authorization_code", "form"),
         Param.new("CODE", "abc123", "form"),
@@ -113,7 +112,65 @@ describe "OAuthTagger" do
 
       tagger.perform([endpoint])
 
-      # Should not match because case doesn't match
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("oauth")
+    end
+
+    it "tags OAuth authorization endpoints with OIDC parameters" do
+      tagger = OAuthTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/oauth2/authorize", "GET", [
+        Param.new("response_type", "code", "query"),
+        Param.new("client_id", "my-app", "query"),
+        Param.new("redirect_uri", "https://example.com/callback", "query"),
+        Param.new("scope", "openid profile", "query"),
+        Param.new("state", "abc123", "query"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("oauth")
+    end
+
+    it "tags OAuth token endpoints using PKCE verifier without client secret" do
+      tagger = OAuthTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/oauth/token", "POST", [
+        Param.new("grant-type", "authorization_code", "form"),
+        Param.new("code_verifier", "pkce-secret", "form"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("oauth")
+    end
+
+    it "does not tag generic token routes with weak OAuth parameters" do
+      tagger = OAuthTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/token", "POST", [
+        Param.new("code", "123456", "form"),
+        Param.new("state", "ready", "form"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(0)
+    end
+
+    it "does not tag non-OAuth endpoints with weak OAuth-like parameter names" do
+      tagger = OAuthTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/promotions", "POST", [
+        Param.new("code", "SPRING", "form"),
+        Param.new("state", "published", "form"),
+        Param.new("scope", "regional", "form"),
+      ])
+
+      tagger.perform([endpoint])
+
       endpoint.tags.size.should eq(0)
     end
   end

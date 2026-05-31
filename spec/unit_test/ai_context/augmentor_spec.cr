@@ -63,6 +63,34 @@ describe "NoirAIContext" do
     end
   end
 
+  it "expands a truncated source-scan match to the full call label" do
+    source = <<-CODE
+      @router.get(
+          "/", dependencies=[Depends(get_current_active_superuser)]
+      )
+      def read_items() -> Any:
+          return []
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/items", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 2))
+      details.technology = "python_fastapi"
+      endpoint.details = details
+
+      endpoints = NoirAIContext.apply([endpoint])
+      context = endpoints[0].ai_context.should_not be_nil
+
+      # The guard regex only anchors on `Depends(get_current_`; the
+      # evidence label must be extended to the real call rather than
+      # surfaced as the truncated fragment.
+      guard = context.guards.find(&.name.starts_with?("Depends"))
+      guard = guard.should_not be_nil
+      guard.name.should eq("Depends(get_current_active_superuser)")
+    end
+  end
+
   it "prefers idor review over generic guard absence on unguarded identifier routes" do
     source = <<-CODE
       post "/projects/:id/rotate" do
@@ -868,6 +896,47 @@ describe "NoirAIContext" do
     end
   end
 
+  it "detects credential_input from Go FormValue access" do
+    source = <<-CODE
+      r.Post("/login", func(w http.ResponseWriter, r *http.Request) {
+        password := r.FormValue("password")
+        _ = password
+      })
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/login", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should contain("credential_input")
+      context.signals.map(&.kind).should contain("rate_limit_absence")
+    end
+  end
+
+  it "detects credential_input from C# Request.Form access" do
+    source = <<-CODE
+      app.MapPost("/login", async context =>
+      {
+          var password = context.Request.Form["password"];
+          await context.Response.WriteAsync("ok");
+      });
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/login", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should contain("credential_input")
+      context.signals.map(&.kind).should contain("rate_limit_absence")
+    end
+  end
+
   it "does not duplicate credential_input when the param already supplied it" do
     # When the analyzer already extracted a credential-bearing param,
     # the source-scan backstop must not double-emit. The param-level
@@ -1449,14 +1518,12 @@ describe "NoirAIContext" do
     end
   end
 
-  it "does NOT bump priority_review on a GET endpoint with csrf_exempt (CSRF doesn't apply)" do
+  it "does NOT emit csrf_exempt on a GET endpoint (CSRF doesn't apply)" do
     # FP sweep #2 regression: an `@csrf_exempt`-decorated function
     # that handles both GET and POST creates two endpoints. The
-    # POST one is legitimately high-priority; the GET one shouldn't
-    # be because CSRF protection only applies to state-changing
-    # methods. csrf_exempt stays as a signal (it's a truthful piece
-    # of information for the LLM) but is excluded from the
-    # sharp_signal bucket on safe-method endpoints.
+    # POST one is legitimately review-worthy; the GET one shouldn't
+    # carry a CSRF-bypass signal because CSRF protection only applies
+    # to state-changing methods.
     source = <<-CODE
       @csrf_exempt
       def webhook(request):
@@ -1470,15 +1537,8 @@ describe "NoirAIContext" do
       endpoint.details = details
 
       context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
-      # csrf_exempt still surfaces as a signal — it's truthful.
-      context.signals.map(&.kind).should contain("csrf_exempt")
-      # But the GET endpoint shouldn't land high-priority just for
-      # that decorator; CSRF doesn't apply to GET. Either no
-      # priority_review at all (score < 2) or low/medium at most.
-      priority = context.signals.find(&.kind.== "priority_review")
-      if priority
-        priority.name.should_not eq("high")
-      end
+      context.signals.map(&.kind).should_not contain("csrf_exempt")
+      context.signals.map(&.kind).should_not contain("priority_review")
     end
   end
 

@@ -27,6 +27,15 @@ FunctionalTester.new("fixtures/specification/oas3/no_servers/", {
   :endpoints => 1,
 }, nil).perform_tests
 
+FunctionalTester.new("fixtures/specification/oas3/no_servers/", {
+  :techs     => 1,
+  :endpoints => 1,
+}, [
+  Endpoint.new("https://api.example.com/gems", "GET"),
+], {
+  "url" => YAML::Any.new("https://api.example.com"),
+}).perform_tests
+
 FunctionalTester.new("fixtures/specification/oas3/multiple_docs/", {
   :techs     => 1,
   :endpoints => 2,
@@ -79,3 +88,36 @@ FunctionalTester.new("fixtures/specification/oas3/param_in_path/", {
     Param.new("cookie", "", "cookie"),
   ]),
 ]).perform_tests
+
+edge_case_endpoints = [
+  Endpoint.new("/api/v2/orders", "GET", [
+    Param.new("X-Tenant", "", "header"),
+    Param.new("state", "", "query"),
+  ]),
+  Endpoint.new("/api/v2/orders", "POST", [
+    Param.new("X-Tenant", "", "header"),
+    Param.new("name", "", "json"),
+    Param.new("priority", "", "json"),
+    Param.new("notes", "", "json"),
+  ]),
+  Endpoint.new("/api/v2/reports", "POST", [
+    Param.new("filter", "", "json"),
+    Param.new("include_archived", "", "json"),
+  ]),
+]
+
+FunctionalTester.new("fixtures/specification/oas3_edge_cases/", {
+  :techs     => 1,
+  :endpoints => edge_case_endpoints.size,
+}, edge_case_endpoints).perform_tests
+
+edge_case_url_endpoints = edge_case_endpoints.map do |endpoint|
+  Endpoint.new("https://api.example.com#{endpoint.url}", endpoint.method, endpoint.params)
+end
+
+FunctionalTester.new("fixtures/specification/oas3_edge_cases/", {
+  :techs     => 1,
+  :endpoints => edge_case_url_endpoints.size,
+}, edge_case_url_endpoints, {
+  "url" => YAML::Any.new("https://api.example.com"),
+}).perform_tests

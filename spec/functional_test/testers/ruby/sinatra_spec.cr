@@ -13,9 +13,21 @@ expected_endpoints = [
   Endpoint.new("/api/widgets", "POST", [
     Param.new("HTTP_X_TRACE_ID", "", "header"),
   ]),
+  Endpoint.new("/api/route_widgets", "GET", [
+    Param.new("token", "", "query"),
+  ]),
+  Endpoint.new("/api/route_widgets", "POST", [
+    Param.new("token", "", "query"),
+  ]),
+  Endpoint.new("/api/verb_named/:post", "GET", [
+    Param.new("id", "", "query"),
+  ]),
+  Endpoint.new("/v2/widgets", "GET", [
+    Param.new("cursor", "", "query"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/ruby/sinatra/", {
   :techs     => 1,
-  :endpoints => 4,
+  :endpoints => 8,
 }, expected_endpoints).perform_tests

@@ -81,6 +81,38 @@ module Noir
       "slog",
     }
 
+    # Chain methods that return the receiving router/group unchanged —
+    # middleware registration. Gin's `RouterGroup.Use(...)` and
+    # `Engine.Use(...)` (and Fiber's `app.Use(...)`) return `IRoutes`,
+    # so `r.Use(mw).GET("/x", h)` and `r.Group("/api").Use(mw).POST(...)`
+    # are valid, common shapes. They don't add a path segment, so the
+    # operand walk peels them and resolves the prefix against the
+    # underlying router/group rather than dropping the route entirely.
+    PASSTHROUGH_CHAIN_METHODS = Set{"Use"}
+
+    # Beego registers controllers with `web.Router("/path", &Ctrl{},
+    # "get:Method;post:Other")`. The receiver is the `web` package (v2,
+    # `github.com/beego/beego/v2/server/web`) or the legacy `beego`
+    # package alias (v1, `github.com/astaxie/beego`). Restricting the
+    # operand to these two names keeps `something.Router(...)` calls on
+    # unrelated types from minting phantom endpoints.
+    BEEGO_ROUTER_OPERANDS = Set{"web", "beego"}
+
+    # When a `web.Router` call carries no method-mapping string, Beego
+    # auto-maps incoming requests to controller methods whose names match
+    # an HTTP verb (Go-cased). Maps the receiver-method name to the HTTP
+    # verb it serves so a mapping-less registration emits exactly the
+    # methods the controller actually implements.
+    BEEGO_CONTROLLER_HTTP_METHODS = {
+      "Get"     => "GET",
+      "Post"    => "POST",
+      "Put"     => "PUT",
+      "Delete"  => "DELETE",
+      "Patch"   => "PATCH",
+      "Head"    => "HEAD",
+      "Options" => "OPTIONS",
+    }
+
     # A static-file route: URL `url_prefix` serves files from disk
     # location `disk_path`.
     struct StaticPath
@@ -134,10 +166,24 @@ module Noir
       group_prefixes = external_groups.dup
       Noir::TreeSitter.parse_go(source) do |root|
         string_values = collect_string_values(root, source)
+        mux_chained_operands = Set(String).new
 
         walk(root) do |node|
           next unless group_assignment_node?(node)
           collect_group(node, source, group_prefixes, group_method, group_aliases, string_values)
+        end
+
+        if handlefunc_methods
+          walk(root) do |node|
+            next unless Noir::TreeSitter.node_type(node) == "call_expression"
+            next unless mux_route_chain_call?(node, source)
+            function = Noir::TreeSitter.field(node, "function")
+            next unless function
+            operand = Noir::TreeSitter.field(function, "operand")
+            next unless operand
+            next unless Noir::TreeSitter.node_type(operand) == "call_expression"
+            mux_chained_operands << node_key(operand)
+          end
         end
 
         walk(root) do |node|
@@ -146,7 +192,7 @@ module Noir
             routes << route
           elsif handle_method && (route = decode_handle_call(node, source, group_prefixes, handle_method))
             routes << route
-          elsif handlefunc_methods
+          elsif handlefunc_methods && !mux_chained_operands.includes?(node_key(node))
             # Mux's `.Methods(...)` can list several verbs at once
             # (`.Methods("GET", "POST")`), so the decoder returns an
             # array and we fan out into one Route per verb.
@@ -156,7 +202,7 @@ module Noir
           end
         end
       end
-      routes
+      dedupe_routes(routes)
     end
 
     # Extracts only `<name> := <parent>.<group_method>("/prefix")`
@@ -177,6 +223,183 @@ module Noir
         end
       end
       group_prefixes
+    end
+
+    # Collects Beego controller types and the HTTP-verb-named methods they
+    # implement, keyed by the (package-unqualified) type name. Used to
+    # resolve mapping-less `web.Router("/path", &Ctrl{})` registrations
+    # into the concrete set of methods the controller serves. Built once
+    # per package directory by the Beego analyzer (controllers and their
+    # router registrations usually share a package).
+    #
+    # Only HTTP-verb method names are recorded — a `MainController` that
+    # defines `Get`, `Health`, `Update` contributes `{"MainController" =>
+    # ["Get"]}`, because Beego's default mapping only routes verb-named
+    # methods; `Health`/`Update` are reachable solely via an explicit
+    # `"get:Health"` mapping string.
+    def extract_controller_methods(source : String) : Hash(String, Array(String))
+      result = Hash(String, Array(String)).new
+      Noir::TreeSitter.parse_go(source) do |root|
+        walk(root) do |node|
+          next unless Noir::TreeSitter.node_type(node) == "method_declaration"
+          receiver = Noir::TreeSitter.field(node, "receiver")
+          name_node = Noir::TreeSitter.field(node, "name")
+          next unless receiver && name_node
+          method_name = Noir::TreeSitter.node_text(name_node, source)
+          next unless BEEGO_CONTROLLER_HTTP_METHODS.has_key?(method_name)
+          type_name = receiver_type_name(receiver, source)
+          next unless type_name
+          list = (result[type_name] ||= [] of String)
+          list << method_name unless list.includes?(method_name)
+        end
+      end
+      result
+    end
+
+    # Extracts Beego controller-style routes:
+    #
+    #   web.Router("/health", ctrl, "get:Health")          -> GET /health
+    #   web.Router("/x", c, "get,post:Handle")             -> GET /x, POST /x
+    #   web.Router("/x", c, "get:Read;post:Write")         -> GET /x, POST /x
+    #   web.Router("/any", c, "*:Any")                     -> ANY /any (fan-out)
+    #   web.Router("/", &MainController{})                 -> verb routes
+    #                                                         for each HTTP
+    #                                                         method the
+    #                                                         controller
+    #                                                         implements
+    #
+    # `controller_methods` (see `extract_controller_methods`) supplies the
+    # method set for the mapping-less form; when the controller type can't
+    # be resolved (e.g. a cross-package `&controllers.User{}`), the route
+    # falls back to a single GET so the endpoint is still surfaced rather
+    # than dropped. The Route's `handler` carries the controller-method
+    # name so the analyzer can attribute it as a callee.
+    def extract_beego_routes(source : String,
+                             controller_methods : Hash(String, Array(String)) = Hash(String, Array(String)).new) : Array(Route)
+      routes = [] of Route
+      Noir::TreeSitter.parse_go(source) do |root|
+        string_values = collect_string_values(root, source)
+        var_types = collect_controller_var_types(root, source)
+        walk(root) do |node|
+          next unless Noir::TreeSitter.node_type(node) == "call_expression"
+          decode_beego_router_call(node, source, controller_methods, var_types, string_values).each do |route|
+            routes << route
+          end
+        end
+      end
+      dedupe_routes(routes)
+    end
+
+    # Framework constructors that mint a *root* router/engine — the
+    # receiver they're assigned to carries no path prefix. A name bound
+    # to one of these is the application root, never a sub-group.
+    ENGINE_CONSTRUCTORS = Set{"New", "Default", "NewRouter"}
+
+    # Engine/root type names (final identifier of the parameter type,
+    # pointer stripped). A parameter of one of these types is the root
+    # router handed in by the caller — `gin.Engine`, `echo.Echo`,
+    # `fiber.App`, `chi.Mux`/`mux.Router` (the last shares `Router` with
+    # group types, so it's intentionally omitted to avoid excluding
+    # genuine group params).
+    ENGINE_PARAM_TYPES = Set{"Engine", "Echo", "App", "Mux"}
+
+    # Collects names that denote a *root* engine/router rather than a
+    # path-bearing group:
+    #
+    #   r := gin.New()            / r := gin.Default()
+    #   r := chi.NewRouter()      / e := echo.New()
+    #   func setup(r *gin.Engine) / func setup(e *echo.Echo)
+    #
+    # The cross-file group pre-pass excludes these so a same-named local
+    # group in a sibling file (e.g. `r := v1.Group("/sysjob")`) can't
+    # leak a prefix onto the root and contaminate every route in the
+    # package. Each file still resolves its own `r` locally during route
+    # extraction; this only governs what crosses file boundaries.
+    def extract_engine_names(source : String) : Set(String)
+      names = Set(String).new
+      Noir::TreeSitter.parse_go(source) do |root|
+        walk(root) do |node|
+          case Noir::TreeSitter.node_type(node)
+          when "short_var_declaration", "assignment_statement", "var_spec"
+            collect_engine_assignment(node, source, names)
+          when "parameter_declaration"
+            collect_engine_param(node, source, names)
+          end
+        end
+      end
+      names
+    end
+
+    # Single-parse combination of `extract_engine_names` +
+    # `extract_groups` (with an empty external map). The Go engine's
+    # group pre-pass needs BOTH per file — the root-engine names to
+    # exclude from cross-file propagation and the file's own group
+    # declarations — so folding them into one tree-sitter parse halves
+    # the pre-pass parse count. Behaviour is identical to calling the two
+    # extractors separately; only the parse is shared.
+    def extract_engine_names_and_groups(source : String,
+                                        group_method : String = "Group",
+                                        group_aliases : Array(String) = [] of String) : Tuple(Set(String), Hash(String, String))
+      names = Set(String).new
+      group_prefixes = Hash(String, String).new
+      Noir::TreeSitter.parse_go(source) do |root|
+        string_values = collect_string_values(root, source)
+        walk(root) do |node|
+          case Noir::TreeSitter.node_type(node)
+          when "short_var_declaration", "assignment_statement", "var_spec"
+            collect_engine_assignment(node, source, names)
+            collect_group(node, source, group_prefixes, group_method, group_aliases, string_values)
+          when "parameter_declaration"
+            collect_engine_param(node, source, names)
+          end
+        end
+      end
+      {names, group_prefixes}
+    end
+
+    # `<name> := <pkg>.New()` / `.Default()` / `.NewRouter()` → root name.
+    private def collect_engine_assignment(node : LibTreeSitter::TSNode,
+                                          source : String,
+                                          names : Set(String))
+      left = Noir::TreeSitter.field(node, "left")
+      right = Noir::TreeSitter.field(node, "right")
+      if Noir::TreeSitter.node_type(node) == "var_spec"
+        left = Noir::TreeSitter.field(node, "name")
+        right = Noir::TreeSitter.field(node, "value")
+      end
+      return unless left && right
+
+      name_node = identifier_or_first_child(left)
+      rhs_node = first_named_child(right)
+      return unless name_node && rhs_node
+      return unless Noir::TreeSitter.node_type(name_node) == "identifier"
+      return unless Noir::TreeSitter.node_type(rhs_node) == "call_expression"
+
+      function = Noir::TreeSitter.field(rhs_node, "function")
+      return unless function
+      return unless Noir::TreeSitter.node_type(function) == "selector_expression"
+      field = Noir::TreeSitter.field(function, "field")
+      return unless field
+      return unless ENGINE_CONSTRUCTORS.includes?(Noir::TreeSitter.node_text(field, source))
+
+      names << Noir::TreeSitter.node_text(name_node, source)
+    end
+
+    # `func f(<name> *gin.Engine)` / `(<name> *echo.Echo)` → root name.
+    private def collect_engine_param(node : LibTreeSitter::TSNode,
+                                     source : String,
+                                     names : Set(String))
+      name_node = Noir::TreeSitter.field(node, "name")
+      type_node = Noir::TreeSitter.field(node, "type")
+      return unless name_node && type_node
+      return unless Noir::TreeSitter.node_type(name_node) == "identifier"
+
+      type_text = Noir::TreeSitter.node_text(type_node, source)
+      # Strip pointer / package qualifier: `*gin.Engine` -> `Engine`.
+      final = type_text.lchop('*').split('.').last
+      return unless ENGINE_PARAM_TYPES.includes?(final)
+
+      names << Noir::TreeSitter.node_text(name_node, source)
     end
 
     # Chi-style extractor: walks the AST with a prefix stack so
@@ -676,6 +899,27 @@ module Noir
       end
     end
 
+    private def node_key(node : LibTreeSitter::TSNode) : String
+      "#{LibTreeSitter.ts_node_start_byte(node)}:#{LibTreeSitter.ts_node_end_byte(node)}"
+    end
+
+    private def mux_route_chain_call?(call : LibTreeSitter::TSNode, source : String) : Bool
+      function = Noir::TreeSitter.field(call, "function")
+      return false unless function
+      return false unless Noir::TreeSitter.node_type(function) == "selector_expression"
+      field = Noir::TreeSitter.field(function, "field")
+      return false unless field
+
+      case Noir::TreeSitter.node_text(field, source)
+      when "Methods", "Queries", "HandleFunc", "Handle", "HandlerFunc", "Handler",
+           "Path", "Host", "Schemes", "Headers", "HeadersRegexp", "Name",
+           "MatcherFunc", "BuildOnly"
+        true
+      else
+        false
+      end
+    end
+
     private def group_assignment_node?(node : LibTreeSitter::TSNode) : Bool
       case Noir::TreeSitter.node_type(node)
       when "short_var_declaration", "assignment_statement", "var_spec"
@@ -772,6 +1016,24 @@ module Noir
       field_node = Noir::TreeSitter.field(function, "field")
       return unless parent_node && field_node
       method_name = Noir::TreeSitter.node_text(field_node, source)
+
+      # Peel trailing middleware pass-through calls so
+      # `v1 := r.Group("/v1").Use(mw)` is recognised as a group
+      # declaration for `v1` — the `.Use(...)` wraps the real
+      # `.Group(...)` call without contributing a path segment.
+      while PASSTHROUGH_CHAIN_METHODS.includes?(method_name) &&
+            Noir::TreeSitter.node_type(parent_node) == "call_expression"
+        inner_function = Noir::TreeSitter.field(parent_node, "function")
+        break unless inner_function
+        break unless Noir::TreeSitter.node_type(inner_function) == "selector_expression"
+        inner_parent = Noir::TreeSitter.field(inner_function, "operand")
+        inner_field = Noir::TreeSitter.field(inner_function, "field")
+        break unless inner_parent && inner_field
+        rhs_node = parent_node
+        parent_node = inner_parent
+        field_node = inner_field
+        method_name = Noir::TreeSitter.node_text(field_node, source)
+      end
 
       # Goyave's zero-arg `v1 := api.Group()` is an "alias" declaration —
       # v1 inherits api's prefix without adding its own. We resolve these
@@ -878,14 +1140,25 @@ module Noir
 
       raw_path = nil
       handler_text = ""
+      arg_index = 0
       Noir::TreeSitter.each_named_child(args) do |arg|
-        if raw_path.nil?
+        if arg_index == 0
+          # The route path must be the FIRST positional argument of a verb
+          # call (`r.GET("/path", handler)` across Gin/Echo/Fiber/Beego/
+          # Hertz/Iris). Bailing when arg0 isn't a string rejects
+          # value-returning helpers that merely share a verb name — a
+          # cache's `c.Put(ctx, "key", val)`, a store's `s.Get(ctx, "id")`,
+          # etc. — whose first arg is a context/receiver, not a URL.
+          # Previously the scan walked past the non-string first arg and
+          # latched onto a later string literal, surfacing phantom routes
+          # like `PUT /key` (observed across beego cache examples).
           raw_path = string_expr_text(arg, source, string_values)
-        else
+        elsif handler_text.empty?
           # First non-string positional arg after the path is treated as
           # the handler — matches Gin/Echo/Fiber calling conventions.
-          handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty? && !raw_path.nil?
+          handler_text = Noir::TreeSitter.node_text(arg, source)
         end
+        arg_index += 1
       end
 
       return unless raw_path
@@ -949,6 +1222,16 @@ module Noir
       return unless field && parent
 
       method_name = Noir::TreeSitter.node_text(field, source)
+
+      # Middleware pass-through (`.Use(...)`): the receiver is returned
+      # unchanged, so skip this link and resolve the prefix against the
+      # parent. Without this, a `r.Group("/x").Use(mw).GET(...)` chain
+      # (the verb's operand is the `.Use(...)` call) would resolve to
+      # nil and the route would be dropped.
+      if PASSTHROUGH_CHAIN_METHODS.includes?(method_name)
+        return router_operand_info(parent, source, groups, group_method, group_aliases, string_values)
+      end
+
       return unless method_name == group_method || group_aliases.includes?(method_name)
 
       prefix = ""
@@ -1027,37 +1310,53 @@ module Noir
       )
     end
 
-    # Decode mux's `<router>.HandleFunc("/path", handler).Methods(...)`.
-    # The outer call is `.Methods(...)` whose operand is the
-    # `.HandleFunc(...)` call. Returns one Route per method listed, so
-    # `.Methods("GET", "POST")` emits both endpoints. Further chained
-    # calls like `.Queries(...)` wrap this one and are peeled back here
-    # before looking at the operand.
+    # Decode mux route chains:
+    #
+    #   * `<router>.HandleFunc("/path", handler).Methods(...)`
+    #   * `<router>.Handle("/path", handler).Methods(...)`
+    #   * `<router>.Methods(...).Path("/path").HandlerFunc(handler)`
+    #   * `<router>.Path("/path").Methods(...).Handler(handler)`
+    #
+    # Returns one Route per method listed, so `.Methods("GET", "POST")`
+    # emits both endpoints. Further chained calls like `.Queries(...)`,
+    # `.Name(...)`, `.Host(...)`, etc. are peeled back while collecting
+    # route metadata.
     private def decode_handlefunc_methods_call(call : LibTreeSitter::TSNode,
                                                source : String,
                                                groups : Hash(String, String)) : Array(Route)
       empty = [] of Route
 
-      # Walk back through any tail methods (`.Queries`, `.Host`, `.Schemes`)
-      # stacked on top of `.Methods(...)` until we either find the
-      # `.Methods(...)` call or give up. As we traverse, collect query-param
-      # names from any `.Queries(...)` call — mux uses odd-positioned
-      # strings as param names (`.Queries("type", "{type}", "page", "{page}")`
-      # declares `type` and `page`).
-      methods_call = call
+      current = call
+      raw_path = nil
+      handler_text = ""
+      verbs = [] of String
       query_params = [] of String
+      saw_registration = false
+      saw_methods = false
+      registration_line = Noir::TreeSitter.node_start_row(call)
+      router_name = nil
+
       loop do
-        fn = Noir::TreeSitter.field(methods_call, "function")
+        fn = Noir::TreeSitter.field(current, "function")
         return empty unless fn
         return empty unless Noir::TreeSitter.node_type(fn) == "selector_expression"
         fld = Noir::TreeSitter.field(fn, "field")
         return empty unless fld
         field_name = Noir::TreeSitter.node_text(fld, source)
+
         case field_name
         when "Methods"
-          break
+          saw_methods = true
+          if methods_args = Noir::TreeSitter.field(current, "arguments")
+            Noir::TreeSitter.each_named_child(methods_args) do |arg|
+              case Noir::TreeSitter.node_type(arg)
+              when "interpreted_string_literal", "raw_string_literal"
+                verbs << decode_string_literal(arg, source).upcase
+              end
+            end
+          end
         when "Queries"
-          if q_args = Noir::TreeSitter.field(methods_call, "arguments")
+          if q_args = Noir::TreeSitter.field(current, "arguments")
             idx = 0
             Noir::TreeSitter.each_named_child(q_args) do |arg|
               case Noir::TreeSitter.node_type(arg)
@@ -1067,66 +1366,66 @@ module Noir
               end
             end
           end
-          next_call = Noir::TreeSitter.field(fn, "operand")
-          return empty unless next_call
-          return empty unless Noir::TreeSitter.node_type(next_call) == "call_expression"
-          methods_call = next_call
-        when "Host", "Schemes", "Headers", "HeadersRegexp"
-          next_call = Noir::TreeSitter.field(fn, "operand")
-          return empty unless next_call
-          return empty unless Noir::TreeSitter.node_type(next_call) == "call_expression"
-          methods_call = next_call
+        when "HandleFunc", "Handle"
+          saw_registration = true
+          registration_line = Noir::TreeSitter.node_start_row(current)
+          if args = Noir::TreeSitter.field(current, "arguments")
+            Noir::TreeSitter.each_named_child(args) do |arg|
+              case Noir::TreeSitter.node_type(arg)
+              when "interpreted_string_literal", "raw_string_literal"
+                raw_path ||= decode_string_literal(arg, source)
+              else
+                handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty? && !raw_path.nil?
+              end
+            end
+          end
+        when "HandlerFunc", "Handler"
+          saw_registration = true
+          registration_line = Noir::TreeSitter.node_start_row(current)
+          if args = Noir::TreeSitter.field(current, "arguments")
+            Noir::TreeSitter.each_named_child(args) do |arg|
+              case Noir::TreeSitter.node_type(arg)
+              when "interpreted_string_literal", "raw_string_literal"
+                # Handler/HandlerFunc don't carry a path in mux's builder
+                # API, but ignore string args defensively.
+              else
+                handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty?
+              end
+            end
+          end
+        when "Path"
+          if args = Noir::TreeSitter.field(current, "arguments")
+            Noir::TreeSitter.each_named_child(args) do |arg|
+              case Noir::TreeSitter.node_type(arg)
+              when "interpreted_string_literal", "raw_string_literal"
+                raw_path ||= decode_string_literal(arg, source)
+                break
+              end
+            end
+          end
+        when "Host", "Schemes", "Headers", "HeadersRegexp", "Name", "MatcherFunc", "BuildOnly"
+          # Metadata/matcher chain; keep peeling.
+        else
+          return empty
+        end
+
+        operand = Noir::TreeSitter.field(fn, "operand")
+        return empty unless operand
+        case Noir::TreeSitter.node_type(operand)
+        when "identifier"
+          router_name = Noir::TreeSitter.node_text(operand, source)
+          break
+        when "call_expression"
+          current = operand
         else
           return empty
         end
       end
 
-      function = Noir::TreeSitter.field(methods_call, "function")
-      return empty unless function
+      return empty unless router_name && raw_path && saw_registration
+      return empty if handler_text.empty?
+      verbs << (saw_methods ? "GET" : "ANY") if verbs.empty?
 
-      handlefunc_call = Noir::TreeSitter.field(function, "operand")
-      return empty unless handlefunc_call
-      return empty unless Noir::TreeSitter.node_type(handlefunc_call) == "call_expression"
-
-      inner_function = Noir::TreeSitter.field(handlefunc_call, "function")
-      return empty unless inner_function
-      return empty unless Noir::TreeSitter.node_type(inner_function) == "selector_expression"
-
-      router_node = Noir::TreeSitter.field(inner_function, "operand")
-      inner_field = Noir::TreeSitter.field(inner_function, "field")
-      return empty unless router_node && inner_field
-      return empty unless Noir::TreeSitter.node_type(router_node) == "identifier"
-      return empty unless Noir::TreeSitter.node_text(inner_field, source) == "HandleFunc"
-
-      inner_args = Noir::TreeSitter.field(handlefunc_call, "arguments")
-      return empty unless inner_args
-
-      raw_path = nil
-      handler_text = ""
-      Noir::TreeSitter.each_named_child(inner_args) do |arg|
-        case Noir::TreeSitter.node_type(arg)
-        when "interpreted_string_literal", "raw_string_literal"
-          if raw_path.nil?
-            raw_path = decode_string_literal(arg, source)
-          end
-        else
-          handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty? && !raw_path.nil?
-        end
-      end
-      return empty unless raw_path
-
-      verbs = [] of String
-      if methods_args = Noir::TreeSitter.field(methods_call, "arguments")
-        Noir::TreeSitter.each_named_child(methods_args) do |arg|
-          case Noir::TreeSitter.node_type(arg)
-          when "interpreted_string_literal", "raw_string_literal"
-            verbs << decode_string_literal(arg, source).upcase
-          end
-        end
-      end
-      verbs << "GET" if verbs.empty?
-
-      router_name = Noir::TreeSitter.node_text(router_node, source)
       return [] of Route if NON_ROUTER_OPERANDS.includes?(router_name)
       resolved = if prefix = groups[router_name]?
                    join_paths(prefix, raw_path)
@@ -1134,10 +1433,200 @@ module Noir
                    raw_path
                  end
 
-      line = Noir::TreeSitter.node_start_row(handlefunc_call)
       verbs.uniq.map do |verb|
-        Route.new(router_name, verb, resolved, raw_path, handler_text, line, query_params.dup)
+        Route.new(router_name, verb, resolved, raw_path, handler_text, registration_line, query_params.dup)
       end
+    end
+
+    # Decode a single `web.Router(...)` / `beego.Router(...)` call into
+    # zero or more routes (one per resolved HTTP method).
+    private def decode_beego_router_call(call : LibTreeSitter::TSNode,
+                                         source : String,
+                                         controller_methods : Hash(String, Array(String)),
+                                         var_types : Hash(String, String),
+                                         string_values : Hash(String, String)) : Array(Route)
+      empty = [] of Route
+      function = Noir::TreeSitter.field(call, "function")
+      return empty unless function
+      return empty unless Noir::TreeSitter.node_type(function) == "selector_expression"
+      operand = Noir::TreeSitter.field(function, "operand")
+      field = Noir::TreeSitter.field(function, "field")
+      return empty unless operand && field
+      return empty unless Noir::TreeSitter.node_type(operand) == "identifier"
+      return empty unless BEEGO_ROUTER_OPERANDS.includes?(Noir::TreeSitter.node_text(operand, source))
+      return empty unless Noir::TreeSitter.node_text(field, source) == "Router"
+
+      args = Noir::TreeSitter.field(call, "arguments")
+      return empty unless args
+
+      path = nil
+      controller_node : LibTreeSitter::TSNode? = nil
+      mapping = nil
+      idx = 0
+      Noir::TreeSitter.each_named_child(args) do |arg|
+        case idx
+        when 0 then path = string_expr_text(arg, source, string_values)
+        when 1 then controller_node = arg
+        when 2 then mapping = string_expr_text(arg, source, string_values)
+        end
+        idx += 1
+      end
+      route_path = path
+      return empty if route_path.nil? || route_path.empty?
+
+      line = Noir::TreeSitter.node_start_row(call)
+      ctrl_type = controller_node.try { |n| controller_type_name(n, source, var_types) }
+
+      if mapping && !mapping.empty?
+        parse_beego_mapping(mapping).map do |verb, fn|
+          Route.new("web", verb, route_path, route_path, fn, line)
+        end
+      else
+        methods = ctrl_type.try { |t| controller_methods[t]? }
+        if methods && !methods.empty?
+          # `compact_map` + `[m]?` is defensive: `controller_methods`
+          # only carries HTTP-verb-named methods today, but a non-verb
+          # name would otherwise raise on the direct lookup.
+          methods.compact_map do |m|
+            if verb = BEEGO_CONTROLLER_HTTP_METHODS[m]?
+              Route.new("web", verb, route_path, route_path, m, line)
+            end
+          end
+        else
+          # Unresolved controller type: surface the endpoint under GET so
+          # it isn't dropped entirely. Beego controllers almost always
+          # implement `Get()`, so GET is the safest single-method guess.
+          [Route.new("web", "GET", route_path, route_path, ctrl_type || "", line)]
+        end
+      end
+    end
+
+    # Parse a Beego method-mapping string into `{HTTP_VERB, func_name}`
+    # pairs. Format: `"get:Method;post,put:Other"` — `;`-separated
+    # segments, each `methods:funcname`, methods `,`-separated, `*`
+    # meaning "any method".
+    private def parse_beego_mapping(mapping : String) : Array(Tuple(String, String))
+      result = [] of Tuple(String, String)
+      mapping.split(';').each do |segment|
+        segment = segment.strip
+        next if segment.empty?
+        colon = segment.index(':')
+        next unless colon
+        methods = segment[0...colon]
+        fn = segment[(colon + 1)..].strip
+        methods.split(',').each do |m|
+          m = m.strip
+          next if m.empty?
+          result << ({m == "*" ? "ANY" : m.upcase, fn})
+        end
+      end
+      result
+    end
+
+    # Scan the file for `name := &Ctrl{}` / `name := Ctrl{}` bindings so a
+    # later `web.Router("/x", name)` can resolve `name`'s controller type.
+    private def collect_controller_var_types(root : LibTreeSitter::TSNode,
+                                             source : String) : Hash(String, String)
+      var_types = Hash(String, String).new
+      walk(root) do |node|
+        next unless group_assignment_node?(node)
+        left = Noir::TreeSitter.field(node, "left")
+        right = Noir::TreeSitter.field(node, "right")
+        if Noir::TreeSitter.node_type(node) == "var_spec"
+          left = Noir::TreeSitter.field(node, "name")
+          right = Noir::TreeSitter.field(node, "value")
+        end
+        next unless left && right
+        name_node = identifier_or_first_child(left)
+        rhs = first_named_child(right)
+        next unless name_node && rhs
+        next unless Noir::TreeSitter.node_type(name_node) == "identifier"
+        type_name = composite_literal_type_name(rhs, source)
+        next unless type_name
+        var_types[Noir::TreeSitter.node_text(name_node, source)] ||= type_name
+      end
+      var_types
+    end
+
+    # Resolve a controller argument node to its (unqualified) type name.
+    # `identifier` → look up the var binding; anything wrapping a
+    # `composite_literal` (`&Ctrl{}`, `Ctrl{}`) → the literal's type.
+    private def controller_type_name(node : LibTreeSitter::TSNode,
+                                     source : String,
+                                     var_types : Hash(String, String)) : String?
+      if Noir::TreeSitter.node_type(node) == "identifier"
+        return var_types[Noir::TreeSitter.node_text(node, source)]?
+      end
+      composite_literal_type_name(node, source)
+    end
+
+    # Find a `composite_literal` at or under `node` and return its
+    # (pointer-stripped) LOCAL type name. A package-qualified literal
+    # (`&pkg.Ctrl{}`) returns nil: in Go a qualified type always lives in
+    # another package, so its methods are never in this directory's
+    # controller-method map. Returning nil routes such a route to the
+    # unresolved-controller fallback instead of mis-matching a local type
+    # that happens to share the final identifier (`Ctrl`).
+    private def composite_literal_type_name(node : LibTreeSitter::TSNode,
+                                            source : String) : String?
+      comp = find_composite_literal(node)
+      return unless comp
+      type_node = Noir::TreeSitter.field(comp, "type") || first_named_child(comp)
+      return unless type_node
+      text = Noir::TreeSitter.node_text(type_node, source).lchop('*')
+      return if text.includes?('.')
+      text
+    end
+
+    private def find_composite_literal(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+      return node if Noir::TreeSitter.node_type(node) == "composite_literal"
+      result : LibTreeSitter::TSNode? = nil
+      Noir::TreeSitter.each_named_child(node) do |child|
+        if found = find_composite_literal(child)
+          result = found
+          break
+        end
+      end
+      result
+    end
+
+    # Type name of a method receiver: `(c *MainController)` → `MainController`.
+    private def receiver_type_name(receiver : LibTreeSitter::TSNode,
+                                   source : String) : String?
+      Noir::TreeSitter.each_named_child(receiver) do |decl|
+        next unless Noir::TreeSitter.node_type(decl) == "parameter_declaration"
+        type_node = Noir::TreeSitter.field(decl, "type")
+        next unless type_node
+        return final_type_identifier(type_node, source)
+      end
+      nil
+    end
+
+    # Strip a leading `*` (pointer) and any package qualifier, returning
+    # the final identifier of a type expression: `*pkg.Foo` → `Foo`.
+    private def final_type_identifier(type_node : LibTreeSitter::TSNode,
+                                      source : String) : String
+      Noir::TreeSitter.node_text(type_node, source).lchop('*').split('.').last
+    end
+
+    private def dedupe_routes(routes : Array(Route)) : Array(Route)
+      deduped = [] of Route
+      seen = Set(String).new
+      routes.each do |route|
+        key = String.build do |io|
+          io << route.line << '\0'
+          io << route.verb << '\0'
+          io << route.path << '\0'
+          io << route.handler << '\0'
+          route.query_params.each do |param|
+            io << param << '\0'
+          end
+        end
+        next if seen.includes?(key)
+        seen << key
+        deduped << route
+      end
+      deduped
     end
 
     # Return the first named child of `node`, or nil if there isn't one.

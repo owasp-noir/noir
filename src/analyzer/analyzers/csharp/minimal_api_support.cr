@@ -69,12 +69,27 @@ module Analyzer::CSharp::MinimalApiSupport
     extra_params.concat(extract_bind_params_from_file(block, file_lines))
     extra_params.concat(extract_delegate_params(block, route, methods.first))
 
+    # Method-group handlers — `MapGet("/items", GetItems)` — carry the route
+    # on the `Map` line but keep their parameters and body in the referenced
+    # method. Resolve it so params, callees and ai-context aren't lost. The
+    # dominant style in modern minimal APIs (eShop, vertical-slice/REPR).
+    callee_block = block
+    callee_line = line
+    callee_skip_first = false
+    if handler = resolve_handler_method(block, file_lines)
+      sig, handler_block, handler_line, skip_first = handler
+      extra_params.concat(handler_signature_params(sig, route, methods.first, file_lines))
+      callee_block = handler_block
+      callee_line = handler_line
+      callee_skip_first = skip_first
+    end
+
     endpoints = [] of Endpoint
     methods.each do |method|
       endpoint = build_endpoint_from_route(route, method, file, line, extra_params)
       next unless endpoint
 
-      attach_csharp_callees(endpoint, block, file, line, include_callee)
+      attach_csharp_callees(endpoint, callee_block, file, callee_line, include_callee, skip_first_line: callee_skip_first)
       endpoints << endpoint
     end
     endpoints
@@ -342,7 +357,11 @@ module Analyzer::CSharp::MinimalApiSupport
     return true if param_type == "service"
     return true if SERVICE_BINDING_TYPES.includes?(type_name)
     return true if full_definition.includes?("HttpContext") || full_definition.includes?("HttpRequest") || full_definition.includes?("HttpResponse")
-    type_name.starts_with?("ILogger")
+    return true if type_name.starts_with?("ILogger")
+    # DbContexts, repositories, MediatR senders, mappers and other DI
+    # collaborators injected straight into the handler delegate are not
+    # request-bound values.
+    Common.csharp_service_type?(type_name)
   end
 
   private def default_delegate_param_type(type_name : String, http_method : String) : String
@@ -420,5 +439,211 @@ module Analyzer::CSharp::MinimalApiSupport
     end
 
     keys.uniq
+  end
+
+  # --- Method-group handler resolution -------------------------------------
+
+  # Resolves a `MapGet("/x", HandlerMethod)` style registration to the
+  # referenced method's signature + body. Returns
+  # `{signature, body, body_start_line, skip_first_line}` or nil when the
+  # handler is a lambda (already handled) or can't be found in this file.
+  private def resolve_handler_method(block : String, lines : Array(String)) : Tuple(String, String, Int32, Bool)?
+    name = handler_method_name(block)
+    return unless name
+    locate_method_definition(name, lines)
+  end
+
+  # Pulls the handler argument out of the `Map*(...)` call and returns its
+  # method name when it's a method group (a bare/qualified identifier), or
+  # nil for lambdas, string literals and inline expressions.
+  private def handler_method_name(block : String) : String?
+    args = map_call_arguments(block)
+    return if args.size < 2
+
+    handler = args.last.strip
+    return if handler.empty?
+    return if handler.includes?("=>")   # lambda
+    return if handler.starts_with?('"') # string literal
+    return if handler.starts_with?("new")
+    return unless handler.matches?(/\A@?[A-Za-z_][A-Za-z0-9_]*(?:\s*\.\s*[A-Za-z_][A-Za-z0-9_]*)*\z/)
+
+    handler.gsub(/\s+/, "").lchop('@').split('.').last
+  end
+
+  # Top-level argument list of the first `Map*` invocation in the block,
+  # split on commas while respecting nested parens/brackets/braces/generics
+  # and string literals.
+  private def map_call_arguments(block : String) : Array(String)
+    m = block.match(/\bMap(?:Get|Post|Put|Delete|Patch|Head|Options|Methods)?\s*\(/)
+    return [] of String unless m
+
+    open = block.index('(', m.begin)
+    return [] of String unless open
+
+    depth = 0
+    i = open
+    close = -1
+    while i < block.size
+      case block[i]
+      when '('
+        depth += 1
+      when ')'
+        depth -= 1
+        if depth == 0
+          close = i
+          break
+        end
+      end
+      i += 1
+    end
+    return [] of String if close < 0
+
+    split_csharp_parameters(block[(open + 1)...close])
+  end
+
+  # Finds a method declaration by name in the file and returns its
+  # signature, body block, body start line (1-based) and whether the
+  # callee scanner should skip the first body line. Skips the
+  # registration call itself and assignment/call sites.
+  private def locate_method_definition(name : String, lines : Array(String)) : Tuple(String, String, Int32, Bool)?
+    decl = /(?:public|private|internal|protected|static|async)\b[^;={(]*\b#{Regex.escape(name)}\s*\(/
+
+    lines.each_with_index do |line, idx|
+      next unless line.includes?(name)
+      next unless line.matches?(decl)
+      # The `Map*("/x", Name)` line also references the handler — skip it.
+      next if line.matches?(/\bMap(?:Get|Post|Put|Delete|Patch|Head|Options|Methods)?\s*\(/)
+
+      sig, end_idx = build_signature(lines, idx)
+      block, body_idx, skip_first = extract_callable_body(lines, end_idx)
+      return if block.empty?
+      return {sig, block, body_idx + 1, skip_first}
+    end
+
+    nil
+  end
+
+  # Builds params from a resolved handler's signature, reusing the delegate
+  # binding rules and expanding `[AsParameters]` bundle types.
+  private def handler_signature_params(signature : String, route : String, http_method : String, lines : Array(String)) : Array(Param)
+    list = extract_balanced_param_list(signature)
+    return [] of Param unless list
+
+    list = list.strip
+    return [] of Param if list.empty?
+
+    route_params = extract_route_placeholders(route)
+    params = [] of Param
+    split_csharp_parameters(list).each do |pdef|
+      if pdef.includes?("[AsParameters]") || pdef.includes?("[AsParameters ")
+        params.concat(expand_as_parameters(pdef, lines, route_params, http_method))
+      elsif param = delegate_param_to_noir_param(pdef, route_params, http_method)
+        params << param
+      end
+    end
+    params.uniq(&.name)
+  end
+
+  # `[AsParameters] SomeType arg` binds each public member of `SomeType`
+  # from the query/route/header — never the body. Expand to those members,
+  # dropping the DI-service members (a bundle like `CatalogServices` yields
+  # nothing, which is exactly right).
+  private def expand_as_parameters(param_def : String, lines : Array(String), route_params : Array(String), http_method : String) : Array(Param)
+    cleaned = param_def.gsub(/\[[^\]]*\]\s*/, "").strip
+    type_token = cleaned.split(/\s+/).first?
+    return [] of Param unless type_token
+
+    base = type_token.gsub(/<.*>/, "").split('.').last
+    return [] of Param if base.empty?
+    return [] of Param if Common.csharp_service_type?(base)
+
+    params = [] of Param
+    as_parameters_member_defs(base, lines).each do |member|
+      param = as_parameters_member_to_param(member, route_params, http_method)
+      params << param if param
+    end
+    params.uniq(&.name)
+  end
+
+  # Returns the member definitions (primary-constructor params or public
+  # auto-properties) of a record/class/struct used with `[AsParameters]`.
+  private def as_parameters_member_defs(type_name : String, lines : Array(String)) : Array(String)
+    def_idx = lines.index do |l|
+      l.matches?(/\b(?:record|class|struct)\s+#{Regex.escape(type_name)}\b/)
+    end
+    return [] of String unless def_idx
+
+    defline = lines[def_idx]
+    name_pos = defline.index(/\b#{Regex.escape(type_name)}\b/)
+    paren = defline.index('(', name_pos || 0)
+    if name_pos && paren && paren > name_pos
+      return split_csharp_parameters(gather_balanced_parens(lines, def_idx, paren))
+    end
+
+    defs = [] of String
+    # Capture any binding attributes that precede the property (they may sit
+    # on their own line, e.g. `[FromHeader(Name = "X-Tenant")]`) so the
+    # member keeps its `header`/`query` classification and explicit name.
+    extract_method_block(lines, def_idx).scan(/((?:\[[^\]]*\]\s*)*)(?:public|internal)\s+([\w<>\[\]\?\.]+)\s+([A-Za-z_]\w*)\s*\{\s*get/) do |m|
+      attrs = m[1].gsub(/\s+/, " ").strip
+      defs << "#{attrs} #{m[2].strip} #{m[3]}".strip
+    end
+    defs
+  end
+
+  # Collects the text inside a parenthesised group that opens at `open_pos`
+  # on `lines[start_index]`, spanning subsequent lines until balanced.
+  private def gather_balanced_parens(lines : Array(String), start_index : Int32, open_pos : Int32) : String
+    io = String::Builder.new
+    depth = 0
+    i = start_index
+    started = false
+    while i < lines.size
+      line = lines[i]
+      from = i == start_index ? open_pos : 0
+      (from...line.size).each do |k|
+        ch = line[k]
+        if ch == '('
+          depth += 1
+          started = true
+          next if depth == 1
+        elsif ch == ')'
+          depth -= 1
+          return io.to_s if depth == 0
+        end
+        io << ch if started && depth >= 1
+      end
+      io << ' '
+      break if started && depth <= 0
+      i += 1
+    end
+    io.to_s
+  end
+
+  # Maps a single `[AsParameters]` member to a Param. Defaults to query
+  # (members bind from query/route/header, never the body) and honours an
+  # explicit `[FromHeader]`/`[FromQuery]`/`[FromRoute]` on the member.
+  private def as_parameters_member_to_param(member_def : String, route_params : Array(String), http_method : String) : Param?
+    explicit_name = extract_explicit_binding_name(member_def)
+    param_type = binding_attribute_type(member_def)
+    cleaned = member_def.gsub(/\[[^\]]*\]\s*/, "").strip
+    cleaned = cleaned.sub(/=.*/, "").strip
+    cleaned = cleaned.gsub(/\b(ref|out|in|params)\b/, "").strip
+    return if cleaned.empty?
+
+    name_match = cleaned.match(/([A-Za-z_][A-Za-z0-9_]*)\s*$/)
+    return unless name_match
+
+    name = explicit_name || name_match[1]
+    type_name = cleaned[0...(cleaned.size - name_match[1].size)].strip
+      .gsub(/\?$/, "")
+      .split(/\s+/).last? || ""
+    type_name = type_name.split('.').last
+
+    return if service_binding?(type_name, cleaned, param_type)
+    return if param_type == "service"
+
+    param_type ||= route_params.includes?(name) ? "path" : "query"
+    Param.new(name, "", param_type)
   end
 end

@@ -47,4 +47,32 @@ describe Noir::ClojureCalleeExtractor do
       {"my-service/map", 31},
     ])
   end
+
+  it "collects callees from top-level defn bodies" do
+    source = <<-CLJ
+      (ns demo.core)
+
+      (defn ^:private show-user
+        "Loads a user"
+        [request]
+        (let [user (user.service/find (:id request))]
+          (audit/write! "show" user)
+          (response/ok (present-user user))))
+
+      (defn ^String ^{:private true} ignored []
+        '(quoted/call)
+        #_(discarded/call)
+        (safe/run!))
+      CLJ
+
+    callees = Noir::ClojureCalleeExtractor.function_callees(source, "core.clj")
+
+    callees["show-user"].map { |name, _, line| {name, line} }.should eq([
+      {"user.service/find", 6},
+      {"audit/write!", 7},
+      {"response/ok", 8},
+      {"present-user", 8},
+    ])
+    callees["ignored"].map(&.[0]).should eq(["safe/run!"])
+  end
 end

@@ -11,12 +11,15 @@ class PythonMiscAuthTagger < FrameworkTagger
     {/\@auth\.login_required/, "Sanic auth login_required"},
   ]
 
-  # Tornado auth patterns
+  # Tornado auth patterns. These are scanned only in the decorator window
+  # above a handler, so they must be decorators. The body/class signals
+  # (`self.current_user`, a `def get_current_user` override) are handled
+  # separately by `check_class_auth`; a bare `current_user` / a
+  # `get_current_user(` *call* in the decorator window is not an auth
+  # decorator and only produced false positives, so they're omitted here.
   TORNADO_PATTERNS = [
     {/\@tornado\.web\.authenticated/, "Tornado @authenticated decorator"},
     {/\@authenticated/, "Tornado @authenticated"},
-    {/get_current_user\s*\(/, "Tornado get_current_user"},
-    {/current_user/, "Tornado current_user check"},
   ]
 
   def initialize(options : Hash(String, YAML::Any))
@@ -43,6 +46,9 @@ class PythonMiscAuthTagger < FrameworkTagger
       lines = content.split("\n")
       line_num = path_info.line
       next if line_num.nil?
+      # Skip stale/out-of-range line refs: a line beyond the content we
+      # read would crash the lines[idx] walks below with IndexError.
+      next if line_num < 1 || line_num > lines.size
       line_idx = line_num - 1
 
       # Check decorators above function/method

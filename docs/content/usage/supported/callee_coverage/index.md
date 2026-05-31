@@ -38,7 +38,7 @@ This matrix lists frameworks with functional test coverage for callee extraction
 | JavaScript | Express, Fastify, Hono, Koa, NestJS, Next.js, Nitro, Nuxt, Remix, Restify, SvelteKit |
 | Kotlin | http4k, Ktor, Spring |
 | Lua | Lapis |
-| Perl | Mojolicious |
+| Perl | Dancer2, Mojolicious |
 | PHP | CakePHP, CodeIgniter, Hyperf, Laravel, Pure PHP, Slim, Symfony, Yii |
 | Python | Aiohttp, Bottle, Django, Falcon, FastAPI, Flask, Litestar, Pyramid, Quart, Sanic, Starlette, Tornado |
 | Ruby | Grape, Hanami, Rails, Roda, Sinatra |

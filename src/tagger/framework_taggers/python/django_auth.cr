@@ -50,7 +50,9 @@ class DjangoAuthTagger < FrameworkTagger
       line = ctx.line
       lines = ctx.full_content.split("\n")
 
-      if line
+      # Skip stale/out-of-range line refs: a line beyond the content we
+      # read would crash the lines[idx] walks below with IndexError.
+      if line && line >= 1 && line <= lines.size
         # Check decorators by walking backwards from endpoint line
         description = check_decorators(lines, line)
         if description

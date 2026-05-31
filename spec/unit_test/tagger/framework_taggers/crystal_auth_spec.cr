@@ -1,3 +1,4 @@
+require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
@@ -92,6 +93,28 @@ describe "CrystalAuthTagger" do
     tagger.perform([endpoint])
 
     endpoint.tags.empty?.should be_true
+  end
+
+  it "does not tag a Lucky action that merely reads current_user (false-positive regression)" do
+    tmpdir = File.tempname("lucky_fp")
+    Dir.mkdir_p(tmpdir)
+    file = File.join(tmpdir, "show.cr")
+    File.write(file, [
+      "get \"/api/me\" do |env|",
+      "  json UserSerializer.new(current_user)",
+      "end",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    details = Details.new(PathInfo.new(file, 1))
+    details.technology = "crystal_lucky"
+    endpoint = Endpoint.new("/api/me", "GET", [] of Param, details)
+
+    CrystalAuthTagger.new(noir_options).perform([endpoint])
+    endpoint.tags.empty?.should be_true
+
+    FileUtils.rm_rf(tmpdir)
   end
 
   it "returns correct target_techs" do

@@ -18,20 +18,38 @@ module Analyzer::Python
     # under any of these patterns ships with `python -m pytest` or
     # `python -m unittest` and never serves real traffic in
     # production. Centralized so every analyzer can opt in via
-    # `next if PythonEngine.python_test_path?(path)`.
+    # `next if PythonEngine.python_test_path?(path, @base_path)`.
     #
-    #   * `/tests/`          — pytest discovery default (Django,
-    #                          Litestar, FastAPI all use it)
+    #   * `/tests/`, `/test/` — pytest discovery defaults and common
+    #                           framework fixture packages (Django,
+    #                           Litestar, FastAPI all use variants)
     #   * `tests.py`         — the legacy Django per-app test module
     #   * `test_*.py`        — unittest / pytest default discovery
     #   * `*_test.py`        — pytest-go style suffix (rare in Python,
     #                          but cheap to include)
-    def self.python_test_path?(path : String) : Bool
-      return true if path.includes?("/tests/")
+    def self.python_test_path?(path : String, base_path : String? = nil) : Bool
+      relative_path = path_for_test_convention_match(path, base_path)
+      return true if relative_path.includes?("/tests/")
+      return true if relative_path.starts_with?("tests/")
+      return true if relative_path.includes?("/test/")
+      return true if relative_path.starts_with?("test/")
       base = File.basename(path)
       return true if base == "tests.py"
       return true if base.starts_with?("test_") && base.ends_with?(".py")
       base.ends_with?("_test.py")
+    end
+
+    private def self.path_for_test_convention_match(path : String, base_path : String?) : String
+      if base_path.nil? || base_path.empty?
+        return File.basename(path)
+      end
+
+      expanded_path = File.expand_path(path)
+      expanded_base = File.expand_path(base_path)
+      return File.basename(path) unless expanded_path == expanded_base || expanded_path.starts_with?(expanded_base + File::SEPARATOR)
+
+      relative = expanded_path[expanded_base.size..].lchop(File::SEPARATOR)
+      relative.empty? ? File.basename(path) : relative
     end
 
     # Parses the definition of a function from the source lines starting at a given index
@@ -200,7 +218,15 @@ module Analyzer::Python
         double_quote_open, single_quote_open = [false, false]
         double_comment_open, single_comment_open = [false, false]
         end_index = lines[0].size + 1
-        lines[1..].each do |line|
+        # A `def`/`class` signature frequently wraps across lines, with
+        # the closing `)` and a `-> T:` return annotation sitting at
+        # column 0 — at or below the body's indent. Those header lines
+        # must not be mistaken for the block terminator, or the entire
+        # body (and every callee in it) is dropped. Modern FastAPI
+        # handlers (`def read_items(\n  session: Dep,\n) -> Any:`) hit
+        # this on nearly every endpoint.
+        header_span = python_signature_line_span(lines)
+        lines[1..].each_with_index do |line, body_idx|
           line_index = 0
           clear_line = line
           while line_index < line.size
@@ -233,7 +259,12 @@ module Analyzer::Python
           end
 
           open_status = single_comment_open || double_comment_open || single_quote_open || double_quote_open
-          if clear_line[0..(indent_size - 1)].strip.empty? || open_status
+          # `body_idx` is 0-based within `lines[1..]`, so absolute line
+          # `body_idx + 1`. While that is still inside the multi-line
+          # signature, keep the line unconditionally.
+          if body_idx + 1 < header_span
+            end_index += line.size + 1
+          elsif clear_line[0..(indent_size - 1)].strip.empty? || open_status
             end_index += line.size + 1
           else
             break
@@ -245,6 +276,43 @@ module Analyzer::Python
       end
 
       nil
+    end
+
+    # Number of physical lines a `def`/`class` signature occupies at the
+    # head of `lines`, i.e. up to and including the line that carries the
+    # suite-introducing `:` at bracket depth 0. A single-line header
+    # returns 1. Used by `parse_code_block` to avoid treating a wrapped
+    # signature's continuation lines (notably the `) -> T:` closer at
+    # column 0) as the end of the body.
+    def python_signature_line_span(lines : Array(::String)) : Int32
+      depth = 0
+      in_quote = nil
+      escaped = false
+      lines.each_with_index do |line, idx|
+        line.each_char do |ch|
+          if in_quote
+            if escaped
+              escaped = false
+            elsif ch == '\\'
+              escaped = true
+            elsif ch == in_quote
+              in_quote = nil
+            end
+            next
+          end
+          case ch
+          when '\'', '"'
+            in_quote = ch
+          when '(', '[', '{'
+            depth += 1
+          when ')', ']', '}'
+            depth -= 1 if depth > 0
+          when ':'
+            return idx + 1 if depth == 0
+          end
+        end
+      end
+      1
     end
 
     # Returns the literal value from a string if it represents a number or a quoted string

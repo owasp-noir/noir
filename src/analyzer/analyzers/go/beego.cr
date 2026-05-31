@@ -14,6 +14,15 @@ module Analyzer::Go
       # use group routes, so we just need file_contents — no fixpoint.
       file_contents = read_package_file_contents
       package_function_bodies = collect_package_function_bodies(file_contents)
+      # Per-directory controller-method map so mapping-less
+      # `web.Router("/x", &Ctrl{})` registrations resolve to the exact
+      # HTTP methods the controller implements.
+      package_controller_methods = collect_package_controller_methods(file_contents)
+      # Per-directory controller-method bodies, so a `web.Router` route's
+      # handler (a controller method named in the mapping string) gets its
+      # 1-hop callees walked even though the call doesn't pass it as an
+      # argument. Empty unless callees are requested.
+      package_controller_method_bodies = collect_package_controller_method_bodies(file_contents)
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
       begin
@@ -38,7 +47,18 @@ module Analyzer::Go
                     lines = content.lines
                     last_endpoint = Endpoint.new("", "")
 
-                    ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(content)
+                    # Functional `web.Get("/x", h)` verb routes plus
+                    # controller-style `web.Router("/x", &Ctrl{}, "get:M")`
+                    # registrations — the latter is Beego's dominant idiom.
+                    controller_methods = ts_controller_methods_for_directory(package_controller_methods, File.dirname(path))
+                    beego_routes = Noir::TreeSitterGoRouteExtractor.extract_beego_routes(content, controller_methods)
+                    # Track which lines are `web.Router` registrations so the
+                    # controller-method callee fallback below only fires for
+                    # them — never for a `web.Get` verb route whose handler
+                    # text happens to collide with a method name.
+                    beego_router_lines = Set(Int32).new
+                    beego_routes.each { |r| beego_router_lines << r.line }
+                    ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(content) + beego_routes
                     routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
                     ts_routes.each do |r|
                       routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
@@ -50,6 +70,7 @@ module Analyzer::Go
                     routes_by_line.each_key { |row| route_rows << row }
                     external_fns = ts_function_bodies_for_directory(package_function_bodies, File.dirname(path))
                     callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
+                    controller_method_bodies = ts_controller_method_bodies_for_directory(package_controller_method_bodies, File.dirname(path))
 
                     lines.each_with_index do |line, index|
                       details = Details.new(PathInfo.new(path, index + 1))
@@ -61,6 +82,18 @@ module Analyzer::Go
                             if entries = callees_by_route[route.line]?
                               entries.each do |entry|
                                 name, callee_path, callee_line = entry
+                                new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+                              end
+                            elsif callees_needed? && beego_router_lines.includes?(route.line) &&
+                                  !route.handler.empty? &&
+                                  (bodies = controller_method_bodies[route.handler]?) && bodies.size == 1
+                              # `web.Router` routes carry the controller
+                              # method name in `handler`; the registration
+                              # call doesn't pass it as an argument, so walk
+                              # the method body here. Only when exactly one
+                              # controller in the package defines the name
+                              # (avoids mis-attributing an ambiguous method).
+                              Noir::GoCalleeExtractor.callees_in_body(bodies.first, external_fns).each do |name, callee_path, callee_line|
                                 new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
                               end
                             end

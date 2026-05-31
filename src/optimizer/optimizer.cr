@@ -207,13 +207,15 @@ class EndpointOptimizer
 
       # Duplicate check
       unless tiny_tmp.url.empty?
+        absolute_url = tiny_tmp.url.matches?(/\A[a-zA-Z][a-zA-Z0-9+.\-]*:\/\//)
+
         # Check start with slash
-        if tiny_tmp.url[0] != "/"
+        if !absolute_url && tiny_tmp.url[0] != "/"
           tiny_tmp.url = "/#{tiny_tmp.url}"
         end
 
         # Check double slash
-        tiny_tmp.url = tiny_tmp.url.gsub_repeatedly("//", "/")
+        tiny_tmp.url = tiny_tmp.url.gsub_repeatedly("//", "/") unless absolute_url
 
         key = {tiny_tmp.method, tiny_tmp.url}
 
@@ -242,7 +244,9 @@ class EndpointOptimizer
     tmp = [] of Endpoint
     target_url = @options["url"].to_s
 
-    unless target_url.empty?
+    if target_url.empty?
+      endpoints
+    else
       @logger.sub "➔ Combining url and endpoints."
       @logger.debug_sub " + Before size: #{endpoints.size}"
 
@@ -267,8 +271,6 @@ class EndpointOptimizer
 
       @logger.debug_sub " + After size: #{tmp.size}"
       tmp
-    else
-      endpoints
     end
   end
 
@@ -283,7 +285,12 @@ class EndpointOptimizer
       # Handle {param} patterns
       scans = endpoint.url.scan(/\/\{([^}]+)\}/).flatten
       scans.each do |match|
-        param = match[1].split(":")[0]
+        # Strip a leading `*` from catch-all path variables. Spring,
+        # Armeria and ASP.NET all spell the rest-of-path capture as
+        # `{*name}` (e.g. `/files/{*path}`); the parameter is named
+        # `name`, not `*name`.
+        param = match[1].split(":")[0].lstrip('*')
+        next if param.empty?
         new_value = apply_pvalue("path", param, "")
         unless new_value.empty?
           new_endpoint.url = new_endpoint.url.gsub("{#{match[1]}}", new_value)
@@ -298,12 +305,19 @@ class EndpointOptimizer
       # Handle /:param patterns
       scans = endpoint.url.scan(/\/:([^\/{}]+)/).flatten
       scans.each do |match|
-        new_value = apply_pvalue("path", match[1], "")
+        # The capture greedily includes any literal suffix that follows the
+        # param within the same segment (e.g. Play's `/:lang.json` or
+        # `/:id.gif`). Path param names are identifiers, so keep only the
+        # leading identifier and drop the extension/format suffix.
+        param = leading_path_param(match[1])
+        next unless param
+
+        new_value = apply_pvalue("path", param, "")
         unless new_value.empty?
           new_endpoint.url = new_endpoint.url.gsub(":#{match[1]}", new_value)
         end
 
-        new_param = Param.new(match[1], "", "path")
+        new_param = Param.new(param, "", "path")
         unless new_endpoint.params.includes?(new_param)
           new_endpoint.params << new_param
         end
@@ -327,6 +341,11 @@ class EndpointOptimizer
           param = parts[0]
         end
 
+        # Skip regex fragments. Play declares constrained path params as
+        # `$name<regex>`, so the framework analyzer already recorded `name`;
+        # the `<regex>` body (e.g. `\w{8}`, `[\w-]{2,6}`) is not a param name.
+        next unless valid_path_param_name?(param)
+
         new_value = apply_pvalue("path", param, "")
         unless new_value.empty?
           new_endpoint.url = new_endpoint.url.gsub("<#{match[1]}>", new_value)
@@ -341,6 +360,11 @@ class EndpointOptimizer
       # Handle /*param patterns (wildcard/glob parameters)
       scans = endpoint.url.scan(/\/\*([^\/]+)/).flatten
       scans.each do |match|
+        # Only named splats are parameters (`/files/*path` -> `path`).
+        # A bare glob like Armeria's `glob:/glob/**` captures `*`, and
+        # a gRPC resource template leaves a trailing `}` — neither is a
+        # real parameter name.
+        next unless valid_path_param_name?(match[1])
         new_value = apply_pvalue("path", match[1], "")
         unless new_value.empty?
           new_endpoint.url = new_endpoint.url.gsub("*#{match[1]}", new_value)
@@ -356,6 +380,21 @@ class EndpointOptimizer
     end
 
     final
+  end
+
+  # A path param name is a plain identifier; anything else (a regex fragment,
+  # a glob, a type expression) is not a real parameter name.
+  private def valid_path_param_name?(name : String) : Bool
+    !name.empty? && !!name.match(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+  end
+
+  # Drop a literal format/extension suffix that shares the segment with the
+  # param (e.g. Play's `/:lang.json` -> `lang`, `/:id.gif` -> `id`). The split
+  # is intentionally limited to the `.` boundary so optional markers and other
+  # framework suffixes (e.g. Express's `/:id?`) are preserved verbatim.
+  private def leading_path_param(raw : String) : String?
+    name = raw.split('.', 2).first
+    name.empty? ? nil : name
   end
 
   # Apply parameter values based on configuration

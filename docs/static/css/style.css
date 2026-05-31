@@ -1081,6 +1081,13 @@ p:has(> .member-card) {
     text-overflow: ellipsis;
     white-space: nowrap;
 }
+.search-highlight {
+    background: var(--accent-dim);
+    color: var(--accent-hover);
+    font-weight: 600;
+    border-radius: 2px;
+    padding: 0 1px;
+}
 .search-no-results {
     padding: 2rem;
     text-align: center;

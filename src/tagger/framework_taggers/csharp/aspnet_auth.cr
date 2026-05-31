@@ -8,8 +8,13 @@ class AspnetAuthTagger < FrameworkTagger
     {/\[Authorize\s*\(\s*Roles\s*=/, "ASP.NET [Authorize(Roles)]"},
     {/\[Authorize\s*\(\s*Policy\s*=/, "ASP.NET [Authorize(Policy)]"},
     {/\[Authorize\s*\(\s*AuthenticationSchemes\s*=/, "ASP.NET [Authorize(AuthenticationSchemes)]"},
-    {/\[RequireAuthorization/, "ASP.NET [RequireAuthorization]"},
   ]
+
+  # Minimal API fluent auth: `app.MapGet("/x", h).RequireAuthorization();`.
+  # This is a chained method call, never a `[...]` attribute, so it can't
+  # live in AUTHORIZE_PATTERNS (which is scanned in attribute position).
+  MINIMAL_API_REQUIRE_AUTH = /\.RequireAuthorization\s*\(/
+  MINIMAL_API_ALLOW_ANON   = /\.AllowAnonymous\s*\(/
 
   # Public override markers
   ALLOW_ANONYMOUS_PATTERN = /\[AllowAnonymous\]/
@@ -45,6 +50,9 @@ class AspnetAuthTagger < FrameworkTagger
       lines = content.split("\n")
       line_num = path_info.line
       next if line_num.nil?
+      # Skip stale/out-of-range line refs: a line beyond the content we
+      # read would crash the lines[idx] walks below with IndexError.
+      next if line_num < 1 || line_num > lines.size
       line_idx = line_num - 1
 
       # Check for [AllowAnonymous] on this action
@@ -54,6 +62,13 @@ class AspnetAuthTagger < FrameworkTagger
 
       # Check method-level [Authorize]
       description = check_method_attributes(lines, line_idx)
+      if description
+        endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "aspnet_auth"))
+        return
+      end
+
+      # Check Minimal API fluent .RequireAuthorization() on the route statement
+      description = check_minimal_api_fluent(lines, line_idx)
       if description
         endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "aspnet_auth"))
         return
@@ -98,6 +113,27 @@ class AspnetAuthTagger < FrameworkTagger
 
       idx -= 1
     end
+
+    nil
+  end
+
+  # Minimal API registrations chain auth fluently after the Map* call,
+  # e.g. `app.MapGet("/x", h).RequireAuthorization();`, possibly split
+  # across lines until the `;` terminator. Scan the whole statement, and
+  # let a chained `.AllowAnonymous()` opt the route back out.
+  private def check_minimal_api_fluent(lines : Array(String), route_line : Int32) : String?
+    idx = route_line
+    end_idx = [route_line + 6, lines.size - 1].min
+    statement = String.build do |sb|
+      while idx <= end_idx
+        sb << lines[idx] << ' '
+        break if lines[idx].includes?(";")
+        idx += 1
+      end
+    end
+
+    return if statement.matches?(MINIMAL_API_ALLOW_ANON)
+    return "ASP.NET .RequireAuthorization()" if statement.matches?(MINIMAL_API_REQUIRE_AUTH)
 
     nil
   end

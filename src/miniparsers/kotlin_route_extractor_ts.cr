@@ -806,20 +806,35 @@ module Noir
     private def decode_string_literal(node : LibTreeSitter::TSNode, source : String) : String
       buf = String.build do |io|
         Noir::TreeSitter.each_named_child(node) do |child|
-          if Noir::TreeSitter.node_type(child) == "string_content"
+          case Noir::TreeSitter.node_type(child)
+          when "string_content"
             io << Noir::TreeSitter.node_text(child, source)
+          when "interpolated_identifier", "interpolated_expression"
+            io << '{'
+            io << Noir::TreeSitter.node_text(child, source).strip
+            io << '}'
           end
         end
       end
       buf
     end
 
-    # Trailing-slash semantics match Spring's runtime and mirror the
-    # Java extractor: `prefix + "" = prefix/` so `@GetMapping("")` on
-    # a class-prefixed route emits `/prefix/`.
+    # Empty-path semantics mirror the Java extractor: a bare method
+    # mapping collapses onto the class prefix, so `@RequestMapping("/api")`
+    # + `@GetMapping` (no path) maps to `/api`, not `/api/` (see the
+    # empty-path branch below).
     private def join_paths(prefix : String, path : String) : String
       return path if prefix.empty?
-      return "#{prefix.rstrip('/')}/" if path.empty?
+      # A bare method mapping (`@GetMapping` with no path arg) on a class
+      # mapped to `/api/article` resolves to `/api/article` in Spring —
+      # the empty segment is absorbed, not turned into `/api/article/`.
+      # An explicit `@GetMapping("/")` still carries its own `/` segment
+      # and falls through to the last branch. Only an all-slash class
+      # prefix (`@RequestMapping("/")`) keeps the root `/`.
+      if path.empty?
+        trimmed = prefix.rstrip('/')
+        return trimmed.empty? ? "/" : trimmed
+      end
       "#{prefix.rstrip('/')}/#{path.lstrip('/')}"
     end
   end

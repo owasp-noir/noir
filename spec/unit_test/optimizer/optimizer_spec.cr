@@ -54,6 +54,16 @@ describe "EndpointOptimizer" do
       result[1].url.should eq("/api/data")
     end
 
+    it "does not corrupt absolute URLs while normalizing slashes" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("https://api.example.com/v1/users", "GET"),
+      ]
+
+      result = optimizer.optimize_endpoints(endpoints)
+      result[0].url.should eq("https://api.example.com/v1/users")
+    end
+
     it "strips Spring inline regex constraints from path variables" do
       optimizer = EndpointOptimizer.new(logger, options)
       endpoints = [
@@ -148,6 +158,37 @@ describe "EndpointOptimizer" do
 
       result[1].params.size.should eq(1)
       result[1].params[0].name.should eq("post_id")
+    end
+
+    it "names catch-all path variables without the leading asterisk" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/files/{*path}", "GET"), # Spring / Armeria / ASP.NET
+        Endpoint.new("/static/{*remaining}/raw", "GET"),
+      ]
+
+      result = optimizer.add_path_parameters(endpoints)
+      result[0].params.size.should eq(1)
+      result[0].params[0].name.should eq("path")
+      result[0].params[0].param_type.should eq("path")
+
+      result[1].params.size.should eq(1)
+      result[1].params[0].name.should eq("remaining")
+    end
+
+    it "ignores bare glob splats that are not real parameter names" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/glob/**", "GET"),      # Armeria glob: captures `*`, not a name
+        Endpoint.new("/assets/*file", "GET"), # named splat is still a parameter
+      ]
+
+      result = optimizer.add_path_parameters(endpoints)
+      result[0].params.size.should eq(0)
+
+      result[1].params.size.should eq(1)
+      result[1].params[0].name.should eq("file")
+      result[1].params[0].param_type.should eq("path")
     end
 
     it "extracts parameters from angle bracket patterns" do

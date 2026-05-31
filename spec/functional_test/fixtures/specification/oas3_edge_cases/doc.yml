@@ -1,0 +1,80 @@
+openapi: 3.1.0
+info:
+  title: OAS3 Edge Cases
+  version: 1.0.0
+servers:
+  - url: /api/{version}
+    variables:
+      version:
+        default: v2
+paths:
+  /orders:
+    $ref: "#/components/pathItems/Orders"
+  /reports:
+    post:
+      requestBody:
+        content:
+          application/vnd.api+json:
+            schema:
+              oneOf:
+                - type: object
+                  properties:
+                    filter:
+                      type: string
+                - type: object
+                  properties:
+                    include_archived:
+                      type: boolean
+      responses:
+        "202":
+          description: Accepted
+components:
+  pathItems:
+    Orders:
+      parameters:
+        - $ref: "#/components/parameters/Tenant"
+      get:
+        parameters:
+          - name: state
+            in: query
+            schema:
+              type: string
+        responses:
+          "200":
+            description: Orders
+      post:
+        requestBody:
+          $ref: "#/components/requestBodies/OrderBody"
+        responses:
+          "201":
+            description: Created
+  parameters:
+    Tenant:
+      name: X-Tenant
+      in: header
+      schema:
+        type: string
+  requestBodies:
+    OrderBody:
+      content:
+        application/merge-patch+json:
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/OrderPatch"
+  schemas:
+    OrderPatch:
+      allOf:
+        - type: object
+          properties:
+            name:
+              type: string
+        - anyOf:
+            - type: object
+              properties:
+                priority:
+                  type: integer
+            - type: object
+              properties:
+                notes:
+                  type: string

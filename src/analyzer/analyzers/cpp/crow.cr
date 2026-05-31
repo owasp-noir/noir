@@ -8,6 +8,10 @@ module Analyzer::Cpp
     ROUTE_REGEX = /CROW_ROUTE\s*\(\s*[A-Za-z_][A-Za-z0-9_]*\s*,\s*"([^"]*)"\s*\)/
     # CROW_BP_ROUTE(bp, "/path") — blueprint-scoped route registration.
     BP_ROUTE_REGEX = /CROW_BP_ROUTE\s*\(\s*[A-Za-z_][A-Za-z0-9_]*\s*,\s*"([^"]*)"\s*\)/
+    # app.route_dynamic("/path") — runtime string route (no compile-time macro).
+    ROUTE_DYNAMIC_REGEX = /\.\s*route_dynamic\s*\(\s*"([^"]*)"\s*\)/
+    # CROW_WEBSOCKET_ROUTE(app, "/path") — websocket upgrade endpoint.
+    WEBSOCKET_REGEX = /CROW_WEBSOCKET_ROUTE\s*\(\s*[A-Za-z_][A-Za-z0-9_]*\s*,\s*"([^"]*)"\s*\)/
     # .methods("POST"_method, "GET"_method) clause.
     METHODS_REGEX     = /\.methods\s*\(([^)]*)\)/
     METHOD_TOKEN      = /"([A-Za-z]+)"_method/
@@ -16,9 +20,12 @@ module Analyzer::Cpp
     # Path placeholder: <int>, <string>, <uint>, <double>, <path> — and the
     # non-standard but occasionally seen <type:name> form.
     PATH_PARAM_REGEX = /<([^<>:]+)(?::([^<>]+))?>/
-    URL_PARAM_GET    = /url_params\s*\.\s*get(?:\s*<[^>]+>)?\s*\(\s*"([^"]+)"/
-    HEADER_VALUE     = /get_header_value\s*\(\s*"([^"]+)"/
-    BODY_ACCESS      = /\b(req|request)\s*\.\s*body\b/
+    # url_params.get("x") plus the list/dict variants get_list / get_dict.
+    URL_PARAM_GET = /url_params\s*\.\s*get(?:_list|_dict)?(?:\s*<[^>]+>)?\s*\(\s*"([^"]+)"/
+    HEADER_VALUE  = /get_header_value\s*\(\s*"([^"]+)"/
+    # ctx.get_cookie("name") via the CookieParser middleware.
+    COOKIE_GET  = /\bget_cookie\s*\(\s*"([^"]+)"/
+    BODY_ACCESS = /\b(req|request)\s*\.\s*body\b/
 
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
@@ -41,55 +48,75 @@ module Analyzer::Cpp
 
     private def analyze_file(path : String, include_callee : Bool)
       source = read_file_content(path)
-      return unless source.includes?("CROW_ROUTE") || source.includes?("CROW_BP_ROUTE")
+      return unless source.includes?("CROW_ROUTE") || source.includes?("CROW_BP_ROUTE") ||
+                    source.includes?("CROW_WEBSOCKET_ROUTE") || source.includes?("route_dynamic")
 
+      # Blank comments so commented-out routes (e.g. inside `/* ... */`) and
+      # documentation snippets are not picked up as real endpoints.
+      source = Noir::CppCalleeExtractor.strip_comments(source)
       lines = source.split("\n")
       line_offsets = line_start_offsets(source)
-      last_endpoints = [] of Endpoint
 
       lines.each_with_index do |line, index|
         next if line.lstrip.starts_with?("//")
-        route_match = line.match(ROUTE_REGEX) || line.match(BP_ROUTE_REGEX)
-        if route_match
-          route_path = route_match[1]
 
-          # `.methods(...)` may sit on the same line as CROW_ROUTE or on one
-          # of the following continuation lines before the handler lambda.
-          search_window = line
-          (1..3).each do |offset|
-            break if index + offset >= lines.size
-            next_line = lines[index + offset]
-            break if next_line.match(ROUTE_REGEX) || next_line.match(BP_ROUTE_REGEX)
-            search_window += " " + next_line
-          end
-
-          methods = [] of String
-          if methods_match = search_window.match(METHODS_REGEX)
-            methods = parse_methods(methods_match[1])
-          end
-          methods << "GET" if methods.empty?
-
-          normalized_path, path_params = normalize_path(route_path)
-          details = Details.new(PathInfo.new(path, index + 1))
-          route_offset = line_offsets[index] + (route_match.begin(0) || 0)
-          route_callees = include_callee ? callees_for_route(source, path, route_offset + route_match[0].bytesize) : [] of Noir::CppCalleeExtractor::Entry
-          route_params = params_for_route(source, route_offset + route_match[0].bytesize)
-
-          last_endpoints.clear
-          methods.uniq.each do |method|
-            endpoint = Endpoint.new(normalized_path, method, path_params.dup, details)
-            route_params.each { |param| push_unique(endpoint, param) }
-            Noir::CppCalleeExtractor.attach_to(endpoint, route_callees) if include_callee
-            result << endpoint
-            last_endpoints << endpoint
-          end
-        else
-          next if last_endpoints.empty?
-          collect_params(line).each do |param|
-            last_endpoints.each { |ep| push_unique(ep, param) }
+        websocket = false
+        route_match = line.match(ROUTE_REGEX) || line.match(BP_ROUTE_REGEX) || line.match(ROUTE_DYNAMIC_REGEX)
+        unless route_match
+          if ws_match = line.match(WEBSOCKET_REGEX)
+            route_match = ws_match
+            websocket = true
           end
         end
+        next unless route_match
+
+        route_path = route_match[1]
+        normalized_path, path_params = normalize_path(route_path)
+        details = Details.new(PathInfo.new(path, index + 1))
+        route_offset = line_offsets[index] + (route_match.begin(0) || 0)
+        search_start = route_offset + route_match[0].bytesize
+
+        # The websocket handler is a chain of `.onopen/.onmessage/...` lambdas
+        # rather than a single request handler, so we register the upgrade
+        # endpoint without trying to mine request params from it.
+        if websocket
+          endpoint = Endpoint.new(normalized_path, "GET", path_params.dup, details)
+          endpoint.protocol = "ws"
+          result << endpoint
+          next
+        end
+
+        # `.methods(...)` may sit on the same line as the route or on one of the
+        # following continuation lines before the handler lambda.
+        search_window = line
+        (1..3).each do |offset|
+          break if index + offset >= lines.size
+          next_line = lines[index + offset]
+          break if route_line?(next_line)
+          search_window += " " + next_line
+        end
+
+        methods = [] of String
+        if methods_match = search_window.match(METHODS_REGEX)
+          methods = parse_methods(methods_match[1])
+        end
+        methods << "GET" if methods.empty?
+
+        route_callees = include_callee ? callees_for_route(source, path, search_start) : [] of Noir::CppCalleeExtractor::Entry
+        route_params = params_for_route(source, search_start)
+
+        methods.uniq.each do |method|
+          endpoint = Endpoint.new(normalized_path, method, path_params.dup, details)
+          route_params.each { |param| push_unique(endpoint, param) }
+          Noir::CppCalleeExtractor.attach_to(endpoint, route_callees) if include_callee
+          result << endpoint
+        end
       end
+    end
+
+    private def route_line?(line : String) : Bool
+      !!(line.match(ROUTE_REGEX) || line.match(BP_ROUTE_REGEX) ||
+        line.match(ROUTE_DYNAMIC_REGEX) || line.match(WEBSOCKET_REGEX))
     end
 
     private def callees_for_route(source : String, path : String, search_start : Int32) : Array(Noir::CppCalleeExtractor::Entry)
@@ -112,6 +139,8 @@ module Analyzer::Cpp
       offsets = [
         source.index("CROW_ROUTE", search_start),
         source.index("CROW_BP_ROUTE", search_start),
+        source.index("CROW_WEBSOCKET_ROUTE", search_start),
+        source.index("route_dynamic", search_start),
       ].compact
       offsets.min? || source.bytesize
     end
@@ -184,6 +213,9 @@ module Analyzer::Cpp
       end
       line.scan(HEADER_VALUE) do |m|
         params << Param.new(m[1], "", "header")
+      end
+      line.scan(COOKIE_GET) do |m|
+        params << Param.new(m[1], "", "cookie")
       end
       if line.match(BODY_ACCESS)
         params << Param.new("body", "", "json")

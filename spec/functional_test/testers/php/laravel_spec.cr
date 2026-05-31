@@ -6,6 +6,8 @@ expected_endpoints = [
   # Core Laravel routes that are definitely working
   Endpoint.new("/", "GET"),
   Endpoint.new("/dashboard", "GET"),
+  Endpoint.new("/terms", "GET"),
+  Endpoint.new("/legacy-dashboard", "GET"),
   Endpoint.new("/users", "GET"),
   Endpoint.new("/users", "POST"),
   Endpoint.new("/health", "GET"),
@@ -18,6 +20,11 @@ expected_endpoints = [
   Endpoint.new("/webhook", "POST"),
   Endpoint.new("/products", "GET"),
   Endpoint.new("/products", "POST"),
+  Endpoint.new("/photos", "GET"),
+  Endpoint.new("/photos/{photo}", "GET", [Param.new("photo", "", "path")]),
+  Endpoint.new("/admin/widgets", "GET"),
+  Endpoint.new("/admin/widgets/{widget}", "GET", [Param.new("widget", "", "path")]),
+  Endpoint.new("/admin/widgets/{widget}", "PATCH", [Param.new("widget", "", "path")]),
   Endpoint.new("/user", "GET"),
   Endpoint.new("/admin/settings", "GET"),
   Endpoint.new("/admin/settings", "POST"),
@@ -32,5 +39,5 @@ expected_endpoints = [
 
 FunctionalTester.new("fixtures/php/laravel/", {
   :techs     => 2,  # Detection still sees both php_laravel and php_pure
-  :endpoints => 53, # Analysis suppresses redundant php_pure and unprefixed group endpoints
+  :endpoints => 62, # Analysis suppresses redundant php_pure and unprefixed group endpoints
 }, expected_endpoints).perform_tests

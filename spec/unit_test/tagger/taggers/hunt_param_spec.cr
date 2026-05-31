@@ -308,5 +308,31 @@ describe "HuntParamTagger" do
 
       endpoint.params[0].tags.count { |tag| tag.name == "idor" && tag.tagger == "Hunt" }.should eq(1)
     end
+
+    it "matches parameter names case-insensitively" do
+      tagger = HuntParamTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/fetch", "GET", [
+        Param.new("URL", "http://example.com", "query"),
+        Param.new("File", "report.pdf", "query"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.params[0].tags.any? { |t| t.name == "ssrf" && t.tagger == "Hunt" }.should be_true
+      endpoint.params[1].tags.any? { |t| t.name == "file-inclusion" && t.tagger == "Hunt" }.should be_true
+    end
+
+    it "suppresses bare id IDOR for body params just like json/form" do
+      tagger = HuntParamTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/update", "POST", [
+        Param.new("id", "123", "body"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.params[0].tags.any? { |t| t.name == "idor" && t.tagger == "Hunt" }.should be_false
+    end
   end
 end

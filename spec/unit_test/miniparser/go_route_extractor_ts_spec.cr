@@ -161,6 +161,80 @@ describe Noir::TreeSitterGoRouteExtractor do
     ])
   end
 
+  it "detects root engine/router names from constructors and engine-typed params" do
+    source = <<-GO
+      package main
+
+      func boot() {
+          r := gin.New()
+          e := echo.New()
+          mux := chi.NewRouter()
+          v1 := r.Group("/api/v1")
+          v1.GET("/users", h)
+      }
+
+      func register(app *gin.Engine, grp *gin.RouterGroup) {
+          grp.GET("/posts", h)
+      }
+      GO
+
+    names = Noir::TreeSitterGoRouteExtractor.extract_engine_names(source)
+    # Constructors (r/e/mux) and the *gin.Engine param (app) are roots;
+    # `grp` is a *gin.RouterGroup (a real group param) and `v1` is a
+    # derived group — neither is an engine.
+    names.includes?("r").should be_true
+    names.includes?("e").should be_true
+    names.includes?("mux").should be_true
+    names.includes?("app").should be_true
+    names.includes?("grp").should be_false
+    names.includes?("v1").should be_false
+  end
+
+  it "peels .Use(...) middleware chains before the verb call" do
+    # Gin's `RouterGroup.Use(...)` / `Engine.Use(...)` return the
+    # receiver, so `r.Use(mw).GET(...)` and
+    # `r.Group("/x").Use(mw).POST(...)` are valid. The verb's operand is
+    # the `.Use(...)` call; without peeling it the routes were dropped.
+    source = <<-GO
+      package main
+      func main() {
+          g := gin.New()
+          g.Use(logMW).GET("/ping", pong)
+          g.Group("/user").Use(authMW).POST("/", createUser)
+          g.Group("/").Use(reqMW).POST("/message", createMsg)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/ping"},
+      {"POST", "/message"},
+      {"POST", "/user/"},
+    ].sort)
+  end
+
+  it "collects group declarations whose RHS ends in a .Use(...) chain" do
+    # `v1 := r.Group("/v1").Use(mw)` — the `.Use(...)` wraps the real
+    # `.Group(...)` call. The group name must still bind to `/v1` so the
+    # verb routes registered on `v1` later resolve with the prefix.
+    source = <<-GO
+      package main
+      func main() {
+          r := gin.Default()
+          v1 := r.Group("/v1").Use(authMW)
+          v1.GET("/users", listUsers)
+          v2 := r.Group("/v2").Use(a).Use(b)
+          v2.POST("/items", addItem)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/v1/users"},
+      {"POST", "/v2/items"},
+    ].sort)
+  end
+
   it "collects group assignments from var declarations and later assignments" do
     source = <<-GO
       package main
@@ -193,5 +267,177 @@ describe Noir::TreeSitterGoRouteExtractor do
 
     routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
     routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/legit"}])
+  end
+
+  it "extracts gorilla mux Handle routes and named tail chains" do
+    source = <<-GO
+      package main
+      func main() {
+          r := mux.NewRouter()
+          r.Handle("/handler", http.HandlerFunc(handler)).Methods("POST").Name("handler.create")
+          r.HandleFunc("/multi", handler).Methods("GET", "POST").Name("multi")
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source, handlefunc_methods: true)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/multi"},
+      {"POST", "/handler"},
+      {"POST", "/multi"},
+    ].sort)
+  end
+
+  it "extracts gorilla mux route builder chains" do
+    source = <<-GO
+      package main
+      func main() {
+          r := mux.NewRouter()
+          r.Methods("GET").Path("/builder").HandlerFunc(handler)
+          r.Path("/alternate").Methods("PATCH").Handler(http.HandlerFunc(handler))
+          r.Methods("GET").Path("/filtered").Queries("type", "{type}", "page", "{page}").HandlerFunc(handler)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source, handlefunc_methods: true)
+    routes.map { |r| {r.verb, r.path, r.query_params} }.sort_by! { |r| r[1] }.should eq([
+      {"PATCH", "/alternate", [] of String},
+      {"GET", "/builder", [] of String},
+      {"GET", "/filtered", ["type", "page"]},
+    ])
+  end
+
+  it "preserves wildcard methods for unconstrained gorilla mux routes" do
+    source = <<-GO
+      package main
+      func main() {
+          r := mux.NewRouter()
+          r.HandleFunc("/all", handler)
+          r.Path("/all-builder").HandlerFunc(handler)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source, handlefunc_methods: true)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"ANY", "/all"},
+      {"ANY", "/all-builder"},
+    ].sort)
+  end
+
+  it "does not mint phantom routes from verb-named value helpers" do
+    # A cache's `Put`/`Get` and similar value helpers share a verb name
+    # but take a context/receiver as their first argument, not a URL.
+    # The path must be the FIRST positional argument of a verb call, so
+    # these must produce no routes.
+    source = <<-GO
+      package main
+      func main() {
+          c.Put(context.Background(), "hello", "world", time.Minute)
+          bm.Get(ctx, "name")
+          store.Delete(ctx, "key")
+          r.GET("/real", handler)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/real"}])
+  end
+
+  it "extracts beego controller routes with explicit method mappings" do
+    source = <<-GO
+      package main
+      func main() {
+          web.Router("/health", ctrl, "get:Health")
+          web.Router("/update", ctrl, "post:Update")
+          web.Router("/getOrPost", ctrl, "get,post:GetOrPost")
+          web.Router("/multi", ctrl, "get:Read;delete:Remove")
+          web.Router("/any", ctrl, "*:Any")
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_beego_routes(source)
+    routes.map { |r| {r.verb, r.path, r.handler} }.sort!.should eq([
+      {"ANY", "/any", "Any"},
+      {"DELETE", "/multi", "Remove"},
+      {"GET", "/getOrPost", "GetOrPost"},
+      {"GET", "/health", "Health"},
+      {"GET", "/multi", "Read"},
+      {"POST", "/getOrPost", "GetOrPost"},
+      {"POST", "/update", "Update"},
+    ].sort)
+  end
+
+  it "resolves mapping-less beego controller routes from implemented methods" do
+    source = <<-GO
+      package main
+      func main() {
+          ctrl := &MainController{}
+          web.Router("/", ctrl)
+          web.Router("/inline", &OtherController{})
+      }
+      func (c *MainController) Get()  {}
+      func (c *MainController) Post() {}
+      func (c *MainController) Helper() {}
+      func (c *OtherController) Delete() {}
+      GO
+
+    methods = Noir::TreeSitterGoRouteExtractor.extract_controller_methods(source)
+    methods["MainController"].sort.should eq(["Get", "Post"])
+    methods["OtherController"].should eq(["Delete"])
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_beego_routes(source, methods)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"DELETE", "/inline"},
+      {"GET", "/"},
+      {"POST", "/"},
+    ].sort)
+  end
+
+  it "falls back to GET for beego controllers it can't resolve" do
+    source = <<-GO
+      package main
+      func main() {
+          web.Router("/external", &controllers.UserController{})
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_beego_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/external"}])
+  end
+
+  it "does not fan out a cross-package controller using a same-named local type" do
+    # A qualified `&controllers.UserController{}` is cross-package; even
+    # though THIS package defines a `UserController` with Get+Post, the
+    # qualified route must take the unresolved fallback (single GET), not
+    # borrow the local type's methods.
+    source = <<-GO
+      package main
+      func main() {
+          web.Router("/local", &UserController{})
+          web.Router("/external", &controllers.UserController{})
+      }
+      func (c *UserController) Get()  {}
+      func (c *UserController) Post() {}
+      GO
+
+    methods = Noir::TreeSitterGoRouteExtractor.extract_controller_methods(source)
+    routes = Noir::TreeSitterGoRouteExtractor.extract_beego_routes(source, methods)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/external"},
+      {"GET", "/local"},
+      {"POST", "/local"},
+    ].sort)
+  end
+
+  it "ignores Router calls on non-beego operands" do
+    source = <<-GO
+      package main
+      func main() {
+          db.Router("/not-a-route", handler)
+          web.Router("/yes", &C{})
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_beego_routes(source)
+    routes.map(&.path).should eq(["/yes"])
   end
 end
