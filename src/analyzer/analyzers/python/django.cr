@@ -89,7 +89,6 @@ module Analyzer::Python
         next false unless file.ends_with?(".py")
         next false if file.includes?("/site-packages/")
         next false if PythonEngine.python_test_path?(file, @base_path)
-        next false if @visited_url_paths.has_key?(file)
         File.basename(file) == "urls.py" || file.includes?("/urls/")
       end
 
@@ -102,8 +101,19 @@ module Analyzer::Python
       # `from app.sub import urls` resolve against the scan root.
       @django_base_path = @base_path
 
+      # Dedup by canonical (expanded) path. `all_files` entries and the
+      # paths `extract_endpoints` records when it follows an `include()`
+      # can spell the same file differently (`./` prefix, trailing or
+      # doubled slashes) depending on how the base path was passed, so a
+      # plain string compare would re-process a module a parent urlconf
+      # already pulled in — surfacing its routes a second time without
+      # the include() prefix.
+      visited = Set(::String).new
+      @visited_url_paths.each_key { |key| visited << File.expand_path(key) }
+
       candidates.each do |file|
-        next if @visited_url_paths.has_key?(file)
+        expanded = File.expand_path(file)
+        next if visited.includes?(expanded)
         begin
           content = read_file_content(file)
         rescue
@@ -115,6 +125,7 @@ module Analyzer::Python
         extract_endpoints(django_urls).each do |endpoint|
           endpoints << endpoint
         end
+        @visited_url_paths.each_key { |key| visited << File.expand_path(key) }
       end
 
       endpoints
