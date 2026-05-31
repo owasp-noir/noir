@@ -54,18 +54,19 @@ module Analyzer::Java
                     # Server.builder()-style routes (regex-scoped — the
                     # builder chain isn't worth a dedicated TS walk yet).
                     details = Details.new(PathInfo.new(path))
-                    constants = if path.ends_with?(".java")
-                                  Noir::TreeSitterJavaRouteExtractor.extract_string_constants(content)
-                                else
-                                  Hash(String, String).new
-                                end
-                    # Built lazily on the first builder-chain match: marks
-                    # char offsets that live inside a string literal or
-                    # comment so we can ignore `Server.builder()...build()`
-                    # chains that only appear in documentation strings or
-                    # `@Description` examples (a real FP source in Kotlin
-                    # docs and Java text blocks).
+                    # Both the string-constant table (a full tree-sitter
+                    # parse) and the non-code mask (a char walk) are only
+                    # needed once a `Server.builder()...build()` chain is
+                    # actually present. Most files are annotated services
+                    # with no builder chain at all, so build both lazily
+                    # on the first match to avoid parsing every file twice.
+                    #
+                    # The mask marks char offsets inside string literals or
+                    # comments, letting us drop builder chains that only
+                    # appear in documentation (e.g. a Kotlin `@Description`
+                    # value or a Java text block) — a real FP source.
                     non_code_mask = nil.as(Array(Bool)?)
+                    constants = nil.as(Hash(String, String)?)
                     content.scan(REGEX_SERVER_CODE_BLOCK) do |server_codeblock_match|
                       start = server_codeblock_match.begin(0)
                       if start
@@ -74,8 +75,9 @@ module Analyzer::Java
                       end
                       server_codeblock = server_codeblock_match[0]
 
-                      collect_service_routes(server_codeblock, constants, details, service_with_routes_index)
-                      collect_builder_routes(server_codeblock, constants, details)
+                      resolved_constants = constants ||= (path.ends_with?(".java") ? Noir::TreeSitterJavaRouteExtractor.extract_string_constants(content) : Hash(String, String).new)
+                      collect_service_routes(server_codeblock, resolved_constants, details, service_with_routes_index)
+                      collect_builder_routes(server_codeblock, resolved_constants, details)
                     end
                   end
                 rescue File::NotFoundError
