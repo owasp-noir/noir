@@ -199,6 +199,11 @@ module NoirTaggers
       desc:   "Identifies Hono authentication patterns (bearerAuth, jwt, basicAuth, custom middleware)",
       runner: HonoAuthTagger,
     },
+    perl_auth: {
+      name:   "Perl Auth Tagger",
+      desc:   "Identifies Perl authentication patterns (Dancer2 Auth::Extensible, Mojolicious, Catalyst)",
+      runner: PerlAuthTagger,
+    },
   }
 
   def self.taggers
