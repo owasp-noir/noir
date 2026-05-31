@@ -1,3 +1,4 @@
+require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
@@ -82,6 +83,37 @@ describe "ExpressAuthTagger" do
     endpoint.tags.empty?.should be_false
     endpoint.tags[0].name.should eq("auth")
     endpoint.tags[0].description.should contain("requireAuth")
+  end
+
+  it "detects ensureLoggedIn / ensureAuthenticated middleware (regression for 'enchure' typo)" do
+    noir_options = create_test_options
+
+    tmpdir = File.tempname("express_ensure")
+    Dir.mkdir_p(tmpdir)
+    js = File.join(tmpdir, "app.js")
+    File.write(js, [
+      "const express = require('express');",
+      "const { ensureLoggedIn } = require('connect-ensure-login');",
+      "const app = express();",
+      "app.get('/secret', ensureLoggedIn(), (req, res) => {",
+      "  res.json({ ok: true });",
+      "});",
+      "module.exports = app;",
+    ].join("\n"))
+    noir_options["base"] = YAML::Any.new(tmpdir)
+
+    details = Details.new(PathInfo.new(js, 4))
+    details.technology = "js_express"
+    endpoint = Endpoint.new("/secret", "GET", [] of Param, details)
+
+    tagger = ExpressAuthTagger.new(noir_options)
+    tagger.perform([endpoint])
+
+    endpoint.tags.empty?.should be_false
+    endpoint.tags[0].name.should eq("auth")
+    endpoint.tags[0].description.should contain("ensureLoggedIn")
+
+    FileUtils.rm_rf(tmpdir)
   end
 
   it "does not tag unprotected routes" do

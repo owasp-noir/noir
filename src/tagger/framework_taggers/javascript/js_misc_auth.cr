@@ -36,7 +36,7 @@ class JsMiscAuthTagger < FrameworkTagger
   GENERIC_NODE_AUTH = [
     {/\brequireAuth\b/, "requireAuth middleware"},
     {/\bisAuthenticated\b/, "isAuthenticated middleware"},
-    {/\benchureLoggedIn\b/, "ensureLoggedIn middleware"},
+    {/\bensureLoggedIn\b/, "ensureLoggedIn middleware"},
     {/\bverifyToken\b/, "verifyToken middleware"},
     {/\bcheckAuth\b/, "checkAuth middleware"},
     {/\bauthMiddleware\b/, "authMiddleware"},
