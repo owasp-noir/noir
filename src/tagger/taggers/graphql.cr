@@ -26,7 +26,7 @@ class GraphqlTagger < Tagger
       intersection = words_set & tmp_params_set
 
       # Check that at least two parameters match or URL indicates GraphQL
-      check = intersection.size.to_i >= 2 || is_graphql_url
+      check = intersection.size >= 2 || is_graphql_url
 
       if check
         tag = Tag.new("graphql", "GraphQL endpoint for flexible API queries, potentially exposing schema introspection and nested data access.", "GraphQL")

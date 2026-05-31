@@ -13,7 +13,12 @@ class CorsTagger < Tagger
     endpoints.each do |endpoint|
       tmp_params = [] of String
 
+      # CORS is a header-level concern: `Origin` and `Access-Control-*`
+      # are request/response headers. Matching a bare `origin` query/body
+      # param (e.g. `?origin=JFK` on a flights API) was a false positive,
+      # so only consider header params.
       endpoint.params.each do |param|
+        next unless param.param_type == "header"
         tmp_params.push param.name.to_s.downcase
       end
 

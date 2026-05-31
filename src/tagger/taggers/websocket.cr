@@ -2,7 +2,8 @@ require "../../models/tagger"
 require "../../models/endpoint"
 
 class WebsocketTagger < Tagger
-  WORDS = ["sec-websocket-key", "sec-websocket-accept", "sec-websocket-version"]
+  WORDS        = ["sec-websocket-key", "sec-websocket-accept", "sec-websocket-version"]
+  WS_PROTOCOLS = Set{"ws", "wss", "websocket"}
 
   def initialize(options : Hash(String, YAML::Any))
     super
@@ -13,7 +14,11 @@ class WebsocketTagger < Tagger
     endpoints.each do |endpoint|
       tmp_params = [] of String
 
-      if endpoint.protocol == "ws"
+      # AsyncAPI specs carry the raw server protocol (`ws`, `wss`,
+      # `websocket`), while HTTP analyzers set `ws`. Normalize case and
+      # accept all WebSocket protocol spellings so `wss`/`websocket`
+      # endpoints aren't missed.
+      if WS_PROTOCOLS.includes?(endpoint.protocol.downcase)
         tag = Tag.new("websocket", "WebSocket endpoint for real-time, bidirectional communication between clients and servers, enabling efficient data exchanges.", "WebSocket")
         endpoint.add_tag(tag)
       else
