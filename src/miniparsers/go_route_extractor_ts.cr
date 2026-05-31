@@ -1484,8 +1484,13 @@ module Noir
       else
         methods = ctrl_type.try { |t| controller_methods[t]? }
         if methods && !methods.empty?
-          methods.map do |m|
-            Route.new("web", BEEGO_CONTROLLER_HTTP_METHODS[m], route_path, route_path, m, line)
+          # `compact_map` + `[m]?` is defensive: `controller_methods`
+          # only carries HTTP-verb-named methods today, but a non-verb
+          # name would otherwise raise on the direct lookup.
+          methods.compact_map do |m|
+            if verb = BEEGO_CONTROLLER_HTTP_METHODS[m]?
+              Route.new("web", verb, route_path, route_path, m, line)
+            end
           end
         else
           # Unresolved controller type: surface the endpoint under GET so

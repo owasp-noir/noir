@@ -414,6 +414,6 @@ describe Noir::TreeSitterGoRouteExtractor do
       GO
 
     routes = Noir::TreeSitterGoRouteExtractor.extract_beego_routes(source)
-    routes.map { |r| r.path }.should eq(["/yes"])
+    routes.map(&.path).should eq(["/yes"])
   end
 end

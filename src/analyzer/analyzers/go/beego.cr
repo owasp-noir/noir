@@ -50,9 +50,15 @@ module Analyzer::Go
                     # Functional `web.Get("/x", h)` verb routes plus
                     # controller-style `web.Router("/x", &Ctrl{}, "get:M")`
                     # registrations — the latter is Beego's dominant idiom.
-                    ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(content)
                     controller_methods = ts_controller_methods_for_directory(package_controller_methods, File.dirname(path))
-                    ts_routes += Noir::TreeSitterGoRouteExtractor.extract_beego_routes(content, controller_methods)
+                    beego_routes = Noir::TreeSitterGoRouteExtractor.extract_beego_routes(content, controller_methods)
+                    # Track which lines are `web.Router` registrations so the
+                    # controller-method callee fallback below only fires for
+                    # them — never for a `web.Get` verb route whose handler
+                    # text happens to collide with a method name.
+                    beego_router_lines = Set(Int32).new
+                    beego_routes.each { |r| beego_router_lines << r.line }
+                    ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(content) + beego_routes
                     routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
                     ts_routes.each do |r|
                       routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
@@ -78,7 +84,8 @@ module Analyzer::Go
                                 name, callee_path, callee_line = entry
                                 new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
                               end
-                            elsif callees_needed? && !route.handler.empty? &&
+                            elsif callees_needed? && beego_router_lines.includes?(route.line) &&
+                                  !route.handler.empty? &&
                                   (bodies = controller_method_bodies[route.handler]?) && bodies.size == 1
                               # `web.Router` routes carry the controller
                               # method name in `handler`; the registration
