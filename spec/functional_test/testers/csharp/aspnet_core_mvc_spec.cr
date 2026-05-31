@@ -31,6 +31,9 @@ expected_endpoints = [
   Endpoint.new("/api/Users/raw", "GET", [
     Param.new("filter", "", "query"),
   ]),
+  Endpoint.new("/api/Users/search", "GET", [
+    Param.new("keyword", "", "query"),
+  ]),
   Endpoint.new("/api/Users/{id}", "PUT", [
     Param.new("id", "", "path"),
     Param.new("name", "", "json"),
@@ -132,6 +135,12 @@ describe "ASP.NET Core MVC analyzer edge cases" do
     raw = tester.app.endpoints.find { |e| e.url == "/api/Users/raw" && e.method == "GET" }
     raw.should_not be_nil
     raw.as(Endpoint).params.any? { |p| p.name == "repository" }.should be_false
+  end
+
+  it "drops an interface-typed action parameter that has no explicit [FromServices]" do
+    search = tester.app.endpoints.find { |e| e.url == "/api/Users/search" && e.method == "GET" }
+    search.should_not be_nil
+    search.as(Endpoint).params.any? { |p| p.name == "repository" }.should be_false
   end
 
   it "does not report NonAction task-returning helpers as endpoints" do
