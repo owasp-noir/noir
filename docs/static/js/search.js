@@ -58,26 +58,23 @@
     results.innerHTML = '';
   }
 
-  function fuzzyMatch(query, text) {
-    if (!text) return false;
-    var lower = text.toLowerCase();
-    var q = query.toLowerCase();
-    return lower.indexOf(q) !== -1;
-  }
-
   function search(query) {
     if (!searchData || !query || query.length < 2) {
       results.innerHTML = '';
       return;
     }
 
+    var q = query.toLowerCase();
     var matches = [];
-    for (var i = 0; i < searchData.length && matches.length < 10; i++) {
+    for (var i = 0; i < searchData.length; i++) {
       var item = searchData[i];
       if (!matchesCurrentLang(item)) continue;
-      if (fuzzyMatch(query, item.title) || fuzzyMatch(query, item.content)) {
-        matches.push(item);
-      }
+      var titleIdx = item.title ? item.title.toLowerCase().indexOf(q) : -1;
+      var contentIdx = item.content ? item.content.toLowerCase().indexOf(q) : -1;
+      if (titleIdx === -1 && contentIdx === -1) continue;
+      // Rank: title matches first, then by how early the match occurs.
+      var score = titleIdx !== -1 ? titleIdx : 1000 + contentIdx;
+      matches.push({ item: item, score: score });
     }
 
     if (matches.length === 0) {
@@ -85,12 +82,15 @@
       return;
     }
 
+    matches.sort(function(a, b) { return a.score - b.score; });
+    matches = matches.slice(0, 10);
+
     var html = '';
     for (var j = 0; j < matches.length; j++) {
-      var m = matches[j];
+      var m = matches[j].item;
       var snippet = '';
       if (m.content) {
-        var idx = m.content.toLowerCase().indexOf(query.toLowerCase());
+        var idx = m.content.toLowerCase().indexOf(q);
         if (idx !== -1) {
           var start = Math.max(0, idx - 40);
           var end = Math.min(m.content.length, idx + query.length + 60);
@@ -101,8 +101,8 @@
       }
       var url = m.url || m.permalink || '#';
       html += '<a class="search-result-item" href="' + url + '">' +
-        '<div class="search-result-title">' + escapeHtml(m.title || 'Untitled') + '</div>' +
-        (snippet ? '<div class="search-result-snippet">' + escapeHtml(snippet) + '</div>' : '') +
+        '<div class="search-result-title">' + highlight(m.title || 'Untitled', query) + '</div>' +
+        (snippet ? '<div class="search-result-snippet">' + highlight(snippet, query) + '</div>' : '') +
         '</a>';
     }
     results.innerHTML = html;
@@ -113,6 +113,27 @@
     var div = document.createElement('div');
     div.appendChild(document.createTextNode(text));
     return div.innerHTML;
+  }
+
+  // Escape-then-highlight: escape both text and query the same way so the
+  // match offsets line up, then wrap each query occurrence in <mark>.
+  // Case-insensitive, preserves the original casing.
+  function highlight(text, query) {
+    var escaped = escapeHtml(text);
+    if (!query) return escaped;
+    var q = escapeHtml(query).toLowerCase();
+    if (!q) return escaped;
+    var lower = escaped.toLowerCase();
+    var out = '';
+    var pos = 0;
+    var idx;
+    while ((idx = lower.indexOf(q, pos)) !== -1) {
+      out += escaped.substring(pos, idx) +
+        '<mark class="search-highlight">' + escaped.substring(idx, idx + q.length) + '</mark>';
+      pos = idx + q.length;
+    }
+    out += escaped.substring(pos);
+    return out;
   }
 
   function navigateResults(dir) {
