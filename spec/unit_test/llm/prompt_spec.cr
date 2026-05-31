@@ -414,4 +414,21 @@ describe LLM do
       LLM.acp_max_tokens?("https://api.openai.com").should be_nil
     end
   end
+
+  describe "clean_token?" do
+    it "accepts identifier-like and path-like tokens" do
+      LLM.clean_token?("/api/v1/users", 2048).should be_true
+      LLM.clean_token?("user_id", 128).should be_true
+      LLM.clean_token?("X-Api-Key", 128).should be_true
+    end
+
+    it "rejects empty, whitespace, control, backtick, and oversized tokens" do
+      LLM.clean_token?("", 128).should be_false
+      LLM.clean_token?("a b", 128).should be_false
+      LLM.clean_token?("a\tb", 128).should be_false
+      LLM.clean_token?("a\nb", 128).should be_false
+      LLM.clean_token?("a`b", 128).should be_false
+      LLM.clean_token?("x" * 200, 128).should be_false
+    end
+  end
 end

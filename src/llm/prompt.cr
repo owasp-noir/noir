@@ -538,6 +538,21 @@ module LLM
     provider.downcase.starts_with?("acp:") ? ACP_DEFAULT_MAX_TOKENS : nil
   end
 
+  # Shared shape check for LLM-supplied endpoint URLs and parameter
+  # names. A served path or an identifier never carries raw whitespace,
+  # control characters, or markdown backticks, and stays within a sane
+  # length bound — their presence means the model captured prose or a
+  # code fragment instead. Both the AI analyzer (identification) and
+  # the LLM optimizer (correction) call this so a hallucinated value
+  # can't ride through either phase. Token-specific rules (placeholder
+  # words for URLs) stay at the call site.
+  def self.clean_token?(value : String, max_length : Int32) : Bool
+    return false if value.empty?
+    return false if value.size > max_length
+    return false if value.includes?('`')
+    !value.each_char.any? { |c| c.ascii_whitespace? || c.control? }
+  end
+
   # Estimate the number of tokens in a string
   # This is a rough estimate using 1 token ≈ 4 characters for English text
   def self.estimate_tokens(text : String) : Int32

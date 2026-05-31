@@ -242,16 +242,15 @@ class LLMEndpointOptimizer < EndpointOptimizer
 
   # A rewritten URL must look like a served path: no raw whitespace,
   # control chars, or markdown noise, and within a sane length bound.
+  # Shares the shape check with Analyzer::AI::Unified so the correction
+  # phase can't reintroduce what the identification phase rejected.
   private def plausible_rewrite_url?(url : String) : Bool
-    return false if url.size > MAX_REWRITE_URL_LENGTH
-    return false if url.includes?('`')
-    !url.each_char.any? { |c| c.ascii_whitespace? || c.control? }
+    LLM.clean_token?(url, MAX_REWRITE_URL_LENGTH)
   end
 
   # A param name is an identifier-ish token, not a sentence.
   private def valid_optimized_param_name?(name : String) : Bool
-    return false if name.empty? || name.size > MAX_OPTIMIZED_PARAM_NAME
-    !name.each_char.any? { |c| c.ascii_whitespace? || c.control? }
+    LLM.clean_token?(name, MAX_OPTIMIZED_PARAM_NAME)
   end
 
   # LLM response format for optimization. The canonical prompt text

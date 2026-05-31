@@ -305,20 +305,12 @@ module Analyzer::AI
     # high-precision: it removes false positives without dropping any
     # legitimate endpoint.
     private def plausible_endpoint_url?(url : String) : Bool
-      return false if url.empty?
-      return false if url.size > MAX_ENDPOINT_URL_LENGTH
-      # A served path never contains raw whitespace (encoded as %20) or
-      # control characters. Their presence means the model captured a
-      # sentence or a code fragment, not a route.
-      return false if url.each_char.any? { |c| c.ascii_whitespace? || c.control? }
-      # Backticks are markdown/code noise, never part of a path.
-      return false if url.includes?('`')
+      return false unless LLM.clean_token?(url, MAX_ENDPOINT_URL_LENGTH)
       # `lstrip('/')` collapses an all-slash URL to "" — that is the
       # root path ("/"), which is a legitimate endpoint, so only the
       # placeholder-token comparison uses the stripped form.
       bare = url.lstrip('/').downcase
-      return false if PLACEHOLDER_URLS.includes?(bare)
-      true
+      !PLACEHOLDER_URLS.includes?(bare)
     end
 
     # A parameter name is an identifier-ish token. Drop names that carry
@@ -326,10 +318,7 @@ module Analyzer::AI
     # are absurdly long — both are false-positive params that would
     # otherwise ride along on an otherwise-valid endpoint.
     private def plausible_param_name?(name : String) : Bool
-      return false if name.empty?
-      return false if name.size > MAX_PARAM_NAME_LENGTH
-      return false if name.each_char.any? { |c| c.ascii_whitespace? || c.control? }
-      true
+      LLM.clean_token?(name, MAX_PARAM_NAME_LENGTH)
     end
 
     private def create_param_from_json(param : JSON::Any) : Param?
