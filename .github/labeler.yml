@@ -55,8 +55,14 @@
 🐳 docker:
   - changed-files:
       - any-glob-to-any-file: Dockerfile
-🤖 llm:
+🤖 ai-analyzer:
   - changed-files:
       - any-glob-to-any-file:
           - src/llm/**
           - src/analyzer/analyzers/llm_analyzers/**
+🧩 ai-context:
+  - changed-files:
+      - any-glob-to-any-file: src/ai_context/**
+🪝 callee:
+  - changed-files:
+      - any-glob-to-any-file: src/miniparsers/*_callee_extractor.cr
