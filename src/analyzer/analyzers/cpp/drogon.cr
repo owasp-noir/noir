@@ -192,7 +192,7 @@ module Analyzer::Cpp
                                     via_regex : Bool = false,
                                     protocol : String = "http")
       clean_path, path_params, query_params = normalize_drogon_path(raw_path, via_regex)
-      methods = parse_methods(method_args.reject { |a| a.lstrip.starts_with?('"') }.join(","))
+      methods = parse_methods(method_args.reject(&.lstrip.starts_with?('"')).join(","))
       line_number = Noir::CppCalleeExtractor.line_number_for(content, call_start)
 
       if handler && !handler[1].empty?
