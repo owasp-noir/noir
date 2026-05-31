@@ -36,6 +36,31 @@ describe "WebsocketTagger" do
       endpoint.tags[0].name.should eq("websocket")
     end
 
+    it "tags endpoints with wss / websocket protocol (AsyncAPI), case-insensitively" do
+      ["wss", "websocket", "WS", "WSS"].each do |proto|
+        tagger = WebsocketTagger.new(default_tagger_options)
+        endpoint = Endpoint.new("/chat", "GET")
+        endpoint.protocol = proto
+
+        tagger.perform([endpoint])
+
+        endpoint.tags.size.should eq(1)
+        endpoint.tags[0].name.should eq("websocket")
+      end
+    end
+
+    it "does not tag non-websocket protocols (http, kafka, mqtt)" do
+      ["http", "kafka", "mqtt"].each do |proto|
+        tagger = WebsocketTagger.new(default_tagger_options)
+        endpoint = Endpoint.new("/topic", "GET")
+        endpoint.protocol = proto
+
+        tagger.perform([endpoint])
+
+        endpoint.tags.size.should eq(0)
+      end
+    end
+
     it "tags endpoint with WebSocket headers" do
       tagger = WebsocketTagger.new(default_tagger_options)
 

@@ -39,7 +39,7 @@ class KtorAuthTagger < FrameworkTagger
   private def pre_scan_auth_blocks
     @auth_scopes.clear
 
-    files = get_files_by_prefix_and_extension(@base_path, ".kt")
+    files = collect_files_by_extension(".kt")
     files.each do |file|
       content = read_file(file)
       next if content.nil?
@@ -99,6 +99,9 @@ class KtorAuthTagger < FrameworkTagger
       lines = content.split("\n")
       line_num = path_info.line
       next if line_num.nil?
+      # Skip stale/out-of-range line refs: a line beyond the content we
+      # read would crash the lines[idx] walks below with IndexError.
+      next if line_num < 1 || line_num > lines.size
       line_idx = line_num - 1
 
       # Check for authenticate block wrapping this route

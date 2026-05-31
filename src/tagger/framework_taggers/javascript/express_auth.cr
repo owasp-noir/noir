@@ -15,8 +15,8 @@ class ExpressAuthTagger < FrameworkTagger
     /\brequireAuth\b/,
     /\bisAuth\b/,
     /\bisAuthenticated\b/,
-    /\benchureLoggedIn\b/,
-    /\benchureAuthenticated\b/,
+    /\bensureLoggedIn\b/,
+    /\bensureAuthenticated\b/,
     /\bauthorize\b/,
     /\brequireLogin\b/,
     /\bauthMiddleware\b/,
@@ -51,7 +51,7 @@ class ExpressAuthTagger < FrameworkTagger
 
     extensions = [".js", ".ts", ".mjs", ".cjs"]
     extensions.each do |ext|
-      files = get_files_by_prefix_and_extension(@base_path, ext)
+      files = collect_files_by_extension(ext)
       files.each do |file|
         content = read_file(file)
         next if content.nil?
