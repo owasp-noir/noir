@@ -151,6 +151,7 @@ describe "Next.js comment filtering" do
     app.analyze
 
     app.endpoints.none? { |ep| ep.url == "/api/commented" && ep.method == "GET" }.should be_true
+    app.endpoints.none? { |ep| ep.url == "/api/commented" && ep.method == "DELETE" }.should be_true
     app.endpoints.any? { |ep| ep.url == "/api/commented" && ep.method == "POST" }.should be_true
   end
 end
