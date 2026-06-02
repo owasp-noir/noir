@@ -25,6 +25,11 @@ require "../../func_spec.cr"
 #                               drops the outer `toString` and keeps
 #                               only the inner `getLegacy`, matching
 #                               the Python/Go chained-call noise filter.
+#   - GET  /api/catalog/{id}  — route declared on a springdoc-style
+#                               `*Api` interface; callees are pulled
+#                               from the `@Override` body on the
+#                               concrete controller, not the empty
+#                               interface method.
 expected_endpoints = [
   Endpoint.new("/api/users/", "POST").tap do |ep|
     ep.push_callee(Callee.new("service.save", line: 20))
@@ -39,6 +44,11 @@ expected_endpoints = [
   Endpoint.new("/api/orders/legacy", "GET").tap do |ep|
     ep.push_callee(Callee.new("AuditLog.write", line: 13))
     ep.push_callee(Callee.new("getLegacy", line: 17))
+  end,
+
+  Endpoint.new("/api/catalog/{id}", "GET", [Param.new("id", "", "path")]).tap do |ep|
+    ep.push_callee(Callee.new("catalogService.load", line: 9))
+    ep.push_callee(Callee.new("AuditLog.write", line: 10))
   end,
 ]
 

@@ -25,7 +25,7 @@ module Analyzer::Java
 
         if path.ends_with?("routes") || path.ends_with?("routes.conf") || path.includes?("/conf/routes")
           routes_files << path
-        elsif path.ends_with?(".java") && path.includes?("/controllers/")
+        elsif path.ends_with?(".java") && play_controller_file?(path)
           java_files << path
         end
       end
@@ -44,6 +44,20 @@ module Analyzer::Java
 
       Fiber.yield
       @result
+    end
+
+    # Decide whether a `.java` file holds Play actions. The `controllers`
+    # package is the conventional home, but Play resolves actions by the
+    # fully-qualified name written in the `routes` file, so apps freely
+    # park controllers under any package (e.g. `app/v1/post/
+    # PostController.java` referenced as `v1.post.PostController.list`).
+    # Gating on the `play.mvc` marker recovers those — without it their
+    # body/header/cookie params and callees were silently dropped. The
+    # per-method `play_action_method?` filter downstream keeps
+    # non-action classes (filters, actions, helpers) from contributing.
+    private def play_controller_file?(path : String) : Bool
+      return true if path.includes?("/controllers/")
+      read_file_content(path).includes?("play.mvc")
     end
 
     # Parse Java controller files to extract header, cookie, and body parameters

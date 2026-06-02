@@ -1,4 +1,5 @@
 require "../../spec_helper"
+require "file_utils"
 require "../../../src/models/logger"
 require "../../../src/miniparsers/java_parameter_extractor_ts"
 
@@ -320,6 +321,75 @@ describe Noir::TreeSitterJavaParameterExtractor do
       )
       params.map(&.name).should eq(["title", "body", "categoryId"])
       params.all? { |p| p.param_type == "json" }.should be_true
+    end
+  end
+
+  describe ".extract_class_supertypes" do
+    it "maps each class to its superclass simple name" do
+      source = <<-JAVA
+        class Owner extends Person {}
+        class Person extends BaseEntity {}
+        class BaseEntity {}
+        class Standalone {}
+        JAVA
+      supers = Noir::TreeSitterJavaParameterExtractor.extract_class_supertypes(source)
+      supers["Owner"].should eq("Person")
+      supers["Person"].should eq("BaseEntity")
+      supers.has_key?("BaseEntity").should be_false
+      supers.has_key?("Standalone").should be_false
+    end
+
+    it "strips package qualifiers and generic arguments" do
+      source = <<-JAVA
+        class Page extends org.example.base.AbstractPage<Item> {}
+        JAVA
+      Noir::TreeSitterJavaParameterExtractor.extract_class_supertypes(source)["Page"].should eq("AbstractPage")
+    end
+  end
+
+  describe "TreeSitterJavaDtoIndex cross-file inheritance" do
+    it "merges inherited fields from a superclass defined in another package" do
+      Noir::TreeSitterJavaDtoIndex.clear_cache!
+      tmp = File.tempname("noir-dto-inherit")
+      Dir.mkdir_p(File.join(tmp, "src/main/java/com/example/web"))
+      Dir.mkdir_p(File.join(tmp, "src/main/java/com/example/model"))
+
+      controller_path = File.join(tmp, "src/main/java/com/example/web/OwnerController.java")
+      owner_path = File.join(tmp, "src/main/java/com/example/web/Owner.java")
+      person_path = File.join(tmp, "src/main/java/com/example/model/Person.java")
+
+      File.write(controller_path, <<-JAVA)
+        package com.example.web;
+        class OwnerController {
+            public String create(Owner owner) { return ""; }
+        }
+        JAVA
+      File.write(owner_path, <<-JAVA)
+        package com.example.web;
+        import com.example.model.Person;
+        public class Owner extends Person {
+            private String city;
+            public String getCity() { return city; }
+            public void setCity(String city) { this.city = city; }
+        }
+        JAVA
+      File.write(person_path, <<-JAVA)
+        package com.example.model;
+        public class Person {
+            private String firstName;
+            private String lastName;
+            public void setFirstName(String firstName) { this.firstName = firstName; }
+            public void setLastName(String lastName) { this.lastName = lastName; }
+        }
+        JAVA
+
+      controller_src = File.read(controller_path)
+      index = Noir::TreeSitterJavaDtoIndex.new.build_for(controller_path, controller_src)
+      index["Owner"]?.should_not be_nil
+      index["Owner"].map(&.name).should eq(["city", "firstName", "lastName"])
+    ensure
+      FileUtils.rm_rf(tmp) if tmp
+      Noir::TreeSitterJavaDtoIndex.clear_cache!
     end
   end
 end

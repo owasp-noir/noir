@@ -36,6 +36,11 @@ module Analyzer::Java
       cookie_methods: Set{"cookie"},
       body_methods: Set{"body", "bodyAsBytes"},
       websocket_methods: Set{"webSocket"},
+      # `redirect.get("/from", "/to")` & friends register redirect
+      # routes with all-string-literal arguments — allowlist the
+      # `redirect` receiver so they survive the route/collection-call
+      # disambiguation in the shared extractor.
+      router_receivers: Set{"redirect"},
     )
 
     def analyze

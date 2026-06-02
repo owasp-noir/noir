@@ -29,7 +29,7 @@ module Analyzer::Scala
           routes_files << path
         elsif path.ends_with?(".scala")
           @scala_paths << path
-          scala_files << path if path.includes?("/controllers/")
+          scala_files << path if play_controller_file?(path)
         end
       end
 
@@ -52,6 +52,19 @@ module Analyzer::Scala
     # All `.scala` paths in the scan, used to resolve SIRD/SimpleRouter
     # classes referenced from `->` include lines that are not routes files.
     @scala_paths = [] of String
+
+    # Decide whether a `.scala` file holds Play controllers. The
+    # `controllers` package is conventional, but Play resolves actions
+    # by the fully-qualified name in the `routes` file, so controllers
+    # routinely live in other packages. Gating on the `play.api.mvc`
+    # marker recovers those — otherwise their header/cookie/body params
+    # and callees are dropped. SIRD/SimpleRouter resolution still walks
+    # every `.scala` path via `@scala_paths`, so this only governs the
+    # controller-method enrichment map.
+    private def play_controller_file?(path : String) : Bool
+      return true if path.includes?("/controllers/")
+      read_file_content(path).includes?("play.api.mvc")
+    end
 
     # Parse Scala controller files to extract header, cookie, and body parameters
     private def parse_controller_files(scala_files : Array(String)) : Hash(String, ControllerMethod)

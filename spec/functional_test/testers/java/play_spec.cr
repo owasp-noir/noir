@@ -70,6 +70,13 @@ expected_endpoints = [
   Endpoint.new("/api/reports", "POST", [
     Param.new("body", "", "json"),
   ]),
+  # Controller in a non-`controllers` package (`app/v1/PostsApi.java`):
+  # header + body enrichment must still resolve via the `play.mvc`
+  # marker gate, not the package-path convention.
+  Endpoint.new("/v1/posts", "POST", [
+    Param.new("X-Posts-Trace", "", "header"),
+    Param.new("body", "", "json"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/java/play/", {
