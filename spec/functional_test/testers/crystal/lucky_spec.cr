@@ -14,6 +14,10 @@ expected_endpoints = [
     Param.new("name1", "", "cookie"),
     Param.new("name2", "", "cookie"),
   ]),
+  # `action do` routes inferred from the action class name (Lucky's
+  # resourceful routing).
+  Endpoint.new("/posts", "GET"),
+  Endpoint.new("/posts/:post_id", "GET", [Param.new("post_id", "", "path")]),
 ]
 
 FunctionalTester.new("fixtures/crystal/lucky/", {

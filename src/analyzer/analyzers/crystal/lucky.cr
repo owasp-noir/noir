@@ -25,16 +25,38 @@ module Analyzer::Crystal
       # them onto the next route; reset at each class boundary so a guide
       # file with several example actions doesn't cross-attach params.
       pending_params = [] of Param
+      # Track the enclosing action class so `action`/`nested_route` (which
+      # carry no path) can infer their route from the class name.
+      current_class = ""
 
       lines.each_with_index do |line, index|
         stripped = Noir::CrystalCalleeExtractor.strip_comment(line)
 
-        if stripped.match(/^\s*(?:abstract\s+)?class\b/)
+        if class_match = stripped.match(/^\s*(?:abstract\s+)?class\s+([A-Z]\w*(?:::[A-Z]\w*)*)/)
+          current_class = class_match[1]
+          pending_params.clear
+        elsif stripped.match(/^\s*(?:abstract\s+)?class\b/)
+          current_class = ""
           pending_params.clear
         end
 
         if decl = lucky_param_declaration(stripped)
           pending_params << decl
+        end
+
+        # `action do … end` / `nested_route do … end` infer the verb and
+        # path from the action class name (Lucky's RouteInferrer). This is
+        # the resourceful style real apps use instead of explicit `get "/…"`.
+        if inferred = infer_lucky_action_route(stripped, current_class)
+          method, url = inferred
+          endpoint = Endpoint.new(url, method)
+          endpoint.details = Details.new(PathInfo.new(path, index + 1))
+          pending_params.each { |p| endpoint.push_param(p) }
+          pending_params.clear
+          attach_route_callees(endpoint, lines, index, path) if include_callee
+          endpoints << endpoint
+          last_endpoint = endpoint
+          next
         end
 
         endpoint = line_to_endpoint(line)
@@ -65,6 +87,67 @@ module Analyzer::Crystal
     private def lucky_param_declaration(content : String) : Param?
       if match = content.match(/^\s*param\s+(\w+)\s*:/)
         Param.new(match[1], "", "query")
+      end
+    end
+
+    RESOURCEFUL_ACTIONS = %w[index show new create edit update delete]
+
+    # When a line opens an `action do` / `nested_route do` block inside an
+    # action class, infer the route the way Lucky's `RouteInferrer` does:
+    # split the class name, the last piece is the resourceful action, the
+    # piece before it is the resource. `nested_route` additionally folds in
+    # the parent resource as `/parent/:parent_id`. Returns `{method, url}`.
+    private def infer_lucky_action_route(content : String, current_class : String) : Tuple(String, String)?
+      return if current_class.empty?
+      match = content.match(/^\s*(action|nested_route)\b.*\bdo\b/)
+      return unless match
+      nested = match[1] == "nested_route"
+
+      pieces = current_class.split("::").map(&.underscore)
+      return if pieces.size < 2
+
+      action_name = pieces.last
+      return unless RESOURCEFUL_ACTIONS.includes?(action_name)
+      resource = pieces[-2]
+      return if nested && pieces.size < 3
+      parent = nested ? pieces[-3] : ""
+
+      method = case action_name
+               when "delete" then "DELETE"
+               when "create" then "POST"
+               when "update" then "PUT"
+               else               "GET"
+               end
+
+      namespace_pieces = pieces.reject { |p| p == action_name || p == resource }
+      namespace_pieces = namespace_pieces.reject { |p| p == parent } if nested
+      parent_pieces = nested ? [parent, ":#{lucky_singularize(parent)}_id"] : [] of String
+
+      resource_pieces = case action_name
+                        when "index", "create" then [resource]
+                        when "new"             then [resource, "new"]
+                        when "edit"            then [resource, ":#{lucky_singularize(resource)}_id", "edit"]
+                        else # show, update, delete
+                          [resource, ":#{lucky_singularize(resource)}_id"]
+                        end
+
+      url = "/" + (namespace_pieces + parent_pieces + resource_pieces).reject(&.empty?).join("/")
+      {method, url}
+    end
+
+    # Minimal inflector for the `:resource_id` path-param name. Lucky uses
+    # Wordsmith; these rules cover the regular plurals real resources use.
+    private def lucky_singularize(word : String) : String
+      return word if word.empty?
+      if word.ends_with?("ies")
+        "#{word[0..-4]}y"
+      elsif word.ends_with?("ses") || word.ends_with?("xes") || word.ends_with?("zes") ||
+            word.ends_with?("ches") || word.ends_with?("shes")
+        word[0..-3]
+      elsif word.ends_with?("s") && !word.ends_with?("ss")
+        word[0..-2]
+      else
+        word
       end
     end
 
