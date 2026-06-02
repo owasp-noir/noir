@@ -122,10 +122,18 @@ module Analyzer::Haskell
           j = i + 1
           while j < lines.size
             next_line = lines[j]
-            stripped = next_line.lstrip
-            if stripped.empty?
-              break
-            elsif starts_with_whitespace?(next_line) || stripped.starts_with?(":<|>") || stripped.starts_with?(":>")
+            if next_line.lstrip.empty?
+              # A blank line — which may be a stripped full-line comment sitting
+              # between routes — does not necessarily terminate the alias. Peek
+              # past the blank run: keep collecting only when a real
+              # continuation line follows, otherwise the declaration has ended.
+              k = j + 1
+              while k < lines.size && lines[k].lstrip.empty?
+                k += 1
+              end
+              break unless k < lines.size && continuation_line?(lines[k])
+              j = k
+            elsif continuation_line?(next_line)
               body_parts << next_line
               j += 1
             else
@@ -147,6 +155,12 @@ module Analyzer::Haskell
       first = line[0]?
       return false unless first
       first == ' ' || first == '\t'
+    end
+
+    private def continuation_line?(line : String) : Bool
+      return true if starts_with_whitespace?(line)
+      stripped = line.lstrip
+      stripped.starts_with?(":<|>") || stripped.starts_with?(":>")
     end
 
     private def strip_haskell_comments(text : String) : String
@@ -286,7 +300,7 @@ module Analyzer::Haskell
                                       endpoint_count : Int32,
                                       handler_bodies : HandlerBodies,
                                       server_bindings : ServerBindings) : Array(String)?
-      server_candidate_names(api_name).each do |server_name|
+      server_candidate_names(api_name, api_source, server_bindings).each do |server_name|
         binding = body_for_path(server_name, api_source, handler_bodies)
         next unless binding
         next unless root_server_matches_api?(server_name, api_source, api_name, server_bindings)
@@ -296,7 +310,13 @@ module Analyzer::Haskell
         leaves = flatten_server_expression(binding[:body], handler_bodies, server_bindings, binding[:path], visited)
         next unless leaves
         next unless leaves.size == endpoint_count
-        next unless leaves.all? { |leaf| !unique_handler_body(leaf, handler_bodies).nil? }
+        # The server is already confirmed by its `:: Server <api>` binding and an
+        # exact leaf/endpoint count match, so require only that at least one leaf
+        # names a known function (proving the flatten landed on real handlers).
+        # Handlers that are imported, point-free, or collide across modules then
+        # simply contribute no callees rather than sinking the whole server —
+        # `attach_servant_callees` resolves each leaf independently.
+        next unless leaves.any? { |leaf| handler_bodies.has_key?(leaf) }
 
         return leaves
       end
@@ -304,12 +324,22 @@ module Analyzer::Haskell
       nil
     end
 
-    private def server_candidate_names(api_name : String) : Array(String)
+    private def server_candidate_names(api_name : String,
+                                       api_source : String,
+                                       server_bindings : ServerBindings) : Array(String)
       candidates = ["server", "#{lower_camel(api_name)}Server"]
 
       if api_name.ends_with?("API")
         prefix = api_name[0...(api_name.size - "API".size)]
         candidates << "#{lower_camel(prefix)}Server" unless prefix.empty?
+      end
+
+      # Servers are frequently named arbitrarily (`exchangeServer`, `appToServer`)
+      # rather than following the `<api>Server` convention. Any binding in the
+      # same file whose `:: Server <api>` / `:: ServerT <api>` signature targets
+      # this API is a valid server root regardless of its name.
+      server_bindings.each do |key, target|
+        candidates << key[1] if key[0] == api_source && target == api_name
       end
 
       candidates.uniq
@@ -344,8 +374,8 @@ module Analyzer::Haskell
                                     server_bindings : ServerBindings,
                                     current_path : String,
                                     visited : Set(Tuple(String, String))) : Array(String)?
-      name = unwrap_parens(part.strip)
-      return unless simple_value_name?(name)
+      name = leaf_value_name(unwrap_parens(part.strip))
+      return unless name
 
       binding = body_for_path(name, current_path, handler_bodies)
       if binding
@@ -363,6 +393,33 @@ module Analyzer::Haskell
       return if server_like_name?(name) || server_binding_name?(name, server_bindings)
 
       [name]
+    end
+
+    # Resolve a single server expression down to the value name that identifies
+    # its handler. A bare name is returned as-is; an application keeps its head
+    # function (`Handler.rates s` -> `rates`, `mkHandler cfg` -> `mkHandler`).
+    # `hoistServer`/`enter` wrap the real server in their last argument, and
+    # `return x`/`pure x` produce a constant response from `x`.
+    private def leaf_value_name(expr : String) : String?
+      return expr if simple_value_name?(expr)
+
+      tokens = expr.split(/\s+/).reject(&.empty?)
+      return if tokens.empty?
+
+      head = qualified_tail(tokens[0])
+      if {"hoistServer", "hoistServerWithContext", "enter"}.includes?(head) && tokens.size >= 2
+        head = qualified_tail(tokens[-1])
+      elsif {"return", "pure"}.includes?(head) && tokens.size >= 2
+        head = qualified_tail(tokens[1])
+      end
+
+      simple_value_name?(head) ? head : nil
+    end
+
+    # Strip a module qualifier and stray parentheses: `Mod.Sub.fn` -> `fn`,
+    # `(handler` -> `handler`.
+    private def qualified_tail(token : String) : String
+      token.strip.gsub(/[()]/, "").split('.').last
     end
 
     private def root_server_matches_api?(server_name : String,

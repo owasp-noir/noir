@@ -297,7 +297,7 @@ class EndpointOptimizer
         end
 
         new_param = Param.new(param, "", "path")
-        unless new_endpoint.params.includes?(new_param)
+        unless path_param_present?(new_endpoint.params, param)
           new_endpoint.params << new_param
         end
       end
@@ -318,7 +318,7 @@ class EndpointOptimizer
         end
 
         new_param = Param.new(param, "", "path")
-        unless new_endpoint.params.includes?(new_param)
+        unless path_param_present?(new_endpoint.params, param)
           new_endpoint.params << new_param
         end
       end
@@ -352,7 +352,7 @@ class EndpointOptimizer
         end
 
         new_param = Param.new(param, "", "path")
-        unless new_endpoint.params.includes?(new_param)
+        unless path_param_present?(new_endpoint.params, param)
           new_endpoint.params << new_param
         end
       end
@@ -371,7 +371,7 @@ class EndpointOptimizer
         end
 
         new_param = Param.new(match[1], "", "path")
-        unless new_endpoint.params.includes?(new_param)
+        unless path_param_present?(new_endpoint.params, match[1])
           new_endpoint.params << new_param
         end
       end
@@ -386,6 +386,15 @@ class EndpointOptimizer
   # a glob, a type expression) is not a real parameter name.
   private def valid_path_param_name?(name : String) : Bool
     !name.empty? && !!name.match(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+  end
+
+  # A URL cannot carry two path params with the same name, so dedup by name
+  # alone. An exact-struct check is too strict: analyzers that record a type
+  # in the param `value` (e.g. Haskell's Servant/Yesod store `Capture "id" Int`
+  # as `Param("id", "Int", "path")`) would otherwise not match the empty-value
+  # param this pass derives from the URL, producing a duplicate.
+  private def path_param_present?(params : Array(Param), name : String) : Bool
+    params.any? { |param| param.param_type == "path" && param.name == name }
   end
 
   # Drop a literal format/extension suffix that shares the segment with the

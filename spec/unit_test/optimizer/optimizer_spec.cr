@@ -160,6 +160,26 @@ describe "EndpointOptimizer" do
       result[1].params[0].name.should eq("post_id")
     end
 
+    it "does not duplicate a path param the analyzer already recorded with a type" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      # Haskell's Servant/Yesod analyzers store the captured type in the param
+      # `value` (e.g. `Capture "id" Int`). The URL-derived param has an empty
+      # value, so an exact-struct dedup used to miss it and add a duplicate.
+      endpoints = [
+        Endpoint.new("/users/:id", "GET", [Param.new("id", "Int", "path")]),
+        Endpoint.new("/sites/{site_id}", "GET", [Param.new("site_id", "SiteId", "path")]),
+        Endpoint.new("/files/*path", "GET", [Param.new("path", "Text", "path")]),
+      ]
+
+      result = optimizer.add_path_parameters(endpoints)
+      result.each_with_index do |endpoint, idx|
+        path_params = endpoint.params.select { |param| param.param_type == "path" }
+        path_params.size.should eq(1)
+        # The analyzer-supplied type must survive (no empty-value clobber).
+        path_params[0].value.should_not eq("")
+      end
+    end
+
     it "names catch-all path variables without the leading asterisk" do
       optimizer = EndpointOptimizer.new(logger, options)
       endpoints = [
