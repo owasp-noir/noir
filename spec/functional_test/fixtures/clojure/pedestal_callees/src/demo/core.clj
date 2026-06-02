@@ -27,5 +27,14 @@
     [["/inline" :get (fn [request]
                       (response/ok (inline.service/run request)))]]))
 
+(def common-interceptors [])
+
+;; Tabular handler built by conj-ing a syntax-quoted handler onto a shared
+;; interceptor vector: `dashboard-page` is the real handler (captured), while
+;; `conj`/`common-interceptors` are plumbing (dropped).
+(def dashboard-routes
+  (table/table-routes
+    #{["/dashboard" :get (conj common-interceptors `dashboard-page)]}))
+
 (def service
-  {::http/routes [classic-routes helper-routes table-routes]})
+  {::http/routes [classic-routes helper-routes table-routes dashboard-routes]})

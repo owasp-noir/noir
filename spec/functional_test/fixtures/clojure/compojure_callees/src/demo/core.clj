@@ -23,4 +23,20 @@
     "(ignored/string)"
     '(ignored/quoted)
     (quote (ignored/again))
-    (response/ok (safe.service/run!))))
+    (response/ok (safe.service/run!)))
+
+  ; Var-quoted handler `#'sym` (the idiomatic hot-reload form) must be
+  ; captured as a callee, unlike an ordinary `'quote`.
+  (GET "/vars" []
+    (wrap #'handlers/show-vars))
+
+  ; Arithmetic / comparison operators are not meaningful callees: only the
+  ; real service call should surface.
+  (GET "/calc" []
+    (response/ok (/ (+ 1 2) (math.util/scale 3))))
+
+  ; compojure.api.resource — handlers under each method key become callees.
+  (context "/items" []
+    (resource
+      {:get {:handler (fn [_] (item.service/list-all))}
+       :post {:handler (fn [req] (item.service/create! req))}})))

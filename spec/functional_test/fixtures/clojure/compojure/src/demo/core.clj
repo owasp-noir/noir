@@ -32,6 +32,11 @@
   (GET "/profile/:id" [id q :as {:keys [headers]}]
     {:id id :q q})
 
+  ; Inline regex constraint `:id{[0-9]+}` must normalize to `:id` in the URL,
+  ; and the `:<<` coercion fn (`as-int`) must NOT become a query param.
+  (GET "/orders/:id{[0-9]+}" [id :<< as-int]
+    {:id id})
+
   (context "/api" []
     (POST "/users" request
       request)
@@ -42,6 +47,53 @@
 
     (ANY "/ping" []
       "pong"))
+
+  ; compojure.api.resource: method-keyed map bound to the context path —
+  ; emits GET/POST /widgets, plus a path param from `/widgets/:id`.
+  (context "/widgets" []
+    (resource
+      {:get {:summary "list widgets"
+             :handler (fn [_] "all")}
+       :post {:parameters {:body-params NewWidget}
+              :handler (fn [_] "created")}}))
+
+  (context "/widgets/:id" []
+    (resource
+      {:get {:handler (fn [_] "one")}}))
+
+  ; A bare `:handler` resource (no method key) serves every method → GET.
+  (context "/health-check" []
+    (resource
+      {:handler (fn [_] "ok")}))
+
+  ; `^metadata` may precede the resource map — the route must still be found.
+  (context "/metered" []
+    (resource
+      ^:audited {:get {:handler (fn [_] "metered")}}))
+
+  ; compojure-api restructuring directives declare typed params in the body.
+  ; `{y :- Long 1}` is an optional param with a default → still bound as `y`.
+  (GET "/calc" []
+    :query-params [x :- Long, {y :- Long 1}]
+    :return Long
+    (ok (+ x y)))
+
+  (POST "/echo" []
+    :body-params [message :- s/Str]
+    :header-params [authorization :- s/Str]
+    (ok message))
+
+  ; Comma-separated, untyped binding names — Clojure treats commas as
+  ; whitespace, so both `a` and `b` must be lifted.
+  (GET "/pair" []
+    :query-params [a, b]
+    (ok))
+
+  ; `:path-params` re-declaring the URL param must not duplicate it.
+  (PUT "/upload/:id" []
+    :path-params [id :- Long]
+    :form-params [file :- s/Str]
+    (ok id))
 
   (routes
     (GET "/health" []

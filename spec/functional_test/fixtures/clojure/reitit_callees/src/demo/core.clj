@@ -18,7 +18,17 @@
      :post {:handler `create-user}}]
    ["/inline"
     {:get {:handler (fn [request]
-                     (response/ok (inline.service/run request)))}}]])
+                     (response/ok (inline.service/run request)))}}]
+
+   ; Method map carries no handler — the route-data `:handler` is what reitit
+   ; dispatches to, so it must surface as the GET endpoint's callee.
+   ["/items/:id"
+    {:get {:parameters {:path {:id int?}}}
+     :handler get-item}]
+
+   ; Bare `:handler` (no method) — emit a GET endpoint with its callee.
+   ["/health"
+    {:handler health-check}]])
 
 (def app
   (ring/ring-handler

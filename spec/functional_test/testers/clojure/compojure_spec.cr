@@ -27,6 +27,9 @@ expected_endpoints = [
     Param.new("id", "", "path"),
     Param.new("q", "", "query"),
   ]),
+  Endpoint.new("/orders/:id", "GET", [
+    Param.new("id", "", "path"),
+  ]),
   Endpoint.new("/api/users", "POST"),
   Endpoint.new("/api/admin/users/:id", "DELETE", [
     Param.new("id", "", "path"),
@@ -34,6 +37,29 @@ expected_endpoints = [
   ]),
   Endpoint.new("/health", "GET"),
   Endpoint.new("/api/ping", "ANY"),
+  Endpoint.new("/widgets", "GET"),
+  Endpoint.new("/widgets", "POST"),
+  Endpoint.new("/widgets/:id", "GET", [
+    Param.new("id", "", "path"),
+  ]),
+  Endpoint.new("/health-check", "GET"),
+  Endpoint.new("/metered", "GET"),
+  Endpoint.new("/calc", "GET", [
+    Param.new("x", "", "query"),
+    Param.new("y", "", "query"),
+  ]),
+  Endpoint.new("/echo", "POST", [
+    Param.new("message", "", "json"),
+    Param.new("authorization", "", "header"),
+  ]),
+  Endpoint.new("/pair", "GET", [
+    Param.new("a", "", "query"),
+    Param.new("b", "", "query"),
+  ]),
+  Endpoint.new("/upload/:id", "PUT", [
+    Param.new("id", "", "path"),
+    Param.new("file", "", "form"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/clojure/compojure/", {

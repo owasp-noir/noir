@@ -34,6 +34,55 @@ describe Noir::ClojureCalleeExtractor do
     ])
   end
 
+  it "captures var-quoted handler references but still skips plain quotes" do
+    body = <<-CLJ
+      (wrap #'user-ctl/default)
+      (route #'show-handler)
+      '(ignored/quoted)
+      CLJ
+
+    callees = Noir::ClojureCalleeExtractor.callees_for_body(body, "core.clj", 40)
+    callees.map { |name, _, line| {name, line} }.should eq([
+      {"wrap", 40},
+      {"user-ctl/default", 40},
+      {"route", 41},
+      {"show-handler", 41},
+    ])
+  end
+
+  it "skips arithmetic/comparison operators and binding macros" do
+    body = <<-CLJ
+      (if-let [u (db/find id)]
+        (response/ok (/ (+ (:a u) (:b u)) (math/scale 2)))
+        (when-some [d (db/default)]
+          (response/ok (= d (compute/value d)))))
+      CLJ
+
+    callees = Noir::ClojureCalleeExtractor.callees_for_body(body, "core.clj", 1)
+    callees.map(&.[0]).should eq([
+      "db/find",
+      "response/ok",
+      "math/scale",
+      "db/default",
+      "response/ok",
+      "compute/value",
+    ])
+  end
+
+  it "captures syntax-quoted handler symbols and drops collection plumbing" do
+    body = <<-CLJ
+      (conj common-interceptors `home-page)
+      (into [] `app.handlers/show)
+      `(ignored template)
+      CLJ
+
+    callees = Noir::ClojureCalleeExtractor.callees_for_body(body, "core.clj", 1)
+    callees.map(&.[0]).should eq([
+      "home-page",
+      "app.handlers/show",
+    ])
+  end
+
   it "keeps namespaced callees that share reserved base names" do
     body = <<-CLJ
       (let [items (db/filter params)]
