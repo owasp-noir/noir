@@ -37,19 +37,19 @@ describe Analyzer::Rust::RustEngine do
   describe ".collect_cfg_test_regions" do
     it "treats braces inside a raw string as opaque so the region spans the whole block" do
       source = <<-RUST
-      fn real() {
-          Router::with_path("/real").get(real_handler);
-      }
+        fn real() {
+            Router::with_path("/real").get(real_handler);
+        }
 
-      #[cfg(test)]
-      mod tests {
-          #[test]
-          fn renders() {
-              let raw = r#"{ "openapi": { "paths": {} } }"#;
-              Router::with_path("/test-only").get(test_handler);
-          }
-      }
-      RUST
+        #[cfg(test)]
+        mod tests {
+            #[test]
+            fn renders() {
+                let raw = r#"{ "openapi": { "paths": {} } }"#;
+                Router::with_path("/test-only").get(test_handler);
+            }
+        }
+        RUST
 
       regions = Analyzer::Rust::RustEngine.collect_cfg_test_regions(source)
       regions.size.should eq(1)
@@ -68,17 +68,17 @@ describe Analyzer::Rust::RustEngine do
 
     it "still closes a cfg(test) block that contains no raw strings" do
       source = <<-RUST
-      #[cfg(test)]
-      mod tests {
-          fn t() { let x = 1; }
-      }
+        #[cfg(test)]
+        mod tests {
+            fn t() { let x = 1; }
+        }
 
-      fn after() {}
-      RUST
+        fn after() {}
+        RUST
 
       regions = Analyzer::Rust::RustEngine.collect_cfg_test_regions(source)
       regions.size.should eq(1)
-      start_byte, end_byte = regions[0]
+      _start_byte, end_byte = regions[0]
       after_byte = source.byte_index("fn after").not_nil!
       (after_byte >= end_byte).should be_true
     end
