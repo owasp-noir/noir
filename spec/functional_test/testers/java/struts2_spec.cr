@@ -10,12 +10,18 @@ orders_create.push_callee(Callee.new("ordersService.save"))
 orders_destroy = Endpoint.new("/orders/orders/:id", "DELETE", [Param.new("id", "", "path")])
 orders_destroy.push_callee(Callee.new("ordersService.deleteById"))
 
+# XML-configured action: callees are resolved from the `<action
+# class="…">` handler (DashboardAction#execute) referenced in
+# admin-struts.xml, not from a Java-source-discovered route.
+admin_dashboard = Endpoint.new("/admin/dashboard", "ANY")
+admin_dashboard.push_callee(Callee.new("dashboardService.loadStats"))
+
 expected_endpoints = [
   Endpoint.new("/user/list", "ANY"),
   Endpoint.new("/user/edit", "ANY"),
   Endpoint.new("/user/user_*", "ANY", [Param.new("wildcard", "", "path")]),
   Endpoint.new("/user/audit", "ANY"),
-  Endpoint.new("/admin/dashboard", "ANY"),
+  admin_dashboard,
   Endpoint.new("/admin/reports/*", "ANY", [Param.new("wildcard", "", "path")]),
   Endpoint.new("/admin/users/create", "ANY"),
   Endpoint.new("/admin/users/save", "ANY"),

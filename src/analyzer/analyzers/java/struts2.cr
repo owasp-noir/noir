@@ -23,8 +23,9 @@ module Analyzer::Java
       getter name : String
       getter method_name : String
       getter line : Int32?
+      getter class_name : String
 
-      def initialize(@name, @method_name, @line)
+      def initialize(@name, @method_name, @line, @class_name = "")
       end
     end
 
@@ -76,6 +77,7 @@ module Analyzer::Java
     end
 
     @include_callee : Bool = false
+    @handler_index : Hash(String, String) = {} of String => String
 
     def analyze
       @include_callee = callees_needed?
@@ -84,12 +86,17 @@ module Analyzer::Java
       convention_config = ConventionConfig.new
       seen = Set(String).new
 
-      config_files.each do |path|
-        parse_struts_config(path, file_list, convention_config, seen)
-      end
-
       java_files = file_list.select do |path|
         File.exists?(path) && path.ends_with?(".java") && !JavaEngine.test_path?(path)
+      end
+
+      # Build a FQCN → source-path index up front so XML `<action
+      # class="…">` handlers can be resolved for callee extraction. Only
+      # needed when callee/ai-context enrichment is requested.
+      build_handler_index(java_files) if @include_callee
+
+      config_files.each do |path|
+        parse_struts_config(path, file_list, convention_config, seen)
       end
 
       package_annotations = package_annotations_for(java_files)
@@ -100,6 +107,51 @@ module Analyzer::Java
 
       Fiber.yield
       @result
+    end
+
+    # Index every top-level Java class by its fully-qualified name so an
+    # XML-configured `<action class="…">` can be resolved back to its
+    # source file for callee extraction. Regex-based to stay cheap; the
+    # index is only built when callee/ai-context enrichment is on.
+    private def build_handler_index(java_files : Array(String))
+      java_files.each do |path|
+        content = read_file_content(path)
+        package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name(content)
+        content.scan(/(?:^|\n)\s*(?:public\s+|protected\s+|private\s+|abstract\s+|final\s+|static\s+)*class\s+([A-Za-z_][A-Za-z0-9_]*)/m) do |match|
+          class_name = match[1]
+          fqcn = package_name.empty? ? class_name : "#{package_name}.#{class_name}"
+          @handler_index[fqcn] ||= path
+        end
+      rescue e : Exception
+        @logger.debug "Failed to index Struts handler #{path}: #{e.message}"
+      end
+    end
+
+    # 1-hop callees for an XML-configured action by resolving its
+    # `class`/`method` (default `execute`) to the handler source. Returns
+    # empty unless enrichment is on and the handler file is indexed.
+    private def xml_action_callees(action : XmlAction) : Array(Callee)
+      callees = [] of Callee
+      return callees unless @include_callee
+      return callees if action.class_name.empty?
+
+      handler_path = @handler_index[action.class_name]?
+      return callees unless handler_path && File.exists?(handler_path)
+
+      simple_name = action.class_name.split('.').last
+      method_name = action.method_name.empty? ? "execute" : action.method_name
+      handler_content = read_file_content(handler_path)
+
+      Noir::TreeSitter.parse_java(handler_content) do |root|
+        Noir::JavaCalleeExtractor.callees_in_method(root, handler_content, handler_path, simple_name, method_name).each do |entry|
+          name, callee_path, callee_line = entry
+          callees << Callee.new(name, path: callee_path, line: callee_line)
+        end
+      end
+      callees
+    rescue e : Exception
+      @logger.debug "Failed to extract Struts XML callees for #{action.class_name}: #{e.message}"
+      [] of Callee
     end
 
     private def struts_config_files(file_list : Array(String)) : Array(String)
@@ -133,7 +185,8 @@ module Analyzer::Java
       packages.each_value do |package_config|
         namespace = package_namespace(package_config, packages, Set(String).new)
         package_config.actions.each do |action|
-          add_route(join_paths(namespace, normalize_action_pattern(action.name)), "ANY", path, action.line)
+          add_route(join_paths(namespace, normalize_action_pattern(action.name)), "ANY", path, action.line,
+            callees: xml_action_callees(action))
         end
       end
     rescue e : Exception
@@ -203,7 +256,8 @@ module Analyzer::Java
         each_xml_child(node, "action") do |action_node|
           action_name = xml_attr(action_node, "name")
           next if action_name.empty?
-          actions << XmlAction.new(action_name, xml_attr(action_node, "method"), xml_line_for(content, action_name, package_offset))
+          actions << XmlAction.new(action_name, xml_attr(action_node, "method"),
+            xml_line_for(content, action_name, package_offset), xml_attr(action_node, "class"))
         end
 
         packages[name] = XmlPackage.new(name, namespace, extends_names, actions)
