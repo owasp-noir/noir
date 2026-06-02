@@ -69,6 +69,20 @@ describe Noir::ClojureCalleeExtractor do
     ])
   end
 
+  it "captures syntax-quoted handler symbols and drops collection plumbing" do
+    body = <<-CLJ
+      (conj common-interceptors `home-page)
+      (into [] `app.handlers/show)
+      `(ignored template)
+      CLJ
+
+    callees = Noir::ClojureCalleeExtractor.callees_for_body(body, "core.clj", 1)
+    callees.map(&.[0]).should eq([
+      "home-page",
+      "app.handlers/show",
+    ])
+  end
+
   it "keeps namespaced callees that share reserved base names" do
     body = <<-CLJ
       (let [items (db/filter params)]

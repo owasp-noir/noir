@@ -18,6 +18,12 @@ module Noir::ClojureCalleeExtractor
     # Arithmetic / comparison operators are clojure.core primitives, not
     # meaningful handler callees — they only add noise to AI context.
     "+", "-", "*", "/", "=", "==", "<", ">", "<=", ">=", "not=",
+    # Collection plumbing (clojure.core). These shuffle data — building
+    # interceptor chains, assembling response maps — rather than expressing
+    # handler logic, so they are noise in AI context.
+    "conj", "conj!", "into", "merge", "merge-with", "concat", "cons",
+    "assoc", "assoc!", "assoc-in", "dissoc", "update", "update-in",
+    "get", "get-in", "select-keys", "vec", "set", "seq", "keys", "vals",
   }
 
   def callees_for_body(body : String, file_path : String, start_line : Int32) : Array(Entry)
@@ -159,7 +165,12 @@ module Noir::ClojureCalleeExtractor
         i = skip_comment(source, i, end_index)
       when '"'
         i = skip_string(source, i, end_index) + 1
-      when '\'', '`'
+      when '`'
+        # Syntax-quote of a bare symbol (`` `ns/handler ``) is the idiomatic
+        # Pedestal tabular-route handler reference — capture it. Syntax-quoted
+        # collections/strings stay code templates and are skipped.
+        i = scan_quoted_symbol(source, i, end_index, file_path, start_line, entries)
+      when '\''
         i = skip_quoted_form(source, i + 1, end_index)
       when '#'
         next_char = i + 1 < end_index ? source.byte_at(i + 1).unsafe_chr : '\0'
@@ -231,6 +242,33 @@ module Noir::ClojureCalleeExtractor
       symbol[(index + 1)..]
     else
       symbol
+    end
+  end
+
+  # Handle a syntax-quote `` ` `` at `index`. When it quotes a bare symbol
+  # (a route-handler reference) the symbol is recorded as a callee; quoted
+  # collections/strings are skipped as code templates. Returns the index past
+  # the quoted form.
+  private def scan_quoted_symbol(source : String,
+                                 index : Int32,
+                                 limit : Int32,
+                                 file_path : String,
+                                 start_line : Int32,
+                                 entries : Array(Entry)) : Int32
+    i = skip_ws_and_comments(source, index + 1, limit)
+    return i if i >= limit
+
+    case source.byte_at(i).unsafe_chr
+    when '(', '[', '{', '"', '~'
+      skip_quoted_form(source, index + 1, limit)
+    else
+      symbol, after = read_symbol(source, i, limit)
+      # Auto-gensyms (`foo#`) only occur in macro templates, never as handler
+      # references — leave them out.
+      unless skip_callee?(symbol) || symbol.ends_with?('#')
+        entries << {symbol, file_path, line_number_for(source, index, start_line)}
+      end
+      after > i ? after : i + 1
     end
   end
 

@@ -17,11 +17,16 @@ inline_endpoint = Endpoint.new("/api/inline", "GET")
 inline_endpoint.push_callee(Callee.new("response/ok"))
 inline_endpoint.push_callee(Callee.new("inline.service/run"))
 
+# Syntax-quoted handler in a conj-built interceptor vector.
+dashboard_endpoint = Endpoint.new("/dashboard", "GET")
+dashboard_endpoint.push_callee(Callee.new("dashboard-page"))
+
 expected_endpoints = [
   list_endpoint,
   create_endpoint,
   health_endpoint,
   inline_endpoint,
+  dashboard_endpoint,
 ]
 
 FunctionalTester.new("fixtures/clojure/pedestal_callees/", {
