@@ -18,9 +18,9 @@ module App::Routing
 
   def register_api_routes
     {% begin %}
-      {{namespace = Routes::API}}
+      {{ namespace = Routes::API }}
 
-      get "/api/items/:id", {{namespace}}::Items, :show
+      get "/api/items/:id", {{ namespace }}::Items, :show
     {% end %}
   end
 end
