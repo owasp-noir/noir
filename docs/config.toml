@@ -144,8 +144,8 @@ lazy_loading = true
 enabled = true
 name = "OWASP Noir"
 short_name = "Noir"
-theme_color = "#1a1a2e"
-background_color = "#1a1a2e"
+theme_color = "#050507"
+background_color = "#050507"
 display = "standalone"
 start_url = "/"
 
