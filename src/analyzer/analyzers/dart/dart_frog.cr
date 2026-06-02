@@ -159,8 +159,11 @@ module Analyzer::Dart
     # Matches `case HttpMethod.<verb>:` clauses inside a method switch.
     CASE_METHOD_REGEX = /\bcase\s+HttpMethod\.([a-z]+)\s*:/
     # A clause body that rejects the verb: `methodNotAllowed`,
-    # `MethodNotAllowedResponse()`, or a literal `405` status code.
-    METHOD_NOT_ALLOWED_REGEX = /methodNotAllowed|MethodNotAllowed|statusCode\s*:\s*405|\b405\b/
+    # `MethodNotAllowedResponse()`, or a literal `405` status code passed
+    # positionally (`Response(405)`) or by name (`statusCode: 405`). We
+    # deliberately avoid a bare `405` so an unrelated `{'code': 405}` in a
+    # real handler body can't be mistaken for a rejection.
+    METHOD_NOT_ALLOWED_REGEX = /methodNotAllowed|MethodNotAllowed|statusCode\s*:\s*405|\(\s*405\b/
 
     private def detect_methods(content : String) : Array(String)
       cleaned = Helper.strip_comments(content)

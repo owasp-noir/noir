@@ -45,8 +45,11 @@ module Analyzer::Dart
         next if Helper.test_path?(path, @base_path)
 
         content = read_file_content(path)
-        process_file(path, content, include_callee)
-        collect_web_routes(path, content, include_callee, route_classes, registrations)
+        # Strip comments once and share the cleaned copy between the RPC
+        # scan and the web-route scan.
+        cleaned = strip_dart_comments(content)
+        process_file(path, content, cleaned, include_callee)
+        collect_web_routes(path, content, cleaned, include_callee, route_classes, registrations)
       end
 
       emit_web_routes(route_classes, registrations)
@@ -61,11 +64,10 @@ module Analyzer::Dart
     # both halves here and join them in `emit_web_routes`.
     private def collect_web_routes(path : String,
                                    content : String,
+                                   cleaned : String,
                                    include_callee : Bool,
                                    route_classes : Hash(String, RouteClass),
                                    registrations : Array(Registration))
-      cleaned = strip_dart_comments(content)
-
       cleaned.scan(/class\s+([A-Z][A-Za-z0-9_]*)(?:\s*<[^>]*>)?\s+extends\s+(?:Widget|Component)?Route\b/) do |match|
         class_name = match[1]
         match_end = match.end(0)
@@ -143,7 +145,9 @@ module Analyzer::Dart
 
     private def emit_web_routes(route_classes : Hash(String, RouteClass),
                                 registrations : Array(Registration))
-      registrations.each do |reg|
+      # The same `(class, path)` can be registered more than once (e.g. a
+      # route re-added across environments); emit each surface only once.
+      registrations.uniq.each do |reg|
         info = route_classes[reg[:class_name]]?
         next unless info
         info[:methods].each do |verb|
@@ -155,9 +159,7 @@ module Analyzer::Dart
       end
     end
 
-    private def process_file(path : String, content : String, include_callee : Bool)
-      cleaned = strip_dart_comments(content)
-
+    private def process_file(path : String, content : String, cleaned : String, include_callee : Bool)
       cleaned.scan(/class\s+([A-Z][A-Za-z0-9_]*)(?:\s*<[^>]*>)?\s+extends\s+(?:StreamingEndpoint|Endpoint)\b/) do |match|
         class_name = match[1]
         match_end = match.end(0)
