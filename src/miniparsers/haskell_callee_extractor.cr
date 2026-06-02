@@ -43,7 +43,10 @@ module Noir::HaskellCalleeExtractor
         next
       end
 
-      equals_index = line.index('=')
+      # Find the definition `=`, skipping comparison/arrow operators that also
+      # contain `=` (`==`, `>=`, `<=`, `/=`, `=>`, `=<<`). Otherwise a guard such
+      # as `f x | x == 0 = ...` would split on the `==` and mis-extract the body.
+      equals_index = definition_equals_index(line)
       unless equals_index
         index += 1
         next
@@ -148,6 +151,23 @@ module Noir::HaskellCalleeExtractor
 
   private def same_function_equation?(line : String, name : String) : Bool
     !!line.match(/^#{Regex.escape(name)}\b.*=/)
+  end
+
+  # Index of the binding `=`, skipping operators that merely contain `=`
+  # (`==`, `>=`, `<=`, `/=`, `!=`, `=>`, `=<<`). Returns nil when the line has no
+  # standalone definition `=` (e.g. it is only a comparison expression).
+  private def definition_equals_index(line : String) : Int32?
+    index = 0
+    while index < line.size
+      if line[index] == '='
+        prev = index > 0 ? line[index - 1] : ' '
+        nxt = index + 1 < line.size ? line[index + 1] : ' '
+        adjacent = {'=', '<', '>', '/', '!'}
+        return index unless adjacent.includes?(prev) || nxt == '=' || nxt == '>' || nxt == '<'
+      end
+      index += 1
+    end
+    nil
   end
 
   private def skip_callee?(name : String) : Bool
