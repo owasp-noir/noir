@@ -52,6 +52,22 @@ defmodule ElixirPhoenixWeb.Router do
     match :put, "/hooks", PageController, :home
   end
 
+  # Nested resources: the child collection mounts under the parent's
+  # `/:singular_id` member segment, and `only:` placed behind `as:`
+  # must still constrain the generated actions.
+  scope "/admin", ElixirPhoenixWeb do
+    resources "/podcasts", PodcastController, only: [:index, :show] do
+      resources "/episodes", EpisodeController, as: :episode, only: [:index]
+    end
+  end
+
+  # Parenthesised `resources(...)` call form, plus a `singleton: true`
+  # resource whose member routes carry no `/:id` segment.
+  scope "/account", ElixirPhoenixWeb do
+    resources("/session", SessionController, singleton: true, only: [:create, :delete])
+    resources "/keys", KeyController, param: "key_id", only: [:show, :delete]
+  end
+
   # Enable LiveDashboard and Swoosh mailbox preview in development
   if Application.compile_env(:elixir_phoenix, :dev_routes) do
     # If you want to use the LiveDashboard in production, you should put
