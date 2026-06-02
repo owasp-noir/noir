@@ -82,13 +82,27 @@ module Noir
     }
 
     # Chain methods that return the receiving router/group unchanged —
-    # middleware registration. Gin's `RouterGroup.Use(...)` and
-    # `Engine.Use(...)` (and Fiber's `app.Use(...)`) return `IRoutes`,
-    # so `r.Use(mw).GET("/x", h)` and `r.Group("/api").Use(mw).POST(...)`
-    # are valid, common shapes. They don't add a path segment, so the
-    # operand walk peels them and resolves the prefix against the
-    # underlying router/group rather than dropping the route entirely.
-    PASSTHROUGH_CHAIN_METHODS = Set{"Use"}
+    # middleware / metadata registration. Gin's `RouterGroup.Use(...)`
+    # and `Engine.Use(...)` (and Fiber's `app.Use(...)`) return
+    # `IRoutes`, so `r.Use(mw).GET("/x", h)` and
+    # `r.Group("/api").Use(mw).POST(...)` are valid, common shapes.
+    #
+    # Goyave's router exposes a fluent builder whose configuration
+    # methods (`SetMeta`, `Middleware`, `CORS`, ...) all return the same
+    # `*Router`, so `authRouter := subrouter.Group().SetMeta(k, v)` binds
+    # `authRouter` to the group's prefix — the `.SetMeta(...)` tail must
+    # be peeled to reach the prefix-bearing `.Group()` call underneath
+    # (otherwise the parent prefix is lost and every route under
+    # `authRouter` falls back to `/`).
+    #
+    # None of these add a path segment, so the operand walk peels them
+    # and resolves the prefix against the underlying router/group rather
+    # than dropping the route (or its prefix) entirely.
+    PASSTHROUGH_CHAIN_METHODS = Set{
+      "Use",
+      # Goyave fluent-builder configuration methods (all return *Router).
+      "SetMeta", "RemoveMeta", "Middleware", "GlobalMiddleware", "CORS",
+    }
 
     # Beego registers controllers with `web.Router("/path", &Ctrl{},
     # "get:Method;post:Other")`. The receiver is the `web` package (v2,
@@ -432,8 +446,25 @@ module Noir
     end
 
     def extract_chi_routes(source : String,
-                           skip_functions : Set(String) = Set(String).new) : Array(Route)
-      extract_scoped_routes(source, ScopedConfig.new, skip_functions)
+                           skip_functions : Set(String) = Set(String).new,
+                           external_string_values : Hash(String, String) = Hash(String, String).new) : Array(Route)
+      extract_scoped_routes(source, ScopedConfig.new, skip_functions, external_string_values)
+    end
+
+    # Collects `<name> := "literal"` / `const <name> = "literal"` string
+    # bindings from `source`, keyed by name. Real chi/mux apps routinely
+    # declare route paths as package constants
+    # (`const tokenPath = "/api/v2/token"`) and register them with
+    # `r.Get(tokenPath, h)`; the analyzer merges these per-package so the
+    # scoped walker can resolve a constant/variable path argument to its
+    # literal value. Conflicting redefinitions are dropped by
+    # `collect_string_values`.
+    def extract_string_values(source : String) : Hash(String, String)
+      result = Hash(String, String).new
+      Noir::TreeSitter.parse_go(source) do |root|
+        result = collect_string_values(root, source)
+      end
+      result
     end
 
     # Gf-style: `.Group("/api", func(){...})` pushes prefix, inline
@@ -505,11 +536,17 @@ module Noir
 
     private def extract_scoped_routes(source : String,
                                       config : ScopedConfig,
-                                      skip_functions : Set(String) = Set(String).new) : Array(Route)
+                                      skip_functions : Set(String) = Set(String).new,
+                                      external_string_values : Hash(String, String) = Hash(String, String).new) : Array(Route)
       routes = [] of Route
       local_groups = Hash(String, String).new
       Noir::TreeSitter.parse_go(source) do |root|
-        walk_chi(root, source, [] of String, local_groups, routes, skip_functions, config)
+        # Same-file string constants/vars win over package-level ones;
+        # both feed the scoped walker so a `r.Get(tokenPath, h)` whose
+        # path is a constant resolves to its literal value.
+        string_values = external_string_values.dup
+        collect_string_values(root, source).each { |k, v| string_values[k] = v }
+        walk_chi(root, source, [] of String, local_groups, routes, skip_functions, config, string_values)
       end
       routes
     end
@@ -518,10 +555,11 @@ module Noir
     # (typically a function body captured elsewhere). Uses chi defaults.
     def walk_chi_public(node : LibTreeSitter::TSNode,
                         source : String,
-                        sink : Array(Route))
+                        sink : Array(Route),
+                        string_values : Hash(String, String) = Hash(String, String).new)
       local_groups = Hash(String, String).new
       skip = Set(String).new
-      walk_chi(node, source, [] of String, local_groups, sink, skip, ScopedConfig.new)
+      walk_chi(node, source, [] of String, local_groups, sink, skip, ScopedConfig.new, string_values)
     end
 
     private def walk_chi(node : LibTreeSitter::TSNode,
@@ -530,7 +568,8 @@ module Noir
                          local_groups : Hash(String, String),
                          routes : Array(Route),
                          skip_functions : Set(String),
-                         config : ScopedConfig)
+                         config : ScopedConfig,
+                         string_values : Hash(String, String) = Hash(String, String).new)
       ty = Noir::TreeSitter.node_type(node)
 
       # Skip `func <skipped>() { ... }` bodies entirely — their routes are
@@ -546,14 +585,14 @@ module Noir
       # here because the binding is name-scoped: sibling calls on the
       # outer receiver still refer to the outer prefix.
       if ty == "short_var_declaration"
-        bind_local_group(node, source, local_groups, config)
+        bind_local_group(node, source, local_groups, config, string_values)
       end
 
       if ty == "call_expression"
-        kind = classify_chi_call(node, source, config)
+        kind = classify_chi_call(node, source, config, string_values)
         case kind
         when ChiCall::Route
-          if info = unpack_chi_scope_call(node, source, expect_prefix: true)
+          if info = unpack_chi_scope_call(node, source, string_values, expect_prefix: true)
             new_prefix, body, closure = info
             prefix_stack.push(new_prefix)
             # Register the closure's first router param (e.g. `group` in
@@ -566,7 +605,7 @@ module Noir
             active_prefix = prefix_stack.join
             saved_binding = local_groups[param_name]? if param_name
             local_groups[param_name] = active_prefix if param_name
-            walk_chi(body, source, prefix_stack, local_groups, routes, skip_functions, config)
+            walk_chi(body, source, prefix_stack, local_groups, routes, skip_functions, config, string_values)
             if param_name
               if saved_binding.nil?
                 local_groups.delete(param_name)
@@ -578,18 +617,18 @@ module Noir
             return
           end
         when ChiCall::Group
-          if info = unpack_chi_scope_call(node, source, expect_prefix: false)
+          if info = unpack_chi_scope_call(node, source, string_values, expect_prefix: false)
             _, body, _ = info
-            walk_chi(body, source, prefix_stack, local_groups, routes, skip_functions, config)
+            walk_chi(body, source, prefix_stack, local_groups, routes, skip_functions, config, string_values)
             return
           end
         when ChiCall::Verb
-          if route = decode_chi_verb_call(node, source, prefix_stack, local_groups, config)
+          if route = decode_chi_verb_call(node, source, prefix_stack, local_groups, config, string_values)
             routes << route
           end
           return
         when ChiCall::Bind
-          if route = decode_chi_bind_call(node, source, prefix_stack, local_groups, config)
+          if route = decode_chi_bind_call(node, source, prefix_stack, local_groups, config, string_values)
             routes << route
           end
           return
@@ -597,7 +636,7 @@ module Noir
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk_chi(child, source, prefix_stack, local_groups, routes, skip_functions, config)
+        walk_chi(child, source, prefix_stack, local_groups, routes, skip_functions, config, string_values)
       end
     end
 
@@ -606,7 +645,8 @@ module Noir
     private def bind_local_group(decl : LibTreeSitter::TSNode,
                                  source : String,
                                  local_groups : Hash(String, String),
-                                 config : ScopedConfig)
+                                 config : ScopedConfig,
+                                 string_values : Hash(String, String) = Hash(String, String).new)
       left = Noir::TreeSitter.field(decl, "left")
       right = Noir::TreeSitter.field(decl, "right")
       return unless left && right
@@ -633,7 +673,7 @@ module Noir
       # already handled by the walker.
       return if chi_closure_arg(rhs_node)
 
-      path = chi_first_string_arg(rhs_node, source)
+      path = chi_first_string_arg(rhs_node, source, string_values)
       return unless path
 
       var_name = Noir::TreeSitter.node_text(var_name_node, source)
@@ -667,7 +707,8 @@ module Noir
 
     # Classify a call_expression so `walk_chi` knows whether to descend
     # into a scoped body, emit a route, or keep walking children.
-    private def classify_chi_call(call : LibTreeSitter::TSNode, source : String, config : ScopedConfig) : ChiCall
+    private def classify_chi_call(call : LibTreeSitter::TSNode, source : String, config : ScopedConfig,
+                                  string_values : Hash(String, String) = Hash(String, String).new) : ChiCall
       function = Noir::TreeSitter.field(call, "function")
       return ChiCall::None unless function
       return ChiCall::None unless Noir::TreeSitter.node_type(function) == "selector_expression"
@@ -678,7 +719,7 @@ module Noir
       if name == config.prefix_method
         # (string, closure) -> push prefix. This also handles gf's
         # `.Group("/api", func(){...})`.
-        if chi_first_string_arg(call, source) && chi_closure_arg(call)
+        if chi_first_string_arg(call, source, string_values) && chi_closure_arg(call)
           return ChiCall::Route
         end
       end
@@ -687,7 +728,7 @@ module Noir
         # (closure only) -> middleware group that doesn't change prefix.
         # Excludes Gin-style `.Group("/x")` which is handled by
         # `extract_routes`, not this walker.
-        if chi_closure_arg(call) && !chi_first_string_arg(call, source)
+        if chi_closure_arg(call) && !chi_first_string_arg(call, source, string_values)
           return ChiCall::Group
         end
       end
@@ -713,7 +754,8 @@ module Noir
                                      source : String,
                                      prefix_stack : Array(String),
                                      local_groups : Hash(String, String),
-                                     config : ScopedConfig) : Route?
+                                     config : ScopedConfig,
+                                     string_values : Hash(String, String) = Hash(String, String).new) : Route?
       function = Noir::TreeSitter.field(call, "function")
       return unless function
       operand = Noir::TreeSitter.field(function, "operand")
@@ -729,7 +771,14 @@ module Noir
         when "interpreted_string_literal", "raw_string_literal"
           raw_path = decode_string_literal(arg, source) if raw_path.nil?
         else
-          handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty? && !raw_path.nil?
+          # A constant/variable first argument is still the bind path
+          # (`s.BindHandler(rootPath, h)`); resolve it before falling
+          # back to treating the arg as the handler.
+          if raw_path.nil? && (resolved_path = string_expr_text(arg, source, string_values))
+            raw_path = resolved_path
+          elsif handler_text.empty? && !raw_path.nil?
+            handler_text = Noir::TreeSitter.node_text(arg, source)
+          end
         end
       end
       return unless raw_path
@@ -755,8 +804,9 @@ module Noir
     # parameter list (for binding the subrouter name into local_groups).
     private def unpack_chi_scope_call(call : LibTreeSitter::TSNode,
                                       source : String,
+                                      string_values : Hash(String, String),
                                       expect_prefix : Bool) : Tuple(String, LibTreeSitter::TSNode, LibTreeSitter::TSNode)?
-      prefix = expect_prefix ? chi_first_string_arg(call, source) : ""
+      prefix = expect_prefix ? chi_first_string_arg(call, source, string_values) : ""
       return if prefix.nil?
       closure = chi_closure_arg(call)
       return unless closure
@@ -765,13 +815,19 @@ module Noir
       {prefix, body, closure}
     end
 
-    private def chi_first_string_arg(call : LibTreeSitter::TSNode, source : String) : String?
+    private def chi_first_string_arg(call : LibTreeSitter::TSNode,
+                                     source : String,
+                                     string_values : Hash(String, String) = Hash(String, String).new) : String?
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
       Noir::TreeSitter.each_named_child(args) do |arg|
-        case Noir::TreeSitter.node_type(arg)
-        when "interpreted_string_literal", "raw_string_literal"
-          return decode_string_literal(arg, source)
+        # Resolve the first string-valued argument: a literal, or a
+        # constant/variable/concatenation that `string_values` can pin
+        # down (e.g. `const apiBase = "/api/v2"` used as `r.Route(apiBase,
+        # ...)`). With an empty `string_values` map this still only
+        # matches literals, preserving the original behaviour.
+        if s = string_expr_text(arg, source, string_values)
+          return s
         end
       end
       nil
@@ -794,7 +850,8 @@ module Noir
                                      source : String,
                                      prefix_stack : Array(String),
                                      local_groups : Hash(String, String),
-                                     config : ScopedConfig) : Route?
+                                     config : ScopedConfig,
+                                     string_values : Hash(String, String) = Hash(String, String).new) : Route?
       function = Noir::TreeSitter.field(call, "function")
       return unless function
       return unless Noir::TreeSitter.node_type(function) == "selector_expression"
@@ -852,23 +909,60 @@ module Noir
         break
       end
 
-      return unless Noir::TreeSitter.node_type(operand) == "identifier"
-      router_name = Noir::TreeSitter.node_text(operand, source)
-      return if NON_ROUTER_OPERANDS.includes?(router_name)
+      # The verb receiver is usually a bare identifier (`r.Get(...)`), but
+      # real apps just as often hang the router off a struct field
+      # (`s.router.Get(...)`). Accept both; for the selector form, guard on
+      # the final segment so non-router fields (`req.Header.Get(...)`,
+      # `s.cache.Get(...)`) can't mint phantom routes.
+      operand_is_selector = false
+      case Noir::TreeSitter.node_type(operand)
+      when "identifier"
+        router_name = Noir::TreeSitter.node_text(operand, source)
+        return if NON_ROUTER_OPERANDS.includes?(router_name)
+      when "selector_expression"
+        final_field = Noir::TreeSitter.field(operand, "field")
+        return unless final_field
+        return if NON_ROUTER_OPERANDS.includes?(Noir::TreeSitter.node_text(final_field, source))
+        router_name = Noir::TreeSitter.node_text(operand, source)
+        operand_is_selector = true
+      else
+        return
+      end
 
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
       raw_path = nil
+      path_was_literal = false
       handler_text = ""
       Noir::TreeSitter.each_named_child(args) do |arg|
         case Noir::TreeSitter.node_type(arg)
         when "interpreted_string_literal", "raw_string_literal"
-          raw_path = decode_string_literal(arg, source) if raw_path.nil?
+          if raw_path.nil?
+            raw_path = decode_string_literal(arg, source)
+            path_was_literal = true
+          end
         else
-          handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty? && !raw_path.nil?
+          # Resolve a constant/variable/concatenation path argument
+          # (`r.Get(tokenPath, h)`, `r.Post(adminPath+"/x", h)`) before
+          # treating a non-string arg as the handler.
+          if raw_path.nil? && (resolved_path = string_expr_text(arg, source, string_values))
+            raw_path = resolved_path
+          elsif handler_text.empty? && !raw_path.nil?
+            handler_text = Noir::TreeSitter.node_text(arg, source)
+          end
         end
       end
       return unless raw_path
+
+      # Tighten the broadened cases (selector receiver or a path resolved
+      # from a non-literal) so they can't surface noise: a real chi/gf
+      # route always starts with `/` and always carries a handler. The
+      # original literal-path + identifier-receiver shape keeps its
+      # historical leniency untouched.
+      if operand_is_selector || !path_was_literal
+        return if handler_text.empty?
+        return unless raw_path.starts_with?("/")
+      end
 
       # Prefer the local binding (closure param / `v1 := group.Group(...)`)
       # when it exists, since Go scope rules say the nearest binding wins.
