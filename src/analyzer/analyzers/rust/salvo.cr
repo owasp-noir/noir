@@ -8,12 +8,23 @@ module Analyzer::Rust
   #
   #   1. Router-chain DSL:
   #        Router::with_path("users/<id>").get(get_user)
-  #      Each `.with_path(...)` / `.path(...)` is paired with the
-  #      following `.<verb>(handler)` method in the same chain.
+  #        Router::new().path("users").hoop(auth).get(list).post(create)
+  #      Each `.<verb>(handler)` is paired with the nearest enclosing
+  #      `.with_path(...)` / `.path(...)` found by walking up its
+  #      receiver chain — so middleware (`.hoop(...)`) and verb chaining
+  #      (`.get(a).post(b)`) between the path and the verb don't break
+  #      detection.
   #
   #   2. Attribute macro:
   #        #[endpoint(method = Post, path = "/api/submit/<id>")]
   #        async fn submit_form(...) { ... }
+  #
+  # Router chains are frequently assembled inside a `vec![ ... ]` macro
+  # (`impl Routers { fn build() -> Vec<Router> { vec![Router::new()…] } }`).
+  # tree-sitter leaves a macro body as a flat `token_tree` with no
+  # `call_expression` nodes, so those routes are invisible to a plain
+  # AST walk. We recover them by re-parsing each router-bearing macro
+  # body as an expression fragment and mapping line numbers back.
   class Salvo < RustEngine
     HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options"}
 
@@ -30,25 +41,11 @@ module Analyzer::Rust
       Noir::TreeSitter.parse_rust(source) do |root|
         function_index = build_function_index(root, source)
 
-        walk(root) do |node|
-          next unless Noir::TreeSitter.node_type(node) == "call_expression"
-          next if RustEngine.inside_test_region?(node, test_regions)
-          chain = decode_router_chain(node, source)
-          next unless chain
-          route_path, method, handler_name = chain
+        # 1. Router chains visible in the real AST.
+        collect_chain_endpoints(root, source, source, path, function_index,
+          include_callee, 0, test_regions, endpoints)
 
-          details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
-          endpoint = Endpoint.new("/#{route_path.lstrip('/')}", method, details)
-          extract_path_params(route_path, endpoint)
-
-          if handler_function = function_index[handler_name]?
-            extract_function_params(handler_function, source, endpoint)
-            attach_handler_callees(handler_function, source, path, endpoint) if include_callee
-          end
-
-          endpoints << endpoint
-        end
-
+        # 2. `#[endpoint(...)]` attribute macros.
         each_routing_pair(root) do |attr_item, function|
           next if RustEngine.inside_test_region?(attr_item, test_regions)
           route = decode_endpoint_macro(attr_item, source)
@@ -63,18 +60,65 @@ module Analyzer::Rust
 
           endpoints << endpoint
         end
+
+        # 3. Router chains hidden inside `vec![ ... ]` (and similar)
+        # macro bodies. Each fragment is re-parsed with its own
+        # source/row offset, but handler functions are still resolved in
+        # the real tree's index (handlers live outside the macro).
+        collect_router_macro_fragments(root, source, test_regions).each do |fragment, row_offset|
+          Noir::TreeSitter.parse_rust(fragment) do |frag_root|
+            collect_chain_endpoints(frag_root, fragment, source, path, function_index,
+              include_callee, row_offset, nil, endpoints)
+          end
+        end
       end
 
       endpoints
     end
 
-    # `<chain>.with_path("x").get(handler)` — tree-sitter sees each
-    # method call as its own `call_expression { function:
-    # field_expression { field: "get", value: call_expression {
-    # function: field_expression { field: "with_path", … } } } }`.
-    # When the outer call's verb is an HTTP verb AND the receiver is a
-    # `.with_path(...)` / `.path(...)` call, we have a complete chain.
-    private def decode_router_chain(call : LibTreeSitter::TSNode, source : String) : Tuple(String, String, String)?
+    # Walk `chain_root` for `.<verb>(handler)` calls and emit an endpoint
+    # for each one whose receiver chain contains a `.with_path(...)` /
+    # `.path(...)`. `chain_source` is the text the route nodes belong to
+    # (the file, or a re-parsed macro fragment); `original_source` is the
+    # file text used for handler-function nodes resolved via the index.
+    # `row_offset` maps fragment rows back onto the file.
+    private def collect_chain_endpoints(chain_root : LibTreeSitter::TSNode,
+                                        chain_source : String,
+                                        original_source : String,
+                                        path : String,
+                                        function_index : Hash(String, LibTreeSitter::TSNode),
+                                        include_callee : Bool,
+                                        row_offset : Int32,
+                                        test_regions : Array(Tuple(Int32, Int32))?,
+                                        endpoints : Array(Endpoint))
+      walk(chain_root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "call_expression"
+        next if test_regions && RustEngine.inside_test_region?(node, test_regions)
+        chain = decode_router_chain(node, chain_source)
+        next unless chain
+        route_path, method, handler_name = chain
+
+        row = Noir::TreeSitter.node_start_row(node) + 1 + row_offset
+        details = Details.new(PathInfo.new(path, row))
+        endpoint = Endpoint.new("/#{route_path.lstrip('/')}", method, details)
+        extract_path_params(route_path, endpoint)
+
+        if handler_name && (handler_function = function_index[handler_name.split("::").last]?)
+          extract_function_params(handler_function, original_source, endpoint)
+          attach_handler_callees(handler_function, original_source, path, endpoint) if include_callee
+        end
+
+        endpoints << endpoint
+      end
+    end
+
+    # `<chain>.<verb>(handler)` → `{path, METHOD, handler_name?}` or
+    # `nil`. The verb method is an HTTP verb and the receiver chain must
+    # carry a `.with_path(...)` / `.path(...)`. The handler may be a
+    # scoped path (`html::pages::login`) or absent (`get(StaticDir::…)`);
+    # either way the route is still emitted — the handler is only used to
+    # enrich params/callees.
+    private def decode_router_chain(call : LibTreeSitter::TSNode, source : String) : Tuple(String, String, String?)?
       fn_node = Noir::TreeSitter.field(call, "function")
       return unless fn_node && Noir::TreeSitter.node_type(fn_node) == "field_expression"
       verb_field = Noir::TreeSitter.field(fn_node, "field")
@@ -82,31 +126,43 @@ module Analyzer::Rust
       verb = Noir::TreeSitter.node_text(verb_field, source).downcase
       return unless HTTP_VERBS.includes?(verb)
 
-      receiver = Noir::TreeSitter.field(fn_node, "value")
-      return unless receiver && Noir::TreeSitter.node_type(receiver) == "call_expression"
-      receiver_fn = Noir::TreeSitter.field(receiver, "function")
-      return unless receiver_fn
-      # `with_path(...)` shows up as both a chain method
-      # (`field_expression` with `field: "with_path"`) and a path
-      # constructor (`scoped_identifier` like `Router::with_path`).
-      # Accept either shape and key off the trailing segment.
-      receiver_name =
-        case Noir::TreeSitter.node_type(receiver_fn)
-        when "field_expression"
-          (field = Noir::TreeSitter.field(receiver_fn, "field")) ? Noir::TreeSitter.node_text(field, source) : ""
-        when "scoped_identifier"
-          Noir::TreeSitter.node_text(receiver_fn, source).split("::").last
-        else
-          ""
-        end
-      return unless receiver_name == "with_path" || receiver_name == "path"
-
-      route_path = first_string_literal_text(Noir::TreeSitter.field(receiver, "arguments"), source)
+      route_path = find_chain_path(fn_node, source)
       return unless route_path
 
-      handler_name = first_identifier_argument(call, source)
-      return unless handler_name
+      handler_name = first_handler_argument(call, source)
       {route_path, verb.upcase, handler_name}
+    end
+
+    # Walk up the receiver chain from a `.<verb>(...)` field expression
+    # looking for the nearest `.with_path("…")` / `.path("…")`. Returns
+    # its route string, or `nil` if the chain isn't a router chain (which
+    # is how non-routing `.get(...)` calls — `map.get(k)`,
+    # `req.headers().get("X")` — are filtered out).
+    private def find_chain_path(verb_fn : LibTreeSitter::TSNode, source : String) : String?
+      receiver = Noir::TreeSitter.field(verb_fn, "value")
+      256.times do
+        return unless receiver && Noir::TreeSitter.node_type(receiver) == "call_expression"
+        rfn = Noir::TreeSitter.field(receiver, "function")
+        return unless rfn
+        case Noir::TreeSitter.node_type(rfn)
+        when "field_expression"
+          name = (f = Noir::TreeSitter.field(rfn, "field")) ? Noir::TreeSitter.node_text(f, source) : ""
+          if name == "with_path" || name == "path"
+            return first_string_literal_text(Noir::TreeSitter.field(receiver, "arguments"), source)
+          end
+          receiver = Noir::TreeSitter.field(rfn, "value")
+        when "scoped_identifier"
+          # Chain base such as `Router::with_path("…")` or `Router::new()`.
+          name = Noir::TreeSitter.node_text(rfn, source).split("::").last
+          if name == "with_path" || name == "path"
+            return first_string_literal_text(Noir::TreeSitter.field(receiver, "arguments"), source)
+          end
+          return
+        else
+          return
+        end
+      end
+      nil
     end
 
     # `#[endpoint(method = Post, path = "/x")]`. tree-sitter-rust
@@ -159,10 +215,22 @@ module Analyzer::Rust
       {route_path, method, Noir::TreeSitter.node_start_row(attr_item) + 1}
     end
 
+    # Salvo path params come in two flavours: the legacy angle form
+    # (`<id>`) and the modern brace form (`{id}`, `{*rest}`, `{**path}`,
+    # and regex-constrained `{id|[0-9]+}`). Strip capture markers and any
+    # inline regex constraint so the param name stays clean.
     private def extract_path_params(route : String, endpoint : Endpoint)
       route.scan(/<(\w+)>/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "path"))
+        push_path_param(endpoint, match[1])
       end
+      route.scan(/\{\**(\w+)(?:\|[^}]*)?\}/) do |match|
+        push_path_param(endpoint, match[1])
+      end
+    end
+
+    private def push_path_param(endpoint : Endpoint, name : String)
+      return if endpoint.params.any? { |p| p.name == name && p.param_type == "path" }
+      endpoint.push_param(Param.new(name, "", "path"))
     end
 
     # Walk parameters + body looking for QueryParam / JsonBody /
@@ -223,13 +291,44 @@ module Analyzer::Rust
       Noir::TreeSitter.node_text(fn_node, source)
     end
 
-    private def first_identifier_argument(call : LibTreeSitter::TSNode, source : String) : String?
+    # First identifier / scoped-path argument of a call, used as the
+    # handler name. `get(create_user)` → `create_user`,
+    # `get(html::pages::login)` → `html::pages::login`.
+    private def first_handler_argument(call : LibTreeSitter::TSNode, source : String) : String?
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
       Noir::TreeSitter.each_named_child(args) do |child|
-        return Noir::TreeSitter.node_text(child, source) if Noir::TreeSitter.node_type(child) == "identifier"
+        case Noir::TreeSitter.node_type(child)
+        when "identifier", "scoped_identifier"
+          return Noir::TreeSitter.node_text(child, source)
+        end
       end
       nil
+    end
+
+    # Collect re-parseable expression fragments for every macro body that
+    # mentions `Router`, paired with the 0-based row of the macro's
+    # `token_tree` so detected routes map back to their real file line.
+    private def collect_router_macro_fragments(root : LibTreeSitter::TSNode,
+                                               source : String,
+                                               test_regions : Array(Tuple(Int32, Int32))) : Array(Tuple(String, Int32))
+      fragments = [] of Tuple(String, Int32)
+      walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "macro_invocation"
+        next if RustEngine.inside_test_region?(node, test_regions)
+        token_tree = nil.as(LibTreeSitter::TSNode?)
+        Noir::TreeSitter.each_named_child(node) do |child|
+          token_tree = child if Noir::TreeSitter.node_type(child) == "token_tree"
+        end
+        next unless tt = token_tree
+        text = Noir::TreeSitter.node_text(tt, source)
+        next unless text.includes?("Router")
+        # The prefix carries no newline, so the token_tree's text keeps
+        # its original relative line layout and `node_start_row(tt)` is
+        # the row offset that maps fragment rows onto the file.
+        fragments << {"fn __noir_salvo_wf() { let __noir_x = #{text}; }", Noir::TreeSitter.node_start_row(tt)}
+      end
+      fragments
     end
 
     private def build_function_index(root : LibTreeSitter::TSNode, source : String) : Hash(String, LibTreeSitter::TSNode)
