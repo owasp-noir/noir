@@ -139,6 +139,11 @@ module NoirTaggers
       desc:   "Identifies Ruby authentication patterns (Devise, Pundit, CanCanCan, Warden)",
       runner: RubyAuthTagger,
     },
+    rails_security: {
+      name:   "Rails Security Tagger",
+      desc:   "Identifies Rails controller security signals (CSRF protection, mass assignment, rate limiting)",
+      runner: RailsSecurityTagger,
+    },
     php_auth: {
       name:   "PHP Auth Tagger",
       desc:   "Identifies PHP authentication patterns (Laravel, Symfony, CakePHP)",
