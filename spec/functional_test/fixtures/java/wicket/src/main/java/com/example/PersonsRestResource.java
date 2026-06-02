@@ -7,12 +7,15 @@ import org.wicketstuff.restutils.http.HttpMethod;
 
 @ResourcePath("/scanned")
 public class PersonsRestResource implements IResource {
+    private final PersonService personService = new PersonService();
+
     @MethodMapping("/persons")
     public String listPeople() {
-        return "[]";
+        return personService.findAll();
     }
 
     @MethodMapping(value = "/persons/{personId:\\d+}", httpMethod = HttpMethod.DELETE)
     public void deletePerson(int personId) {
+        personService.deleteById(personId);
     }
 }
