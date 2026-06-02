@@ -3,25 +3,46 @@ require "../../../ext/tree_sitter/tree_sitter"
 require "../../../miniparsers/rust_callee_extractor_ts"
 
 module Analyzer::Rust
-  # RWF analyzer (tree-sitter port). RWF wires routes via the
-  # `route!("/path" => ControllerName)` macro and resolves the
-  # implementation as a `impl Controller for ControllerName` block
-  # whose `handle` method's body contains the request handling.
+  # RWF analyzer (tree-sitter port). RWF registers routes in a handful
+  # of shapes, all handled here:
   #
-  # The analyzer walks the AST once for both pieces, then joins them:
-  #   1. Collect every `impl Controller for X { ... }`'s `handle`
-  #      method body into a map keyed by controller name.
-  #   2. Walk `macro_invocation` nodes whose macro is `route!` and
-  #      extract `(path, controller_name)` from the macro's token
-  #      stream.
-  #   3. For each route, scan the controller's `handle` body for
-  #      `Method::GET` / `Method::POST` etc. to enumerate verbs and
-  #      pull params from `request.path_parameter(...)` /
-  #      `request.query_parameter(...)` / `request.body()` /
-  #      `request.form_data()` / `request.header(...)` /
-  #      `request.cookie(...)` shapes.
+  #   route!("/path" => Controller)   single route; the controller's
+  #                                   `Controller` impl `handle` body
+  #                                   enumerates verbs + params.
+  #   crud!("/path"  => Controller)   six RESTful routes (the
+  #   rest!("/path"  => Controller)   RestController/ModelController
+  #                                   convention).
+  #   Controller.route("/path")       the same three as method calls
+  #   Controller::new().rest("/p")    (no macro), plus
+  #   controller.wildcard("/path")    a catch-all mount.
+  #
+  # Registrations almost always sit inside `Server::new(vec![ ... ])` /
+  # `Engine::new(vec![ ... ])`. tree-sitter leaves a `vec!` body as a
+  # flat `token_tree` with no `macro_invocation` / `call_expression`
+  # nodes, so we re-parse each route-bearing macro body as an expression
+  # fragment and scan it too, mapping line numbers back onto the file.
   class Rwf < RustEngine
     HTTP_METHODS = %w[GET POST PUT DELETE PATCH HEAD OPTIONS]
+    # `crud!` / `rest!` register the standard REST surface. `:id` is the
+    # resource identifier param RWF uses for the member routes.
+    REST_ROUTES = [
+      {"", "GET"},        # list
+      {"", "POST"},       # create
+      {"/:id", "GET"},    # get
+      {"/:id", "PUT"},    # update
+      {"/:id", "PATCH"},  # patch
+      {"/:id", "DELETE"}, # delete
+    ]
+
+    # A discovered route registration before it is expanded into
+    # endpoints. `controller` is the controller/type name (used to find
+    # the `handle` body for `:route`); it may be nil for anonymous
+    # receivers.
+    record Registration,
+      path : String,
+      controller : String?,
+      kind : Symbol,
+      row : Int32
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
@@ -32,30 +53,34 @@ module Analyzer::Rust
       Noir::TreeSitter.parse_rust(source) do |root|
         controller_bodies = collect_controller_handle_bodies(root, source)
 
-        # `route!("/path" => Controller)` parses as a top-level
-        # `macro_invocation` only when called standalone. When nested
-        # inside `vec![ ... ]` (the usual pattern), the lexer leaves
-        # `identifier "route"` + `token_tree` as raw tokens of the
-        # outer `vec!` macro_invocation's argument. We pick up both
-        # shapes by scanning named-children pairs for that signature
-        # at every depth.
-        each_route_macro(root) do |route_path, controller_name, row|
-          body = controller_bodies[controller_name]?
-          methods = body ? extract_methods(body, source) : [] of String
-          methods << "GET" if methods.empty?
+        collect_registrations(root, source).each do |reg|
+          case reg.kind
+          when :route, :wildcard, :engine
+            body = reg.controller ? controller_bodies[reg.controller]? : nil
+            methods = body ? extract_methods(body, source) : [] of String
+            methods << "GET" if methods.empty?
 
-          details = Details.new(PathInfo.new(path, row))
-          methods.each do |http_method|
-            endpoint = Endpoint.new(route_path, http_method, details)
-            extract_path_params(route_path, endpoint)
-            if body
-              extract_controller_params(body, source, endpoint)
-              if include_callee
-                entries = Noir::RustCalleeExtractorTS.callees_in_body(body, source, path)
-                attach_rust_callees(endpoint, entries)
+            details = Details.new(PathInfo.new(path, reg.row))
+            methods.each do |http_method|
+              endpoint = Endpoint.new(reg.path, http_method, details)
+              extract_path_params(reg.path, endpoint)
+              if body
+                extract_controller_params(body, source, endpoint)
+                if include_callee
+                  entries = Noir::RustCalleeExtractorTS.callees_in_body(body, source, path)
+                  attach_rust_callees(endpoint, entries)
+                end
               end
+              endpoints << endpoint
             end
-            endpoints << endpoint
+          when :crud, :rest
+            REST_ROUTES.each do |suffix, http_method|
+              route_path = "#{reg.path.rstrip('/')}#{suffix}"
+              details = Details.new(PathInfo.new(path, reg.row))
+              endpoint = Endpoint.new(route_path, http_method, details)
+              extract_path_params(route_path, endpoint)
+              endpoints << endpoint
+            end
           end
         end
       end
@@ -63,81 +88,116 @@ module Analyzer::Rust
       endpoints
     end
 
-    # Yield `(path, controller_name, attr_row_1based)` for every
-    # `route!("/path" => Controller)` invocation reachable from
-    # `node`. Handles both the top-level `macro_invocation` shape and
-    # the more common `vec![route!(...), ...]` nesting, where the
-    # `route!(...)` is lexed as raw `identifier "route"` + `token_tree`
-    # tokens within the outer macro's token_tree.
-    private def each_route_macro(node : LibTreeSitter::TSNode, & : String, String, Int32 ->)
-      collect_route_macros(node).each do |route_path, controller, row|
-        yield route_path, controller, row
-      end
-    end
+    # Stashed during `analyze_file` so the nested traversal helpers
+    # don't need to thread `source` through every recursion.
+    @current_source : String = ""
 
-    private def collect_route_macros(node : LibTreeSitter::TSNode) : Array(Tuple(String, String, Int32))
-      sink = [] of Tuple(String, String, Int32)
-      # Direct macro_invocation form first.
-      walk(node) do |child|
-        next unless Noir::TreeSitter.node_type(child) == "macro_invocation"
-        name_node = Noir::TreeSitter.field(child, "macro")
-        next unless name_node
-        next unless Noir::TreeSitter.node_text(name_node, @current_source) == "route"
-        tokens = nil.as(LibTreeSitter::TSNode?)
-        Noir::TreeSitter.each_named_child(child) do |c|
-          tokens = c if Noir::TreeSitter.node_type(c) == "token_tree"
-        end
-        next unless tokens_node = tokens
-        if route = decode_route_token_tree(tokens_node)
-          sink << {route[0], route[1], Noir::TreeSitter.node_start_row(child) + 1}
-        end
-      end
+    # Collect every route registration reachable from `root`: macros and
+    # method calls in the real AST, plus everything hidden inside
+    # re-parsed `vec!`-style macro bodies.
+    private def collect_registrations(root : LibTreeSitter::TSNode, source : String) : Array(Registration)
+      sink = [] of Registration
+      scan_registrations(root, source, 0, sink)
 
-      # Nested `identifier "route" + token_tree` shape inside larger
-      # token_trees (e.g. `vec![route!(...)]`).
-      walk_pairs(node) do |a, b|
-        next unless Noir::TreeSitter.node_type(a) == "identifier"
-        next unless Noir::TreeSitter.node_text(a, @current_source) == "route"
-        next unless Noir::TreeSitter.node_type(b) == "token_tree"
-        if route = decode_route_token_tree(b)
-          sink << {route[0], route[1], Noir::TreeSitter.node_start_row(a) + 1}
+      collect_route_macro_fragments(root, source).each do |fragment, row_offset|
+        Noir::TreeSitter.parse_rust(fragment) do |frag_root|
+          scan_registrations(frag_root, fragment, row_offset, sink)
         end
       end
 
       sink
     end
 
-    # Recursively visits each parent's named-children list, calling
-    # the block on every adjacent pair. Used to spot the
-    # `identifier + token_tree` form of `route!(...)` inside larger
-    # macro token_trees.
-    private def walk_pairs(node : LibTreeSitter::TSNode, & : LibTreeSitter::TSNode, LibTreeSitter::TSNode ->)
-      collect_pairs(node).each { |a, b| yield a, b }
-    end
-
-    private def collect_pairs(node : LibTreeSitter::TSNode) : Array(Tuple(LibTreeSitter::TSNode, LibTreeSitter::TSNode))
-      pairs = [] of Tuple(LibTreeSitter::TSNode, LibTreeSitter::TSNode)
-      collect_pairs_into(node, pairs)
-      pairs
-    end
-
-    private def collect_pairs_into(node : LibTreeSitter::TSNode,
-                                   sink : Array(Tuple(LibTreeSitter::TSNode, LibTreeSitter::TSNode)))
-      named = [] of LibTreeSitter::TSNode
-      Noir::TreeSitter.each_named_child(node) { |c| named << c }
-      (0...named.size - 1).each do |i|
-        sink << {named[i], named[i + 1]}
+    # Walk `node` for both registration shapes:
+    #   * `route!`/`crud!`/`rest!`/`engine!` macro invocations, and
+    #   * `.route(...)`/`.crud(...)`/`.rest(...)`/`.wildcard(...)` method
+    #     calls.
+    private def scan_registrations(node : LibTreeSitter::TSNode,
+                                   source : String,
+                                   row_offset : Int32,
+                                   sink : Array(Registration))
+      walk(node) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "macro_invocation"
+          name_node = Noir::TreeSitter.field(child, "macro")
+          next unless name_node
+          kind = macro_kind(Noir::TreeSitter.node_text(name_node, source))
+          next unless kind
+          tokens = nil.as(LibTreeSitter::TSNode?)
+          Noir::TreeSitter.each_named_child(child) do |c|
+            tokens = c if Noir::TreeSitter.node_type(c) == "token_tree"
+          end
+          next unless tt = tokens
+          decoded = decode_macro_token_tree(tt, source)
+          next unless decoded
+          route_path, controller = decoded
+          sink << Registration.new(route_path, controller, kind, Noir::TreeSitter.node_start_row(child) + 1 + row_offset)
+        when "call_expression"
+          reg = decode_method_call(child, source, row_offset)
+          sink << reg if reg
+        end
       end
-      named.each { |child| collect_pairs_into(child, sink) }
     end
 
-    # The token_tree inside `route!(...)`: walk named children, take
-    # the first string_literal as path and the first identifier as
-    # controller name.
-    private def decode_route_token_tree(tokens : LibTreeSitter::TSNode) : Tuple(String, String)?
+    private def macro_kind(name : String) : Symbol?
+      case name
+      when "route"  then :route
+      when "crud"   then :crud
+      when "rest"   then :rest
+      when "engine" then :engine
+      end
+    end
+
+    # `Controller.route("/path")` / `Controller::new().rest("/p")` /
+    # `controller.wildcard("/p")`. The verb method names the registration
+    # kind; the string argument is the path; the receiver names the
+    # controller (best effort, used only to resolve a `handle` body).
+    private def decode_method_call(call : LibTreeSitter::TSNode, source : String, row_offset : Int32) : Registration?
+      fn_node = Noir::TreeSitter.field(call, "function")
+      return unless fn_node && Noir::TreeSitter.node_type(fn_node) == "field_expression"
+      field = Noir::TreeSitter.field(fn_node, "field")
+      return unless field
+      kind =
+        case Noir::TreeSitter.node_text(field, source)
+        when "route"    then :route
+        when "crud"     then :crud
+        when "rest"     then :rest
+        when "wildcard" then :wildcard
+        else                 return
+        end
+
+      route_path = first_string_literal_text(Noir::TreeSitter.field(call, "arguments"), source)
+      return unless route_path
+
+      receiver = Noir::TreeSitter.field(fn_node, "value")
+      controller = receiver ? receiver_controller_name(receiver, source) : nil
+      Registration.new(route_path, controller, kind, Noir::TreeSitter.node_start_row(call) + 1 + row_offset)
+    end
+
+    # First identifier-ish token of a method-call receiver, used as the
+    # controller name. `IndexController` → `IndexController`,
+    # `BasicAuthController::new()` → `BasicAuthController`.
+    private def receiver_controller_name(receiver : LibTreeSitter::TSNode, source : String) : String?
+      result : String? = nil
+      walk(receiver) do |node|
+        next if result
+        case Noir::TreeSitter.node_type(node)
+        when "identifier", "type_identifier"
+          result = Noir::TreeSitter.node_text(node, source)
+        when "scoped_identifier"
+          result = Noir::TreeSitter.node_text(node, source).split("::").first
+        end
+      end
+      result
+    end
+
+    # The token_tree inside `route!("/path" => Controller)`: the first
+    # string literal is the path; the controller is the trailing
+    # identifier so a scoped `controllers::login` resolves to `login`
+    # (the controller type) rather than the module prefix.
+    private def decode_macro_token_tree(tokens : LibTreeSitter::TSNode, source : String) : Tuple(String, String?)?
       route_path : String? = nil
       controller : String? = nil
-      source = @current_source
       Noir::TreeSitter.each_named_child(tokens) do |child|
         case Noir::TreeSitter.node_type(child)
         when "string_literal"
@@ -149,19 +209,39 @@ module Analyzer::Rust
               end
             end
           end
-        when "identifier"
-          controller = Noir::TreeSitter.node_text(child, source) if controller.nil?
+        when "identifier", "type_identifier"
+          controller = Noir::TreeSitter.node_text(child, source)
+        when "scoped_identifier"
+          controller = Noir::TreeSitter.node_text(child, source).split("::").last
         end
       end
       rp = route_path
-      ct = controller
-      return unless rp && ct
-      {rp, ct}
+      return unless rp
+      {rp, controller}
     end
 
-    # Stashed during `analyze_file` so the nested traversal helpers
-    # don't need to thread `source` through every recursion.
-    @current_source : String = ""
+    # Re-parseable expression fragments for every macro body that
+    # mentions a route registration, paired with the 0-based row of the
+    # macro's `token_tree` so detected routes map back to the file line.
+    private def collect_route_macro_fragments(root : LibTreeSitter::TSNode, source : String) : Array(Tuple(String, Int32))
+      fragments = [] of Tuple(String, Int32)
+      walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "macro_invocation"
+        name_node = Noir::TreeSitter.field(node, "macro")
+        # Skip the macros we decode directly; only re-parse container
+        # macros (`vec!`, …) whose bodies hide registrations.
+        next if name_node && macro_kind(Noir::TreeSitter.node_text(name_node, source))
+        token_tree = nil.as(LibTreeSitter::TSNode?)
+        Noir::TreeSitter.each_named_child(node) do |child|
+          token_tree = child if Noir::TreeSitter.node_type(child) == "token_tree"
+        end
+        next unless tt = token_tree
+        text = Noir::TreeSitter.node_text(tt, source)
+        next unless text.includes?("route") || text.includes?("crud") || text.includes?("rest") || text.includes?("wildcard")
+        fragments << {"fn __noir_rwf_wf() { let __noir_x = #{text}; }", Noir::TreeSitter.node_start_row(tt)}
+      end
+      fragments
+    end
 
     # Walk all `impl_item` nodes whose trait is `Controller` and store
     # the controller (impl target) → `handle` method's body node.
