@@ -3,9 +3,56 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#050507">
   <meta name="description" content="{{ page.description | default(site.description) }}">
   <title>{% if page.title and page.title != site.title %}{{ page.title }} - {{ site.title }}{% else %}{{ site.title }}{% endif %}</title>
   {{ og_all_tags }}
+  {% if page.permalink %}
+  {% set rel = page.permalink | replace(base_url, "") %}
+  {% if page.language == "ko" %}
+  {% set en_url = base_url ~ (rel | replace("/ko/", "/")) %}
+  {% set ko_url = page.permalink %}
+  {% else %}
+  {% set en_url = page.permalink %}
+  {% set ko_url = base_url ~ "/ko" ~ rel %}
+  {% endif %}
+  <link rel="canonical" href="{{ page.permalink }}">
+  <link rel="alternate" hreflang="en" href="{{ en_url }}">
+  <link rel="alternate" hreflang="ko" href="{{ ko_url }}">
+  <link rel="alternate" hreflang="x-default" href="{{ en_url }}">
+  <script type="application/ld+json">
+  {% autoescape false %}
+  {% if rel == "/" or rel == "/ko/" %}
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "OWASP Noir",
+    "description": "{{ site.description | replace('"', '\\"') }}",
+    "url": "{{ base_url }}/",
+    "applicationCategory": "SecurityApplication",
+    "operatingSystem": "Linux, macOS, Windows",
+    "softwareHelp": "{{ base_url }}/get_started/overview/",
+    "codeRepository": "https://github.com/owasp-noir/noir",
+    "license": "https://github.com/owasp-noir/noir/blob/main/LICENSE.md",
+    "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"},
+    "publisher": {"@type": "Organization", "name": "OWASP", "url": "https://owasp.org"}
+  }
+  {% else %}
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "{{ page.title | default(site.title) | replace('"', '\\"') }}",
+    "description": "{{ page.description | default(site.description) | replace('"', '\\"') }}",
+    "inLanguage": "{{ page.language | default('en') }}",
+    "url": "{{ page.permalink }}",
+    "isPartOf": {"@type": "WebSite", "name": "{{ site.title | replace('"', '\\"') }}", "url": "{{ base_url }}/"},
+    "publisher": {"@type": "Organization", "name": "OWASP", "url": "https://owasp.org"}
+  }
+  {% endif %}
+  {% endautoescape %}
+  </script>
+  {% endif %}
   <link rel="icon" href="{{ base_url }}/favicon.ico" sizes="any">
   <link rel="icon" href="{{ base_url }}/favicon.svg" type="image/svg+xml">
   <link rel="icon" href="{{ base_url }}/favicon-96x96.png" type="image/png" sizes="96x96">
@@ -21,6 +68,7 @@
   {{ auto_includes_css }}
 </head>
 <body>
+  <a href="#main-content" class="skip-link">{% if page.language == "ko" %}본문으로 건너뛰기{% else %}Skip to content{% endif %}</a>
   <header class="site-header">
     <div class="header-inner">
       <div class="header-left">
