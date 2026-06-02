@@ -56,6 +56,24 @@ class Detector
     true
   end
 
+  # Tolerant matcher for a Gemfile `gem "<name>"` line. Accepts both the
+  # bare and parenthesized call forms with arbitrary spacing — `gem 'x'`,
+  # `gem "x"`, `gem('x')`, `gem( "x" )` — and a trailing version
+  # constraint, while still requiring the closing quote right after the
+  # name so `gem 'sinatra'` never matches `gem 'sinatra-contrib'`.
+  def gemfile_dependency?(file_contents : String, gem_name : String) : Bool
+    file_contents.matches?(/\bgem\s*\(?\s*['"]#{Regex.escape(gem_name)}['"]/)
+  end
+
+  # Tolerant matcher for a gemspec runtime dependency on `<name>`, in
+  # either the space or parenthesized call form — gems routinely write
+  # `s.add_dependency('sinatra', "~> 4.0")` (geminabox) or
+  # `spec.add_runtime_dependency "railties"`, neither of which the old
+  # `"add_dependency 'sinatra'"` substring markers matched.
+  def gemspec_dependency?(file_contents : String, gem_name : String) : Bool
+    file_contents.matches?(/\badd(?:_runtime)?_dependency\s*\(?\s*['"]#{Regex.escape(gem_name)}['"]/)
+  end
+
   macro define_getter_methods(names)
     {% for name, index in names %}
       def {{ name.id }}

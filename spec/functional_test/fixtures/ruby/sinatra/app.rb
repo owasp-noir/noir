@@ -56,6 +56,24 @@ namespace "/v2" {
   end
 }
 
+# Regression guard: a multi-line `if`/`else`/`end` inside a route body
+# must not corrupt namespace depth tracking. With the old open/close
+# tally the `if`'s `end` over-decremented depth, popping the `/admin`
+# prefix so `/admin/audit` leaked out as `/audit`.
+namespace "/admin" do
+  get "/dashboard" do
+    if params[:full]
+      erb :full_dashboard
+    else
+      erb :dashboard
+    end
+  end
+
+  get "/audit" do
+    params[:since]
+  end
+end
+
 def helper_noise
   params[:should_not_attach]
   request.env["HTTP_SHOULD_NOT_ATTACH"]

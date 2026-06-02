@@ -25,9 +25,15 @@ expected_endpoints = [
   Endpoint.new("/v2/widgets", "GET", [
     Param.new("cursor", "", "query"),
   ]),
+  Endpoint.new("/admin/dashboard", "GET", [
+    Param.new("full", "", "query"),
+  ]),
+  Endpoint.new("/admin/audit", "GET", [
+    Param.new("since", "", "query"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/ruby/sinatra/", {
   :techs     => 1,
-  :endpoints => 8,
+  :endpoints => 10,
 }, expected_endpoints).perform_tests
