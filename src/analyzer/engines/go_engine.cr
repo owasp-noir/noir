@@ -266,6 +266,12 @@ module Analyzer::Go
 
     def add_param_to_endpoint(param : Param, endpoint : Endpoint)
       if param.name.size > 0 && !endpoint.method.empty? && !endpoint.url.empty?
+        # Don't re-add an identical (name, type) param. go-zero's
+        # handler-body getters (`httpx.ParseForm`, repeated across several
+        # handlers in a single-file app) would otherwise stack four
+        # `body` params onto one endpoint; the same guard keeps every Go
+        # adapter's line-loop from emitting duplicates.
+        return if endpoint.params.any? { |p| p.name == param.name && p.param_type == param.param_type }
         endpoint.params << param
       end
     end

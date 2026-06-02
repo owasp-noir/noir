@@ -37,6 +37,34 @@ module Analyzer::Go
                     lines = content.lines
                     last_endpoint = Endpoint.new("", "")
 
+                    # GoFrame standardized routing: request structs embed
+                    # `g.Meta` with `path:`/`method:` tags that fully
+                    # define the route. These live in dedicated API
+                    # definition files (no verb-call registration), so
+                    # they're emitted directly here rather than through
+                    # the closure-scoped walker. Gated on the `g.Meta`
+                    # marker so files without it skip the tree-sitter
+                    # parse entirely.
+                    if content.includes?("g.Meta") && content.includes?("path:")
+                      Noir::TreeSitterGoRouteExtractor.extract_gf_meta_routes(content).each do |mr|
+                        mr_details = Details.new(PathInfo.new(path, mr.line + 1))
+                        # A `method:"all"`/method-less route (verb "ALL")
+                        # responds to every HTTP method; fan it out the
+                        # same way Gin's `r.Any` is, so it isn't dropped by
+                        # the optimizer's allowed-method filter.
+                        verbs = mr.methods.flat_map { |m| Noir::TreeSitterGoRouteExtractor.fan_out_verbs(m) }.uniq!
+                        verbs.each do |verb|
+                          meta_ep = Endpoint.new(mr.path, verb, mr_details)
+                          ptype = (verb == "GET" || verb == "HEAD" || verb == "DELETE") ? "query" : "json"
+                          mr.params.each do |pname|
+                            param = Param.new(pname, "", ptype)
+                            meta_ep.params << param unless meta_ep.params.includes?(param)
+                          end
+                          result << meta_ep
+                        end
+                      end
+                    end
+
                     # Tree-sitter pre-pass covers gf's three route shapes
                     # in one walk: closure groups `.Group("/x", func(){...})`,
                     # chained `s.Group("/multi").GET(...)`, and

@@ -152,6 +152,23 @@ module Noir
       end
     end
 
+    # GoFrame's standardized routing: a request struct embeds `g.Meta`
+    # whose struct tag carries the route (`path:"/x" method:"get"`), and
+    # `group.Bind(controller)` wires every such method up. The tag *is*
+    # the route definition — it's exactly what gf's own OpenAPI generator
+    # reads — so we surface it directly. `params` are the struct's own
+    # request fields (json-tag name or field name); the analyzer types
+    # them by HTTP method.
+    struct GfMetaRoute
+      getter path : String
+      getter methods : Array(String)
+      getter line : Int32
+      getter params : Array(String)
+
+      def initialize(@path, @methods, @line, @params)
+      end
+    end
+
     # Parses `source` and returns every verb route it can resolve.
     # `external_groups` supplies group prefixes defined in other files of
     # the same Go package, so cross-file patterns like
@@ -175,7 +192,9 @@ module Noir
                        handle_method : String? = nil,
                        handlefunc_methods : Bool = false,
                        group_aliases : Array(String) = [] of String,
-                       extra_verbs : Array(String) = [] of String) : Array(Route)
+                       extra_verbs : Array(String) = [] of String,
+                       handle_many_method : String? = nil,
+                       closure_group_methods : Array(String) = [] of String) : Array(Route)
       routes = [] of Route
       group_prefixes = external_groups.dup
       Noir::TreeSitter.parse_go(source) do |root|
@@ -186,6 +205,12 @@ module Noir
           next unless group_assignment_node?(node)
           collect_group(node, source, group_prefixes, group_method, group_aliases, string_values)
         end
+
+        # Closure-scoped groups (Iris `Party("/x", func(p){...})` /
+        # `PartyFunc("/x", func(p){...})`) — collected after the flat
+        # group map so a closure receiver that is itself a package-level
+        # group resolves correctly.
+        closure_groups = closure_group_methods.empty? ? [] of ClosureGroup : collect_closure_groups(root, source, closure_group_methods, group_prefixes)
 
         if handlefunc_methods
           walk(root) do |node|
@@ -202,10 +227,12 @@ module Noir
 
         walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
-          if route = decode_verb_call(node, source, group_prefixes, extra_verbs, group_method, group_aliases, string_values)
+          if route = decode_verb_call(node, source, group_prefixes, extra_verbs, group_method, group_aliases, string_values, closure_groups)
             routes << route
           elsif handle_method && (route = decode_handle_call(node, source, group_prefixes, handle_method))
             routes << route
+          elsif handle_many_method && (many = decode_handle_many_call(node, source, group_prefixes, handle_many_method)) && !many.empty?
+            many.each { |r| routes << r }
           elsif handlefunc_methods && !mux_chained_operands.includes?(node_key(node))
             # Mux's `.Methods(...)` can list several verbs at once
             # (`.Methods("GET", "POST")`), so the decoder returns an
@@ -529,9 +556,354 @@ module Noir
         prefix_method: "Group",
         middleware_method: "Group",
         chain_prefix: true,
-        bind_methods: ["BindHandler", "BindMiddleware"],
+        # Only `BindHandler` registers a request handler (a real
+        # endpoint). `BindMiddleware`/`BindMiddlewareDefault` and
+        # `BindHookHandler` attach middleware/hooks to a path *pattern*
+        # (e.g. the catch-all `/*any`) — they are not endpoints, so
+        # keeping them here minted phantom routes in every gf app.
+        bind_methods: ["BindHandler"],
         bind_method_verb: "ALL",
       ))
+    end
+
+    # GoFrame standardized routing: scan every `type X struct { ... }`
+    # for an embedded `g.Meta` field whose tag declares a route
+    # (`path:"/x" method:"get"`). Each such struct is one endpoint (or
+    # several, when `method` lists more than one verb). The struct's own
+    # named fields become request params. This is method-/group-agnostic
+    # on purpose: the tag fully specifies the route, the same way gf's
+    # OpenAPI generator treats it, so we don't need to resolve the
+    # `group.Bind(...)` site (whose prefix is often a runtime config
+    # value we can't see statically).
+    def extract_gf_meta_routes(source : String) : Array(GfMetaRoute)
+      results = [] of GfMetaRoute
+      Noir::TreeSitter.parse_go(source) do |root|
+        walk(root) do |node|
+          next unless Noir::TreeSitter.node_type(node) == "type_spec"
+          type_node = Noir::TreeSitter.field(node, "type")
+          next if type_node.nil?
+          tn = type_node
+          next unless Noir::TreeSitter.node_type(tn) == "struct_type"
+
+          field_list = nil
+          Noir::TreeSitter.each_named_child(tn) do |c|
+            if Noir::TreeSitter.node_type(c) == "field_declaration_list"
+              field_list = c
+              break
+            end
+          end
+          fl = field_list
+          next if fl.nil?
+
+          meta_tag = nil
+          meta_line = Noir::TreeSitter.node_start_row(node)
+          params = [] of String
+
+          Noir::TreeSitter.each_named_child(fl) do |decl|
+            next unless Noir::TreeSitter.node_type(decl) == "field_declaration"
+
+            tag = ""
+            if tag_node = Noir::TreeSitter.field(decl, "tag")
+              tag = Noir::TreeSitter.node_text(tag_node, source).gsub(/^[`"]|[`"]$/, "")
+            end
+
+            if name_node = Noir::TreeSitter.field(decl, "name")
+              # A genuine named request field — its json tag (or, lacking
+              # one, the field name) is a request param.
+              next if tag.includes?("path:") # defensive: not the meta line
+              field_name = Noir::TreeSitter.node_text(name_node, source)
+              pname = if m = tag.match(/json:"([^",]+)/)
+                        m[1]
+                      else
+                        field_name
+                      end
+              params << pname unless pname.empty? || pname == "-"
+            elsif type_node2 = Noir::TreeSitter.field(decl, "type")
+              # Embedded field. The `g.Meta` carrier holds the route tag;
+              # other embeds (`adminin.FooInp`) bring fields we can't see
+              # cheaply, so they're skipped for params.
+              embed_type = Noir::TreeSitter.node_text(type_node2, source)
+              if (embed_type == "g.Meta" || embed_type.ends_with?(".Meta")) && tag.includes?("path:")
+                meta_tag = tag
+                meta_line = Noir::TreeSitter.node_start_row(decl)
+              end
+            end
+          end
+
+          mt = meta_tag
+          next if mt.nil?
+          path_match = mt.match(/path:"([^"]+)"/)
+          next if path_match.nil?
+          path = path_match[1]
+          next unless path.starts_with?("/")
+
+          methods = if mm = mt.match(/method:"([^"]+)"/)
+                      mm[1].split(',').map(&.strip.upcase).reject(&.empty?)
+                    else
+                      [] of String
+                    end
+          # A method-less g.Meta route responds to ALL HTTP methods in
+          # gf; represent that as "ALL" so the analyzer fans it out to
+          # every canonical verb (rather than guessing a single one).
+          methods = ["ALL"] if methods.empty?
+
+          results << GfMetaRoute.new(path, methods, meta_line, params)
+        end
+      end
+      results
+    end
+
+    # go-zero registers routes as `rest.Route` struct literals rather than
+    # verb calls, in two shapes:
+    #
+    #   server.AddRoutes(                       # generated routes.go
+    #     []rest.Route{
+    #       {Method: http.MethodPost, Path: "/user/login", Handler: h},
+    #     },
+    #     rest.WithPrefix("/usercenter/v1"),
+    #   )
+    #
+    #   server.AddRoute(rest.Route{Method: http.MethodGet, Path: "/"})
+    #   apiGroup := server.Group("/api/v1")     # hand-written grouping
+    #   apiGroup.AddRoute(rest.Route{Path: "/products", ...})
+    #
+    # The verb/path live in the struct (not a `.Get(...)` call), and the
+    # mount prefix comes from a trailing `rest.WithPrefix(...)` option
+    # and/or a `server.Group("/p")` receiver — so the generic verb
+    # extractor sees nothing. This decodes every route to its full mounted
+    # path so it dedupes against the same route declared (prefix-applied)
+    # in a `.api` file. `handler` carries the registered handler
+    # expression for callee wiring.
+    def extract_gozero_routes(source : String) : Array(Route)
+      results = [] of Route
+      Noir::TreeSitter.parse_go(source) do |root|
+        group_prefixes = collect_gozero_group_prefixes(root, source)
+
+        walk(root) do |node|
+          next unless Noir::TreeSitter.node_type(node) == "call_expression"
+          function = Noir::TreeSitter.field(node, "function")
+          next if function.nil?
+          next unless Noir::TreeSitter.node_type(function) == "selector_expression"
+          fname_node = Noir::TreeSitter.field(function, "field")
+          next if fname_node.nil?
+          fname = Noir::TreeSitter.node_text(fname_node, source)
+          next unless fname == "AddRoute" || fname == "AddRoutes"
+
+          # The receiver may be the root server/engine (no prefix) or a
+          # `:= server.Group("/p")` variable whose prefix we resolved.
+          receiver = Noir::TreeSitter.field(function, "operand")
+          base_prefix = ""
+          if receiver && Noir::TreeSitter.node_type(receiver) == "identifier"
+            base_prefix = group_prefixes[Noir::TreeSitter.node_text(receiver, source)]? || ""
+          end
+
+          args = Noir::TreeSitter.field(node, "arguments")
+          next if args.nil?
+
+          with_prefix = ""
+          route_literal = nil
+          Noir::TreeSitter.each_named_child(args) do |arg|
+            case Noir::TreeSitter.node_type(arg)
+            when "composite_literal"
+              route_literal ||= arg
+            when "call_expression"
+              if p = gozero_with_prefix(arg, source)
+                with_prefix = p
+              end
+            end
+          end
+          rl = route_literal
+          next if rl.nil?
+
+          prefix = "#{normalize_gozero_prefix(base_prefix)}#{normalize_gozero_prefix(with_prefix)}"
+
+          # `[]rest.Route{...}` (slice) holds one struct per element;
+          # `rest.Route{...}` (singular) is itself one route struct.
+          type_node = Noir::TreeSitter.field(rl, "type")
+          type_text = type_node ? Noir::TreeSitter.node_text(type_node, source) : ""
+          body = Noir::TreeSitter.field(rl, "body")
+          next if body.nil?
+
+          if type_text.starts_with?("[]")
+            Noir::TreeSitter.each_named_child(body) do |elem|
+              inner = gozero_inner_value(elem)
+              next if inner.nil?
+              if route = gozero_decode_route_struct(inner, prefix, source, elem)
+                results << route
+              end
+            end
+          else
+            if route = gozero_decode_route_struct(body, prefix, source, rl)
+              results << route
+            end
+          end
+        end
+      end
+      results
+    end
+
+    private def normalize_gozero_prefix(prefix : String) : String
+      return "" if prefix.empty?
+      prefix.starts_with?("/") ? prefix : "/#{prefix}"
+    end
+
+    # Decode a single `rest.Route{Method:..., Path:..., Handler:...}`
+    # struct (given its `literal_value` body) into a Route, applying the
+    # resolved mount prefix.
+    private def gozero_decode_route_struct(inner : LibTreeSitter::TSNode, prefix : String,
+                                           source : String, line_node : LibTreeSitter::TSNode) : Route?
+      method = ""
+      rpath = ""
+      handler = ""
+      Noir::TreeSitter.each_named_child(inner) do |kv|
+        next unless Noir::TreeSitter.node_type(kv) == "keyed_element"
+        key_node, val_node = gozero_keyed_pair(kv)
+        next if key_node.nil? || val_node.nil?
+        case Noir::TreeSitter.node_text(key_node, source)
+        when "Method"  then method = gozero_method_value(val_node, source)
+        when "Path"    then rpath = gozero_string_value(val_node, source)
+        when "Handler" then handler = Noir::TreeSitter.node_text(val_node, source)
+        end
+      end
+      return nil if method.empty? || rpath.empty?
+      return nil unless rpath.starts_with?("/")
+      full = "#{prefix}#{rpath}"
+      Route.new("server", method, full, rpath, handler, Noir::TreeSitter.node_start_row(line_node))
+    end
+
+    # Collect `groupVar := <recv>.Group("/p")` bindings, resolving nested
+    # groups to their full prefix. The root receiver (`server`/`engine`)
+    # contributes no prefix; a group-on-group accumulates. Iterated to a
+    # fixpoint so `g2 := g1.Group("/x")` resolves regardless of source
+    # order.
+    private def collect_gozero_group_prefixes(root : LibTreeSitter::TSNode, source : String) : Hash(String, String)
+      prefixes = Hash(String, String).new
+      10.times do
+        changed = false
+        walk(root) do |node|
+          next unless Noir::TreeSitter.node_type(node) == "short_var_declaration"
+          left = Noir::TreeSitter.field(node, "left")
+          right = Noir::TreeSitter.field(node, "right")
+          next if left.nil? || right.nil?
+          var = first_named_child(left)
+          rhs = first_named_child(right)
+          next if var.nil? || rhs.nil?
+          next unless Noir::TreeSitter.node_type(var) == "identifier"
+          next unless Noir::TreeSitter.node_type(rhs) == "call_expression"
+          func = Noir::TreeSitter.field(rhs, "function")
+          next if func.nil? || Noir::TreeSitter.node_type(func) != "selector_expression"
+          fld = Noir::TreeSitter.field(func, "field")
+          next if fld.nil? || Noir::TreeSitter.node_text(fld, source) != "Group"
+          recv = Noir::TreeSitter.field(func, "operand")
+          next if recv.nil? || Noir::TreeSitter.node_type(recv) != "identifier"
+          pstr = nil
+          if rargs = Noir::TreeSitter.field(rhs, "arguments")
+            Noir::TreeSitter.each_named_child(rargs) do |arg|
+              s = gozero_string_value(arg, source)
+              if pstr.nil? && !s.empty?
+                pstr = s
+              end
+            end
+          end
+          next if pstr.nil?
+          recv_name = Noir::TreeSitter.node_text(recv, source)
+          base = (recv_name == "server" || recv_name == "engine") ? "" : (prefixes[recv_name]? || "")
+          val = "#{base}#{normalize_gozero_prefix(pstr)}"
+          vname = Noir::TreeSitter.node_text(var, source)
+          if prefixes[vname]? != val
+            prefixes[vname] = val
+            changed = true
+          end
+        end
+        break unless changed
+      end
+      prefixes
+    end
+
+    # Resolve a slice element to the `literal_value` holding its keyed
+    # fields — transparent to a `literal_element` wrapper, an explicit
+    # `rest.Route{...}` composite_literal, or a bare `{...}` literal_value.
+    private def gozero_inner_value(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+      n = node
+      if Noir::TreeSitter.node_type(n) == "literal_element"
+        fc = first_named_child(n)
+        return nil if fc.nil?
+        n = fc
+      end
+      case Noir::TreeSitter.node_type(n)
+      when "literal_value"
+        n
+      when "composite_literal"
+        Noir::TreeSitter.field(n, "body")
+      else
+        nil
+      end
+    end
+
+    # Unwrap a `literal_element` container (tree-sitter-go wraps both
+    # sides of a keyed_element) to reach the underlying key/value node.
+    private def gozero_unwrap(node : LibTreeSitter::TSNode?) : LibTreeSitter::TSNode?
+      return nil if node.nil?
+      if Noir::TreeSitter.node_type(node) == "literal_element"
+        return first_named_child(node)
+      end
+      node
+    end
+
+    private def gozero_keyed_pair(kv : LibTreeSitter::TSNode) : Tuple(LibTreeSitter::TSNode?, LibTreeSitter::TSNode?)
+      key = Noir::TreeSitter.field(kv, "key")
+      val = Noir::TreeSitter.field(kv, "value")
+      if key.nil? || val.nil?
+        kids = [] of LibTreeSitter::TSNode
+        Noir::TreeSitter.each_named_child(kv) { |c| kids << c }
+        return {nil, nil} if kids.size < 2
+        key ||= kids[0]
+        val ||= kids[1]
+      end
+      {gozero_unwrap(key), gozero_unwrap(val)}
+    end
+
+    # `Method:` is either a string literal ("POST") or an `http.MethodX`
+    # selector; both collapse to the bare upper-cased verb.
+    private def gozero_method_value(node : LibTreeSitter::TSNode, source : String) : String
+      case Noir::TreeSitter.node_type(node)
+      when "interpreted_string_literal", "raw_string_literal"
+        Noir::TreeSitter.node_text(node, source).gsub(/^["`]|["`]$/, "").upcase
+      when "selector_expression"
+        text = Noir::TreeSitter.node_text(node, source)
+        if idx = text.index("Method")
+          text[(idx + "Method".size)..].upcase
+        else
+          ""
+        end
+      else
+        ""
+      end
+    end
+
+    private def gozero_string_value(node : LibTreeSitter::TSNode, source : String) : String
+      case Noir::TreeSitter.node_type(node)
+      when "interpreted_string_literal", "raw_string_literal"
+        Noir::TreeSitter.node_text(node, source).gsub(/^["`]|["`]$/, "")
+      else
+        ""
+      end
+    end
+
+    private def gozero_with_prefix(call : LibTreeSitter::TSNode, source : String) : String?
+      function = Noir::TreeSitter.field(call, "function")
+      return nil if function.nil?
+      return nil unless Noir::TreeSitter.node_type(function) == "selector_expression"
+      fname = Noir::TreeSitter.field(function, "field")
+      return nil if fname.nil?
+      return nil unless Noir::TreeSitter.node_text(fname, source) == "WithPrefix"
+      args = Noir::TreeSitter.field(call, "arguments")
+      return nil if args.nil?
+      Noir::TreeSitter.each_named_child(args) do |arg|
+        s = gozero_string_value(arg, source)
+        return s unless s.empty?
+      end
+      nil
     end
 
     private def extract_scoped_routes(source : String,
@@ -954,14 +1326,24 @@ module Noir
       end
       return unless raw_path
 
+      # A real chi/gf verb route's path is always rooted at `/`. Value
+      # getters that share a verb name — gf's `genv.Get("GOPATH")`,
+      # `r.Get("authorization")`, `gmeta.Get(req, "path")` — pass a bare
+      # key, never a `/`-prefixed path, so this single guard drops them
+      # without touching any genuine route (chi/gf both reject patterns
+      # that don't start with `/`). Param-reads whose receiver is a call
+      # chain (`r.URL.Query().Get("q")`) are already filtered by the
+      # operand-type check above; this catches the bare-identifier
+      # receivers (`genv`, `gmeta`, `r`) the operand check intentionally
+      # allows through.
+      return unless raw_path.starts_with?("/")
+
       # Tighten the broadened cases (selector receiver or a path resolved
       # from a non-literal) so they can't surface noise: a real chi/gf
-      # route always starts with `/` and always carries a handler. The
-      # original literal-path + identifier-receiver shape keeps its
-      # historical leniency untouched.
+      # route always carries a handler. The original literal-path +
+      # identifier-receiver shape keeps its historical leniency untouched.
       if operand_is_selector || !path_was_literal
         return if handler_text.empty?
-        return unless raw_path.starts_with?("/")
       end
 
       # Prefer the local binding (closure param / `v1 := group.Group(...)`)
@@ -1209,7 +1591,8 @@ module Noir
                                  extra_verbs : Array(String) = [] of String,
                                  group_method : String = "Group",
                                  group_aliases : Array(String) = [] of String,
-                                 string_values : Hash(String, String) = Hash(String, String).new) : Route?
+                                 string_values : Hash(String, String) = Hash(String, String).new,
+                                 closure_groups : Array(ClosureGroup) = [] of ClosureGroup) : Route?
       function = Noir::TreeSitter.field(call, "function")
       return unless function
       return unless Noir::TreeSitter.node_type(function) == "selector_expression"
@@ -1267,7 +1650,12 @@ module Noir
       return if raw_path.includes?("://")
       return if handler_text.empty?
 
-      base_prefix = groups[router_name]? || ""
+      # A closure-scoped group binding (Iris `PartyFunc("/x",
+      # func(p){...})`) takes precedence over the flat group map: the
+      # verb's receiver is the closure param, resolved by the innermost
+      # enclosing closure body whose param matches.
+      base_prefix = closure_prefix_for(closure_groups, LibTreeSitter.ts_node_start_byte(call), router_name) ||
+                    groups[router_name]? || ""
       base_prefix = join_paths(base_prefix, chain_prefix) unless chain_prefix.empty?
       resolved = base_prefix.empty? ? raw_path : join_paths(base_prefix, raw_path)
 
@@ -1402,6 +1790,150 @@ module Noir
         handler_text,
         Noir::TreeSitter.node_start_row(call),
       )
+    end
+
+    # Like `decode_handle_call` but the method argument lists several
+    # verbs at once — Iris's `app.HandleMany("GET POST", "/x", h)` (and
+    # the comma-separated `"GET,POST"` form). Fans out into one Route per
+    # verb so each surfaces as its own endpoint.
+    private def decode_handle_many_call(call : LibTreeSitter::TSNode,
+                                        source : String,
+                                        groups : Hash(String, String),
+                                        handle_method : String) : Array(Route)
+      empty = [] of Route
+      function = Noir::TreeSitter.field(call, "function")
+      return empty unless function
+      return empty unless Noir::TreeSitter.node_type(function) == "selector_expression"
+      operand = Noir::TreeSitter.field(function, "operand")
+      field = Noir::TreeSitter.field(function, "field")
+      return empty unless operand && field
+      return empty unless Noir::TreeSitter.node_type(operand) == "identifier"
+      return empty unless Noir::TreeSitter.node_text(field, source) == handle_method
+
+      args = Noir::TreeSitter.field(call, "arguments")
+      return empty unless args
+
+      method_lit = nil
+      path_lit = nil
+      handler_text = ""
+      Noir::TreeSitter.each_named_child(args) do |arg|
+        case Noir::TreeSitter.node_type(arg)
+        when "interpreted_string_literal", "raw_string_literal"
+          if method_lit.nil?
+            method_lit = decode_string_literal(arg, source)
+          elsif path_lit.nil?
+            path_lit = decode_string_literal(arg, source)
+          end
+        else
+          handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty? && !path_lit.nil?
+        end
+      end
+
+      return empty unless method_lit && path_lit
+      return empty if method_lit.empty? || path_lit.empty?
+
+      router_name = Noir::TreeSitter.node_text(operand, source)
+      return empty if NON_ROUTER_OPERANDS.includes?(router_name)
+      resolved = if prefix = groups[router_name]?
+                   join_paths(prefix, path_lit)
+                 else
+                   path_lit
+                 end
+
+      verbs = method_lit.split(/[\s,]+/).map(&.strip.upcase).reject(&.empty?)
+      verbs.map do |verb|
+        Route.new(router_name, verb, resolved, path_lit, handler_text,
+          Noir::TreeSitter.node_start_row(call))
+      end
+    end
+
+    # A closure-scoped route group: the inner routes are registered on
+    # the closure's first parameter, with the prefix supplied to the
+    # enclosing `Party`/`PartyFunc` call.
+    private struct ClosureGroup
+      getter start_byte : UInt32
+      getter end_byte : UInt32
+      getter param : String
+      getter prefix : String
+
+      def initialize(@start_byte, @end_byte, @param, @prefix)
+      end
+    end
+
+    # Collect closure-scoped groups: `<recv>.<method>("/x", func(p
+    # ...){...})`. Records each closure body's byte-range, its first
+    # param name, and the resolved prefix. The receiver prefix is
+    # resolved against the flat group map or an enclosing closure group
+    # (so nested groups stack). Byte-range scoping keeps repeated param
+    # names (`p`, `r`) from cross-contaminating — the inner-most body
+    # containing a verb call wins — without touching the package-level
+    # group map.
+    private def collect_closure_groups(root : LibTreeSitter::TSNode,
+                                       source : String,
+                                       methods : Array(String),
+                                       groups : Hash(String, String)) : Array(ClosureGroup)
+      result = [] of ClosureGroup
+      walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "call_expression"
+        function = Noir::TreeSitter.field(node, "function")
+        next if function.nil?
+        next unless Noir::TreeSitter.node_type(function) == "selector_expression"
+        fld = Noir::TreeSitter.field(function, "field")
+        next if fld.nil?
+        next unless methods.includes?(Noir::TreeSitter.node_text(fld, source))
+
+        args = Noir::TreeSitter.field(node, "arguments")
+        next if args.nil?
+        prefix_str = nil
+        closure = nil
+        Noir::TreeSitter.each_named_child(args) do |arg|
+          case Noir::TreeSitter.node_type(arg)
+          when "interpreted_string_literal", "raw_string_literal"
+            prefix_str ||= decode_string_literal(arg, source)
+          when "func_literal"
+            closure ||= arg
+          end
+        end
+        ps = prefix_str
+        cl = closure
+        next if ps.nil? || cl.nil?
+        body = Noir::TreeSitter.field(cl, "body")
+        next if body.nil?
+        param = extract_closure_first_param_name(cl, source)
+        next if param.nil?
+
+        recv_prefix = ""
+        recv = Noir::TreeSitter.field(function, "operand")
+        if recv && Noir::TreeSitter.node_type(recv) == "identifier"
+          rname = Noir::TreeSitter.node_text(recv, source)
+          recv_prefix = groups[rname]? ||
+                        closure_prefix_for(result, LibTreeSitter.ts_node_start_byte(node), rname) || ""
+        end
+
+        full = recv_prefix.empty? ? ps : join_paths(recv_prefix, ps)
+        result << ClosureGroup.new(
+          LibTreeSitter.ts_node_start_byte(body),
+          LibTreeSitter.ts_node_end_byte(body),
+          param,
+          full,
+        )
+      end
+      result
+    end
+
+    # Innermost closure-group prefix for a verb call at byte offset
+    # `pos` whose receiver is `name` — the smallest body that both
+    # contains `pos` and binds `name`. Returns nil when none match.
+    private def closure_prefix_for(groups : Array(ClosureGroup), pos : UInt32, name : String) : String?
+      best : ClosureGroup? = nil
+      groups.each do |g|
+        next unless g.param == name
+        next unless pos >= g.start_byte && pos < g.end_byte
+        if best.nil? || (g.end_byte - g.start_byte) < (best.end_byte - best.start_byte)
+          best = g
+        end
+      end
+      best.try &.prefix
     end
 
     # Decode mux route chains:

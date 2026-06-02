@@ -61,22 +61,69 @@ module Analyzer::Go
                         public_dirs << {"static_path" => sp.url_prefix, "file_path" => sp.disk_path}
                       end
 
-                      # Resolve 1-hop callees for every .go route.
+                      # Resolve 1-hop callees for every verb-style .go
+                      # route. (Done before AddRoutes routes are folded in
+                      # below: their handlers are cross-package wrapper
+                      # refs, so directory-scoped body resolution can't
+                      # reach them — they carry no 1-hop callees.)
                       route_rows = Set(Int32).new
                       routes_by_line.each_key { |row| route_rows << row }
                       external_fns = ts_function_bodies_for_directory(package_function_bodies, File.dirname(path))
                       callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
+
+                      # go-zero's canonical generated `routes.go`:
+                      # `server.AddRoutes([]rest.Route{ {Method, Path,
+                      # Handler}, ... }, rest.WithPrefix("/p"))`. These are
+                      # struct literals, not verb calls, so the generic
+                      # extractor misses them. Fold them into the same
+                      # per-line map for emission with full mounted paths.
+                      Noir::TreeSitterGoRouteExtractor.extract_gozero_routes(content).each do |r|
+                        routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
+                        routes_by_line[r.line] << r
+                      end
                     end
+
+                    # `.api` route paths are relative to the `@server`
+                    # block's `prefix:` (and go-zero mounts them under
+                    # it). Track the active prefix as we scan so each
+                    # `post /user/login` resolves to its full mounted
+                    # path (`/usercenter/v1/user/login`) — matching what
+                    # the generated `routes.go` registers via
+                    # `rest.WithPrefix(...)`, so the two representations
+                    # dedupe instead of producing half-paths.
+                    api_prefix = ""
+                    in_server_block = false
 
                     lines.each_with_index do |line, index|
                       details = Details.new(PathInfo.new(path, index + 1))
 
                       # Handle .api files (go-zero API definition files)
                       if File.extname(path) == ".api"
+                        stripped = line.strip
+                        if stripped.starts_with?("@server")
+                          in_server_block = true
+                          api_prefix = ""
+                        elsif in_server_block && (pm = stripped.match(/^prefix:\s*"?([^"\s]+)"?/))
+                          pfx = pm[1].strip
+                          api_prefix = if pfx.empty?
+                                         ""
+                                       else
+                                         pfx.starts_with?("/") ? pfx : "/#{pfx}"
+                                       end
+                        elsif in_server_block && stripped.starts_with?(")")
+                          in_server_block = false
+                        end
+
                         if match = line.match(/^\s*(get|post|put|delete|patch|head|options)\s+([^\s\(]+)/)
                           method = match[1].upcase
                           route_path = match[2]
-                          new_endpoint = Endpoint.new(route_path, method, details)
+                          full_path = if api_prefix.empty?
+                                        route_path
+                                      else
+                                        rel = route_path.starts_with?("/") ? route_path : "/#{route_path}"
+                                        "#{api_prefix}#{rel}"
+                                      end
+                          new_endpoint = Endpoint.new(full_path, method, details)
                           result << new_endpoint
                           last_endpoint = new_endpoint
                         end

@@ -440,4 +440,107 @@ describe Noir::TreeSitterGoRouteExtractor do
     routes = Noir::TreeSitterGoRouteExtractor.extract_beego_routes(source)
     routes.map(&.path).should eq(["/yes"])
   end
+
+  it "drops gf value-getter `.Get(...)` and BindMiddleware/BindHookHandler" do
+    # genv.Get / r.Get / gmeta.Get pass a bare key, never a `/`-path;
+    # BindMiddleware/BindHookHandler attach to a pattern but aren't routes.
+    source = <<-GO
+      package main
+      func main() {
+          _ = genv.Get("GOPATH").String()
+          _ = r.Get("authorization").String()
+          _ = gmeta.Get(Req{}, "path").String()
+          s.BindMiddleware("/*any", mw)
+          s.BindHookHandler("/*any", hook, mw)
+          s.BindHandler("/real", handler)
+          s.GET("/verb", handler)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_gf_routes(source)
+    routes.map(&.path).sort!.should eq(["/real", "/verb"])
+  end
+
+  it "extracts gf g.Meta standardized routes with method fan-out and params" do
+    source = <<-GO
+      package v1
+      type GetUserReq struct {
+          g.Meta `path:"/user/get" method:"get"`
+          Id     int    `json:"id"`
+      }
+      type SaveReq struct {
+          g.Meta `path:"/user/save" method:"put,patch"`
+      }
+      type ListReq struct {
+          g.Meta `path:"/user/list"`
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_gf_meta_routes(source)
+    pairs = routes.flat_map { |r| r.methods.map { |m| {m, r.path} } }.sort!
+    pairs.should eq([
+      # method-less -> "ALL" (analyzer fans this out to every verb)
+      {"ALL", "/user/list"},
+      {"GET", "/user/get"},
+      {"PATCH", "/user/save"},
+      {"PUT", "/user/save"},
+    ].sort)
+    routes.find { |r| r.path == "/user/get" }.not_nil!.params.should eq(["id"])
+  end
+
+  it "extracts go-zero AddRoutes slice, AddRoute single, and group prefixes" do
+    source = <<-GO
+      package handler
+      func RegisterHandlers(server *rest.Server) {
+          server.AddRoutes(
+              []rest.Route{
+                  {Method: http.MethodPost, Path: "/user/login", Handler: h},
+                  {Method: http.MethodGet, Path: "/user/info", Handler: h},
+              },
+              rest.WithPrefix("/v1"),
+          )
+          server.AddRoute(rest.Route{Method: http.MethodGet, Path: "/"})
+          g := server.Group("/api/v1")
+          g.AddRoute(rest.Route{Method: http.MethodDelete, Path: "/items/:id"})
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_gozero_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"DELETE", "/api/v1/items/:id"},
+      {"GET", "/"},
+      {"GET", "/v1/user/info"},
+      {"POST", "/v1/user/login"},
+    ].sort)
+  end
+
+  it "applies iris closure-group prefixes and method-first Handle/HandleMany" do
+    source = <<-GO
+      package main
+      func main() {
+          app := iris.New()
+          app.Handle("GET", "/h", handler)
+          app.HandleMany("GET POST", "/many", handler)
+          app.PartyFunc("/pf", func(p iris.Party) {
+              p.Get("/inside", handler)
+              p.PartyFunc("/admin", func(a iris.Party) {
+                  a.Get("/stats", handler)
+              })
+          })
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(
+      source, group_method: "Party",
+      handle_method: "Handle", handle_many_method: "HandleMany",
+      closure_group_methods: ["Party", "PartyFunc"]
+    )
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/h"},
+      {"GET", "/many"},
+      {"GET", "/pf/admin/stats"},
+      {"GET", "/pf/inside"},
+      {"POST", "/many"},
+    ].sort)
+  end
 end
