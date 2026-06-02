@@ -16,12 +16,29 @@ module Noir::LuaCalleeExtractor
     "setmetatable", "tonumber", "tostring", "type", "xpcall",
   }
 
+  # MoonScript-only keywords. These are NOT Lua keywords — `class`,
+  # `import`, `from`, `with`, `switch`, … are all legal (and common,
+  # e.g. middleclass's `class("Foo")`) Lua function names — so they are
+  # filtered ONLY when the source file is `.moon`, where `import X from`,
+  # `class … extends …`, and `switch`/`when` are statement keywords that
+  # would otherwise surface as phantom callees.
+  MOONSCRIPT_RESERVED = Set{
+    "import", "export", "from", "class", "extends", "with", "using",
+    "switch", "when", "unless", "continue",
+  }
+
   STANDARD_LIB_ROOTS = Set{
     "coroutine", "debug", "io", "math", "os", "package", "string",
     "table", "utf8",
   }
 
-  RECEIVER_CALL_REGEX = /(?<![A-Za-z0-9_@])(@?[A-Za-z_][A-Za-z0-9_]*(?:(?:\s*[.:\\]\s*)[A-Za-z_][A-Za-z0-9_]*)+)\s*(?:\(|(?=\s+(?:["'{]|\[\[|@)))/
+  # A receiver chain is `a.b`, `a:b` (Lua method call), or `a\b`
+  # (MoonScript method call). The `:` separator is kept space-free so a
+  # MoonScript table entry (`success: Flow(...)`, where `:` is a hash
+  # separator, not method access) is not glued onto the following call —
+  # Lua's `obj:method` never carries surrounding whitespace, whereas a
+  # MoonScript key always does. `.` and `\` keep optional whitespace.
+  RECEIVER_CALL_REGEX = /(?<![A-Za-z0-9_@])(@?[A-Za-z_][A-Za-z0-9_]*(?:(?:\s*[.\\]\s*|:)[A-Za-z_][A-Za-z0-9_]*)+)\s*(?:\(|(?=\s+(?:["'{]|\[\[|@)))/
   SELF_CALL_REGEX     = /(?<![A-Za-z0-9_])(@[A-Za-z_][A-Za-z0-9_]*)\s*(?:\(|(?=\s+(?:["'{]|\[\[|[A-Za-z_@])))/
   BARE_CALL_REGEX     = /(?<![A-Za-z0-9_.:\\@])([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(|(?=\s*(?:["'{]|\[\[)))/
   COMMAND_CALL_REGEX  = /(?:^\s*|[=,;]\s*|\breturn\s+)([A-Za-z_][A-Za-z0-9_]*)\s+(?=["'{A-Za-z_@\[])/
@@ -129,6 +146,43 @@ module Noir::LuaCalleeExtractor
     {body_lines.join("\n"), body_start_line}
   end
 
+  # Extract a MoonScript class-action value: everything from `value_start`
+  # (just past a route header's `:`) through the end of the indentation
+  # block the header introduces. Unlike `extract_moonscript_block_after`,
+  # which assumes an inline arrow and stops at the first body line, this
+  # keeps the header line's trailing content (`respond_to {`, a wrapper
+  # call, an inline arrow) together with every more-indented line that
+  # follows, so `respond_to` blocks and wrapped handlers are captured
+  # whole. `start_line` is the header line, matching the offsets callers
+  # already expect for inline arrows.
+  def moonscript_value_region(source : String, value_start : Int32) : Tuple(String, Int32)?
+    return if value_start >= source.size
+
+    header_line_start = line_start_for(source, value_start)
+    header_indent = indentation_at(source, header_line_start)
+    region_end = line_end_for(source, value_start)
+    index = region_end < source.size ? region_end + 1 : source.size
+
+    while index < source.size
+      current_end = line_end_for(source, index)
+      line = source[index...current_end]
+
+      if line.strip.empty?
+        region_end = current_end
+        index = current_end < source.size ? current_end + 1 : source.size
+        next
+      end
+
+      break if indentation_at(source, index) <= header_indent
+
+      region_end = current_end
+      index = current_end < source.size ? current_end + 1 : source.size
+    end
+
+    return if region_end <= value_start
+    {source[value_start...region_end], line_number_for(source, value_start)}
+  end
+
   def find_matching_delimiter(source : String, open_index : Int32, open_char : Char, close_char : Char,
                               limit : Int32 = source.size) : Int32?
     depth = 0
@@ -214,9 +268,10 @@ module Noir::LuaCalleeExtractor
     scan_candidates(line, BARE_CALL_REGEX, candidates)
     scan_candidates(line, COMMAND_CALL_REGEX, candidates)
 
+    moonscript = file_path.ends_with?(".moon")
     candidates.sort_by! { |position, _| position }
     candidates.each do |position, name|
-      next if skip_callee?(name)
+      next if skip_callee?(name, moonscript)
       next if declaration_name?(line, position)
 
       entries << {normalize_name(name), file_path, line_number}
@@ -235,14 +290,14 @@ module Noir::LuaCalleeExtractor
     normalized
   end
 
-  private def skip_callee?(name : String) : Bool
+  private def skip_callee?(name : String, moonscript : Bool = false) : Bool
     return true if name.empty?
 
     normalized = normalize_name(name)
     parts = normalized.split('.')
     return STANDARD_LIB_ROOTS.includes?(parts.first) if parts.size > 1
 
-    RESERVED.includes?(normalized)
+    RESERVED.includes?(normalized) || (moonscript && MOONSCRIPT_RESERVED.includes?(normalized))
   end
 
   private def declaration_name?(line : String, position : Int32) : Bool

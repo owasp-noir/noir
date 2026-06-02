@@ -17,11 +17,19 @@ module Analyzer::Lua
   #     `[name: "/path"]: =>`.
   #
   # Path parameters use `:name` and splats use `*name`, which already
-  # match noir's URL convention so they are surfaced verbatim.
+  # match noir's URL convention so they are surfaced verbatim. Lapis
+  # route patterns additionally carry Lua-pattern constraints
+  # (`:id[%d]`, `:slug[%w]`) and optional groups (`(/page/:page)`),
+  # neither of which belong in a concrete URL — both are normalised
+  # away. Sub-apps mounted with `app:include(...)` carry an
+  # `app.path = "/prefix"` that every route inherits, so the prefix is
+  # detected per file and prepended to the routes bound on that app.
   class Lapis < Analyzer
     HTTP_METHODS     = %w[GET POST PUT DELETE PATCH HEAD OPTIONS]
     FALLBACK_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"]
     APP_VAR_RE       = /(?:^|[^A-Za-z0-9_])(?:local\s+)?([A-Za-z_]\w*)\s*=\s*lapis\.Application(?:\b|:extend|\s*\()/
+    APP_PATH_RE      = /(?:^|[^A-Za-z0-9_.])([A-Za-z_]\w*)\.path\s*=\s*(['"])([^'"]*)\2/
+    MOON_PATH_RE     = /@path\s*:\s*(['"])([^'"]*)\1/
 
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
@@ -72,11 +80,13 @@ module Analyzer::Lua
                          {} of String => Noir::LuaCalleeExtractor::FunctionBody
                        end
       app_vars = detect_app_vars(cleaned)
+      app_paths = detect_app_paths(cleaned, app_vars)
+      moon_prefix = detect_moonscript_prefix(cleaned)
 
-      emit_method_calls(path, content, cleaned, include_callee, handler_bodies, app_vars)
-      emit_match_calls(path, content, cleaned, include_callee, handler_bodies, app_vars)
+      emit_method_calls(path, content, cleaned, include_callee, handler_bodies, app_vars, app_paths)
+      emit_match_calls(path, content, cleaned, include_callee, handler_bodies, app_vars, app_paths)
       emit_table_routes(path, content, cleaned, include_callee, handler_bodies)
-      emit_moonscript_routes(path, content, cleaned, include_callee)
+      emit_moonscript_routes(path, content, cleaned, include_callee, moon_prefix)
     end
 
     # Lapis projects typically bind their application to a `local app`,
@@ -97,6 +107,41 @@ module Analyzer::Lua
       vars.to_a
     end
 
+    # Sub-apps declare their mount prefix as `app.path = "/api/users"`.
+    # When the app is `include`d by a parent every route is served
+    # under that prefix, so `app:match("users", "", ...)` resolves to
+    # `/api/users` and `app:match("user", "/:id", ...)` to
+    # `/api/users/:id`. We map each application variable to its prefix
+    # and only keep the binding when the variable is a known app var,
+    # so unrelated `*.path` assignments (`parsed_url.path = ...`,
+    # `manifest.path = ...`) never pollute the lookup.
+    private def detect_app_paths(cleaned : String, app_vars : Array(String)) : Hash(String, String)
+      known = app_vars.to_set
+      paths = {} of String => String
+      cleaned.scan(APP_PATH_RE) do |match|
+        var = match[1]
+        next unless known.includes?(var)
+        paths[var] = match[3]
+      end
+      paths
+    end
+
+    # MoonScript Lapis controllers declare their mount prefix as a
+    # class field — `@path: "/account"` — the MoonScript analogue of
+    # Lua's `app.path = "/account"`. Without it every included
+    # controller's `[list: "/list"]` route collapses to a bare `/list`
+    # and distinct controllers' routes dedupe into one. We take the
+    # first `@path` literal in the file (one Application class per file
+    # is the universal convention) and prefix the file's MoonScript
+    # class actions with it.
+    private def detect_moonscript_prefix(cleaned : String) : String
+      if match = cleaned.match(MOON_PATH_RE)
+        match[2]
+      else
+        ""
+      end
+    end
+
     private def app_var_alternation(app_vars : Array(String)) : String
       app_vars.map { |v| Regex.escape(v) }.join("|")
     end
@@ -110,32 +155,36 @@ module Analyzer::Lua
                                   cleaned : String,
                                   include_callee : Bool,
                                   handler_bodies : Hash(String, Noir::LuaCalleeExtractor::FunctionBody),
-                                  app_vars : Array(String))
+                                  app_vars : Array(String),
+                                  app_paths : Hash(String, String))
       alt = app_var_alternation(app_vars)
-      pattern = /\b(?:#{alt})\s*[:.]\s*(get|post|put|delete|patch|head|options)\s*\(?\s*(['"])([^'"]+)\2(?:\s*,\s*(['"])([^'"]+)\4)?/
+      pattern = /\b(#{alt})\s*[:.]\s*(get|post|put|delete|patch|head|options)\s*\(?\s*(['"])([^'"]*)\3(?:\s*,\s*(['"])([^'"]*)\5)?/
       cleaned.scan(pattern) do |match|
-        verb = match[1].upcase
+        var = match[1]
+        verb = match[2].upcase
         next unless HTTP_METHODS.includes?(verb)
-        first = match[3]
-        second = match[5]?
+        first = match[4]
+        second = match[6]?
 
-        url : String? = nil
+        relative : String? = nil
         after_url = match.begin(0) || 0
         if first.starts_with?("/")
           # Either `app:get("/path", handler)` or the
           # `app:get("/path", "named_handler_name")` string-handler form.
           # Stop the callee search just past the first string so the
           # named handler lookup in `route_call_callees` still works.
-          url = first
-          after_url = (match.end(3) || 0) + 1
-        elsif second && second.starts_with?("/")
+          relative = first
+          after_url = (match.end(4) || 0) + 1
+        elsif !second.nil?
           # Lapis's named-route form: `app:get("name", "/path", handler)`.
-          # The first arg is the route name, not the URL.
-          url = second
-          after_url = (match.end(5) || 0) + 1
+          # The first arg is the route name, not the URL — the second
+          # string is the (possibly empty, prefix-relative) path.
+          relative = second
+          after_url = (match.end(6) || 0) + 1
         end
-        next unless url
+        next if relative.nil?
 
+        url = resolve_url(app_paths[var]?, relative)
         route_offset = match.begin(0) || 0
         callees = include_callee ? route_call_callees(path, content, route_offset, after_url, handler_bodies) : [] of Noir::LuaCalleeExtractor::Entry
         emit_endpoint(path, content, route_offset, url, [verb], callees)
@@ -149,24 +198,62 @@ module Analyzer::Lua
                                  cleaned : String,
                                  include_callee : Bool,
                                  handler_bodies : Hash(String, Noir::LuaCalleeExtractor::FunctionBody),
-                                 app_vars : Array(String))
+                                 app_vars : Array(String),
+                                 app_paths : Hash(String, String))
       alt = app_var_alternation(app_vars)
-      pattern = /\b(?:#{alt})\s*[:.]\s*match\s*\(?\s*(['"])([^'"]+)\1(?:\s*,\s*(['"])([^'"]+)\3)?/
+      pattern = /\b(#{alt})\s*[:.]\s*match\s*\(?\s*(['"])([^'"]*)\2(?:\s*,\s*(['"])([^'"]*)\4)?/
       cleaned.scan(pattern) do |match|
-        first = match[2]
-        second = match[4]?
-        url = if second && second.starts_with?("/")
-                second
-              elsif first.starts_with?("/")
-                first
-              else
-                next
-              end
+        var = match[1]
+        first = match[3]
+        second = match[5]?
+        relative = if first.starts_with?("/")
+                     # `app:match("/path", handler)` — first arg is the path.
+                     first
+                   elsif !second.nil?
+                     # `app:match("name", "/path", handler)` — named route;
+                     # second arg is the (possibly empty) prefix-relative path.
+                     second
+                   else
+                     next
+                   end
+        url = resolve_url(app_paths[var]?, relative)
         route_offset = match.begin(0) || 0
         url_end = match.end(0) || route_offset
+        methods = match_methods(cleaned, route_offset, url_end)
         callees = include_callee ? route_call_callees(path, content, route_offset, url_end, handler_bodies) : [] of Noir::LuaCalleeExtractor::Entry
-        emit_endpoint(path, content, route_offset, url, FALLBACK_METHODS, callees)
+        emit_endpoint(path, content, route_offset, url, methods, callees)
       end
+    end
+
+    # `app:match` dispatches on any HTTP method unless its handler is an
+    # inline `respond_to({ GET = ..., POST = ... })` table, which limits
+    # the route to the verbs it names. Pulling those verbs out turns the
+    # default all-methods fan-out into the real, smaller set and drops the
+    # phantom PUT/DELETE/PATCH endpoints. The alias form `r2(require ...)`
+    # carries no inline verbs (they live in the required module), so it
+    # correctly falls through to the full method set.
+    private def match_methods(cleaned : String, route_offset : Int32, url_end : Int32) : Array(String)
+      search_limit, _ = route_call_limits(cleaned, route_offset, url_end)
+      region = cleaned[route_offset...search_limit]? || ""
+      if region.includes?("respond_to")
+        verbs = scan_respond_to_verbs(region)
+        return verbs unless verbs.empty?
+      end
+      FALLBACK_METHODS
+    end
+
+    # Pull the HTTP verbs a `respond_to` table names. The verb must sit in
+    # a table-key position — directly after the opening `(`/`{`, a `,`
+    # separator, or a newline — so a verb-shaped token buried inside a
+    # handler body (`local POST = …`, a `"POST: "` string, a nested
+    # `{ DELETE = true }`) is not miscounted as a dispatched method.
+    private def scan_respond_to_verbs(region : String) : Array(String)
+      verbs = [] of String
+      region.scan(/[\n{,(]\s*(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\b\s*[=:]/) do |match|
+        verb = match[1].upcase
+        verbs << verb unless verbs.includes?(verb)
+      end
+      verbs
     end
 
     # `["/path"] = "handler"` and `["/path"] = function(self) ... end`
@@ -188,36 +275,86 @@ module Analyzer::Lua
       end
     end
 
-    # MoonScript class actions:
-    #   "/path": =>
-    #   [name: "/path"]: =>
-    private def emit_moonscript_routes(path : String, content : String, cleaned : String, include_callee : Bool)
-      simple = /(?:^|\n)\s*(['"])([^'"]+)\1\s*:\s*=>/m
-      cleaned.scan(simple) do |match|
-        url = match[2]
-        next unless url.starts_with?("/")
-
-        route_offset = match.begin(2) || match.begin(0) || 0
-        arrow_end = match.end(0) || route_offset
-        callees = include_callee ? moonscript_route_callees(path, content, arrow_end) : [] of Noir::LuaCalleeExtractor::Entry
-        emit_endpoint(path, content, route_offset, url, FALLBACK_METHODS, callees)
-      end
-
-      named = /\[\s*[A-Za-z_]\w*\s*:\s*(['"])([^'"]+)\1\s*\]\s*:\s*=>/
+    # MoonScript class actions come in several shapes, all keyed by the
+    # route path:
+    #
+    #   "/path": =>                              -- inline arrow (any verb)
+    #   [name: "/path"]: =>                      -- named, inline arrow
+    #   [name: "/path"]: respond_to { GET: => }  -- verb-specific handlers
+    #   [name: "/path"]: capture_errors_json =>  -- wrapped arrow
+    #   [name: "/path"]: capture_errors_json respond_to { ... }
+    #
+    # The earlier implementation only matched the two inline-arrow forms,
+    # dropping every `respond_to` / wrapped handler — the dominant idiom
+    # in real MoonScript Lapis apps. We now match the route header
+    # regardless of what follows the `:` and inspect the action region to
+    # recover the HTTP verbs (from a `respond_to` block) and callees.
+    private def emit_moonscript_routes(path : String, content : String, cleaned : String, include_callee : Bool, moon_prefix : String)
+      # Bracketed named routes `[name: "/path"]:` are unambiguous Lapis
+      # syntax, so we accept any action body. Bare `"/path":` keys are
+      # only treated as routes when the path is rooted and the body
+      # carries an action marker (`=>` / `respond_to`), so string→string
+      # config tables in non-route files are not mistaken for endpoints.
+      named = /(?:^|\n)[ \t]*\[\s*[A-Za-z_]\w*\s*:\s*(['"])([^'"]+)\1\s*\]\s*:/
       cleaned.scan(named) do |match|
         url = match[2]
         next unless url.starts_with?("/")
-
-        route_offset = match.begin(2) || match.begin(0) || 0
-        arrow_end = match.end(0) || route_offset
-        callees = include_callee ? moonscript_route_callees(path, content, arrow_end) : [] of Noir::LuaCalleeExtractor::Entry
-        emit_endpoint(path, content, route_offset, url, FALLBACK_METHODS, callees)
+        emit_moonscript_route(path, content, cleaned, include_callee, moon_prefix, url,
+          match.begin(2) || match.begin(0) || 0, match.end(0) || 0, require_action: false)
       end
+
+      simple = /(?:^|\n)[ \t]*(['"])(\/[^'"]*)\1\s*:/
+      cleaned.scan(simple) do |match|
+        url = match[2]
+        emit_moonscript_route(path, content, cleaned, include_callee, moon_prefix, url,
+          match.begin(2) || match.begin(0) || 0, match.end(0) || 0, require_action: true)
+      end
+    end
+
+    private def emit_moonscript_route(path : String, content : String, cleaned : String,
+                                      include_callee : Bool, moon_prefix : String, url : String,
+                                      route_offset : Int32, value_start : Int32, require_action : Bool)
+      region = Noir::LuaCalleeExtractor.moonscript_value_region(cleaned, value_start)
+      region_text = region ? region[0] : ""
+      return if require_action && !moonscript_action?(region_text)
+
+      methods = moonscript_methods(region_text)
+      callees = include_callee ? moonscript_route_callees(path, content, value_start) : [] of Noir::LuaCalleeExtractor::Entry
+      emit_endpoint(path, content, route_offset, resolve_url(moon_prefix, url), methods, callees)
+    end
+
+    # Decide whether a bare `"/path":` key is a route. Its value is an
+    # action when it is an arrow (`=>`), a `respond_to` block, or a
+    # handler expression — `require "lapis.console" .make!`,
+    # `capture_errors_json with_params {...}, (p) =>`, an action class.
+    # Those all begin with an identifier/`@`. A value that opens with a
+    # string or number literal (`"/old": "/new"`) is a config-table
+    # entry, not a route, so it is rejected — guarding the broadened
+    # bare-key match against string→string maps in non-route files.
+    private def moonscript_action?(region_text : String) : Bool
+      return true if region_text.includes?("=>") || region_text.includes?("respond_to")
+      stripped = region_text.lstrip
+      return false if stripped.empty?
+      first = stripped[0]
+      first.ascii_letter? || first == '_' || first == '@'
+    end
+
+    # Recover the HTTP verbs a MoonScript action serves. A
+    # `respond_to { GET: =>, POST: => }` block names its verbs
+    # explicitly; a bare arrow handles every method, so fall back to the
+    # full verb set.
+    private def moonscript_methods(region_text : String) : Array(String)
+      if region_text.includes?("respond_to")
+        verbs = scan_respond_to_verbs(region_text)
+        return verbs unless verbs.empty?
+      end
+      FALLBACK_METHODS
     end
 
     private def emit_endpoint(path : String, content : String, offset : Int32,
                               url : String, methods : Array(String),
                               callees : Array(Noir::LuaCalleeExtractor::Entry) = [] of Noir::LuaCalleeExtractor::Entry)
+      url = normalize_lapis_url(url)
       params = extract_path_params(url)
       line = line_for_offset(content, offset)
       details = Details.new(PathInfo.new(path, line))
@@ -268,9 +405,9 @@ module Analyzer::Lua
       [] of Noir::LuaCalleeExtractor::Entry
     end
 
-    private def moonscript_route_callees(path : String, content : String, arrow_end : Int32) : Array(Noir::LuaCalleeExtractor::Entry)
-      if body = Noir::LuaCalleeExtractor.extract_moonscript_block_after(content, arrow_end)
-        body_text, start_line = body
+    private def moonscript_route_callees(path : String, content : String, value_start : Int32) : Array(Noir::LuaCalleeExtractor::Entry)
+      if region = Noir::LuaCalleeExtractor.moonscript_value_region(content, value_start)
+        body_text, start_line = region
         return Noir::LuaCalleeExtractor.callees_for_body(body_text, path, start_line)
       end
 
@@ -412,6 +549,64 @@ module Analyzer::Lua
         cursor += 1
       end
       cursor < chars.size && chars[cursor] == ']'
+    end
+
+    # Join a sub-app's `app.path` prefix (if any) with a route's
+    # declared pattern. Lapis concatenates the two strings, so an empty
+    # pattern collapses to the bare prefix (`/api/users`) and a
+    # slash-prefixed pattern appends cleanly. The final normalisation in
+    # `normalize_lapis_url` collapses any `//` the join introduces.
+    private def resolve_url(prefix : String?, relative : String) : String
+      prefix ||= ""
+      combined = if relative.empty?
+                   prefix
+                 elsif prefix.empty?
+                   relative
+                 elsif relative.starts_with?("/")
+                   "#{prefix}#{relative}"
+                 else
+                   "#{prefix}/#{relative}"
+                 end
+      combined = "/#{combined}" unless combined.starts_with?("/")
+      combined
+    end
+
+    # Lapis route patterns are not concrete URLs: a param can carry a
+    # Lua-pattern constraint (`:id[%d]`, `:slug[%w%-]`) and any portion
+    # of the path can be wrapped in an optional group (`(/page/:page)`,
+    # `(#:anchor)`). Strip the constraints back to the bare param name
+    # and peel every (possibly nested) optional group down to its
+    # required base, matching the convention noir's Rails analyzer uses,
+    # then collapse the `//` and trailing-`/` artifacts that remain.
+    private def normalize_lapis_url(url : String) : String
+      result = url.gsub(/([:*][A-Za-z_]\w*)\[[^\]]*\]/, "\\1")
+      result = strip_optional_groups(result) if result.includes?('(')
+      result = result.gsub(%r{/{2,}}, "/")
+      result = result.rchop('/') if result.size > 1 && result.ends_with?('/')
+      result = "/" if result.empty?
+      result
+    end
+
+    # Peel Lapis optional groups `(...)` down to their required base in a
+    # single linear pass (depth-tracked): characters inside any (possibly
+    # nested) group are dropped. This is equivalent to repeatedly removing
+    # the innermost group on balanced input but runs in O(n) — a repeated
+    # `gsub(/\([^()]*\)/, "")` loop is O(n²) on deeply nested patterns and
+    # lets a crafted route string (`/x(((((…)))))`) stall a scan.
+    private def strip_optional_groups(url : String) : String
+      result = String::Builder.new
+      depth = 0
+      url.each_char do |char|
+        case char
+        when '('
+          depth += 1
+        when ')'
+          depth -= 1 if depth > 0
+        else
+          result << char if depth == 0
+        end
+      end
+      result.to_s
     end
 
     private def extract_path_params(url : String) : Array(Param)
