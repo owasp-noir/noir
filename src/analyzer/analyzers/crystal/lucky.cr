@@ -92,14 +92,17 @@ module Analyzer::Crystal
 
     RESOURCEFUL_ACTIONS = %w[index show new create edit update delete]
 
-    # When a line opens an `action do` / `nested_route do` block inside an
-    # action class, infer the route the way Lucky's `RouteInferrer` does:
-    # split the class name, the last piece is the resourceful action, the
-    # piece before it is the resource. `nested_route` additionally folds in
-    # the parent resource as `/parent/:parent_id`. Returns `{method, url}`.
+    # When a line opens a `route do` / `action do` / `nested_route do` block
+    # inside an action class, infer the route the way Lucky's `RouteInferrer`
+    # does: split the class name, the last piece is the resourceful action,
+    # the piece before it is the resource. Lucky exposes the inference under
+    # both `route` and `action` (real apps use either); `nested_route`
+    # additionally folds in the parent as `/parent/:parent_id`. The leading
+    # `route\b` won't match `routes`/`route_prefix`/`route_style`, and a
+    # non-resourceful class name infers nothing. Returns `{method, url}`.
     private def infer_lucky_action_route(content : String, current_class : String) : Tuple(String, String)?
       return if current_class.empty?
-      match = content.match(/^\s*(action|nested_route)\b.*\bdo\b/)
+      match = content.match(/^\s*(action|nested_route|route)\b.*\bdo\b/)
       return unless match
       nested = match[1] == "nested_route"
 
