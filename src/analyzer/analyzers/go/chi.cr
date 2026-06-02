@@ -27,6 +27,10 @@ module Analyzer::Go
       package_files = Hash(String, Array(String)).new
       file_contents_cache = Hash(String, String).new
       file_lines_cache = Hash(String, Array(String)).new
+      # Directories that hold at least one chi-importing file. Route-path
+      # constants (`const tokenPath = "/api/v2/token"`) are resolved only
+      # for these so unrelated packages don't pay for an extra parse.
+      chi_dirs = Set(String).new
 
       get_files_by_extension(".go").each do |scan_path|
         next if File.directory?(scan_path)
@@ -36,6 +40,7 @@ module Analyzer::Go
           package_files[dir] << scan_path
 
           content = read_file_content(scan_path)
+          chi_dirs << dir if content.includes?(IMPORT_MARKER)
           # Cache contents for every Go file in the package — the
           # cross-file callee map and Mount-expansion walker both
           # need handler/helper functions that live in non-chi
@@ -72,6 +77,37 @@ module Analyzer::Go
       # that as a follow-up; for now Mount endpoints keep an empty
       # callees list.
       package_function_bodies = Noir::GoCalleeExtractor.package_function_bodies_if(callees_needed?, file_contents_cache)
+      # Method-value handlers (`s.handleOIDCRedirect`, `router.Get(p,
+      # h.Show)`) resolve to their method bodies so callees aren't empty
+      # when chi apps hang handlers off a server/controller struct.
+      package_method_bodies = Noir::GoCalleeExtractor.package_method_bodies_if(callees_needed?, file_contents_cache)
+
+      # Per-directory string-constant map so a route registered in one
+      # file (`server.go`: `r.Get(tokenPath, h)`) resolves a path
+      # constant declared in a sibling file (`httpd.go`:
+      # `const tokenPath = "/api/v2/token"`). Conflicting redefinitions
+      # across files are dropped so an ambiguous name never resolves to
+      # the wrong path.
+      package_string_values = Hash(String, Hash(String, String)).new
+      chi_dirs.each do |dir|
+        next unless files = package_files[dir]?
+        merged = Hash(String, String).new
+        ambiguous = Set(String).new
+        files.each do |fp|
+          content = file_contents_cache[fp]?
+          next unless content
+          Noir::TreeSitterGoRouteExtractor.extract_string_values(content).each do |name, value|
+            next if ambiguous.includes?(name)
+            if (existing = merged[name]?) && existing != value
+              merged.delete(name)
+              ambiguous << name
+            else
+              merged[name] = value
+            end
+          end
+        end
+        package_string_values[dir] = merged unless merged.empty?
+      end
 
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       begin
@@ -102,7 +138,8 @@ module Analyzer::Go
                   # bodies of functions that are expanded via Mount (those
                   # are handled below to get their `/admin` prefix).
                   ts_routes = Noir::TreeSitterGoRouteExtractor
-                    .extract_chi_routes(content, mounted_functions)
+                    .extract_chi_routes(content, mounted_functions,
+                      package_string_values[dir]? || Hash(String, String).new)
                   routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
                   ts_routes.each do |r|
                     routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
@@ -117,7 +154,8 @@ module Analyzer::Go
                   route_rows = Set(Int32).new
                   routes_by_line.each_key { |row| route_rows << row }
                   external_fns = Noir::GoCalleeExtractor.function_bodies_for_directory(package_function_bodies, dir)
-                  callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
+                  external_methods = Noir::GoCalleeExtractor.method_bodies_for_directory(package_method_bodies, dir)
+                  callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns, external_methods)
 
                   state = ChiRouteState.new
                   last_endpoint = Endpoint.new("", "")
