@@ -24,25 +24,90 @@ module Analyzer::Go
     alias MessageFields = Array(Param)
     alias ServiceMount = NamedTuple(file: String, line: Int32)
 
+    # Maps the generated handler-constructor to a streaming descriptor.
+    HANDLER_KIND_REGEX = /connect\.New(Unary|ClientStream|ServerStream|BidiStream)Handler\s*\(\s*(\w+Procedure)/m
+    PROCEDURE_REGEX    = /\b(\w+Procedure)\s*=\s*"(\/[\w.]+\/\w+)"/
+
     def analyze
       locator = CodeLocator.instance
       proto_files = locator.all("grpc-proto")
-      return @result if proto_files.empty?
 
-      service_mounts = discover_service_mounts
+      unless proto_files.empty?
+        service_mounts = discover_service_mounts
 
-      proto_files.each do |proto_file|
-        begin
-          content = read_file_content(proto_file)
-          parse_proto(content, proto_file, service_mounts)
-        rescue File::NotFoundError
-          @logger.debug "Proto file not found during analysis, skipping: #{proto_file}"
-        rescue e
-          @logger.debug "ConnectRpc parse error for #{proto_file}: #{e.message}"
+        proto_files.each do |proto_file|
+          begin
+            content = read_file_content(proto_file)
+            parse_proto(content, proto_file, service_mounts)
+          rescue File::NotFoundError
+            @logger.debug "Proto file not found during analysis, skipping: #{proto_file}"
+          rescue e
+            @logger.debug "ConnectRpc parse error for #{proto_file}: #{e.message}"
+          end
         end
       end
 
+      # Fallback/supplement: generated `*.connect.go` files declare every
+      # RPC's fully-qualified route as a `XxxProcedure = "/pkg.Service/
+      # Method"` constant. Repos that ship only the generated code (no
+      # committed `.proto`) would otherwise produce zero endpoints. URLs
+      # already surfaced from a proto are skipped so the richer
+      # proto-driven endpoints (params/streaming) win when both exist.
+      seen_urls = Set(String).new
+      @result.each { |ep| seen_urls << ep.url }
+      discover_connect_go_endpoints(seen_urls)
+
       @result
+    end
+
+    # Scans generated `*.connect.go` files for RPC procedure constants and
+    # emits one Connect endpoint per fully-qualified route not already
+    # covered by a proto. Streaming is recovered from the matching
+    # `connect.NewXxxHandler(XxxProcedure, ...)` constructor.
+    private def discover_connect_go_endpoints(seen_urls : Set(String))
+      get_files_by_extension(".go").each do |path|
+        next if File.directory?(path)
+        next if GoEngine.go_test_file?(path)
+        begin
+          content = read_file_content(path)
+          next unless content.includes?(IMPORT_MARKER)
+          next unless content.includes?("Procedure")
+
+          kinds = {} of String => String
+          content.scan(HANDLER_KIND_REGEX) do |m|
+            kinds[m[2]] = m[1]
+          end
+
+          content.each_line.with_index do |line, index|
+            if m = line.match(PROCEDURE_REGEX)
+              const_name = m[1]
+              url = m[2]
+              next if seen_urls.includes?(url)
+              seen_urls << url
+
+              details = Details.new(PathInfo.new(path, index + 1))
+              endpoint = Endpoint.new(url, "POST", details)
+              endpoint.protocol = "connect"
+              endpoint.add_tag(Tag.new("content-type", CONNECT_CONTENT_TYPES, "connect_rpc_analyzer"))
+
+              if kind = kinds[const_name]?
+                streaming_desc = case kind
+                                 when "ClientStream" then "client-streaming"
+                                 when "ServerStream" then "server-streaming"
+                                 when "BidiStream"   then "client-streaming, server-streaming"
+                                 end
+                endpoint.add_tag(Tag.new("streaming", streaming_desc, "connect_rpc_analyzer")) if streaming_desc
+              end
+
+              @result << endpoint
+            end
+          end
+        rescue File::NotFoundError
+          @logger.debug "connect.go not found during analysis, skipping: #{path}"
+        rescue e
+          @logger.debug "ConnectRpc connect.go parse error for #{path}: #{e.message}"
+        end
+      end
     end
 
     # Walks every `.go` file in the project once, records each
