@@ -134,4 +134,45 @@ describe Noir::LuaCalleeExtractor do
       ])
     end
   end
+
+  it "treats MoonScript keywords as callees only in .moon sources" do
+    body = <<-SRC
+      local Animal = class("Animal")
+      import("mymodule")
+      return switch(Animal)
+      SRC
+
+    lua = Noir::LuaCalleeExtractor.callees_for_body(body, "app.lua", 1).map(&.[0])
+    lua.should contain("class")
+    lua.should contain("import")
+    lua.should contain("switch")
+
+    moon = Noir::LuaCalleeExtractor.callees_for_body(body, "app.moon", 1).map(&.[0])
+    moon.should_not contain("class")
+    moon.should_not contain("import")
+    moon.should_not contain("switch")
+  end
+
+  it "captures a whole MoonScript respond_to action region without leaking adjacent routes" do
+    source = <<-MOON
+      class extends lapis.Application
+        [profile: "/profile"]: respond_to {
+          GET: => load_profile @params
+          POST: => save_profile @params
+        }
+        [next: "/next"]: => other_call!
+      MOON
+
+    value_start = source.index!("respond_to") - 2 # just past the route header's ':'
+    region = Noir::LuaCalleeExtractor.moonscript_value_region(source, value_start)
+    region.should_not be_nil
+
+    region.try do |text, start_line|
+      start_line.should eq(2)
+      text.should contain("respond_to")
+      text.should contain("load_profile")
+      text.should contain("save_profile")
+      text.should_not contain("other_call")
+    end
+  end
 end
