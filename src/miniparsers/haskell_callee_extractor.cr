@@ -38,13 +38,21 @@ module Noir::HaskellCalleeExtractor
       end
 
       name = match[1]
-      if skip_callee?(name) || line.includes?("::")
+      if skip_callee?(name)
         index += 1
         next
       end
 
       equals_index = line.index('=')
       unless equals_index
+        index += 1
+        next
+      end
+
+      # A `::` before the `=` marks a type signature (`foo :: (C a) => a`), not a
+      # definition. Only inspect the head; an inline annotation in the body
+      # (e.g. `apiSwagger = toSwagger (Proxy :: Proxy API)`) is a real binding.
+      if line[0...equals_index].includes?("::")
         index += 1
         next
       end

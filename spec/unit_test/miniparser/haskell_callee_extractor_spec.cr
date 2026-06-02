@@ -40,6 +40,22 @@ describe Noir::HaskellCalleeExtractor do
     ])
   end
 
+  it "treats a binding with an inline body annotation as a definition" do
+    source = <<-HASKELL
+      apiInfo :: Info
+      apiInfo = buildInfo (Proxy :: Proxy API)
+
+      typed = decode payload :: Maybe Value
+      HASKELL
+
+    bodies = Noir::HaskellCalleeExtractor.function_bodies(source, "Api.hs")
+    bodies.map { |body| body[:name] }.should eq(["apiInfo", "typed"])
+
+    apiinfo = bodies.find { |body| body[:name] == "apiInfo" }.not_nil!
+    callees = Noir::HaskellCalleeExtractor.callees_for_body(apiinfo[:body], apiinfo[:path], apiinfo[:start_line])
+    callees.map { |name, _, _| name }.should contain("buildInfo")
+  end
+
   it "extracts direct calls from Haskell handler bodies" do
     body = <<-HASKELL
       do
