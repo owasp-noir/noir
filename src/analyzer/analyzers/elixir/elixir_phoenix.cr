@@ -132,7 +132,10 @@ module Analyzer::Elixir
     end
 
     private def statement_open?(buffer : String) : Bool
-      trimmed = buffer.rstrip
+      # Judge continuation on a string-blanked copy so brackets/commas
+      # inside a literal path (`resources "/a[b", Ctrl`) don't read as an
+      # unbalanced, still-open statement.
+      trimmed = Noir::ElixirCalleeExtractor.strip_comment(buffer).rstrip
       return false if trimmed.empty?
       return true if trimmed.ends_with?(",")
       opens = trimmed.count('[') + trimmed.count('(') + trimmed.count('{')
@@ -268,11 +271,16 @@ module Analyzer::Elixir
       while i < limit
         text = strip_trailing_comment(lines[i])
         buffer = buffer.empty? ? text.strip : "#{buffer} #{text.strip}"
-        paren += text.count('(') - text.count(')')
+        # Count parens and look for the block `do` on a string-blanked
+        # copy so a paren or the word `do` inside a default value
+        # (`def f(x \\ "(")`, `def f(mode \\ :do)`) doesn't skew the
+        # depth or fire early.
+        code = Noir::ElixirCalleeExtractor.strip_comment(text)
+        paren += code.count('(') - code.count(')')
         # The block opens at the first top-level `do` once the argument
         # list's parentheses are balanced; the paren guard keeps a `do`
         # buried in a default value or atom inside the args from firing.
-        if paren <= 0 && text.matches?(/\bdo\b(?!:)/)
+        if paren <= 0 && code.matches?(/\bdo\b(?!:)/)
           return {buffer, i}
         end
         i += 1
@@ -605,7 +613,6 @@ module Analyzer::Elixir
     # only affects the placeholder name, never the route structure.
     private def singularize(name : String) : String
       return "#{name[0, name.size - 3]}y" if name.ends_with?("ies") && name.size > 3
-      return name[0, name.size - 2] if name.ends_with?("ses") && name.size > 3
       return name[0, name.size - 1] if name.ends_with?("s") && name.size > 1
       name
     end

@@ -26,8 +26,13 @@ module Analyzer::Elixir
     # a `do` that isn't the inline `do:` keyword form, plus each `fn`,
     # minus each `end`.
     protected def elixir_block_depth_delta(line : String) : Int32
-      opens = line.scan(/\bdo\b(?!:)/).size + line.scan(/\bfn\b/).size
-      closes = line.scan(/\bend\b/).size
+      # Count on a string-and-comment-stripped copy so the keywords
+      # `do`/`fn`/`end` appearing inside a literal (`flash(conn, "…the
+      # end")`) or a trailing comment don't shift block depth and
+      # truncate the enclosing function.
+      code = Noir::ElixirCalleeExtractor.strip_comment(line)
+      opens = code.scan(/\bdo\b(?!:)/).size + code.scan(/\bfn\b/).size
+      closes = code.scan(/\bend\b/).size
       opens - closes
     end
 
