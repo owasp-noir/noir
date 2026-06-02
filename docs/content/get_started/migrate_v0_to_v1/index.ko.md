@@ -10,6 +10,8 @@ sort_by = "weight"
 거의 모든 v0 invocation 은 v1 에서 그대로 굴러갑니다. 이 페이지는 rename 과 behavior 변화, 명시적으로 깨진 항목 몇 가지를 한 곳에서 찾기 위한 정리입니다.
 {% end %}
 
+이 가이드는 훑어보기 좋게 구성했습니다. 아래 TL;DR 부터 보고, 실제로 스크립트나 대시보드가 건드리는 CLI·flag·출력 섹션만 골라서 보면 됩니다.
+
 ## TL;DR
 
 v1.0 은 **compatibility-first** 입니다. `noir -b ./app -P -f json` 같은 v0 호출은 자동으로 `scan` 서브커맨드로 라우팅되고, rename 된 모든 flag 는 옛 이름을 silent alias 로 유지합니다. 명시적으로 깨진 것은 `--ollama` / `--ollama-model` 뿐 (2024년부터 deprecated). 대체는 `--ai-provider ollama [--ai-model NAME]` 입니다.

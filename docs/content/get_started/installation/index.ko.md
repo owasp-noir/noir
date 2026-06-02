@@ -14,6 +14,8 @@ next_page_label = "첫 번째 스캔"
 Noir는 런타임 의존성 없이 단일 바이너리로 배포돼. 대부분의 사용자에게 Homebrew가 가장 빠르지만, 시스템에 맞는 걸 선택해.
 {% end %}
 
+아래 방법들은 모두 동일한 `noir` 바이너리를 설치하므로 하나만 고르면 됩니다. 대체로 간편한 순서로 정리했으니, 사용하는 플랫폼과 패키지 매니저에 맞는 항목을 선택하고 나머지는 건너뛰어도 됩니다.
+
 ## Homebrew (macOS 및 Linux)
 
 가장 간편한 방법. Noir에는 공식 [Homebrew formula](https://formulae.brew.sh/formula/noir)가 있습니다.
