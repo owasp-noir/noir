@@ -1,7 +1,7 @@
 require "../../func_spec.cr"
 
 expected_endpoints = [
-  Endpoint.new("/", "GET"),
+  Endpoint.new("/", "GET", [Param.new("locale", "", "query")]),
   Endpoint.new("/secret.html", "GET"),
   Endpoint.new("/api/me", "GET", [
     Param.new("q", "", "query"),

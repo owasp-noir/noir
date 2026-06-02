@@ -20,11 +20,29 @@ module Analyzer::Crystal
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       last_endpoint = Endpoint.new("", "")
 
+      # Lucky's `param name : Type` macro declares a query parameter at the
+      # class level, above the route block. Buffer declarations and flush
+      # them onto the next route; reset at each class boundary so a guide
+      # file with several example actions doesn't cross-attach params.
+      pending_params = [] of Param
+
       lines.each_with_index do |line, index|
+        stripped = Noir::CrystalCalleeExtractor.strip_comment(line)
+
+        if stripped.match(/^\s*(?:abstract\s+)?class\b/)
+          pending_params.clear
+        end
+
+        if decl = lucky_param_declaration(stripped)
+          pending_params << decl
+        end
+
         endpoint = line_to_endpoint(line)
-        unless endpoint.method.empty?
+        if !endpoint.method.empty? && valid_crystal_route_path?(endpoint.url)
           details = Details.new(PathInfo.new(path, index + 1))
           endpoint.details = details
+          pending_params.each { |p| endpoint.push_param(p) }
+          pending_params.clear
           attach_route_callees(endpoint, lines, index, path) if include_callee
           endpoints << endpoint
           last_endpoint = endpoint
@@ -39,6 +57,15 @@ module Analyzer::Crystal
       end
 
       endpoints
+    end
+
+    # `param name : Type` / `param name : Type = default` — Lucky's query
+    # parameter declaration macro. Requires the `name :` shape so prose such
+    # as "the param to determine the page" never matches.
+    private def lucky_param_declaration(content : String) : Param?
+      if match = content.match(/^\s*param\s+(\w+)\s*:/)
+        Param.new(match[1], "", "query")
+      end
     end
 
     private def attach_route_callees(endpoint : Endpoint, lines : Array(String), index : Int32, path : String)
