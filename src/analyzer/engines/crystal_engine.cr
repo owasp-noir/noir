@@ -21,7 +21,7 @@ module Analyzer::Crystal
         parallel_analyze(all_files) do |path|
           next if File.directory?(path)
           next unless File.exists?(path) && File.extname(path) == ".cr"
-          next if path.includes?("lib")
+          next if crystal_dependency_path?(path)
           # Crystal's standard test directory is `spec/`, and test
           # files always end in `_spec.cr`. Crystal framework repos
           # (lucky, marten, amber, kemal) park hundreds of route
@@ -54,6 +54,15 @@ module Analyzer::Crystal
         normalized = root.ends_with?("/") ? root : "#{root}/"
         path.starts_with?("#{normalized}spec/")
       end
+    end
+
+    # Shards installs dependencies under a `lib/` directory; skip them.
+    # Match the `lib/` path SEGMENT, not the bare substring "lib", so
+    # application directories like `library/`, `glib/`, or a project
+    # literally named `amber-library` aren't silently dropped (that bug
+    # made a real Amber app surface 0 routes — only public files).
+    protected def crystal_dependency_path?(path : String) : Bool
+      path.includes?("/lib/") || path.starts_with?("lib/")
     end
 
     # Crystal `"…"` strings interpolate `#{expr}`. The Kemal/Lucky/
@@ -106,7 +115,7 @@ module Analyzer::Crystal
       paths.each do |path|
         next if File.directory?(path)
         next unless File.exists?(path) && File.extname(path) == ".cr"
-        next if path.includes?("lib")
+        next if crystal_dependency_path?(path)
         begin
           collect_actions_into(index, File.read_lines(path), path)
         rescue e

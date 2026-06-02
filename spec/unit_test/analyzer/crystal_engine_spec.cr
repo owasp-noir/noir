@@ -35,6 +35,10 @@ class CrystalEngineSpecHarness < Analyzer::Crystal::CrystalEngine
   def test_resolve_action_callees(index : ActionIndex, controller : String, action : String)
     resolve_action_callees(index, controller, action)
   end
+
+  def test_crystal_dependency_path?(path : String) : Bool
+    crystal_dependency_path?(path)
+  end
 end
 
 describe Analyzer::Crystal::CrystalEngine do
@@ -173,6 +177,21 @@ describe Analyzer::Crystal::CrystalEngine do
 
     it "returns nil when no controller/action matches" do
       harness.test_resolve_action_callees(index, "Routes::Other", "missing").should be_nil
+    end
+  end
+
+  describe "#crystal_dependency_path?" do
+    it "skips the shards lib/ dependency directory" do
+      harness.test_crystal_dependency_path?("/app/lib/kemal/src/kemal.cr").should be_true
+      harness.test_crystal_dependency_path?("lib/foo/bar.cr").should be_true
+    end
+
+    it "keeps app dirs that merely contain the substring 'lib'" do
+      # Regression: a real Amber app under `amber-library/` surfaced 0
+      # routes because the old `path.includes?(\"lib\")` matched "library".
+      harness.test_crystal_dependency_path?("/app/amber-library/config/routes.cr").should be_false
+      harness.test_crystal_dependency_path?("/app/glib/src/app.cr").should be_false
+      harness.test_crystal_dependency_path?("/app/src/routes.cr").should be_false
     end
   end
 end
