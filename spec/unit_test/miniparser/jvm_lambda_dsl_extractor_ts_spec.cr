@@ -36,7 +36,8 @@ describe Noir::TreeSitterJvmLambdaDslExtractor do
       "post" => "POST",
       "any"  => "ANY",
     },
-    nest_methods: Set{"path"}
+    nest_methods: Set{"path"},
+    router_receivers: Set{"redirect"}
   )
 
   it "resolves constants and concatenations in paths and handler params" do
@@ -316,6 +317,35 @@ describe Noir::TreeSitterJvmLambdaDslExtractor do
       {"GET", "/legacy-home"},
       {"POST", "/legacy-submit"},
       {"ANY", "/legacy-any"},
+    ])
+  end
+
+  it "ignores collection calls that collide with verb method names" do
+    source = <<-JAVA
+      package com.example;
+
+      import static spark.Spark.*;
+      import java.util.HashMap;
+      import java.util.Map;
+
+      public class Application {
+          void register() {
+              Map<String, String> credentials = new HashMap<>();
+              String secret = credentials.get("admin");
+
+              get("/users/:name", (req, res) -> "hi");
+              post("/login", LoginHandler::handle);
+          }
+      }
+      JAVA
+
+    routes = Noir::TreeSitterJvmLambdaDslExtractor.extract_routes(source, spark_config)
+    # `credentials.get("admin")` reads like `get("/admin", ...)` by method
+    # name alone — but its receiver is a Map and it carries no handler, so
+    # it must not surface as a route.
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/users/:name"},
+      {"POST", "/login"},
     ])
   end
 end

@@ -59,6 +59,16 @@ module Noir
       getter cookie_methods : Set(String)
       getter body_methods : Set(String)
       getter body_typed_methods : Set(String)
+      # Receiver names (the `object` in `recv.get(...)`) that mark a
+      # verb call as a genuine route registration even when it carries
+      # no functional handler argument. Spark's redirect API
+      # (`redirect.get("/from", "/to")`) is the canonical case — its
+      # arguments are all string literals, so without an explicit
+      # allowlist it's indistinguishable from a colliding collection
+      # call like `map.put("k", "v")`. Matched against the receiver's
+      # last dotted segment, so both `redirect.get(...)` and
+      # `Spark.redirect.get(...)` resolve to `redirect`.
+      getter router_receivers : Set(String)
 
       def initialize(@verb_methods,
                      @nest_methods,
@@ -71,7 +81,8 @@ module Noir
                      @cookie_methods = Set(String).new,
                      @body_methods = Set(String).new,
                      @body_typed_methods = Set(String).new,
-                     @websocket_methods = Set(String).new)
+                     @websocket_methods = Set(String).new,
+                     @router_receivers = Set(String).new)
       end
     end
 
@@ -167,6 +178,8 @@ module Noir
                            method_bodies : Hash(String, LibTreeSitter::TSNode),
                            include_callees : Bool,
                            protocol : String = "http")
+      return unless route_invocation?(call, source, config)
+
       path_arg = first_string_argument(call, source, constants)
       if path_arg.nil?
         return if prefix.empty? || !pathless_handler_argument?(call)
@@ -504,6 +517,49 @@ module Noir
                                        source : String,
                                        constants : Hash(String, String)) : Bool
       !!first_string_argument(call, source, constants) || pathless_handler_argument?(call)
+    end
+
+    # Guard against collisions between verb method names and ordinary
+    # collection / builder calls that happen to share them — e.g.
+    # `usernamePasswords.put("foo", "bar")` (a `Map.put`) reads exactly
+    # like `put("/foo", handler)` once you only look at the method name
+    # and a string argument. A call is a genuine route when ANY holds:
+    #
+    #   * it's unqualified (`get("/x", ...)`) — `import static
+    #     spark.Spark.*` style, never a method on a user object;
+    #   * it carries a functional handler argument (lambda, method
+    #     reference, anonymous class, or class literal) — collection
+    #     mutators pass plain values, never handlers;
+    #   * its receiver is an allowlisted router (Spark's `redirect`),
+    #     which lets the all-string-literal redirect forms through.
+    private def route_invocation?(call : LibTreeSitter::TSNode,
+                                  source : String,
+                                  config : Config) : Bool
+      receiver = Noir::TreeSitter.field(call, "object")
+      return true unless receiver
+      return true if functional_handler_argument?(call)
+      config.router_receivers.includes?(receiver_key(receiver, source))
+    end
+
+    # Last dotted segment of the receiver expression: `redirect` for
+    # both `redirect.get(...)` and `service.redirect.get(...)`.
+    private def receiver_key(receiver : LibTreeSitter::TSNode, source : String) : String
+      Noir::TreeSitter.node_text(receiver, source).split('.').last.strip
+    end
+
+    private def functional_handler_argument?(call : LibTreeSitter::TSNode) : Bool
+      args = argument_list_node(call)
+      return false unless args
+
+      Noir::TreeSitter.each_named_child(args) do |arg|
+        case Noir::TreeSitter.node_type(arg)
+        when "lambda_expression", "method_reference",
+             "object_creation_expression", "class_literal"
+          return true
+        end
+      end
+
+      false
     end
 
     private def decode_string_literal(node : LibTreeSitter::TSNode, source : String) : String
