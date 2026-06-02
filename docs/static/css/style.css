@@ -311,8 +311,10 @@ body {
 }
 .sidebar-links {
     list-style: none;
-    padding: 0 0 0 0.5rem;
-    margin: 0;
+    /* Indent + guide rail so the level-2 group reads as nested under its heading */
+    margin: 0.15rem 0 0.4rem 1.15rem;
+    padding: 0 0 0 0.6rem;
+    border-left: 1px solid var(--border-light);
     overflow: hidden;
     transition: max-height 0.25s ease;
 }
@@ -363,9 +365,10 @@ body {
     padding: 0.35rem 0.75rem;
     background: none;
     border: none;
-    color: var(--text-muted);
+    /* Brighter + heavier than its leaf links so the group header stands out */
+    color: var(--text-secondary);
     font-size: 0.82rem;
-    font-weight: 500;
+    font-weight: 600;
     cursor: pointer;
     border-radius: 4px;
     transition:
@@ -379,8 +382,10 @@ body {
 }
 .sidebar-sublinks {
     list-style: none;
-    padding: 0 0 0 0.75rem;
-    margin: 0;
+    /* A second, lighter rail nests the level-3 leaves under their group header */
+    margin: 0.15rem 0 0.3rem 0.45rem;
+    padding: 0 0 0 0.65rem;
+    border-left: 1px solid var(--border);
     overflow: hidden;
     transition: max-height 0.25s ease;
 }
@@ -433,6 +438,8 @@ body {
 }
 .docs-article {
     max-width: var(--content-max);
+    /* Contain the floated mascot bubble inside the article flow */
+    display: flow-root;
 }
 
 /* ==========================================================================
@@ -1676,14 +1683,17 @@ p:has(> .member-card) {
     margin-top: 1.5rem;
 }
 .trust-logo {
-    height: 100px;
+    height: 60px;
     width: auto;
-    transition: opacity 0.2s;
+    opacity: 0.65;
+    transition:
+        opacity 0.2s,
+        filter 0.2s;
     filter: grayscale(1);
 }
 .trust-logo:hover {
-    opacity: 0.8;
-    filter: grayscale(0.5);
+    opacity: 1;
+    filter: grayscale(0);
 }
 
 /* ---- CTA ---- */
@@ -1719,17 +1729,40 @@ p:has(> .member-card) {
 .cta-inner > .section-desc {
     margin-bottom: 1.75rem;
 }
-.cta-mascot {
+/* CTA panel — mascot sits beside the copy instead of in its own row */
+.cta-panel {
     display: flex;
-    justify-content: center;
-    margin-bottom: 2rem;
+    align-items: center;
+    gap: 2.75rem;
+    text-align: left;
+    padding: 2.5rem 3rem;
+    background: var(--bg-content);
+    border: 1px solid var(--border);
+    border-radius: 14px;
 }
-.cta-mascot img {
-    max-width: 200px;
+.cta-panel-mascot {
+    flex-shrink: 0;
+    width: 150px;
+    line-height: 0;
+}
+.cta-panel-mascot img {
     width: 100%;
     height: auto;
-    border-radius: 12px;
-    filter: drop-shadow(0 4px 24px rgba(0, 0, 0, 0.15));
+    filter: drop-shadow(0 8px 28px rgba(0, 0, 0, 0.45));
+}
+.cta-panel-body {
+    min-width: 0;
+}
+.cta-desc {
+    color: var(--text-secondary);
+    font-size: 0.92rem;
+    line-height: 1.6;
+    margin: 0.5rem 0 1.5rem;
+    max-width: 460px;
+}
+.cta-contributors {
+    text-align: center;
+    margin-top: 3rem;
 }
 .cta-buttons {
     display: flex;
@@ -1737,6 +1770,10 @@ p:has(> .member-card) {
     gap: 0.75rem;
     flex-wrap: wrap;
     margin-bottom: 2.5rem;
+}
+.cta-panel .cta-buttons {
+    justify-content: flex-start;
+    margin-bottom: 0;
 }
 .cta-btn {
     display: inline-flex;
@@ -2028,11 +2065,23 @@ p:has(> .member-card) {
     .cta-title {
         font-size: 1.5rem;
     }
-    .cta-mascot img {
-        max-width: 220px;
+    /* Stack the CTA panel: mascot on top, copy below, centered */
+    .cta-panel {
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        gap: 1.5rem;
+        padding: 2.25rem 1.5rem;
     }
-    .cta-buttons {
-        margin-bottom: 2rem;
+    .cta-panel-mascot {
+        width: 120px;
+    }
+    .cta-desc {
+        margin-left: auto;
+        margin-right: auto;
+    }
+    .cta-panel .cta-buttons {
+        justify-content: center;
     }
 
     /* Footer */
@@ -2105,11 +2154,8 @@ p:has(> .member-card) {
     .cta-title {
         font-size: 1.25rem;
     }
-    .cta-mascot img {
-        max-width: 180px;
-    }
-    .cta-buttons {
-        margin-bottom: 1.5rem;
+    .cta-panel-mascot {
+        width: 104px;
     }
     .section-desc {
         font-size: 0.85rem;
@@ -2132,17 +2178,21 @@ p:has(> .member-card) {
    ========================================================================== */
 
 .mascot-bubble {
+    /* Float into the body so prose wraps around it on the right */
+    float: right;
+    clear: right;
+    width: 290px;
+    max-width: 38%;
+    margin: 0.35rem 0 1.1rem 1.75rem;
     display: flex;
     align-items: flex-start;
-    gap: 1rem;
-    margin: 1.5rem 0;
-    max-width: 520px;
+    gap: 0.7rem;
 }
 
 .mascot-avatar {
     flex-shrink: 0;
-    width: 150px;
-    height: 150px;
+    width: 72px;
+    height: 72px;
 }
 
 .mascot-avatar img {
@@ -2160,7 +2210,7 @@ p:has(> .member-card) {
 .mascot-speech-arrow {
     position: absolute;
     left: -6px;
-    top: 28px;
+    top: 20px;
     width: 0;
     height: 0;
     border-top: 6px solid transparent;
@@ -2172,10 +2222,10 @@ p:has(> .member-card) {
     background: var(--bg-surface);
     border: 1px solid var(--border-light);
     border-radius: 8px;
-    padding: 0.75rem 1rem;
+    padding: 0.65rem 0.85rem;
     color: var(--text-secondary);
-    font-size: 1rem;
-    line-height: 1.6;
+    font-size: 0.9rem;
+    line-height: 1.55;
 }
 
 .mascot-speech-content p {
@@ -2201,16 +2251,21 @@ p:has(> .member-card) {
     font-size: 0.8125rem;
 }
 
-@media (max-width: 480px) {
+@media (max-width: 640px) {
     .mascot-bubble {
+        float: none;
+        clear: both;
+        width: 100%;
         max-width: 100%;
+        margin: 1.25rem 0;
+        gap: 0.85rem;
     }
     .mascot-avatar {
-        width: 100px;
-        height: 100px;
+        width: 84px;
+        height: 84px;
     }
     .mascot-speech-content {
-        font-size: 0.875rem;
+        font-size: 0.9rem;
     }
 }
 
@@ -2791,6 +2846,7 @@ p:has(> .member-card) {
    when only one of the two is present (a placeholder span occupies
    the empty slot). */
 .prev-next-nav {
+  clear: both;
   margin: 3rem 0 0;
   padding-top: 1.5rem;
   border-top: 1px solid var(--color-border, #e5e7eb);
