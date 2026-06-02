@@ -66,6 +66,11 @@
     (resource
       {:handler (fn [_] "ok")}))
 
+  ; `^metadata` may precede the resource map — the route must still be found.
+  (context "/metered" []
+    (resource
+      ^:audited {:get {:handler (fn [_] "metered")}}))
+
   ; compojure-api restructuring directives declare typed params in the body.
   ; `{y :- Long 1}` is an optional param with a default → still bound as `y`.
   (GET "/calc" []
@@ -77,6 +82,12 @@
     :body-params [message :- s/Str]
     :header-params [authorization :- s/Str]
     (ok message))
+
+  ; Comma-separated, untyped binding names — Clojure treats commas as
+  ; whitespace, so both `a` and `b` must be lifted.
+  (GET "/pair" []
+    :query-params [a, b]
+    (ok))
 
   ; `:path-params` re-declaring the URL param must not duplicate it.
   (PUT "/upload/:id" []

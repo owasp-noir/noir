@@ -247,6 +247,12 @@ module Analyzer::Clojure
     private def add_resource(source : String, args_start : Int32, form_end : Int32,
                              prefix : String, path : String, include_callee : Bool) : Bool
       i = skip_ws_and_comments(source, args_start, form_end)
+      # An optional `^metadata` form may precede the resource map
+      # (`(resource ^:foo {...})`); skip the metadata and its value.
+      while i < form_end && source.byte_at(i).unsafe_chr == '^'
+        i = resource_end_of_value(source, i + 1, form_end)
+        i = skip_ws_and_comments(source, i, form_end)
+      end
       return false if i >= form_end
       return false unless source.byte_at(i).unsafe_chr == '{'
 
@@ -554,7 +560,9 @@ module Analyzer::Clojure
       i = index
       while i < limit
         char = source.byte_at(i).unsafe_chr
-        break if whitespace?(char) || {'(', ')', '[', ']', '{', '}', '"', ';'}.includes?(char)
+        # Commas are whitespace in Clojure, so they terminate a symbol just
+        # like spaces (keeps `[x, y]` from reading `x,` as one token).
+        break if whitespace?(char) || char == ',' || {'(', ')', '[', ']', '{', '}', '"', ';'}.includes?(char)
         i += 1
       end
 
@@ -565,7 +573,7 @@ module Analyzer::Clojure
       i = index
       while i < limit
         char = source.byte_at(i).unsafe_chr
-        if whitespace?(char)
+        if whitespace?(char) || char == ','
           i += 1
         elsif char == ';'
           i = skip_comment(source, i, limit)

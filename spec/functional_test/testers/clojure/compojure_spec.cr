@@ -43,6 +43,7 @@ expected_endpoints = [
     Param.new("id", "", "path"),
   ]),
   Endpoint.new("/health-check", "GET"),
+  Endpoint.new("/metered", "GET"),
   Endpoint.new("/calc", "GET", [
     Param.new("x", "", "query"),
     Param.new("y", "", "query"),
@@ -50,6 +51,10 @@ expected_endpoints = [
   Endpoint.new("/echo", "POST", [
     Param.new("message", "", "json"),
     Param.new("authorization", "", "header"),
+  ]),
+  Endpoint.new("/pair", "GET", [
+    Param.new("a", "", "query"),
+    Param.new("b", "", "query"),
   ]),
   Endpoint.new("/upload/:id", "PUT", [
     Param.new("id", "", "path"),
