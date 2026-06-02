@@ -98,7 +98,7 @@ describe Noir::PhpCalleeExtractor do
   # to make the old `String#[](Int)` loop O(n^2) — here we just assert
   # correctness on multi-byte content.
   it "blanks multi-byte (CJK) comments and string literals" do
-    body = <<-'PHP'
+    body = <<-PHP
       // 用户管理 AuditLog::write('忽略');
       $name = '用户名称';
       UserService::create($name); // 创建用户

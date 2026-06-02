@@ -304,7 +304,7 @@ module Analyzer::Php
     # Attach callees for a route handler. Inline `function`/`fn` closures
     # are extracted directly. For the dominant Laravel shape —
     # `[Controller::class, 'method']`, `'Controller@method'`, or an
-    # invokable `Controller::class` — resolve the controller file from the
+    # single-action `Controller::class` — resolve the controller file from the
     # route file's `use` imports and pull callees from the action body so
     # controller-based routes are no longer callee/ai-context blind spots.
     private def attach_route_callees(endpoint : Endpoint,
@@ -353,7 +353,7 @@ module Analyzer::Php
         return {m[1], m[2]}
       end
 
-      # Invokable single-action controller: Controller::class
+      # Single-action (`__invoke`) controller: Controller::class
       if m = rest.match(/\A([A-Za-z_\\][\w\\]*)::class\s*\)/)
         return {m[1], "__invoke"}
       end
