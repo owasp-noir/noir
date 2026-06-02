@@ -410,7 +410,7 @@ module Analyzer::Ruby
 
           # `get "path"` / `get "path" => "..."` / `get "path", to: "..."`
           if sm = rest.match(/^\s*['"]([^'"]+)['"]/)
-            path = sm[1]
+            path = normalize_ruby_interpolation(strip_optional_route_segments(sm[1]))
             prefix = current_path_prefix_for_route(stack, route_scope)
             path_part = path.starts_with?("/") ? path : "/#{path}"
             url = prefix.empty? ? path_part : "/#{prefix}#{path_part}"
@@ -452,7 +452,7 @@ module Analyzer::Ruby
         if call = route_call(line, ["match"])
           rest = call[1]
           if sm = rest.match(/^\s*['"]([^'"]+)['"]/)
-            path = sm[1]
+            path = normalize_ruby_interpolation(strip_optional_route_segments(sm[1]))
             prefix = current_path_prefix_for_route(stack, parse_options(rest)["on"]?)
             path_part = path.starts_with?("/") ? path : "/#{path}"
             url = prefix.empty? ? path_part : "/#{prefix}#{path_part}"
@@ -827,6 +827,29 @@ module Analyzer::Ruby
     private def opens_keyword_block?(line : String) : Bool
       return false unless line.matches?(/^(?:if|unless|case|begin|while|until|for)\b/)
       !line.matches?(/\bend\b/)
+    end
+
+    # Rails route strings carry optional segments in parentheses —
+    # `(.:format)`, `(/page/:page)`, even nested `(/:length(/page/:page))`.
+    # They are DSL syntax, not part of any concrete URL, so emitting
+    # `/domain/:id(.:format)` hands a consumer a path that 404s when hit
+    # literally. Peel every (possibly nested) optional group down to the
+    # required base path, then collapse the `//` and trailing-`/`
+    # artifacts the removal can leave behind. `(.:format)` is appended to
+    # most Rails string routes, so this touches nearly every app.
+    private def strip_optional_route_segments(path : String) : String
+      return path unless path.includes?('(')
+
+      result = path
+      loop do
+        stripped = result.gsub(/\([^()]*\)/, "")
+        break if stripped == result
+        result = stripped
+      end
+
+      result = result.gsub(%r{/{2,}}, "/")
+      result = result.rchop('/') if result.size > 1 && result.ends_with?('/')
+      result
     end
 
     private def parse_options(line : String) : Hash(String, String)

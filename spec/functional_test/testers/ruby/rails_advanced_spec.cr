@@ -131,6 +131,21 @@ expected_endpoints = [
     Param.new("X-Ping", "", "header"),
   ]),
 
+  # Optional route segments `(.:format)` / `(/:section)` peeled to the
+  # required base path (nested + middle-segment `//` collapse).
+  Endpoint.new("/feed", "GET", [
+    Param.new("X-Ping", "", "header"),
+  ]),
+  Endpoint.new("/report/rss", "GET", [
+    Param.new("X-Ping", "", "header"),
+  ]),
+
+  # Unresolved `#{action}` loop-variable interpolation collapses to a
+  # `{placeholder}` instead of leaking raw Ruby into the URL.
+  Endpoint.new("/repo/:id/{action}", "GET", [
+    Param.new("X-Ping", "", "header"),
+  ]),
+
   # devise_for :users — sample of generated routes
   Endpoint.new("/users/sign_in", "GET"),
   Endpoint.new("/users/sign_in", "POST"),
@@ -177,6 +192,8 @@ total_endpoints = 1 +  # root
                   6 +  # posts
                   4 +  # posts/1/comments + nested likes from concern
                   2 +  # /up + /ping
+                  2 +  # optional-segment routes /feed + /report/rss
+                  1 +  # %w[...].each loop route with normalized #{action}
                   20 + # devise_for :users
                   1 +  # mount sidekiq
                   1 +  # multiline parenthesized get
