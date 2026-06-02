@@ -1,7 +1,7 @@
 <?php
 
-use App\Http\Controllers\ReportController;
-use App\Http\Controllers\PhotoController;
+use App\Http\Controllers\{ReportController,
+    PhotoController};
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 

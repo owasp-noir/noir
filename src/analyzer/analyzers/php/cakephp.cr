@@ -286,7 +286,7 @@ module Analyzer::Php
       return unless controller_path && File.exists?(controller_path)
 
       content = read_file_content(controller_path)
-      method_match = content.match(/(?:public|protected|private)\s+function\s+#{action_name}\s*\(/)
+      method_match = content.match(/(?:public|protected|private)\s+(?:static\s+)?function\s+#{action_name}\s*\(/)
       return unless method_match
 
       method_body = extract_php_method_body_after(content, method_match.begin(0))

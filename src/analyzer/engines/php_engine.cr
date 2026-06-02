@@ -105,7 +105,7 @@ module Analyzer::Php
       return unless start_pos < content.size
 
       context = content[start_pos..]
-      func_match = context.match(/(?:public|protected|private)\s+function\s+\w+[^{]*\{/m)
+      func_match = context.match(/(?:public|protected|private)\s+(?:static\s+)?function\s+\w+[^{]*\{/m)
       return unless func_match
 
       func_start = context.index(func_match[0])

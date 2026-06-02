@@ -415,11 +415,27 @@ module Analyzer::Php
 
     private def parse_use_imports(content : String) : Hash(String, String)
       imports = {} of String => String
+
+      # Plain imports: `use App\Http\Controllers\FooController;` (optional alias).
       content.scan(/(?:\A|[;\n{])\s*use\s+([A-Za-z_\\][\w\\]*)(?:\s+as\s+([A-Za-z_]\w*))?\s*;/) do |match|
         fqcn = match[1]
         short = match[2]? || fqcn.split('\\').last
         imports[short] = fqcn unless short.empty?
       end
+
+      # Grouped imports: `use App\Http\Controllers\{FooController, BarController as Bar};`
+      content.scan(/(?:\A|[;\n{])\s*use\s+([A-Za-z_\\][\w\\]*\\)\{([^}]+)\}/) do |match|
+        prefix = match[1]
+        match[2].split(',').each do |entry|
+          item = entry.strip
+          next if item.empty?
+          next unless m = item.match(/\A([A-Za-z_\\][\w\\]*)(?:\s+as\s+([A-Za-z_]\w*))?\z/)
+          fqcn = prefix + m[1]
+          short = m[2]? || m[1].split('\\').last
+          imports[short] = fqcn unless short.empty?
+        end
+      end
+
       imports
     end
 
