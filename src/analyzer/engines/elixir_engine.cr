@@ -16,6 +16,21 @@ module Analyzer::Elixir
       Noir::ElixirCalleeExtractor.attach_to(endpoint, callees)
     end
 
+    # How much a single line shifts Elixir block nesting depth. Every
+    # block in Elixir closes with `end` and opens with either a `do`
+    # block (`def`/`case`/`if`/`for`/`with`/`receive`/`try`/`cond`/…) or
+    # an anonymous `fn`. Counting the block keyword *and* its `do`
+    # double-counts the opener — `case x do … end` would read as +2/-1 —
+    # which is exactly why a controller action wrapping its body in a
+    # `case … do` never balanced and got dropped. Count the opener once:
+    # a `do` that isn't the inline `do:` keyword form, plus each `fn`,
+    # minus each `end`.
+    protected def elixir_block_depth_delta(line : String) : Int32
+      opens = line.scan(/\bdo\b(?!:)/).size + line.scan(/\bfn\b/).size
+      closes = line.scan(/\bend\b/).size
+      opens - closes
+    end
+
     # No extension filter: Phoenix uses `.ex` only, Plug also accepts
     # `.exs`, so each analyzer filters inside `analyze_file`.
     protected def parallel_file_scan(&block : String -> Nil) : Nil

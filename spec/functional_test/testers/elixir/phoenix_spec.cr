@@ -38,6 +38,17 @@ expected_endpoints = [
   Endpoint.new("/api/hooks", "PUT", [Param.new("q", "", "query"), Param.new("page", "", "form"), Param.new("limit", "", "form")]),
   Endpoint.new("/dev/dashboard", "GET"),
   Endpoint.new("/dev/mailbox", "GET"),
+  # Nested resources under a scope: child mounts on the parent's
+  # `/:podcast_id` member segment; `only:` behind `as:` still applies.
+  Endpoint.new("/admin/podcasts", "GET"),
+  Endpoint.new("/admin/podcasts/:id", "GET", [Param.new("id", "", "path")]),
+  Endpoint.new("/admin/podcasts/:podcast_id/episodes", "GET", [Param.new("podcast_id", "", "path")]),
+  # Parenthesised call form + singleton resource (no `/:id` member)
+  Endpoint.new("/account/session", "POST"),
+  Endpoint.new("/account/session", "DELETE"),
+  # `param:` renames the member capture
+  Endpoint.new("/account/keys/:key_id", "GET", [Param.new("key_id", "", "path")]),
+  Endpoint.new("/account/keys/:key_id", "DELETE", [Param.new("key_id", "", "path")]),
 ]
 
 FunctionalTester.new("fixtures/elixir/phoenix/", {
