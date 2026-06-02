@@ -11,6 +11,7 @@ module Analyzer::Rust
   # `HeaderMap`).
   class Loco < RustEngine
     REST_ACTIONS = Set{"index", "show", "new", "create", "edit", "update", "destroy", "delete"}
+    HTTP_VERBS   = Set{"get", "post", "put", "delete", "patch", "head", "options", "trace"}
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
@@ -29,6 +30,33 @@ module Analyzer::Rust
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
       Noir::TreeSitter.parse_rust(source) do |root|
+        function_index = build_function_index(root, source)
+
+        # Modern Loco registers routes explicitly via the builder:
+        #   pub fn routes() -> Routes {
+        #       Routes::new().prefix("/api/auth").add("/login", post(login))
+        #   }
+        # The handler functions are usually plain `async fn` (no `pub`),
+        # so the Rails-convention pass below never fires for them. When a
+        # file uses this builder, the explicit routes are authoritative —
+        # we return them and skip the convention pass so the two can't
+        # double-count the same controller.
+        explicit = extract_explicit_routes(root, source, path, function_index, include_callee)
+        if !explicit.empty?
+          endpoints.concat(explicit)
+          next
+        end
+
+        # Rails-convention fallback: only controller files. Loco never
+        # auto-derives routes from a `pub async fn` name — routes are
+        # always registered through the `Routes::new().add(...)` builder
+        # handled above. The convention pass exists purely as a
+        # best-effort guess for controller files that omit an explicit
+        # builder; running it anywhere else turns every `pub async fn`
+        # in `src/models/`, `src/mailers/`, `src/workers/`, … into a
+        # phantom GET endpoint (15 FPs on the stock SaaS starter alone).
+        next unless controller_path?(path)
+
         walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "function_item"
           next unless public_async?(node, source)
@@ -50,6 +78,139 @@ module Analyzer::Rust
       end
 
       endpoints
+    end
+
+    # Walk every `.add("/path", get(handler))` registration on a
+    # `Routes::new()` builder chain. Each `.add` is its own
+    # `call_expression`; the controller-level `.prefix("…")` sits deeper
+    # in the same receiver chain, so we walk up from the `.add` to find
+    # it. A method-router second argument (`get(h)` / `get(h).post(h2)`)
+    # can register more than one verb, so a single `.add` may yield
+    # several endpoints.
+    private def extract_explicit_routes(root : LibTreeSitter::TSNode,
+                                        source : String,
+                                        path : String,
+                                        function_index : Hash(String, LibTreeSitter::TSNode),
+                                        include_callee : Bool) : Array(Endpoint)
+      endpoints = [] of Endpoint
+      walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "call_expression"
+        fn_node = Noir::TreeSitter.field(node, "function")
+        next unless fn_node && Noir::TreeSitter.node_type(fn_node) == "field_expression"
+        field = Noir::TreeSitter.field(fn_node, "field")
+        next unless field && Noir::TreeSitter.node_text(field, source) == "add"
+
+        args = Noir::TreeSitter.field(node, "arguments")
+        next unless args
+        route_path = first_string_literal_text(args, source)
+        # Route paths are always string literals beginning with `/`; this
+        # filters out unrelated `.add(...)` calls (sets, vectors, …).
+        next unless route_path && route_path.starts_with?("/")
+
+        verb_handlers = collect_method_handlers(args, source)
+        next if verb_handlers.empty?
+
+        prefix = find_chain_prefix(node, source)
+        full_path = join_paths(prefix, route_path)
+        row = Noir::TreeSitter.node_start_row(node) + 1
+
+        verb_handlers.each do |verb, handler_name|
+          details = Details.new(PathInfo.new(path, row))
+          endpoint = Endpoint.new(full_path, verb.upcase, details)
+          extract_path_params(full_path, endpoint)
+
+          if handler_name && (handler_function = function_index[handler_name.split("::").last]?)
+            extract_function_params(handler_function, source, endpoint)
+            attach_handler_callees(handler_function, source, path, endpoint) if include_callee
+          end
+
+          endpoints << endpoint
+        end
+      end
+      endpoints
+    end
+
+    # The method-router second argument to `.add`. Walks the subtree for
+    # every verb call — `get(handler)` (function is the identifier `get`)
+    # and chained `get(h).post(h2)` (function is a `field_expression`
+    # whose field is `post`). Returns `[{verb, handler_name?}]`.
+    private def collect_method_handlers(args : LibTreeSitter::TSNode,
+                                        source : String) : Array(Tuple(String, String?))
+      result = [] of Tuple(String, String?)
+      walk(args) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "call_expression"
+        fn_node = Noir::TreeSitter.field(node, "function")
+        next unless fn_node
+        verb =
+          case Noir::TreeSitter.node_type(fn_node)
+          when "identifier"
+            Noir::TreeSitter.node_text(fn_node, source)
+          when "field_expression"
+            (f = Noir::TreeSitter.field(fn_node, "field")) ? Noir::TreeSitter.node_text(f, source) : ""
+          else
+            ""
+          end
+        next unless HTTP_VERBS.includes?(verb)
+        result << {verb, first_identifier_argument(node, source)}
+      end
+      result
+    end
+
+    # Walk up the `.add(...)` receiver chain looking for `.prefix("…")`
+    # registered earlier on the same `Routes::new()` builder.
+    private def find_chain_prefix(add_call : LibTreeSitter::TSNode, source : String) : String?
+      node = add_call
+      # Bounded walk; controller chains are short but guard anyway.
+      256.times do
+        fn = Noir::TreeSitter.field(node, "function")
+        return unless fn && Noir::TreeSitter.node_type(fn) == "field_expression"
+        name = (f = Noir::TreeSitter.field(fn, "field")) ? Noir::TreeSitter.node_text(f, source) : ""
+        receiver = Noir::TreeSitter.field(fn, "value")
+        if name == "prefix"
+          if pfx = first_string_literal_text(Noir::TreeSitter.field(node, "arguments"), source)
+            return pfx
+          end
+        end
+        return unless receiver && Noir::TreeSitter.node_type(receiver) == "call_expression"
+        node = receiver
+      end
+      nil
+    end
+
+    private def join_paths(prefix : String?, route_path : String) : String
+      p = (prefix || "").strip
+      return ensure_leading_slash(route_path) if p.empty?
+      combined = "/#{p.strip('/')}/#{route_path.lstrip('/')}"
+      combined = combined.rstrip('/')
+      combined.empty? ? "/" : combined
+    end
+
+    private def ensure_leading_slash(route_path : String) : String
+      route_path.starts_with?("/") ? route_path : "/#{route_path}"
+    end
+
+    private def first_identifier_argument(call : LibTreeSitter::TSNode, source : String) : String?
+      args = Noir::TreeSitter.field(call, "arguments")
+      return unless args
+      Noir::TreeSitter.each_named_child(args) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "identifier", "scoped_identifier"
+          return Noir::TreeSitter.node_text(child, source)
+        end
+      end
+      nil
+    end
+
+    private def build_function_index(root : LibTreeSitter::TSNode, source : String) : Hash(String, LibTreeSitter::TSNode)
+      index = {} of String => LibTreeSitter::TSNode
+      walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "function_item"
+        name_node = Noir::TreeSitter.field(node, "name")
+        next unless name_node
+        name = Noir::TreeSitter.node_text(name_node, source)
+        index[name] = node unless index.has_key?(name)
+      end
+      index
     end
 
     # Loco analysers are scoped to `pub async fn` items only — the
@@ -90,6 +251,14 @@ module Analyzer::Rust
         base_path = controller.empty? ? "" : "/#{controller}"
         "#{base_path}/#{action.gsub(/([A-Z])/, "_\\1").downcase.lstrip("_")}"
       end
+    end
+
+    # Loco controllers live under `src/controllers/` (the framework
+    # generator never puts them anywhere else). The `*_controller.rs`
+    # basename is also accepted for projects that keep a flatter layout.
+    private def controller_path?(file_path : String) : Bool
+      return true if file_path.includes?("/controllers/") || file_path.includes?("/controller/")
+      File.basename(file_path).ends_with?("_controller.rs")
     end
 
     private def controller_name_from_path(file_path : String) : String
@@ -135,9 +304,19 @@ module Analyzer::Rust
       source.byte_slice(start_byte, end_byte - start_byte)
     end
 
+    # Loco/Axum path params come in two flavours: the legacy colon form
+    # (`/:id`) used by the Rails-convention pass and the brace form
+    # (`/{id}`, `/{*rest}`, `/{**path}`) used by modern explicit routes.
+    # Strip any leading capture markers (`*`) so the param name stays
+    # clean.
     private def extract_path_params(route : String, endpoint : Endpoint)
       route.scan(/:(\w+)/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "path"))
+        name = match[1]
+        endpoint.push_param(Param.new(name, "", "path")) unless endpoint.params.any? { |p| p.name == name && p.param_type == "path" }
+      end
+      route.scan(/\{\**(\w+)\}/) do |match|
+        name = match[1]
+        endpoint.push_param(Param.new(name, "", "path")) unless endpoint.params.any? { |p| p.name == name && p.param_type == "path" }
       end
     end
 
