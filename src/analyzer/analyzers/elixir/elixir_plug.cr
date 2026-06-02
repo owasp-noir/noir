@@ -16,11 +16,28 @@ module Analyzer::Elixir
       endpoints = [] of Endpoint
       File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
         content = file.gets_to_end
+        # A Phoenix router is owned by the Phoenix analyzer, which
+        # understands `scope` prefixes, the `resources` macro, and the
+        # controller/action mapping. The bare `get "/path"` regex here
+        # would re-extract those same lines stripped of their scope
+        # prefix and minus every `resources`-generated route — degraded
+        # duplicates that pollute the result. Skip the file and let the
+        # Phoenix analyzer handle it.
+        next endpoints if phoenix_router?(content)
         analyze_content(content, path).each do |endpoint|
           endpoints << endpoint unless endpoint.method.empty?
         end
       end
       endpoints
+    end
+
+    # `use MyAppWeb, :router` (or, rarely, `use Phoenix.Router`) marks a
+    # Phoenix router module. The Plug.Router DSL never uses either, so
+    # this distinguishes the two even though both share `get`/`post`
+    # route macros.
+    private def phoenix_router?(content : String) : Bool
+      content.includes?("Phoenix.Router") ||
+        content.matches?(/\buse\s+[A-Z]\w*(?:\.[A-Z]\w*)*\s*,\s*:router\b/)
     end
 
     def analyze_content(content : String, file_path : String) : Array(Endpoint)
@@ -169,77 +186,70 @@ module Analyzer::Elixir
 
       depth = 1
       (start_index + 1...lines.size).each do |i|
-        line = lines[i].strip
-
-        # Count "do" keywords that increase depth
-        depth += line.scan(/\bdo\b/).size
-
-        # Count "end" keywords that decrease depth
-        depth -= line.scan(/\bend\b/).size
-
+        depth += elixir_block_depth_delta(lines[i].strip)
         return i if depth == 0
       end
 
       -1
     end
 
+    # The route macro must start a fresh token. Without the
+    # `(?:^|[^.\w])` guard the bare verb matched as a substring of any
+    # identifier — `@temp_slot_options "TEMPORARY …"` read as an
+    # `options` route, `Repo.delete "x"` as a `delete` route — flooding
+    # non-router modules with junk endpoints. The captured path is also
+    # required to start with `/`, because the Plug.Router DSL only ever
+    # registers absolute paths; that single constraint drops the
+    # remaining `get "true"`-style false positives.
+    PLUG_ROUTE_MACROS = {
+      "get"     => "GET",
+      "post"    => "POST",
+      "put"     => "PUT",
+      "patch"   => "PATCH",
+      "delete"  => "DELETE",
+      "head"    => "HEAD",
+      "options" => "OPTIONS",
+      "forward" => "FORWARD",
+    }
+
     def line_to_endpoint(line : String) : Array(Endpoint)
       endpoints = Array(Endpoint).new
 
-      # Match Plug.Router style route definitions
-      # get "/path", do: ...
-      line.scan(/get\s+["\']([^"\']+)["\']/) do |match|
-        endpoints << Endpoint.new("#{match[1]}", "GET")
-      end
-
-      line.scan(/post\s+["\']([^"\']+)["\']/) do |match|
-        endpoints << Endpoint.new("#{match[1]}", "POST")
-      end
-
-      line.scan(/put\s+["\']([^"\']+)["\']/) do |match|
-        endpoints << Endpoint.new("#{match[1]}", "PUT")
-      end
-
-      line.scan(/patch\s+["\']([^"\']+)["\']/) do |match|
-        endpoints << Endpoint.new("#{match[1]}", "PATCH")
-      end
-
-      line.scan(/delete\s+["\']([^"\']+)["\']/) do |match|
-        endpoints << Endpoint.new("#{match[1]}", "DELETE")
-      end
-
-      line.scan(/head\s+["\']([^"\']+)["\']/) do |match|
-        endpoints << Endpoint.new("#{match[1]}", "HEAD")
-      end
-
-      line.scan(/options\s+["\']([^"\']+)["\']/) do |match|
-        endpoints << Endpoint.new("#{match[1]}", "OPTIONS")
-      end
-
-      # Match forward statements: forward "/api", SomeModule
-      line.scan(/forward\s+["\']([^"\']+)["\']/) do |match|
-        endpoints << Endpoint.new("#{match[1]}", "FORWARD")
+      # Match Plug.Router style route definitions, e.g. `get "/path", do: …`
+      PLUG_ROUTE_MACROS.each do |verb, method|
+        pattern = Regex.new("(?:^|[^.\\w])#{verb}\\s+[\"']([^\"']+)[\"']")
+        line.scan(pattern) do |match|
+          path = match[1]
+          endpoints << Endpoint.new(path, method) if plug_route_path?(path)
+        end
       end
 
       # Match match statements with method patterns
       # match "/path", via: [:get, :post]
-      if via_match = line.match(/match\s+["\']([^"\']+)["\'][^:]*via:\s*\[([^\]]+)\]/)
+      if via_match = line.match(/(?:^|[^.\w])match\s+["\']([^"\']+)["\'][^:]*via:\s*\[([^\]]+)\]/)
         path = via_match[1]
-        methods_str = via_match[2]
-        methods_str.scan(/:(\w+)/) do |method_match|
-          endpoints << Endpoint.new(path, method_match[1].upcase)
+        if plug_route_path?(path)
+          via_match[2].scan(/:(\w+)/) do |method_match|
+            endpoints << Endpoint.new(path, method_match[1].upcase)
+          end
         end
       end
 
       # Match simple match statements (defaults to GET)
-      line.scan(/match\s+["\']([^"\']+)["\']/) do |match|
-        # Only add if we didn't already match a via: pattern above
-        unless line.includes?("via:")
-          endpoints << Endpoint.new("#{match[1]}", "GET")
+      unless line.includes?("via:")
+        line.scan(/(?:^|[^.\w])match\s+["\']([^"\']+)["\']/) do |match|
+          path = match[1]
+          endpoints << Endpoint.new(path, "GET") if plug_route_path?(path)
         end
       end
 
       endpoints
+    end
+
+    # Plug.Router only registers absolute paths, so a captured value that
+    # doesn't begin with `/` is a misfire on some other string literal.
+    private def plug_route_path?(path : String) : Bool
+      path.starts_with?('/')
     end
   end
 end

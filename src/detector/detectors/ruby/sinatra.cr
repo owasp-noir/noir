@@ -2,28 +2,15 @@ require "../../../models/detector"
 
 module Detector::Ruby
   class Sinatra < Detector
-    GEMFILE_MARKERS = [
-      "gem 'sinatra'",
-      "gem \"sinatra\"",
-    ]
-
-    # Single-gem repos (e.g. Gollum) park their Gemfile at
-    # `gemspec` and declare `s.add_dependency 'sinatra'` inside
-    # the gemspec instead. Walk those files too.
-    GEMSPEC_MARKERS = [
-      "add_dependency 'sinatra'",
-      "add_dependency \"sinatra\"",
-      "add_runtime_dependency 'sinatra'",
-      "add_runtime_dependency \"sinatra\"",
-    ]
-
     def detect(filename : String, file_contents : String) : Bool
       if filename.includes?("Gemfile")
-        return GEMFILE_MARKERS.any? { |marker| file_contents.includes?(marker) }
+        return gemfile_dependency?(file_contents, "sinatra")
       end
 
+      # Single-gem repos (e.g. Gollum, geminabox) park their Gemfile at
+      # `gemspec` and declare the dependency inside the gemspec instead.
       if filename.ends_with?(".gemspec")
-        return GEMSPEC_MARKERS.any? { |marker| file_contents.includes?(marker) }
+        return gemspec_dependency?(file_contents, "sinatra")
       end
 
       false

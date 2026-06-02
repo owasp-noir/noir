@@ -9,21 +9,23 @@ module Analyzer::Java
     STRUTS_CONFIG_BASENAMES = Set{"struts.xml", "struts-plugin.xml", "struts-deferred.xml"}
     DEFAULT_LOCATORS        = ["action", "actions", "struts", "struts2"]
     REST_METHODS            = {
-      "index"   => {"GET", ""},
-      "show"    => {"GET", "/:id"},
-      "edit"    => {"GET", "/:id/edit"},
-      "editNew" => {"GET", "/new"},
-      "create"  => {"POST", ""},
-      "update"  => {"PUT", "/:id"},
-      "destroy" => {"DELETE", "/:id"},
+      "index"         => {"GET", ""},
+      "show"          => {"GET", "/:id"},
+      "edit"          => {"GET", "/:id/edit"},
+      "editNew"       => {"GET", "/new"},
+      "deleteConfirm" => {"GET", "/:id/deleteConfirm"},
+      "create"        => {"POST", ""},
+      "update"        => {"PUT", "/:id"},
+      "destroy"       => {"DELETE", "/:id"},
     }
 
     private struct XmlAction
       getter name : String
       getter method_name : String
       getter line : Int32?
+      getter class_name : String
 
-      def initialize(@name, @method_name, @line)
+      def initialize(@name, @method_name, @line, @class_name = "")
       end
     end
 
@@ -74,18 +76,27 @@ module Analyzer::Java
       end
     end
 
+    @include_callee : Bool = false
+    @handler_index : Hash(String, String) = {} of String => String
+
     def analyze
+      @include_callee = callees_needed?
       file_list = all_files()
       config_files = struts_config_files(file_list)
       convention_config = ConventionConfig.new
       seen = Set(String).new
 
-      config_files.each do |path|
-        parse_struts_config(path, file_list, convention_config, seen)
-      end
-
       java_files = file_list.select do |path|
         File.exists?(path) && path.ends_with?(".java") && !JavaEngine.test_path?(path)
+      end
+
+      # Build a FQCN → source-path index up front so XML `<action
+      # class="…">` handlers can be resolved for callee extraction. Only
+      # needed when callee/ai-context enrichment is requested.
+      build_handler_index(java_files) if @include_callee
+
+      config_files.each do |path|
+        parse_struts_config(path, file_list, convention_config, seen)
       end
 
       package_annotations = package_annotations_for(java_files)
@@ -96,6 +107,51 @@ module Analyzer::Java
 
       Fiber.yield
       @result
+    end
+
+    # Index every top-level Java class by its fully-qualified name so an
+    # XML-configured `<action class="…">` can be resolved back to its
+    # source file for callee extraction. Regex-based to stay cheap; the
+    # index is only built when callee/ai-context enrichment is on.
+    private def build_handler_index(java_files : Array(String))
+      java_files.each do |path|
+        content = read_file_content(path)
+        package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name(content)
+        content.scan(/(?:^|\n)\s*(?:public\s+|protected\s+|private\s+|abstract\s+|final\s+|static\s+)*class\s+([A-Za-z_][A-Za-z0-9_]*)/m) do |match|
+          class_name = match[1]
+          fqcn = package_name.empty? ? class_name : "#{package_name}.#{class_name}"
+          @handler_index[fqcn] ||= path
+        end
+      rescue e : Exception
+        @logger.debug "Failed to index Struts handler #{path}: #{e.message}"
+      end
+    end
+
+    # 1-hop callees for an XML-configured action by resolving its
+    # `class`/`method` (default `execute`) to the handler source. Returns
+    # empty unless enrichment is on and the handler file is indexed.
+    private def xml_action_callees(action : XmlAction) : Array(Callee)
+      callees = [] of Callee
+      return callees unless @include_callee
+      return callees if action.class_name.empty?
+
+      handler_path = @handler_index[action.class_name]?
+      return callees unless handler_path && File.exists?(handler_path)
+
+      simple_name = action.class_name.split('.').last
+      method_name = action.method_name.empty? ? "execute" : action.method_name
+      handler_content = read_file_content(handler_path)
+
+      Noir::TreeSitter.parse_java(handler_content) do |root|
+        Noir::JavaCalleeExtractor.callees_in_method(root, handler_content, handler_path, simple_name, method_name).each do |entry|
+          name, callee_path, callee_line = entry
+          callees << Callee.new(name, path: callee_path, line: callee_line)
+        end
+      end
+      callees
+    rescue e : Exception
+      @logger.debug "Failed to extract Struts XML callees for #{action.class_name}: #{e.message}"
+      [] of Callee
     end
 
     private def struts_config_files(file_list : Array(String)) : Array(String)
@@ -129,7 +185,8 @@ module Analyzer::Java
       packages.each_value do |package_config|
         namespace = package_namespace(package_config, packages, Set(String).new)
         package_config.actions.each do |action|
-          add_route(join_paths(namespace, normalize_action_pattern(action.name)), "ANY", path, action.line)
+          add_route(join_paths(namespace, normalize_action_pattern(action.name)), "ANY", path, action.line,
+            callees: xml_action_callees(action))
         end
       end
     rescue e : Exception
@@ -190,11 +247,17 @@ module Analyzer::Java
 
         namespace = node["namespace"]?
         extends_names = split_csv(xml_attr(node, "extends"))
+        # Anchor action-line lookups to this package's offset so that an
+        # action name shared across packages (e.g. `delete` in both
+        # `/skill` and `/employee`) resolves to the declaration inside
+        # the owning package rather than the document's first match.
+        package_offset = package_start_offset(content, name)
         actions = [] of XmlAction
         each_xml_child(node, "action") do |action_node|
           action_name = xml_attr(action_node, "name")
           next if action_name.empty?
-          actions << XmlAction.new(action_name, xml_attr(action_node, "method"), xml_line_for(content, action_name))
+          actions << XmlAction.new(action_name, xml_attr(action_node, "method"),
+            xml_line_for(content, action_name, package_offset), xml_attr(action_node, "class"))
         end
 
         packages[name] = XmlPackage.new(name, namespace, extends_names, actions)
@@ -246,6 +309,25 @@ module Analyzer::Java
       content = read_file_content(path)
       return unless struts_java_source?(content, config)
 
+      # When callee/ai-context enrichment is requested, parse the file
+      # once with tree-sitter and reuse the root for every action route
+      # in the file. On a default scan we skip the parse entirely.
+      if @include_callee
+        Noir::TreeSitter.parse_java(content) do |root|
+          analyze_java_classes(path, config, package_annotations, content, root)
+        end
+      else
+        analyze_java_classes(path, config, package_annotations, content, nil)
+      end
+    rescue e : Exception
+      @logger.debug "Failed to parse Struts Java source #{path}: #{e.message}"
+    end
+
+    private def analyze_java_classes(path : String,
+                                     config : ConventionConfig,
+                                     package_annotations : Hash(String, String),
+                                     content : String,
+                                     root : LibTreeSitter::TSNode?)
       package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name(content)
       classes_in(content, package_name).each do |klass|
         next if klass.abstract?
@@ -262,7 +344,8 @@ module Analyzer::Java
         namespaces.each do |class_namespace|
           class_actions.each do |action_path|
             resolved = action_path.empty? ? join_paths(class_namespace, class_action_base) : resolve_action_path(action_path, class_namespace)
-            add_route(resolved, "ANY", path, klass.line)
+            # A class-level @Action defaults to the `execute` handler.
+            add_route(resolved, "ANY", path, klass.line, callees: callees_for(root, content, path, klass.name, "execute"))
           end
 
           methods.each do |method|
@@ -271,7 +354,7 @@ module Analyzer::Java
 
             action_paths.each do |action_path|
               resolved = action_path.empty? ? join_paths(class_namespace, class_action_base) : resolve_action_path(action_path, class_namespace)
-              add_route(resolved, "ANY", path, method.line)
+              add_route(resolved, "ANY", path, method.line, callees: callees_for(root, content, path, klass.name, method.name))
             end
           end
 
@@ -280,14 +363,35 @@ module Analyzer::Java
 
           base_path = join_paths(class_namespace, class_action_base)
           if rest_controller?(klass, config)
-            add_rest_routes(path, base_path, methods)
+            add_rest_routes(path, base_path, methods, root, content, klass.name)
           else
-            add_route(base_path, "ANY", path, klass.line)
+            # A convention action without an explicit method defaults to `execute`.
+            add_route(base_path, "ANY", path, klass.line, callees: callees_for(root, content, path, klass.name, "execute"))
           end
         end
       end
+    end
+
+    # 1-hop callees out of the action handler method body, mirroring the
+    # Spring analyzer. Returns an empty list unless callee/ai-context
+    # enrichment was requested (`root` is nil on a default scan). The
+    # tree-sitter root is shared across every route in the file.
+    private def callees_for(root : LibTreeSitter::TSNode?,
+                            content : String,
+                            path : String,
+                            class_name : String,
+                            method_name : String) : Array(Callee)
+      callees = [] of Callee
+      return callees if root.nil? || class_name.empty? || method_name.empty?
+
+      Noir::JavaCalleeExtractor.callees_in_method(root, content, path, class_name, method_name).each do |entry|
+        name, callee_path, callee_line = entry
+        callees << Callee.new(name, path: callee_path, line: callee_line)
+      end
+      callees
     rescue e : Exception
-      @logger.debug "Failed to parse Struts Java source #{path}: #{e.message}"
+      @logger.debug "Failed to extract Struts callees for #{class_name}##{method_name}: #{e.message}"
+      [] of Callee
     end
 
     private def struts_java_source?(content : String, config : ConventionConfig) : Bool
@@ -459,14 +563,20 @@ module Analyzer::Java
       klass.name.ends_with?("Controller") && (config.rest_enabled? || config.action_suffixes.includes?("Controller"))
     end
 
-    private def add_rest_routes(path : String, base_path : String, methods : Array(JavaMethod))
+    private def add_rest_routes(path : String,
+                                base_path : String,
+                                methods : Array(JavaMethod),
+                                root : LibTreeSitter::TSNode?,
+                                content : String,
+                                class_name : String)
       methods.each do |method|
         route = REST_METHODS[method.name]?
         next unless route
 
         verb, suffix = route
         params = suffix.includes?(":id") ? [Param.new("id", "", "path")] : [] of Param
-        add_route(join_paths(base_path, suffix), verb, path, method.line, params)
+        add_route(join_paths(base_path, suffix), verb, path, method.line, params,
+          callees: callees_for(root, content, path, class_name, method.name))
       end
     end
 
@@ -517,7 +627,8 @@ module Analyzer::Java
       normalized.empty? ? "" : normalized
     end
 
-    private def add_route(path : String, method : String, file_path : String, line : Int32?, params = [] of Param)
+    private def add_route(path : String, method : String, file_path : String, line : Int32?,
+                          params = [] of Param, callees : Array(Callee) = [] of Callee)
       normalized = normalize_path(path)
       route_params = params.dup
       wildcard_count = normalized.count('*')
@@ -534,7 +645,9 @@ module Analyzer::Java
       key = "#{method} #{normalized}"
       return if @result.any? { |endpoint| "#{endpoint.method} #{endpoint.url}" == key }
 
-      @result << Endpoint.new(normalized, method, route_params, Details.new(PathInfo.new(file_path, line)))
+      endpoint = Endpoint.new(normalized, method, route_params, Details.new(PathInfo.new(file_path, line)))
+      callees.each { |callee| endpoint.push_callee(callee) }
+      @result << endpoint
     end
 
     private def normalize_namespace(namespace : String) : String
@@ -560,11 +673,26 @@ module Analyzer::Java
       value.split(",").map(&.strip).reject(&.empty?)
     end
 
-    private def xml_line_for(content : String, action_name : String) : Int32?
-      if index = content.index(/<action\b[^>]*\bname\s*=\s*["']#{Regex.escape(action_name)}["']/)
+    private def xml_line_for(content : String, action_name : String, from_offset : Int32 = 0) : Int32?
+      pattern = /<action\b[^>]*\bname\s*=\s*["']#{Regex.escape(action_name)}["']/
+      if index = content.index(pattern, from_offset)
+        return line_number_for(content, index)
+      end
+      # Fall back to a document-wide search when the package anchor
+      # didn't land before the declaration (e.g. attributes reordered).
+      if from_offset > 0 && (index = content.index(pattern))
         return line_number_for(content, index)
       end
       nil
+    end
+
+    # Byte offset of a package's opening `<package … name="…">` tag, used
+    # to scope action-line lookups to the declaring package.
+    private def package_start_offset(content : String, package_name : String) : Int32
+      if index = content.index(/<package\b[^>]*\bname\s*=\s*["']#{Regex.escape(package_name)}["']/)
+        return index
+      end
+      0
     end
 
     private def line_number_for(content : String, offset : Int32) : Int32

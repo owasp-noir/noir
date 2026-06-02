@@ -33,4 +33,54 @@ describe Analyzer::Rust::RustEngine do
       body.should contain("RealService::run")
     end
   end
+
+  describe ".collect_cfg_test_regions" do
+    it "treats braces inside a raw string as opaque so the region spans the whole block" do
+      source = <<-RUST
+      fn real() {
+          Router::with_path("/real").get(real_handler);
+      }
+
+      #[cfg(test)]
+      mod tests {
+          #[test]
+          fn renders() {
+              let raw = r#"{ "openapi": { "paths": {} } }"#;
+              Router::with_path("/test-only").get(test_handler);
+          }
+      }
+      RUST
+
+      regions = Analyzer::Rust::RustEngine.collect_cfg_test_regions(source)
+      regions.size.should eq(1)
+      start_byte, end_byte = regions[0]
+
+      # The test-only route is registered *after* the brace-laden raw
+      # string; without raw-string handling the region would close early
+      # at a `}` inside the JSON and leak that route as an endpoint.
+      test_route = source.byte_index("/test-only").not_nil!
+      (test_route >= start_byte && test_route < end_byte).should be_true
+
+      # The production route above the block stays outside the region.
+      real_route = source.byte_index("/real").not_nil!
+      (real_route >= start_byte && real_route < end_byte).should be_false
+    end
+
+    it "still closes a cfg(test) block that contains no raw strings" do
+      source = <<-RUST
+      #[cfg(test)]
+      mod tests {
+          fn t() { let x = 1; }
+      }
+
+      fn after() {}
+      RUST
+
+      regions = Analyzer::Rust::RustEngine.collect_cfg_test_regions(source)
+      regions.size.should eq(1)
+      start_byte, end_byte = regions[0]
+      after_byte = source.byte_index("fn after").not_nil!
+      (after_byte >= end_byte).should be_true
+    end
+  end
 end

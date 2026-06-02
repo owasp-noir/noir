@@ -234,28 +234,35 @@ module Analyzer::Haskell
     private def split_route_tokens(line : String) : Array(String)
       tokens = [] of String
       current = String::Builder.new
+      has_content = false
       brace_depth = 0
 
       line.each_char do |char|
         if char == '{'
           brace_depth += 1
           current << char
+          has_content = true
         elsif char == '}'
           brace_depth -= 1 if brace_depth > 0
           current << char
+          has_content = true
         elsif char.whitespace? && brace_depth == 0
-          token = current.to_s
-          unless token.empty?
-            tokens << token
+          # Flush the pending token. Guard on `has_content` so a `String::Builder`
+          # is only stringified once — consecutive whitespace (common in
+          # alignment-padded routes files) would otherwise call `to_s` twice on
+          # the same builder and raise.
+          if has_content
+            tokens << current.to_s
             current = String::Builder.new
+            has_content = false
           end
         else
           current << char
+          has_content = true
         end
       end
 
-      token = current.to_s
-      tokens << token unless token.empty?
+      tokens << current.to_s if has_content
       tokens
     end
 

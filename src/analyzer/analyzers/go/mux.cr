@@ -17,6 +17,10 @@ module Analyzer::Go
       # HandleFunc call_expression itself, so the row-keyed callee
       # lookup matches it cleanly.
       package_function_bodies = collect_package_function_bodies(file_contents)
+      # Mux handlers are almost always method values (`as.Campaigns`) or
+      # wrapped method values (`mid.Use(as.Users, ...)`); resolve them to
+      # their method bodies so callees/ai-context aren't empty.
+      package_method_bodies = collect_package_controller_method_bodies(file_contents)
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       begin
         WaitGroup.wait do |wg|
@@ -56,7 +60,8 @@ module Analyzer::Go
                     route_rows = Set(Int32).new
                     routes_by_line.each_key { |row| route_rows << row }
                     external_fns = ts_function_bodies_for_directory(package_function_bodies, File.dirname(path))
-                    callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
+                    external_methods = ts_controller_method_bodies_for_directory(package_method_bodies, File.dirname(path))
+                    callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns, external_methods)
 
                     # Mux static-file: `r.PathPrefix("/x/").Handler(... http.Dir("./x/") ...)`
                     Noir::TreeSitterGoRouteExtractor.extract_mux_statics(content).each do |sp|

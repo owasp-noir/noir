@@ -2,6 +2,13 @@
 # instead of using Dir.glob, improving efficiency by reusing files already scanned
 
 module FileHelper
+  # Version-control / OS placeholder files that sit inside `public/`
+  # directories (often to keep an otherwise-empty dir in git) but are
+  # never served as real endpoints. Matched by exact basename so genuine
+  # static files keep flowing through — e.g. `.well-known/dnt-policy.txt`
+  # (basename `dnt-policy.txt`) is unaffected.
+  PUBLIC_FILE_IGNORE = Set{".gitkeep", ".keep", ".gitignore", ".DS_Store", ".placeholder"}
+
   # Get all files from CodeLocator
   def all_files : Array(String)
     locator = CodeLocator.instance
@@ -53,6 +60,7 @@ module FileHelper
     files.select do |file|
       next false unless file.starts_with?(base_path)
       next false if File.directory?(file)
+      next false if PUBLIC_FILE_IGNORE.includes?(File.basename(file))
       project_public_roots.any? { |root| file.starts_with?(root + "/") }
     end
   end
@@ -69,6 +77,8 @@ module FileHelper
     public_dir_files = files.select do |file|
       # Ignore directories
       next false if File.directory?(file)
+      # Ignore VC/OS placeholder files (never served).
+      next false if PUBLIC_FILE_IGNORE.includes?(File.basename(file))
 
       # Case 1: Folder is a full path
       if normalized_folder.includes?("/")

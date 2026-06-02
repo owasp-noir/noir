@@ -58,4 +58,17 @@ describe "Detect Ruby Rails" do
       RUBY
     instance.detect("sinatra-thing.gemspec", contents).should be_false
   end
+
+  it "gemspec/add_dependency parenthesized call form" do
+    contents = <<-RUBY
+      Gem::Specification.new do |s|
+        s.add_dependency('railties', "~> 8.0")
+      end
+      RUBY
+    instance.detect("engine.gemspec", contents).should be_true
+  end
+
+  it "gemfile/does not match jquery-rails" do
+    instance.detect("Gemfile", "gem 'jquery-rails'\ngem 'sinatra'").should be_false
+  end
 end

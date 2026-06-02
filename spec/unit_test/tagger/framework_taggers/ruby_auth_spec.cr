@@ -73,7 +73,7 @@ describe "RubyAuthTagger (Grape/Roda)" do
     noir_options = create_test_options
     noir_options["base"] = YAML::Any.new(grape_base)
 
-    details = Details.new(PathInfo.new(grape_path, 62)) # admin/dashboard get with before
+    details = Details.new(PathInfo.new(grape_path, 68)) # admin/dashboard get with before
     details.technology = "ruby_grape"
     endpoint = Endpoint.new("/admin/dashboard", "GET", [] of Param, details)
 

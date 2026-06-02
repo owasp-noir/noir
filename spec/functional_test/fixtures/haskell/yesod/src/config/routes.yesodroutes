@@ -1,3 +1,7 @@
-/search SearchR GET
-/files/*Texts FilesR GET
-/feed/+Texts FeedR GET POST
+-- Columns are padded with multiple spaces, the common alignment style in
+-- real Yesod routes files. The token splitter must collapse the run of spaces
+-- into a single separator (regression: it used to stringify an empty builder
+-- twice and abort the whole analyzer).
+/search          SearchR   GET
+/files/*Texts    FilesR    GET
+/feed/+Texts     FeedR     GET POST

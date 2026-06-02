@@ -93,6 +93,33 @@ module Noir::GoCalleeExtractor
     package_bodies[dir]? || Hash(String, FunctionBody).new
   end
 
+  # Per-directory `{method_name => [FunctionBody, ...]}` map so a
+  # method-value handler (`as.Campaigns`, `ctrl.Index`) can be resolved
+  # to its method body for callee extraction. Module-level twin of
+  # `GoEngine#collect_package_controller_method_bodies` for analyzers
+  # (Chi) that don't inherit from `GoEngine`. Returns an empty map
+  # immediately when `enabled` is false so default scans pay nothing.
+  def package_method_bodies_if(enabled : Bool, file_contents : Hash(String, String)) : Hash(String, Hash(String, Array(FunctionBody)))
+    bodies = Hash(String, Hash(String, Array(FunctionBody))).new
+    return bodies unless enabled
+    file_contents.each do |path, content|
+      next unless content.includes?("func (")
+      methods = collect_method_bodies(content, path)
+      next if methods.empty?
+      dir = File.dirname(path)
+      dir_map = (bodies[dir] ||= Hash(String, Array(FunctionBody)).new)
+      methods.each do |name, list|
+        (dir_map[name] ||= [] of FunctionBody).concat(list)
+      end
+    end
+    bodies
+  end
+
+  # Returns the per-directory method-body map, or an empty map.
+  def method_bodies_for_directory(package_method_bodies : Hash(String, Hash(String, Array(FunctionBody))), dir : String) : Hash(String, Array(FunctionBody))
+    package_method_bodies[dir]? || Hash(String, Array(FunctionBody)).new
+  end
+
   # Returns top-level function declarations in `source`, keyed by name.
   # `file_path` is recorded on each `FunctionBody` so callees emitted by
   # later re-parsing can report a useful path.
@@ -121,18 +148,25 @@ module Noir::GoCalleeExtractor
                             source : String,
                             file_path : String,
                             route_rows : Set(Int32),
-                            external_functions : Hash(String, FunctionBody))
+                            external_functions : Hash(String, FunctionBody),
+                            external_methods : Hash(String, Array(FunctionBody)) = Hash(String, Array(FunctionBody)).new)
     return Hash(Int32, Array(Tuple(String, String, Int32))).new unless enabled
-    callees_for_routes(source, file_path, route_rows, external_functions)
+    callees_for_routes(source, file_path, route_rows, external_functions, external_methods)
   end
 
   # For each call_expression at a row in `route_rows`, find the handler
   # argument, walk its body, and return the 1-hop callees keyed by row.
   # Each entry is a tuple `{name, callee_file_path, file_line_1_based}`.
+  #
+  # `external_methods` maps a (package-unqualified) method name to the
+  # bodies that define it, so a method-value handler (`as.Campaigns`,
+  # `s.handleOIDCRedirect` — the dominant shape in gorilla/mux and chi
+  # apps) resolves to its method body when the name is unambiguous.
   def callees_for_routes(source : String,
                          file_path : String,
                          route_rows : Set(Int32),
-                         external_functions : Hash(String, FunctionBody))
+                         external_functions : Hash(String, FunctionBody),
+                         external_methods : Hash(String, Array(FunctionBody)) = Hash(String, Array(FunctionBody)).new)
     by_route = Hash(Int32, Array(Tuple(String, String, Int32))).new
     return by_route if route_rows.empty?
 
@@ -167,9 +201,27 @@ module Noir::GoCalleeExtractor
             end
           elsif extern = external_functions[name]?
             callees.concat(calls_in_external(extern, external_functions))
+          elsif (methods = external_methods[name]?) && methods.size == 1
+            # A bare identifier that resolves to a single same-package
+            # method (rare, but `Handle("/x", Foo)` where `Foo` is a
+            # method value lifted to package scope).
+            callees.concat(calls_in_external(methods.first, external_functions))
+          end
+        when "selector_expression"
+          # Method-value handler: `as.Campaigns`, `s.handleOIDCRedirect`,
+          # `ctrl.Index`. Resolve by the field (method) name against the
+          # package method-body map; only attribute when the name is
+          # unambiguous so a shared method name across two receiver types
+          # can't mis-attribute callees.
+          field = Noir::TreeSitter.field(handler_arg, "field")
+          if field
+            method_name = Noir::TreeSitter.node_text(field, source)
+            if (methods = external_methods[method_name]?) && methods.size == 1
+              callees.concat(calls_in_external(methods.first, external_functions))
+            end
           end
         else
-          # selector_expression / method values — out of scope for now.
+          # other shapes (index/lambda results) — out of scope.
         end
 
         by_route[row] = callees unless callees.empty?
@@ -191,14 +243,34 @@ module Noir::GoCalleeExtractor
     args = Noir::TreeSitter.field(call_node, "arguments")
     return unless args
     handler_only = handler_only_call?(call_node, source)
-    seen_path = false
+
+    if handler_only
+      # `.Handler(h)` / `.HandlerFunc(h)` builder calls: the handler is
+      # the first non-string argument.
+      Noir::TreeSitter.each_named_child(args) do |arg|
+        ty = Noir::TreeSitter.node_type(arg)
+        next if ty == "interpreted_string_literal" || ty == "raw_string_literal"
+        return arg
+      end
+      return
+    end
+
+    # Verb/registration calls are path-first (`r.Get("/x", h)`). Treat the
+    # FIRST positional argument as the path — a string literal in most
+    # apps, but just as often a path constant/variable
+    # (`r.Get(tokenPath, h)`) or a concatenation — then take the next
+    # non-string argument as the handler. Keying off "first arg = path"
+    # rather than "first string literal = path" is what lets callee
+    # resolution survive constant route paths.
+    first = true
     Noir::TreeSitter.each_named_child(args) do |arg|
-      ty = Noir::TreeSitter.node_type(arg)
-      if ty == "interpreted_string_literal" || ty == "raw_string_literal"
-        seen_path = true
+      if first
+        first = false
         next
       end
-      return arg if seen_path || handler_only
+      ty = Noir::TreeSitter.node_type(arg)
+      next if ty == "interpreted_string_literal" || ty == "raw_string_literal"
+      return arg
     end
     nil
   end
@@ -218,24 +290,34 @@ module Noir::GoCalleeExtractor
     end
   end
 
-  private def unwrap_handler_arg(arg : LibTreeSitter::TSNode, source : String) : LibTreeSitter::TSNode
+  # Peel handler-wrapping calls down to the underlying handler so callee
+  # resolution sees the real function. Covers the common wrappers in
+  # gorilla/mux and chi apps:
+  #
+  #   * `http.HandlerFunc(h)`                         -> `h`
+  #   * `mid.Use(as.Foo, mid.RequireLogin)`           -> `as.Foo`
+  #   * `http.StripPrefix("/x", fileServer)`          -> `fileServer`
+  #   * nested combinations (`mid.Use(http.HandlerFunc(h), ...)`)
+  #
+  # The rule is: a call_expression handler unwraps to its first non-string
+  # argument (the handler position; string args are prefixes/keys). The
+  # walk is depth-capped so a pathological chain can't recurse forever.
+  private def unwrap_handler_arg(arg : LibTreeSitter::TSNode, source : String, depth : Int32 = 0) : LibTreeSitter::TSNode
+    return arg if depth > 4
     return arg unless Noir::TreeSitter.node_type(arg) == "call_expression"
-
-    function = Noir::TreeSitter.field(arg, "function")
-    return arg unless function
-    return arg unless Noir::TreeSitter.node_type(function) == "selector_expression"
-
-    field = Noir::TreeSitter.field(function, "field")
-    return arg unless field
-    return arg unless Noir::TreeSitter.node_text(field, source) == "HandlerFunc"
 
     args = Noir::TreeSitter.field(arg, "arguments")
     return arg unless args
+
+    inner : LibTreeSitter::TSNode? = nil
     Noir::TreeSitter.each_named_child(args) do |child|
-      return child unless Noir::TreeSitter.node_type(child) == "interpreted_string_literal" ||
-                          Noir::TreeSitter.node_type(child) == "raw_string_literal"
+      ty = Noir::TreeSitter.node_type(child)
+      next if ty == "interpreted_string_literal" || ty == "raw_string_literal"
+      inner = child
+      break
     end
-    arg
+    return arg unless found = inner
+    unwrap_handler_arg(found, source, depth + 1)
   end
 
   # Walk `body_node` for call expressions and append `(name, file_path,

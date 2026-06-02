@@ -2848,3 +2848,25 @@ p:has(> .member-card) {
     display: none;
   }
 }
+
+/* ==========================================================================
+   Skip-to-content link — WCAG 2.4.1 Bypass Blocks
+   ========================================================================== */
+.skip-link {
+    position: absolute;
+    left: 0;
+    top: -100%;
+    z-index: 1000;
+    padding: 0.65rem 1.1rem;
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border: 1px solid var(--accent);
+    border-radius: 0 0 8px 0;
+    font-weight: 600;
+    text-decoration: none;
+}
+.skip-link:focus {
+    top: 0;
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
