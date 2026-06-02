@@ -58,7 +58,9 @@ module Analyzer::Php
       #    Advance `pos` past each matched handler body so nested calls
       #    (e.g. an HTTP client call inside the closure) can't impersonate
       #    a route at the outer level.
-      verb_regex = /(\$\w+)->(get|post|put|patch|delete|options|head)\s*\(\s*['"]([^'"]+)['"]\s*,/i
+      # Keep the path literal on a single line (no quotes, no newlines) so an
+      # unrelated `$obj->get('key')` can't pull in following code as a route.
+      verb_regex = /(\$\w+)->(get|post|put|patch|delete|options|head)\s*\(\s*['"]([^'"\r\n]+)['"]\s*,/i
       pos = 0
       while m = working_content.match(verb_regex, pos)
         match_text = m[0]
@@ -82,7 +84,7 @@ module Analyzer::Php
       end
 
       # 3. Multi-method map routes: $app->map(["GET","POST"], "/path", handler)
-      map_regex = /(\$\w+)->map\s*\(\s*\[([^\]]+)\]\s*,\s*['"]([^'"]+)['"]\s*,/i
+      map_regex = /(\$\w+)->map\s*\(\s*\[([^\]]+)\]\s*,\s*['"]([^'"\r\n]+)['"]\s*,/i
       pos = 0
       while m = working_content.match(map_regex, pos)
         match_text = m[0]

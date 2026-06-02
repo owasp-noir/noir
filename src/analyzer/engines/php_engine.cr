@@ -126,52 +126,78 @@ module Analyzer::Php
       content[0...index].count('\n') + 1
     end
 
+    # ASCII byte values for the structural delimiters scanned below.
+    # All are < 0x80, so they can never collide with a UTF-8 multi-byte
+    # continuation/lead byte (>= 0x80) — see `find_matching_php_close_brace`.
+    private BYTE_NEWLINE     = '\n'.ord.to_u8
+    private BYTE_STAR        = '*'.ord.to_u8
+    private BYTE_SLASH       = '/'.ord.to_u8
+    private BYTE_HASH        = '#'.ord.to_u8
+    private BYTE_BACKSLASH   = '\\'.ord.to_u8
+    private BYTE_DQUOTE      = '"'.ord.to_u8
+    private BYTE_SQUOTE      = '\''.ord.to_u8
+    private BYTE_OPEN_BRACE  = '{'.ord.to_u8
+    private BYTE_CLOSE_BRACE = '}'.ord.to_u8
+
+    # Find the `}` that closes the `{` at `open_pos`, skipping braces inside
+    # strings and comments.
+    #
+    # Scans the raw byte buffer for O(1) positional access instead of
+    # `String#[](Int)`, which is O(n) on strings containing multi-byte
+    # characters and turned this loop into O(n^2). CJK-commented PHP (e.g.
+    # CRMEB's Chinese docblocks) made noir hang for minutes per large
+    # controller; byte scanning keeps it linear. Every delimiter we look for
+    # is ASCII, and UTF-8 only uses bytes >= 0x80 for multi-byte sequences,
+    # so a Chinese character can never be mistaken for a quote or brace.
     protected def find_matching_php_close_brace(content : String, open_pos : Int32) : Int32?
-      return unless open_pos < content.size && content[open_pos] == '{'
+      bytes = content.to_slice
+      start = content.char_index_to_byte_index(open_pos)
+      return unless start && start < bytes.size && bytes[start] == BYTE_OPEN_BRACE
 
       depth = 0
       in_string = false
       in_line_comment = false
       in_block_comment = false
       escaped = false
-      quote = '\0'
-      pos = open_pos
+      quote = 0_u8
+      pos = start
+      size = bytes.size
 
-      while pos < content.size
-        char = content[pos]
-        next_char = content[pos + 1]?
+      while pos < size
+        char = bytes[pos]
+        next_char = pos + 1 < size ? bytes[pos + 1] : 0_u8
 
         if in_line_comment
-          in_line_comment = false if char == '\n'
+          in_line_comment = false if char == BYTE_NEWLINE
         elsif in_block_comment
-          if char == '*' && next_char == '/'
+          if char == BYTE_STAR && next_char == BYTE_SLASH
             in_block_comment = false
             pos += 1
           end
         elsif in_string
           if escaped
             escaped = false
-          elsif char == '\\'
+          elsif char == BYTE_BACKSLASH
             escaped = true
           elsif char == quote
             in_string = false
           end
-        elsif char == '/' && next_char == '/'
+        elsif char == BYTE_SLASH && next_char == BYTE_SLASH
           in_line_comment = true
           pos += 1
-        elsif char == '/' && next_char == '*'
+        elsif char == BYTE_SLASH && next_char == BYTE_STAR
           in_block_comment = true
           pos += 1
-        elsif char == '#'
+        elsif char == BYTE_HASH
           in_line_comment = true
-        elsif char == '"' || char == '\''
+        elsif char == BYTE_DQUOTE || char == BYTE_SQUOTE
           in_string = true
           quote = char
-        elsif char == '{'
+        elsif char == BYTE_OPEN_BRACE
           depth += 1
-        elsif char == '}'
+        elsif char == BYTE_CLOSE_BRACE
           depth -= 1
-          return pos if depth == 0
+          return content.byte_index_to_char_index(pos) if depth == 0
         end
 
         pos += 1

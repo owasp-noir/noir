@@ -19,8 +19,17 @@ module Analyzer::Php
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
 
-      # Analyze Laravel routes files
-      if path.includes?("routes/") && (path.ends_with?("web.php") || path.ends_with?("api.php"))
+      # Analyze Laravel route files. The framework convention is
+      # `routes/web.php` and `routes/api.php`, but real apps routinely
+      # split route registrations across additional files in the same
+      # directory: `routes/auth.php` (Breeze/Fortify), `routes/admin.php`,
+      # `routes/channels.php`, and project-specific names like koel's
+      # `routes/api.base.php` / `routes/web.base.php`. Treat any `.php`
+      # file living directly under a `routes/` directory as a candidate —
+      # the verb scans only emit on `Route::<verb>(...)` calls, so
+      # non-routing siblings such as `console.php` (Artisan commands) and
+      # `channels.php` (broadcast channels) contribute nothing.
+      if laravel_route_file?(path)
         endpoints.concat(analyze_routes_file(path))
       end
 
@@ -32,19 +41,34 @@ module Analyzer::Php
       endpoints
     end
 
+    private def laravel_route_file?(path : String) : Bool
+      return false unless path.ends_with?(".php")
+      # Match any `.php` under a `routes/` directory at any depth. Larger
+      # apps group routes in subdirectories — snipe-it keeps per-resource
+      # files in `routes/web/hardware.php`, `routes/web/users.php`, etc.
+      File.dirname(path).split('/').includes?("routes")
+    end
+
     private def analyze_routes_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       begin
         File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
           content = file.gets_to_end
-          endpoints = analyze_routes_content(content, "", path, include_callee)
+          # `use App\Http\Controllers\...;` imports map the short class
+          # names used in route handlers back to their FQCNs so callee
+          # resolution can locate the controller file. Only parsed when
+          # callees/ai-context are requested.
+          imports = include_callee ? parse_use_imports(content) : EMPTY_IMPORTS
+          endpoints = analyze_routes_content(content, "", path, include_callee, imports: imports)
         end
       rescue e
         logger.debug "Error analyzing routes file #{path}: #{e}"
       end
       endpoints
     end
+
+    EMPTY_IMPORTS = {} of String => String
 
     private def analyze_controller_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
@@ -94,7 +118,8 @@ module Analyzer::Php
                                        prefix : String,
                                        file_path : String,
                                        include_callee : Bool,
-                                       base_line : Int32 = 1) : Array(Endpoint)
+                                       base_line : Int32 = 1,
+                                       imports : Hash(String, String) = EMPTY_IMPORTS) : Array(Endpoint)
       endpoints = [] of Endpoint
       route_groups = extract_route_groups(content)
       # Pre-compute byte ranges that are inside PHP comments
@@ -123,7 +148,7 @@ module Analyzer::Php
           methods.each do |http_method|
             details = Details.new(PathInfo.new(file_path, route_line))
             endpoint = Endpoint.new(full_path, http_method, params, details.dup)
-            attach_route_callees(endpoint, handler_body, file_path, body_start_line) if include_callee
+            attach_route_callees(endpoint, handler_body, body_start_line, content, route_match.end(0), file_path, imports) if include_callee
             endpoints << endpoint
           end
           pos = next_pos
@@ -148,7 +173,7 @@ module Analyzer::Php
           methods.each do |http_method|
             details = Details.new(PathInfo.new(file_path, route_line))
             endpoint = Endpoint.new(full_path, http_method, params, details.dup)
-            attach_route_callees(endpoint, handler_body, file_path, body_start_line) if include_callee
+            attach_route_callees(endpoint, handler_body, body_start_line, content, route_match.end(0), file_path, imports) if include_callee
             endpoints << endpoint
           end
           pos = next_pos
@@ -172,7 +197,7 @@ module Analyzer::Php
           methods.each do |http_method|
             details = Details.new(PathInfo.new(file_path, route_line))
             endpoint = Endpoint.new(full_path, http_method, params, details.dup)
-            attach_route_callees(endpoint, handler_body, file_path, body_start_line) if include_callee
+            attach_route_callees(endpoint, handler_body, body_start_line, content, route_match.end(0), file_path, imports) if include_callee
             endpoints << endpoint
           end
           pos = next_pos
@@ -196,7 +221,7 @@ module Analyzer::Php
           methods.each do |http_method|
             details = Details.new(PathInfo.new(file_path, route_line))
             endpoint = Endpoint.new(full_path, http_method, params, details.dup)
-            attach_route_callees(endpoint, handler_body, file_path, body_start_line) if include_callee
+            attach_route_callees(endpoint, handler_body, body_start_line, content, route_match.end(0), file_path, imports) if include_callee
             endpoints << endpoint
           end
           pos = next_pos
@@ -270,17 +295,132 @@ module Analyzer::Php
       route_groups.each do |group|
         new_prefix = group.prefix.empty? ? prefix : build_full_path(prefix, group.prefix)
         group_base_line = base_line + newline_count_before(content, group.body_start)
-        endpoints.concat(analyze_routes_content(group.body, new_prefix, file_path, include_callee, group_base_line))
+        endpoints.concat(analyze_routes_content(group.body, new_prefix, file_path, include_callee, group_base_line, imports))
       end
 
       endpoints
     end
 
-    private def attach_route_callees(endpoint : Endpoint, body : String?, file_path : String, start_line : Int32?)
-      return unless body && start_line
+    # Attach callees for a route handler. Inline `function`/`fn` closures
+    # are extracted directly. For the dominant Laravel shape —
+    # `[Controller::class, 'method']`, `'Controller@method'`, or an
+    # invokable `Controller::class` — resolve the controller file from the
+    # route file's `use` imports and pull callees from the action body so
+    # controller-based routes are no longer callee/ai-context blind spots.
+    private def attach_route_callees(endpoint : Endpoint,
+                                     body : String?,
+                                     start_line : Int32?,
+                                     content : String,
+                                     action_pos : Int32,
+                                     routes_file_path : String,
+                                     imports : Hash(String, String))
+      if body && start_line
+        callees = Noir::PhpCalleeExtractor.callees_for_body(body, routes_file_path, start_line)
+        attach_php_callees(endpoint, callees)
+        return
+      end
 
-      callees = Noir::PhpCalleeExtractor.callees_for_body(body, file_path, start_line)
+      action = extract_route_action(content, action_pos)
+      return unless action
+
+      resolved = resolve_controller_action_body(action[0], action[1], routes_file_path, imports)
+      return unless resolved
+
+      action_body, controller_path, controller_line = resolved
+      callees = Noir::PhpCalleeExtractor.callees_for_body(action_body, controller_path, controller_line)
       attach_php_callees(endpoint, callees)
+    end
+
+    # Parse the controller reference that follows a route's path argument.
+    # Returns {class, method} where `class` may be a short name (resolved
+    # later via `use` imports) or a fully-qualified `\App\...` name.
+    private def extract_route_action(content : String, pos : Int32) : Tuple(String, String)?
+      scan_pos = pos
+      while scan_pos < content.size && content[scan_pos].ascii_whitespace?
+        scan_pos += 1
+      end
+      return unless scan_pos < content.size
+
+      rest = content[scan_pos..]
+
+      # [Controller::class, 'method']
+      if m = rest.match(/\A\[\s*([A-Za-z_\\][\w\\]*)::class\s*,\s*['"]([A-Za-z_]\w*)['"]/)
+        return {m[1], m[2]}
+      end
+
+      # 'Controller@method' / "App\\...\\Controller@method"
+      if m = rest.match(/\A['"]([\w\\]+)@([A-Za-z_]\w*)['"]/)
+        return {m[1], m[2]}
+      end
+
+      # Invokable single-action controller: Controller::class
+      if m = rest.match(/\A([A-Za-z_\\][\w\\]*)::class\s*\)/)
+        return {m[1], "__invoke"}
+      end
+
+      nil
+    end
+
+    private def resolve_controller_action_body(class_ref : String,
+                                               method_name : String,
+                                               routes_file_path : String,
+                                               imports : Hash(String, String)) : Tuple(String, String, Int32)?
+      controller_path = resolve_controller_path(class_ref, routes_file_path, imports)
+      return unless controller_path && File.exists?(controller_path)
+
+      content = read_file_content(controller_path)
+      method_match = content.match(/(?:public|protected|private)\s+(?:static\s+)?function\s+#{Regex.escape(method_name)}\s*\(/)
+      return unless method_match
+
+      body_info = extract_php_method_body_after(content, method_match.begin(0))
+      return unless body_info
+
+      body, start_line = body_info
+      {body, controller_path, start_line}
+    rescue e
+      logger.debug "Error resolving Laravel handler #{class_ref}::#{method_name}: #{e}"
+      nil
+    end
+
+    # Map a (possibly short or aliased) class reference to a controller file
+    # path. The route file's `use` imports resolve the leading segment —
+    # both `use App\...\FooController;` (short name) and
+    # `use BookStack\Settings as SettingControllers;` (namespace alias) — and
+    # Laravel's PSR-4 root namespace maps to `app/`. The root namespace is not
+    # always `App\`: BookStack uses `BookStack\ => app/`, so the first segment
+    # is dropped generically rather than matched against a literal `App`.
+    private def resolve_controller_path(class_ref : String,
+                                        routes_file_path : String,
+                                        imports : Hash(String, String)) : String?
+      segments = class_ref.lstrip('\\').split('\\').reject(&.empty?)
+      return if segments.empty?
+
+      if mapped = imports[segments[0]]?
+        segments = mapped.lstrip('\\').split('\\').reject(&.empty?) + segments[1..]
+      end
+      return unless segments.size >= 2
+
+      root = laravel_project_root(routes_file_path)
+      return unless root
+
+      File.join(root, "app", "#{segments[1..].join("/")}.php")
+    end
+
+    private def laravel_project_root(routes_file_path : String) : String?
+      marker = "/routes/"
+      idx = routes_file_path.rindex(marker)
+      return unless idx
+      routes_file_path[0...idx]
+    end
+
+    private def parse_use_imports(content : String) : Hash(String, String)
+      imports = {} of String => String
+      content.scan(/(?:\A|[;\n{])\s*use\s+([A-Za-z_\\][\w\\]*)(?:\s+as\s+([A-Za-z_]\w*))?\s*;/) do |match|
+        fqcn = match[1]
+        short = match[2]? || fqcn.split('\\').last
+        imports[short] = fqcn unless short.empty?
+      end
+      imports
     end
 
     private def extract_inline_closure_body(content : String, pos : Int32, base_line : Int32) : Tuple(String?, Int32, Int32?)
@@ -487,7 +627,13 @@ module Analyzer::Php
       return unless pos < content.size
 
       context = content[pos..]
-      function_match = context.match(/function\s*\([^)]*\)\s*\{/mi)
+      # Match the group closure, allowing `static`, a `use (...)` capture,
+      # and a return type (`: void`) between the parameter list and the
+      # body — koel and other modern Laravel apps write
+      # `->group(static function (): void { ... })`, which the previous
+      # `function (...) {` pattern missed, dropping the group prefix from
+      # every nested route.
+      function_match = context.match(/(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{;=]+)?\{/mi)
       return unless function_match
 
       function_start = function_match.begin(0)

@@ -33,7 +33,13 @@ ready = Endpoint.new("/ready", "GET").tap do |ep|
   ep.push_callee(Callee.new("ReadyProbe::check", line: 29))
 end
 
-reports = Endpoint.new("/reports", "GET")
+# Controller-array handler `[ReportController::class, 'index']` resolves the
+# controller file (app/Http/Controllers/ReportController.php) and pulls callees
+# from the action body.
+reports = Endpoint.new("/reports", "GET").tap do |ep|
+  ep.push_callee(Callee.new("ReportBuilder::generate", line: 9))
+  ep.push_callee(Callee.new("response", line: 10))
+end
 photos_index = Endpoint.new("/photos", "GET")
 
 expected_endpoints = [
@@ -57,14 +63,21 @@ tester = FunctionalTester.new("fixtures/php/laravel_callees/", {
 tester.perform_tests
 
 describe "Laravel callee extraction" do
-  it "keeps controller array routes and resource routes callee-empty" do
+  it "resolves callees for controller-array handlers from the controller file" do
     reports_endpoint = tester.app.endpoints.find { |e| e.method == "GET" && e.url == "/reports" }
-    photos_endpoint = tester.app.endpoints.find { |e| e.method == "GET" && e.url == "/photos" }
 
     reports_endpoint.should_not be_nil
-    photos_endpoint.should_not be_nil
+    if reports_endpoint
+      names = reports_endpoint.callees.map(&.name)
+      names.should contain("ReportBuilder::generate")
+      names.should contain("response")
+    end
+  end
 
-    reports_endpoint.callees.should be_empty if reports_endpoint
+  it "leaves resource routes callee-empty (no per-action resolution)" do
+    photos_endpoint = tester.app.endpoints.find { |e| e.method == "GET" && e.url == "/photos" }
+
+    photos_endpoint.should_not be_nil
     photos_endpoint.callees.should be_empty if photos_endpoint
   end
 end

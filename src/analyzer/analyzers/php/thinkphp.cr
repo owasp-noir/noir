@@ -84,6 +84,7 @@ module Analyzer::Php
         methods = verb == "ANY" ? ALL_METHODS : [verb]
 
         handler_body, next_pos, body_start_line = extract_inline_closure_body(content, route_match.end(0), base_line)
+        route_handler = handler_body ? nil : extract_route_handler(content, route_match.end(0))
 
         path_params = extract_path_params(full_path)
         handler_params = handler_body ? extract_request_params(handler_body) : [] of Param
@@ -95,7 +96,7 @@ module Analyzer::Php
 
           details = Details.new(PathInfo.new(file_path, route_line))
           endpoint = Endpoint.new(normalized_path, m, params, details)
-          attach_route_callees(endpoint, handler_body, file_path, body_start_line) if include_callee
+          attach_route_callees(endpoint, handler_body, file_path, body_start_line, route_handler) if include_callee
           endpoints << endpoint
         end
 
@@ -267,10 +268,96 @@ module Analyzer::Php
       methods.empty? ? ["GET"] : methods
     end
 
-    private def attach_route_callees(endpoint : Endpoint, body : String?, file_path : String, start_line : Int32?)
-      return unless body && start_line
-      callees = Noir::PhpCalleeExtractor.callees_for_body(body, file_path, start_line)
+    private def attach_route_callees(endpoint : Endpoint,
+                                     body : String?,
+                                     file_path : String,
+                                     start_line : Int32?,
+                                     handler : Tuple(String, String)? = nil)
+      if body && start_line
+        callees = Noir::PhpCalleeExtractor.callees_for_body(body, file_path, start_line)
+        attach_php_callees(endpoint, callees)
+        return
+      end
+
+      # Explicit ThinkPHP routes name their handler as a string —
+      # `'v1.user.User/save_info'` (dotted controller + `/method`) — or an
+      # `[Controller::class, 'method']` pair, never an inline closure. Resolve
+      # the controller file under `app/<app>/controller/` so these routes
+      # surface callees / ai-context instead of staying blind.
+      return unless handler
+
+      resolved = resolve_handler_method_body(handler[0], handler[1], file_path)
+      return unless resolved
+
+      method_body, controller_path, method_line = resolved
+      callees = Noir::PhpCalleeExtractor.callees_for_body(method_body, controller_path, method_line)
       attach_php_callees(endpoint, callees)
+    end
+
+    # Parse the controller reference following a route's pattern argument.
+    # Handles `'v1.user.User/save_info'`, `'v1.user.User@save_info'`, and
+    # `[\app\...\User::class, 'save_info']`. Returns {controller_ref, method}.
+    private def extract_route_handler(content : String, pos : Int32) : Tuple(String, String)?
+      scan_pos = skip_whitespace(content, pos)
+      return unless scan_pos < content.size
+
+      rest = content[scan_pos..]
+
+      if m = rest.match(/\A['"]([^'"\/@]+)[\/@]([A-Za-z_]\w*)['"]/)
+        return {m[1], m[2]}
+      end
+
+      if m = rest.match(/\A\[\s*([A-Za-z_\\][\w\\]*)::class\s*,\s*['"]([A-Za-z_]\w*)['"]/)
+        return {m[1], m[2]}
+      end
+
+      nil
+    end
+
+    private def resolve_handler_method_body(controller_ref : String,
+                                            method_name : String,
+                                            route_file_path : String) : Tuple(String, String, Int32)?
+      controller_path = resolve_controller_path(controller_ref, route_file_path)
+      return unless controller_path && File.exists?(controller_path)
+
+      content = read_file_content(controller_path)
+      method_match = content.match(/(?:public|protected|private)\s+function\s+#{Regex.escape(method_name)}\s*\(/)
+      return unless method_match
+
+      body_info = extract_php_method_body_after(content, method_match.begin(0))
+      return unless body_info
+
+      body, start_line = body_info
+      {body, controller_path, start_line}
+    rescue e
+      logger.debug "Error resolving ThinkPHP handler #{controller_ref}/#{method_name}: #{e}"
+      nil
+    end
+
+    # Map a controller reference to a file under the owning app's
+    # `controller/` directory. A route file lives at
+    # `.../app/<app>/route/<file>.php`, so its sibling `controller/` holds
+    # the controllers. Dotted refs (`v1.user.User`) and namespaced refs
+    # (`app\adminapi\controller\v1\user\User`) both collapse to
+    # `controller/v1/user/User.php`.
+    private def resolve_controller_path(controller_ref : String, route_file_path : String) : String?
+      segments = route_file_path.split('/')
+      route_idx = segments.rindex("route")
+      return unless route_idx && route_idx >= 1
+
+      app_dir = segments[0...route_idx].join('/')
+      return if app_dir.empty?
+
+      rel = controller_ref.gsub('\\', '/')
+      if marker = rel.index("controller/")
+        rel = rel[(marker + "controller/".size)..]
+      elsif !rel.includes?('/')
+        rel = rel.gsub('.', '/')
+      end
+      rel = rel.strip('/')
+      return if rel.empty? || rel.includes?("..")
+
+      File.join(app_dir, "controller", "#{rel}.php")
     end
 
     # Implicit Controller Auto-Routing

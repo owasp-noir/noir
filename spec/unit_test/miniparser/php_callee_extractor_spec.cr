@@ -91,4 +91,22 @@ describe Noir::PhpCalleeExtractor do
       {"sanitize_name", 63},
     ])
   end
+
+  # `sanitize_line` scans the raw byte buffer (ASCII delimiters never collide
+  # with UTF-8 multi-byte sequences). CJK comments/strings must still be
+  # blanked correctly, and the half-megabyte CJK string literals in CRMEB used
+  # to make the old `String#[](Int)` loop O(n^2) — here we just assert
+  # correctness on multi-byte content.
+  it "blanks multi-byte (CJK) comments and string literals" do
+    body = <<-'PHP'
+      // 用户管理 AuditLog::write('忽略');
+      $name = '用户名称';
+      UserService::create($name); // 创建用户
+      PHP
+
+    callees = Noir::PhpCalleeExtractor.callees_for_body(body, "index.php", 70)
+    callees.map { |name, _, line| {name, line} }.should eq([
+      {"UserService::create", 72},
+    ])
+  end
 end

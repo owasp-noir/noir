@@ -13,9 +13,17 @@ expected_endpoints = [
   Endpoint.new("/admin/dashboard", "GET"),
   Endpoint.new("/admin/users", "GET"),
   Endpoint.new("/login", "POST"),
+  # connect()->setMethods([...]) is honored instead of defaulting to GET
+  Endpoint.new("/logout", "POST"),
+  Endpoint.new("/sessions/{id}", "PUT", [Param.new("id", "", "path")]),
+  Endpoint.new("/sessions/{id}", "DELETE", [Param.new("id", "", "path")]),
+  # prefix() opens a prefixed scope like scope()
+  Endpoint.new("/groups/{id}", "GET", [Param.new("id", "", "path")]),
+  # Static Router facade form
+  Endpoint.new("/legacy/ping", "GET"),
 ]
 
 FunctionalTester.new("fixtures/php/cakephp/", {
   :techs     => 2,  # Detection still sees php_cakephp and php_pure
-  :endpoints => 12, # Analysis suppresses redundant php_pure file endpoints
+  :endpoints => 17, # Analysis suppresses redundant php_pure file endpoints
 }, expected_endpoints).perform_tests

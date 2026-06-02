@@ -94,19 +94,39 @@ module Noir::PhpCalleeExtractor
     sanitized
   end
 
+  # ASCII byte values for the delimiters scanned below. All < 0x80, so a
+  # UTF-8 multi-byte sequence (bytes >= 0x80) never collides with them.
+  private BYTE_NEWLINE   = '\n'.ord.to_u8
+  private BYTE_STAR      = '*'.ord.to_u8
+  private BYTE_SLASH     = '/'.ord.to_u8
+  private BYTE_HASH      = '#'.ord.to_u8
+  private BYTE_BACKSLASH = '\\'.ord.to_u8
+  private BYTE_DQUOTE    = '"'.ord.to_u8
+  private BYTE_SQUOTE    = '\''.ord.to_u8
+  private BYTE_SPACE     = ' '.ord.to_u8
+
+  # Blank out string literals and comments so the call-pattern regexes only
+  # see executable code. Scans the raw byte buffer for O(1) positional
+  # access — `String#[](Int)` is O(n) on multi-byte strings, which made a
+  # single long CJK/escaped line (e.g. CRMEB's half-megabyte SQL seed
+  # literal) cost O(n^2). String/comment bytes are replaced with spaces;
+  # code bytes (including any multi-byte ones outside strings) are copied
+  # verbatim so the result stays valid UTF-8.
   private def sanitize_line(line : String, in_block_comment : Bool) : Tuple(String, Bool)
+    bytes = line.to_slice
+    size = bytes.size
     sanitized = String.build do |io|
       in_string = false
       escaped = false
-      quote = '\0'
+      quote = 0_u8
       index = 0
 
-      while index < line.size
-        char = line[index]
-        next_char = line[index + 1]?
+      while index < size
+        char = bytes[index]
+        next_char = index + 1 < size ? bytes[index + 1] : 0_u8
 
         if in_block_comment
-          if char == '*' && next_char == '/'
+          if char == BYTE_STAR && next_char == BYTE_SLASH
             io << "  "
             in_block_comment = false
             index += 2
@@ -118,29 +138,26 @@ module Noir::PhpCalleeExtractor
           io << ' '
           if escaped
             escaped = false
-          elsif char == '\\'
+          elsif char == BYTE_BACKSLASH
             escaped = true
           elsif char == quote
             in_string = false
           end
           index += 1
-        elsif char == '/' && next_char == '*'
+        elsif char == BYTE_SLASH && next_char == BYTE_STAR
           io << "  "
           in_block_comment = true
           index += 2
-        elsif char == '/' && next_char == '/'
-          io << " " * (line.size - index)
-          index = line.size
-        elsif char == '#'
-          io << " " * (line.size - index)
-          index = line.size
-        elsif char == '"' || char == '\''
+        elsif (char == BYTE_SLASH && next_char == BYTE_SLASH) || char == BYTE_HASH
+          (size - index).times { io.write_byte(BYTE_SPACE) }
+          index = size
+        elsif char == BYTE_DQUOTE || char == BYTE_SQUOTE
           io << ' '
           in_string = true
           quote = char
           index += 1
         else
-          io << char
+          io.write_byte(char)
           index += 1
         end
       end

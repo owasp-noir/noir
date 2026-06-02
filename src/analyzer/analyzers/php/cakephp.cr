@@ -34,79 +34,198 @@ module Analyzer::Php
       endpoints = [] of Endpoint
       details = Details.new(PathInfo.new(file_path))
 
-      working_content = content
+      # `scope()`/`prefix()`/`plugin()` each open a nested RouteBuilder whose
+      # routes inherit a URL prefix. Extract their bodies first so the verb
+      # scans below don't emit nested routes a second time without the prefix.
+      scopes = extract_scopes(content)
 
-      # 1. Scoped routes
-      scope_patterns = [
-        /(\$routes|\$builder)->scope\s*\(\s*['"]([^'"]+)['"]\s*,[^,]*,\s*(?:static\s+)?function\s*\(\s*(?:[^$)]+\s+)?\$[^)]+\)\s*\{((?:[^{}]|{[^{}]*})*)\}/mi,
-        /(\$routes|\$builder)->scope\s*\(\s*['"]([^'"]+)['"]\s*,\s*(?:static\s+)?function\s*\(\s*(?:[^$)]+\s+)?\$[^)]+\)\s*\{((?:[^{}]|{[^{}]*})*)\}/mi,
-      ]
-
-      scope_patterns.each do |pattern|
-        working_content.scan(pattern).each do |match|
-          # match[1] is variable
-          # match[2] is path
-          # match[3] is content
-          if match.size >= 4
-            new_prefix = build_full_path(prefix, match[2])
-            endpoints.concat(analyze_routes_content(match[3], new_prefix, file_path, include_callee))
-          end
+      # 1. Connect routes. Capture the whole statement (up to the terminating
+      # `;`) so the chained method restriction is visible. Modern CakePHP pins
+      # verbs with `->setMethods(['POST'])`, not the legacy
+      # `'_method' => 'POST'` option, so the previous options-only scan
+      # recorded every connect route as GET — turning real POST/PUT/DELETE
+      # endpoints into GET false positives (and dropping the verbs they
+      # actually answer).
+      pos = 0
+      while route_match = content.match(CONNECT_REGEX, pos)
+        if inside_scope_body?(route_match.begin(0), scopes)
+          pos = route_match.end(0)
+          next
         end
-        working_content = working_content.gsub(pattern, "")
-      end
 
-      # 2. Connect routes
-      connect_pattern = /(\$routes|\$builder)->connect\s*\(\s*['"]([^'"]+)['"](?:.*?)\[(.*?)\]/mi
-      working_content.scan(connect_pattern).each do |match|
-        route_path = match[2]
-        options_str = match[3]
+        route_path = route_match[2]
+        statement = route_match[3]
+        options_str = first_bracket_group(statement)
 
         full_path = build_full_path(prefix, route_path)
-        params = extract_route_params(full_path)
         target = extract_controller_action_target(options_str)
+        methods = extract_connect_methods(statement, options_str)
 
-        method = "GET"
-        if method_match = options_str.match(/['"]_method['"]\s*=>\s*['"]([^'"]+)['"]/)
-          method = method_match[1].upcase
-        end
-
-        endpoint = Endpoint.new(full_path, method, params, details.dup)
-        attach_route_target_callees(endpoint, target, file_path) if include_callee
-        endpoints << endpoint
-      end
-
-      # 3. HTTP Verb methods
-      verb_patterns = {
-        "GET"     => /(\$routes|\$builder)->get\s*\(\s*['"]([^'"]+)['"](?:\s*,\s*\[(.*?)\])?/mi,
-        "POST"    => /(\$routes|\$builder)->post\s*\(\s*['"]([^'"]+)['"](?:\s*,\s*\[(.*?)\])?/mi,
-        "PUT"     => /(\$routes|\$builder)->put\s*\(\s*['"]([^'"]+)['"](?:\s*,\s*\[(.*?)\])?/mi,
-        "PATCH"   => /(\$routes|\$builder)->patch\s*\(\s*['"]([^'"]+)['"](?:\s*,\s*\[(.*?)\])?/mi,
-        "DELETE"  => /(\$routes|\$builder)->delete\s*\(\s*['"]([^'"]+)['"](?:\s*,\s*\[(.*?)\])?/mi,
-        "OPTIONS" => /(\$routes|\$builder)->options\s*\(\s*['"]([^'"]+)['"](?:\s*,\s*\[(.*?)\])?/mi,
-        "HEAD"    => /(\$routes|\$builder)->head\s*\(\s*['"]([^'"]+)['"](?:\s*,\s*\[(.*?)\])?/mi,
-      }
-
-      verb_patterns.each do |method, pattern|
-        working_content.scan(pattern).each do |match|
-          route_path = match[2]
-          full_path = build_full_path(prefix, route_path)
+        methods.each do |method|
           params = extract_route_params(full_path)
-          target = extract_controller_action_target(match[3]?)
           endpoint = Endpoint.new(full_path, method, params, details.dup)
           attach_route_target_callees(endpoint, target, file_path) if include_callee
           endpoints << endpoint
         end
+        pos = route_match.end(0)
       end
 
-      # 4. Resources
-      resource_pattern = /(\$routes|\$builder)->resources\s*\(\s*['"]([^'"]+)['"]/mi
-      working_content.scan(resource_pattern).each do |match|
-        resource_name = match[2]
+      # 2. HTTP verb shortcuts: $routes->get/post/..., Router::get/...
+      VERB_REGEXES.each do |method, pattern|
+        pos = 0
+        while route_match = content.match(pattern, pos)
+          if inside_scope_body?(route_match.begin(0), scopes)
+            pos = route_match.end(0)
+            next
+          end
+
+          route_path = route_match[2]
+          full_path = build_full_path(prefix, route_path)
+          params = extract_route_params(full_path)
+          target = extract_controller_action_target(route_match[3]?)
+          endpoint = Endpoint.new(full_path, method, params, details.dup)
+          attach_route_target_callees(endpoint, target, file_path) if include_callee
+          endpoints << endpoint
+          pos = route_match.end(0)
+        end
+      end
+
+      # 3. Resource routes
+      pos = 0
+      while route_match = content.match(RESOURCE_REGEX, pos)
+        if inside_scope_body?(route_match.begin(0), scopes)
+          pos = route_match.end(0)
+          next
+        end
+
+        resource_name = route_match[2]
         full_resource_path = build_full_path(prefix, resource_name)
         endpoints.concat(create_resource_endpoints(full_resource_path, file_path, include_callee, resource_name))
+        pos = route_match.end(0)
+      end
+
+      # 4. Recurse into each scope/prefix/plugin body with its prefix applied.
+      scopes.each do |scope|
+        new_prefix = build_full_path(prefix, scope.prefix)
+        endpoints.concat(analyze_routes_content(scope.body, new_prefix, file_path, include_callee))
       end
 
       endpoints
+    end
+
+    private struct Scope
+      getter prefix, body, body_start, body_end
+
+      def initialize(@prefix : String, @body : String, @body_start : Int32, @body_end : Int32)
+      end
+    end
+
+    # Route receivers in a CakePHP routes file: the injected builder under any
+    # variable name (`$routes`, `$builder`, `$routeBuilder`, ...) or the static
+    # `Router` facade used by older apps and plugin route files (croogo).
+    CONNECT_REGEX    = /(\$\w+|Router)(?:->|::)connect\s*\(\s*['"]([^'"]+)['"](.*?);/mi
+    RESOURCE_REGEX   = /(\$\w+|Router)(?:->|::)resources\s*\(\s*['"]([^'"]+)['"]/mi
+    SCOPE_OPEN_REGEX = /(?:\$\w+|Router)(?:->|::)(scope|prefix|plugin)\s*\(/mi
+    VERB_REGEXES     = {
+      "GET"     => /(\$\w+|Router)(?:->|::)get\s*\(\s*['"]([^'"]+)['"](?:\s*,\s*\[(.*?)\])?/mi,
+      "POST"    => /(\$\w+|Router)(?:->|::)post\s*\(\s*['"]([^'"]+)['"](?:\s*,\s*\[(.*?)\])?/mi,
+      "PUT"     => /(\$\w+|Router)(?:->|::)put\s*\(\s*['"]([^'"]+)['"](?:\s*,\s*\[(.*?)\])?/mi,
+      "PATCH"   => /(\$\w+|Router)(?:->|::)patch\s*\(\s*['"]([^'"]+)['"](?:\s*,\s*\[(.*?)\])?/mi,
+      "DELETE"  => /(\$\w+|Router)(?:->|::)delete\s*\(\s*['"]([^'"]+)['"](?:\s*,\s*\[(.*?)\])?/mi,
+      "OPTIONS" => /(\$\w+|Router)(?:->|::)options\s*\(\s*['"]([^'"]+)['"](?:\s*,\s*\[(.*?)\])?/mi,
+      "HEAD"    => /(\$\w+|Router)(?:->|::)head\s*\(\s*['"]([^'"]+)['"](?:\s*,\s*\[(.*?)\])?/mi,
+    }
+
+    # Find top-level scope/prefix/plugin closures and their bodies. Advancing
+    # past each matched body means nested scopes are not captured here — they
+    # surface when `analyze_routes_content` recurses into the body — so a route
+    # is never emitted twice.
+    private def extract_scopes(content : String) : Array(Scope)
+      scopes = [] of Scope
+      pos = 0
+
+      while open_match = content.match(SCOPE_OPEN_REGEX, pos)
+        method = open_match[1].downcase
+        info = parse_scope_call(content, open_match.end(0), method)
+        if info
+          prefix, body, body_start, body_end = info
+          scopes << Scope.new(prefix, body, body_start, body_end)
+          pos = body_end + 1
+        else
+          pos = open_match.end(0)
+        end
+      end
+
+      scopes
+    end
+
+    private def parse_scope_call(content : String, pos : Int32, method : String) : Tuple(String, String, Int32, Int32)?
+      return unless pos < content.size
+
+      context = content[pos..]
+      closure = context.match(/(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?\{/mi)
+      return unless closure
+
+      prelude = context[0...closure.begin(0)]
+      brace_pos = pos + closure.end(0) - 1
+      body_end = find_matching_php_close_brace(content, brace_pos)
+      return unless body_end
+
+      {scope_prefix_from_prelude(prelude, method), content[(brace_pos + 1)...body_end], brace_pos + 1, body_end}
+    end
+
+    # Resolve the URL prefix a scope/prefix/plugin contributes. `scope`/`prefix`
+    # take the path as their first string argument; `plugin` takes the plugin
+    # name, with the mounted path supplied separately as a `'path' => '/x'`
+    # option (falling back to the dasherized plugin name).
+    private def scope_prefix_from_prelude(prelude : String, method : String) : String
+      if method == "plugin"
+        if path = prelude.match(/['"]path['"]\s*=>\s*['"]([^'"]*)['"]/i)
+          return path[1]
+        end
+        name = prelude.match(/['"]([^'"]+)['"]/)
+        return name ? "/#{name[1].downcase}" : ""
+      end
+
+      first = prelude.match(/['"]([^'"]*)['"]/)
+      first ? first[1] : ""
+    end
+
+    private def inside_scope_body?(pos : Int32, scopes : Array(Scope)) : Bool
+      scopes.any? { |scope| pos >= scope.body_start && pos < scope.body_end }
+    end
+
+    # Determine the HTTP verbs a `connect()` route answers. Prefer the
+    # chained `->setMethods([...])` (modern CakePHP), fall back to the
+    # legacy `'_method' => '...'` option, and default to GET when neither
+    # is present (an unrestricted `connect()` is most commonly reached via
+    # GET in these apps).
+    private def extract_connect_methods(statement : String, options_str : String?) : Array(String)
+      if set_methods = statement.match(/->\s*setMethods\s*\(\s*\[([^\]]*)\]/i)
+        methods = extract_methods_from_array(set_methods[1])
+        return methods unless methods.empty?
+      end
+
+      if options_str && (legacy = options_str.match(/['"]_method['"]\s*=>\s*['"]([^'"]+)['"]/i))
+        return [legacy[1].upcase]
+      end
+
+      ["GET"]
+    end
+
+    private def extract_methods_from_array(array_body : String) : Array(String)
+      methods = [] of String
+      array_body.scan(/['"]([^'"]+)['"]/).each do |match|
+        methods << match[1].upcase
+      end
+      methods
+    end
+
+    # First `[...]` group in a connect statement — the route options array
+    # carrying `controller`/`action`. `setPass`/`setMethods` arrays follow it.
+    private def first_bracket_group(statement : String) : String?
+      match = statement.match(/\[(.*?)\]/m)
+      match ? match[1] : nil
     end
 
     # CakePHP supports both `{id}` and `:id` route params; the latter is not
