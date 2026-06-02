@@ -27,6 +27,10 @@
                                 :page int?}}
            :handler search}}]
 
+   ; Bare `:handler` (no method key) responds to every method — emit GET.
+   ["/status"
+    {:handler status-handler}]
+
    ["/admin"
     ["/reports/:id"
      {:patch {:parameters {:path {:id int?}

@@ -32,6 +32,11 @@
   (GET "/profile/:id" [id q :as {:keys [headers]}]
     {:id id :q q})
 
+  ; Inline regex constraint `:id{[0-9]+}` must normalize to `:id` in the URL,
+  ; and the `:<<` coercion fn (`as-int`) must NOT become a query param.
+  (GET "/orders/:id{[0-9]+}" [id :<< as-int]
+    {:id id})
+
   (context "/api" []
     (POST "/users" request
       request)

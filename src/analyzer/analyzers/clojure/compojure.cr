@@ -59,6 +59,7 @@ module Analyzer::Clojure
           case base
           when "context"
             context_path, _ = first_string_literal(source, after_symbol, form_end)
+            context_path = normalize_route_path(context_path) if context_path
             next_prefix = context_path ? join_path(prefix, context_path) : prefix
             scan_forms(source, after_symbol, form_end, next_prefix, path, include_callee)
           when "defroutes", "routes"
@@ -80,8 +81,9 @@ module Analyzer::Clojure
 
     private def add_route(source : String, form_start : Int32, args_start : Int32, form_end : Int32,
                           prefix : String, path : String, method : String, include_callee : Bool)
-      route_path, path_end = first_string_literal(source, args_start, form_end)
-      return unless route_path
+      raw_route_path, path_end = first_string_literal(source, args_start, form_end)
+      return unless raw_route_path
+      route_path = normalize_route_path(raw_route_path)
 
       full_path = join_path(prefix, route_path)
       endpoint = Endpoint.new(full_path, method, Details.new(PathInfo.new(path, line_number_for(source, form_start))))
@@ -139,6 +141,14 @@ module Analyzer::Clojure
       names
     end
 
+    # Compojure allows an inline regex constraint on a path param:
+    # `:id{[0-9]+}` binds `id` and validates it against `[0-9]+`. The
+    # constraint is routing metadata, not part of the matched URL, so strip
+    # it to keep the endpoint path clean (`/user/:id`, not `/user/:id{[0-9]+}`).
+    private def normalize_route_path(route_path : String) : String
+      route_path.gsub(/(:[A-Za-z_][\w\-]*)\{[^{}]*\}/, "\\1")
+    end
+
     private def extract_query_param_names(binding : String, path_param_names : Array(String)) : Array(String)
       # `{:keys [...]}` style request-map destructuring — extract keys directly.
       return extract_keys_from_map(binding, path_param_names) if binding.starts_with?('{')
@@ -152,6 +162,11 @@ module Analyzer::Clojure
       # request map — keys inside are existing symbols, not query params.
       # Strip those maps before any further harvesting.
       inner_clean = inner.gsub(/:(?:as|or)\s*\{[^{}]*\}/, " ")
+
+      # Compojure's `:<<` applies a coercion fn to the preceding binding,
+      # e.g. `[id :<< as-int]`. The symbol after `:<<` is the coercion fn,
+      # not a request param — drop both the operator and its fn.
+      inner_clean = inner_clean.gsub(/:<<\s+[^\s\[\]{}()]+/, " ")
 
       # Vector binding may carry inline destructuring sub-maps like
       # `[foo {:keys [bar]}]`. Capture inline `:keys`/`:strs`/`:syms`

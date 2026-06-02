@@ -161,6 +161,16 @@ module Noir::ClojureCalleeExtractor
         next_char = i + 1 < end_index ? source.byte_at(i + 1).unsafe_chr : '\0'
         if next_char == '_'
           i = skip_quoted_form(source, i + 2, end_index)
+        elsif next_char == '\''
+          # Var-quote `#'handler` resolves a var — a deliberate function
+          # reference (the idiomatic Ring/Compojure handler form, e.g.
+          # `(wrap #'user-ctl/default)`). Record the var'd symbol as a callee
+          # rather than skipping it like an ordinary quote.
+          symbol, after_symbol = read_symbol(source, i + 2, end_index)
+          unless skip_callee?(symbol)
+            entries << {symbol, file_path, line_number_for(source, i, start_line)}
+          end
+          i = after_symbol
         else
           i += 1
         end

@@ -16,9 +16,10 @@ module Detector::Clojure
       end
 
       if CLOJURE_EXTENSIONS.any? { |ext| filename.ends_with?(ext) }
-        return true if file_contents.includes?("reitit.core")
-        return true if file_contents.includes?("reitit.ring")
-        return true if file_contents.includes?("reitit.http")
+        # Any `reitit.*` namespace import marks a reitit file — routes are
+        # frequently defined in namespaces that only pull a coercion or
+        # middleware ns rather than the core/ring/http entry points.
+        return true if file_contents.includes?("reitit.")
       end
 
       false

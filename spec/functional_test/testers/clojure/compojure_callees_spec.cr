@@ -26,11 +26,16 @@ quoted_endpoint = Endpoint.new("/quoted", "GET")
 quoted_endpoint.push_callee(Callee.new("response/ok", line: 26))
 quoted_endpoint.push_callee(Callee.new("safe.service/run!", line: 26))
 
+vars_endpoint = Endpoint.new("/vars", "GET")
+vars_endpoint.push_callee(Callee.new("wrap", line: 31))
+vars_endpoint.push_callee(Callee.new("handlers/show-vars", line: 31))
+
 expected_endpoints = [
   show_endpoint,
   create_endpoint,
   delete_endpoint,
   quoted_endpoint,
+  vars_endpoint,
 ]
 
 FunctionalTester.new("fixtures/clojure/compojure_callees/", {

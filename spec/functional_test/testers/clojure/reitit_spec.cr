@@ -17,6 +17,7 @@ expected_endpoints = [
     Param.new("q", "", "query"),
     Param.new("page", "", "query"),
   ]),
+  Endpoint.new("/api/status", "GET"),
   Endpoint.new("/api/admin/reports/:id", "PATCH", [
     Param.new("id", "", "path"),
     Param.new("status", "", "json"),

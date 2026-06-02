@@ -27,6 +27,9 @@ expected_endpoints = [
     Param.new("id", "", "path"),
     Param.new("q", "", "query"),
   ]),
+  Endpoint.new("/orders/:id", "GET", [
+    Param.new("id", "", "path"),
+  ]),
   Endpoint.new("/api/users", "POST"),
   Endpoint.new("/api/admin/users/:id", "DELETE", [
     Param.new("id", "", "path"),
