@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "../../../miniparsers/dart_callee_extractor"
+require "./dart_helper"
 
 module Analyzer::Dart
   # Shelf (`package:shelf_router/shelf_router.dart`) is the foundational
@@ -59,6 +60,9 @@ module Analyzer::Dart
 
         parallel_analyze(files) do |path|
           next unless path.ends_with?(".dart")
+          # Skip `test/` routers — `dart test` fixtures spin up real
+          # `Router()` instances that never serve production traffic.
+          next if Helper.test_path?(path, @base_path)
 
           content = begin
             read_file_content(path)
@@ -109,6 +113,7 @@ module Analyzer::Dart
                           include_callee : Bool) : Hash(String, RouterInfo)
       result = {} of String => RouterInfo
       cleaned = strip_dart_comments(content)
+      classes = class_ranges(cleaned)
 
       cleaned.scan(/(?:^|[;{}=(,\s])(?:final|var|const|late)\s+(?:[A-Za-z_][\w<>,\s\?]*\s+)?([A-Za-z_]\w*)\s*=\s*Router\s*\(\s*\)/) do |match|
         var_name = match[1]
@@ -129,18 +134,184 @@ module Analyzer::Dart
         # strings or comments are ignored.
         scan_direct_calls(cleaned, var_name, content, path, include_callee, routes, mounts)
 
-        existing = result[var_name]?
+        # A router built inside a class (e.g. a `Router get router =>`
+        # getter) is reached from the outside as `ClassName().router`,
+        # so key it under the class name — that's what a parent's
+        # `mount('/prefix', ClassName().router)` resolves against. The
+        # internal local name (`app`, `router`, ...) is only meaningful
+        # within the class and would otherwise be emitted, unmounted, as
+        # a duplicate root with no prefix.
+        key = enclosing_class(classes, end_idx) || var_name
+
+        existing = result[key]?
         if existing
-          result[var_name] = {
+          result[key] = {
             routes: existing[:routes] + routes,
             mounts: existing[:mounts] + mounts,
           }
         else
-          result[var_name] = {routes: routes, mounts: mounts}
+          result[key] = {routes: routes, mounts: mounts}
         end
       end
 
+      # `shelf_router` also supports a code-gen style where handlers are
+      # annotated with `@Route.<verb>('/path')` inside a controller class
+      # and wired up by a generated `_$ClassRouter`. Surface those too.
+      scan_route_annotations(cleaned, content, path, include_callee, classes, result)
+
       result
+    end
+
+    # Matches the official `@Route.<verb>('/path')` annotation and the
+    # `shelf_router_classes` `@Route('VERB', '/path')` variant. Capture 1
+    # is the dotted verb (nil for the string-arg form).
+    ROUTE_ANNOTATION_REGEX = /@Route\s*(?:\.\s*([A-Za-z]+))?\s*\(/
+    ROUTE_PREFIX_REGEX     = /@RoutePrefix\s*\(/
+
+    # Collect `@Route...`-annotated handlers, keyed by their enclosing
+    # controller class so a parent `mount('/p', Ctrl().router)` lines up.
+    private def scan_route_annotations(cleaned : String,
+                                       content : String,
+                                       path : String,
+                                       include_callee : Bool,
+                                       classes : Array(ClassRange),
+                                       result : Hash(String, RouterInfo))
+      prefixes = route_prefixes(cleaned, classes)
+
+      cleaned.scan(ROUTE_ANNOTATION_REGEX) do |m|
+        match_begin = m.begin(0)
+        open_paren = m.end(0).try &.- 1
+        next unless match_begin && open_paren
+        close_paren = find_matching_paren(cleaned, open_paren)
+        next unless close_paren
+
+        args = split_top_level_args(cleaned[(open_paren + 1)...close_paren])
+        next if args.empty?
+
+        verbs, path_arg = annotation_verbs_and_path(m[1]?, args)
+        next if verbs.empty? || path_arg.nil?
+
+        literal = extract_string_literal(path_arg)
+        next unless literal
+
+        owner = enclosing_class(classes, match_begin)
+        prefix = owner ? prefixes[owner]? : nil
+        route_path = normalize_path(prefix ? join_path(prefix, normalize_path(literal)) : literal)
+
+        line = line_for_offset(content, match_begin)
+        callees = include_callee ? annotation_callees(content, close_paren, path) : [] of Noir::DartCalleeExtractor::Entry
+
+        key = owner || "@route:#{path}"
+        info = result[key]? || {routes: [] of Route, mounts: [] of Mount}
+        routes = info[:routes].dup
+        verbs.each do |verb|
+          routes << {verb: verb, path: route_path, line: line, file: path, callees: callees}
+        end
+        result[key] = {routes: routes, mounts: info[:mounts]}
+      end
+    end
+
+    # `@RoutePrefix('/prefix')` (shelf_router_classes) applies a common
+    # prefix to every annotated route in its class.
+    private def route_prefixes(cleaned : String, classes : Array(ClassRange)) : Hash(String, String)
+      prefixes = {} of String => String
+      cleaned.scan(ROUTE_PREFIX_REGEX) do |m|
+        match_begin = m.begin(0)
+        open_paren = m.end(0).try &.- 1
+        next unless match_begin && open_paren
+        close_paren = find_matching_paren(cleaned, open_paren)
+        next unless close_paren
+        args = split_top_level_args(cleaned[(open_paren + 1)...close_paren])
+        next if args.empty?
+        literal = extract_string_literal(args[0])
+        next unless literal
+        # `@RoutePrefix` sits *above* the `class` keyword, so it isn't
+        # bracketed by any class body — attribute it to the class whose
+        # declaration immediately follows.
+        owner = class_after(classes, match_begin)
+        prefixes[owner] = normalize_path(literal) if owner
+      end
+      prefixes
+    end
+
+    # The class whose body opens soonest after the given offset — used to
+    # bind a leading class annotation (`@RoutePrefix`) to its class.
+    private def class_after(ranges : Array(ClassRange), offset : Int32) : String?
+      best = nil.as(String?)
+      best_start = Int32::MAX
+      ranges.each do |r|
+        next unless r[:start] >= offset
+        if r[:start] < best_start
+          best = r[:name]
+          best_start = r[:start]
+        end
+      end
+      best
+    end
+
+    private def annotation_verbs_and_path(dotted : String?, args : Array(String)) : Tuple(Array(String), String?)
+      if dotted
+        verb = dotted.downcase
+        return {ALL_VERBS.dup, args[0]} if verb == "all"
+        mapped = HTTP_METHOD_MAP[verb]?
+        return {[mapped], args[0]} if mapped
+        return {[] of String, nil}
+      end
+
+      # `@Route('GET', '/path')` — verb is the first string argument.
+      return {[] of String, nil} if args.size < 2
+      verb_lit = extract_string_literal(args[0])
+      return {[] of String, nil} unless verb_lit
+      verb = verb_lit.downcase
+      return {ALL_VERBS.dup, args[1]} if verb == "all"
+      mapped = HTTP_METHOD_MAP[verb]?
+      return {[mapped], args[1]} if mapped
+      {[] of String, nil}
+    end
+
+    private def annotation_callees(content : String,
+                                   annotation_close : Int32,
+                                   path : String) : Array(Noir::DartCalleeExtractor::Entry)
+      body_info = Noir::DartCalleeExtractor.extract_body_after(content, annotation_close + 1)
+      return [] of Noir::DartCalleeExtractor::Entry unless body_info
+
+      body, body_start, _ = body_info
+      start_line = Noir::DartCalleeExtractor.line_number_for(content, body_start)
+      Noir::DartCalleeExtractor.callees_for_body(body, path, start_line)
+    end
+
+    alias ClassRange = NamedTuple(name: String, start: Int32, finish: Int32)
+
+    # Locate every `class Name { ... }` block and its byte range so a
+    # `Router()` instantiation can be attributed to its enclosing class.
+    private def class_ranges(cleaned : String) : Array(ClassRange)
+      ranges = [] of ClassRange
+      cleaned.scan(/\bclass\s+([A-Za-z_]\w*)/) do |m|
+        name = m[1]
+        header_end = m.end(0)
+        next unless header_end
+        open = Noir::DartCalleeExtractor.find_next_code_char(cleaned, '{', header_end)
+        next unless open
+        close = Noir::DartCalleeExtractor.find_matching_delimiter(cleaned, open, '{', '}')
+        next unless close
+        ranges << {name: name, start: open, finish: close}
+      end
+      ranges
+    end
+
+    # Innermost class whose body brackets the given offset, if any.
+    private def enclosing_class(ranges : Array(ClassRange), offset : Int32) : String?
+      best = nil.as(String?)
+      best_size = Int32::MAX
+      ranges.each do |r|
+        next unless offset >= r[:start] && offset <= r[:finish]
+        size = r[:finish] - r[:start]
+        if size < best_size
+          best = r[:name]
+          best_size = size
+        end
+      end
+      best
     end
 
     private def scan_cascades(cleaned : String,
@@ -229,27 +400,37 @@ module Analyzer::Dart
         return unless child
         mounts << {prefix: normalize_path(literal), child: child}
       when "all"
-        callees = include_callee && args.size >= 2 ? handler_callees(args[1], file_content, close_paren, path) : [] of Noir::DartCalleeExtractor::Entry
+        callees = include_callee && args.size >= 2 ? handler_callees(args[1], file_content, close_paren, path, line) : [] of Noir::DartCalleeExtractor::Entry
         ALL_VERBS.each do |verb|
           routes << {verb: verb, path: normalize_path(literal), line: line, file: path, callees: callees}
         end
       else
         verb = HTTP_METHOD_MAP[method]?
         return unless verb
-        callees = include_callee && args.size >= 2 ? handler_callees(args[1], file_content, close_paren, path) : [] of Noir::DartCalleeExtractor::Entry
+        callees = include_callee && args.size >= 2 ? handler_callees(args[1], file_content, close_paren, path, line) : [] of Noir::DartCalleeExtractor::Entry
         routes << {verb: verb, path: normalize_path(literal), line: line, file: path, callees: callees}
       end
     end
 
-    # Best-effort callee extraction for inline handler lambdas. Returns
-    # an empty list for plain function references (those resolve via the
-    # cross-file callee resolution stage later).
+    # Matches a bare handler reference (`getNotes`, `_echo`,
+    # `health_check.handler`) passed as the second argument to a route.
+    HANDLER_REFERENCE_REGEX = /\A[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\z/
+
+    # Best-effort callee extraction for the route handler. Inline lambdas
+    # have their body scanned for callees; a plain function reference
+    # (Dart can't resolve these cross-file yet) is itself recorded as the
+    # single callee so the handler still surfaces in AI context.
     private def handler_callees(handler_arg : String,
                                 file_content : String,
                                 close_paren : Int32,
-                                path : String) : Array(Noir::DartCalleeExtractor::Entry)
+                                path : String,
+                                line : Int32) : Array(Noir::DartCalleeExtractor::Entry)
       stripped = handler_arg.strip
-      return [] of Noir::DartCalleeExtractor::Entry unless stripped.starts_with?('(')
+
+      unless stripped.starts_with?('(')
+        return [] of Noir::DartCalleeExtractor::Entry unless stripped.matches?(HANDLER_REFERENCE_REGEX)
+        return [{stripped, path, line}] of Noir::DartCalleeExtractor::Entry
+      end
 
       body_info = Noir::DartCalleeExtractor.extract_body_after(file_content, close_paren - handler_arg.size)
       return [] of Noir::DartCalleeExtractor::Entry unless body_info
