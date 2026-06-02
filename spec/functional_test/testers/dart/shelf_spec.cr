@@ -24,9 +24,47 @@ expected_endpoints = [
   Endpoint.new("/api/v1/items/{itemId}", "GET", [Param.new("itemId", "", "path")]),
   # Direct `apiRouter.patch(...)` outside the cascade.
   Endpoint.new("/api/v1/items/{itemId}", "PATCH", [Param.new("itemId", "", "path")]),
+
+  # `WidgetsController` builds a `Router()` inside a getter and is mounted
+  # at `/widgets/`. The routes must inherit the mount prefix even though
+  # the inner local variable is `r`, not the class name.
+  Endpoint.new("/widgets/list", "GET"),
+  Endpoint.new("/widgets/{id}", "GET", [Param.new("id", "", "path")]),
+
+  # `TasksController` uses the `@Route.<verb>('/path')` code-gen style and
+  # is mounted at `/tasks/`.
+  Endpoint.new("/tasks/all", "GET"),
+  Endpoint.new("/tasks/{id}/done", "POST", [Param.new("id", "", "path")]),
+
+  # (`test/server_test.dart` builds a `Router()` too, but lives under
+  # `test/` and must be ignored.)
 ]
 
 FunctionalTester.new("fixtures/dart/shelf/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests
+
+# Callee/AI-context coverage: a bare function-reference handler is
+# recorded as a callee, and `@Route`-annotated handler bodies are
+# scanned for their callees.
+callee_tester = FunctionalTester.new("fixtures/dart/shelf/", {} of Symbol => Int32, [] of Endpoint, {
+  "include_callee" => YAML::Any.new(true),
+})
+callee_tester.perform_tests
+
+it "records bare function-reference handlers as callees" do
+  endpoint = callee_tester.app.endpoints.find { |found| found.url == "/users" && found.method == "GET" }
+  endpoint.should_not be_nil
+  endpoint.try do |actual|
+    actual.callees.map(&.name).should contain("_listUsers")
+  end
+end
+
+it "extracts callees from @Route-annotated handler bodies" do
+  endpoint = callee_tester.app.endpoints.find { |found| found.url == "/tasks/{id}/done" && found.method == "POST" }
+  endpoint.should_not be_nil
+  endpoint.try do |actual|
+    actual.callees.map(&.name).should contain("_repository.complete")
+  end
+end

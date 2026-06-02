@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "../../../miniparsers/dart_callee_extractor"
+require "./dart_helper"
 
 module Analyzer::Dart
   # Dart Frog is a filesystem-routed framework. Routes live under
@@ -43,6 +44,10 @@ module Analyzer::Dart
 
         parallel_analyze(files) do |path|
           next unless path.ends_with?(".dart")
+
+          # Dart Frog mirrors the route tree under `test/routes/`; those
+          # are mock handlers exercised by `dart test`, never live routes.
+          next if Helper.test_path?(path, @base_path)
 
           idx = path.index("/routes/")
           next if idx.nil?
@@ -105,7 +110,24 @@ module Analyzer::Dart
         return Noir::DartCalleeExtractor.callees_for_body(body, path, start_line)
       end
 
+      # Assignment form: `Handler onRequest = sharedHandler;` (or
+      # `= fromShelfHandler(router);`). The handler reference itself is
+      # the most useful callee — without this it would be lost entirely.
+      if m = content.match(/\bonRequest\s*=\s*([^;]+);/)
+        rhs = m[1].strip
+        line = Noir::DartCalleeExtractor.line_number_for(content, m.begin(0) || 0)
+        return assignment_callees(rhs, path, line)
+      end
+
       [] of Noir::DartCalleeExtractor::Entry
+    end
+
+    # A bare (possibly dotted) handler reference assigned to `onRequest`.
+    HANDLER_REFERENCE_REGEX = /\A[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\z/
+
+    private def assignment_callees(rhs : String, path : String, line : Int32) : Array(Noir::DartCalleeExtractor::Entry)
+      return [{rhs, path, line}] of Noir::DartCalleeExtractor::Entry if rhs.matches?(HANDLER_REFERENCE_REGEX)
+      Noir::DartCalleeExtractor.callees_for_body(rhs, path, line)
     end
 
     # Filesystem path → URL pattern. Drops the `.dart` extension,
@@ -134,16 +156,81 @@ module Analyzer::Dart
       seg
     end
 
+    # Matches `case HttpMethod.<verb>:` clauses inside a method switch.
+    CASE_METHOD_REGEX = /\bcase\s+HttpMethod\.([a-z]+)\s*:/
+    # A clause body that rejects the verb: `methodNotAllowed`,
+    # `MethodNotAllowedResponse()`, or a literal `405` status code.
+    METHOD_NOT_ALLOWED_REGEX = /methodNotAllowed|MethodNotAllowed|statusCode\s*:\s*405|\b405\b/
+
     private def detect_methods(content : String) : Array(String)
+      cleaned = Helper.strip_comments(content)
+
       verbs = [] of String
       HTTP_METHOD_MAP.each do |dart_name, verb|
         # Dart Frog exposes verbs as `HttpMethod.<lowercase>` constants.
         # Both `==` comparison and `case`/`switch` patterns reach here.
-        if content.match(/HttpMethod\.#{dart_name}\b/)
-          verbs << verb
-        end
+        verbs << verb if cleaned.matches?(/HttpMethod\.#{dart_name}\b/)
       end
-      verbs.empty? ? FALLBACK_METHODS : verbs.uniq
+      return FALLBACK_METHODS if verbs.empty?
+
+      # `onRequest` is invoked for every verb, so handlers commonly list
+      # the verbs they *don't* support in fall-through `case` clauses that
+      # return `methodNotAllowed`. Those are not real endpoints — drop
+      # them so we don't over-report.
+      rejected = rejected_verbs(cleaned)
+      kept = verbs.reject { |v| rejected.includes?(v) }
+      kept.empty? ? verbs.uniq : kept.uniq
+    end
+
+    # Walk `case HttpMethod.X:` clauses in order, coalescing empty
+    # fall-through cases into the group that shares their handler body.
+    # Any group whose body resolves to a `methodNotAllowed`/405 response
+    # contributes its verbs to the rejected set.
+    private def rejected_verbs(cleaned : String) : Set(String)
+      rejected = Set(String).new
+      clauses = [] of {verb: String, match_begin: Int32, body_start: Int32}
+      cleaned.scan(CASE_METHOD_REGEX) do |m|
+        verb = HTTP_METHOD_MAP[m[1]]?
+        next unless verb
+        match_begin = m.begin(0)
+        body_start = m.end(0)
+        next unless match_begin && body_start
+        clauses << {verb: verb, match_begin: match_begin, body_start: body_start}
+      end
+
+      pending = [] of String
+      clauses.each_with_index do |clause, idx|
+        pending << clause[:verb]
+        # Bound at the *next clause's* `case` keyword (not its body) so an
+        # empty fall-through case isn't credited with the following
+        # `case ...:` text and mistaken for a real handler body.
+        limit = idx + 1 < clauses.size ? clauses[idx + 1][:match_begin] : cleaned.size
+        body = clause_body(cleaned, clause[:body_start], limit)
+        next if body.strip.empty? # empty case falls through to the next
+
+        if body.matches?(METHOD_NOT_ALLOWED_REGEX)
+          pending.each { |v| rejected << v }
+        end
+        pending.clear
+      end
+
+      rejected
+    end
+
+    # The handler body for a `case` clause runs until the next clause or
+    # the closing brace of the switch — whichever comes first. We bound
+    # at the earliest of a `}`, a `case`, or a `default` keyword so the
+    # last enumerated method-case can't sweep in a trailing `default:`
+    # arm (whose `405`/`methodNotAllowed` would wrongly tar the case).
+    CLAUSE_BOUNDARY_REGEX = /\}|\bcase\b|\bdefault\b/
+
+    private def clause_body(cleaned : String, start : Int32, limit : Int32) : String
+      slice = cleaned[start...limit]
+      if m = slice.match(CLAUSE_BOUNDARY_REGEX)
+        cut = m.begin(0)
+        return slice[0...cut] if cut
+      end
+      slice
     end
   end
 end

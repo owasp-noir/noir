@@ -24,6 +24,13 @@ status_callees = [
   Callee.new("HealthService.status", line: 4),
 ]
 
+# `proxy.dart` binds `onRequest` to a shared handler reference; that
+# reference is the route's single callee. No `HttpMethod.*` refs, so it
+# falls back to the standard verb set.
+proxy_callees = [
+  Callee.new("sharedHandler", line: 8),
+]
+
 expected_endpoints = [
   dart_frog_endpoint_with_callees("/users/{id}", "GET", [
     Param.new("id", "", "path"),
@@ -36,6 +43,11 @@ expected_endpoints = [
   dart_frog_endpoint_with_callees("/status", "PUT", [] of Param, status_callees),
   dart_frog_endpoint_with_callees("/status", "DELETE", [] of Param, status_callees),
   dart_frog_endpoint_with_callees("/status", "PATCH", [] of Param, status_callees),
+  dart_frog_endpoint_with_callees("/proxy", "GET", [] of Param, proxy_callees),
+  dart_frog_endpoint_with_callees("/proxy", "POST", [] of Param, proxy_callees),
+  dart_frog_endpoint_with_callees("/proxy", "PUT", [] of Param, proxy_callees),
+  dart_frog_endpoint_with_callees("/proxy", "DELETE", [] of Param, proxy_callees),
+  dart_frog_endpoint_with_callees("/proxy", "PATCH", [] of Param, proxy_callees),
 ]
 
 tester = FunctionalTester.new("fixtures/dart/dart_frog_callees/", {

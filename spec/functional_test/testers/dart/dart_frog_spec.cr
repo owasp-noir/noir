@@ -27,6 +27,12 @@ expected_endpoints = [
   Endpoint.new("/api/health", "PATCH"),
   # `posts/[...slug].dart` — catch-all wildcard collapses to a path param.
   Endpoint.new("/posts/{slug}", "GET", [Param.new("slug", "", "path")]),
+  # `articles/[id].dart` switches on the method: GET and PUT are handled,
+  # the remaining verbs fall through to a `methodNotAllowed` response and
+  # must NOT be reported. (`test/routes/articles_test.dart` is a test
+  # mirror and contributes nothing.)
+  Endpoint.new("/articles/{id}", "GET", [Param.new("id", "", "path")]),
+  Endpoint.new("/articles/{id}", "PUT", [Param.new("id", "", "path")]),
 ]
 
 FunctionalTester.new("fixtures/dart/dart_frog/", {

@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "../../../miniparsers/dart_callee_extractor"
+require "./dart_helper"
 
 module Analyzer::Dart
   # Serverpod is an RPC-style backend framework. Server endpoints are
@@ -17,19 +18,141 @@ module Analyzer::Dart
   class Serverpod < Analyzer
     HTTP_METHOD         = "POST"
     RESERVED_DART_NAMES = %w[if else for while switch case return try catch finally throw new const final var late void await async assert]
+    # `Method.<verb>` constants accepted by `Route`'s `methods:` set.
+    WEB_METHOD_MAP = {
+      "get"     => "GET",
+      "post"    => "POST",
+      "put"     => "PUT",
+      "patch"   => "PATCH",
+      "delete"  => "DELETE",
+      "head"    => "HEAD",
+      "options" => "OPTIONS",
+    }
     alias MethodParam = NamedTuple(name: String, type: String)
+    alias RouteClass = NamedTuple(methods: Array(String), file: String, line: Int32, callees: Array(Noir::DartCalleeExtractor::Entry))
+    alias Registration = NamedTuple(class_name: String, path: String)
 
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      route_classes = {} of String => RouteClass
+      registrations = [] of Registration
+
       all_files.each do |path|
         next if File.directory?(path)
         next unless path.ends_with?(".dart")
+        # `test/integration/*_endpoint_test.dart` exercises endpoints but
+        # is not itself a server surface.
+        next if Helper.test_path?(path, @base_path)
 
         content = read_file_content(path)
         process_file(path, content, include_callee)
+        collect_web_routes(path, content, include_callee, route_classes, registrations)
       end
 
+      emit_web_routes(route_classes, registrations)
+
       @result
+    end
+
+    # Serverpod's web server exposes plain HTTP endpoints through `Route`
+    # subclasses wired with `pod.webServer.addRoute(MyRoute(), '/path')`.
+    # These live alongside the RPC endpoints but are easy to miss because
+    # the class and its registration sit in different files. We collect
+    # both halves here and join them in `emit_web_routes`.
+    private def collect_web_routes(path : String,
+                                   content : String,
+                                   include_callee : Bool,
+                                   route_classes : Hash(String, RouteClass),
+                                   registrations : Array(Registration))
+      cleaned = strip_dart_comments(content)
+
+      cleaned.scan(/class\s+([A-Z][A-Za-z0-9_]*)(?:\s*<[^>]*>)?\s+extends\s+(?:Widget|Component)?Route\b/) do |match|
+        class_name = match[1]
+        match_end = match.end(0)
+        match_start = match.begin(0)
+        next unless match_end && match_start
+
+        body_info = extract_braced_block(cleaned, match_end)
+        next unless body_info
+        body, body_start = body_info
+
+        line = line_for_offset(content, match_start)
+        methods = web_route_methods(body)
+        callees = include_callee ? web_handler_callees(path, body, body_start, content) : [] of Noir::DartCalleeExtractor::Entry
+        route_classes[class_name] = {methods: methods, file: path, line: line, callees: callees}
+      end
+
+      cleaned.scan(/\baddRoute\s*\(/) do |match|
+        open_paren = (match.end(0) || 0) - 1
+        close_paren = find_matching_paren(cleaned, open_paren)
+        next unless close_paren
+        args = split_top_level_commas(cleaned[(open_paren + 1)...close_paren])
+        next if args.size < 2
+
+        class_name = registered_class_name(args[0])
+        next unless class_name
+        route_path = Helper.extract_string_literal(args[1])
+        next unless route_path
+        registrations << {class_name: class_name, path: normalize_web_path(route_path)}
+      end
+    end
+
+    # `methods: {Method.post, Method.get}` declared in the constructor.
+    # `Route` defaults to GET when the set is omitted.
+    private def web_route_methods(body : String) : Array(String)
+      verbs = [] of String
+      if m = body.match(/methods\s*:\s*\{([^}]*)\}/)
+        m[1].scan(/Method\.([a-z]+)/) do |mm|
+          verb = WEB_METHOD_MAP[mm[1]]?
+          verbs << verb if verb
+        end
+      end
+      verbs.empty? ? ["GET"] : verbs.uniq
+    end
+
+    private def registered_class_name(arg : String) : String?
+      stripped = arg.strip
+      m = stripped.match(/\A([A-Z][A-Za-z0-9_]*)/)
+      return unless m
+      name = m[1]
+      # `StaticRoute` / `RouteStaticDirectory` serve files, not handlers.
+      return if name.includes?("Static")
+      name
+    end
+
+    private def normalize_web_path(path : String) : String
+      path.starts_with?('/') ? path : "/#{path}"
+    end
+
+    private def web_handler_callees(path : String,
+                                    class_body : String,
+                                    class_body_start : Int32,
+                                    file_content : String) : Array(Noir::DartCalleeExtractor::Entry)
+      m = class_body.match(/\b(?:handleCall|build)\s*\(/)
+      return [] of Noir::DartCalleeExtractor::Entry unless m
+      open_paren = (m.end(0) || 0) - 1
+      close_paren = find_matching_paren(class_body, open_paren)
+      return [] of Noir::DartCalleeExtractor::Entry unless close_paren
+
+      body_info = Noir::DartCalleeExtractor.extract_body_after(class_body, close_paren + 1)
+      return [] of Noir::DartCalleeExtractor::Entry unless body_info
+      body, body_start, _ = body_info
+      start_line = line_for_offset(file_content, class_body_start + body_start)
+      Noir::DartCalleeExtractor.callees_for_body(body, path, start_line)
+    end
+
+    private def emit_web_routes(route_classes : Hash(String, RouteClass),
+                                registrations : Array(Registration))
+      registrations.each do |reg|
+        info = route_classes[reg[:class_name]]?
+        next unless info
+        info[:methods].each do |verb|
+          details = Details.new(PathInfo.new(info[:file], info[:line]))
+          endpoint = Endpoint.new(reg[:path], verb, [] of Param, details)
+          Noir::DartCalleeExtractor.attach_to(endpoint, info[:callees])
+          @result << endpoint
+        end
+      end
     end
 
     private def process_file(path : String, content : String, include_callee : Bool)
