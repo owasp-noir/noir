@@ -1,6 +1,7 @@
 <?php
 use Cake\Routing\Route\DashedRoute;
 use Cake\Routing\RouteBuilder;
+use Cake\Routing\Router;
 
 return static function (RouteBuilder $routes) {
     $routes->setRouteClass(DashedRoute::class);
@@ -19,5 +20,25 @@ return static function (RouteBuilder $routes) {
         });
 
         $builder->post('/login', ['controller' => 'Users', 'action' => 'login']);
+
+        // connect() with a chained ->setMethods([...]) must record the
+        // restricted verbs instead of defaulting to GET.
+        $builder->connect('/logout', ['controller' => 'Users', 'action' => 'logout'])
+            ->setMethods(['POST']);
+        $builder->connect('/sessions/{id}', ['controller' => 'Sessions', 'action' => 'update'])
+            ->setPass(['id'])
+            ->setMethods(['PUT', 'DELETE']);
+    });
+
+    // prefix() opens a prefixed scope just like scope().
+    $routes->prefix('/groups', function (RouteBuilder $builder) {
+        $builder->connect('/{id}', ['controller' => 'Groups', 'action' => 'view'])
+            ->setPass(['id'])
+            ->setMethods(['GET']);
+    });
+
+    // Static Router facade form used by older apps and plugin route files.
+    Router::scope('/legacy', function (RouteBuilder $routes) {
+        $routes->get('/ping', ['controller' => 'Legacy', 'action' => 'ping']);
     });
 };

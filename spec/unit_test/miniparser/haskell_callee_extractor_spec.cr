@@ -51,7 +51,7 @@ describe Noir::HaskellCalleeExtractor do
     bodies = Noir::HaskellCalleeExtractor.function_bodies(source, "Api.hs")
     bodies.map { |body| body[:name] }.should eq(["apiInfo", "typed"])
 
-    apiinfo = bodies.find { |body| body[:name] == "apiInfo" }.not_nil!
+    apiinfo = bodies.find! { |body| body[:name] == "apiInfo" }
     callees = Noir::HaskellCalleeExtractor.callees_for_body(apiinfo[:body], apiinfo[:path], apiinfo[:start_line])
     callees.map { |name, _, _| name }.should contain("buildInfo")
   end

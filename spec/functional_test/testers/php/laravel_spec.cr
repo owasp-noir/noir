@@ -35,9 +35,13 @@ expected_endpoints = [
   Endpoint.new("/api/v1/tokens/{id}", "DELETE", [Param.new("id", "", "path")]),
   Endpoint.new("/api/v1/reports/daily", "GET"),
   Endpoint.new("/tenant/{tenant}/dashboard", "GET", [Param.new("tenant", "", "path")]),
+  # routes/internal.php (not web.php/api.php) with a `static function (): void`
+  # group closure — both the file and the group prefix must be recognized.
+  Endpoint.new("/internal/status", "GET"),
+  Endpoint.new("/internal/sync", "POST"),
 ]
 
 FunctionalTester.new("fixtures/php/laravel/", {
   :techs     => 2,  # Detection still sees both php_laravel and php_pure
-  :endpoints => 62, # Analysis suppresses redundant php_pure and unprefixed group endpoints
+  :endpoints => 64, # Analysis suppresses redundant php_pure and unprefixed group endpoints
 }, expected_endpoints).perform_tests

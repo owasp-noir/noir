@@ -172,7 +172,7 @@ describe "EndpointOptimizer" do
       ]
 
       result = optimizer.add_path_parameters(endpoints)
-      result.each_with_index do |endpoint, idx|
+      result.each do |endpoint|
         path_params = endpoint.params.select { |param| param.param_type == "path" }
         path_params.size.should eq(1)
         # The analyzer-supplied type must survive (no empty-value clobber).
