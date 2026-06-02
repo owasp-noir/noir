@@ -20,10 +20,14 @@ module Analyzer::Groovy
   # those restrictions are honored; otherwise actions are emitted as
   # `GET` (the default Grails dispatch verb when no restriction is set).
   #
-  # `grails-app/conf/UrlMappings.groovy` is also scanned for explicit
-  # string-based mappings of the form
+  # `UrlMappings.groovy` is also scanned for explicit string-based mappings
+  # of the form
   #   `get '/api/users'(controller: 'user', action: 'list')`
-  # which are surfaced as additional endpoints.
+  # which are surfaced as additional endpoints. It lives under
+  # `grails-app/conf/` on Grails 1.x/2.x and `grails-app/controllers/` on
+  # Grails 3+; both locations are handled. Per-verb `action = [GET: ..., PUT:
+  # ...]` dispatch maps and `${name}` GString path variables are recognized,
+  # while bare-status-code (`"404"`, `"500"`) error mappings are excluded.
   class Grails < Analyzer
     DEFAULT_METHODS = ["GET"]
     HTTP_METHODS    = %w[GET POST PUT DELETE PATCH HEAD OPTIONS]
@@ -95,9 +99,12 @@ module Analyzer::Groovy
     private def url_mappings_path?(path : String) : Bool
       # Grails plugins ship their own `<Name>UrlMappings.groovy` files
       # alongside the canonical `UrlMappings.groovy`, so accept any basename
-      # ending in `UrlMappings.groovy` — but only inside `grails-app/conf/`
-      # so unrelated files with similar names are not picked up.
-      return false unless path.includes?("/grails-app/conf/")
+      # ending in `UrlMappings.groovy`. The canonical location changed across
+      # Grails versions: 1.x/2.x kept it under `grails-app/conf/`, while
+      # Grails 3+ moved it to `grails-app/controllers/`. Accept both so modern
+      # apps (the common case today) are not silently skipped.
+      return false unless path.includes?("/grails-app/conf/") ||
+                          path.includes?("/grails-app/controllers/")
       File.basename(path).ends_with?("UrlMappings.groovy")
     end
 
@@ -199,6 +206,25 @@ module Analyzer::Groovy
       base[0].downcase.to_s + base[1..]
     end
 
+    # JavaBean-style property accessors (`getFoo`, `setFoo`, `isFoo`) follow
+    # the `<get|set|is><UpperCase>` convention. Grails treats these as
+    # property access, never as routable actions, so they must be excluded
+    # from the surfaced endpoint set even though they are public methods.
+    private def accessor_name?(name : String) : Bool
+      name.matches?(/\A(?:get|set|is)[A-Z]/)
+    end
+
+    # Grails only dispatches to *public, non-static* controller methods.
+    # A leading `private`/`protected`/`static` modifier therefore disqualifies
+    # a method from being a routable action. The char-by-char scanner can land
+    # on a method's return-type keyword *after* stepping past its modifier, so
+    # the modifier run is captured and checked here rather than relied upon to
+    # be absent.
+    private def nonpublic_modifier?(modifiers : String?) : Bool
+      return false if modifiers.nil?
+      modifiers.matches?(/\b(?:private|protected|static)\b/)
+    end
+
     alias Action = NamedTuple(name: String, offset: Int32, body: String, body_start: Int32)
 
     private def extract_actions(body : String) : Array(Action)
@@ -238,8 +264,7 @@ module Analyzer::Groovy
           if m
             modifier = m[1]?
             name = m[2]
-            is_private = modifier && modifier.lstrip.starts_with?("private")
-            unless is_private || SKIP_ACTION_NAMES.includes?(name)
+            unless nonpublic_modifier?(modifier) || SKIP_ACTION_NAMES.includes?(name) || accessor_name?(name)
               if action_body = extract_braced_block(body, i + (m.end(0) || 0))
                 action_body_text, action_body_start = action_body
                 actions << {name: name, offset: i, body: action_body_text, body_start: action_body_start}
@@ -254,10 +279,10 @@ module Analyzer::Groovy
           # Grails 3+ allows actions with explicit return types. We
           # require the trailing `{` to avoid matching field declarations
           # like `String name = "x"` or method calls.
-          m2 = rest.match(/\A(public\s+|protected\s+)?([A-Z][A-Za-z0-9_]*(?:\s*<[^<>]+>)?(?:\s*\[\s*\])?)\s+([a-z_][A-Za-z0-9_]*)\s*\([^)]*\)\s*(?:throws\s+[A-Za-z0-9_,\s.]+)?\s*\{/)
+          m2 = rest.match(/\A((?:(?:public|protected|private|static|final|synchronized)\s+)*)([A-Z][A-Za-z0-9_]*(?:\s*<[^<>]+>)?(?:\s*\[\s*\])?)\s+([a-z_][A-Za-z0-9_]*)\s*\([^)]*\)\s*(?:throws\s+[A-Za-z0-9_,\s.]+)?\s*\{/)
           if m2
             name = m2[3]
-            unless SKIP_ACTION_NAMES.includes?(name)
+            unless nonpublic_modifier?(m2[1]?) || SKIP_ACTION_NAMES.includes?(name) || accessor_name?(name)
               open_brace = i + (m2.end(0) || 1) - 1
               if action_body = extract_braced_block(body, open_brace)
                 action_body_text, action_body_start = action_body
@@ -273,10 +298,10 @@ module Analyzer::Groovy
           # `int count(...) { ... }`. Distinct from the uppercase-return
           # pattern above to avoid colliding with field declarations and
           # `def` actions.
-          m3 = rest.match(/\A(public\s+|protected\s+)?(void|int|long|boolean|byte|short|float|double|char)\s+([a-z_][A-Za-z0-9_]*)\s*\([^)]*\)\s*(?:throws\s+[A-Za-z0-9_,\s.]+)?\s*\{/)
+          m3 = rest.match(/\A((?:(?:public|protected|private|static|final|synchronized)\s+)*)(void|int|long|boolean|byte|short|float|double|char)\s+([a-z_][A-Za-z0-9_]*)\s*\([^)]*\)\s*(?:throws\s+[A-Za-z0-9_,\s.]+)?\s*\{/)
           if m3
             name = m3[3]
-            unless SKIP_ACTION_NAMES.includes?(name)
+            unless nonpublic_modifier?(m3[1]?) || SKIP_ACTION_NAMES.includes?(name) || accessor_name?(name)
               open_brace = i + (m3.end(0) || 1) - 1
               if action_body = extract_braced_block(body, open_brace)
                 action_body_text, action_body_start = action_body
@@ -410,6 +435,11 @@ module Analyzer::Groovy
       # mappings.
       simple_pattern = /(?:^|\n)\s*(?:name\s+[A-Za-z_][A-Za-z0-9_]*\s*:\s*)?(['"])([^'"]+)\1\s*\(([^)]*?)\)/m
       remaining.scan(simple_pattern) do |match|
+        # Response-code mappings (`"404"(...)`, `"500"(...)`) reuse the same
+        # paren-form syntax but the "path" is an HTTP status code, not a URL.
+        # They are error-page handlers, not addressable endpoints.
+        next if status_code_mapping?(match[2])
+
         url_pattern = prefix + match[2]
         body_args = match[3]
         line = line_for_offset(content, match.begin(0) || 0)
@@ -437,6 +467,20 @@ module Analyzer::Groovy
 
         next unless body_args.includes?("controller:") || body_args.includes?("action:") ||
                     body_args.includes?("view:") || body_args.includes?("uri:")
+
+        # A trailing closure block may declare per-verb action dispatch via
+        # `action = [GET: "show", PUT: "apiUpdate"]`. When present, surface one
+        # endpoint per HTTP verb rather than the single GET fallback.
+        verbs = action_map_verbs_after(remaining, match.end(0))
+        if verbs
+          verbs.each do |verb|
+            @result << Endpoint.new(translate_pattern(url_pattern), verb,
+              extract_path_params(url_pattern),
+              Details.new(PathInfo.new(path, line)))
+          end
+          next
+        end
+
         verb = extract_method_arg(body_args) || "GET"
         @result << Endpoint.new(translate_pattern(url_pattern), verb,
           extract_path_params(url_pattern),
@@ -446,6 +490,7 @@ module Analyzer::Groovy
       # Closure-form mapping: `'/path' { controller = 'foo'; method = 'POST' }`.
       closure_pattern = /(?:^|\n)\s*(['"])([^'"]+)\1\s*\{([^}]*)\}/m
       remaining.scan(closure_pattern) do |match|
+        next if status_code_mapping?(match[2])
         url_pattern = prefix + match[2]
         body_block = match[3]
         next unless body_block.match(/\b(controller|action|method|view)\s*=/)
@@ -526,16 +571,60 @@ module Analyzer::Groovy
       HTTP_METHODS.includes?(verb) ? verb : nil
     end
 
+    # Grails response-code mappings (`"404"(...)`, `"500" { ... }`) carry a
+    # bare HTTP status code where a URL would normally go. They configure
+    # error pages, not routable endpoints, so they must not be surfaced.
+    private def status_code_mapping?(raw : String) : Bool
+      raw.matches?(/\A\d{3}\z/)
+    end
+
+    # Parses the `action = [GET: "show", PUT: "apiUpdate"]` per-verb dispatch
+    # map from a closure block that trails a paren-form mapping. `match_end`
+    # is the offset just past the closing `)` of the paren form; we only look
+    # ahead when the very next token is the opening `{` of that block.
+    private def action_map_verbs_after(text : String, match_end : Int32?) : Array(String)?
+      return unless match_end
+      return if match_end >= text.size
+
+      lead = text[match_end..].match(/\A\s*\{/)
+      return unless lead
+
+      brace_pos = match_end + (lead.end(0) || 1) - 1
+      close = find_matching_brace(text, brace_pos)
+      return unless close
+
+      block = text[(brace_pos + 1)...close]
+      map_match = block.match(/\baction\s*=\s*\[([^\]]*)\]/)
+      return unless map_match
+
+      verbs = [] of String
+      map_match[1].scan(/([A-Za-z]+)\s*:/) do |vm|
+        verb = vm[1].upcase
+        verbs << verb if HTTP_METHODS.includes?(verb) && !verbs.includes?(verb)
+      end
+      verbs.empty? ? nil : verbs
+    end
+
     private def translate_pattern(pattern : String) : String
-      pattern.gsub(/\$([A-Za-z_][A-Za-z0-9_]*)\??/) { |_, m| ":#{m[1]}" }
+      # `$name` and `${name}` path variables both map to `:name`.
+      strip_format_suffix(pattern)
+        .gsub(/\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?\??/) { |_, m| ":#{m[1]}" }
     end
 
     private def extract_path_params(pattern : String) : Array(Param)
       params = [] of Param
-      pattern.scan(/\$([A-Za-z_][A-Za-z0-9_]*)/) do |m|
+      strip_format_suffix(pattern).scan(/\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?/) do |m|
         params << Param.new(m[1], "", "path")
       end
       params
+    end
+
+    # Drops the optional Grails content-format suffix `(.$format)?` /
+    # `(.${type})` so it does not leak into the surfaced URL as a literal
+    # `(.:format)` segment. The suffix denotes optional content negotiation
+    # (`.json`, `.xml`), not an actual path component.
+    private def strip_format_suffix(pattern : String) : String
+      pattern.gsub(/\(\.\$\{?[A-Za-z_][A-Za-z0-9_]*\}?\)\??/, "")
     end
 
     private def extract_braced_block(text : String, start : Int32) : Tuple(String, Int32)?
