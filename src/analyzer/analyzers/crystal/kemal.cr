@@ -6,11 +6,23 @@ module Analyzer::Crystal
     NAMESPACE_PATTERN = /^(\s*)(?:(\w+)\.)?namespace\s+["'](.+?)["']/
     MOUNT_PATTERN     = /^\s*mount\s+["'](.+?)["']\s*,\s*(\w+)/
     ROUTER_PATTERN    = /^\s*(\w+)\s*=\s*Kemal::Router\.new/
+    # Compile-time macro var assignment, e.g. `{{namespace = Routes::API::V1}}`.
+    # invidious sets it once, then registers 50+ routes as
+    # `get "/…", {{namespace}}::Videos, :videos` — substituting it back lets
+    # those routes resolve their controller and carry callees.
+    MACRO_VAR_PATTERN = /\{\{\s*(\w+)\s*=\s*([A-Za-z_][\w:]*)\s*\}\}/
 
     @is_public : Bool = true
     @public_folders : Array(String) = [] of String
+    @action_index : ActionIndex = ActionIndex.new
 
     def analyze
+      # Apps like invidious register routes as `get "/", Routes::Misc, :home`
+      # with the handler defined in a separate controller file. Build the
+      # cross-file action index up front so those routes can carry callees.
+      if any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+        @action_index = build_crystal_action_index(all_files)
+      end
       super
       collect_public_dir_endpoints
       @result
@@ -21,9 +33,11 @@ module Analyzer::Crystal
       lines = File.read_lines(path)
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
-      # Pre-scan: build mount_map (variable_name => mount_path)
+      # Pre-scan: build mount_map (variable_name => mount_path) and resolve
+      # compile-time macro variables used in controller references.
       mount_map = {} of String => String
       router_vars = Set(String).new
+      macro_vars = {} of String => String
 
       lines.each do |line|
         if match = line.match(ROUTER_PATTERN)
@@ -31,6 +45,11 @@ module Analyzer::Crystal
         end
         if match = line.match(MOUNT_PATTERN)
           mount_map[match[2]] = match[1]
+        end
+        if include_callee
+          if match = line.match(MACRO_VAR_PATTERN)
+            macro_vars[match[1]] = match[2]
+          end
         end
       end
 
@@ -86,7 +105,7 @@ module Analyzer::Crystal
 
         # Parse endpoint
         endpoint = line_to_endpoint(line)
-        unless endpoint.method.empty?
+        if !endpoint.method.empty? && valid_crystal_route_path?(endpoint.url)
           # Build full path with namespace prefixes and mount path
           route_path = endpoint.url
           full_path = route_path
@@ -109,7 +128,7 @@ module Analyzer::Crystal
           endpoint.url = full_path
           details = Details.new(PathInfo.new(path, index + 1))
           endpoint.details = details
-          attach_route_callees(endpoint, lines, index, path) if include_callee
+          attach_route_callees(endpoint, lines, index, path, macro_vars) if include_callee
           endpoints << endpoint
           last_endpoint = endpoint
         end
@@ -128,13 +147,34 @@ module Analyzer::Crystal
       endpoints
     end
 
-    private def attach_route_callees(endpoint : Endpoint, lines : Array(String), index : Int32, path : String)
-      route_body = extract_crystal_do_block(lines, index)
-      return unless route_body
+    private def attach_route_callees(endpoint : Endpoint, lines : Array(String), index : Int32, path : String, macro_vars : Hash(String, String))
+      # Preferred source: the inline `do … end` route block.
+      if route_body = extract_crystal_do_block(lines, index)
+        body, body_start_line = route_body
+        callees = Noir::CrystalCalleeExtractor.callees_for_body(body, path, body_start_line)
+        attach_crystal_callees(endpoint, callees)
+        return
+      end
 
-      body, body_start_line = route_body
-      callees = Noir::CrystalCalleeExtractor.callees_for_body(body, path, body_start_line)
-      attach_crystal_callees(endpoint, callees)
+      # Fallback: `get "/path", Controller, :action` dispatches to a handler
+      # in another file — resolve it through the cross-file action index.
+      if target = extract_route_target(substitute_macro_vars(lines[index], macro_vars))
+        controller, action = target
+        if callees = resolve_action_callees(@action_index, controller, action)
+          attach_crystal_callees(endpoint, callees)
+        end
+      end
+    end
+
+    private def extract_route_target(line : String) : Tuple(String, String)?
+      if match = line.match(/\b(?:get|post|put|delete|patch|head|options|ws)\s+['"][^'"]+['"]\s*,\s*([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)\s*,\s*:(\w+)/)
+        {match[1], match[2]}
+      end
+    end
+
+    private def substitute_macro_vars(line : String, macro_vars : Hash(String, String)) : String
+      return line if macro_vars.empty? || !line.includes?("{{")
+      line.gsub(/\{\{\s*(\w+)\s*\}\}/) { |whole| macro_vars[$~[1]]? || whole }
     end
 
     private def collect_public_dir_endpoints
