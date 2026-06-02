@@ -1049,7 +1049,11 @@ module Noir
       own = result[cls]? || [] of TreeSitterJavaParameterExtractor::FieldInfo
       sup = supers[cls]?
 
-      unless sup && sup != cls && !visiting.includes?(cls)
+      # Stop when there's no usable superclass to merge: missing, the
+      # class itself, or already on the current resolution path (cycle
+      # guard). Written as a positive `if` (rather than `unless` with a
+      # negated condition) so `sup` still narrows to non-nil below.
+      if sup.nil? || sup == cls || visiting.includes?(cls)
         memo[cls] = own
         return own
       end

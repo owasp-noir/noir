@@ -485,7 +485,7 @@ describe Noir::TreeSitterGoRouteExtractor do
       {"PATCH", "/user/save"},
       {"PUT", "/user/save"},
     ].sort)
-    routes.find { |r| r.path == "/user/get" }.not_nil!.params.should eq(["id"])
+    routes.find! { |r| r.path == "/user/get" }.params.should eq(["id"])
   end
 
   it "extracts go-zero AddRoutes slice, AddRoute single, and group prefixes" do
