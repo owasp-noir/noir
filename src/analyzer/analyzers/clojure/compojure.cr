@@ -25,6 +25,15 @@ module Analyzer::Clojure
       ":options" => "OPTIONS",
       ":any"     => "ANY",
     }
+    # compojure-api restructuring directives that name request params with a
+    # `[name :- Schema ...]` binding vector in the route body.
+    RESTRUCTURING_PARAMS = {
+      ":query-params"  => "query",
+      ":body-params"   => "json",
+      ":path-params"   => "path",
+      ":form-params"   => "form",
+      ":header-params" => "header",
+    }
     CLOJURE_EXTENSIONS = {".clj", ".cljc", ".cljs"}
 
     def analyze
@@ -121,6 +130,10 @@ module Analyzer::Clojure
         end
       end
 
+      # compojure-api routes declare typed params via `:query-params`/etc.
+      # directives in the body rather than the binding vector.
+      extract_restructuring_params(source, route_body_start(source, path_end + 1, form_end), form_end, endpoint)
+
       attach_route_callees(endpoint, source, path_end + 1, form_end, path) if include_callee
 
       @result << endpoint
@@ -134,6 +147,96 @@ module Analyzer::Clojure
       start_line = line_number_for(source, body_start)
       callees = Noir::ClojureCalleeExtractor.callees_for_body(body, path, start_line)
       Noir::ClojureCalleeExtractor.attach_to(endpoint, callees)
+    end
+
+    # Scan a route body for compojure-api restructuring directives
+    # (`:query-params [x :- Long]`, `:body-params`, …) and lift their bound
+    # names into endpoint params. Only top-level body forms are inspected, so
+    # keywords nested inside the handler expression are never mistaken for
+    # directives.
+    private def extract_restructuring_params(source : String, body_start : Int32, form_end : Int32, endpoint : Endpoint)
+      i = body_start
+      while i < form_end
+        i = skip_ws_and_comments(source, i, form_end)
+        break if i >= form_end
+
+        if source.byte_at(i).unsafe_chr == ':'
+          keyword, after_kw = read_symbol(source, i, form_end)
+          value_start = skip_ws_and_comments(source, after_kw, form_end)
+          value_end = resource_end_of_value(source, value_start, form_end)
+
+          if (ptype = RESTRUCTURING_PARAMS[keyword]?) &&
+             value_start < value_end && source.byte_at(value_start).unsafe_chr == '['
+            bind_end = find_matching_delimiter(source, value_start, '[', ']', value_end)
+            if bind_end > value_start
+              binding_param_names(source, value_start + 1, bind_end).each do |name|
+                add_param_once(endpoint, name, ptype)
+              end
+            end
+          end
+
+          i = value_end
+        else
+          i = resource_end_of_value(source, i, form_end)
+        end
+      end
+    end
+
+    # Extract the bound names from a compojure-api binding vector body such as
+    # `x :- Long, y :- (describe Long "..")`. A symbol followed by `:-` is a
+    # bound name; the schema form after `:-` is skipped. Map-destructuring and
+    # `&` rest-bindings are ignored.
+    private def binding_param_names(source : String, start : Int32, limit : Int32) : Array(String)
+      forms = [] of String
+      i = start
+      while i < limit
+        i = skip_ws_and_comments(source, i, limit)
+        break if i >= limit
+        form_end = resource_end_of_value(source, i, limit)
+        break if form_end <= i
+        forms << source.byte_slice(i, form_end - i).strip
+        i = form_end
+      end
+
+      names = [] of String
+      j = 0
+      while j < forms.size
+        token = forms[j]
+        if j + 1 < forms.size && forms[j + 1] == ":-"
+          names << token if param_symbol?(token)
+          j += 3 # name, `:-`, schema
+        elsif token == "&"
+          j += 2 # `&`, rest-binding name
+        elsif token.starts_with?('{')
+          # Optional param with default: `{y :- Long 1}` binds `y`.
+          if name = optional_param_name(token)
+            names << name
+          end
+          j += 1
+        else
+          names << token if param_symbol?(token)
+          j += 1
+        end
+      end
+      names.uniq
+    end
+
+    private def optional_param_name(token : String) : String?
+      if m = token.match(/\A\{\s*([A-Za-z_][\w\-!?*<>]*)\s+:-/)
+        m[1]
+      end
+    end
+
+    private def param_symbol?(token : String) : Bool
+      return false if token.empty?
+      return false if token == ":-" || token.starts_with?(':')
+      !!token.match(/\A[A-Za-z_][\w\-!?*<>]*\z/)
+    end
+
+    private def add_param_once(endpoint : Endpoint, name : String, param_type : String)
+      return if name.empty?
+      return if endpoint.params.any? { |p| p.name == name && p.param_type == param_type }
+      endpoint.push_param(Param.new(name, "", param_type))
     end
 
     # `(resource {...})` (compojure.api.resource). The resource map keys the

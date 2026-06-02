@@ -43,6 +43,18 @@ expected_endpoints = [
     Param.new("id", "", "path"),
   ]),
   Endpoint.new("/health-check", "GET"),
+  Endpoint.new("/calc", "GET", [
+    Param.new("x", "", "query"),
+    Param.new("y", "", "query"),
+  ]),
+  Endpoint.new("/echo", "POST", [
+    Param.new("message", "", "json"),
+    Param.new("authorization", "", "header"),
+  ]),
+  Endpoint.new("/upload/:id", "PUT", [
+    Param.new("id", "", "path"),
+    Param.new("file", "", "form"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/clojure/compojure/", {

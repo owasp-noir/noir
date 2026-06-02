@@ -66,6 +66,24 @@
     (resource
       {:handler (fn [_] "ok")}))
 
+  ; compojure-api restructuring directives declare typed params in the body.
+  ; `{y :- Long 1}` is an optional param with a default → still bound as `y`.
+  (GET "/calc" []
+    :query-params [x :- Long, {y :- Long 1}]
+    :return Long
+    (ok (+ x y)))
+
+  (POST "/echo" []
+    :body-params [message :- s/Str]
+    :header-params [authorization :- s/Str]
+    (ok message))
+
+  ; `:path-params` re-declaring the URL param must not duplicate it.
+  (PUT "/upload/:id" []
+    :path-params [id :- Long]
+    :form-params [file :- s/Str]
+    (ok id))
+
   (routes
     (GET "/health" []
       "ok")))
