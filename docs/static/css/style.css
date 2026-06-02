@@ -441,6 +441,13 @@ body {
     /* Contain the floated mascot bubble inside the article flow */
     display: flow-root;
 }
+/* Headings and code blocks drop below the floated mascot bubble instead of
+   jamming against its right edge when the intro prose is shorter than it. */
+.docs-article h2,
+.docs-article h3,
+.docs-article pre {
+    clear: both;
+}
 
 /* ==========================================================================
    TOC (Right sidebar)

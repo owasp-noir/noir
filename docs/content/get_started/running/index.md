@@ -12,6 +12,8 @@ prev_page_label = "Install Noir"
 Noir is installed. Let's take it for a spin! Point it at a project, see what it finds, and learn how to shape the output.
 {% end %}
 
+This page runs through a first scan end to end — pointing Noir at a project, reading what it reports, and shaping the output for your workflow. Each step builds on the one before it, so it's worth following in order the first time through.
+
 ## Run a Scan
 
 Pick a project directory and scan it:

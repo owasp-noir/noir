@@ -10,6 +10,8 @@ sort_by = "weight"
 Almost every v0 invocation still runs on v1 unchanged. This page is a single place to look up the renames, behavior changes, and the few things that explicitly broke.
 {% end %}
 
+This guide is built for skimming. Start with the short version below, then jump only to the CLI, flag, or output sections that your scripts and dashboards actually touch.
+
 ## The short version
 
 v1.0 is **compatibility-first**. v0 call shapes like `noir -b ./app -P -f json` route automatically into the `scan` subcommand, and every renamed flag keeps its old name as a silent alias. The only things that explicitly broke are `--ollama` / `--ollama-model` (deprecated since 2024 — use `--ai-provider ollama [--ai-model NAME]` instead).
