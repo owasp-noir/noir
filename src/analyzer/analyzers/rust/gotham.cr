@@ -25,16 +25,43 @@ module Analyzer::Rust
 
       Noir::TreeSitter.parse_rust(source) do |root|
         function_index = build_function_index(root, source)
+        walk_with_prefix(root, source, "", path, function_index, include_callee, endpoints)
+      end
 
-        walk(root) do |node|
-          next unless Noir::TreeSitter.node_type(node) == "call_expression"
-          route = decode_to_call(node, source)
-          next unless route
+      endpoints
+    end
+
+    # Recursive descent that threads the current path prefix. Gotham's
+    # `build_router(|route| { ... })` groups routes under
+    # `route.scope("/api", |route| { ... })` closures (which prepend a
+    # path segment) and `route.with_pipeline_chain(chain, |route| { ... })`
+    # closures (which only add middleware). A flat walk reported the
+    # inner path verbatim — `/users` instead of `/api/users`. We now
+    # descend into each closure carrying the accumulated prefix.
+    private def walk_with_prefix(node : LibTreeSitter::TSNode,
+                                 source : String,
+                                 prefix : String,
+                                 path : String,
+                                 function_index : Hash(String, LibTreeSitter::TSNode),
+                                 include_callee : Bool,
+                                 endpoints : Array(Endpoint))
+      if Noir::TreeSitter.node_type(node) == "call_expression"
+        if scope = decode_scope(node, source)
+          seg, block = scope
+          walk_with_prefix(block, source, join_paths(prefix, seg), path, function_index, include_callee, endpoints)
+          return
+        end
+        if block = decode_pipeline_closure(node, source)
+          walk_with_prefix(block, source, prefix, path, function_index, include_callee, endpoints)
+          return
+        end
+        if route = decode_to_call(node, source)
           route_path, method, handler_name = route
+          full_path = join_paths(prefix, route_path)
 
           details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
-          endpoint = Endpoint.new(route_path, method, details)
-          extract_path_params(route_path, endpoint)
+          endpoint = Endpoint.new(full_path, method, details)
+          extract_path_params(full_path, endpoint)
 
           if handler_function = function_index[handler_name]?
             scan_function(handler_function, source, endpoint)
@@ -45,7 +72,63 @@ module Analyzer::Rust
         end
       end
 
-      endpoints
+      Noir::TreeSitter.each_named_child(node) do |child|
+        walk_with_prefix(child, source, prefix, path, function_index, include_callee, endpoints)
+      end
+    end
+
+    # `route.scope("/seg", |route| { ... })` → `{seg, closure_body}`.
+    private def decode_scope(call : LibTreeSitter::TSNode, source : String) : Tuple(String, LibTreeSitter::TSNode)?
+      fn_node = Noir::TreeSitter.field(call, "function")
+      return unless fn_node && Noir::TreeSitter.node_type(fn_node) == "field_expression"
+      field = Noir::TreeSitter.field(fn_node, "field")
+      return unless field && Noir::TreeSitter.node_text(field, source) == "scope"
+
+      args = Noir::TreeSitter.field(call, "arguments")
+      return unless args
+      seg = first_string_literal_text(args, source)
+      return unless seg
+      block = closure_body(args)
+      return unless block
+      {seg, block}
+    end
+
+    # Pipeline-grouping closures (`with_pipeline_chain`, `with_pipeline`)
+    # wrap routes with middleware without changing the path. Returns the
+    # closure body so the caller can descend with the same prefix.
+    private def decode_pipeline_closure(call : LibTreeSitter::TSNode, source : String) : LibTreeSitter::TSNode?
+      fn_node = Noir::TreeSitter.field(call, "function")
+      return unless fn_node && Noir::TreeSitter.node_type(fn_node) == "field_expression"
+      field = Noir::TreeSitter.field(fn_node, "field")
+      return unless field
+      name = Noir::TreeSitter.node_text(field, source)
+      return unless name == "with_pipeline_chain" || name == "with_pipeline"
+      args = Noir::TreeSitter.field(call, "arguments")
+      return unless args
+      closure_body(args)
+    end
+
+    # Body block of the first closure argument in an `arguments` node.
+    private def closure_body(args : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+      Noir::TreeSitter.each_named_child(args) do |arg|
+        next unless Noir::TreeSitter.node_type(arg) == "closure_expression"
+        body = Noir::TreeSitter.field(arg, "body")
+        return body if body && Noir::TreeSitter.node_type(body) == "block"
+        Noir::TreeSitter.each_named_child(arg) do |child|
+          return child if Noir::TreeSitter.node_type(child) == "block"
+        end
+      end
+      nil
+    end
+
+    private def join_paths(prefix : String, route_path : String) : String
+      return ensure_leading_slash(route_path) if prefix.empty?
+      combined = "/#{prefix.strip('/')}/#{route_path.lstrip('/')}".rstrip('/')
+      combined.empty? ? "/" : combined
+    end
+
+    private def ensure_leading_slash(route_path : String) : String
+      route_path.starts_with?("/") ? route_path : "/#{route_path}"
     end
 
     # `.<verb>("/x").to(handler)` → `{path, METHOD, handler_name}` or
