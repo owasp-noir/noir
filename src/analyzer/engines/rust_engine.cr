@@ -109,6 +109,11 @@ module Analyzer::Rust
         case c
         when '"'.ord  then i = skip_string_literal(bytes, i)
         when '\''.ord then i = skip_char_or_lifetime(bytes, i)
+        when 'r'.ord, 'b'.ord
+          # Raw strings (`r"…"`, `r#"…"#`, `br#"…"#`) routinely embed `{`
+          # / `}` — e.g. a JSON body in a `#[cfg(test)]` test — and must
+          # be skipped whole or the brace matcher mis-counts depth.
+          i = try_skip_raw_string(bytes, i) || i + 1
         when '/'.ord
           if i + 1 < bytes.size && bytes[i + 1] == '/'.ord
             i = skip_line_comment(bytes, i)
@@ -132,6 +137,11 @@ module Analyzer::Rust
         case c
         when '"'.ord  then i = skip_string_literal(bytes, i); next
         when '\''.ord then i = skip_char_or_lifetime(bytes, i); next
+        when 'r'.ord, 'b'.ord
+          if nb = try_skip_raw_string(bytes, i)
+            i = nb
+            next
+          end
         when '/'.ord
           if i + 1 < bytes.size && bytes[i + 1] == '/'.ord
             i = skip_line_comment(bytes, i); next
@@ -144,6 +154,45 @@ module Analyzer::Rust
         i += 1
       end
       depth == 0 ? i - 1 : nil
+    end
+
+    # If `from` begins a Rust raw string literal — `r"…"`, `r#"…"#`,
+    # `r##"…"##`, or the byte-string `br"…"` / `br#"…"#` forms — return
+    # the index just past its terminator; otherwise `nil`. The closer is
+    # a `"` followed by exactly the same number of `#` as the opener, so
+    # interior quotes and braces are consumed verbatim. In valid Rust an
+    # `r` / `br` immediately followed by `#`* `"` is unambiguously a raw
+    # string (a bare `r#ident` raw identifier has no quote), so ordinary
+    # identifiers and byte/binary literals (`b'x'`, `b"x"`, `0b10`) fall
+    # through to `nil`.
+    private def self.try_skip_raw_string(bytes : Slice(UInt8), from : Int32) : Int32?
+      i = from
+      if bytes[i] == 'b'.ord
+        i += 1
+        return unless i < bytes.size && bytes[i] == 'r'.ord
+      end
+      return unless i < bytes.size && bytes[i] == 'r'.ord
+      i += 1
+      hashes = 0
+      while i < bytes.size && bytes[i] == '#'.ord
+        hashes += 1
+        i += 1
+      end
+      return unless i < bytes.size && bytes[i] == '"'.ord
+      i += 1
+      while i < bytes.size
+        if bytes[i] == '"'.ord
+          j = i + 1
+          k = 0
+          while k < hashes && j < bytes.size && bytes[j] == '#'.ord
+            k += 1
+            j += 1
+          end
+          return j if k == hashes
+        end
+        i += 1
+      end
+      bytes.size
     end
 
     private def self.skip_string_literal(bytes : Slice(UInt8), from : Int32) : Int32
