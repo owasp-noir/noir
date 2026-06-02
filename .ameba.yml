@@ -19,3 +19,13 @@ Naming/BlockParameterName:
 Lint/NotNil:
   Excluded:
     - "spec/**/*"
+
+# TODO/FIXME notes in comments are tracked, not lint failures.
+Documentation/DocumentationAdmonition:
+  Enabled: false
+
+# Spelling is enforced by the dedicated `typos` check (typos.toml); Ameba's
+# Lint/Typos false-positives on regex fragments in framework taggers
+# (e.g. `[Aa]dmin[Oo]nly` -> "nly").
+Lint/Typos:
+  Enabled: false

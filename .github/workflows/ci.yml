@@ -70,7 +70,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Run Ameba linter
-        uses: crystal-ameba/github-action@master
+        # Pinned to a tagged release (ameba ~> 1.6.4) instead of @master so an
+        # upstream Ameba dev build can't introduce new rules that fail CI on
+        # unrelated, already-merged code (e.g. Style/HeredocIndent).
+        uses: crystal-ameba/github-action@v0.12.0
   tests:
     runs-on: ubuntu-latest
     strategy:
