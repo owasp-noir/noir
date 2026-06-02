@@ -765,8 +765,8 @@ module Noir
         when "Handler" then handler = Noir::TreeSitter.node_text(val_node, source)
         end
       end
-      return nil if method.empty? || rpath.empty?
-      return nil unless rpath.starts_with?("/")
+      return if method.empty? || rpath.empty?
+      return unless rpath.starts_with?("/")
       full = "#{prefix}#{rpath}"
       Route.new("server", method, full, rpath, handler, Noir::TreeSitter.node_start_row(line_node))
     end
@@ -827,7 +827,7 @@ module Noir
       n = node
       if Noir::TreeSitter.node_type(n) == "literal_element"
         fc = first_named_child(n)
-        return nil if fc.nil?
+        return if fc.nil?
         n = fc
       end
       case Noir::TreeSitter.node_type(n)
@@ -835,15 +835,13 @@ module Noir
         n
       when "composite_literal"
         Noir::TreeSitter.field(n, "body")
-      else
-        nil
       end
     end
 
     # Unwrap a `literal_element` container (tree-sitter-go wraps both
     # sides of a keyed_element) to reach the underlying key/value node.
     private def gozero_unwrap(node : LibTreeSitter::TSNode?) : LibTreeSitter::TSNode?
-      return nil if node.nil?
+      return if node.nil?
       if Noir::TreeSitter.node_type(node) == "literal_element"
         return first_named_child(node)
       end
@@ -892,13 +890,13 @@ module Noir
 
     private def gozero_with_prefix(call : LibTreeSitter::TSNode, source : String) : String?
       function = Noir::TreeSitter.field(call, "function")
-      return nil if function.nil?
-      return nil unless Noir::TreeSitter.node_type(function) == "selector_expression"
+      return if function.nil?
+      return unless Noir::TreeSitter.node_type(function) == "selector_expression"
       fname = Noir::TreeSitter.field(function, "field")
-      return nil if fname.nil?
-      return nil unless Noir::TreeSitter.node_text(fname, source) == "WithPrefix"
+      return if fname.nil?
+      return unless Noir::TreeSitter.node_text(fname, source) == "WithPrefix"
       args = Noir::TreeSitter.field(call, "arguments")
-      return nil if args.nil?
+      return if args.nil?
       Noir::TreeSitter.each_named_child(args) do |arg|
         s = gozero_string_value(arg, source)
         return s unless s.empty?

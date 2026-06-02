@@ -95,7 +95,6 @@ module Analyzer::Go
                                  when "ClientStream" then "client-streaming"
                                  when "ServerStream" then "server-streaming"
                                  when "BidiStream"   then "client-streaming, server-streaming"
-                                 else                     nil
                                  end
                 endpoint.add_tag(Tag.new("streaming", streaming_desc, "connect_rpc_analyzer")) if streaming_desc
               end
