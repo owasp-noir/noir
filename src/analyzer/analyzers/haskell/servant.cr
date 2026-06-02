@@ -29,6 +29,18 @@ module Analyzer::Haskell
             line:   entry[:line],
           }
         end
+
+        # Record-based (`NamedRoutes`) APIs declare each route as a record field
+        # `field :: mode :- <route>`. Treat the record as a pseudo type alias
+        # whose body is the fields joined with `:<|>`, so the existing
+        # expansion/processing pipeline handles it like any other API.
+        extract_record_routes(content).each do |entry|
+          type_aliases[entry[:name]] = {
+            body:   entry[:body],
+            source: path,
+            line:   entry[:line],
+          }
+        end
       end
 
       reference_counts = Hash(String, Int32).new(0)
@@ -41,7 +53,7 @@ module Analyzer::Haskell
       type_aliases.each do |name, entry|
         next if reference_counts[name] > 0
 
-        expanded = expand_references(entry[:body], type_aliases)
+        expanded = strip_named_routes(expand_references(entry[:body], type_aliases))
         next unless contains_servant_signature?(expanded)
 
         endpoints = process_api_body(entry[:source], entry[:line], expanded)
@@ -149,6 +161,114 @@ module Analyzer::Haskell
       end
 
       results
+    end
+
+    # Extract `Servant.API.Generic` record-route declarations:
+    #
+    #   data RecordRoutes mode = RecordRoutes
+    #     { version :: mode :- "version" :> Get '[JSON] Int
+    #     , echo    :: mode :- "echo" :> Capture "s" String :> Get '[JSON] String
+    #     }
+    #
+    # Each `field :: mode :- <route>` carries one route; the record is returned
+    # as a pseudo type alias whose body is the routes joined with `:<|>`, so the
+    # downstream alias machinery (reference counting, expansion, processing)
+    # treats it exactly like a `type X = ...` API.
+    private def extract_record_routes(content : String) : Array(NamedTuple(name: String, body: String, line: Int32))
+      results = [] of NamedTuple(name: String, body: String, line: Int32)
+      cleaned = strip_haskell_comments(content)
+      lines = cleaned.lines
+
+      i = 0
+      while i < lines.size
+        match = lines[i].match(/^(?:data|newtype)\s+([A-Z][A-Za-z0-9_']*)\s+[a-z][A-Za-z0-9_']*\b/)
+        unless match
+          i += 1
+          next
+        end
+
+        name = match[1]
+        start_line = i + 1
+
+        # Collect from the declaration through the closing brace of the record.
+        open_index = find_record_open_brace(lines, i)
+        unless open_index
+          i += 1
+          next
+        end
+
+        block, next_index = collect_record_block(lines, open_index)
+        routes = record_field_routes(block)
+        if routes.size > 0
+          results << {name: name, body: routes.join(" :<|> "), line: start_line}
+        end
+        i = next_index
+      end
+
+      results
+    end
+
+    # Locate the `{` that opens the record's field list, scanning at most a few
+    # lines past the `data`/`newtype` head (the brace is often on the next line).
+    private def find_record_open_brace(lines : Array(String), decl_index : Int32) : Int32?
+      i = decl_index
+      limit = Math.min(lines.size, decl_index + 4)
+      while i < limit
+        return i if lines[i].includes?('{')
+        # Stop if another top-level declaration starts before any brace.
+        return if i > decl_index && !lines[i].lstrip.empty? && !starts_with_whitespace?(lines[i]) && !lines[i].lstrip.starts_with?("=")
+        i += 1
+      end
+      nil
+    end
+
+    # Return the text between the record's outermost `{` and matching `}` plus
+    # the index of the line after the closing brace.
+    private def collect_record_block(lines : Array(String), open_index : Int32) : Tuple(String, Int32)
+      buffer = String::Builder.new
+      depth = 0
+      started = false
+      i = open_index
+      while i < lines.size
+        line = lines[i]
+        line.each_char do |char|
+          if char == '{'
+            depth += 1
+            started = true
+            next
+          elsif char == '}'
+            depth -= 1
+            next if depth <= 0
+          end
+          buffer << char if started && depth >= 1
+        end
+        if started && depth <= 0
+          return {buffer.to_s, i + 1}
+        end
+        buffer << '\n' if started
+        i += 1
+      end
+      {buffer.to_s, i}
+    end
+
+    # Split a record body into its per-field route types, keeping only fields of
+    # the form `name :: mode :- <route>` and returning the `<route>` part.
+    private def record_field_routes(block : String) : Array(String)
+      routes = [] of String
+      split_top_level(block, ",").each do |field|
+        idx = field.index(":-")
+        next unless idx
+        route = field[(idx + 2)..].strip
+        routes << route unless route.empty?
+      end
+      routes
+    end
+
+    # Drop the `NamedRoutes` combinator keyword. After expansion a nested record
+    # reference reads `... :> NamedRoutes (<expanded body>)`; removing the bare
+    # word leaves `... :> (<expanded body>)`, a plain nested route.
+    private def strip_named_routes(body : String) : String
+      body.gsub(/\bNamedRoutes\b/, " ")
     end
 
     private def starts_with_whitespace?(line : String) : Bool
@@ -495,11 +615,31 @@ module Analyzer::Haskell
       [route]
     end
 
+    # Split a route into its `:>` segments, recursing into parenthesised
+    # sub-chains. `:>` is right-associative, so `A :> (B :> C)` is the same route
+    # as `A :> B :> C`; a nested `NamedRoutes` record expands to a parenthesised
+    # `:>` chain that must be spliced in rather than treated as one opaque
+    # segment.
+    private def flatten_route_segments(raw : String) : Array(String)
+      result = [] of String
+      split_top_level(raw, ":>").each do |segment|
+        seg = unwrap_parens(segment.strip)
+        next if seg.empty?
+
+        if split_top_level(seg, ":>").size > 1
+          result.concat(flatten_route_segments(seg))
+        else
+          result << seg
+        end
+      end
+      result
+    end
+
     private def process_route(source : String, line_number : Int32, route : String) : Endpoint?
       raw = unwrap_parens(route.strip)
       return if raw.empty?
 
-      segments = split_top_level(raw, ":>")
+      segments = flatten_route_segments(raw)
 
       url_parts = [] of String
       params = [] of Param
