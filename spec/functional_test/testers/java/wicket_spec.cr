@@ -11,6 +11,19 @@ scanned_delete = Endpoint.new("/scanned/persons/{personId}", "DELETE", [
 ])
 scanned_delete.push_callee(Callee.new("personService.deleteById"))
 
+# POST handler exercises wicketstuff-rest request-parameter annotations:
+# @RequestBody → json body param, @RequestParam → query param. Asserted
+# on both mount points (/scanned via @ResourcePath, /api via mountResource).
+scanned_create = Endpoint.new("/scanned/persons", "POST", [
+  Param.new("person", "", "json"),
+  Param.new("notify", "", "query"),
+])
+scanned_create.push_callee(Callee.new("personService.save"))
+api_create = Endpoint.new("/api/persons", "POST", [
+  Param.new("person", "", "json"),
+  Param.new("notify", "", "query"),
+])
+
 expected_endpoints = [
   Endpoint.new("/users", "GET"),
   Endpoint.new("/users/{id}", "GET", [
@@ -36,9 +49,11 @@ expected_endpoints = [
   ]),
   Endpoint.new("/DefaultMountPage", "GET"),
   scanned_persons,
+  scanned_create,
   scanned_delete,
   Endpoint.new("/dashboards", "GET"),
   Endpoint.new("/api/persons", "GET"),
+  api_create,
   Endpoint.new("/api/persons/{personId}", "DELETE", [
     Param.new("personId", "", "path"),
   ]),

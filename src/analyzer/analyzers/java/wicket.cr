@@ -38,7 +38,7 @@ module Analyzer::Java
     REST_LAMBDA_METHODS     = Set{"get", "post", "put", "delete", "patch", "head", "options", "trace"}
 
     alias FileInfo = NamedTuple(path: String, content: String, constants: Hash(String, String))
-    alias RestRoute = NamedTuple(path: String, method: String, file_path: String, line: Int32, callees: Array(Callee))
+    alias RestRoute = NamedTuple(path: String, method: String, file_path: String, line: Int32, callees: Array(Callee), params: Array(Param))
     alias RestMount = NamedTuple(path: String, file_path: String, line: Int32)
 
     @include_callee : Bool = false
@@ -141,7 +141,7 @@ module Analyzer::Java
             if resource_class = rest_resource_class_name(args, rest_routes)
               if routes = rest_routes[resource_class]?
                 routes.each do |route|
-                  add_endpoint(join_mount_paths(normalized, route[:path]), route[:file_path], route[:line], seen, route[:method], route[:callees])
+                  add_endpoint(join_mount_paths(normalized, route[:path]), route[:file_path], route[:line], seen, route[:method], route[:callees], route[:params])
                 end
                 next
               end
@@ -221,10 +221,12 @@ module Analyzer::Java
       class_name = first_class_name(file[:content])
       return if class_name.empty?
 
-      # First pass collects the route shape + the enclosing handler
-      # method name; callees are filled in a single tree-sitter parse
-      # below (only when callee/ai-context enrichment is requested).
-      pending = [] of NamedTuple(path: String, method: String, line: Int32, method_name: String)
+      # First pass collects the route shape, the enclosing handler method
+      # name, and the handler's request parameters (from wicketstuff-rest
+      # @RequestParam/@HeaderParam/@CookieParam/@RequestBody annotations);
+      # callees are filled in a single tree-sitter parse below (only when
+      # callee/ai-context enrichment is requested).
+      pending = [] of NamedTuple(path: String, method: String, line: Int32, method_name: String, params: Array(Param))
       file[:content].scan(/@(?:[A-Za-z_][A-Za-z0-9_]*\.)*MethodMapping\b/) do |match|
         marker = match.begin(0) || 0
         after = match.end(0) || marker
@@ -239,11 +241,13 @@ module Analyzer::Java
         end
 
         path, method = method_mapping_values(args, file[:constants])
+        method_name, param_list = rest_handler_signature(file[:content], scan_from)
         pending << {
           path:        normalize_mount_path(path),
           method:      method,
           line:        line_for_offset(file[:content], marker),
-          method_name: next_method_name(file[:content], scan_from),
+          method_name: method_name,
+          params:      rest_method_params(param_list),
         }
       end
       return if pending.empty?
@@ -256,6 +260,7 @@ module Analyzer::Java
           file_path: file[:path],
           line:      entry[:line],
           callees:   callee_map[entry[:method_name]]? || [] of Callee,
+          params:    entry[:params],
         }
       end
     end
@@ -290,16 +295,73 @@ module Analyzer::Java
       Hash(String, Array(Callee)).new
     end
 
-    # Name of the method declared immediately after a `@MethodMapping`
-    # annotation. wicketstuff-rest handler methods are public, so we
-    # anchor on the access modifier and capture the identifier that
-    # precedes the parameter list.
-    private def next_method_name(content : String, offset : Int32) : String
+    # Name + raw parameter-list text of the method declared immediately
+    # after a `@MethodMapping` annotation. wicketstuff-rest handler
+    # methods are public, so we anchor on the access modifier and capture
+    # the identifier that precedes the parameter list, then the balanced
+    # `(...)` that follows.
+    private def rest_handler_signature(content : String, offset : Int32) : Tuple(String, String)
       rest = content[offset..]? || ""
-      if match = rest.match(/\b(?:public|protected|private)\b[^;{}=]*?\b([A-Za-z_][A-Za-z0-9_]*)\s*\(/)
-        return match[1]
+      match = rest.match(/\b(?:public|protected|private)\b[^;{}=]*?\b([A-Za-z_][A-Za-z0-9_]*)\s*\(/)
+      return {"", ""} unless match
+
+      name = match[1]
+      open_abs = offset + (match.end(0) || 1) - 1
+      close_abs = find_matching_paren(content, open_abs)
+      return {name, ""} unless close_abs
+
+      {name, content[(open_abs + 1)...close_abs]}
+    end
+
+    # Map wicketstuff-rest handler parameters to request parameters.
+    # Path parameters are sourced from the `{...}` placeholders in the
+    # mount URL, so an unannotated method parameter (bound positionally to
+    # a path placeholder) is intentionally skipped here to avoid
+    # duplicates. `@PathParam` is likewise covered by the URL placeholder.
+    private def rest_method_params(param_list : String) : Array(Param)
+      params = [] of Param
+      return params if param_list.strip.empty?
+
+      split_arguments(param_list).each do |raw|
+        decl = raw.strip
+        next if decl.empty?
+
+        java_name = decl.match(/([A-Za-z_][A-Za-z0-9_]*)\s*$/).try(&.[1]) || ""
+
+        if match = decl.match(/@(?:[A-Za-z_][A-Za-z0-9_]*\.)*RequestParam\b\s*\(([^)]*)\)/)
+          name = annotation_first_string(match[1]) || java_name
+          add_rest_param(params, name, "query")
+        elsif match = decl.match(/@(?:[A-Za-z_][A-Za-z0-9_]*\.)*HeaderParam\b\s*\(([^)]*)\)/)
+          name = annotation_first_string(match[1]) || java_name
+          add_rest_param(params, name, "header")
+        elsif match = decl.match(/@(?:[A-Za-z_][A-Za-z0-9_]*\.)*CookieParam\b\s*\(([^)]*)\)/)
+          name = annotation_first_string(match[1]) || java_name
+          add_rest_param(params, name, "cookie")
+        elsif decl.matches?(/@(?:[A-Za-z_][A-Za-z0-9_]*\.)*RequestBody\b/)
+          add_rest_param(params, java_name, "json")
+        end
       end
-      ""
+      params
+    end
+
+    private def add_rest_param(params : Array(Param), name : String, type : String)
+      return if name.empty?
+      return if params.any? { |param| param.name == name && param.param_type == type }
+      params << Param.new(name, "", type)
+    end
+
+    # First string literal in an annotation argument list, handling both
+    # the shorthand `@X("name")` and the explicit `@X(value = "name", …)`
+    # forms.
+    private def annotation_first_string(args : String) : String?
+      stripped = args.strip
+      if value_match = stripped.match(/\bvalue\s*=\s*"((?:\\.|[^"\\])*)"/)
+        return value_match[1]
+      end
+      if literal = stripped.match(/"((?:\\.|[^"\\])*)"/)
+        return literal[1]
+      end
+      nil
     end
 
     private def collect_resource_path_annotations(file : FileInfo,
@@ -337,7 +399,7 @@ module Analyzer::Java
         routes = rest_routes[class_name]?
         if routes && !routes.empty?
           routes.each do |route|
-            add_endpoint(join_mount_paths(mount[:path], route[:path]), route[:file_path], route[:line], seen, route[:method], route[:callees])
+            add_endpoint(join_mount_paths(mount[:path], route[:path]), route[:file_path], route[:line], seen, route[:method], route[:callees], route[:params])
           end
         else
           add_endpoint(mount[:path], mount[:file_path], mount[:line], seen)
@@ -419,8 +481,14 @@ module Analyzer::Java
       add_endpoint(path, file_path, line, seen, "GET")
     end
 
-    private def add_endpoint(path : String, file_path : String, line : Int32, seen : Set(String), method : String, callees : Array(Callee) = [] of Callee)
-      endpoint = Endpoint.new(path, method, path_params(path), Details.new(PathInfo.new(file_path, line)))
+    private def add_endpoint(path : String, file_path : String, line : Int32, seen : Set(String), method : String, callees : Array(Callee) = [] of Callee, extra_params : Array(Param) = [] of Param)
+      params = path_params(path)
+      extra_params.each do |param|
+        next if params.any? { |existing| existing.name == param.name && existing.param_type == param.param_type }
+        params << param
+      end
+
+      endpoint = Endpoint.new(path, method, params, Details.new(PathInfo.new(file_path, line)))
       key = endpoint_key(endpoint)
       return if seen.includes?(key)
 
