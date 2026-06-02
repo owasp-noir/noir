@@ -80,7 +80,8 @@ module Analyzer::Ruby
         verb_handled = false
         GRAPE_VERBS.each do |verb|
           if m = stripped.match(/^#{verb}\b(?:\s+(['":][\w\/\-:]+[\'""]?))?(?:\s*,[^#]*?)?\s*do\b/)
-            raw_path = (m[1]? || "").to_s.gsub(/['"]/, "")
+            raw_match = (m[1]? || "").to_s
+            raw_path = grape_literal_or_param_path(raw_match)
             ep_path = build_path(class_prefix, version_prefix, prefix_segments, raw_path)
             details = Details.new(PathInfo.new(path, index + 1))
             endpoint = Endpoint.new(ep_path, verb.upcase, details)
@@ -157,6 +158,20 @@ module Analyzer::Ruby
           end
         end
       end
+    end
+
+    # Grape accepts the route path as a bare Ruby symbol (`get :status`,
+    # `delete :test`) or a string (`get '/users/:id'`). A symbol is
+    # stringified to a LITERAL segment — `/status`, `/test` — while a
+    # `:name` token inside a string is a dynamic param. Quote-stripping
+    # alone erased that distinction, so the common `delete :test` idiom
+    # surfaced as the bogus param route `/{test}` instead of `/test`.
+    # Drop the leading colon of the symbol form so `build_path` keeps it
+    # literal; leave the string form (and any in-path `:params`) intact.
+    private def grape_literal_or_param_path(raw_match : String) : String
+      literal_symbol = raw_match.starts_with?(':')
+      path = raw_match.gsub(/['"]/, "")
+      literal_symbol ? path.lchop(':') : path
     end
 
     private def push_grape_param(endpoint : Endpoint, param : Param)
