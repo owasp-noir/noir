@@ -14,6 +14,17 @@ module Analyzer::Clojure
       "OPTIONS" => "OPTIONS",
       "ANY"     => "ANY",
     }
+    # compojure.api.resource method keys (keyword form inside the resource map).
+    RESOURCE_METHODS = {
+      ":get"     => "GET",
+      ":post"    => "POST",
+      ":put"     => "PUT",
+      ":delete"  => "DELETE",
+      ":patch"   => "PATCH",
+      ":head"    => "HEAD",
+      ":options" => "OPTIONS",
+      ":any"     => "ANY",
+    }
     CLOJURE_EXTENSIONS = {".clj", ".cljc", ".cljs"}
 
     def analyze
@@ -36,7 +47,10 @@ module Analyzer::Clojure
     end
 
     private def compojure_source?(content : String) : Bool
-      content.includes?("compojure.core") || content.includes?("defroutes") || content.includes?("(context")
+      content.includes?("compojure.core") ||
+        content.includes?("compojure.api") ||
+        content.includes?("defroutes") ||
+        content.includes?("(context")
     end
 
     private def scan_forms(source : String, start_index : Int32, end_index : Int32, prefix : String, path : String, include_callee : Bool)
@@ -64,6 +78,14 @@ module Analyzer::Clojure
             scan_forms(source, after_symbol, form_end, next_prefix, path, include_callee)
           when "defroutes", "routes"
             scan_forms(source, after_symbol, form_end, prefix, path, include_callee)
+          when "resource"
+            # compojure.api.resource: `(resource {:get {...} :post {...}})`
+            # binds method handlers to the enclosing context path rather than
+            # a route string. Falls back to plain recursion when the argument
+            # is not a resource map (e.g. `(resource db Schema)`).
+            unless add_resource(source, after_symbol, form_end, prefix, path, include_callee)
+              scan_forms(source, after_symbol, form_end, prefix, path, include_callee)
+            end
           else
             if route_method = ROUTE_METHODS[base]?
               add_route(source, i, after_symbol, form_end, prefix, path, route_method, include_callee)
@@ -112,6 +134,140 @@ module Analyzer::Clojure
       start_line = line_number_for(source, body_start)
       callees = Noir::ClojureCalleeExtractor.callees_for_body(body, path, start_line)
       Noir::ClojureCalleeExtractor.attach_to(endpoint, callees)
+    end
+
+    # `(resource {...})` (compojure.api.resource). The resource map keys the
+    # HTTP methods it serves; the path is the enclosing context prefix. Returns
+    # false when the first argument is not a map so the caller can fall back to
+    # ordinary recursion. Each method value is itself a map that may carry a
+    # `:handler`; a top-level `:handler` (no method key) serves every method.
+    private def add_resource(source : String, args_start : Int32, form_end : Int32,
+                             prefix : String, path : String, include_callee : Bool) : Bool
+      i = skip_ws_and_comments(source, args_start, form_end)
+      return false if i >= form_end
+      return false unless source.byte_at(i).unsafe_chr == '{'
+
+      map_end = find_matching_delimiter(source, i, '{', '}', form_end)
+      return false if map_end <= i
+
+      route_path = prefix.empty? ? "/" : prefix
+      data_handler = resource_value_range(source, i + 1, map_end, ":handler")
+
+      method_found = false
+      each_resource_entry(source, i + 1, map_end) do |key, key_pos, value_start, value_end|
+        if method = RESOURCE_METHODS[key]?
+          method_found = true
+          handler_range = resource_value_range(source, value_start, value_end, ":handler") || data_handler
+          emit_resource_endpoint(source, key_pos, route_path, method, path, include_callee, handler_range)
+        end
+      end
+
+      if !method_found && (dh = data_handler)
+        emit_resource_endpoint(source, dh[0], route_path, "GET", path, include_callee, dh)
+      end
+
+      true
+    end
+
+    private def emit_resource_endpoint(source : String, offset : Int32, route_path : String, method : String,
+                                       path : String, include_callee : Bool, handler_range : Tuple(Int32, Int32)?)
+      endpoint = Endpoint.new(route_path, method, Details.new(PathInfo.new(path, line_number_for(source, offset))))
+      extract_path_param_names(route_path).each do |name|
+        endpoint.push_param(Param.new(name, "", "path"))
+      end
+
+      if include_callee && handler_range
+        body = source.byte_slice(handler_range[0], handler_range[1] - handler_range[0])
+        start_line = line_number_for(source, handler_range[0])
+        Noir::ClojureCalleeExtractor.attach_to(endpoint,
+          Noir::ClojureCalleeExtractor.callees_for_body(body, path, start_line))
+      end
+
+      @result << endpoint
+    end
+
+    # Find the value byte-range of a top-level keyword key. When the scanned
+    # span itself is a `{...}` map (a method-value map), descend into it; nested
+    # values are skipped via `resource_end_of_value`.
+    private def resource_value_range(source : String, start : Int32, limit : Int32, target_key : String) : Tuple(Int32, Int32)?
+      i = skip_ws_and_comments(source, start, limit)
+      return if i >= limit
+
+      inner_start = i
+      inner_limit = limit
+      if source.byte_at(i).unsafe_chr == '{'
+        map_end = find_matching_delimiter(source, i, '{', '}', limit)
+        return if map_end <= i
+        inner_start = i + 1
+        inner_limit = map_end
+      end
+
+      result = nil.as(Tuple(Int32, Int32)?)
+      each_resource_entry(source, inner_start, inner_limit) do |key, _key_pos, value_start, value_end|
+        result = {value_start, value_end} if result.nil? && key == target_key
+      end
+      result
+    end
+
+    private def each_resource_entry(source : String, start : Int32, limit : Int32, &)
+      i = start
+      while i < limit
+        i = skip_ws_and_comments(source, i, limit)
+        break if i >= limit
+        key_pos = i
+        key, after_key = read_symbol(source, i, limit)
+        if key.empty?
+          i = resource_end_of_value(source, i, limit)
+          next
+        end
+
+        value_start = skip_ws_and_comments(source, after_key, limit)
+        break if value_start >= limit
+        value_end = resource_end_of_value(source, value_start, limit)
+        yield key, key_pos, value_start, value_end
+        i = value_end
+      end
+    end
+
+    private def resource_end_of_value(source : String, start : Int32, limit : Int32) : Int32
+      i = skip_ws_and_comments(source, start, limit)
+      return i if i >= limit
+
+      case source.byte_at(i).unsafe_chr
+      when '"'
+        e = skip_string(source, i, limit)
+        e >= i ? e + 1 : limit
+      when '('
+        e = find_matching_delimiter(source, i, '(', ')', limit)
+        e > i ? e + 1 : limit
+      when '['
+        e = find_matching_delimiter(source, i, '[', ']', limit)
+        e > i ? e + 1 : limit
+      when '{'
+        e = find_matching_delimiter(source, i, '{', '}', limit)
+        e > i ? e + 1 : limit
+      when '\'', '`'
+        resource_end_of_value(source, i + 1, limit)
+      when '#'
+        nxt = i + 1 < limit ? source.byte_at(i + 1).unsafe_chr : '\0'
+        case nxt
+        when '{', '('
+          inner_close = nxt == '{' ? '}' : ')'
+          e = find_matching_delimiter(source, i + 1, nxt, inner_close, limit)
+          e > i + 1 ? e + 1 : limit
+        when '"'
+          e = skip_string(source, i + 1, limit)
+          e >= i + 1 ? e + 1 : limit
+        when '_'
+          resource_end_of_value(source, i + 2, limit)
+        else
+          _, after = read_symbol(source, i, limit)
+          after
+        end
+      else
+        _, after = read_symbol(source, i, limit)
+        after > i ? after : i + 1
+      end
     end
 
     private def route_body_start(source : String, index : Int32, limit : Int32) : Int32

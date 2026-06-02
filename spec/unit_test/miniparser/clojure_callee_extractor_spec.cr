@@ -50,6 +50,25 @@ describe Noir::ClojureCalleeExtractor do
     ])
   end
 
+  it "skips arithmetic/comparison operators and binding macros" do
+    body = <<-CLJ
+      (if-let [u (db/find id)]
+        (response/ok (/ (+ (:a u) (:b u)) (math/scale 2)))
+        (when-some [d (db/default)]
+          (response/ok (= d (compute/value d)))))
+      CLJ
+
+    callees = Noir::ClojureCalleeExtractor.callees_for_body(body, "core.clj", 1)
+    callees.map(&.[0]).should eq([
+      "db/find",
+      "response/ok",
+      "math/scale",
+      "db/default",
+      "response/ok",
+      "compute/value",
+    ])
+  end
+
   it "keeps namespaced callees that share reserved base names" do
     body = <<-CLJ
       (let [items (db/filter params)]

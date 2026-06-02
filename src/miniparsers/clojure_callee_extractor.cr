@@ -7,13 +7,17 @@ module Noir::ClojureCalleeExtractor
 
   RESERVED = Set{
     "def", "defn", "defmacro", "fn", "let", "letfn", "if", "if-not",
-    "when", "when-not", "when-let", "when-first", "cond", "condp",
+    "if-let", "if-some", "when", "when-not", "when-let", "when-some",
+    "when-first", "while", "cond", "condp",
     "case", "do", "doseq", "dotimes", "for", "loop", "recur",
     "try", "catch", "finally", "throw", "quote", "var", "new",
     "set!", "and", "or", "not", "->", "->>", "as->", "cond->",
     "cond->>", "some->", "some->>", "doto", ".", "..", "comment",
     "str", "println", "print", "prn", "list", "vector", "hash-map",
     "map", "filter", "reduce", "partial", "comp", "identity",
+    # Arithmetic / comparison operators are clojure.core primitives, not
+    # meaningful handler callees — they only add noise to AI context.
+    "+", "-", "*", "/", "=", "==", "<", ">", "<=", ">=", "not=",
   }
 
   def callees_for_body(body : String, file_path : String, start_line : Int32) : Array(Entry)
@@ -204,7 +208,10 @@ module Noir::ClojureCalleeExtractor
   end
 
   private def reserved_symbol?(symbol : String, expected : String? = nil) : Bool
-    if symbol.includes?('/')
+    # `/` is the bare division operator, not a namespaced symbol — the `/`
+    # it contains is the whole name. Treat it as an ordinary base symbol so
+    # it can match the RESERVED entry rather than being read as a namespace.
+    if symbol.includes?('/') && symbol != "/"
       return false unless symbol.starts_with?("clojure.core/")
 
       base = base_symbol(symbol)

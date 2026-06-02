@@ -48,6 +48,24 @@
     (ANY "/ping" []
       "pong"))
 
+  ; compojure.api.resource: method-keyed map bound to the context path —
+  ; emits GET/POST /widgets, plus a path param from `/widgets/:id`.
+  (context "/widgets" []
+    (resource
+      {:get {:summary "list widgets"
+             :handler (fn [_] "all")}
+       :post {:parameters {:body-params NewWidget}
+              :handler (fn [_] "created")}}))
+
+  (context "/widgets/:id" []
+    (resource
+      {:get {:handler (fn [_] "one")}}))
+
+  ; A bare `:handler` resource (no method key) serves every method → GET.
+  (context "/health-check" []
+    (resource
+      {:handler (fn [_] "ok")}))
+
   (routes
     (GET "/health" []
       "ok")))

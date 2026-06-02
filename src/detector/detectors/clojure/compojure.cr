@@ -14,6 +14,10 @@ module Detector::Clojure
 
       if CLOJURE_EXTENSIONS.any? { |ext| filename.ends_with?(ext) }
         return true if file_contents.includes?("compojure.core")
+        # compojure-api (`compojure.api.sweet`/`.core`/`.resource`) shares the
+        # GET/POST/context macros and adds the `resource` DSL — files often
+        # pull only this ns rather than `compojure.core`.
+        return true if file_contents.includes?("compojure.api")
         return true if file_contents.includes?("defroutes") && file_contents.match(/\([A-Z]+?\s+"/)
       end
 

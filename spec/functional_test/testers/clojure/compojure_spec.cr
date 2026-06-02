@@ -37,6 +37,12 @@ expected_endpoints = [
   ]),
   Endpoint.new("/health", "GET"),
   Endpoint.new("/api/ping", "ANY"),
+  Endpoint.new("/widgets", "GET"),
+  Endpoint.new("/widgets", "POST"),
+  Endpoint.new("/widgets/:id", "GET", [
+    Param.new("id", "", "path"),
+  ]),
+  Endpoint.new("/health-check", "GET"),
 ]
 
 FunctionalTester.new("fixtures/clojure/compojure/", {
