@@ -53,6 +53,11 @@ expected_endpoints = [
     Param.new("id", "", "query"),
   ]),
 
+  # Keyword-block guard: route inside `if Rails.env.test?` and the route
+  # after the `end` both stay under `/admin`.
+  Endpoint.new("/admin/debug/echo", "GET"),
+  Endpoint.new("/admin/after_conditional", "GET"),
+
   # Parenthesized namespace with path override keeps the controller namespace
   # while changing the URL prefix.
   Endpoint.new("/sekret/reports", "GET"),
@@ -160,6 +165,7 @@ total_endpoints = 1 +  # root
                   6 +  # admin/reports
                   4 +  # admin/refunds member (change_status, purge, update_metadata) + collection (new_list)
                   1 +  # admin/monitor/heartbeat (namespaced `to:`)
+                  2 +  # admin debug/echo (inside if-block) + after_conditional (keeps /admin)
                   2 +  # namespace path override reports
                   2 +  # scope module/path explicit routes
                   1 +  # controller block route
