@@ -37,11 +37,12 @@ module Analyzer::CSharp
     end
 
     private def each_add_routes_block(lines : Array(String), &)
+      masked_lines = Noir::CSharpLexer.new(lines.join('\n')).masked_lines
       i = 0
       while i < lines.size
         line = lines[i]
         if add_routes_signature?(line)
-          _, end_index = build_signature(lines, i)
+          _, end_index = build_signature(lines, masked_lines, i)
           body_start = end_index
           block_lines, body_end = collect_method_body_lines(lines, body_start)
           yield block_lines, body_start
@@ -251,12 +252,13 @@ module Analyzer::CSharp
       return [] of Param unless block.includes?("Bind(") || block.includes?("BindAsync(")
 
       params = [] of Param
+      masked_lines = Noir::CSharpLexer.new(lines.join('\n')).masked_lines
       lines.each_with_index do |line, index|
         next unless line.includes?("Bind(") || line.includes?("BindAsync(")
         next unless line.includes?("public") || line.includes?("private") || line.includes?("protected") || line.includes?("internal") || line.includes?("static")
 
-        _, end_idx = build_signature(lines, index)
-        body = extract_method_block(lines, end_idx)
+        _, end_idx = build_signature(lines, masked_lines, index)
+        body = extract_method_block(lines, masked_lines, end_idx)
         params.concat(extract_params_from_block(body))
       end
 

@@ -71,6 +71,7 @@ module Analyzer::CSharp
       return unless content.includes?("Controller") && content.includes?("ActionResult")
 
       lines = content.lines
+      masked_lines = Noir::CSharpLexer.new(content).masked_lines
       controller_name = extract_controller_name(content)
       return if controller_name.empty?
 
@@ -113,7 +114,7 @@ module Analyzer::CSharp
 
         # Check for action method definition
         if line.includes?("public") && line.includes?("(") && (line.includes?("ActionResult") || explicit_endpoint_attribute)
-          signature, end_index = build_signature(lines, i)
+          signature, end_index = build_signature(lines, masked_lines, i)
           action_name = extract_action_name(signature)
           parameters = extract_parameters(signature, http_method)
 
@@ -122,7 +123,7 @@ module Analyzer::CSharp
             url = build_url(controller_route_prefix, action_route, controller_name, action_name)
             details = Details.new(PathInfo.new(file, i + 1))
             endpoint = Endpoint.new(url, http_method, details)
-            body_block = extract_method_block(lines, end_index)
+            body_block = extract_method_block(lines, masked_lines, end_index)
 
             parameters.each do |param|
               endpoint.params << param
