@@ -503,7 +503,10 @@ module Analyzer::Php
 
       while group_match = content.match(group_regex, pos)
         group_start = group_match.begin(0)
-        body_info = extract_group_closure_body_after(content, group_match.end(0), lexer)
+        # Only treat a `Route::group(` as real when it is code — one inside a
+        # string/comment/heredoc would otherwise register a bogus group range
+        # that swallows or mis-prefixes the real routes around it.
+        body_info = lexer.in_code?(group_start) ? extract_group_closure_body_after(content, group_match.end(0), lexer) : nil
         if body_info
           body, body_start, body_end = body_info
           prelude = content[group_start...body_start]

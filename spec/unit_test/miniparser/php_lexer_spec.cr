@@ -153,5 +153,13 @@ describe Noir::PhpLexer do
       Noir::PhpLexer.new("").tokens.should be_empty
       Noir::PhpLexer.new("$ ").tokens.should be_empty
     end
+
+    it "numbers token lines under bare-CR and CRLF endings" do
+      cr = Noir::PhpLexer.new("a();\rb();\rc();").tokens
+      cr.find! { |t| t.value == "b" }.line.should eq(2)
+      cr.find! { |t| t.value == "c" }.line.should eq(3)
+      crlf = Noir::PhpLexer.new("a();\r\nb();").tokens
+      crlf.find! { |t| t.value == "b" }.line.should eq(2)
+    end
   end
 end

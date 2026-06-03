@@ -372,7 +372,14 @@ module Noir
       line_cursor = 0
       line_for = ->(pos : Int32) do
         while line_cursor < pos
-          line += 1 if @chars[line_cursor] == '\n'
+          c = @chars[line_cursor]
+          # `\n`, `\r\n` and a bare `\r` (classic-Mac, which the heredoc masking
+          # also honours) each end a line; count the `\r` of `\r\n` only once.
+          if c == '\n'
+            line += 1
+          elsif c == '\r' && (line_cursor + 1 >= @size || @chars[line_cursor + 1] != '\n')
+            line += 1
+          end
           line_cursor += 1
         end
         line
