@@ -82,9 +82,14 @@ Taggers span several kinds of security-relevant signal. Run `noir list taggers` 
   - `api_docs` — API documentation / schema endpoints (Swagger, OpenAPI, GraphiQL, ReDoc, WSDL); expose the full API surface and are frequently unauthenticated — review for unauthenticated exposure and information disclosure.
   - `account_recovery` — credential-management and account-recovery endpoints (password reset/change, email change, MFA/OTP, verification); the classic account-takeover surface — review for reset-token leakage, host-header injection in reset links, account enumeration, and missing rate limiting.
   - `file_upload` — file upload endpoints; review for unrestricted upload, path traversal, and malicious file handling.
-- **Framework-specific protections & risks** — framework-aware taggers that flag *deviations from a framework's secure defaults* on the actions they affect. For Rails (`rails_security`):
+- **Framework-specific protections & risks** — framework-aware taggers that flag a framework's security controls and *deviations from its secure defaults* on the endpoints they affect. For Rails (`rails_security`):
   - `csrf-protection` — CSRF verification disabled (`skip_before_action :verify_authenticity_token`, `skip_forgery_protection`) or downgraded (`protect_from_forgery with: :null_session`); Rails protects state-changing requests by default, so an explicit opt-out is the case worth reviewing.
   - `mass-assignment` — Strong Parameters bypassed (`params.permit!`, `params.to_unsafe_h`, or a raw `params[:x]` hash passed to a model writer such as `Model.new(params[:user])`); review for attacker-controlled attribute writes (privilege flags, ownership columns).
   - `rate-limit` — actions throttled by the Rails 8 native `rate_limit` macro; useful context when assessing brute-force / abuse exposure (and its absence on auth/recovery surface is itself a finding).
+
+  For Spring (`spring_security`), complementing the `spring_auth` authentication tagger:
+  - `csrf-protection` — CSRF disabled in a `SecurityFilterChain` (`csrf().disable()`, `csrf(AbstractHttpConfigurer::disable)`, or Kotlin `csrf { disable() }`), reported on the state-changing endpoints (POST/PUT/PATCH/DELETE) the affected chain exposes; common for stateless/token APIs but always worth surfacing, and scoped to a chain's `securityMatcher` when present.
+  - `cors` — a `@CrossOrigin` annotation on the handler or controller opts the endpoint out of the browser same-origin default; wildcard origins (`*`), especially combined with credentials, are called out as permissive.
+  - `input-validation` — `@Valid` / `@Validated` applies Bean Validation to the request payload; surfacing where it *is* applied also makes the gaps (handlers taking a `@RequestBody` without it) visible by their absence.
 
 Endpoint-level tags also feed the AI context as signals, enriching the per-endpoint summary that AI reviewers consume.
