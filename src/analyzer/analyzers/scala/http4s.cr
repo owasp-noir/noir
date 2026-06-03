@@ -12,16 +12,16 @@ module Analyzer::Scala
     private def extract_routes_from_content(path : String, content : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
       lines = content.split('\n')
+      code_lines = scala_code_lines(content)
 
       routes_names = collect_routes_bindings(content)
-      mount_prefixes = collect_mount_prefixes(content, routes_names)
+      mount_prefixes = collect_mount_prefixes(code_lines, routes_names)
 
       current_routes_name : String? = nil
 
       i = 0
       while i < lines.size
-        raw = lines[i]
-        stripped = scala_code_line(raw)
+        stripped = code_lines[i]? || ""
         trimmed = stripped.strip
 
         if m = stripped.match(/\b(?:val|def|lazy\s+val)\s+(\w+)\s*(?::[^=]*?)?=\s*HttpRoutes\.of\b/)
@@ -29,11 +29,11 @@ module Analyzer::Scala
         end
 
         if case_line?(trimmed)
-          header, end_index = collect_case_header(lines, i)
+          header, end_index = collect_case_header(lines, code_lines, i)
           if data = parse_case_header(header)
             methods, segments, path_params, query_params, binding_name = data
             full_path = build_full_path(segments, current_routes_name, mount_prefixes)
-            body_text = extract_case_body(lines, end_index)
+            body_text = extract_case_body(lines, code_lines, end_index)
             body_type : String? = nil
             if binding_name
               if body_match = body_text.match(/#{Regex.escape(binding_name)}\s*\.\s*as\s*\[\s*([^\]\s]+)\s*\]/)
@@ -86,11 +86,11 @@ module Analyzer::Scala
     end
 
     # Join continuation lines until we find the `=>` that ends the case pattern.
-    private def collect_case_header(lines : Array(String), start : Int32) : Tuple(String, Int32)
+    private def collect_case_header(lines : Array(String), code_lines : Array(String), start : Int32) : Tuple(String, Int32)
       buffer = String.build do |io|
         idx = start
         while idx < lines.size
-          stripped = scala_code_line(lines[idx])
+          stripped = code_lines[idx]? || ""
           io << stripped
           io << ' '
           if stripped.includes?("=>")
@@ -201,9 +201,12 @@ module Analyzer::Scala
       names
     end
 
-    private def collect_mount_prefixes(content : String, routes_names : Set(String)) : Hash(String, String)
+    private def collect_mount_prefixes(code_lines : Array(String), routes_names : Set(String)) : Hash(String, String)
       prefixes = {} of String => String
-      content.scan(/"(\/[^"]*)"\s*->\s*(\w+)/) do |m|
+      # Scan the (already-computed) code-masked view so a `"/x" -> name` that
+      # lives inside a `"""…"""` doc or a `/* … */` comment can't register a
+      # phantom prefix.
+      code_lines.join('\n').scan(/"(\/[^"]*)"\s*->\s*(\w+)/) do |m|
         prefix = m[1]
         name = m[2]
         next unless routes_names.includes?(name)
@@ -214,7 +217,7 @@ module Analyzer::Scala
 
     # Pull case body text from the line after the `=>` until the next `case ` at the same level
     # or the close of the enclosing brace. Used for body-type and callee extraction.
-    private def extract_case_body(lines : Array(String), header_end_index : Int32) : String
+    private def extract_case_body(lines : Array(String), code_lines : Array(String), header_end_index : Int32) : String
       body_lines = [] of String
       brace_depth = 0
 
@@ -229,7 +232,7 @@ module Analyzer::Scala
       idx = header_end_index + 1
       while idx < lines.size
         line = lines[idx]
-        stripped = scala_code_line(line)
+        stripped = code_lines[idx]? || ""
         trimmed = stripped.strip
 
         if brace_depth <= 0 && (trimmed.starts_with?("case ") || trimmed == "}")
