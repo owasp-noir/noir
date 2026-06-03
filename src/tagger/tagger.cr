@@ -104,6 +104,11 @@ module NoirTaggers
       desc:   "Identifies Spring Security patterns (annotations, security config)",
       runner: SpringAuthTagger,
     },
+    spring_security: {
+      name:   "Spring Security Tagger",
+      desc:   "Identifies Spring security signals beyond auth (CSRF disabled, CORS policy, input validation)",
+      runner: SpringSecurityTagger,
+    },
     express_auth: {
       name:   "Express Auth Tagger",
       desc:   "Identifies Express.js authentication patterns (Passport, JWT, auth middleware)",

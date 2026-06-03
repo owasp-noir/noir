@@ -82,9 +82,14 @@ noir scan <BASE_PATH> --use-taggers hunt,oauth
   - `api_docs` — API 문서/스키마 엔드포인트(Swagger, OpenAPI, GraphiQL, ReDoc, WSDL). 전체 API 표면을 드러내고 인증 없이 노출되는 경우가 많음. 비인증 노출 및 정보 유출 검토 대상.
   - `account_recovery` — 자격증명 관리·계정 복구 엔드포인트(비밀번호 재설정/변경, 이메일 변경, MFA/OTP, 인증). 전형적인 계정 탈취 표면 — 리셋 토큰 유출, reset 링크 host-header 인젝션, 계정 열거, 레이트리밋 부재 검토 대상.
   - `file_upload` — 파일 업로드 엔드포인트. 무제한 업로드, 경로 탐색, 악성 파일 처리 검토 대상.
-- **프레임워크별 보호 장치 & 위험** — 프레임워크의 안전한 기본값에서 *벗어난 지점*을 해당 액션에 표시하는 프레임워크 인지 태거. Rails(`rails_security`)의 경우:
+- **프레임워크별 보호 장치 & 위험** — 프레임워크의 보안 통제와 안전한 기본값에서 *벗어난 지점*을 해당 엔드포인트에 표시하는 프레임워크 인지 태거. Rails(`rails_security`)의 경우:
   - `csrf-protection` — CSRF 검증이 비활성화(`skip_before_action :verify_authenticity_token`, `skip_forgery_protection`)되었거나 약화(`protect_from_forgery with: :null_session`)된 경우. Rails는 상태 변경 요청을 기본으로 보호하므로, 명시적으로 해제한 지점이 검토 대상.
   - `mass-assignment` — Strong Parameters가 우회된 경우(`params.permit!`, `params.to_unsafe_h`, 또는 `Model.new(params[:user])`처럼 가공되지 않은 `params[:x]` 해시를 모델 라이터에 전달). 공격자가 제어하는 속성 쓰기(권한 플래그, 소유권 컬럼) 검토 대상.
   - `rate-limit` — Rails 8 네이티브 `rate_limit` 매크로로 스로틀링되는 액션. 무차별 대입/남용 노출을 평가할 때 유용한 맥락이며, 인증·복구 표면에서 이것이 부재하면 그 자체가 점검 포인트.
+
+  Spring(`spring_security`)의 경우, 인증 태거 `spring_auth`를 보완:
+  - `csrf-protection` — `SecurityFilterChain`에서 CSRF가 비활성화(`csrf().disable()`, `csrf(AbstractHttpConfigurer::disable)`, Kotlin `csrf { disable() }`)된 경우. 해당 체인이 노출하는 상태 변경 엔드포인트(POST/PUT/PATCH/DELETE)에 표시되며, 무상태/토큰 API에서는 흔하지만 항상 검토 가치가 있고, `securityMatcher`가 있으면 그 체인 범위로 한정.
+  - `cors` — 핸들러나 컨트롤러의 `@CrossOrigin` 애너테이션은 브라우저 동일 출처 기본값에서 엔드포인트를 벗어나게 함. 와일드카드 출처(`*`), 특히 자격 증명과 함께 사용된 경우 과도한(permissive) 설정으로 표시.
+  - `input-validation` — `@Valid` / `@Validated`로 요청 페이로드에 Bean Validation이 적용된 경우. 적용된 지점을 드러내면, 적용되지 않은 공백(`@RequestBody`를 받으면서 검증이 없는 핸들러)도 부재로 드러남.
 
 엔드포인트 레벨 태그는 AI 컨텍스트에도 신호로 전달되어, AI 리뷰어가 사용하는 엔드포인트별 요약을 더욱 풍부하게 만듭니다.
