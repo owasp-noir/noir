@@ -62,6 +62,27 @@ expected_endpoints << Endpoint.new("/admin/sessions/:int", "DELETE", [
   Param.new("int", "int", "path"),
 ])
 
+# --- Api.fs ---------------------------------------------------------------
+# `VERB >=> choose [...]` — verb scopes the whole block, so each nested
+# route reports only that method (no fallback-method explosion).
+expected_endpoints << Endpoint.new("/products", "GET")
+# `route Urls.home` resolves against the `let home = "/home"` binding.
+expected_endpoints << Endpoint.new("/home", "GET")
+# `routef "/products/%i"` typed param, scoped to GET.
+expected_endpoints << Endpoint.new("/products/:int", "GET", [Param.new("int", "int", "path")])
+# `routeCif "/search/%s"` — case-insensitive typed route.
+expected_endpoints << Endpoint.new("/search/:string", "GET", [Param.new("string", "string", "path")])
+# `routeCix "/legacy(/?)"` — case-insensitive regex route, verbatim path.
+expected_endpoints << Endpoint.new("/legacy(/?)", "GET")
+# Inline `POST >=> choose [...]`.
+expected_endpoints << Endpoint.new("/products", "POST")
+# `routeBind<Customer> "/customers/{customerId}/orders/{orderId}"` — named
+# params become `:customerId` / `:orderId` string path params.
+expected_endpoints << Endpoint.new("/customers/:customerId/orders/:orderId", "POST", [
+  Param.new("customerId", "string", "path"),
+  Param.new("orderId", "string", "path"),
+])
+
 FunctionalTester.new("fixtures/fsharp/giraffe/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,

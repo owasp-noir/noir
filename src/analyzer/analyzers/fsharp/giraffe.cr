@@ -64,6 +64,7 @@ module Analyzer::Fsharp
     private def process_file(path : String, content : String, include_callee : Bool)
       cleaned = strip_fsharp_comments(content)
       scope_stack = [] of SubRouteScope
+      string_constants = collect_string_constants(cleaned)
 
       i = 0
       while i < cleaned.size
@@ -103,6 +104,32 @@ module Analyzer::Fsharp
           end
         end
 
+        # `VERB >=> choose [ ... ]` — an HTTP verb applied to an entire
+        # `choose` block. This is the canonical Giraffe idiom (e.g.
+        # `GET >=> choose [ route "/" ...; route "/ping" ... ]`), and
+        # without it every nested route falls back to the full method
+        # set. `\s` spans the line break in the common multi-line layout
+        # where the verb sits on its own line above `choose [`.
+        verb_choose_match = rest.match(/\A(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*>=>\s*choose\s*\[/)
+        if verb_choose_match && verb_list_method_context?(cleaned, i)
+          verb = verb_choose_match[1]
+          match_end_local = verb_choose_match.end(0)
+          if match_end_local
+            open_bracket_abs = i + match_end_local - 1
+            close_bracket = find_matching_bracket(cleaned, open_bracket_abs)
+            if close_bracket
+              scope_stack << {
+                prefix:  "",
+                end_pos: close_bracket,
+                params:  [] of Param,
+                method:  verb,
+              }
+              i += match_end_local
+              next
+            end
+          end
+        end
+
         # Giraffe Endpoint Routing: `GET [ route "/" h; route "/x" h ]`.
         # The verb token wraps a list of routes. When this form is used,
         # the embedded `route` lines do not carry the verb on their own
@@ -127,9 +154,23 @@ module Analyzer::Fsharp
           end
         end
 
-        # routef "/users/%i/%s"
-        routef_match = rest.match(/\Aroutef\s+"([^"]+)"/)
-        if routef_match
+        # routeBind<'T> "/p/{firstName}/{lastName}" — named parameters
+        # bound to a record's properties. `{name}` placeholders become
+        # `:name` path params. The pattern may also carry trailing regex
+        # (e.g. `(/?)`), which is reported verbatim.
+        bind_match = rest.match(/\ArouteBind(?:\s*<[^>\n]*>)?\s+"([^"]+)"/)
+        if bind_match && token_boundary?(cleaned, i)
+          path_pattern = bind_match[1]
+          match_end_local = bind_match.end(0)
+          emit_route(path, content, cleaned, i, scope_stack, path_pattern, routef: false, include_callee: include_callee, bind: true)
+          i += match_end_local || 1
+          next
+        end
+
+        # routef / routeCif "/users/%i/%s" — typed format parameters
+        # (routeCif is the case-insensitive variant of routef).
+        routef_match = rest.match(/\A(?:routef|routeCif)\s+"([^"]+)"/)
+        if routef_match && token_boundary?(cleaned, i)
           path_pattern = routef_match[1]
           match_end_local = routef_match.end(0)
           emit_route(path, content, cleaned, i, scope_stack, path_pattern, routef: true, include_callee: include_callee)
@@ -137,9 +178,12 @@ module Analyzer::Fsharp
           next
         end
 
-        # route / routeCi / routex "/path"
-        route_match = rest.match(/\A(?:route(?:Ci|x)?)\s+"([^"]+)"/)
-        if route_match
+        # route / routeCi "/path" exact match, plus the regex variants
+        # routex / routeCix / routexp (path reported verbatim). The
+        # `routeStartsWith*` prefix guards are intentionally excluded —
+        # they filter without defining a complete endpoint.
+        route_match = rest.match(/\A(?:routeCix|routexp|routeCi|routex|route)\s+"([^"]+)"/)
+        if route_match && token_boundary?(cleaned, i)
           path_pattern = route_match[1]
           match_end_local = route_match.end(0)
           emit_route(path, content, cleaned, i, scope_stack, path_pattern, routef: false, include_callee: include_callee)
@@ -147,8 +191,49 @@ module Analyzer::Fsharp
           next
         end
 
+        # route / routeCi / routex IDENT — the path is supplied via a
+        # string constant rather than a literal, e.g. `route Urls.index`
+        # where `let index = "/"`. Resolve it against file-level `let`
+        # bindings; if the name is unknown, skip without emitting (no
+        # phantom endpoint).
+        route_const_match = rest.match(/\A(?:routeCix|routexp|routeCi|routex|route)\s+([A-Za-z_][A-Za-z0-9_']*(?:\.[A-Za-z_][A-Za-z0-9_']*)*)/)
+        if route_const_match && token_boundary?(cleaned, i)
+          ident = route_const_match[1]
+          match_end_local = route_const_match.end(0)
+          resolved = string_constants[ident.split('.').last]?
+          if resolved
+            emit_route(path, content, cleaned, i, scope_stack, resolved, routef: false, include_callee: include_callee)
+          end
+          i += match_end_local || 1
+          next
+        end
+
         i += 1
       end
+    end
+
+    # Collects `let NAME = "VALUE"` string bindings so routes that
+    # reference a path constant (`route Urls.index`) can be resolved.
+    # Keyed by the bare binding name (last segment of any qualifier);
+    # the first definition wins. Only direct string literals are
+    # captured — concatenations and computed paths are ignored.
+    private def collect_string_constants(text : String) : Hash(String, String)
+      consts = {} of String => String
+      text.scan(/\blet\s+(?:mutable\s+|rec\s+|inline\s+)*([A-Za-z_][A-Za-z0-9_']*)\s*(?::[^=\n]+)?=\s*"((?:[^"\\]|\\.)*)"/) do |m|
+        name = m[1]
+        next if consts.has_key?(name)
+        consts[name] = m[2]
+      end
+      consts
+    end
+
+    # True when `offset` begins a fresh token, i.e. the preceding char is
+    # not part of an identifier. Guards combinator matches so substrings
+    # like the `route` inside `myroute "/x"` are not mistaken for routes.
+    private def token_boundary?(text : String, offset : Int32) : Bool
+      return true if offset == 0
+      prev = text[offset - 1]
+      !(prev.alphanumeric? || prev == '_' || prev == '\'' || prev == '.')
     end
 
     private def current_prefix(scope_stack : Array(SubRouteScope)) : String
@@ -187,8 +272,11 @@ module Analyzer::Fsharp
 
     private def emit_route(path : String, content : String, cleaned : String,
                            offset : Int32, scope_stack : Array(SubRouteScope),
-                           path_pattern : String, routef : Bool, include_callee : Bool)
-      url, params = if routef
+                           path_pattern : String, routef : Bool, include_callee : Bool,
+                           bind : Bool = false)
+      url, params = if bind
+                      translate_route_bind(path_pattern)
+                    elsif routef
                       translate_routef(path_pattern)
                     else
                       {path_pattern, [] of Param}
@@ -245,12 +333,26 @@ module Analyzer::Fsharp
         i += 1
       end
 
-      return unless i < text.size && text[i] == '"'
+      return unless i < text.size
 
-      string_end = find_string_end(text, i)
-      return unless string_end
+      if text[i] == '"'
+        string_end = find_string_end(text, i)
+        return unless string_end
+        return string_end + 1
+      end
 
-      string_end + 1
+      # Path supplied as a constant reference (`route Urls.index`): skip
+      # the qualified identifier so the handler body that follows is
+      # still available for callee extraction.
+      if identifier_char?(text[i])
+        j = i
+        while j < text.size && (identifier_char?(text[j]) || text[j] == '.' || text[j] == '\'')
+          j += 1
+        end
+        return j
+      end
+
+      nil
     end
 
     private def find_string_end(text : String, quote_index : Int32) : Int32?
@@ -301,7 +403,8 @@ module Analyzer::Fsharp
       return true if stripped.starts_with?("]") || stripped.starts_with?(")")
       return true if stripped.match(/\A(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\b\s*$/)
 
-      !!stripped.match(/\A(?:(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\b.*\broute(?:Ci|f|x)?\b|route(?:Ci|f|x)?\b|subRoute(?:Ci|f)?\b)/)
+      route_combinator = /(?:route(?:Bind|Ci[fx]?|xp?|f)?|subRoute(?:Ci|f)?)\b/
+      !!stripped.match(/\A(?:(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\b.*\b#{route_combinator}|#{route_combinator})/)
     end
 
     private def line_start_for_offset(text : String, offset : Int32) : Int32
@@ -364,6 +467,37 @@ module Analyzer::Fsharp
             params << Param.new(name, type, "path")
             i += 2
             next
+          end
+        end
+        buffer << c
+        i += 1
+      end
+
+      {buffer.to_s, params}
+    end
+
+    # Translates a `routeBind<'T>` pattern, turning `{name}` placeholders
+    # into `:name` path params. Property types are unknown at the route
+    # site, so each bound segment is reported as a string path param.
+    # Non-placeholder text (including trailing regex like `(/?)`) is kept
+    # verbatim.
+    private def translate_route_bind(pattern : String) : Tuple(String, Array(Param))
+      params = [] of Param
+      buffer = String::Builder.new
+      i = 0
+
+      while i < pattern.size
+        c = pattern[i]
+        if c == '{'
+          close = pattern.index('}', i + 1)
+          if close
+            name = pattern[(i + 1)...close]
+            if !name.empty? && name.each_char.all? { |ch| identifier_char?(ch) }
+              buffer << ":#{name}"
+              params << Param.new(name, "string", "path")
+              i = close + 1
+              next
+            end
           end
         end
         buffer << c

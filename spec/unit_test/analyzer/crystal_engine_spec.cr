@@ -21,6 +21,24 @@ class CrystalEngineSpecHarness < Analyzer::Crystal::CrystalEngine
   def test_extract_crystal_def_block(lines : Array(String), start_index : Int32) : Tuple(String, Int32)?
     extract_crystal_def_block(lines, start_index)
   end
+
+  def test_valid_crystal_route_path?(path : String) : Bool
+    valid_crystal_route_path?(path)
+  end
+
+  def test_collect_actions(lines : Array(String), path : String) : ActionIndex
+    index = ActionIndex.new
+    collect_actions_into(index, lines, path)
+    index
+  end
+
+  def test_resolve_action_callees(index : ActionIndex, controller : String, action : String)
+    resolve_action_callees(index, controller, action)
+  end
+
+  def test_crystal_dependency_path?(path : String) : Bool
+    crystal_dependency_path?(path)
+  end
 end
 
 describe Analyzer::Crystal::CrystalEngine do
@@ -104,6 +122,76 @@ describe Analyzer::Crystal::CrystalEngine do
         body.should eq("  a = \"hello\"\n  b = \"world\"")
         start_line.should eq(2)
       end
+    end
+  end
+
+  describe "#valid_crystal_route_path?" do
+    it "accepts genuine route paths (root, params, glob, interpolation)" do
+      harness.test_valid_crystal_route_path?("/").should be_true
+      harness.test_valid_crystal_route_path?("/users/:id").should be_true
+      harness.test_valid_crystal_route_path?("/posts/*").should be_true
+      harness.test_valid_crystal_route_path?("{VERSION}/items").should be_true
+    end
+
+    it "rejects captures from string args and prose" do
+      # `method: "get", template: "…"`, `nested_arrays("post")`, the word
+      # "post" in a sentence — all surface as non-path captures.
+      harness.test_valid_crystal_route_path?(", template:").should be_false
+      harness.test_valid_crystal_route_path?(")[").should be_false
+      harness.test_valid_crystal_route_path?("Fortunes").should be_false
+      harness.test_valid_crystal_route_path?("").should be_false
+    end
+  end
+
+  describe "#collect_actions_into" do
+    # A controller method whose body opens an `XML.build do … end` block and
+    # contains a literal "end" string used to throw off do/end depth counting
+    # and drop every method defined after it. Indentation tracking is immune.
+    lines = [
+      "module Invidious::Routes::API::Manifest",
+      "  def self.get_dash_video_id(env)",
+      "    body = String.build do |str|",
+      "      str << \"end\"",
+      "    end",
+      "  end",
+      "",
+      "  def self.get_dash_video_playback(env)",
+      "    Manifest.render(env)",
+      "  end",
+      "end",
+    ]
+    index = harness.test_collect_actions(lines, "manifest.cr")
+
+    it "indexes every method regardless of body complexity" do
+      index.has_key?("get_dash_video_id").should be_true
+      index.has_key?("get_dash_video_playback").should be_true
+    end
+
+    it "resolves a relatively-named controller by namespace suffix" do
+      callees = harness.test_resolve_action_callees(index, "Routes::API::Manifest", "get_dash_video_playback")
+      callees.should_not be_nil
+      if callees
+        callees.map(&.[0]).should contain("Manifest.render")
+      end
+    end
+
+    it "returns nil when no controller/action matches" do
+      harness.test_resolve_action_callees(index, "Routes::Other", "missing").should be_nil
+    end
+  end
+
+  describe "#crystal_dependency_path?" do
+    it "skips the shards lib/ dependency directory" do
+      harness.test_crystal_dependency_path?("/app/lib/kemal/src/kemal.cr").should be_true
+      harness.test_crystal_dependency_path?("lib/foo/bar.cr").should be_true
+    end
+
+    it "keeps app dirs that merely contain the substring 'lib'" do
+      # Regression: a real Amber app under `amber-library/` surfaced 0
+      # routes because the old `path.includes?(\"lib\")` matched "library".
+      harness.test_crystal_dependency_path?("/app/amber-library/config/routes.cr").should be_false
+      harness.test_crystal_dependency_path?("/app/glib/src/app.cr").should be_false
+      harness.test_crystal_dependency_path?("/app/src/routes.cr").should be_false
     end
   end
 end

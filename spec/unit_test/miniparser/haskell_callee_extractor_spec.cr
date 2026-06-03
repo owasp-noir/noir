@@ -40,6 +40,37 @@ describe Noir::HaskellCalleeExtractor do
     ])
   end
 
+  it "treats a binding with an inline body annotation as a definition" do
+    source = <<-HASKELL
+      apiInfo :: Info
+      apiInfo = buildInfo (Proxy :: Proxy API)
+
+      typed = decode payload :: Maybe Value
+      HASKELL
+
+    bodies = Noir::HaskellCalleeExtractor.function_bodies(source, "Api.hs")
+    bodies.map { |body| body[:name] }.should eq(["apiInfo", "typed"])
+
+    apiinfo = bodies.find! { |body| body[:name] == "apiInfo" }
+    callees = Noir::HaskellCalleeExtractor.callees_for_body(apiinfo[:body], apiinfo[:path], apiinfo[:start_line])
+    callees.map { |name, _, _| name }.should contain("buildInfo")
+  end
+
+  it "extracts the body past a same-line guard comparison" do
+    # The binding `=` follows a `==` guard; splitting on the first `=` would
+    # capture `= 0 = handleZero n` instead of the real body.
+    source = <<-HASKELL
+      classify n | n == 0 = handleZero n
+      HASKELL
+
+    bodies = Noir::HaskellCalleeExtractor.function_bodies(source, "X.hs")
+    body = bodies.first
+    body[:name].should eq("classify")
+    callees = Noir::HaskellCalleeExtractor.callees_for_body(body[:body], body[:path], body[:start_line])
+    names = callees.map { |name, _, _| name }
+    names.should contain("handleZero")
+  end
+
   it "extracts direct calls from Haskell handler bodies" do
     body = <<-HASKELL
       do

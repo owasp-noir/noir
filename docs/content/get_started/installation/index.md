@@ -14,6 +14,8 @@ next_page_label = "Your First Scan"
 Noir is a single binary with no runtime dependencies. Homebrew is the quickest way for most users, but pick whatever fits your system.
 {% end %}
 
+Every method below installs the same `noir` binary, so you only need one. They're ordered roughly easiest-first — find the row that matches your platform and package manager, and skip the rest.
+
 ## Homebrew (macOS and Linux)
 
 The easiest option. Noir has an official [Homebrew formula](https://formulae.brew.sh/formula/noir).

@@ -148,7 +148,12 @@ module Analyzer::Php
       details = Details.new(PathInfo.new(path))
       working_content = strip_php_comments(content)
 
-      verb_regex = /(\$\w+|\$this->\w+)->(get|post|put|patch|delete|options|head|any)\s*\(\s*(['"])(.*?)\3\s*,/im
+      # The path literal must stay on one line and contain no quotes. The
+      # earlier `(.*?)\3` spanned newlines under DOTALL, so an unrelated
+      # `$obj->get('x')` (no trailing comma) backtracked until it found a
+      # far-off quote+comma, surfacing multi-line code as a bogus route
+      # (e.g. CakePHP controllers in cakesandbox, koel request objects).
+      verb_regex = /(\$\w+|\$this->\w+)->(get|post|put|patch|delete|options|head|any)\s*\(\s*(['"])([^'"\r\n]*?)\3\s*,/im
       pos = 0
       while match = working_content.match(verb_regex, pos)
         match_text = match[0]
@@ -173,7 +178,11 @@ module Analyzer::Php
         pos = next_pos
       end
 
-      route_regex = /(\$\w+|\$this->\w+)->route\s*\(\s*(['"])(.*?)\2\s*,/im
+      # Single-line, quote-free path only. The old `(.*?)\2` spanned newlines,
+      # so Laravel's `$this->route('user')` param helper (no trailing comma)
+      # backtracked to a distant quote+comma and surfaced controller code as a
+      # 7-method phantom route (koel request objects).
+      route_regex = /(\$\w+|\$this->\w+)->route\s*\(\s*(['"])([^'"\r\n]*?)\2\s*,/im
       pos = 0
       while match = working_content.match(route_regex, pos)
         match_text = match[0]

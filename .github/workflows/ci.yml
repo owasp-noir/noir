@@ -69,8 +69,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: 1.20.0
+      - name: Install dependencies
+        run: shards install
       - name: Run Ameba linter
-        uses: crystal-ameba/github-action@master
+        # Run the Ameba pinned in shard.lock rather than
+        # crystal-ameba/github-action@master, whose image tracks an
+        # unreleased Ameba dev build. A dev build added Style/HeredocIndent
+        # (and tightened Lint/UselessAssign), failing CI on unrelated,
+        # already-merged code. shard.lock keeps the rule set stable and
+        # reproducible with local `ameba` runs.
+        run: crystal run lib/ameba/bin/ameba.cr
   tests:
     runs-on: ubuntu-latest
     strategy:

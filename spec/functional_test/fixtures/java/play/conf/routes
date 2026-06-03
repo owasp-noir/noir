@@ -29,4 +29,6 @@ POST /bytes controllers.MissingController.bytes
 POST /whitespace controllers.MissingController.whitespace
 POST /api/static @controllers.Api.staticPost
 
+POST /v1/posts v1.PostsApi.create(request: Request)
+
 -> /api api.Routes

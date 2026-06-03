@@ -88,4 +88,27 @@ describe Noir::GroovyCalleeExtractor do
       {"BookService.save", 61},
     ])
   end
+
+  it "does not mistake typed declarations for command calls" do
+    body = <<-GROOVY
+      String body = "h1. title"
+      Map model = [:]
+      WikiPage page = WikiPage.get(id)
+      AclClass.list().each { AclClass aclClass ->
+        render aclClass.name
+      }
+      cache true
+      GROOVY
+
+    # `String body =`, `Map model =`, `WikiPage page =` and the typed closure
+    # parameter `AclClass aclClass ->` are declarations, not calls. The real
+    # calls (`WikiPage.get`, `AclClass.list`, `render`, `cache`) survive.
+    callees = Noir::GroovyCalleeExtractor.callees_for_body(body, "BookController.groovy", 70)
+    callees.map { |name, _, line| {name, line} }.should eq([
+      {"WikiPage.get", 72},
+      {"AclClass.list", 73},
+      {"render", 74},
+      {"cache", 76},
+    ])
+  end
 end

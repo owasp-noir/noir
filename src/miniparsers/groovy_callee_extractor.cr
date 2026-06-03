@@ -48,7 +48,7 @@ module Noir::GroovyCalleeExtractor
 
       candidates << {position, match[1]}
     end
-    scan_candidates(line, COMMAND_CALL_REGEX, candidates)
+    scan_command_candidates(line, candidates)
     scan_candidates(line, KEYWORD_COMMAND_CALL_REGEX, candidates)
     scan_candidates(line, ASSIGN_CALL_REGEX, candidates)
 
@@ -63,6 +63,24 @@ module Noir::GroovyCalleeExtractor
   private def scan_candidates(line : String, regex : Regex, candidates : Array(Tuple(Int32, String)))
     line.scan(regex) do |match|
       candidates << {match.begin(1) || 0, match[1]}
+    end
+  end
+
+  # Command-style calls (`render foo`, `cache true`, `AuditLog.write 'x'`) share
+  # their surface syntax with typed variable/parameter declarations, where the
+  # captured "command" is really the declared type:
+  #   * locals:        `String body = "..."`, `Map m = [:]`
+  #   * closure params: `list.each { WikiPage page -> ... }`
+  # Neither is a call, so drop a candidate whose argument is `<identifier> =`
+  # (local) or `<identifier> ->` (closure param) — shapes a declaration takes
+  # and a genuine command argument never does.
+  private def scan_command_candidates(line : String, candidates : Array(Tuple(Int32, String)))
+    line.scan(COMMAND_CALL_REGEX) do |match|
+      position = match.begin(1) || 0
+      after = line[(match.end(1) || position)..]
+      next if after.matches?(/\A\s+[A-Za-z_$][A-Za-z0-9_$]*\s*(?:=(?!=)|->)/)
+
+      candidates << {position, match[1]}
     end
   end
 

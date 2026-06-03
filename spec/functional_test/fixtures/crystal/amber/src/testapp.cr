@@ -42,6 +42,12 @@ Amber::Server.configure do
     # WebSocket route
     ws "/socket", WebSocketController, :handle
   end
+
+  # Scoped block: every route here is prefixed with "/admin", and the
+  # `resources` macro fans out to the seven RESTful routes.
+  routes :web, "/admin" do
+    resources "/articles", ArticleController
+  end
 end
 
 Amber::Server.start

@@ -29,6 +29,8 @@ module Analyzer::Ruby
             stripped = Noir::RubyCalleeExtractor.strip_comment(line, preserve_strings: true).strip
             next if stripped.empty? || stripped.starts_with?('#')
 
+            line_delta = sinatra_depth_delta(line)
+
             if ns = stripped.match(/^namespace\s*\(?\s*['"]([^'"]+)['"]\s*\)?\s*(?:do\b|\{)/)
               prefix_stack << {depth: depth + 1, path: ns[1]}
             end
@@ -43,7 +45,7 @@ module Analyzer::Ruby
                 @result << endpoint
               end
 
-              if sinatra_block_opens(stripped) > sinatra_block_closes(stripped)
+              if line_delta > 0
                 active_route_endpoints = route_endpoints
                 active_route_depth = depth + 1
               else
@@ -68,7 +70,7 @@ module Analyzer::Ruby
               end
             end
 
-            depth += sinatra_block_opens(stripped) - sinatra_block_closes(stripped)
+            depth += line_delta
             while !prefix_stack.empty? && prefix_stack.last[:depth] > depth
               prefix_stack.pop
             end
@@ -187,12 +189,28 @@ module Analyzer::Ruby
       end
     end
 
-    private def sinatra_block_opens(line : String) : Int32
-      line.scan(/\bdo\b|\{/).size
-    end
-
-    private def sinatra_block_closes(line : String) : Int32
-      line.scan(/\bend\b|\}/).size
+    # Net change in block nesting contributed by a single line. Unlike a
+    # naive `{`/`do` open vs `}`/`end` close tally, this:
+    #   * blanks string interiors first, so `#{...}` interpolation and
+    #     any DSL keyword that merely appears inside a string literal
+    #     never skew the count;
+    #   * credits statement-position keyword blocks (`if`, `unless`,
+    #     `case`, `begin`, `while`, `until`, `for`, `class`, `module`,
+    #     `def`) with the `+1` their matching `end` will later subtract.
+    # The previous open/close split counted every `end` as a close while
+    # ignoring the `if`/`case`/… that opened it. A single multi-line `if`
+    # inside a route body therefore popped the surrounding `namespace`
+    # prefix early — gollum dropped `/gollum` from ~17 real routes
+    # (`/gollum/last_commit_info` surfaced as `/last_commit_info`). Modifier
+    # forms (`forbid unless x`, `return if y`) sit mid-line, never at a
+    # statement boundary, so they are correctly left uncounted.
+    private def sinatra_depth_delta(line : String) : Int32
+      structure = Noir::RubyCalleeExtractor.strip_comment(line, preserve_strings: false)
+      delta = structure.count('{') - structure.count('}')
+      structure.scan(/\bdo\b/) { delta += 1 }
+      structure.scan(/(?:^|;)\s*(?:if|unless|case|begin|while|until|for|class|module|def)\b/) { delta += 1 }
+      structure.scan(/\bend\b/) { delta -= 1 }
+      delta
     end
   end
 end

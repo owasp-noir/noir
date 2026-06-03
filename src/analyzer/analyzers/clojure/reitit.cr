@@ -53,10 +53,11 @@ module Analyzer::Clojure
     end
 
     private def reitit_source?(content : String) : Bool
-      content.includes?("reitit.core") ||
-        content.includes?("reitit.ring") ||
-        content.includes?("reitit.http") ||
-        content.includes?("metosin/reitit")
+      # Any `reitit.*` namespace marks a reitit file. Route data is often
+      # split across namespaces that only pull a coercion/middleware ns
+      # (`reitit.coercion.spec`, `reitit.ring.coercion`, …) rather than the
+      # core/ring/http entry points, so match the family broadly.
+      content.includes?("reitit.") || content.includes?("metosin/reitit")
     end
 
     # Iterate forms looking for route-shaped vectors. A vector is
@@ -215,6 +216,13 @@ module Analyzer::Clojure
                                        path : String,
                                        include_callee : Bool,
                                        function_callees : Hash(String, Array(Noir::ClojureCalleeExtractor::Entry)))
+      # A route-data-level `:handler` (sibling to the method keys) is the
+      # handler reitit uses for any method without its own. Locate it first so
+      # method endpoints can fall back to it and so a method-less `:handler`
+      # still produces an endpoint.
+      data_handler = find_value_range(source, start, limit, ":handler")
+
+      method_found = false
       i = start
       while i < limit
         i = skip_ws_and_comments(source, i, limit)
@@ -231,60 +239,24 @@ module Analyzer::Clojure
         val_end = end_of_value(source, v_start, limit)
 
         if method_name = HTTP_METHODS[key]?
-          emit_endpoint(source, key_start, v_start, val_end, route_path, method_name, path, include_callee, function_callees)
+          method_found = true
+          emit_endpoint(source, key_start, v_start, val_end, route_path, method_name, path, include_callee, function_callees, data_handler)
         end
 
         i = val_end
       end
-    end
 
-    private def emit_endpoint(source : String, key_pos : Int32, v_start : Int32, v_end : Int32,
-                              route_path : String,
-                              method : String,
-                              path : String,
-                              include_callee : Bool,
-                              function_callees : Hash(String, Array(Noir::ClojureCalleeExtractor::Entry)))
-      endpoint = Endpoint.new(route_path, method, Details.new(PathInfo.new(path, line_number_for(source, key_pos))))
-
-      extract_path_param_names(route_path).each do |name|
-        endpoint.push_param(Param.new(name, "", "path"))
-      end
-
-      if v_start < v_end && source.byte_at(v_start).unsafe_chr == '{'
-        map_end = find_matching_delimiter(source, v_start, '{', '}', v_end)
-        if map_end > v_start
-          extract_params_from_method_map(source, v_start + 1, map_end, endpoint, route_path)
-        end
-      end
-
-      attach_method_callees(endpoint, source, v_start, v_end, path, function_callees) if include_callee
-
-      @result << endpoint
-    end
-
-    private def attach_method_callees(endpoint : Endpoint,
-                                      source : String,
-                                      v_start : Int32,
-                                      v_end : Int32,
-                                      path : String,
-                                      function_callees : Hash(String, Array(Noir::ClojureCalleeExtractor::Entry)))
-      return if v_start >= v_end
-
-      if source.byte_at(v_start).unsafe_chr == '{'
-        map_end = find_matching_delimiter(source, v_start, '{', '}', v_end)
-        return unless map_end > v_start
-        attach_handler_map_callees(source, v_start + 1, map_end, endpoint, path, function_callees)
-      else
-        attach_handler_value(endpoint, source, v_start, v_end, path, function_callees)
+      # `["/path" {:handler h}]` (no method key) responds to every method.
+      # Emit a single GET endpoint so the route is not dropped entirely.
+      if !method_found && (dh = data_handler)
+        emit_endpoint(source, dh[0], dh[0], dh[1], route_path, "GET", path, include_callee, function_callees, nil)
       end
     end
 
-    private def attach_handler_map_callees(source : String,
-                                           start : Int32,
-                                           limit : Int32,
-                                           endpoint : Endpoint,
-                                           path : String,
-                                           function_callees : Hash(String, Array(Noir::ClojureCalleeExtractor::Entry)))
+    # Find the value byte-range of a top-level `target_key` in a map at
+    # `[start, limit)`. Nested maps are skipped via `end_of_value`, so only
+    # first-level keys are inspected.
+    private def find_value_range(source : String, start : Int32, limit : Int32, target_key : String) : Tuple(Int32, Int32)?
       i = start
       while i < limit
         i = skip_ws_and_comments(source, i, limit)
@@ -299,9 +271,88 @@ module Analyzer::Clojure
         break if v_start >= limit
         val_end = end_of_value(source, v_start, limit)
 
-        attach_handler_value(endpoint, source, v_start, val_end, path, function_callees) if key == ":handler"
+        return {v_start, val_end} if key == target_key
         i = val_end
       end
+      nil
+    end
+
+    private def emit_endpoint(source : String, key_pos : Int32, v_start : Int32, v_end : Int32,
+                              route_path : String,
+                              method : String,
+                              path : String,
+                              include_callee : Bool,
+                              function_callees : Hash(String, Array(Noir::ClojureCalleeExtractor::Entry)),
+                              data_handler : Tuple(Int32, Int32)? = nil)
+      endpoint = Endpoint.new(route_path, method, Details.new(PathInfo.new(path, line_number_for(source, key_pos))))
+
+      extract_path_param_names(route_path).each do |name|
+        endpoint.push_param(Param.new(name, "", "path"))
+      end
+
+      if v_start < v_end && source.byte_at(v_start).unsafe_chr == '{'
+        map_end = find_matching_delimiter(source, v_start, '{', '}', v_end)
+        if map_end > v_start
+          extract_params_from_method_map(source, v_start + 1, map_end, endpoint, route_path)
+        end
+      end
+
+      attach_method_callees(endpoint, source, v_start, v_end, path, function_callees, data_handler) if include_callee
+
+      @result << endpoint
+    end
+
+    private def attach_method_callees(endpoint : Endpoint,
+                                      source : String,
+                                      v_start : Int32,
+                                      v_end : Int32,
+                                      path : String,
+                                      function_callees : Hash(String, Array(Noir::ClojureCalleeExtractor::Entry)),
+                                      data_handler : Tuple(Int32, Int32)? = nil)
+      return if v_start >= v_end
+
+      if source.byte_at(v_start).unsafe_chr == '{'
+        map_end = find_matching_delimiter(source, v_start, '{', '}', v_end)
+        return unless map_end > v_start
+        attached = attach_handler_map_callees(source, v_start + 1, map_end, endpoint, path, function_callees)
+        # `{:get {:parameters ...}}` carries no method-level handler; fall back
+        # to the route-data `:handler` reitit would dispatch to.
+        if !attached && (dh = data_handler)
+          attach_handler_value(endpoint, source, dh[0], dh[1], path, function_callees)
+        end
+      else
+        attach_handler_value(endpoint, source, v_start, v_end, path, function_callees)
+      end
+    end
+
+    private def attach_handler_map_callees(source : String,
+                                           start : Int32,
+                                           limit : Int32,
+                                           endpoint : Endpoint,
+                                           path : String,
+                                           function_callees : Hash(String, Array(Noir::ClojureCalleeExtractor::Entry))) : Bool
+      attached = false
+      i = start
+      while i < limit
+        i = skip_ws_and_comments(source, i, limit)
+        break if i >= limit
+        key, after_key = read_symbol(source, i, limit)
+        if key.empty?
+          i = end_of_value(source, i, limit)
+          next
+        end
+
+        v_start = skip_ws_and_comments(source, after_key, limit)
+        break if v_start >= limit
+        val_end = end_of_value(source, v_start, limit)
+
+        if key == ":handler"
+          attach_handler_value(endpoint, source, v_start, val_end, path, function_callees)
+          attached = true
+        end
+        i = val_end
+      end
+      attached
     end
 
     private def attach_handler_value(endpoint : Endpoint,

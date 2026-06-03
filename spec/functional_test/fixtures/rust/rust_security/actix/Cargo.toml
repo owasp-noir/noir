@@ -1,0 +1,9 @@
+[package]
+name = "rust-security-actix-fixture"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+actix-web = "4.9"
+actix-cors = "0.7"
+actix-governor = "0.6"

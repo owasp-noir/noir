@@ -104,6 +104,11 @@ module NoirTaggers
       desc:   "Identifies Spring Security patterns (annotations, security config)",
       runner: SpringAuthTagger,
     },
+    spring_security: {
+      name:   "Spring Security Tagger",
+      desc:   "Identifies Spring security signals beyond auth (CSRF disabled, CORS policy, security headers, input validation)",
+      runner: SpringSecurityTagger,
+    },
     express_auth: {
       name:   "Express Auth Tagger",
       desc:   "Identifies Express.js authentication patterns (Passport, JWT, auth middleware)",
@@ -114,10 +119,20 @@ module NoirTaggers
       desc:   "Identifies Go authentication patterns (middleware, JWT, session)",
       runner: GoAuthTagger,
     },
+    go_security: {
+      name:   "Go Security Tagger",
+      desc:   "Identifies Go security middleware (CSRF, security headers, rate limiting, body-size limits)",
+      runner: GoSecurityTagger,
+    },
     rust_auth: {
       name:   "Rust Auth Tagger",
       desc:   "Identifies Rust authentication patterns (guards, extractors, middleware)",
       runner: RustAuthTagger,
+    },
+    rust_security: {
+      name:   "Rust Security Tagger",
+      desc:   "Identifies Rust framework security protections (CORS, rate limiting, security headers, body-size limits)",
+      runner: RustSecurityTagger,
     },
     flask_auth: {
       name:   "Flask Auth Tagger",
@@ -138,6 +153,11 @@ module NoirTaggers
       name:   "Ruby Auth Tagger",
       desc:   "Identifies Ruby authentication patterns (Devise, Pundit, CanCanCan, Warden)",
       runner: RubyAuthTagger,
+    },
+    rails_security: {
+      name:   "Rails Security Tagger",
+      desc:   "Identifies Rails controller security signals (CSRF protection, mass assignment, rate limiting)",
+      runner: RailsSecurityTagger,
     },
     php_auth: {
       name:   "PHP Auth Tagger",

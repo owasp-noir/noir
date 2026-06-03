@@ -52,6 +52,12 @@ class API < Grape::API
   resource :status do
     get do
     end
+
+    # Symbol path is a LITERAL segment: `get :ping` => /v2/status/ping,
+    # not the bogus param route /v2/status/{ping}.
+    get :ping do
+      {pong: true}
+    end
   end
 
   # Auth examples for grape_auth tagger testing

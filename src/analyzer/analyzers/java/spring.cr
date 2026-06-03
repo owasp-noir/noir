@@ -183,9 +183,9 @@ module Analyzer::Java
                 parameter_format = Noir::TreeSitterJavaParameterExtractor.extract_consumes_from(
                   root, content, route.class_name, route.method_name
                 )
-                if parameter_format.nil? && route.verb == "POST"
-                  parameter_format = "form"
-                end
+                # The POST form-binding default is applied per-parameter in
+                # the extractor so an explicit `@RequestBody` resolves to
+                # "json" rather than inheriting "form".
 
                 parameters = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters_from(
                   root, content, route.class_name, route.method_name, route.verb, parameter_format, dto_index
@@ -237,9 +237,8 @@ module Analyzer::Java
                         parameter_format = Noir::TreeSitterJavaParameterExtractor.extract_consumes_from(
                           interface_root, entry.source, entry_route.class_name, entry_route.method_name
                         )
-                        if parameter_format.nil? && entry_route.verb == "POST"
-                          parameter_format = "form"
-                        end
+                        # POST form-binding default applied per-parameter in
+                        # the extractor (keeps `@RequestBody` as "json").
 
                         parameters = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters_from(
                           interface_root, entry.source, entry_route.class_name, entry_route.method_name,
@@ -249,9 +248,27 @@ module Analyzer::Java
                       end
 
                       details = Details.new(PathInfo.new(entry.path, entry_route.line + 1))
-                      @result << Endpoint.new(
+                      endpoint = Endpoint.new(
                         join_paths(configured_base_path, inherited_path), entry_route.verb, parameters, details
                       )
+
+                      # The route is declared on the interface (springdoc /
+                      # OpenAPI `*Api` contracts), but the behaviour — and
+                      # thus the callees worth surfacing for ai-context —
+                      # lives in the `@Override` method on the concrete
+                      # controller currently being walked. Pull 1-hop
+                      # callees from that implementing body rather than the
+                      # empty interface method.
+                      if include_callee && !(implementation.class_name.empty? || entry_route.method_name.empty?)
+                        Noir::JavaCalleeExtractor.callees_in_method(
+                          root, content, path, implementation.class_name, entry_route.method_name
+                        ).each do |callee_entry|
+                          name, callee_path, callee_line = callee_entry
+                          endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+                        end
+                      end
+
+                      @result << endpoint
                     end
                   end
                 end

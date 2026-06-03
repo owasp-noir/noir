@@ -34,3 +34,14 @@ let webApp =
             let response = loadPipeline ctx |> enrich |> renderPipeline
             json response next ctx
     ]
+
+// A `VERB >=> choose [...]` block whose nested route uses a path
+// constant. Callee extraction must still find the handler after the
+// resolved identifier path.
+module Urls =
+    let dashboard = "/dashboard"
+
+let adminApp =
+    GET >=> choose [
+        route Urls.dashboard >=> AdminController.render
+    ]

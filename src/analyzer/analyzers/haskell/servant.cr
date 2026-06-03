@@ -29,6 +29,18 @@ module Analyzer::Haskell
             line:   entry[:line],
           }
         end
+
+        # Record-based (`NamedRoutes`) APIs declare each route as a record field
+        # `field :: mode :- <route>`. Treat the record as a pseudo type alias
+        # whose body is the fields joined with `:<|>`, so the existing
+        # expansion/processing pipeline handles it like any other API.
+        extract_record_routes(content).each do |entry|
+          type_aliases[entry[:name]] = {
+            body:   entry[:body],
+            source: path,
+            line:   entry[:line],
+          }
+        end
       end
 
       reference_counts = Hash(String, Int32).new(0)
@@ -41,7 +53,7 @@ module Analyzer::Haskell
       type_aliases.each do |name, entry|
         next if reference_counts[name] > 0
 
-        expanded = expand_references(entry[:body], type_aliases)
+        expanded = strip_named_routes(expand_references(entry[:body], type_aliases))
         next unless contains_servant_signature?(expanded)
 
         endpoints = process_api_body(entry[:source], entry[:line], expanded)
@@ -122,10 +134,18 @@ module Analyzer::Haskell
           j = i + 1
           while j < lines.size
             next_line = lines[j]
-            stripped = next_line.lstrip
-            if stripped.empty?
-              break
-            elsif starts_with_whitespace?(next_line) || stripped.starts_with?(":<|>") || stripped.starts_with?(":>")
+            if next_line.lstrip.empty?
+              # A blank line — which may be a stripped full-line comment sitting
+              # between routes — does not necessarily terminate the alias. Peek
+              # past the blank run: keep collecting only when a real
+              # continuation line follows, otherwise the declaration has ended.
+              k = j + 1
+              while k < lines.size && lines[k].lstrip.empty?
+                k += 1
+              end
+              break unless k < lines.size && continuation_line?(lines[k])
+              j = k
+            elsif continuation_line?(next_line)
               body_parts << next_line
               j += 1
             else
@@ -143,10 +163,124 @@ module Analyzer::Haskell
       results
     end
 
+    # Extract `Servant.API.Generic` record-route declarations:
+    #
+    #   data RecordRoutes mode = RecordRoutes
+    #     { version :: mode :- "version" :> Get '[JSON] Int
+    #     , echo    :: mode :- "echo" :> Capture "s" String :> Get '[JSON] String
+    #     }
+    #
+    # Each `field :: mode :- <route>` carries one route; the record is returned
+    # as a pseudo type alias whose body is the routes joined with `:<|>`, so the
+    # downstream alias machinery (reference counting, expansion, processing)
+    # treats it exactly like a `type X = ...` API.
+    private def extract_record_routes(content : String) : Array(NamedTuple(name: String, body: String, line: Int32))
+      results = [] of NamedTuple(name: String, body: String, line: Int32)
+      cleaned = strip_haskell_comments(content)
+      lines = cleaned.lines
+
+      i = 0
+      while i < lines.size
+        match = lines[i].match(/^(?:data|newtype)\s+([A-Z][A-Za-z0-9_']*)\s+[a-z][A-Za-z0-9_']*\b/)
+        unless match
+          i += 1
+          next
+        end
+
+        name = match[1]
+        start_line = i + 1
+
+        # Collect from the declaration through the closing brace of the record.
+        open_index = find_record_open_brace(lines, i)
+        unless open_index
+          i += 1
+          next
+        end
+
+        block, next_index = collect_record_block(lines, open_index)
+        routes = record_field_routes(block)
+        if routes.size > 0
+          results << {name: name, body: routes.join(" :<|> "), line: start_line}
+        end
+        i = next_index
+      end
+
+      results
+    end
+
+    # Locate the `{` that opens the record's field list, scanning at most a few
+    # lines past the `data`/`newtype` head (the brace is often on the next line).
+    private def find_record_open_brace(lines : Array(String), decl_index : Int32) : Int32?
+      i = decl_index
+      limit = Math.min(lines.size, decl_index + 4)
+      while i < limit
+        return i if lines[i].includes?('{')
+        # Stop if another top-level declaration starts before any brace.
+        return if i > decl_index && !lines[i].lstrip.empty? && !starts_with_whitespace?(lines[i]) && !lines[i].lstrip.starts_with?("=")
+        i += 1
+      end
+      nil
+    end
+
+    # Return the text between the record's outermost `{` and matching `}` plus
+    # the index of the line after the closing brace.
+    private def collect_record_block(lines : Array(String), open_index : Int32) : Tuple(String, Int32)
+      buffer = String::Builder.new
+      depth = 0
+      started = false
+      i = open_index
+      while i < lines.size
+        line = lines[i]
+        line.each_char do |char|
+          if char == '{'
+            depth += 1
+            started = true
+            next
+          elsif char == '}'
+            depth -= 1
+            next if depth <= 0
+          end
+          buffer << char if started && depth >= 1
+        end
+        if started && depth <= 0
+          return {buffer.to_s, i + 1}
+        end
+        buffer << '\n' if started
+        i += 1
+      end
+      {buffer.to_s, i}
+    end
+
+    # Split a record body into its per-field route types, keeping only fields of
+    # the form `name :: mode :- <route>` and returning the `<route>` part.
+    private def record_field_routes(block : String) : Array(String)
+      routes = [] of String
+      split_top_level(block, ",").each do |field|
+        idx = field.index(":-")
+        next unless idx
+        route = field[(idx + 2)..].strip
+        routes << route unless route.empty?
+      end
+      routes
+    end
+
+    # Drop the `NamedRoutes` combinator keyword. After expansion a nested record
+    # reference reads `... :> NamedRoutes (<expanded body>)`; removing the bare
+    # word leaves `... :> (<expanded body>)`, a plain nested route.
+    private def strip_named_routes(body : String) : String
+      body.gsub(/\bNamedRoutes\b/, " ")
+    end
+
     private def starts_with_whitespace?(line : String) : Bool
       first = line[0]?
       return false unless first
       first == ' ' || first == '\t'
+    end
+
+    private def continuation_line?(line : String) : Bool
+      return true if starts_with_whitespace?(line)
+      stripped = line.lstrip
+      stripped.starts_with?(":<|>") || stripped.starts_with?(":>")
     end
 
     private def strip_haskell_comments(text : String) : String
@@ -286,7 +420,7 @@ module Analyzer::Haskell
                                       endpoint_count : Int32,
                                       handler_bodies : HandlerBodies,
                                       server_bindings : ServerBindings) : Array(String)?
-      server_candidate_names(api_name).each do |server_name|
+      server_candidate_names(api_name, api_source, server_bindings).each do |server_name|
         binding = body_for_path(server_name, api_source, handler_bodies)
         next unless binding
         next unless root_server_matches_api?(server_name, api_source, api_name, server_bindings)
@@ -296,7 +430,13 @@ module Analyzer::Haskell
         leaves = flatten_server_expression(binding[:body], handler_bodies, server_bindings, binding[:path], visited)
         next unless leaves
         next unless leaves.size == endpoint_count
-        next unless leaves.all? { |leaf| !unique_handler_body(leaf, handler_bodies).nil? }
+        # The server is already confirmed by its `:: Server <api>` binding and an
+        # exact leaf/endpoint count match, so require only that at least one leaf
+        # names a known function (proving the flatten landed on real handlers).
+        # Handlers that are imported, point-free, or collide across modules then
+        # simply contribute no callees rather than sinking the whole server —
+        # `attach_servant_callees` resolves each leaf independently.
+        next unless leaves.any? { |leaf| handler_bodies.has_key?(leaf) }
 
         return leaves
       end
@@ -304,12 +444,22 @@ module Analyzer::Haskell
       nil
     end
 
-    private def server_candidate_names(api_name : String) : Array(String)
+    private def server_candidate_names(api_name : String,
+                                       api_source : String,
+                                       server_bindings : ServerBindings) : Array(String)
       candidates = ["server", "#{lower_camel(api_name)}Server"]
 
       if api_name.ends_with?("API")
         prefix = api_name[0...(api_name.size - "API".size)]
         candidates << "#{lower_camel(prefix)}Server" unless prefix.empty?
+      end
+
+      # Servers are frequently named arbitrarily (`exchangeServer`, `appToServer`)
+      # rather than following the `<api>Server` convention. Any binding in the
+      # same file whose `:: Server <api>` / `:: ServerT <api>` signature targets
+      # this API is a valid server root regardless of its name.
+      server_bindings.each do |key, target|
+        candidates << key[1] if key[0] == api_source && target == api_name
       end
 
       candidates.uniq
@@ -344,8 +494,8 @@ module Analyzer::Haskell
                                     server_bindings : ServerBindings,
                                     current_path : String,
                                     visited : Set(Tuple(String, String))) : Array(String)?
-      name = unwrap_parens(part.strip)
-      return unless simple_value_name?(name)
+      name = leaf_value_name(unwrap_parens(part.strip))
+      return unless name
 
       binding = body_for_path(name, current_path, handler_bodies)
       if binding
@@ -363,6 +513,33 @@ module Analyzer::Haskell
       return if server_like_name?(name) || server_binding_name?(name, server_bindings)
 
       [name]
+    end
+
+    # Resolve a single server expression down to the value name that identifies
+    # its handler. A bare name is returned as-is; an application keeps its head
+    # function (`Handler.rates s` -> `rates`, `mkHandler cfg` -> `mkHandler`).
+    # `hoistServer`/`enter` wrap the real server in their last argument, and
+    # `return x`/`pure x` produce a constant response from `x`.
+    private def leaf_value_name(expr : String) : String?
+      return expr if simple_value_name?(expr)
+
+      tokens = expr.split(/\s+/).reject(&.empty?)
+      return if tokens.empty?
+
+      head = qualified_tail(tokens[0])
+      if {"hoistServer", "hoistServerWithContext", "enter"}.includes?(head) && tokens.size >= 2
+        head = qualified_tail(tokens[-1])
+      elsif {"return", "pure"}.includes?(head) && tokens.size >= 2
+        head = qualified_tail(tokens[1])
+      end
+
+      simple_value_name?(head) ? head : nil
+    end
+
+    # Strip a module qualifier and stray parentheses: `Mod.Sub.fn` -> `fn`,
+    # `(handler` -> `handler`.
+    private def qualified_tail(token : String) : String
+      token.strip.gsub(/[()]/, "").split('.').last
     end
 
     private def root_server_matches_api?(server_name : String,
@@ -438,11 +615,31 @@ module Analyzer::Haskell
       [route]
     end
 
+    # Split a route into its `:>` segments, recursing into parenthesised
+    # sub-chains. `:>` is right-associative, so `A :> (B :> C)` is the same route
+    # as `A :> B :> C`; a nested `NamedRoutes` record expands to a parenthesised
+    # `:>` chain that must be spliced in rather than treated as one opaque
+    # segment.
+    private def flatten_route_segments(raw : String) : Array(String)
+      result = [] of String
+      split_top_level(raw, ":>").each do |segment|
+        seg = unwrap_parens(segment.strip)
+        next if seg.empty?
+
+        if split_top_level(seg, ":>").size > 1
+          result.concat(flatten_route_segments(seg))
+        else
+          result << seg
+        end
+      end
+      result
+    end
+
     private def process_route(source : String, line_number : Int32, route : String) : Endpoint?
       raw = unwrap_parens(route.strip)
       return if raw.empty?
 
-      segments = split_top_level(raw, ":>")
+      segments = flatten_route_segments(raw)
 
       url_parts = [] of String
       params = [] of Param

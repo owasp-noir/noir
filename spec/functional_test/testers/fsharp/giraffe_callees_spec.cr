@@ -44,6 +44,12 @@ expected_endpoints << giraffe_endpoint_with_callees("/api/items", "PUT", [] of P
   Callee.new("ItemController.update", line: 27),
 ])
 expected_endpoints << giraffe_endpoint_with_callees("/pipeline", "PATCH", [] of Param, pipeline_callees)
+# `route Urls.dashboard` inside a `GET >=> choose [...]` block: the path
+# resolves from the `let dashboard = "/dashboard"` constant, the verb is
+# inherited from the block, and the handler callee is still recovered.
+expected_endpoints << giraffe_endpoint_with_callees("/dashboard", "GET", [] of Param, [
+  Callee.new("AdminController.render", line: 46),
+])
 
 tester = FunctionalTester.new("fixtures/fsharp/giraffe_callees/", {
   :techs     => 1,
@@ -58,6 +64,14 @@ it "reports exact Giraffe callees for multiline inline handlers" do
   endpoint.should_not be_nil
   endpoint.try do |actual|
     actual.callees.map { |callee| {callee.name, callee.line} }.should eq(profile_callees.map { |callee| {callee.name, callee.line} })
+  end
+end
+
+it "recovers the handler callee for a constant-path route" do
+  endpoint = tester.app.endpoints.find { |found| found.url == "/dashboard" && found.method == "GET" }
+  endpoint.should_not be_nil
+  endpoint.try do |actual|
+    actual.callees.map(&.name).should eq(["AdminController.render"])
   end
 end
 

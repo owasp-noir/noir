@@ -12,9 +12,23 @@ module Analyzer::Ruby
     # every Ruby analyzer (sinatra, grape, roda, hanami). Promoted
     # from `Analyzer::Ruby::Sinatra` (#1571) so the rest of the
     # family stays in sync.
+    #
+    # Test::Unit / Minitest equally support the inverse `test_*.rb`
+    # prefix (`rake test` globs `test/test_*.rb`). gollum, for
+    # instance, exercises its modular Sinatra app exclusively through
+    # `test/test_app.rb`-style files whose inline Rack::Test requests
+    # (`get "/wiki/Home"`, `post "/gollum/upload_file"`) are
+    # indistinguishable from real route registrations to a line-based
+    # matcher — ~70 phantom endpoints per scan. Production route files
+    # never carry the `test_` prefix, so it is as safe as the suffix
+    # forms. We match on the basename only (never the full path) so a
+    # legitimate app that merely lives under a `spec/`-suffixed
+    # absolute path — e.g. noir's own fixtures — is untouched.
     def self.ruby_test_path?(path : String) : Bool
       base = File.basename(path)
-      base.ends_with?("_test.rb") || base.ends_with?("_spec.rb")
+      return true if base.ends_with?("_test.rb") || base.ends_with?("_spec.rb")
+      return true if base.starts_with?("test_") && base.ends_with?(".rb")
+      false
     end
 
     # Match the `<verb> "<path>"` idiom on a single line and return the first

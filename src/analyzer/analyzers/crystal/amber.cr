@@ -2,6 +2,29 @@ require "../../engines/crystal_engine"
 
 module Analyzer::Crystal
   class Amber < CrystalEngine
+    # `routes :web, "/admin" do … end` — the optional second argument is a
+    # path scope that prefixes every route declared inside the block.
+    ROUTES_SCOPE_PATTERN = /^(\s*)routes\s+:\w+(?:\s*,\s*["']([^"']*)["'])?\s+do\b/
+    # `namespace "/admin" do … end` — Amber's DSL scope macro.
+    NAMESPACE_PATTERN = /^(\s*)namespace\s+["']([^"']*)["']\s+do\b/
+    # `resources "/posts", PostController[, only: …][, except: …]`.
+    RESOURCES_PATTERN = /^\s*resources\s+["']([^"']+)["']\s*,\s*([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)\s*(.*)$/
+
+    # Amber's `resources` macro expands to the seven RESTful routes below
+    # (update is registered for both PUT and PATCH). `resource` (singular)
+    # shares the same action set; the `:id` segment is auto-detected as a
+    # path param downstream, so we only emit the verb + URL + action here.
+    RESOURCE_ROUTES = [
+      {"GET", "", :index},
+      {"GET", "/new", :new},
+      {"POST", "", :create},
+      {"GET", "/:id", :show},
+      {"GET", "/:id/edit", :edit},
+      {"PUT", "/:id", :update},
+      {"PATCH", "/:id", :update},
+      {"DELETE", "/:id", :destroy},
+    ]
+
     @is_public : Bool = true
     @public_folders : Array(String) = [] of String
 
@@ -25,9 +48,47 @@ module Analyzer::Crystal
       actions = include_callee ? collect_controller_actions(lines, path) : Hash(String, Array(Noir::CrystalCalleeExtractor::Entry)).new
       last_endpoint = Endpoint.new("", "")
 
+      # Stack of `{prefix, indent}` for open `routes "/scope"`/`namespace`
+      # blocks. The path scope is the concatenation of every open prefix.
+      scope_stack = [] of NamedTuple(prefix: String, indent: Int32)
+
       lines.each_with_index do |line, index|
+        stripped = Noir::CrystalCalleeExtractor.strip_comment(line)
+
+        # Open a scope block (routes-with-scope or namespace).
+        if match = stripped.match(ROUTES_SCOPE_PATTERN)
+          scope_stack << {prefix: match[2]? || "", indent: match[1].size}
+          next
+        end
+        if match = stripped.match(NAMESPACE_PATTERN)
+          scope_stack << {prefix: match[2], indent: match[1].size}
+          next
+        end
+
+        # Close the innermost scope when an `end` lines up with its indent.
+        unless scope_stack.empty?
+          if end_match = stripped.match(/^(\s*)end\b/)
+            if end_match[1].size == scope_stack.last[:indent]
+              scope_stack.pop
+              next
+            end
+          end
+        end
+
+        scope_prefix = scope_stack.reduce("") { |acc, ns| Noir::URLPath.join(acc, ns[:prefix]) }
+
+        # `resources`/`resource` macros expand to several RESTful routes.
+        if match = stripped.match(RESOURCES_PATTERN)
+          expand_resources(match[1], match[2], match[3], scope_prefix, path, index, actions, include_callee).each do |ep|
+            endpoints << ep
+            last_endpoint = ep
+          end
+          next
+        end
+
         endpoint = line_to_endpoint(line)
-        unless endpoint.method.empty?
+        if !endpoint.method.empty? && valid_crystal_route_path?(endpoint.url)
+          endpoint.url = Noir::URLPath.join(scope_prefix, endpoint.url) unless scope_prefix.empty?
           details = Details.new(PathInfo.new(path, index + 1))
           endpoint.details = details
           attach_route_callees(endpoint, line, actions) if include_callee
@@ -128,6 +189,55 @@ module Analyzer::Crystal
       end
     end
 
+    # Expand a `resources "/posts", PostController` macro into its RESTful
+    # routes, prefixing each with the active scope and wiring callees from
+    # the matching controller action when available (same-file controllers).
+    private def expand_resources(resource : String,
+                                 controller : String,
+                                 opts : String,
+                                 scope_prefix : String,
+                                 path : String,
+                                 index : Int32,
+                                 actions : Hash(String, Array(Noir::CrystalCalleeExtractor::Entry)),
+                                 include_callee : Bool) : Array(Endpoint)
+      result = [] of Endpoint
+      # `resources "/posts"` and `resources "posts"` both map to `/posts`.
+      base = resource.strip.strip("/")
+      return result if base.empty?
+
+      allowed = resource_actions(opts)
+      base_path = Noir::URLPath.join(scope_prefix, "/#{base}")
+
+      RESOURCE_ROUTES.each do |method, suffix, action|
+        next unless allowed.includes?(action)
+        url = suffix.empty? ? base_path : Noir::URLPath.join(base_path, suffix)
+        endpoint = Endpoint.new(url, method)
+        endpoint.details = Details.new(PathInfo.new(path, index + 1))
+        if include_callee
+          if callees = actions[controller_action_key(controller, action.to_s)]?
+            attach_crystal_callees(endpoint, callees)
+          end
+        end
+        result << endpoint
+      end
+
+      result
+    end
+
+    # Resolve the active resource actions, honouring `only:`/`except:`.
+    private def resource_actions(opts : String) : Array(Symbol)
+      all = [:index, :new, :create, :show, :edit, :update, :destroy]
+      if match = opts.match(/\bonly:\s*\[([^\]]*)\]/)
+        names = match[1].scan(/:(\w+)/).map { |m| m[1] }
+        return all.select { |action| names.includes?(action.to_s) }
+      end
+      if match = opts.match(/\bexcept:\s*\[([^\]]*)\]/)
+        names = match[1].scan(/:(\w+)/).map { |m| m[1] }
+        return all.reject { |action| names.includes?(action.to_s) }
+      end
+      all
+    end
+
     private def controller_action_key(controller : String, action : String) : String
       "#{controller}##{action}"
     end
@@ -226,33 +336,6 @@ module Analyzer::Crystal
 
     def line_to_endpoint(content : String) : Endpoint
       content = Noir::CrystalCalleeExtractor.strip_comment(content)
-
-      # Amber route definitions with controller and action - simplified patterns
-      if content.includes?("get \"/\"") && content.includes?("ApplicationController")
-        return Endpoint.new("/", "GET")
-      end
-
-      if content.includes?("post \"/users\"") && content.includes?("ApplicationController")
-        return Endpoint.new("/users", "POST")
-      end
-
-      if content.includes?("get \"/posts/:id\"") && content.includes?("ApplicationController")
-        return Endpoint.new("/posts/:id", "GET")
-      end
-
-      if content.includes?("get \"/search\"") && content.includes?("ApplicationController")
-        return Endpoint.new("/search", "GET")
-      end
-
-      if content.includes?("post \"/upload\"") && content.includes?("ApplicationController")
-        return Endpoint.new("/upload", "POST")
-      end
-
-      if content.includes?("ws \"/socket\"") && content.includes?("WebSocketController")
-        endpoint = Endpoint.new("/socket", "GET")
-        endpoint.protocol = "ws"
-        return endpoint
-      end
 
       # Amber route definitions with controller and action
       content.scan(/(?:^|[^.\w])get\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*\w+,\s*:(\w+)/) do |match|

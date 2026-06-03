@@ -27,12 +27,21 @@
                                 :page int?}}
            :handler search}}]
 
+   ; Bare `:handler` (no method key) responds to every method — emit GET.
+   ["/status"
+    {:handler status-handler}]
+
    ["/admin"
     ["/reports/:id"
      {:patch {:parameters {:path {:id int?}
                            :body {:status string?}
                            :header {:x-request-id string?}}
-              :handler patch-report}}]]])
+              :handler patch-report}}]]
+
+   ; A prefix route-data map with only :middleware (no method, no :handler)
+   ; must NOT emit an endpoint for the prefix itself — only the child does.
+   ["/guarded" {:middleware [wrap-auth]}
+    ["/info" {:get list-info}]]])
 
 (def health-routes
   [["/health"

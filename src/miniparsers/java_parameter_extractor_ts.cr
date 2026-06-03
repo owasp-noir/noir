@@ -103,6 +103,47 @@ module Noir
       results
     end
 
+    def extract_class_supertypes(source : String) : Hash(String, String)
+      results = Hash(String, String).new
+      Noir::TreeSitter.parse_java(source) do |root|
+        results = extract_class_supertypes_from(root, source)
+      end
+      results
+    end
+
+    # Map each `class` to the simple name of its superclass
+    # (`{"Owner" => "Person"}` for `class Owner extends Person`). Drives
+    # cross-file DTO inheritance: a command object that extends a base
+    # entity binds the parent's fields too, so the index merges them in
+    # via `TreeSitterJavaDtoIndex`. Interfaces are skipped — only the
+    # single `extends` superclass carries bindable fields.
+    def extract_class_supertypes_from(root : LibTreeSitter::TSNode, source : String) : Hash(String, String)
+      results = Hash(String, String).new
+      walk_class_containers(root) do |decl|
+        next unless Noir::TreeSitter.node_type(decl) == "class_declaration"
+        name_node = Noir::TreeSitter.field(decl, "name")
+        next unless name_node
+        super_node = Noir::TreeSitter.field(decl, "superclass")
+        next unless super_node
+        super_name = simple_superclass_name(Noir::TreeSitter.node_text(super_node, source))
+        next if super_name.empty?
+        results[Noir::TreeSitter.node_text(name_node, source)] = super_name
+      end
+      results
+    end
+
+    # `extends com.example.Base<T>` -> `Base`. The tree-sitter
+    # `superclass` node text carries the `extends` keyword, an optional
+    # package qualifier, and optional generic arguments — strip all
+    # three down to the simple type name the field index is keyed on.
+    private def simple_superclass_name(text : String) : String
+      name = text.strip
+      name = name.lchop("extends").strip if name.starts_with?("extends")
+      name = name.split('<', 2).first
+      name = name.split('.').last
+      name.strip
+    end
+
     # Extract parameters for `method_name` on `class_name`. Returns
     # `[]` when the method isn't found. `parameter_format` is the
     # method's default-shape hint (e.g. "form" when `@PostMapping` +
@@ -490,6 +531,14 @@ module Noir
         next unless Noir::TreeSitter.node_type(fp) == "formal_parameter"
         current_format = emit_param_for(fp, method, source, verb, current_format, class_fields, constants, current_class, params)
       end
+
+      # Collapse duplicate `(name, type)` params. A handler binding two
+      # command objects that share an inherited field — e.g. an `Owner`
+      # and a `Pet` both extending a base entity with `id` — otherwise
+      # surfaces `id` once per object, but the wire form carries a
+      # single `id`. Distinct types (path `id` vs query `id`) are kept.
+      seen = Set({String, String}).new
+      params.select! { |param| seen.add?({param.name, param.param_type}) }
       params
     end
 
@@ -559,7 +608,17 @@ module Noir
       when :cookie
         effective_format = "cookie"
       end
-      return effective_format if effective_format.nil?
+      if effective_format.nil?
+        # No parameter annotation and no `consumes` hint. A POST binds an
+        # un-annotated command object / scalar as form data (Spring
+        # `@ModelAttribute` semantics); other verbs carry no implicit
+        # request body, so the parameter isn't a request input. Applying
+        # this per-parameter — rather than pre-seeding the whole method
+        # with "form" — lets an explicit `@RequestBody` on the same POST
+        # resolve to "json" instead of being dragged to "form".
+        return parameter_format unless verb == "POST"
+        effective_format = "form"
+      end
 
       default_value : String? = nil
       parameter_name = arg_name
@@ -764,10 +823,17 @@ module Noir
     # exposed anyway for any test setup that wants explicit
     # determinism.
     @@shared_cache = Hash(String, Index).new
+    # Per-file `class -> superclass simple name` map, cached alongside
+    # the field index so a file is parsed once for both. Drives the
+    # cross-file inheritance merge below.
+    @@shared_super_cache = Hash(String, Hash(String, String)).new
     @@shared_cache_mutex = Mutex.new
 
     def self.clear_cache!
-      @@shared_cache_mutex.synchronize { @@shared_cache.clear }
+      @@shared_cache_mutex.synchronize do
+        @@shared_cache.clear
+        @@shared_super_cache.clear
+      end
     end
 
     def initialize
@@ -793,61 +859,225 @@ module Noir
     # process-wide cache so concurrent analyzers don't double-up.
     def build_for_with_root(path : String, content : String, root : LibTreeSitter::TSNode) : Index
       result = Index.new
+      # `supers[class] = superclass simple name`, `origin[class] = the
+      # file that defined it`. The latter lets the inheritance pass
+      # resolve a superclass through the *subclass's* imports — Owner
+      # imports `model.Person`, even though the controller that pulled
+      # Owner in never mentions the `model` package.
+      supers = Hash(String, String).new
+      origin = Hash(String, String).new
+
       package_name = TreeSitterJavaParameterExtractor.extract_package_name_from(root, content)
       imports = TreeSitterJavaParameterExtractor.extract_imports_from(root, content)
 
-      # Seed the shared cache for the current file from the
+      # Seed the shared caches for the current file from the
       # already-parsed root so this and any concurrent analyzer's
       # `related_files` loop reuses it.
       current_fields = TreeSitterJavaParameterExtractor.extract_class_fields_from(root, content)
+      current_supers = TreeSitterJavaParameterExtractor.extract_class_supertypes_from(root, content)
       @@shared_cache_mutex.synchronize do
         @@shared_cache[path] ||= current_fields
+        @@shared_super_cache[path] ||= current_supers
       end
 
       Noir::ImportGraph.related_files(path, package_name, imports, "java") do |file|
-        merge!(result, classes_in(file, path, content))
+        fields, file_supers = load_file(file)
+        absorb!(result, supers, origin, fields, file_supers, file)
       end
 
+      resolve_inheritance!(result, supers, origin)
       result
     end
 
-    private def classes_in(file : String, current_path : String, current_content : String) : Index
-      cached = @@shared_cache_mutex.synchronize { @@shared_cache[file]? }
-      return cached if cached
+    # Pull a file's `{fields, supertypes}` from the shared cache,
+    # parsing it once on a miss. Both maps are populated together so a
+    # DTO file is never parsed twice.
+    private def load_file(file : String) : {Index, Hash(String, String)}
+      cached_fields, cached_supers = @@shared_cache_mutex.synchronize do
+        {@@shared_cache[file]?, @@shared_super_cache[file]?}
+      end
+      return {cached_fields, cached_supers} if cached_fields && cached_supers
 
-      fields = parse_classes_for(file, current_path, current_content)
+      fields = Index.new
+      supertypes = Hash(String, String).new
+      body = file_body(file)
+      Noir::TreeSitter.parse_java(body) do |root|
+        fields = TreeSitterJavaParameterExtractor.extract_class_fields_from(root, body)
+        supertypes = TreeSitterJavaParameterExtractor.extract_class_supertypes_from(root, body)
+      end
 
-      # Multiple analyzers may race here on a cache miss — the
-      # `||=` keeps whichever wrote first; the loser silently
-      # discards its parse. Acceptable cost vs the per-file lock
-      # complexity that strict single-parse would require.
+      # Multiple analyzers may race here on a cache miss — the `||=`
+      # keeps whichever wrote first; the loser silently discards its
+      # parse. Acceptable cost vs the per-file lock complexity that
+      # strict single-parse would require.
       @@shared_cache_mutex.synchronize do
         @@shared_cache[file] ||= fields
-        @@shared_cache[file]
+        @@shared_super_cache[file] ||= supertypes
+        {@@shared_cache[file], @@shared_super_cache[file]}
       end
-    end
-
-    private def parse_classes_for(file : String, current_path : String, current_content : String) : Index
-      body =
-        if file == current_path
-          current_content
-        else
-          # Detector pre-warms a content cache for every scanned
-          # file (size-bounded). Sibling DTO files often live in
-          # that cache already — `nil` falls back to a fresh
-          # `File.read` for files outside the budget.
-          CodeLocator.instance.content_for(file) ||
-            File.read(file, encoding: "utf-8", invalid: :skip)
-        end
-      TreeSitterJavaParameterExtractor.extract_class_fields(body)
     rescue File::NotFoundError
-      Index.new
+      {Index.new, Hash(String, String).new}
     end
 
-    private def merge!(into : Index, src : Index)
-      src.each do |name, fields|
-        into[name] ||= fields
+    private def file_body(file : String) : String
+      # Detector pre-warms a content cache for every scanned file
+      # (size-bounded). Sibling/parent DTO files often live in that
+      # cache already — `nil` falls back to a fresh `File.read` for
+      # files outside the budget.
+      CodeLocator.instance.content_for(file) ||
+        File.read(file, encoding: "utf-8", invalid: :skip)
+    end
+
+    private def absorb!(result : Index,
+                        supers : Hash(String, String),
+                        origin : Hash(String, String),
+                        fields : Index,
+                        file_supers : Hash(String, String),
+                        file : String)
+      fields.each do |name, fs|
+        unless result.has_key?(name)
+          result[name] = fs
+          origin[name] ||= file
+        end
+      end
+      file_supers.each do |name, sup|
+        supers[name] ||= sup
+        origin[name] ||= file
       end
     end
+
+    # Merge inherited fields into each subclass. First pulls in the
+    # files that define still-unresolved superclasses (following
+    # `extends` edges the controller never imported directly), then
+    # folds each `extends` chain into a single flattened field list.
+    private def resolve_inheritance!(result : Index,
+                                     supers : Hash(String, String),
+                                     origin : Hash(String, String))
+      return if supers.empty?
+
+      pull_superclass_files!(result, supers, origin)
+
+      memo = Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)).new
+      (result.keys.to_set | supers.keys.to_set).each do |cls|
+        merged = effective_fields(cls, result, supers, memo, Set(String).new)
+        result[cls] = merged unless merged.empty?
+      end
+    end
+
+    private def pull_superclass_files!(result : Index,
+                                       supers : Hash(String, String),
+                                       origin : Hash(String, String))
+      attempted = Set(String).new
+      pending = supers.keys.to_a
+      iterations = 0
+
+      until pending.empty? || iterations > MAX_INHERITANCE_RESOLUTIONS
+        iterations += 1
+        cls = pending.shift
+        sup = supers[cls]?
+        next unless sup
+        # Already loaded (has fields or a recorded super) — its own
+        # `extends` edge, if any, is queued separately.
+        next if result.has_key?(sup) || supers.has_key?(sup)
+        # Resolve each distinct superclass name at most once, even if
+        # several subclasses share it or its file defines nothing
+        # useful.
+        next unless attempted.add?(sup)
+        file = origin[cls]?
+        next unless file
+
+        pending.concat(load_superclass_files(result, supers, origin, file))
+      end
+    end
+
+    # Walk the subclass file's own related files (siblings + imports)
+    # and absorb any classes not seen yet. Returns the names added so
+    # the caller can chase their `extends` edges in turn.
+    private def load_superclass_files(result : Index,
+                                      supers : Hash(String, String),
+                                      origin : Hash(String, String),
+                                      subclass_file : String) : Array(String)
+      added = [] of String
+      package_name, imports = file_package_imports(subclass_file)
+
+      Noir::ImportGraph.related_files(subclass_file, package_name, imports, "java") do |file|
+        fields, file_supers = load_file(file)
+        fields.each do |name, fs|
+          unless result.has_key?(name)
+            result[name] = fs
+            origin[name] ||= file
+            added << name
+          end
+        end
+        file_supers.each do |name, sup|
+          unless supers.has_key?(name)
+            supers[name] = sup
+            origin[name] ||= file
+            added << name
+          end
+        end
+      end
+
+      added
+    end
+
+    private def file_package_imports(file : String) : {String, Array(Noir::ImportGraph::ImportRef)}
+      package_name = ""
+      imports = [] of Noir::ImportGraph::ImportRef
+      body = file_body(file)
+      Noir::TreeSitter.parse_java(body) do |root|
+        package_name = TreeSitterJavaParameterExtractor.extract_package_name_from(root, body)
+        imports = TreeSitterJavaParameterExtractor.extract_imports_from(root, body)
+      end
+      {package_name, imports}
+    rescue File::NotFoundError
+      {"", [] of Noir::ImportGraph::ImportRef}
+    end
+
+    # Own fields plus the (already-flattened) superclass fields, deduped
+    # by name so an overriding field wins. `visiting` guards against
+    # `extends` cycles; `memo` keeps the walk linear.
+    private def effective_fields(cls : String,
+                                 result : Index,
+                                 supers : Hash(String, String),
+                                 memo : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)),
+                                 visiting : Set(String)) : Array(TreeSitterJavaParameterExtractor::FieldInfo)
+      if cached = memo[cls]?
+        return cached
+      end
+
+      own = result[cls]? || [] of TreeSitterJavaParameterExtractor::FieldInfo
+      sup = supers[cls]?
+
+      # Stop when there's no usable superclass to merge: missing, the
+      # class itself, or already on the current resolution path (cycle
+      # guard). Written as a positive `if` (rather than `unless` with a
+      # negated condition) so `sup` still narrows to non-nil below.
+      if sup.nil? || sup == cls || visiting.includes?(cls)
+        memo[cls] = own
+        return own
+      end
+
+      visiting << cls
+      parent = effective_fields(sup, result, supers, memo, visiting)
+      visiting.delete(cls)
+
+      if parent.empty?
+        memo[cls] = own
+        return own
+      end
+
+      names = own.map(&.name).to_set
+      combined = own.dup
+      parent.each do |field|
+        combined << field unless names.includes?(field.name)
+      end
+      memo[cls] = combined
+      combined
+    end
+
+    # Backstop against pathological `extends` graphs — far above any
+    # real DTO hierarchy depth/fan-out.
+    MAX_INHERITANCE_RESOLUTIONS = 512
   end
 end

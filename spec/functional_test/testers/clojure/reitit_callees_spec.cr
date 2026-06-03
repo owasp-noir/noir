@@ -15,10 +15,20 @@ inline_endpoint = Endpoint.new("/api/inline", "GET")
 inline_endpoint.push_callee(Callee.new("response/ok"))
 inline_endpoint.push_callee(Callee.new("inline.service/run"))
 
+items_endpoint = Endpoint.new("/api/items/:id", "GET", [
+  Param.new("id", "", "path"),
+])
+items_endpoint.push_callee(Callee.new("get-item"))
+
+health_endpoint = Endpoint.new("/api/health", "GET")
+health_endpoint.push_callee(Callee.new("health-check"))
+
 expected_endpoints = [
   list_endpoint,
   create_endpoint,
   inline_endpoint,
+  items_endpoint,
+  health_endpoint,
 ]
 
 FunctionalTester.new("fixtures/clojure/reitit_callees/", {

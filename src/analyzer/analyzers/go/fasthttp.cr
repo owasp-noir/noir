@@ -29,6 +29,9 @@ module Analyzer::Go
           end
         end
         package_function_bodies = Noir::GoCalleeExtractor.package_function_bodies_if(callees_needed?, file_contents)
+        # Resolve method-value handlers (`h.Index`) to their bodies too,
+        # so callees aren't empty when handlers hang off a struct.
+        package_method_bodies = Noir::GoCalleeExtractor.package_method_bodies_if(callees_needed?, file_contents)
 
         base_paths.each do |current_base_path|
           base_dir_prefix = current_base_path.ends_with?("/") ? current_base_path : "#{current_base_path}/"
@@ -59,15 +62,17 @@ module Analyzer::Go
               route_rows = Set(Int32).new
               routes_by_line.each_key { |row| route_rows << row }
               external_fns = Noir::GoCalleeExtractor.function_bodies_for_directory(package_function_bodies, File.dirname(path))
-              callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
+              external_methods = Noir::GoCalleeExtractor.method_bodies_for_directory(package_method_bodies, File.dirname(path))
+              callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns, external_methods)
 
               content.each_line.with_index do |line, index|
                 details = Details.new(PathInfo.new(path, index + 1))
 
                 if ts_hits = routes_by_line[index]?
                   ts_hits.each do |route|
+                    clean_path = normalize_fasthttp_path(route.path)
                     Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
-                      endpoint = Endpoint.new(route.path, verb, details)
+                      endpoint = Endpoint.new(clean_path, verb, details)
                       if entries = callees_by_route[route.line]?
                         entries.each do |entry|
                           name, callee_path, callee_line = entry
@@ -97,6 +102,18 @@ module Analyzer::Go
       end
 
       result
+    end
+
+    # Normalize fasthttp/router path-parameter syntax into the canonical
+    # `{name}` placeholder. fasthttp/router accepts optional params
+    # (`{name?}`), inline regex constraints (`{name:[0-9]+}`), and the
+    # two combined (`{name?:[a-zA-Z]+}`). The optimizer's generic
+    # `{name:regex}` stripper only matches identifier-then-colon, so the
+    # `?` optional marker leaks through as part of the param name
+    # (`name?`) and the URL keeps its regex body. Strip both here so the
+    # surfaced URL and the path-param names are clean.
+    private def normalize_fasthttp_path(path : String) : String
+      path.gsub(/\{([a-zA-Z0-9_]+)\??(?::[^{}]+)?\}/) { "{#{$1}}" }
     end
 
     private def analyze_route_line(line : String, details : Details) : Endpoint

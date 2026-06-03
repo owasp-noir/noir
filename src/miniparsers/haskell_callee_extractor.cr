@@ -38,13 +38,24 @@ module Noir::HaskellCalleeExtractor
       end
 
       name = match[1]
-      if skip_callee?(name) || line.includes?("::")
+      if skip_callee?(name)
         index += 1
         next
       end
 
-      equals_index = line.index('=')
+      # Find the definition `=`, skipping comparison/arrow operators that also
+      # contain `=` (`==`, `>=`, `<=`, `/=`, `=>`, `=<<`). Otherwise a guard such
+      # as `f x | x == 0 = ...` would split on the `==` and mis-extract the body.
+      equals_index = definition_equals_index(line)
       unless equals_index
+        index += 1
+        next
+      end
+
+      # A `::` before the `=` marks a type signature (`foo :: (C a) => a`), not a
+      # definition. Only inspect the head; an inline annotation in the body
+      # (e.g. `apiSwagger = toSwagger (Proxy :: Proxy API)`) is a real binding.
+      if line[0...equals_index].includes?("::")
         index += 1
         next
       end
@@ -140,6 +151,23 @@ module Noir::HaskellCalleeExtractor
 
   private def same_function_equation?(line : String, name : String) : Bool
     !!line.match(/^#{Regex.escape(name)}\b.*=/)
+  end
+
+  # Index of the binding `=`, skipping operators that merely contain `=`
+  # (`==`, `>=`, `<=`, `/=`, `!=`, `=>`, `=<<`). Returns nil when the line has no
+  # standalone definition `=` (e.g. it is only a comparison expression).
+  private def definition_equals_index(line : String) : Int32?
+    index = 0
+    while index < line.size
+      if line[index] == '='
+        prev = index > 0 ? line[index - 1] : ' '
+        nxt = index + 1 < line.size ? line[index + 1] : ' '
+        adjacent = {'=', '<', '>', '/', '!'}
+        return index unless adjacent.includes?(prev) || nxt == '=' || nxt == '>' || nxt == '<'
+      end
+      index += 1
+    end
+    nil
   end
 
   private def skip_callee?(name : String) : Bool

@@ -37,7 +37,15 @@ module Analyzer::Go
 
                     cross_file_groups = ts_groups_for_directory(package_groups, File.dirname(path))
                     ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(
-                      content, cross_file_groups, group_method: "Party"
+                      content, cross_file_groups, group_method: "Party",
+                      # `app.Handle("GET", "/x", h)` is Iris's method-first
+                      # registration; `app.HandleMany("GET POST", "/x", h)`
+                      # lists several verbs at once. `PartyFunc("/x",
+                      # func(p){...})` (and the closure form of `Party`) is
+                      # Iris's idiomatic closure-scoped group.
+                      handle_method: "Handle",
+                      handle_many_method: "HandleMany",
+                      closure_group_methods: ["Party", "PartyFunc"]
                     )
                     routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
                     ts_routes.each do |r|
@@ -56,24 +64,21 @@ module Analyzer::Go
 
                       if ts_hits = routes_by_line[index]?
                         ts_hits.each do |route|
-                          normalized = normalize_iris_path(route.path)
+                          # `app.Party("admin.")` is an Iris *subdomain*,
+                          # not a path segment — peel it so the path is
+                          # clean (`/settings`, not `/admin./settings`) and
+                          # preserve the host on a `subdomain` tag.
+                          subdomain, clean = split_iris_subdomain(route.path)
+                          normalized = normalize_iris_path(clean)
                           callee_entries = callees_by_route[route.line]?
-                          if route.verb == "ANY"
-                            HTTP_METHODS.each do |m|
-                              new_endpoint = Endpoint.new(normalized, m, details)
-                              callee_entries.try &.each do |entry|
-                                name, callee_path, callee_line = entry
-                                new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
-                              end
-                              result << new_endpoint
-                              last_endpoint = new_endpoint
-                            end
-                          else
-                            new_endpoint = Endpoint.new(normalized, route.verb, details)
+                          verbs = route.verb == "ANY" ? HTTP_METHODS : [route.verb]
+                          verbs.each do |m|
+                            new_endpoint = Endpoint.new(normalized, m, details)
                             callee_entries.try &.each do |entry|
                               name, callee_path, callee_line = entry
                               new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
                             end
+                            new_endpoint.add_tag(Tag.new("subdomain", subdomain, "iris_analyzer")) if subdomain
                             result << new_endpoint
                             last_endpoint = new_endpoint
                           end
@@ -116,6 +121,22 @@ module Analyzer::Go
     # `{file:path}` → `{file}`. Leaves unadorned `{id}` untouched.
     def normalize_iris_path(path : String) : String
       path.gsub(/\{([^{}:]+):[^{}]+\}/) { "{#{$1}}" }
+    end
+
+    # Iris route paths always start with `/`; a `Party` prefix that does
+    # NOT (e.g. `admin.`, `www.`, `v1.`) is a *subdomain*, which the group
+    # resolver concatenates into a malformed `admin./settings`. Split the
+    # leading dotted host segment off so the path is clean and the host is
+    # carried separately. Returns `{subdomain?, clean_path}`.
+    def split_iris_subdomain(path : String) : Tuple(String?, String)
+      return {nil, path} if path.starts_with?("/")
+      slash = path.index('/')
+      head = slash ? path[0...slash] : path
+      rest = slash ? path[slash..] : "/"
+      # Only treat a dotted leading segment as a subdomain; a plain
+      # non-slash head (shouldn't normally occur) is left alone.
+      return {nil, path} unless head.includes?(".")
+      {head, rest}
     end
 
     def get_param(line : String, pattern : String) : Param

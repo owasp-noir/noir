@@ -1,0 +1,6 @@
+name: servant-callees-applied-fixture
+version: 0.1.0.0
+dependencies:
+  - base
+  - servant
+  - text

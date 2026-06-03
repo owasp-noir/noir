@@ -69,7 +69,7 @@ module Analyzer::Crystal
       get_files_by_extension(".cr").each do |path|
         next if File.directory?(path)
         next unless File.exists?(path)
-        next if path.includes?("lib")
+        next if crystal_dependency_path?(path)
 
         collect_handler_callees_from_lines(read_source_lines(path), path, actions)
       rescue e

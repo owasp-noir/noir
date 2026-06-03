@@ -26,11 +26,31 @@ quoted_endpoint = Endpoint.new("/quoted", "GET")
 quoted_endpoint.push_callee(Callee.new("response/ok", line: 26))
 quoted_endpoint.push_callee(Callee.new("safe.service/run!", line: 26))
 
+vars_endpoint = Endpoint.new("/vars", "GET")
+vars_endpoint.push_callee(Callee.new("wrap", line: 31))
+vars_endpoint.push_callee(Callee.new("handlers/show-vars", line: 31))
+
+# Operators (`/`, `+`) are filtered; only the real service call surfaces.
+calc_endpoint = Endpoint.new("/calc", "GET")
+calc_endpoint.push_callee(Callee.new("response/ok", line: 36))
+calc_endpoint.push_callee(Callee.new("math.util/scale", line: 36))
+
+# compojure.api.resource: each method's `:handler` body yields its callees.
+items_get_endpoint = Endpoint.new("/items", "GET")
+items_get_endpoint.push_callee(Callee.new("item.service/list-all", line: 41))
+
+items_post_endpoint = Endpoint.new("/items", "POST")
+items_post_endpoint.push_callee(Callee.new("item.service/create!", line: 42))
+
 expected_endpoints = [
   show_endpoint,
   create_endpoint,
   delete_endpoint,
   quoted_endpoint,
+  vars_endpoint,
+  calc_endpoint,
+  items_get_endpoint,
+  items_post_endpoint,
 ]
 
 FunctionalTester.new("fixtures/clojure/compojure_callees/", {
