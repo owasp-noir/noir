@@ -602,14 +602,17 @@ module Analyzer::CSharp::MinimalApiSupport
     i = start_index
     started = false
     while i < lines.size
-      line = lines[i]
-      mline = masked[i]
+      # Index over `Array(Char)` (O(1)) rather than `String#[](Int)`, which is
+      # O(n) per access on multi-byte lines and made this O(n^2) on long
+      # CJK signatures — the very regression the lexer work targets.
+      line_chars = lines[i].chars
+      mline_chars = masked[i].chars
       from = i == start_index ? open_pos : 0
-      (from...line.size).each do |k|
+      (from...line_chars.size).each do |k|
         # Count over the masked twin so a `(`/`)` inside a string default
         # value (`prop = "f(x"`) can't unbalance the group; emit raw text.
-        mch = k < mline.size ? mline[k] : ' '
-        ch = line[k]
+        mch = k < mline_chars.size ? mline_chars[k] : ' '
+        ch = line_chars[k]
         if mch == '('
           depth += 1
           started = true

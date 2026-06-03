@@ -30,6 +30,16 @@ describe Noir::CSharpLexer do
       lex.in_code?(src.index!("after")).should be_true # the literal ended correctly
     end
 
+    it "skips nested verbatim/raw strings inside an interpolation hole" do
+      # The `}` inside the nested `@"…"` / `"""…"""` must not terminate the
+      # outer interpolated string early.
+      verbatim = "var s = $\"x{Path(@\"a\"\"}\"\"b\")}y\"; tail();"
+      Noir::CSharpLexer.new(verbatim).in_code?(verbatim.index!("tail")).should be_true
+
+      raw = "var s = $\"x{F(\"\"\"a}\"\" }\"\"\" )}y\"; done();"
+      Noir::CSharpLexer.new(raw).in_code?(raw.index!("done")).should be_true
+    end
+
     it "handles C# 11 raw string literals with a quote fence" do
       src = "var r = \"\"\" a } \" \"\" }\"\" b \"\"\"; tail();"
       lex = Noir::CSharpLexer.new(src)

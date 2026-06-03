@@ -193,6 +193,16 @@ module Noir
       escaped = false
       while i < @size
         c = @chars[i]
+
+        # A string opening inside a `{ … }` interpolation hole is a nested
+        # string, NOT the end of the outer literal. Skip the whole nested
+        # literal — regular, verbatim `@"`, raw `"""`, or `$`-prefixed — so its
+        # quotes and braces can't change interp_depth or terminate early.
+        if interpolated && interp_depth > 0 && c == '"' && !escaped
+          i = mask_nested_hole_string(i)
+          next
+        end
+
         @masked << (c == '\n' ? '\n' : ' ')
         if escaped
           escaped = false
@@ -233,15 +243,9 @@ module Noir
           end
           interp_depth -= 1 if interp_depth > 0
         elsif c == '"'
-          if interp_depth == 0
-            i += 1
-            break
-          else
-            # A `"` inside a `{ }` interpolation hole opens a nested string;
-            # skip it so its quotes/braces don't end the outer literal.
-            i = skip_nested_string(i + 1)
-          end
-          next
+          # interp_depth == 0 here — the hole case is handled above.
+          i += 1
+          break
         end
 
         i += 1
@@ -282,15 +286,64 @@ module Noir
       @size
     end
 
-    # `start` is just past the nested opening `"`. Mask a regular string up to
-    # and including its closing quote; returns the index after it.
-    private def skip_nested_string(start : Int32) : Int32
-      i = start
+    # `quote_pos` is the opening `"` of a string nested inside an interpolation
+    # hole. Mask the whole nested literal (recognising a `@` verbatim prefix via
+    # lookbehind and a `"""` raw fence) and return the index just past it.
+    private def mask_nested_hole_string(quote_pos : Int32) : Int32
+      verbatim = quote_pos > 0 && @chars[quote_pos - 1] == '@'
+
+      run = 0
+      j = quote_pos
+      while j < @size && @chars[j] == '"'
+        run += 1
+        j += 1
+      end
+
+      if run >= 3 # raw nested string: close on the next run of `run` quotes
+        run.times { @masked << ' ' }
+        i = quote_pos + run
+        while i < @size
+          if @chars[i] == '"'
+            r = 0
+            while i + r < @size && @chars[i + r] == '"'
+              r += 1
+            end
+            if r >= run
+              run.times { @masked << ' ' }
+              return i + run
+            end
+            r.times { @masked << ' ' }
+            i += r
+          else
+            @masked << (@chars[i] == '\n' ? '\n' : ' ')
+            i += 1
+          end
+        end
+        return @size
+      end
+
+      if run == 2 && !verbatim # empty "" string
+        @masked << ' '
+        @masked << ' '
+        return quote_pos + 2
+      end
+
+      @masked << ' ' # opening quote
+      i = quote_pos + 1
       escaped = false
       while i < @size
         c = @chars[i]
         @masked << (c == '\n' ? '\n' : ' ')
-        if escaped
+        if verbatim
+          if c == '"'
+            if i + 1 < @size && @chars[i + 1] == '"'
+              @masked << ' ' # doubled (escaped) quote
+              i += 2
+              next
+            end
+            return i + 1
+          end
+        elsif escaped
           escaped = false
         elsif c == '\\'
           escaped = true
