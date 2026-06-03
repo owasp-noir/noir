@@ -119,6 +119,11 @@ module NoirTaggers
       desc:   "Identifies Go authentication patterns (middleware, JWT, session)",
       runner: GoAuthTagger,
     },
+    go_security: {
+      name:   "Go Security Tagger",
+      desc:   "Identifies Go security middleware (CSRF, security headers, rate limiting, body-size limits)",
+      runner: GoSecurityTagger,
+    },
     rust_auth: {
       name:   "Rust Auth Tagger",
       desc:   "Identifies Rust authentication patterns (guards, extractors, middleware)",
