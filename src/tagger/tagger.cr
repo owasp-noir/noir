@@ -106,7 +106,7 @@ module NoirTaggers
     },
     spring_security: {
       name:   "Spring Security Tagger",
-      desc:   "Identifies Spring security signals beyond auth (CSRF disabled, CORS policy, input validation)",
+      desc:   "Identifies Spring security signals beyond auth (CSRF disabled, CORS policy, security headers, input validation)",
       runner: SpringSecurityTagger,
     },
     express_auth: {

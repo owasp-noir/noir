@@ -15,6 +15,13 @@ require "../../../../src/tagger/tagger"
 # spring_security_scoped/src/main/java/com/example/SecurityConfig.java
 #   chain apiChain: securityMatcher("/api/**") + csrf().disable()
 #   chain webChain: securityMatcher("/web/**"), CSRF left enabled
+#
+# spring_security_extras/src/main/java/com/example/
+#   SecurityConfig.java   csrf ignoringRequestMatchers("/api/webhook/**")
+#                         + headers().frameOptions().disable() (global)
+#   CorsConfig.java       addMapping("/api/**").allowedOrigins("*").allowCredentials(true)
+#   WebhookController.java  10: POST /api/webhook/github
+#   AdminController.java    10: POST /admin/users
 
 private def tag_named(endpoint : Endpoint, name : String) : Tag?
   endpoint.tags.find { |t| t.name == name }
@@ -45,6 +52,13 @@ describe "SpringSecurityTagger" do
 
   scoped_options = create_test_options
   scoped_options["base"] = YAML::Any.new(scoped_base)
+
+  extras_base = "#{__DIR__}/../../../functional_test/fixtures/java/spring_security_extras"
+  webhook_ctrl = "#{extras_base}/src/main/java/com/example/WebhookController.java"
+  admin_ctrl = "#{extras_base}/src/main/java/com/example/AdminController.java"
+
+  extras_options = create_test_options
+  extras_options["base"] = YAML::Any.new(extras_base)
 
   before_each do
     CodeLocator.instance.clear_all
@@ -151,5 +165,73 @@ describe "SpringSecurityTagger" do
     # still applies by URL/method without raising.
     tag_named(endpoint, "csrf-protection").should_not be_nil
     tag_named(endpoint, "cors").should be_nil
+  end
+
+  describe "csrf-protection via ignoringRequestMatchers" do
+    it "flags only the paths CSRF is selectively ignored for" do
+      load_fixture_files(extras_base)
+
+      ignored = build_endpoint(webhook_ctrl, 10, "/api/webhook/github", "POST")
+      SpringSecurityTagger.new(extras_options).perform([ignored])
+      tag = tag_named(ignored, "csrf-protection")
+      tag.should_not be_nil
+      tag.not_nil!.description.should contain("ignoringRequestMatchers")
+
+      # /admin/users is outside the ignored matcher and the chain is not
+      # otherwise CSRF-disabled, so CSRF stays on → no tag.
+      kept = build_endpoint(admin_ctrl, 10, "/admin/users", "POST")
+      SpringSecurityTagger.new(extras_options).perform([kept])
+      tag_named(kept, "csrf-protection").should be_nil
+    end
+  end
+
+  describe "security-headers" do
+    it "flags clickjacking protection disabled (frameOptions) for every endpoint in scope" do
+      load_fixture_files(extras_base)
+      endpoint = build_endpoint(admin_ctrl, 10, "/admin/users", "POST")
+      SpringSecurityTagger.new(extras_options).perform([endpoint])
+
+      tag = tag_named(endpoint, "security-headers")
+      tag.should_not be_nil
+      tag.not_nil!.tagger.should eq("spring_security")
+      tag.not_nil!.description.should contain("Clickjacking")
+    end
+
+    it "applies to GET endpoints too (headers affect all responses)" do
+      load_fixture_files(extras_base)
+      endpoint = build_endpoint(webhook_ctrl, nil, "/api/webhook/list", "GET")
+      SpringSecurityTagger.new(extras_options).perform([endpoint])
+
+      tag_named(endpoint, "security-headers").should_not be_nil
+    end
+
+    it "is absent when the secure-default headers are left in place" do
+      load_fixture_files(global_base)
+      endpoint = build_endpoint(controller, 12, "/api/posts", "POST")
+      SpringSecurityTagger.new(global_options).perform([endpoint])
+
+      tag_named(endpoint, "security-headers").should be_nil
+    end
+  end
+
+  describe "cors via global WebMvc config" do
+    it "flags a permissive addMapping wildcard + credentials by URL" do
+      load_fixture_files(extras_base)
+      endpoint = build_endpoint(webhook_ctrl, nil, "/api/webhook/github", "POST")
+      SpringSecurityTagger.new(extras_options).perform([endpoint])
+
+      tag = tag_named(endpoint, "cors")
+      tag.should_not be_nil
+      tag.not_nil!.description.should contain("global WebMvc config")
+      tag.not_nil!.description.should contain("credentials")
+    end
+
+    it "does not flag a URL outside the CORS mapping" do
+      load_fixture_files(extras_base)
+      endpoint = build_endpoint(admin_ctrl, nil, "/admin/users", "POST")
+      SpringSecurityTagger.new(extras_options).perform([endpoint])
+
+      tag_named(endpoint, "cors").should be_nil
+    end
   end
 end

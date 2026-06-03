@@ -88,8 +88,9 @@ Taggers span several kinds of security-relevant signal. Run `noir list taggers` 
   - `rate-limit` — actions throttled by the Rails 8 native `rate_limit` macro; useful context when assessing brute-force / abuse exposure (and its absence on auth/recovery surface is itself a finding).
 
   For Spring (`spring_security`), complementing the `spring_auth` authentication tagger:
-  - `csrf-protection` — CSRF disabled in a `SecurityFilterChain` (`csrf().disable()`, `csrf(AbstractHttpConfigurer::disable)`, or Kotlin `csrf { disable() }`), reported on the state-changing endpoints (POST/PUT/PATCH/DELETE) the affected chain exposes; common for stateless/token APIs but always worth surfacing, and scoped to a chain's `securityMatcher` when present.
-  - `cors` — a `@CrossOrigin` annotation on the handler or controller opts the endpoint out of the browser same-origin default; wildcard origins (`*`), especially combined with credentials, are called out as permissive.
+  - `csrf-protection` — CSRF turned off in a `SecurityFilterChain`, either wholesale (`csrf().disable()`, `csrf(AbstractHttpConfigurer::disable)`, Kotlin `csrf { disable() }`) or selectively for specific paths (`csrf(c -> c.ignoringRequestMatchers("/api/**"))`), reported on the state-changing endpoints (POST/PUT/PATCH/DELETE) affected; common for stateless/token APIs but always worth surfacing, and scoped to a chain's `securityMatcher` when present.
+  - `cors` — a `@CrossOrigin` annotation on the handler/controller, or a global `WebMvcConfigurer` mapping (`addMapping(...).allowedOrigins("*")`), opts the endpoint out of the browser same-origin default; wildcard origins (`*`), especially combined with credentials, are called out as permissive.
+  - `security-headers` — Spring's default response-header protections weakened: clickjacking off (`frameOptions().disable()`) or the whole header writer disabled (`headers().disable()` / `headers(HeadersConfigurer::disable)`).
   - `input-validation` — `@Valid` / `@Validated` applies Bean Validation to the request payload; surfacing where it *is* applied also makes the gaps (handlers taking a `@RequestBody` without it) visible by their absence.
 
 Endpoint-level tags also feed the AI context as signals, enriching the per-endpoint summary that AI reviewers consume.
