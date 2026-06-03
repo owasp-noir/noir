@@ -4,7 +4,7 @@ require "yaml"
 struct Endpoint
   include JSON::Serializable
   include YAML::Serializable
-  property url, method, params, protocol, details, tags, callees, internal
+  property url, method, params, protocol, kind, details, tags, callees, internal
   property ai_context : AIContext?
 
   # Per-endpoint context for AI code reviewers: 1-hop callees from the
@@ -16,6 +16,7 @@ struct Endpoint
   def initialize(@url : String, @method : String, @params : Array(Param) = [] of Param,
                  @details : Details = Details.new, @internal : Bool = false)
     @protocol = "http"
+    @kind = ""
     @tags = [] of Tag
     @callees = [] of Callee
     @ai_context = nil
@@ -24,6 +25,7 @@ struct Endpoint
   def initialize(@url : String, @method : String, @details : Details)
     @params = [] of Param
     @protocol = "http"
+    @kind = ""
     @tags = [] of Tag
     @callees = [] of Callee
     @internal = false

@@ -16,10 +16,16 @@ class OutputBuilderCommon < OutputBuilder
                        end
 
       r_method = endpoint.method.colorize(r_method_color).toggle(@is_color)
-      r_url = baked[:url].colorize(:light_yellow).toggle(@is_color)
 
       r_buffer = String::Builder.new
-      r_buffer << "\n#{r_method} #{r_url}"
+      if endpoint.kind.empty?
+        r_url = baked[:url].colorize(:light_yellow).toggle(@is_color)
+        r_buffer << "\n#{r_method} #{r_url}"
+      else
+        r_kind = "[#{endpoint.kind}]".colorize(:light_magenta).toggle(@is_color)
+        r_name = baked[:url].lstrip('/').colorize(:light_yellow).toggle(@is_color)
+        r_buffer << "\n#{r_method} #{r_kind} #{r_name}"
+      end
 
       if any_to_bool(@options["status_codes"]) || !@options["exclude_codes"].to_s.empty?
         status_color = :light_green

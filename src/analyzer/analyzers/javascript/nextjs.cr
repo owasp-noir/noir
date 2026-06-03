@@ -181,6 +181,7 @@ module Analyzer::Javascript
 
       url = "/" + action_name
       endpoint = Endpoint.new(url, "POST")
+      endpoint.kind = "server-action"
       endpoint.details = Details.new(PathInfo.new(path, 1))
 
       extract_server_action_params(args, body, endpoint)
