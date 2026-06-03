@@ -45,20 +45,26 @@ class OutputBuilderCommon < OutputBuilder
         r_buffer << " #{r_ws}"
       end
 
-      if baked[:header].size > 0
+      header_params = endpoint.params.select { |p| p.param_type == "header" }
+      if header_params.size > 0
         r_buffer << "\n  ○ headers: "
-        baked[:header].each_with_index do |header, index|
-          prefix = index == baked[:header].size - 1 ? "└── " : "├── "
-          r_header = "#{prefix}#{header}".colorize(:light_green).toggle(@is_color)
+        header_params.each_with_index do |param, index|
+          prefix = index == header_params.size - 1 ? "└── " : "├── "
+          label = param.value.empty? ? param.name : "#{param.name}: #{param.value}"
+          label += " [unresolved]" if param.tags.any? { |t| t.name == "unresolved" }
+          r_header = "#{prefix}#{label}".colorize(:light_green).toggle(@is_color)
           r_buffer << "\n    #{r_header}"
         end
       end
 
-      if baked[:cookie].size > 0
+      cookie_params = endpoint.params.select { |p| p.param_type == "cookie" }
+      if cookie_params.size > 0
         r_buffer << "\n  ○ cookies: "
-        baked[:cookie].each_with_index do |cookie, index|
-          prefix = index == baked[:cookie].size - 1 ? "└── " : "├── "
-          r_cookie = "#{prefix}#{cookie}".colorize(:light_green).toggle(@is_color)
+        cookie_params.each_with_index do |param, index|
+          prefix = index == cookie_params.size - 1 ? "└── " : "├── "
+          label = param.value.empty? ? param.name : "#{param.name}=#{param.value}"
+          label += " [unresolved]" if param.tags.any? { |t| t.name == "unresolved" }
+          r_cookie = "#{prefix}#{label}".colorize(:light_green).toggle(@is_color)
           r_buffer << "\n    #{r_cookie}"
         end
       end
@@ -68,12 +74,22 @@ class OutputBuilderCommon < OutputBuilder
         r_buffer << "\n  ○ path: #{r_path_param}"
       end
 
-      unless baked[:body].empty?
+      if baked[:body_type] == "form"
+        form_params = endpoint.params.select { |p| p.param_type == "form" }
+        unless form_params.empty?
+          r_buffer << "\n  ○ body: "
+          form_params.each_with_index do |param, index|
+            prefix = index == form_params.size - 1 ? "└── " : "├── "
+            label = param.value.empty? ? param.name : "#{param.name}=#{param.value}"
+            r_buffer << "\n    #{("#{prefix}#{label}").colorize(:cyan).toggle(@is_color)}"
+          end
+        end
+      elsif !baked[:body].empty?
         r_body = baked[:body].colorize(:cyan).toggle(@is_color)
         r_buffer << "\n  ○ body: #{r_body}"
       end
 
-      tags = baked[:tags]
+      tags = baked[:tags].reject { |t| t == "unresolved" } # will handle unresolved directly in the logs
       endpoint.tags.each do |tag|
         tags << tag.name.to_s
       end

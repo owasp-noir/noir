@@ -407,19 +407,25 @@ module Analyzer::Javascript
         end
       end
 
-      # req.headers["x-token"] or req.headers.foo
-      content.scan(/req\.headers\[['"]([^'"]+)['"]\]/) do |m|
+      # Headers — Pages Router (req object)
+      content.scan(/req\.headers\[['"]([^'"]+)['"]\]/) do |m|  # req.headers["x-token"]
         add_param(endpoint, m[1], "header")
       end
-      content.scan(/req\.headers\.(\w+)/) do |m|
+      content.scan(/req\.headers\[([A-Za-z_$]\w*)\]/) do |m|  # req.headers[CONST] — unresolved
+        add_unresolved_param(endpoint, m[1], "header")
+      end
+      content.scan(/req\.headers\.(\w+)/) do |m|               # req.headers.authorization
         add_param(endpoint, m[1], "header")
       end
 
-      # req.cookies["session"] or req.cookies.name
-      content.scan(/req\.cookies\[['"]([^'"]+)['"]\]/) do |m|
+      # Cookies — Pages Router (req object)
+      content.scan(/req\.cookies\[['"]([^'"]+)['"]\]/) do |m|  # req.cookies["session"]
         add_param(endpoint, m[1], "cookie")
       end
-      content.scan(/req\.cookies\.(\w+)/) do |m|
+      content.scan(/req\.cookies\[([A-Za-z_$]\w*)\]/) do |m|  # req.cookies[CONST] — unresolved
+        add_unresolved_param(endpoint, m[1], "cookie")
+      end
+      content.scan(/req\.cookies\.(\w+)/) do |m|               # req.cookies.session
         add_param(endpoint, m[1], "cookie")
       end
     end
@@ -466,22 +472,36 @@ module Analyzer::Javascript
         end
       end
 
-      # request.headers.get("x-token")
-      content.scan(/(?:request|req)\.headers\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
+      # Headers — Web Request API (request/req object)
+      content.scan(/(?:request|req)\.headers\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|  # .get("literal")
         add_param(endpoint, m[1], "header")
       end
-      content.scan(/headers\(\)\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
-        add_param(endpoint, m[1], "header")
+      content.scan(/(?:request|req)\.headers\.get\s*\(\s*([A-Za-z_$]\w*)\s*\)/) do |m|   # .get(CONST) — unresolved
+        add_unresolved_param(endpoint, m[1], "header")
       end
 
-      # cookies().get("session") from next/headers
-      content.scan(/cookies\(\)\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
+      # Headers — Next.js server API: headers() from "next/headers"
+      content.scan(/headers\(\)\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|  # .get("literal")
+        add_param(endpoint, m[1], "header")
+      end
+      content.scan(/headers\(\)\.get\s*\(\s*([A-Za-z_$]\w*)\s*\)/) do |m|   # .get(CONST) — unresolved
+        add_unresolved_param(endpoint, m[1], "header")
+      end
+
+      # Cookies — Next.js server API: cookies() from "next/headers"
+      content.scan(/cookies\(\)\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|  # .get("literal")
         add_param(endpoint, m[1], "cookie")
+      end
+      content.scan(/cookies\(\)\.get\s*\(\s*([A-Za-z_$]\w*)\s*\)/) do |m|   # .get(CONST) — unresolved
+        add_unresolved_param(endpoint, m[1], "cookie")
       end
       content.scan(/(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?cookies\s*\(\s*\)/) do |m|
         escaped = Regex.escape(m[1])
-        content.scan(/\b#{escaped}\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |mm|
+        content.scan(/\b#{escaped}\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |mm|  # store.get("literal")
           add_param(endpoint, mm[1], "cookie")
+        end
+        content.scan(/\b#{escaped}\.get\s*\(\s*([A-Za-z_$]\w*)\s*\)/) do |mm|   # store.get(CONST) — unresolved
+          add_unresolved_param(endpoint, mm[1], "cookie")
         end
       end
     end
@@ -556,6 +576,14 @@ module Analyzer::Javascript
       return if name.empty?
       return if endpoint.params.any? { |p| p.name == name && p.param_type == type }
       endpoint.push_param(Param.new(name, "", type))
+    end
+
+    private def add_unresolved_param(endpoint : Endpoint, name : String, type : String)
+      return if name.empty?
+      return if endpoint.params.any? { |p| p.name == name && p.param_type == type }
+      param = Param.new(name, "", type)
+      param.add_tag(Tag.new("unresolved", "Key is a variable/constant identifier, not a string literal", "analyzer"))
+      endpoint.push_param(param)
     end
 
     private def strip_extension(path : String) : String
