@@ -15,7 +15,7 @@ module Analyzer::Scala
       code_lines = scala_code_lines(content)
 
       routes_names = collect_routes_bindings(content)
-      mount_prefixes = collect_mount_prefixes(content, routes_names)
+      mount_prefixes = collect_mount_prefixes(code_lines, routes_names)
 
       current_routes_name : String? = nil
 
@@ -201,11 +201,12 @@ module Analyzer::Scala
       names
     end
 
-    private def collect_mount_prefixes(content : String, routes_names : Set(String)) : Hash(String, String)
+    private def collect_mount_prefixes(code_lines : Array(String), routes_names : Set(String)) : Hash(String, String)
       prefixes = {} of String => String
-      # Scan the code-masked view so a `"/x" -> name` that lives inside a
-      # `"""…"""` doc or a `/* … */` comment can't register a phantom prefix.
-      scala_code_lines(content).join('\n').scan(/"(\/[^"]*)"\s*->\s*(\w+)/) do |m|
+      # Scan the (already-computed) code-masked view so a `"/x" -> name` that
+      # lives inside a `"""…"""` doc or a `/* … */` comment can't register a
+      # phantom prefix.
+      code_lines.join('\n').scan(/"(\/[^"]*)"\s*->\s*(\w+)/) do |m|
         prefix = m[1]
         name = m[2]
         next unless routes_names.includes?(name)

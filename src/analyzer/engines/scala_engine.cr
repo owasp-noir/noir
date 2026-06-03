@@ -97,6 +97,13 @@ module Analyzer::Scala
       Noir::ScalaLexer.new(content).masked_lines
     end
 
+    # One lexer per file when an analyzer needs BOTH the code and structural
+    # views (take `.code_lines` and `.masked_lines` from it) so the file is
+    # lexed once rather than twice.
+    protected def scala_lexer(content : String) : Noir::ScalaLexer
+      Noir::ScalaLexer.new(content)
+    end
+
     private def scala_structural_opening_brace(line : String) : Int32?
       scala_structural_line(line).index('{')
     end

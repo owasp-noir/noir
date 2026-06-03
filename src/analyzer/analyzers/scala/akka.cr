@@ -13,8 +13,9 @@ module Analyzer::Scala
     private def extract_routes_from_content(path : String, content : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
       lines = content.split('\n')
-      code_lines = scala_code_lines(content)
-      structural_lines = scala_structural_lines(content)
+      lexer = scala_lexer(content)
+      code_lines = lexer.code_lines
+      structural_lines = lexer.masked_lines
       prefix_stack = [] of String
       brace_depth = 0
       prefix_depths = [] of Int32 # Track at which depth each prefix was added
