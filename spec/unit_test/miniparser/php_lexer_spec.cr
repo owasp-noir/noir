@@ -88,6 +88,33 @@ describe Noir::PhpLexer do
     end
   end
 
+  describe "masking edge cases" do
+    it "does not let `/*/` self-close the block comment" do
+      # `/*/` is an OPEN comment, not a complete one — the route inside must
+      # stay masked rather than leaking as code after a phantom close.
+      src = "/*/ Route::get('/leak') */ ok();"
+      lex = Noir::PhpLexer.new(src)
+      lex.in_code?(src.index!("Route")).should be_false
+      lex.in_code?(src.index!("ok")).should be_true
+    end
+
+    it "masks heredoc bodies under LF, CRLF and bare-CR line endings" do
+      {"\n", "\r\n", "\r"}.each do |nl|
+        src = "$h = <<<EOT#{nl}Route::get('/x')#{nl}EOT;#{nl}done();"
+        lex = Noir::PhpLexer.new(src)
+        lex.masked.size.should eq(src.size)
+        lex.in_code?(src.index!("Route::get")).should be_false
+        lex.in_code?(src.index!("done")).should be_true
+      end
+    end
+
+    it "does not treat a digit-leading `<<<` label as a heredoc" do
+      src = "$x = 1 <<<3;"
+      lex = Noir::PhpLexer.new(src)
+      lex.skip_ranges.should eq([] of Range(Int32, Int32))
+    end
+  end
+
   describe "#tokens" do
     it "produces a structural stream with operators, idents and string spans" do
       src = %(Route::get('/x')->name('home');)
@@ -103,6 +130,28 @@ describe Noir::PhpLexer do
       str = Noir::PhpLexer.new(src).tokens.find! { |t| t.kind == :string }
       str.value.should eq("'/y'")
       str.line.should eq(2)
+    end
+
+    it "tokenizes variables, => and array brackets in a closure" do
+      src = %(fn($r) => [$r => 1];)
+      kinds = Noir::PhpLexer.new(src).tokens.map(&.kind)
+      kinds.should eq([
+        :ident, :lparen, :variable, :rparen, :double_arrow,
+        :lbracket, :variable, :double_arrow, :rbracket, :semicolon,
+      ])
+    end
+
+    it "emits comment and heredoc span tokens with correct kinds" do
+      src = "/* c */ $x = <<<EOT\nbody\nEOT;\n"
+      kinds = Noir::PhpLexer.new(src).tokens.map(&.kind)
+      kinds.should contain(:comment)
+      kinds.should contain(:heredoc)
+      kinds.should contain(:variable)
+    end
+
+    it "returns no tokens for empty source and skips a lone $" do
+      Noir::PhpLexer.new("").tokens.should be_empty
+      Noir::PhpLexer.new("$ ").tokens.should be_empty
     end
   end
 end

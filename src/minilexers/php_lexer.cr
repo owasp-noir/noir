@@ -114,7 +114,12 @@ module Noir
     end
 
     private def mask_block_comment(start : Int32) : Int32
-      i = start
+      # Blank the `/*` opener first and scan for `*/` from after it, so a
+      # `/*/` is NOT mis-read as a self-closing comment (the opener's own `*`
+      # must not double as the closer's `*`).
+      @masked << ' '
+      @masked << ' '
+      i = start + 2
       while i < @size
         if @chars[i] == '*' && i + 1 < @size && @chars[i + 1] == '/'
           @masked << ' '
@@ -177,34 +182,43 @@ module Noir
       end
 
       label_start = i
+      # PHP labels start with a letter, `_` or a >=0x80 byte — never a digit;
+      # a digit-leading run means this `<<<` isn't a heredoc opener.
+      return unless i < @size && ident_start?(@chars[i])
       while i < @size && ident_char?(@chars[i])
         i += 1
       end
       label = @chars[label_start...i].join
-      return if label.empty?
       return if quote != '\0' && (i >= @size || @chars[i] != quote)
       i += 1 if quote != '\0'
 
-      # The remainder of the opener line must be only whitespace / `;` / `,`
-      # / `)` before the newline; otherwise this isn't a heredoc opener.
+      # The remainder of the opener line must be only blanks before the line
+      # break: PHP forbids any code after the label on the opener line, so
+      # anything else means this isn't a heredoc opener. A line break is
+      # `\n`, `\r\n`, or a bare `\r` (classic-Mac endings).
       j = i
-      while j < @size && @chars[j] != '\n'
+      while j < @size && @chars[j] != '\n' && @chars[j] != '\r'
         ch = @chars[j]
-        return unless ch == ' ' || ch == '\t' || ch == '\r'
+        return unless ch == ' ' || ch == '\t'
         j += 1
       end
-      return if j >= @size # opener with no body/newline → not heredoc
+      return if j >= @size # opener with no body/line break → not heredoc
 
-      # Mask the opener (we've already emitted nothing for start..j). Blank
-      # everything from `start` up to but not including the newline at j.
+      # Blank the opener from `start` up to (not including) the line break.
       (start...j).each { @masked << ' ' }
-      i = j # at the newline
+      i = j # at the line break
 
       # Walk body lines until a line that closes the label.
       while i < @size
-        # i sits at a newline; copy it.
-        @masked << '\n'
-        i += 1
+        # i sits at a line break; copy it verbatim, treating `\r\n` as a unit.
+        if @chars[i] == '\r' && i + 1 < @size && @chars[i + 1] == '\n'
+          @masked << '\r'
+          @masked << '\n'
+          i += 2
+        else
+          @masked << @chars[i] # `\n` or a bare `\r`
+          i += 1
+        end
         line_start = i
         k = i
         while k < @size && (@chars[k] == ' ' || @chars[k] == '\t')
@@ -212,14 +226,14 @@ module Noir
         end
         if matches_label?(k, label)
           # Blank the indentation + label, then continue normal scanning from
-          # the char after the label (could be `;`, `,`, `)`, newline...).
+          # the char after the label (could be `;`, `,`, `)`, a line break...).
           (line_start...(k + label.size)).each { @masked << ' ' }
           @spans << {:heredoc, start, k + label.size}
           return k + label.size
         end
 
-        # Not a closer: blank the whole line (up to next newline).
-        while i < @size && @chars[i] != '\n'
+        # Not a closer: blank the whole line up to the next line break.
+        while i < @size && @chars[i] != '\n' && @chars[i] != '\r'
           @masked << ' '
           i += 1
         end
@@ -335,12 +349,6 @@ module Noir
       @spans.none? { |(_, s, e)| s <= pos && pos < e }
     end
 
-    # The masked code as a String (strings/comments/heredoc blanked). Handy for
-    # running existing regexes over executable code only.
-    def masked_source : String
-      String.build { |io| @masked.each { |c| io << c } }
-    end
-
     # ---- token stream ------------------------------------------------------
 
     # Lazily produce a flat token stream over the source: structural
@@ -357,11 +365,24 @@ module Noir
       span_idx = 0
       spans = @spans
       i = 0
+      # Running line counter. Tokens are emitted at non-decreasing start
+      # offsets, so advancing `line_cursor` monotonically keeps line lookup
+      # O(n) total instead of the O(n^2) a rescan-from-zero per token caused.
+      line = 1
+      line_cursor = 0
+      line_for = ->(pos : Int32) do
+        while line_cursor < pos
+          line += 1 if @chars[line_cursor] == '\n'
+          line_cursor += 1
+        end
+        line
+      end
+
       while i < @size
         # Emit any recorded span that starts here.
         if span_idx < spans.size && spans[span_idx][1] == i
           kind, s, e = spans[span_idx]
-          result << PhpToken.new(kind, @chars[s...e].join, s, e, line_at(s))
+          result << PhpToken.new(kind, @chars[s...e].join, s, e, line_for.call(s))
           span_idx += 1
           i = e
           next
@@ -376,17 +397,17 @@ module Noir
           while i < @size && ident_char?(@masked[i])
             i += 1
           end
-          result << PhpToken.new(:variable, @chars[start...i].join, start, i, line_at(start))
+          result << PhpToken.new(:variable, @chars[start...i].join, start, i, line_for.call(start))
         elsif ident_start?(c)
           start = i
           while i < @size && ident_char?(@masked[i])
             i += 1
           end
-          result << PhpToken.new(:ident, @chars[start...i].join, start, i, line_at(start))
+          result << PhpToken.new(:ident, @chars[start...i].join, start, i, line_for.call(start))
         else
           kind, len = punct_at(i)
           if kind
-            result << PhpToken.new(kind, @chars[i...i + len].join, i, i + len, line_at(i))
+            result << PhpToken.new(kind, @chars[i...i + len].join, i, i + len, line_for.call(i))
             i += len
           else
             i += 1
@@ -413,17 +434,6 @@ module Noir
       when c == ','             then {:comma, 1}
       else                           {nil, 1}
       end
-    end
-
-    private def line_at(pos : Int32) : Int32
-      line = 1
-      i = 0
-      limit = pos < @size ? pos : @size
-      while i < limit
-        line += 1 if @chars[i] == '\n'
-        i += 1
-      end
-      line
     end
   end
 end
