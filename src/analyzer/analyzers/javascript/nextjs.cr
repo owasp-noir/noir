@@ -408,24 +408,24 @@ module Analyzer::Javascript
       end
 
       # Headers — Pages Router (req object)
-      content.scan(/req\.headers\[['"]([^'"]+)['"]\]/) do |m|  # req.headers["x-token"]
+      content.scan(/req\.headers\[['"]([^'"]+)['"]\]/) do |m| # req.headers["x-token"]
         add_param(endpoint, m[1], "header")
       end
-      content.scan(/req\.headers\[([A-Za-z_$]\w*)\]/) do |m|  # req.headers[CONST] — unresolved
+      content.scan(/req\.headers\[([A-Za-z_$]\w*)\]/) do |m| # req.headers[CONST] — unresolved
         add_unresolved_param(endpoint, m[1], "header")
       end
-      content.scan(/req\.headers\.(\w+)/) do |m|               # req.headers.authorization
+      content.scan(/req\.headers\.(\w+)/) do |m| # req.headers.authorization
         add_param(endpoint, m[1], "header")
       end
 
       # Cookies — Pages Router (req object)
-      content.scan(/req\.cookies\[['"]([^'"]+)['"]\]/) do |m|  # req.cookies["session"]
+      content.scan(/req\.cookies\[['"]([^'"]+)['"]\]/) do |m| # req.cookies["session"]
         add_param(endpoint, m[1], "cookie")
       end
-      content.scan(/req\.cookies\[([A-Za-z_$]\w*)\]/) do |m|  # req.cookies[CONST] — unresolved
+      content.scan(/req\.cookies\[([A-Za-z_$]\w*)\]/) do |m| # req.cookies[CONST] — unresolved
         add_unresolved_param(endpoint, m[1], "cookie")
       end
-      content.scan(/req\.cookies\.(\w+)/) do |m|               # req.cookies.session
+      content.scan(/req\.cookies\.(\w+)/) do |m| # req.cookies.session
         add_param(endpoint, m[1], "cookie")
       end
     end
@@ -473,34 +473,34 @@ module Analyzer::Javascript
       end
 
       # Headers — Web Request API (request/req object)
-      content.scan(/(?:request|req)\.headers\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|  # .get("literal")
+      content.scan(/(?:request|req)\.headers\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m| # .get("literal")
         add_param(endpoint, m[1], "header")
       end
-      content.scan(/(?:request|req)\.headers\.get\s*\(\s*([A-Za-z_$]\w*)\s*\)/) do |m|   # .get(CONST) — unresolved
+      content.scan(/(?:request|req)\.headers\.get\s*\(\s*([A-Za-z_$]\w*)\s*\)/) do |m| # .get(CONST) — unresolved
         add_unresolved_param(endpoint, m[1], "header")
       end
 
       # Headers — Next.js server API: headers() from "next/headers"
-      content.scan(/headers\(\)\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|  # .get("literal")
+      content.scan(/headers\(\)\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m| # .get("literal")
         add_param(endpoint, m[1], "header")
       end
-      content.scan(/headers\(\)\.get\s*\(\s*([A-Za-z_$]\w*)\s*\)/) do |m|   # .get(CONST) — unresolved
+      content.scan(/headers\(\)\.get\s*\(\s*([A-Za-z_$]\w*)\s*\)/) do |m| # .get(CONST) — unresolved
         add_unresolved_param(endpoint, m[1], "header")
       end
 
       # Cookies — Next.js server API: cookies() from "next/headers"
-      content.scan(/cookies\(\)\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|  # .get("literal")
+      content.scan(/cookies\(\)\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m| # .get("literal")
         add_param(endpoint, m[1], "cookie")
       end
-      content.scan(/cookies\(\)\.get\s*\(\s*([A-Za-z_$]\w*)\s*\)/) do |m|   # .get(CONST) — unresolved
+      content.scan(/cookies\(\)\.get\s*\(\s*([A-Za-z_$]\w*)\s*\)/) do |m| # .get(CONST) — unresolved
         add_unresolved_param(endpoint, m[1], "cookie")
       end
       content.scan(/(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?cookies\s*\(\s*\)/) do |m|
         escaped = Regex.escape(m[1])
-        content.scan(/\b#{escaped}\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |mm|  # store.get("literal")
+        content.scan(/\b#{escaped}\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |mm| # store.get("literal")
           add_param(endpoint, mm[1], "cookie")
         end
-        content.scan(/\b#{escaped}\.get\s*\(\s*([A-Za-z_$]\w*)\s*\)/) do |mm|   # store.get(CONST) — unresolved
+        content.scan(/\b#{escaped}\.get\s*\(\s*([A-Za-z_$]\w*)\s*\)/) do |mm| # store.get(CONST) — unresolved
           add_unresolved_param(endpoint, mm[1], "cookie")
         end
       end

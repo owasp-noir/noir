@@ -956,73 +956,73 @@ module Noir
 
     def self.extract_header_params(handler_body : String, endpoint : Endpoint)
       # Express/Fastify-style: req.headers / req.header
-      handler_body.scan(/(?:req|request)\.headers\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match|  # req.headers["x-token"]
+      handler_body.scan(/(?:req|request)\.headers\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match| # req.headers["x-token"]
         endpoint.push_param(Param.new(match[1], "", "header")) if match.size > 0
       end
-      handler_body.scan(/(?:req|request)\.headers\s*\[\s*([A-Za-z_$]\w*)\s*\]/) do |match|  # req.headers[CONST] — unresolved
+      handler_body.scan(/(?:req|request)\.headers\s*\[\s*([A-Za-z_$]\w*)\s*\]/) do |match| # req.headers[CONST] — unresolved
         push_unresolved_param(endpoint, match[1], "header") if match.size > 0
       end
-      handler_body.scan(/(?:req|request)\.headers\.(\w+)/) do |match|                        # req.headers.authorization
+      handler_body.scan(/(?:req|request)\.headers\.(\w+)/) do |match| # req.headers.authorization
         endpoint.push_param(Param.new(match[1], "", "header")) if match.size > 0
       end
-      handler_body.scan(/(?:req|request)\.header\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|  # req.header("x-token")
+      handler_body.scan(/(?:req|request)\.header\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match| # req.header("x-token")
         endpoint.push_param(Param.new(match[1], "", "header")) if match.size > 0
       end
-      handler_body.scan(/(?:req|request)\.header\s*\(\s*([A-Za-z_$]\w*)\s*\)/) do |match|   # req.header(CONST) — unresolved
+      handler_body.scan(/(?:req|request)\.header\s*\(\s*([A-Za-z_$]\w*)\s*\)/) do |match| # req.header(CONST) — unresolved
         push_unresolved_param(endpoint, match[1], "header") if match.size > 0
       end
-      handler_body.scan(/(?:req|request)\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|     # req.get("x-token")
+      handler_body.scan(/(?:req|request)\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match| # req.get("x-token")
         endpoint.push_param(Param.new(match[1], "", "header")) if match.size > 0
       end
 
       # Koa-style: ctx.headers / ctx.header / ctx.get
-      handler_body.scan(/ctx\.headers\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match|  # ctx.headers["x-token"]
+      handler_body.scan(/ctx\.headers\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match| # ctx.headers["x-token"]
         endpoint.push_param(Param.new(match[1], "", "header")) if match.size > 0
       end
-      handler_body.scan(/ctx\.headers\s*\[\s*([A-Za-z_$]\w*)\s*\]/) do |match|  # ctx.headers[CONST] — unresolved
+      handler_body.scan(/ctx\.headers\s*\[\s*([A-Za-z_$]\w*)\s*\]/) do |match| # ctx.headers[CONST] — unresolved
         push_unresolved_param(endpoint, match[1], "header") if match.size > 0
       end
-      handler_body.scan(/ctx\.header\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match|  # ctx.header["x-token"]
+      handler_body.scan(/ctx\.header\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match| # ctx.header["x-token"]
         endpoint.push_param(Param.new(match[1], "", "header")) if match.size > 0
       end
-      handler_body.scan(/ctx\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|     # ctx.get("x-token")
+      handler_body.scan(/ctx\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match| # ctx.get("x-token")
         endpoint.push_param(Param.new(match[1], "", "header")) if match.size > 0
       end
 
       # Hono-style: c.req.header
-      handler_body.scan(/\w+\.req\.header\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|  # c.req.header("x-token")
+      handler_body.scan(/\w+\.req\.header\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match| # c.req.header("x-token")
         endpoint.push_param(Param.new(match[1], "", "header")) if match.size > 0
       end
-      handler_body.scan(/\w+\.req\.header\s*\(\s*([A-Za-z_$]\w*)\s*\)/) do |match|   # c.req.header(CONST) — unresolved
+      handler_body.scan(/\w+\.req\.header\s*\(\s*([A-Za-z_$]\w*)\s*\)/) do |match| # c.req.header(CONST) — unresolved
         push_unresolved_param(endpoint, match[1], "header") if match.size > 0
       end
     end
 
     def self.extract_cookie_params(handler_body : String, endpoint : Endpoint)
       # Express/Fastify-style: req.cookies
-      handler_body.scan(/(?:req|request)\.cookies\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match|  # req.cookies["session"]
+      handler_body.scan(/(?:req|request)\.cookies\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match| # req.cookies["session"]
         endpoint.push_param(Param.new(match[1], "", "cookie")) if match.size > 0
       end
-      handler_body.scan(/(?:req|request)\.cookies\s*\[\s*([A-Za-z_$]\w*)\s*\]/) do |match|  # req.cookies[CONST] — unresolved
+      handler_body.scan(/(?:req|request)\.cookies\s*\[\s*([A-Za-z_$]\w*)\s*\]/) do |match| # req.cookies[CONST] — unresolved
         push_unresolved_param(endpoint, match[1], "cookie") if match.size > 0
       end
-      handler_body.scan(/(?:req|request)\.cookies\.(\w+)/) do |match|                        # req.cookies.session
+      handler_body.scan(/(?:req|request)\.cookies\.(\w+)/) do |match| # req.cookies.session
         endpoint.push_param(Param.new(match[1], "", "cookie")) if match.size > 0
       end
 
       # Koa-style: ctx.cookies.get
-      handler_body.scan(/ctx\.cookies\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|  # ctx.cookies.get("session")
+      handler_body.scan(/ctx\.cookies\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match| # ctx.cookies.get("session")
         endpoint.push_param(Param.new(match[1], "", "cookie")) if match.size > 0
       end
-      handler_body.scan(/ctx\.cookies\.get\s*\(\s*([A-Za-z_$]\w*)\s*\)/) do |match|   # ctx.cookies.get(CONST) — unresolved
+      handler_body.scan(/ctx\.cookies\.get\s*\(\s*([A-Za-z_$]\w*)\s*\)/) do |match| # ctx.cookies.get(CONST) — unresolved
         push_unresolved_param(endpoint, match[1], "cookie") if match.size > 0
       end
 
       # Hono-style: getCookie(c, 'name')
-      handler_body.scan(/getCookie\s*\(\s*\w+\s*,\s*['"]([^'"]+)['"]\s*\)/) do |match|  # getCookie(c, "name")
+      handler_body.scan(/getCookie\s*\(\s*\w+\s*,\s*['"]([^'"]+)['"]\s*\)/) do |match| # getCookie(c, "name")
         endpoint.push_param(Param.new(match[1], "", "cookie")) if match.size > 0
       end
-      handler_body.scan(/getCookie\s*\(\s*\w+\s*,\s*([A-Za-z_$]\w*)\s*\)/) do |match|   # getCookie(c, CONST) — unresolved
+      handler_body.scan(/getCookie\s*\(\s*\w+\s*,\s*([A-Za-z_$]\w*)\s*\)/) do |match| # getCookie(c, CONST) — unresolved
         push_unresolved_param(endpoint, match[1], "cookie") if match.size > 0
       end
     end
