@@ -13,13 +13,15 @@ module Analyzer::Scala
     private def extract_routes_from_content(path : String, content : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
       lines = content.split('\n')
+      code_lines = scala_code_lines(content)
+      structural_lines = scala_structural_lines(content)
       prefix_stack = [] of String
       brace_depth = 0
       prefix_depths = [] of Int32 # Track at which depth each prefix was added
 
-      lines.each_with_index do |line, index|
-        stripped_line = scala_code_line(line).strip
-        structural_line = scala_structural_line(line).strip
+      lines.each_with_index do |_line, index|
+        stripped_line = (code_lines[index]? || "").strip
+        structural_line = (structural_lines[index]? || "").strip
 
         # Handle pathPrefix: pathPrefix("api" / "v1") { ... }
         if path_prefix_args = directive_args(stripped_line, "pathPrefix")
@@ -53,7 +55,7 @@ module Analyzer::Scala
 
               # Extract additional parameters from the block
               extract_params_from_block(endpoint, method_param_scopes.join("\n"))
-              attach_method_callees(endpoint, lines, index, block_end, method, path) if include_callee
+              attach_method_callees(endpoint, lines, structural_lines, index, block_end, method, path) if include_callee
 
               endpoints << endpoint
             end
@@ -75,7 +77,7 @@ module Analyzer::Scala
               endpoint = create_endpoint(full_path, method.upcase, path)
               extract_path_params(endpoint, full_path)
               extract_params_from_block(endpoint, method_param_scopes.join("\n"))
-              attach_method_callees(endpoint, lines, index, block_end, method, path) if include_callee
+              attach_method_callees(endpoint, lines, structural_lines, index, block_end, method, path) if include_callee
               endpoints << endpoint
             end
           end
@@ -105,17 +107,19 @@ module Analyzer::Scala
 
     private def attach_method_callees(endpoint : Endpoint,
                                       lines : Array(String),
+                                      structural_lines : Array(String),
                                       route_start : Int32,
                                       route_end : Int32,
                                       method : String,
                                       path : String)
-      extract_method_blocks(lines, route_start, route_end, method).each do |body, start_line|
+      extract_method_blocks(lines, structural_lines, route_start, route_end, method).each do |body, start_line|
         callees = Noir::ScalaCalleeExtractor.callees_for_body(body, path, start_line)
         attach_scala_callees(endpoint, callees)
       end
     end
 
     private def extract_method_blocks(lines : Array(String),
+                                      structural_lines : Array(String),
                                       route_start : Int32,
                                       route_end : Int32,
                                       method : String) : Array(Tuple(String, Int32))
@@ -123,7 +127,7 @@ module Analyzer::Scala
       index = route_start
 
       while index <= route_end
-        stripped = scala_structural_line(lines[index])
+        stripped = structural_lines[index]? || ""
         match = stripped.match(/(?<![.\w])#{Regex.escape(method)}\s*\{/)
         unless match
           index += 1

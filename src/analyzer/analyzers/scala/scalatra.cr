@@ -13,9 +13,10 @@ module Analyzer::Scala
     private def extract_routes_from_content(path : String, content : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
       lines = content.split('\n')
+      code_lines = scala_code_lines(content)
 
-      lines.each_with_index do |line, index|
-        stripped_line = scala_code_line(line).strip
+      lines.each_with_index do |_line, index|
+        stripped_line = (code_lines[index]? || "").strip
 
         # Match Scalatra route definitions: get("/path") { ... }
         HTTP_METHODS.each do |method|

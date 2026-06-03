@@ -1,5 +1,6 @@
 require "../../models/analyzer"
 require "../../miniparsers/scala_callee_extractor"
+require "../../minilexers/scala_lexer"
 
 module Analyzer::Scala
   abstract class ScalaEngine < Analyzer
@@ -75,6 +76,25 @@ module Analyzer::Scala
 
     protected def scala_code_line(line : String) : String
       Noir::ScalaCalleeExtractor.strip_comment_preserving_strings(line)
+    end
+
+    # Whole-file masked views (via `Noir::ScalaLexer`). Unlike the per-line
+    # `scala_code_line` / `scala_structural_line`, these thread block-comment
+    # depth and triple-quote state across the WHOLE file, so route-shaped DSL
+    # inside a `"""…"""` string or a multi-line `/* … */` comment no longer
+    # leaks as a phantom endpoint. Index 1:1 with `content.lines`; analyzers
+    # that split with `content.split('\n')` should guard the last (possibly
+    # empty) line with `[i]? || ""`. Build once per file and reuse.
+    #
+    #   * code view: comments + triple-quote bodies blanked, regular `"…"`
+    #     string literals KEPT (Scala routes are string args).
+    #   * structural view: all strings/comments blanked, for brace matching.
+    protected def scala_code_lines(content : String) : Array(String)
+      Noir::ScalaLexer.new(content).code_lines
+    end
+
+    protected def scala_structural_lines(content : String) : Array(String)
+      Noir::ScalaLexer.new(content).masked_lines
     end
 
     private def scala_structural_opening_brace(line : String) : Int32?
