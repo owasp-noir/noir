@@ -99,4 +99,13 @@ Taggers span several kinds of security-relevant signal. Run `noir list taggers` 
   - `security-headers` — hardening response headers set on the route (HSTS, CSP, `X-Frame-Options`, `X-Content-Type-Options`, …).
   - `body-limit` — request body size cap (DoS mitigation); a disabled limit (`DefaultBodyLimit::disable()`) is flagged as a risk.
 
+  For Go web frameworks (`go_security`) the protective middleware is what gets mapped onto each endpoint — unlike Rails, Go ships none of it on by default, so its *presence* (and absence on a state-changing route) is the signal. Detected from group-level `.Use(...)`, global wrappers, and inline route middleware across Echo, Gin, Fiber, Chi, and friends:
+  - `csrf-protection` — CSRF middleware on the route (`middleware.CSRF` for Echo, `csrf.New` for Fiber, `csrf.Protect` for gorilla/csrf, gin-csrf, `nosurf`); its absence on cookie-authenticated state-changing routes is the case worth reviewing.
+  - `security-headers` — response-hardening middleware (Echo `middleware.Secure`, Fiber `helmet`, unrolled/gin-contrib `secure`) setting HSTS / `X-Frame-Options` / nosniff / XSS protections.
+  - `rate-limit` — throttling middleware (Echo `RateLimiter`, chi `Throttle`, Fiber/ulule `limiter`, go-chi/httprate, tollbooth); maps brute-force / abuse exposure.
+  - `body-limit` — request-body size cap (Echo `BodyLimit`, gin-contrib/size); a DoS / resource-exhaustion guard.
+  - `timeout` — request-timeout middleware (Echo/chi `middleware.Timeout`, Fiber `timeout`); a slow-request / resource-exhaustion guard.
+  - `cors` — CORS middleware (Echo `middleware.CORS`, Fiber/gin-contrib/go-chi/rs `cors`, gorilla `handlers.CORS`); known-permissive constructors (`cors.Default()`, `cors.AllowAll()`) are flagged as allowing all origins. Complements the header-param-based `cors` tagger.
+  - `secure-cookies` — cookie confidentiality/integrity middleware (Fiber `encryptcookie`).
+
 Endpoint-level tags also feed the AI context as signals, enriching the per-endpoint summary that AI reviewers consume.

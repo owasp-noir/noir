@@ -99,4 +99,13 @@ noir scan <BASE_PATH> --use-taggers hunt,oauth
   - `security-headers` — 라우트에 설정된 강화 응답 헤더(HSTS, CSP, `X-Frame-Options`, `X-Content-Type-Options` 등).
   - `body-limit` — 요청 본문 크기 제한(DoS 완화). 제한이 비활성화(`DefaultBodyLimit::disable()`)된 경우 위험으로 표시.
 
+  Go 웹 프레임워크(`go_security`)의 경우, 각 엔드포인트에 매핑되는 것은 *보호 미들웨어*입니다. Rails와 달리 Go는 이런 보호를 기본으로 제공하지 않으므로, 그 *존재*(그리고 상태 변경 라우트에서의 부재)가 곧 신호입니다. 그룹 단위 `.Use(...)`, 전역 래퍼, 인라인 라우트 미들웨어로부터 Echo·Gin·Fiber·Chi 등 전반에서 탐지합니다:
+  - `csrf-protection` — 라우트의 CSRF 미들웨어(Echo `middleware.CSRF`, Fiber `csrf.New`, gorilla/csrf `csrf.Protect`, gin-csrf, `nosurf`). 쿠키 인증 기반 상태 변경 라우트에서 부재하면 검토 대상.
+  - `security-headers` — 응답 강화 미들웨어(Echo `middleware.Secure`, Fiber `helmet`, unrolled/gin-contrib `secure`). HSTS / `X-Frame-Options` / nosniff / XSS 보호 헤더 설정.
+  - `rate-limit` — 스로틀링 미들웨어(Echo `RateLimiter`, chi `Throttle`, Fiber/ulule `limiter`, go-chi/httprate, tollbooth). 무차별 대입/남용 노출을 매핑.
+  - `body-limit` — 요청 본문 크기 제한(Echo `BodyLimit`, gin-contrib/size). DoS/자원 고갈 방어 장치.
+  - `timeout` — 요청 타임아웃 미들웨어(Echo/chi `middleware.Timeout`, Fiber `timeout`). 느린 요청/자원 고갈 방어 장치.
+  - `cors` — CORS 미들웨어(Echo `middleware.CORS`, Fiber/gin-contrib/go-chi/rs `cors`, gorilla `handlers.CORS`). 알려진 permissive 생성자(`cors.Default()`, `cors.AllowAll()`)는 모든 origin 허용으로 플래깅. 헤더 파라미터 기반 `cors` 태거를 보완.
+  - `secure-cookies` — 쿠키 기밀성/무결성 미들웨어(Fiber `encryptcookie`).
+
 엔드포인트 레벨 태그는 AI 컨텍스트에도 신호로 전달되어, AI 리뷰어가 사용하는 엔드포인트별 요약을 더욱 풍부하게 만듭니다.
