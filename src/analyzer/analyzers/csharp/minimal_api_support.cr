@@ -611,17 +611,17 @@ module Analyzer::CSharp::MinimalApiSupport
       (from...line_chars.size).each do |k|
         # Count over the masked twin so a `(`/`)` inside a string default
         # value (`prop = "f(x"`) can't unbalance the group; emit raw text.
-        mch = k < mline_chars.size ? mline_chars[k] : ' '
-        ch = line_chars[k]
-        if mch == '('
+        masked_char = k < mline_chars.size ? mline_chars[k] : ' '
+        raw_char = line_chars[k]
+        if masked_char == '('
           depth += 1
           started = true
           next if depth == 1
-        elsif mch == ')'
+        elsif masked_char == ')'
           depth -= 1
           return io.to_s if depth == 0
         end
-        io << ch if started && depth >= 1
+        io << raw_char if started && depth >= 1
       end
       io << ' '
       break if started && depth <= 0
