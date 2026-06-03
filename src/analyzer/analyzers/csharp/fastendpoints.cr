@@ -162,10 +162,11 @@ module Analyzer::CSharp
 
     private def extract_configure_block(class_block : String) : String?
       lines = class_block.lines
+      masked_lines = Noir::CSharpLexer.new(class_block).masked_lines
       lines.each_with_index do |line, index|
         next unless line.includes?("Configure") && line.includes?("(") && line.includes?(")")
         next unless line.includes?("override") || line.includes?("public") || line.includes?("protected")
-        method_block = extract_method_block(lines, index)
+        method_block = extract_method_block(lines, masked_lines, index)
         return method_block
       end
       nil

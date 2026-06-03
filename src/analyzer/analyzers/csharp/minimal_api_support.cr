@@ -241,12 +241,13 @@ module Analyzer::CSharp::MinimalApiSupport
     return [] of Param unless block.includes?("Bind(") || block.includes?("BindAsync(")
 
     params = [] of Param
+    masked_lines = Noir::CSharpLexer.new(lines.join('\n')).masked_lines
     lines.each_with_index do |line, index|
       next unless line.includes?("Bind(") || line.includes?("BindAsync(")
       next unless line.includes?("public") || line.includes?("private") || line.includes?("protected") || line.includes?("internal") || line.includes?("static")
 
-      _, end_idx = build_signature(lines, index)
-      body = extract_method_block(lines, end_idx)
+      _, end_idx = build_signature(lines, masked_lines, index)
+      body = extract_method_block(lines, masked_lines, end_idx)
       params.concat(extract_params_from_block(body))
     end
 
@@ -507,6 +508,7 @@ module Analyzer::CSharp::MinimalApiSupport
   # registration call itself and assignment/call sites.
   private def locate_method_definition(name : String, lines : Array(String)) : Tuple(String, String, Int32, Bool)?
     decl = /(?:public|private|internal|protected|static|async)\b[^;={(]*\b#{Regex.escape(name)}\s*\(/
+    masked_lines = Noir::CSharpLexer.new(lines.join('\n')).masked_lines
 
     lines.each_with_index do |line, idx|
       next unless line.includes?(name)
@@ -514,8 +516,8 @@ module Analyzer::CSharp::MinimalApiSupport
       # The `Map*("/x", Name)` line also references the handler — skip it.
       next if line.matches?(/\bMap(?:Get|Post|Put|Delete|Patch|Head|Options|Methods)?\s*\(/)
 
-      sig, end_idx = build_signature(lines, idx)
-      block, body_idx, skip_first = extract_callable_body(lines, end_idx)
+      sig, end_idx = build_signature(lines, masked_lines, idx)
+      block, body_idx, skip_first = extract_callable_body(lines, masked_lines, end_idx)
       return if block.empty?
       return {sig, block, body_idx + 1, skip_first}
     end
@@ -573,18 +575,19 @@ module Analyzer::CSharp::MinimalApiSupport
     end
     return [] of String unless def_idx
 
+    masked_lines = Noir::CSharpLexer.new(lines.join('\n')).masked_lines
     defline = lines[def_idx]
     name_pos = defline.index(/\b#{Regex.escape(type_name)}\b/)
     paren = defline.index('(', name_pos || 0)
     if name_pos && paren && paren > name_pos
-      return split_csharp_parameters(gather_balanced_parens(lines, def_idx, paren))
+      return split_csharp_parameters(gather_balanced_parens(lines, masked_lines, def_idx, paren))
     end
 
     defs = [] of String
     # Capture any binding attributes that precede the property (they may sit
     # on their own line, e.g. `[FromHeader(Name = "X-Tenant")]`) so the
     # member keeps its `header`/`query` classification and explicit name.
-    extract_method_block(lines, def_idx).scan(/((?:\[[^\]]*\]\s*)*)(?:public|internal)\s+([\w<>\[\]\?\.]+)\s+([A-Za-z_]\w*)\s*\{\s*get/) do |m|
+    extract_method_block(lines, masked_lines, def_idx).scan(/((?:\[[^\]]*\]\s*)*)(?:public|internal)\s+([\w<>\[\]\?\.]+)\s+([A-Za-z_]\w*)\s*\{\s*get/) do |m|
       attrs = m[1].gsub(/\s+/, " ").strip
       defs << "#{attrs} #{m[2].strip} #{m[3]}".strip
     end
@@ -593,25 +596,32 @@ module Analyzer::CSharp::MinimalApiSupport
 
   # Collects the text inside a parenthesised group that opens at `open_pos`
   # on `lines[start_index]`, spanning subsequent lines until balanced.
-  private def gather_balanced_parens(lines : Array(String), start_index : Int32, open_pos : Int32) : String
+  private def gather_balanced_parens(lines : Array(String), masked : Array(String), start_index : Int32, open_pos : Int32) : String
     io = String::Builder.new
     depth = 0
     i = start_index
     started = false
     while i < lines.size
-      line = lines[i]
+      # Index over `Array(Char)` (O(1)) rather than `String#[](Int)`, which is
+      # O(n) per access on multi-byte lines and made this O(n^2) on long
+      # CJK signatures — the very regression the lexer work targets.
+      line_chars = lines[i].chars
+      mline_chars = masked[i].chars
       from = i == start_index ? open_pos : 0
-      (from...line.size).each do |k|
-        ch = line[k]
-        if ch == '('
+      (from...line_chars.size).each do |k|
+        # Count over the masked twin so a `(`/`)` inside a string default
+        # value (`prop = "f(x"`) can't unbalance the group; emit raw text.
+        masked_char = k < mline_chars.size ? mline_chars[k] : ' '
+        raw_char = line_chars[k]
+        if masked_char == '('
           depth += 1
           started = true
           next if depth == 1
-        elsif ch == ')'
+        elsif masked_char == ')'
           depth -= 1
           return io.to_s if depth == 0
         end
-        io << ch if started && depth >= 1
+        io << raw_char if started && depth >= 1
       end
       io << ' '
       break if started && depth <= 0

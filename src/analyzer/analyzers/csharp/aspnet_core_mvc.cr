@@ -50,12 +50,13 @@ module Analyzer::CSharp
       return [] of Param unless block.includes?("Bind(")
 
       params = [] of Param
+      masked_lines = Noir::CSharpLexer.new(lines.join('\n')).masked_lines
       lines.each_with_index do |line, index|
         next unless line.includes?("Bind(")
         next unless line.includes?("public") || line.includes?("private") || line.includes?("protected") || line.includes?("internal") || line.includes?("static")
 
-        _, end_idx = build_signature(lines, index)
-        body = extract_method_block(lines, end_idx)
+        _, end_idx = build_signature(lines, masked_lines, index)
+        body = extract_method_block(lines, masked_lines, end_idx)
         params.concat(extract_params_from_block(body))
       end
 
@@ -142,6 +143,7 @@ module Analyzer::CSharp
 
       controller_route = extract_controller_route(content)
       lines = content.lines
+      masked_lines = Noir::CSharpLexer.new(content).masked_lines
 
       http_method = "GET"
       action_route = ""
@@ -174,12 +176,12 @@ module Analyzer::CSharp
         end
 
         if in_class && potential_action_signature?(line)
-          signature, end_index = build_signature(lines, i)
+          signature, end_index = build_signature(lines, masked_lines, i)
           if !non_action_attribute && action_method?(signature, explicit_endpoint_attribute)
             action_name = extract_action_name(signature)
             unless action_name.empty?
               parameters = extract_parameters(signature, http_method)
-              body_block, body_line, skip_first = extract_callable_body(lines, end_index)
+              body_block, body_line, skip_first = extract_callable_body(lines, masked_lines, end_index)
               body_params = extract_params_from_block(body_block)
               parameters = merge_params(parameters, body_params, http_method)
               effective_action_route = action_route
