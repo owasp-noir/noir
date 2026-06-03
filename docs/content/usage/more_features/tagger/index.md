@@ -93,4 +93,10 @@ Taggers span several kinds of security-relevant signal. Run `noir list taggers` 
   - `security-headers` — Spring's default response-header protections weakened: clickjacking off (`frameOptions().disable()`) or the whole header writer disabled (`headers().disable()` / `headers(HeadersConfigurer::disable)`).
   - `input-validation` — `@Valid` / `@Validated` applies Bean Validation to the request payload; surfacing where it *is* applied also makes the gaps (handlers taking a `@RequestBody` without it) visible by their absence.
 
+  For Rust web frameworks (`rust_security`, covering Actix-Web, Axum/tower-http, Rocket, Loco, Warp, …) — Rust has no implicit secure defaults, so the tagger records the protections actually wired up (via `.wrap(..)`/`.layer(..)` middleware, or Loco's `config/*.yaml`) and flags the dangerous configurations:
+  - `cors` — CORS middleware. Permissive configs (`Cors::permissive()`, `CorsLayer::very_permissive()`, `allow_any_origin`, `allow_origins: ["*"]`) are flagged as a risk; restricted allow-lists are recorded as informational.
+  - `rate-limit` — request throttling (`actix-governor`, `tower_governor`, `actix-limitation`, tower's limit layers); maps onto the scope it wraps, so you can see which routes are *not* protected.
+  - `security-headers` — hardening response headers set on the route (HSTS, CSP, `X-Frame-Options`, `X-Content-Type-Options`, …).
+  - `body-limit` — request body size cap (DoS mitigation); a disabled limit (`DefaultBodyLimit::disable()`) is flagged as a risk.
+
 Endpoint-level tags also feed the AI context as signals, enriching the per-endpoint summary that AI reviewers consume.

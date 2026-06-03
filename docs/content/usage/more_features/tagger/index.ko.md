@@ -93,4 +93,10 @@ noir scan <BASE_PATH> --use-taggers hunt,oauth
   - `security-headers` — Spring의 기본 응답 헤더 보호가 약화된 경우: 클릭재킹 보호 해제(`frameOptions().disable()`) 또는 헤더 라이터 전체 비활성화(`headers().disable()` / `headers(HeadersConfigurer::disable)`).
   - `input-validation` — `@Valid` / `@Validated`로 요청 페이로드에 Bean Validation이 적용된 경우. 적용된 지점을 드러내면, 적용되지 않은 공백(`@RequestBody`를 받으면서 검증이 없는 핸들러)도 부재로 드러남.
 
+  Rust 웹 프레임워크(`rust_security`, Actix-Web·Axum/tower-http·Rocket·Loco·Warp 등)의 경우 — Rust에는 암묵적 보안 기본값이 없으므로, 태거는 실제로 연결된 보호 장치(`.wrap(..)`/`.layer(..)` 미들웨어 또는 Loco의 `config/*.yaml`)를 기록하고 위험한 설정을 플래그합니다:
+  - `cors` — CORS 미들웨어. 허용적 설정(`Cors::permissive()`, `CorsLayer::very_permissive()`, `allow_any_origin`, `allow_origins: ["*"]`)은 위험으로 표시하고, 제한된 허용 목록은 정보성으로 기록.
+  - `rate-limit` — 요청 스로틀링(`actix-governor`, `tower_governor`, `actix-limitation`, tower limit 레이어). 감싸는 스코프에 매핑되므로 *보호되지 않은* 라우트가 무엇인지 파악 가능.
+  - `security-headers` — 라우트에 설정된 강화 응답 헤더(HSTS, CSP, `X-Frame-Options`, `X-Content-Type-Options` 등).
+  - `body-limit` — 요청 본문 크기 제한(DoS 완화). 제한이 비활성화(`DefaultBodyLimit::disable()`)된 경우 위험으로 표시.
+
 엔드포인트 레벨 태그는 AI 컨텍스트에도 신호로 전달되어, AI 리뷰어가 사용하는 엔드포인트별 요약을 더욱 풍부하게 만듭니다.

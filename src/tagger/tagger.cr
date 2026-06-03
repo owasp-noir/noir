@@ -124,6 +124,11 @@ module NoirTaggers
       desc:   "Identifies Rust authentication patterns (guards, extractors, middleware)",
       runner: RustAuthTagger,
     },
+    rust_security: {
+      name:   "Rust Security Tagger",
+      desc:   "Identifies Rust framework security protections (CORS, rate limiting, security headers, body-size limits)",
+      runner: RustSecurityTagger,
+    },
     flask_auth: {
       name:   "Flask Auth Tagger",
       desc:   "Identifies Flask authentication patterns (flask-login, flask-jwt, flask-httpauth)",
