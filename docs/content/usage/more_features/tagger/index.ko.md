@@ -88,8 +88,9 @@ noir scan <BASE_PATH> --use-taggers hunt,oauth
   - `rate-limit` — Rails 8 네이티브 `rate_limit` 매크로로 스로틀링되는 액션. 무차별 대입/남용 노출을 평가할 때 유용한 맥락이며, 인증·복구 표면에서 이것이 부재하면 그 자체가 점검 포인트.
 
   Spring(`spring_security`)의 경우, 인증 태거 `spring_auth`를 보완:
-  - `csrf-protection` — `SecurityFilterChain`에서 CSRF가 비활성화(`csrf().disable()`, `csrf(AbstractHttpConfigurer::disable)`, Kotlin `csrf { disable() }`)된 경우. 해당 체인이 노출하는 상태 변경 엔드포인트(POST/PUT/PATCH/DELETE)에 표시되며, 무상태/토큰 API에서는 흔하지만 항상 검토 가치가 있고, `securityMatcher`가 있으면 그 체인 범위로 한정.
-  - `cors` — 핸들러나 컨트롤러의 `@CrossOrigin` 애너테이션은 브라우저 동일 출처 기본값에서 엔드포인트를 벗어나게 함. 와일드카드 출처(`*`), 특히 자격 증명과 함께 사용된 경우 과도한(permissive) 설정으로 표시.
+  - `csrf-protection` — `SecurityFilterChain`에서 CSRF가 꺼진 경우. 체인 전체 비활성화(`csrf().disable()`, `csrf(AbstractHttpConfigurer::disable)`, Kotlin `csrf { disable() }`)이거나 특정 경로만 선택적으로 제외(`csrf(c -> c.ignoringRequestMatchers("/api/**"))`)된 경우 모두 해당 상태 변경 엔드포인트(POST/PUT/PATCH/DELETE)에 표시. 무상태/토큰 API에서는 흔하지만 항상 검토 가치가 있고, `securityMatcher`가 있으면 그 체인 범위로 한정.
+  - `cors` — 핸들러/컨트롤러의 `@CrossOrigin` 애너테이션 또는 전역 `WebMvcConfigurer` 매핑(`addMapping(...).allowedOrigins("*")`)으로 브라우저 동일 출처 기본값에서 엔드포인트가 벗어난 경우. 와일드카드 출처(`*`), 특히 자격 증명과 함께 사용된 경우 과도한(permissive) 설정으로 표시.
+  - `security-headers` — Spring의 기본 응답 헤더 보호가 약화된 경우: 클릭재킹 보호 해제(`frameOptions().disable()`) 또는 헤더 라이터 전체 비활성화(`headers().disable()` / `headers(HeadersConfigurer::disable)`).
   - `input-validation` — `@Valid` / `@Validated`로 요청 페이로드에 Bean Validation이 적용된 경우. 적용된 지점을 드러내면, 적용되지 않은 공백(`@RequestBody`를 받으면서 검증이 없는 핸들러)도 부재로 드러남.
 
 엔드포인트 레벨 태그는 AI 컨텍스트에도 신호로 전달되어, AI 리뷰어가 사용하는 엔드포인트별 요약을 더욱 풍부하게 만듭니다.
