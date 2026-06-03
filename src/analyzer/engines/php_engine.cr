@@ -149,6 +149,12 @@ module Analyzer::Php
     # controller; byte scanning keeps it linear. Every delimiter we look for
     # is ASCII, and UTF-8 only uses bytes >= 0x80 for multi-byte sequences,
     # so a Chinese character can never be mistaken for a quote or brace.
+    #
+    # NOTE: a heredoc/nowdoc-aware, fully shared replacement lives in
+    # `Noir::PhpLexer` (see the Laravel analyzer). Analyzers that call this in
+    # a loop should migrate to building one `PhpLexer` per file and reusing
+    # `matching_delimiter` — constructing a lexer per call re-lexes the whole
+    # file and is ~hundreds of times slower on method-heavy controllers.
     protected def find_matching_php_close_brace(content : String, open_pos : Int32) : Int32?
       bytes = content.to_slice
       start = content.char_index_to_byte_index(open_pos)
