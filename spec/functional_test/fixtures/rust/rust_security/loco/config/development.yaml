@@ -1,0 +1,21 @@
+logger:
+  enable: true
+  level: debug
+
+server:
+  binding: localhost
+  port: 5150
+  middlewares:
+    limit_payload:
+      enable: true
+      body_limit: 5mb
+    cors:
+      enable: true
+      allow_origins:
+        - "*"
+    secure_headers:
+      enable: true
+      preset: github
+    # Disabled middleware must not be tagged.
+    compression:
+      enable: false
