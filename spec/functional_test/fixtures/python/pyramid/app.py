@@ -65,6 +65,27 @@ class OrdersView:
         return {"order_id": order_id}
 
 
+# Multi-line @view_defaults: the closing `)` sits directly above the
+# class, so the route_name must still be inherited by the methods below.
+@view_defaults(
+    route_name="reports",
+    renderer="json",
+    permission="view",
+)
+class ReportsView:
+    def __init__(self, request):
+        self.request = request
+
+    @view_config(request_method="GET")
+    def list(self):
+        scope = self.request.params.get("scope")
+        return {"scope": scope}
+
+    @view_config(request_method="DELETE")
+    def delete(self):
+        return {}
+
+
 def main(global_config, **settings):
     config = Configurator(settings=settings)
     config.add_route("home", "/")
@@ -74,6 +95,7 @@ def main(global_config, **settings):
     config.add_route(pattern="/about", name="about")
     config.add_route("ping", "/ping")
     config.add_route("orders", "/orders")
+    config.add_route("reports", "/reports")
     config.add_static_view(
         name="assets",
         path="public",

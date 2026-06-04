@@ -34,6 +34,13 @@ expected_endpoints = [
   Endpoint.new("/orders", "POST", [
     Param.new("order_id", "", "json"),
   ]),
+  # Multi-line @view_defaults(route_name="reports") — methods inherit the
+  # class route_name even though the decorator's closing `)` is the line
+  # directly above the class.
+  Endpoint.new("/reports", "GET", [
+    Param.new("scope", "", "query"),
+  ]),
+  Endpoint.new("/reports", "DELETE"),
   Endpoint.new("/assets/*", "GET"),
 ]
 
