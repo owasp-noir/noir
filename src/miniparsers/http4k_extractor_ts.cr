@@ -76,7 +76,7 @@ module Noir
       routes = [] of Route
       local_string_constants = extract_string_constants(source)
       Noir::TreeSitter.parse_kotlin(source) do |root|
-        walk(root, source, "", routes, string_constants, local_string_constants, 0, include_callees)
+        walk(root, source, "", routes, string_constants, local_string_constants, 0, include_callees, false)
       end
       routes
     end
@@ -131,22 +131,26 @@ module Noir
                      string_constants : Hash(String, String),
                      local_string_constants : Hash(String, String),
                      depth : Int32,
-                     include_callees : Bool)
+                     include_callees : Bool,
+                     in_routes : Bool)
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
 
       ty = Noir::TreeSitter.node_type(node)
 
-      if ty == "infix_expression" && handle_bind(node, source, prefix, routes, string_constants, local_string_constants, depth, include_callees)
+      if ty == "infix_expression" && handle_bind(node, source, prefix, routes, string_constants, local_string_constants, depth, include_callees, in_routes)
         return
       end
 
       if ty == "call_expression" && call_function_name(node, source) == "routes"
-        walk_routes_args(node, source, prefix, routes, string_constants, local_string_constants, depth, include_callees)
+        # Arguments of a `routes(...)` call are inside the routing
+        # block — a bare `VERB to handler` arg there is a real route
+        # bound to the current prefix (the verbs-under-path idiom).
+        walk_routes_args(node, source, prefix, routes, string_constants, local_string_constants, depth, include_callees, true)
         return
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees)
+        walk(child, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, in_routes)
       end
     end
 
@@ -164,52 +168,52 @@ module Noir
                             string_constants : Hash(String, String),
                             local_string_constants : Hash(String, String),
                             depth : Int32,
-                            include_callees : Bool) : Bool
+                            include_callees : Bool,
+                            in_routes : Bool) : Bool
       lhs, op, rhs = infix_parts(node, source)
       return false unless lhs && rhs
 
       case op
       when "to"
-        # Outer node — inner must be `path bind VERB`.
-        return false unless Noir::TreeSitter.node_type(lhs) == "infix_expression"
-        inner_lhs, inner_op, inner_rhs = infix_parts(lhs, source)
-        return false unless inner_op == "bind"
-        return false unless inner_lhs && inner_rhs
+        if Noir::TreeSitter.node_type(lhs) == "infix_expression"
+          # `path bind VERB to handler` — the canonical form — or
+          # `path[ meta {...}] bindContract VERB to handler` for the
+          # contract DSL. Both glue a literal path to a verb on the
+          # inner infix, then attach the handler via the outer `to`.
+          inner_lhs, inner_op, inner_rhs = infix_parts(lhs, source)
+          return false unless inner_op == "bind" || inner_op == "bindContract"
+          return false unless inner_lhs && inner_rhs
 
-        verb = resolve_verb(inner_rhs, source)
-        return false unless verb
+          # `bindContract` routes are almost always defined in a helper
+          # function returning `ContractRoute` and assembled into a
+          # `contract { routes += foo() }` block mounted under a prefix
+          # elsewhere — so emitting them standalone yields a path that's
+          # missing its mount prefix (a wrong URL). Only emit them when
+          # we're inside a `routes(...)` whose prefix we already know.
+          # The canonical `bind` form carries its own absolute-ish path,
+          # so it stays unconditional (preserves existing behaviour).
+          return false if inner_op == "bindContract" && !in_routes
 
-        path_text = resolve_string_value(inner_lhs, source, string_constants, local_string_constants)
-        return false unless path_text
-        full = join_paths(prefix, path_text)
-        line = Noir::TreeSitter.node_start_row(node)
+          verb = resolve_verb(inner_rhs, source)
+          return false unless verb
 
-        query, header, form = [] of String, [] of String, [] of String
-        has_body = false
-        scan_handler(rhs, source, 0) do |kind, value|
-          case kind
-          when :query  then query << value
-          when :header then header << value
-          when :form   then form << value
-          when :body   then has_body = true
-          end
+          path_text = route_path_from(inner_lhs, source, string_constants, local_string_constants)
+          return false unless path_text
+          emit_route(verb, join_paths(prefix, path_text), node, rhs, source, routes, include_callees)
+          true
+        else
+          # Bare `VERB to handler` directly inside a `routes(...)` call
+          # — the verbs-under-path idiom, e.g.
+          #   "/{id}" bind routes(GET to Get(fs), DELETE to Delete(fs))
+          # The path is supplied by the enclosing prefix; only treat it
+          # as a route when we actually reached it via `routes(...)` so
+          # a stray `a to b` pair elsewhere isn't misread.
+          return false unless in_routes
+          verb = resolve_verb(lhs, source)
+          return false unless verb
+          emit_route(verb, prefix.empty? ? "/" : prefix, node, rhs, source, routes, include_callees)
+          true
         end
-
-        # http4k's routing idiom is `"/x" bind GET to handler`, not
-        # `get { ... }` — there's no Ktor-style nested routing DSL
-        # inside a handler body, so the routing-skip filter is off
-        # to avoid silently dropping real handler calls named `get`,
-        # `post`, etc.
-        callees = [] of Tuple(String, Int32)
-        if include_callees
-          Noir::KotlinCalleeExtractor.callees_in_lambda(rhs, source, "", skip_routing: false).each do |entry|
-            name, _path, line_no = entry
-            callees << {name, line_no}
-          end
-        end
-
-        routes << Route.new(verb, full, line, has_body, query, header, form, callees)
-        true
       when "bind"
         return false unless Noir::TreeSitter.node_type(rhs) == "call_expression"
         return false unless call_function_name(rhs, source) == "routes"
@@ -217,11 +221,67 @@ module Noir
         path_text = resolve_string_value(lhs, source, string_constants, local_string_constants)
         return false unless path_text
         new_prefix = join_paths(prefix, path_text)
-        walk_routes_args(rhs, source, new_prefix, routes, string_constants, local_string_constants, depth + 1, include_callees)
+        walk_routes_args(rhs, source, new_prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, true)
         true
       else
         false
       end
+    end
+
+    # Build and append a Route from a verb, full path, and handler
+    # node. Shared by the canonical `path bind VERB to handler`, the
+    # contract `bindContract` form, and the bare verbs-under-path form.
+    private def emit_route(verb : String,
+                           full : String,
+                           node : LibTreeSitter::TSNode,
+                           handler : LibTreeSitter::TSNode,
+                           source : String,
+                           routes : Array(Route),
+                           include_callees : Bool)
+      line = Noir::TreeSitter.node_start_row(node)
+
+      query, header, form = [] of String, [] of String, [] of String
+      has_body = false
+      scan_handler(handler, source, 0) do |kind, value|
+        case kind
+        when :query  then query << value
+        when :header then header << value
+        when :form   then form << value
+        when :body   then has_body = true
+        end
+      end
+
+      # http4k's routing idiom is `"/x" bind GET to handler`, not
+      # `get { ... }` — there's no Ktor-style nested routing DSL
+      # inside a handler body, so the routing-skip filter is off
+      # to avoid silently dropping real handler calls named `get`,
+      # `post`, etc.
+      callees = [] of Tuple(String, Int32)
+      if include_callees
+        Noir::KotlinCalleeExtractor.callees_in_lambda(handler, source, "", skip_routing: false).each do |entry|
+          name, _path, line_no = entry
+          callees << {name, line_no}
+        end
+      end
+
+      routes << Route.new(verb, full, line, has_body, query, header, form, callees)
+    end
+
+    # Resolve the path for a contract/bind LHS. Plain string literals
+    # and constants resolve directly; the contract DSL wraps the path
+    # in a `"/x" meta { ... }` infix, so peel the `meta` operator and
+    # resolve its left operand.
+    private def route_path_from(node : LibTreeSitter::TSNode,
+                                source : String,
+                                string_constants : Hash(String, String),
+                                local_string_constants : Hash(String, String)) : String?
+      if Noir::TreeSitter.node_type(node) == "infix_expression"
+        l, op, _r = infix_parts(node, source)
+        return unless l
+        return unless op == "meta"
+        return resolve_string_value(l, source, string_constants, local_string_constants)
+      end
+      resolve_string_value(node, source, string_constants, local_string_constants)
     end
 
     # Walk every argument inside a `routes(...)` call and recurse.
@@ -235,14 +295,15 @@ module Noir
                                  string_constants : Hash(String, String),
                                  local_string_constants : Hash(String, String),
                                  depth : Int32,
-                                 include_callees : Bool)
+                                 include_callees : Bool,
+                                 in_routes : Bool)
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
       args = call_value_arguments(call)
       return unless args
       Noir::TreeSitter.each_named_child(args) do |arg|
         next unless Noir::TreeSitter.node_type(arg) == "value_argument"
         Noir::TreeSitter.each_named_child(arg) do |child|
-          walk(child, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees)
+          walk(child, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, in_routes)
         end
       end
     end

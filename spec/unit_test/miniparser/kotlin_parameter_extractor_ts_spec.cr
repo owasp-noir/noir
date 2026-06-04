@@ -184,6 +184,58 @@ describe Noir::TreeSitterKotlinParameterExtractor do
         {"X-Trace", "", "header"},
       ])
     end
+
+    it "keeps @RequestBody json while an un-annotated command object on the same POST stays form" do
+      fields = {
+        "Dto"     => [Noir::TreeSitterKotlinParameterExtractor::FieldInfo.new("a", "public", true, "")],
+        "Command" => [Noir::TreeSitterKotlinParameterExtractor::FieldInfo.new("b", "public", true, "")],
+      }
+      source = <<-KT
+        @RestController
+        class C {
+            @PostMapping("/x")
+            fun create(@RequestBody dto: Dto, command: Command): String = ""
+        }
+        KT
+      # The analyzer passes consumes-only (nil here); the POST verb default
+      # is applied per-parameter, so @RequestBody is json and the
+      # un-annotated command object is form.
+      params = extract(source, "C", "create", "POST", parameter_format: nil, fields: fields)
+      params.map { |p| {p.name, p.param_type} }.should eq([
+        {"a", "json"},
+        {"b", "form"},
+      ])
+    end
+
+    it "drops an @AuthenticationPrincipal / @CurrentUser injected parameter instead of expanding its DTO" do
+      fields = {
+        "SecurityUserItem" => [
+          Noir::TreeSitterKotlinParameterExtractor::FieldInfo.new("userId", "public", true, ""),
+          Noir::TreeSitterKotlinParameterExtractor::FieldInfo.new("role", "public", true, ""),
+        ],
+      }
+      source = <<-KT
+        @RestController
+        class C {
+            @PostMapping("/x")
+            fun act(@CurrentUser user: SecurityUserItem): String = ""
+        }
+        KT
+      extract(source, "C", "act", "POST", fields: fields).should be_empty
+    end
+
+    it "emits an @RequestParam collection parameter by name" do
+      source = <<-KT
+        @RestController
+        class C {
+            @GetMapping("/x")
+            fun get(@RequestParam(name = "userIds") userIds: List<Long>): String = ""
+        }
+        KT
+      extract(source, "C", "get", "GET").map { |p| {p.name, p.param_type} }.should eq([
+        {"userIds", "query"},
+      ])
+    end
   end
 
   describe "#extract_consumes" do
@@ -226,6 +278,22 @@ describe Noir::TreeSitterKotlinParameterExtractor do
       fields = Noir::TreeSitterKotlinParameterExtractor.extract_class_fields(source)
       fields["Article"].map(&.name).should eq(["title", "body"])
       fields["Article"].map(&.init_value).should eq(["", "todo"])
+    end
+
+    it "does not leak property annotation tokens into a field's init value" do
+      source = <<-KT
+        data class CreateUserRequest(
+            @field:Schema(description = "User Name")
+            @field:NotBlank(message = "field name is blank")
+            val name: String,
+            @field:Email
+            val email: String,
+        )
+        KT
+      fields = Noir::TreeSitterKotlinParameterExtractor.extract_class_fields(source)
+      fields["CreateUserRequest"].map(&.name).should eq(["name", "email"])
+      # The `@field:...` annotation source must not bleed into init_value.
+      fields["CreateUserRequest"].map(&.init_value).should eq(["", ""])
     end
 
     it "collects class-body var/val properties" do

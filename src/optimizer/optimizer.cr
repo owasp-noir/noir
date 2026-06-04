@@ -282,8 +282,13 @@ class EndpointOptimizer
     endpoints.each do |endpoint|
       new_endpoint = endpoint
 
-      # Handle {param} patterns
-      scans = endpoint.url.scan(/\/\{([^}]+)\}/).flatten
+      # Handle {param} patterns. The placeholder may sit at a segment
+      # boundary (`/{id}`) or share a segment with sibling variables
+      # separated by a comma — Spring's matrix-style `@GetMapping(
+      # "/bbox/{xMin},{yMin},{xMax},{yMax}")` packs four into one
+      # segment, so allow a leading `,` as well as `/` (otherwise only
+      # the first variable in the segment is captured).
+      scans = endpoint.url.scan(/[\/,]\{([^}]+)\}/).flatten
       scans.each do |match|
         # Strip a leading `*` from catch-all path variables. Spring,
         # Armeria and ASP.NET all spell the rest-of-path capture as

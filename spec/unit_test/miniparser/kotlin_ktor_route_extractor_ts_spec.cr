@@ -325,4 +325,116 @@ describe Noir::TreeSitterKotlinKtorRouteExtractor do
     routes = Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(source)
     (routes[1].line - routes[0].line).should eq(1)
   end
+
+  it "emits WebSocket and SSE handlers as GET routes" do
+    source = <<-KT
+      routing {
+          webSocket("/echo") { }
+          sse("/events") { }
+          route("/v1") {
+              webSocket("/feed") { }
+          }
+      }
+      KT
+
+    routes = Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/echo"},
+      {"GET", "/events"},
+      {"GET", "/v1/feed"},
+    ])
+  end
+
+  it "does not mistake a plugin config DSL lambda for an HTTP verb route" do
+    source = <<-KT
+      routing {
+          install(CachingHeaders) {
+              options { call, content -> null }
+          }
+          route("/index") {
+              get { call.respondText("Index") }
+          }
+      }
+      KT
+
+    routes = Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(source)
+    # The `options { }` inside install(CachingHeaders) is config, not an
+    # OPTIONS route; only the real GET /index should surface.
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/index"},
+    ])
+  end
+
+  describe "type-safe resource routing" do
+    it "resolves @Resource routes, composing nested + parent paths" do
+      source = <<-KT
+        @Resource("/articles")
+        class Articles {
+            @Resource("new")
+            class New(val parent: Articles)
+            @Resource("{id}")
+            class Id(val parent: Articles, val id: Long) {
+                @Resource("edit")
+                class Edit(val parent: Id)
+            }
+        }
+
+        fun Application.module() {
+            routing {
+                get<Articles> { }
+                get<Articles.New> { }
+                post<Articles> { }
+                get<Articles.Id> { }
+                get<Articles.Id.Edit> { }
+            }
+        }
+        KT
+
+      resources = Noir::TreeSitterKotlinKtorRouteExtractor.extract_resource_classes(source)
+      paths = Noir::TreeSitterKotlinKtorRouteExtractor.compose_resource_paths(resources)
+      routes = Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(source, resource_paths: paths)
+      routes.map { |r| {r.verb, r.path} }.should eq([
+        {"GET", "/articles"},
+        {"GET", "/articles/new"},
+        {"POST", "/articles"},
+        {"GET", "/articles/{id}"},
+        {"GET", "/articles/{id}/edit"},
+      ])
+    end
+
+    it "composes a constructor-property parent resource declared elsewhere" do
+      api_module = <<-KT
+        @Resource("/api")
+        data object Root
+        KT
+      routes_module = <<-KT
+        @Resource("/tags")
+        class TagsResource(val root: Root = Root)
+
+        fun Route.tagRoutes() {
+            get<TagsResource> { }
+        }
+        KT
+
+      resources = Noir::TreeSitterKotlinKtorRouteExtractor.extract_resource_classes(api_module) +
+                  Noir::TreeSitterKotlinKtorRouteExtractor.extract_resource_classes(routes_module)
+      paths = Noir::TreeSitterKotlinKtorRouteExtractor.compose_resource_paths(resources)
+      routes = Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(routes_module, resource_paths: paths)
+      routes.map { |r| {r.verb, r.path} }.should eq([
+        {"GET", "/api/tags"},
+      ])
+    end
+
+    it "skips an unresolved type-safe route instead of emitting the bare prefix" do
+      source = <<-KT
+        fun Application.module() {
+            routing {
+                get<UnknownResource> { }
+            }
+        }
+        KT
+
+      Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(source).should be_empty
+    end
+  end
 end

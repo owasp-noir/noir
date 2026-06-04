@@ -37,11 +37,33 @@ module Noir
   module TreeSitterKotlinParameterExtractor
     extend self
 
+    # Scalar types Spring binds from a single request value. Array
+    # (`IntArray`), and single-type-argument collection forms
+    # (`List<Long>`, `Optional<String>`) reduce to their element type
+    # via `simple_param_base` before lookup. Mirrors the Java
+    # extractor's `SIMPLE_PARAM_TYPES` so `@RequestParam ids:
+    # List<Long>` surfaces instead of being silently dropped.
     PRIMITIVE_TYPES = Set{
       "long", "int", "integer", "short", "byte",
-      "char", "boolean", "string",
+      "char", "character", "boolean", "string",
       "float", "double", "number",
+      "bigdecimal", "biginteger", "uuid",
+      "date", "localdate", "localdatetime", "localtime", "instant",
       "multipartfile",
+    }
+
+    # Parameter annotations whose value is supplied by a Spring argument
+    # resolver, not bound from the HTTP request the client controls. A
+    # parameter carrying one of these is NOT an attack-surface input
+    # even when its type is a bindable DTO (the classic
+    # `@AuthenticationPrincipal user: User`, or a custom meta-annotation
+    # like `@CurrentUser`), so it must be excluded from the un-annotated
+    # implicit-binding path that would otherwise expand its DTO fields
+    # into phantom params. Validation annotations (`@Valid`, …) are
+    # intentionally absent — they leave binding semantics untouched.
+    INJECTED_PARAM_ANNOTATIONS = Set{
+      "AuthenticationPrincipal", "CurrentUser", "CurrentSecurityContext",
+      "SessionAttribute", "RequestAttribute",
     }
 
     # Verbs whose `params = [...]` constraint emits as query
@@ -443,8 +465,12 @@ module Noir
               name = Noir::TreeSitter.node_text(child, source) if name.empty?
             when "string_literal"
               init = decode_string_literal(child, source)
-            when "user_type", "nullable_type", "binding_pattern_kind"
-              # type / val|var marker — not needed here
+            when "user_type", "nullable_type", "binding_pattern_kind",
+                 "modifiers", "parameter_modifiers", "annotation"
+              # type / val|var marker / property annotations — not a
+              # default value. `modifiers` carries `@field:Email`-style
+              # annotations whose source text would otherwise leak into
+              # `init_value` (and surface as a bogus param default).
             else
               # default-value expressions (numbers, identifiers, etc.)
               # — stringify so the legacy "init_value" semantic stays
@@ -504,7 +530,7 @@ module Noir
         when "parameter_modifiers"
           pending_modifiers = child
         when "parameter"
-          current_format = emit_param_for(child, pending_modifiers, source, current_format, class_fields, params)
+          current_format = emit_param_for(child, pending_modifiers, source, verb, current_format, class_fields, params)
           pending_modifiers = nil
         end
       end
@@ -523,6 +549,7 @@ module Noir
     private def emit_param_for(param : LibTreeSitter::TSNode,
                                modifiers : LibTreeSitter::TSNode?,
                                source : String,
+                               verb : String,
                                parameter_format : String?,
                                class_fields : Hash(String, Array(FieldInfo)),
                                sink : Array(Param)) : String?
@@ -543,10 +570,12 @@ module Noir
 
       ann_kind = nil
       ann_node : LibTreeSitter::TSNode? = nil
+      injected_param = false
       if modifiers
         Noir::TreeSitter.each_named_child(modifiers) do |ann|
           next unless Noir::TreeSitter.node_type(ann) == "annotation"
           name = annotation_simple_name(ann, source)
+          injected_param = true if INJECTED_PARAM_ANNOTATIONS.includes?(name)
           case name
           when "PathVariable"
             ann_kind = :path
@@ -572,11 +601,24 @@ module Noir
         end
       end
 
+      # @PathVariable is carried by the URL, not emitted as a param.
       return parameter_format if ann_kind == :path
+
+      # A Spring argument-resolver parameter (@AuthenticationPrincipal, a
+      # custom @CurrentUser meta-annotation, …) with no request-binding
+      # annotation is server-supplied, not client input — drop it before
+      # the implicit-binding path can expand its (often DTO-typed) fields
+      # into phantom params.
+      return parameter_format if ann_kind.nil? && injected_param
 
       effective_format = parameter_format
       case ann_kind
       when :body
+        # @RequestBody is JSON unless an explicit `consumes` already pinned
+        # the format (e.g. form-urlencoded). The POST verb default is
+        # applied per-parameter below, NOT pre-seeded into parameter_format,
+        # so a @RequestBody on a POST still resolves to json rather than
+        # being dragged along as form.
         effective_format = effective_format.nil? ? "json" : effective_format
       when :query
         effective_format = "query"
@@ -585,7 +627,19 @@ module Noir
       when :cookie
         effective_format = "cookie"
       end
-      return effective_format if effective_format.nil?
+
+      if effective_format.nil?
+        # No parameter annotation and no `consumes` hint. Spring still
+        # binds a scalar (or a command object) from request values — query
+        # string on GET/…, form body on POST. Framework resolver types
+        # (Model, Pageable, BindingResult, …) aren't bindable and must not
+        # surface. Applying the verb default here — rather than seeding the
+        # whole method — lets an explicit @RequestBody on the same POST
+        # resolve to json instead of being dragged to form.
+        bindable = simple_bindable_param?(type_name) || class_fields.has_key?(type_name)
+        return parameter_format unless bindable
+        effective_format = verb == "POST" ? "form" : "query"
+      end
 
       default_value : String? = nil
       parameter_name = arg_name
@@ -612,18 +666,45 @@ module Noir
         end
       end
 
-      type_key = type_name.downcase
-      if PRIMITIVE_TYPES.includes?(type_key)
+      case ann_kind
+      when :query, :header, :cookie
+        # An explicit scalar request input (possibly a collection of
+        # scalars like `@RequestParam ids: List<Long>`) — emit by its
+        # declared name; never DTO-expand.
         sink << Param.new(parameter_name, default_value || "", effective_format)
-      elsif fields = class_fields[type_name]?
-        fields.each do |field|
-          next unless field.access_modifier == "public" || field.has_setter?
-          expanded_default = default_value || field.init_value
-          sink << Param.new(field.name, expanded_default, effective_format)
+      else
+        # @RequestBody or an un-annotated command object: a scalar emits
+        # by name, a known DTO fans out to its fields. Body JSON binds
+        # every field (Jackson reflection); form/model binding keeps the
+        # public-or-setter gate.
+        if simple_bindable_param?(type_name)
+          sink << Param.new(parameter_name, default_value || "", effective_format)
+        elsif fields = class_fields[type_name]?
+          json_body = effective_format == "json"
+          fields.each do |field|
+            next unless json_body || field.access_modifier == "public" || field.has_setter?
+            expanded_default = default_value || field.init_value
+            sink << Param.new(field.name, expanded_default, effective_format)
+          end
         end
       end
 
-      effective_format
+      # Carry the format to subsequent un-annotated params (Spring's
+      # implicit binding makes a trailing `page: Int` share the prior
+      # `@RequestParam`'s query format). A `@RequestBody`'s json is NOT a
+      # method-wide default, though — propagating it would drag a sibling
+      # command object into json, so a body param leaves the carry
+      # untouched (returns the incoming consumes-derived format).
+      ann_kind == :body ? parameter_format : effective_format
+    end
+
+    # True when `type_name` is a scalar Spring binds from a single
+    # request value. `type_name` is the leaf type identifier resolved by
+    # `leaf_type_name`, so a `List<Long>` parameter already reduces to
+    # `List` here — collection element types are handled at the call
+    # site (annotated request params emit by name regardless of type).
+    private def simple_bindable_param?(type_name : String) : Bool
+      PRIMITIVE_TYPES.includes?(type_name.downcase)
     end
 
     private def leaf_type_name(node : LibTreeSitter::TSNode, source : String) : String

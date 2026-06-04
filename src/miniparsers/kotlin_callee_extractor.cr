@@ -36,6 +36,7 @@ module Noir::KotlinCalleeExtractor
   # callees don't leak into the parent route's list.
   ROUTING_DSL_NAMES = Set{
     "get", "post", "put", "delete", "patch", "head", "options",
+    "webSocket", "webSocketRaw", "sse",
     "route", "routing", "authenticate", "rateLimit", "install",
     "intercept", "host", "port",
   }
