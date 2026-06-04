@@ -79,6 +79,12 @@ module Noir
       # would otherwise read as `Any /key`. Pocketbase parks
       # several `slog.Any("subscriptions", ...)` calls per file.
       "slog",
+      # uber-go/zap — the most widely used structured logger in Go —
+      # exposes the field constructor `zap.Any("key", value)`. Without
+      # this guard `global.GVA_LOG.Info(..., zap.Any("error", err))`
+      # surfaces as a phantom `Any /error` route fanned across all 7
+      # HTTP verbs (observed in gin-vue-admin: `/error`, `/mode`).
+      "zap",
     }
 
     # Chain methods that return the receiving router/group unchanged —

@@ -543,4 +543,19 @@ describe Noir::TreeSitterGoRouteExtractor do
       {"POST", "/many"},
     ].sort)
   end
+
+  it "does not treat zap.Any logging field constructors as routes" do
+    source = <<-GO
+      package main
+      func main() {
+          r := gin.Default()
+          r.GET("/ok", handler)
+          global.GVA_LOG.Info("msg", zap.Any("error", err))
+          slog.Any("mode", val)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/ok"}])
+  end
 end
