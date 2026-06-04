@@ -13,6 +13,25 @@ module Analyzer::Rust
   class ActixWeb < RustEngine
     HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options"}
 
+    # Cross-file scope registrations: `web::scope("/auth").service(mod::handler)`
+    # frequently mounts a `#[get("/x")]` handler that lives in a *different*
+    # file (the scope tree sits in `main.rs` / a router-setup module, the
+    # `#[get]` handler in `api/<mod>.rs`). The per-file scope pass below only
+    # sees same-file registrations, so those handlers lose their prefix
+    # (`/x` instead of `/auth/v1/x`). `analyze` walks every file once up
+    # front to record each **module-qualified** `.service(mod::handler)`
+    # registration's fully composed prefix; `analyze_file` then falls back to
+    # this index when a handler isn't registered in its own file. Only
+    # qualified (`mod::handler`) refs are globalised — bare `.service(handler)`
+    # refs stay file-local so identically named handlers across the standalone
+    # sub-apps of an example monorepo don't cross-contaminate.
+    @cross_file_scope_regs : Array(NamedTuple(ref: String, prefix: String))? = nil
+
+    def analyze
+      @cross_file_scope_regs = build_cross_file_scope_registrations
+      super
+    end
+
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       source = read_file_content(path)
@@ -31,6 +50,12 @@ module Analyzer::Rust
 
           handler_name = function_name(function, source)
           prefixes = handler_name ? scoped_services[handler_name]? : nil
+          # Same-file scope pass found nothing — the handler is mounted
+          # cross-file via `.service(mod::handler)`. Resolve its prefix from
+          # the global index (module-qualified, so name clashes stay apart).
+          if (prefixes.nil? || prefixes.empty?) && handler_name
+            prefixes = lookup_cross_file_prefixes(handler_name, path)
+          end
 
           methods.each do |method|
             if prefixes && !prefixes.empty?
@@ -170,6 +195,107 @@ module Analyzer::Rust
         Noir::TreeSitter.node_text(node, source)
       when "scoped_identifier"
         Noir::TreeSitter.node_text(node, source).split("::").last
+      end
+    end
+
+    # First pass over the whole project: collect every module-qualified
+    # `.service(mod::handler)` registration's fully composed scope prefix.
+    # Gated to files that actually carry both a `scope(` and a `.service(`
+    # (router-setup files) so handler-only files cost nothing here.
+    private def build_cross_file_scope_registrations : Array(NamedTuple(ref: String, prefix: String))
+      regs = [] of NamedTuple(ref: String, prefix: String)
+      all_files.each do |path|
+        next if File.directory?(path)
+        next unless File.exists?(path) && File.extname(path) == ".rs"
+        next if RustEngine.test_path?(path)
+        src = read_file_content(path)
+        next unless src.includes?("scope(") && src.includes?(".service(")
+        begin
+          test_regions = RustEngine.collect_cfg_test_regions(src)
+          Noir::TreeSitter.parse_rust(src) do |root|
+            collect_qualified_registrations(root, src, test_regions, "", regs)
+          end
+        rescue e
+          logger.debug "actix cross-file scope scan error #{path}: #{e}"
+        end
+      end
+      regs
+    end
+
+    # Mirror of `collect_service_registrations`' prefix threading, but records
+    # only **scoped** (`mod::handler`) `.service(...)` args — the cross-file
+    # case. Bare-identifier args are left to the per-file pass.
+    private def collect_qualified_registrations(node : LibTreeSitter::TSNode,
+                                                source : String,
+                                                test_regions : Array(Tuple(Int32, Int32)),
+                                                active_prefix : String,
+                                                regs : Array(NamedTuple(ref: String, prefix: String)))
+      if Noir::TreeSitter.node_type(node) == "call_expression"
+        return if RustEngine.inside_test_region?(node, test_regions)
+
+        if field_call_name(node, source) == "service"
+          args = Noir::TreeSitter.field(node, "arguments")
+          return unless args
+          named = named_children(args)
+          return unless named.size == 1
+
+          function = Noir::TreeSitter.field(node, "function")
+          return unless function
+          receiver = Noir::TreeSitter.field(function, "value")
+          receiver_prefix = receiver ? (extract_scope_prefix(receiver, source) || "") : ""
+          service_prefix = scoped_route_path(active_prefix, receiver_prefix)
+
+          arg = named[0]
+          case Noir::TreeSitter.node_type(arg)
+          when "scoped_identifier"
+            regs << {ref: Noir::TreeSitter.node_text(arg, source), prefix: service_prefix}
+          when "identifier"
+            # bare same-file handler — handled by per-file scoped_services
+          else
+            collect_qualified_registrations(arg, source, test_regions, service_prefix, regs)
+          end
+
+          collect_qualified_registrations(receiver, source, test_regions, active_prefix, regs) if receiver
+          return
+        end
+      end
+
+      Noir::TreeSitter.each_named_child(node) do |child|
+        collect_qualified_registrations(child, source, test_regions, active_prefix, regs)
+      end
+    end
+
+    # Resolve a handler function's cross-file scope prefix(es). Matches the
+    # global index module-aware: the segment before the leaf in the
+    # registration ref (`api_keys::get_api_keys` → `api_keys`) must equal the
+    # handler file's module (its filename stem, or the parent dir for
+    # `mod.rs`/`lib.rs`/`main.rs`). When no module matches we return nil
+    # rather than guess, so a leaf shared by two modules never borrows the
+    # wrong prefix.
+    private def lookup_cross_file_prefixes(name : String, file_path : String) : Array(String)?
+      regs = @cross_file_scope_regs
+      return unless regs
+      hints = module_hints(file_path)
+      matched = [] of String
+      regs.each do |r|
+        segs = r[:ref].split("::")
+        next unless segs[-1]? == name
+        mod = segs.size >= 2 ? segs[-2] : nil
+        matched << r[:prefix] if mod && hints.includes?(mod)
+      end
+      matched.empty? ? nil : matched.uniq
+    end
+
+    # Candidate module names a Rust source file can be referred to by. A
+    # plain `foo.rs` is module `foo`; the `mod.rs` / `lib.rs` / `main.rs`
+    # convention names the module after the parent directory.
+    private def module_hints(path : String) : Array(String)
+      base = File.basename(path, ".rs")
+      if base == "mod" || base == "lib" || base == "main"
+        parent = File.basename(File.dirname(path))
+        parent.empty? ? [] of String : [parent]
+      else
+        [base]
       end
     end
 
