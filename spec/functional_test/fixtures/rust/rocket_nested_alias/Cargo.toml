@@ -1,0 +1,7 @@
+[package]
+name = "rocket_nested_alias_fixture"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rocket = "0.5"
