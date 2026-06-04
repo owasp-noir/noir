@@ -40,11 +40,12 @@ module Noir::JavaCalleeExtractor
                         source : String,
                         file_path : String,
                         class_name : String,
-                        method_name : String) : Array(Tuple(String, String, Int32))
+                        method_name : String,
+                        target_line : Int32? = nil) : Array(Tuple(String, String, Int32))
     sink = [] of Tuple(String, String, Int32)
     return sink if class_name.empty? || method_name.empty?
 
-    method_node = find_method(root, source, class_name, method_name)
+    method_node = find_method(root, source, class_name, method_name, target_line)
     return sink unless method_node
     body = Noir::TreeSitter.field(method_node, "body")
     return sink unless body
@@ -128,27 +129,40 @@ module Noir::JavaCalleeExtractor
     end
   end
 
+  # `target_line` (0-based row of the route's mapping annotation, when
+  # available) disambiguates overloaded handlers: the annotation lives
+  # inside the correct overload's node span, so the method whose
+  # `[start_row, end_row]` range contains that line wins. Falls back to
+  # the first same-named method otherwise, matching prior behaviour.
   private def find_method(root : LibTreeSitter::TSNode,
                           source : String,
                           class_name : String,
-                          method_name : String) : LibTreeSitter::TSNode?
-    result : LibTreeSitter::TSNode? = nil
+                          method_name : String,
+                          target_line : Int32? = nil) : LibTreeSitter::TSNode?
+    first : LibTreeSitter::TSNode? = nil
+    matched : LibTreeSitter::TSNode? = nil
     walk_class_decls(root) do |decl|
-      next if result
+      next if matched
       name_node = Noir::TreeSitter.field(decl, "name")
       next unless name_node
       next unless Noir::TreeSitter.node_text(name_node, source) == class_name
       body = Noir::TreeSitter.field(decl, "body")
       next unless body
       Noir::TreeSitter.each_named_child(body) do |member|
-        next if result
+        next if matched
         next unless Noir::TreeSitter.node_type(member) == "method_declaration"
         mn = Noir::TreeSitter.field(member, "name")
         next unless mn
-        result = member if Noir::TreeSitter.node_text(mn, source) == method_name
+        next unless Noir::TreeSitter.node_text(mn, source) == method_name
+        first ||= member
+        if line = target_line
+          start_row = Noir::TreeSitter.node_start_row(member)
+          end_row = Noir::TreeSitter.node_end_row(member)
+          matched = member if line >= start_row && line <= end_row
+        end
       end
     end
-    result
+    matched || first
   end
 
   private def walk_class_decls(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)

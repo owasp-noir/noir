@@ -188,7 +188,7 @@ module Analyzer::Java
                 # "json" rather than inheriting "form".
 
                 parameters = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters_from(
-                  root, content, route.class_name, route.method_name, route.verb, parameter_format, dto_index
+                  root, content, route.class_name, route.method_name, route.verb, parameter_format, dto_index, route.line
                 )
                 merge_route_condition_params(parameters, route.params)
 
@@ -213,7 +213,7 @@ module Analyzer::Java
                 # other analyzer's first-cut honest scope.
                 if include_callee && !(route.class_name.empty? || route.method_name.empty?)
                   Noir::JavaCalleeExtractor.callees_in_method(
-                    root, content, path, route.class_name, route.method_name
+                    root, content, path, route.class_name, route.method_name, route.line
                   ).each do |entry|
                     name, callee_path, callee_line = entry
                     endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
@@ -242,7 +242,7 @@ module Analyzer::Java
 
                         parameters = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters_from(
                           interface_root, entry.source, entry_route.class_name, entry_route.method_name,
-                          entry_route.verb, parameter_format, interface_dto_index
+                          entry_route.verb, parameter_format, interface_dto_index, entry_route.line
                         )
                         merge_route_condition_params(parameters, implementation.params + entry_route.params)
                       end
@@ -306,21 +306,41 @@ module Analyzer::Java
             # Reactive routes declared via `router().route(...).andRoute(...)`
             # — regex-scoped because the builder-pattern shape isn't
             # worth a dedicated tree-sitter walk yet.
-            content.scan(REGEX_ROUTER_CODE_BLOCK) do |route_code|
-              method_code = route_code[0]
-              constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants(content)
-              # Pick up `nest(RequestPredicates.path("/prefix"), ...)`
-              # / `nest(path("/prefix"), ...)` byte ranges so verb
-              # calls inside the nested lambda get the prefix added.
-              # Servlet-fn and WebFlux both use this idiom heavily;
-              # without prefix awareness routes like
-              # `route().nest(path("/product"), builder ->
-              # builder.GET("/name/{name}", ...))` surfaced as
-              # `GET /name/{name}` instead of `GET /product/name/{name}`.
-              nest_prefixes = collect_nest_prefixes(method_code, constants)
+            route_blocks = [] of Tuple(Array(Tuple(Int32, String, String, String)), Array(Tuple(Int32, Int32, String)))
+            reactive_callees = {} of String => Array(Callee)
 
-              collect_router_route_calls(method_code, constants).each do |call|
-                pos, method, endpoint = call
+            # Single tree-sitter parse for the whole reactive file: the
+            # constant table and the `this::handler` callee resolution both
+            # read from this one `root`, so the file isn't parsed twice
+            # when callees are requested (and constants are resolved once,
+            # not once-per-block).
+            Noir::TreeSitter.parse_java(content) do |root|
+              constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content)
+              content.scan(REGEX_ROUTER_CODE_BLOCK) do |route_code|
+                method_code = route_code[0]
+                # Pick up `nest(RequestPredicates.path("/prefix"), ...)`
+                # / `nest(path("/prefix"), ...)` byte ranges so verb
+                # calls inside the nested lambda get the prefix added.
+                # Servlet-fn and WebFlux both use this idiom heavily;
+                # without prefix awareness routes like
+                # `route().nest(path("/product"), builder ->
+                # builder.GET("/name/{name}", ...))` surfaced as
+                # `GET /name/{name}` instead of `GET /product/name/{name}`.
+                route_blocks << {collect_router_route_calls(method_code, constants), collect_nest_prefixes(method_code, constants)}
+              end
+
+              # Resolve same-file `this::handler` method bodies to 1-hop
+              # callees so reactive endpoints carry handler context too.
+              if include_callee
+                wanted = Set(String).new
+                route_blocks.each { |calls, _| calls.each { |call| wanted << call[3] unless call[3].empty? } }
+                reactive_callees = build_reactive_method_callees(root, content, path, wanted)
+              end
+            end
+
+            route_blocks.each do |calls, nest_prefixes|
+              calls.each do |call|
+                pos, method, endpoint, handler_ref = call
                 nest_prefix = ""
                 nest_prefixes.each do |start_b, end_b, prefix|
                   if pos >= start_b && pos < end_b
@@ -329,7 +349,15 @@ module Analyzer::Java
                 end
                 composed = nest_prefix.empty? ? endpoint : join_paths(nest_prefix, endpoint)
                 details = Details.new(PathInfo.new(path))
-                @result << Endpoint.new(join_paths(configured_base_path, composed), method, details)
+                reactive_endpoint = Endpoint.new(join_paths(configured_base_path, composed), method, details)
+
+                if include_callee && !handler_ref.empty?
+                  if handler_callees = reactive_callees[handler_ref]?
+                    handler_callees.each { |callee| reactive_endpoint.push_callee(callee) }
+                  end
+                end
+
+                @result << reactive_endpoint
               end
             end
           end
@@ -754,8 +782,8 @@ module Analyzer::Java
     # whose match position falls inside `[start, end)` should have
     # `prefix` prepended.
     private def collect_router_route_calls(code : String,
-                                           constants : Hash(String, String)) : Array(Tuple(Int32, String, String))
-      calls = [] of Tuple(Int32, String, String)
+                                           constants : Hash(String, String)) : Array(Tuple(Int32, String, String, String))
+      calls = [] of Tuple(Int32, String, String, String)
 
       code.scan(REGEX_ROUTE_CALL) do |match|
         open_idx = (match.end || 0) - 1
@@ -764,14 +792,75 @@ module Analyzer::Java
         next unless close_idx
 
         args = code[(open_idx + 1)...close_idx]
-        first_arg = first_argument(args)
-        path = resolve_router_path(first_arg, constants)
+        arg_list = top_level_arguments(args)
+        path = resolve_router_path(arg_list.first? || "", constants)
         next unless path
 
-        calls << {match.begin || 0, match[2], path.gsub(/\n/, "")}
+        # The handler is the second argument of `.GET("/x", this::handle)`
+        # / `route(RequestPredicates.GET("/x"), this::handle)`. Capture a
+        # same-file method-reference name so the reactive branch can pull
+        # 1-hop callees out of that handler body (WebFlux/servlet-fn
+        # RouterFunction handlers carry the real behaviour worth surfacing
+        # for ai-context).
+        handler_ref = arg_list.size >= 2 ? handler_method_reference(arg_list[1]) : ""
+        calls << {match.begin || 0, match[2], path.gsub(/\n/, ""), handler_ref}
       end
 
       calls
+    end
+
+    # Extract the method name from a functional-handler argument when it
+    # is a same-file method reference (`this::handle`, `Type::handle`,
+    # `handler::handle`). Returns "" for lambdas and anything else — those
+    # carry no resolvable same-file declaration to walk.
+    private def handler_method_reference(arg : String) : String
+      expr = arg.strip
+      if idx = expr.rindex("::")
+        name = expr[(idx + 2)..].strip
+        return name if name.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+      end
+      ""
+    end
+
+    # Walk the already-parsed `root` and return `{handler_method_name =>
+    # [Callee]}` for every wanted handler, mirroring the Vert.x analyzer's
+    # method-reference callee resolution. Shares the caller's parse so a
+    # reactive file is read once. Name collisions keep the first
+    # declaration (reactive router configs rarely repeat handler names in
+    # one file).
+    private def build_reactive_method_callees(root : LibTreeSitter::TSNode,
+                                              content : String,
+                                              path : String,
+                                              wanted : Set(String)) : Hash(String, Array(Callee))
+      result = {} of String => Array(Callee)
+      return result if wanted.empty?
+
+      walk_reactive_method_declarations(root) do |method|
+        name_node = Noir::TreeSitter.field(method, "name")
+        next unless name_node
+        method_name = Noir::TreeSitter.node_text(name_node, content)
+        next unless wanted.includes?(method_name)
+        next if result.has_key?(method_name)
+
+        body = Noir::TreeSitter.field(method, "body")
+        next unless body
+        result[method_name] = Noir::JavaCalleeExtractor.callees_in_body(body, content, path).map do |(name, callee_path, callee_line)|
+          Callee.new(name, path: callee_path, line: callee_line)
+        end
+      end
+
+      result
+    end
+
+    private def walk_reactive_method_declarations(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
+      if Noir::TreeSitter.node_type(node) == "method_declaration"
+        block.call(node)
+        return
+      end
+
+      Noir::TreeSitter.each_named_child(node) do |child|
+        walk_reactive_method_declarations(child, &block)
+      end
     end
 
     private def collect_nest_prefixes(code : String,

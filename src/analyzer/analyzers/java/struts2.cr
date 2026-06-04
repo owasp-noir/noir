@@ -158,6 +158,12 @@ module Analyzer::Java
       file_list.select do |path|
         next false unless File.exists?(path)
         next false unless path.ends_with?(".xml")
+        # Test-source Struts config (`src/test/resources/struts.xml`,
+        # `src/it/...`) exercises the framework itself and never backs a
+        # deployed action — gate it the same way the `.java` selection at
+        # the top of `analyze` does via the shared `JavaEngine.test_path?`
+        # convention.
+        next false if JavaEngine.test_path?(path)
         basename = File.basename(path)
         STRUTS_CONFIG_BASENAMES.includes?(basename) || basename.ends_with?("-struts.xml")
       end

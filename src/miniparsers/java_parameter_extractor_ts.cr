@@ -26,6 +26,37 @@ module Noir
     # DTO expansion.
     PRIMITIVE_TYPES = Set{"long", "int", "integer", "char", "boolean", "string", "multipartfile"}
 
+    # Scalar types Spring binds directly from a single request value
+    # (query string, form field, or — when annotated — path segment).
+    # Superset of `PRIMITIVE_TYPES`: covers the remaining numeric/date
+    # wrappers and `MultipartFile` so an un-annotated `Integer[] ids` or
+    # `BigDecimal amount` handler argument surfaces as a parameter
+    # instead of being silently dropped. Array (`Integer[]`), varargs,
+    # and single-type-argument collection forms (`List<Long>`,
+    # `Optional<String>`) all reduce to their element type before lookup
+    # via `simple_param_base`. Framework argument-resolver types (Model,
+    # HttpServletRequest, Pageable, Authentication, Principal,
+    # BindingResult, …) are deliberately absent — they are resolved by
+    # Spring, not bound from the request, so they must not surface.
+    SIMPLE_PARAM_TYPES = Set{
+      "long", "int", "integer", "short", "byte", "double", "float",
+      "boolean", "char", "character", "string", "bigdecimal", "biginteger",
+      "number", "uuid", "date", "localdate", "localdatetime", "localtime",
+      "instant", "multipartfile",
+    }
+
+    # Parameter annotations whose value is supplied by a Spring argument
+    # resolver, not bound from the HTTP request the client controls. A
+    # parameter carrying one of these is NOT an attack-surface input even
+    # when its type is a bindable DTO (the classic `@AuthenticationPrincipal
+    # User user`), so it must be excluded from the un-annotated
+    # implicit-binding path. Validation annotations (`@Valid`, `@Min`, …)
+    # are intentionally absent — they leave binding semantics untouched.
+    INJECTED_PARAM_ANNOTATIONS = Set{
+      "AuthenticationPrincipal", "CurrentUser", "CurrentSecurityContext",
+      "SessionAttribute", "RequestAttribute",
+    }
+
     # Subset of servlet types whose method body is scanned for
     # `request.getParameter("x")` / `request.getHeader("x")` calls.
     SERVLET_REQUEST_TYPES = Set{"HttpServletRequest"}
@@ -100,7 +131,48 @@ module Noir
         fields = collect_class_fields(body, source, lombok_setters)
         results[class_name] = fields unless fields.empty?
       end
+      # Java records: the header components ARE the bindable fields (a
+      # record can't declare extra instance state), bound through the
+      # canonical constructor for both JSON and form requests. Records are
+      # an increasingly common request-DTO shape, so index their
+      # components too. Walked separately from `walk_class_containers` so
+      # the shared class/interface walker's callers stay record-free.
+      if source.includes?("record ")
+        walk_record_declarations(root) do |decl|
+          name_node = Noir::TreeSitter.field(decl, "name")
+          next unless name_node
+          class_name = Noir::TreeSitter.node_text(name_node, source)
+          fields = collect_record_fields(decl, source)
+          results[class_name] = fields unless fields.empty? || results.has_key?(class_name)
+        end
+      end
       results
+    end
+
+    private def walk_record_declarations(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
+      block.call(node) if Noir::TreeSitter.node_type(node) == "record_declaration"
+      Noir::TreeSitter.each_named_child(node) do |child|
+        walk_record_declarations(child, &block)
+      end
+    end
+
+    # Collect a record's component list as bindable fields. Each component
+    # is a `formal_parameter` (`record Foo(String a, int b)`); the
+    # canonical constructor makes every one settable from a request, so
+    # they bind regardless of HTTP method or content type.
+    private def collect_record_fields(decl : LibTreeSitter::TSNode, source : String) : Array(FieldInfo)
+      fields = [] of FieldInfo
+      params = Noir::TreeSitter.field(decl, "parameters")
+      return fields unless params
+      Noir::TreeSitter.each_named_child(params) do |component|
+        next unless Noir::TreeSitter.node_type(component) == "formal_parameter"
+        name_node = Noir::TreeSitter.field(component, "name")
+        next unless name_node
+        name = Noir::TreeSitter.node_text(name_node, source)
+        next if name.empty?
+        fields << FieldInfo.new(name, "public", true, "")
+      end
+      fields
     end
 
     def extract_class_supertypes(source : String) : Hash(String, String)
@@ -158,10 +230,11 @@ module Noir
                                   method_name : String,
                                   verb : String,
                                   parameter_format : String?,
-                                  class_fields : Hash(String, Array(FieldInfo))) : Array(Param)
+                                  class_fields : Hash(String, Array(FieldInfo)),
+                                  target_line : Int32? = nil) : Array(Param)
       params = [] of Param
       Noir::TreeSitter.parse_java(source) do |root|
-        params = extract_method_parameters_from(root, source, class_name, method_name, verb, parameter_format, class_fields)
+        params = extract_method_parameters_from(root, source, class_name, method_name, verb, parameter_format, class_fields, target_line)
       end
       params
     end
@@ -172,8 +245,9 @@ module Noir
                                        method_name : String,
                                        verb : String,
                                        parameter_format : String?,
-                                       class_fields : Hash(String, Array(FieldInfo))) : Array(Param)
-      method = find_method(root, source, class_name, method_name)
+                                       class_fields : Hash(String, Array(FieldInfo)),
+                                       target_line : Int32? = nil) : Array(Param)
+      method = find_method(root, source, class_name, method_name, target_line)
       return [] of Param unless method
       constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source)
       collect_method_params(method, source, verb, parameter_format, class_fields, constants, class_name)
@@ -347,29 +421,42 @@ module Noir
 
     # Find the (class_name, method_name) method_declaration in the
     # tree. Returns nil when absent.
+    # Locate the `method_declaration` named `method_name` inside class
+    # `class_name`. When `target_line` is given (the route's mapping
+    # annotation row, 0-based) it disambiguates overloaded handlers: the
+    # annotation sits inside the *correct* overload's node span, so the
+    # method whose `[start_row, end_row]` range contains `target_line`
+    # wins. Without a line hint — or when no overload contains it — the
+    # first same-named method is returned, preserving prior behaviour.
     private def find_method(root : LibTreeSitter::TSNode,
                             source : String,
                             class_name : String,
-                            method_name : String) : LibTreeSitter::TSNode?
-      result : LibTreeSitter::TSNode? = nil
+                            method_name : String,
+                            target_line : Int32? = nil) : LibTreeSitter::TSNode?
+      first : LibTreeSitter::TSNode? = nil
+      matched : LibTreeSitter::TSNode? = nil
       walk_class_containers(root) do |decl|
-        next if result
+        next if matched
         name_node = Noir::TreeSitter.field(decl, "name")
         next unless name_node
         next unless Noir::TreeSitter.node_text(name_node, source) == class_name
         body = Noir::TreeSitter.field(decl, "body")
         next unless body
         Noir::TreeSitter.each_named_child(body) do |member|
-          next if result
+          next if matched
           next unless Noir::TreeSitter.node_type(member) == "method_declaration"
           mn = Noir::TreeSitter.field(member, "name")
           next unless mn
-          if Noir::TreeSitter.node_text(mn, source) == method_name
-            result = member
+          next unless Noir::TreeSitter.node_text(mn, source) == method_name
+          first ||= member
+          if line = target_line
+            start_row = Noir::TreeSitter.node_start_row(member)
+            end_row = Noir::TreeSitter.node_end_row(member)
+            matched = member if line >= start_row && line <= end_row
           end
         end
       end
-      result
+      matched || first
     end
 
     # Iterate annotation names (marker or full) attached to a
@@ -563,6 +650,7 @@ module Noir
       # `@RequestHeader` / `@CookieValue`; the first we see wins.
       ann_kind = nil
       ann_node : LibTreeSitter::TSNode? = nil
+      injected_param = false
       if mods = find_modifiers(fp)
         Noir::TreeSitter.each_named_child(mods) do |ann|
           ty = Noir::TreeSitter.node_type(ann)
@@ -570,6 +658,7 @@ module Noir
           n = Noir::TreeSitter.field(ann, "name")
           next unless n
           sn = simple_name(Noir::TreeSitter.node_text(n, source))
+          injected_param = true if INJECTED_PARAM_ANNOTATIONS.includes?(sn)
           case sn
           when "PathVariable"
             ann_kind = :path
@@ -597,6 +686,12 @@ module Noir
 
       return parameter_format if ann_kind == :path # legacy: @PathVariable is not emitted
 
+      # An argument-resolver parameter (`@AuthenticationPrincipal`, …) with
+      # no request-binding annotation is server-supplied, not a request
+      # input — drop it before the implicit-binding path can expand its
+      # (often DTO-typed) fields into phantom params.
+      return parameter_format if ann_kind.nil? && injected_param
+
       effective_format = parameter_format
       case ann_kind
       when :body
@@ -609,15 +704,23 @@ module Noir
         effective_format = "cookie"
       end
       if effective_format.nil?
-        # No parameter annotation and no `consumes` hint. A POST binds an
-        # un-annotated command object / scalar as form data (Spring
-        # `@ModelAttribute` semantics); other verbs carry no implicit
-        # request body, so the parameter isn't a request input. Applying
-        # this per-parameter — rather than pre-seeding the whole method
-        # with "form" — lets an explicit `@RequestBody` on the same POST
-        # resolve to "json" instead of being dragged to "form".
-        return parameter_format unless verb == "POST"
-        effective_format = "form"
+        # No parameter annotation and no `consumes` hint. Spring still
+        # binds the argument implicitly:
+        #   * a scalar (or array/collection of scalars) and a command
+        #     object both bind from request values for every verb — query
+        #     string on GET/DELETE/…, form body on POST;
+        #   * a framework argument-resolver type (Model,
+        #     HttpServletRequest, Pageable, Authentication, BindingResult,
+        #     …) binds from neither and must not surface.
+        # Emit only the first two kinds; recognise a command object by its
+        # presence in the resolved DTO field map. POST keeps the legacy
+        # "form" classification; other verbs use "query" (no implicit
+        # request body). Applying this per-parameter — rather than
+        # pre-seeding the whole method — lets an explicit `@RequestBody` on
+        # the same POST resolve to "json" instead of being dragged along.
+        bindable = simple_bindable_param?(type_name) || class_fields.has_key?(type_name)
+        return parameter_format unless bindable
+        effective_format = verb == "POST" ? "form" : "query"
       end
 
       default_value : String? = nil
@@ -650,20 +753,53 @@ module Noir
         end
       end
 
-      type_key = type_name.downcase
-      if PRIMITIVE_TYPES.includes?(type_key)
+      if simple_bindable_param?(type_name)
         sink << Param.new(parameter_name, default_value || "", effective_format)
       elsif SERVLET_REQUEST_TYPES.includes?(type_name)
         scan_servlet_body(method, source, arg_name, effective_format, sink)
       elsif fields = class_fields[type_name]?
+        # `@RequestBody` is deserialised by Jackson, which populates every
+        # non-static instance field by reflection (and via
+        # all-args/`@Builder` constructors) regardless of setter
+        # visibility — so a Lombok `@Getter`-only or constructor-bound DTO
+        # still binds all its fields. Form/model-attribute binding goes
+        # through Spring's `WebDataBinder`, which needs a public field or a
+        # setter, so keep that stricter gate for non-JSON formats.
+        json_body = effective_format == "json"
         fields.each do |field|
-          next unless field.access_modifier == "public" || field.has_setter?
+          next unless json_body || field.access_modifier == "public" || field.has_setter?
           expanded_default = default_value || field.init_value
           sink << Param.new(field.name, expanded_default, effective_format)
         end
       end
 
       effective_format
+    end
+
+    # True when `type_name` is a scalar Spring binds from one request
+    # value, including its array (`Integer[]`), varargs, and
+    # single-argument collection (`List<Long>`, `Optional<String>`)
+    # forms. Drives both the un-annotated implicit-binding gate and the
+    # final emit dispatch, so an annotated `@RequestParam Integer[] ids`
+    # surfaces too (the bare `PRIMITIVE_TYPES` lookup missed array forms).
+    private def simple_bindable_param?(type_name : String) : Bool
+      SIMPLE_PARAM_TYPES.includes?(simple_param_base(type_name))
+    end
+
+    # Reduce a parameter type to its lower-cased element-type simple name:
+    # strip a single-argument collection/`Optional` wrapper, array
+    # brackets and varargs, then drop any package/outer-class qualifier.
+    private def simple_param_base(type_name : String) : String
+      base = type_name.strip
+      if match = base.match(/\A(?:java\.util\.)?(?:List|Set|Collection|Iterable|Optional)\s*<\s*(.+?)\s*>\z/)
+        base = match[1].strip
+      end
+      base = base.gsub(/\[\s*\]/, "")
+      base = base.rstrip(". ")
+      if idx = base.rindex('.')
+        base = base[(idx + 1)..]
+      end
+      base.downcase
     end
 
     # Resolve either a string literal, a local Java constant, or a
