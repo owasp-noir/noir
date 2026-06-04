@@ -86,8 +86,16 @@ module Analyzer::Ruby
       stack : Array(Frame)
 
     @controller_data_cache = Hash(String, ControllerData).new
+    # Maps a mountable-engine constant (e.g. `DiscoursePoll::Engine`) to the
+    # path it is mounted at (`/polls`). A Rails engine's `routes.draw` block
+    # holds engine-relative paths; the `mount` that anchors them usually
+    # lives in a different file (a plugin.rb, the host app's routes), so we
+    # resolve it cross-file once up front.
+    @engine_mount_prefixes = Hash(String, String).new
 
     def analyze
+      @engine_mount_prefixes = build_engine_mount_map
+
       framework_roots = discover_framework_roots("config/routes.rb")
       framework_roots = [@base_path] if framework_roots.empty?
 
@@ -200,6 +208,21 @@ module Analyzer::Ruby
         # Outermost: Rails.application.routes.draw do ... end
         if line.starts_with?("Rails.application.routes.draw")
           stack << Frame.new(:neutral) if opens_block
+          next
+        end
+
+        # Mountable engine: `SomeEngine.routes.draw do ... end`. Its routes
+        # are relative to where the host `mount`s the engine, so resolve the
+        # mount prefix (built cross-file in @engine_mount_prefixes) and push
+        # it as a scope. Unknown mounts (engine shipped as a library, host
+        # not in scan) fall back to a transparent frame — same as before.
+        if opens_block && (em = line.match(/^(?:::)?([A-Z][A-Za-z0-9_:]*)\.routes\.draw\b/))
+          mount_prefix = @engine_mount_prefixes[em[1]]?
+          if mount_prefix && !mount_prefix.empty?
+            stack << Frame.new(:scope, path: mount_prefix)
+          else
+            stack << Frame.new(:neutral)
+          end
           next
         end
 
@@ -583,6 +606,39 @@ module Analyzer::Ruby
 
     private def end_line?(line : String) : Bool
       line == "end" || line.starts_with?("end ") || line.starts_with?("end;") || line.starts_with?("end#")
+    end
+
+    # Scan the files that declare engine mounts (`config/routes.rb`,
+    # `plugin.rb` — discourse pins every plugin's `mount X::Engine, at:`
+    # there) and build the engine-constant -> mount-path map. Forms handled:
+    #   mount X::Engine, at: "/p"        mount X::Engine => "/p"
+    #   Discourse::Application.routes.append { mount X::Engine, at: "/p" }
+    private def build_engine_mount_map : Hash(String, String)
+      map = Hash(String, String).new
+      all_files.each do |file|
+        base = File.basename(file)
+        next unless base == "plugin.rb" || base.ends_with?("routes.rb")
+        next unless File.exists?(file)
+        content = read_file_content(file)
+        next unless content.includes?("mount")
+
+        content.each_line do |raw|
+          line = strip_inline_comment(raw)
+          next unless line.includes?("mount")
+          if m = line.match(/\bmount\s+(?:::)?([A-Z][A-Za-z0-9_:]*)\s*(?:,\s*at:\s*|=>\s*)['"]([^'"]+)['"]/)
+            const = m[1]
+            map[const] = normalize_mount_prefix(m[2]) unless map.has_key?(const)
+          end
+        end
+      end
+      map
+    end
+
+    private def normalize_mount_prefix(at : String) : String
+      prefix = at.strip
+      return "" if prefix.empty? || prefix == "/"
+      prefix = prefix.rchop('/') if prefix.size > 1 && prefix.ends_with?('/')
+      prefix.lchop('/')
     end
 
     private def logical_route_lines(routes_path : String) : Array(String)
