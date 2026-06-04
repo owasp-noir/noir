@@ -32,10 +32,7 @@ module Analyzer::Ruby
       stack = [] of RouteFrame
 
       File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        file.each_line.with_index do |raw_line, index|
-          line = Noir::RubyCalleeExtractor.strip_comment(raw_line, preserve_strings: true).strip
-          next if line.empty?
-
+        hanami_logical_lines(file).each do |line, index|
           if closes_block?(line)
             stack.pop unless stack.empty?
             next
@@ -43,6 +40,11 @@ module Analyzer::Ruby
 
           opens_block = opens_route_block?(line)
           details = Details.new(PathInfo.new(path, index + 1))
+
+          if mounted = mount_endpoint(line, stack, details)
+            @result << mounted
+            next
+          end
 
           if neutral_block?(line)
             stack << RouteFrame.new if opens_block
@@ -81,6 +83,51 @@ module Analyzer::Ruby
           end
         end
       end
+    end
+
+    # Join continuation lines so a route whose options spill onto the next
+    # line is parsed as one statement. Hanami routes routinely wrap a long
+    # `to:`/`as:` tail:
+    #   post "/extensions/:extension_id/build",
+    #        to: "extensions.builds.create"
+    # Without joining, the verb line carries no `to:` so the action file is
+    # never opened and all of the route's params/callees are dropped.
+    # Returns {logical_line, first_line_index} pairs; comments are stripped
+    # and strings preserved, mirroring the per-line parse.
+    private def hanami_logical_lines(file) : Array(Tuple(String, Int32))
+      result = [] of Tuple(String, Int32)
+      buffer = ""
+      buffer_index = 0
+
+      file.each_line.with_index do |raw_line, index|
+        line = Noir::RubyCalleeExtractor.strip_comment(raw_line, preserve_strings: true).strip
+        next if line.empty?
+
+        if buffer.empty?
+          buffer = line
+          buffer_index = index
+        else
+          buffer = "#{buffer} #{line}"
+        end
+
+        next if buffer.ends_with?(",")
+        result << {buffer, buffer_index}
+        buffer = ""
+      end
+
+      result << {buffer, buffer_index} unless buffer.empty?
+      result
+    end
+
+    # `mount RackApp, at: "/path"` mounts a sub-app at a prefix (Sidekiq::Web,
+    # a sub-router). Emit a best-effort GET at the mount prefix so the
+    # mounted surface isn't invisible — same shape as the Rails analyzer.
+    private def mount_endpoint(line : String, stack : Array(RouteFrame), details : Details) : Endpoint?
+      return unless line.starts_with?("mount")
+      return if line.size > 5 && (line[5].alphanumeric? || line[5] == '_')
+      return unless m = line.match(/\bat:\s*['"]([^'"]+)['"]/)
+
+      Endpoint.new(join_paths(current_path_prefix(stack), m[1]), "GET", details)
     end
 
     def extract_action_path(content : String, framework_root : String = @base_path) : String
