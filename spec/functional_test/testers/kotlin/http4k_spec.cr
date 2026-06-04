@@ -29,6 +29,12 @@ expected_endpoints = [
     Param.new("email", "", "form"),
     Param.new("phone", "", "form"),
   ]),
+  Endpoint.new("/widgets/{id}", "GET", [
+    Param.new("id", "", "path"),
+  ]),
+  Endpoint.new("/widgets/{id}", "DELETE", [
+    Param.new("id", "", "path"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/kotlin/http4k/", {

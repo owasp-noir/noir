@@ -235,4 +235,26 @@ describe Noir::TreeSitterKotlinRouteExtractor do
 
     Noir::TreeSitterKotlinRouteExtractor.extract_routes(source).should be_empty
   end
+
+  it "skips @FeignClient interfaces (outbound clients, not server routes)" do
+    source = <<-KT
+      @FeignClient(value = "example-api")
+      interface ExampleApi {
+          @RequestMapping(method = [RequestMethod.POST], value = ["/example/example-api"])
+          fun example(): String
+      }
+
+      @RestController
+      @RequestMapping("/real")
+      class RealController {
+          @GetMapping("/ping")
+          fun ping(): String = "pong"
+      }
+      KT
+
+    routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/real/ping"},
+    ])
+  end
 end

@@ -52,5 +52,11 @@ val app = routes(
         val email = req.form("email")
         val phone = req.form("phone")
         Response(OK)
-    }
+    },
+
+    // verbs-under-path idiom: the path is bound once, verbs grouped inside
+    "/widgets/{id}" bind routes(
+        GET to { _: Request -> Response(OK) },
+        DELETE to { _: Request -> Response(OK) }
+    )
 )

@@ -10,17 +10,28 @@ module Analyzer::Kotlin
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       file_list = all_files()
       string_constants = Hash(String, String).new
+      raw_resources = [] of Noir::TreeSitterKotlinKtorRouteExtractor::RawResource
       file_list.each do |path|
         next unless File.exists?(path)
         next unless path.ends_with?(".#{KOTLIN_EXTENSION}")
         next if KotlinEngine.test_path?(path)
 
-        Noir::TreeSitterKotlinKtorRouteExtractor.extract_string_constants(read_file_content(path)).each do |name, value|
+        content = read_file_content(path)
+        Noir::TreeSitterKotlinKtorRouteExtractor.extract_string_constants(content).each do |name, value|
           next unless fully_qualified_constant?(name)
 
           string_constants[name] ||= value
         end
+
+        # `@Resource` classes may live in a shared module separate from
+        # the route files (Ktor KMP `commonMain`), so collect them across
+        # the whole project before composing type-safe-route paths.
+        if content.includes?("@Resource")
+          raw_resources.concat(Noir::TreeSitterKotlinKtorRouteExtractor.extract_resource_classes(content))
+        end
       end
+
+      resource_paths = Noir::TreeSitterKotlinKtorRouteExtractor.compose_resource_paths(raw_resources)
 
       file_list.each do |path|
         next unless File.exists?(path)
@@ -30,7 +41,7 @@ module Analyzer::Kotlin
         content = read_file_content(path)
         next unless potential_ktor_route_file?(content)
 
-        Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(content, string_constants, include_callees: include_callee).each do |route|
+        Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(content, string_constants, resource_paths, include_callees: include_callee).each do |route|
           @result << build_endpoint(route, path)
         end
       end

@@ -185,17 +185,13 @@ module Analyzer::Kotlin
           key = "#{route.class_name}##{route.method_name}"
           format_verb = first_verb[key]? || route.verb
 
+          # Pass only the `consumes`-derived format (nil when absent). The
+          # verb default (POST → form, others → query) is applied
+          # per-parameter inside the extractor so an explicit @RequestBody
+          # on a POST resolves to json instead of being dragged to form.
           parameter_format = Noir::TreeSitterKotlinParameterExtractor.extract_consumes_from(
             root, content, route.class_name, route.method_name
           )
-          if parameter_format.nil?
-            parameter_format = case format_verb
-                               when "POST", "PUT", "DELETE", "PATCH"
-                                 "form"
-                               when "GET"
-                                 "query"
-                               end
-          end
 
           parameters = Noir::TreeSitterKotlinParameterExtractor.extract_method_parameters_from(
             root, content, route.class_name, route.method_name, format_verb, parameter_format, dto_index

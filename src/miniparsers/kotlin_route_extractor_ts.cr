@@ -162,6 +162,13 @@ module Noir
                               string_constants : Hash(String, String),
                               local_string_constants : Hash(String, String))
       class_name = type_identifier_text(node, source)
+
+      # `@FeignClient` (Spring Cloud) interfaces declare OUTBOUND remote
+      # client calls with the same `@*Mapping` annotations a controller
+      # uses — they are not server routes, so skip the whole declaration
+      # to avoid emitting phantom inbound endpoints.
+      return if feign_client?(node, source)
+
       class_prefix = class_mapping_prefix(node, source, pending, string_constants, local_string_constants)
       prefix = join_paths(outer_prefix, class_prefix)
 
@@ -175,6 +182,17 @@ module Noir
           end
         end
       end
+    end
+
+    # True when the class/interface declaration carries a `@FeignClient`
+    # annotation (Spring Cloud declarative HTTP client). Such a type's
+    # `@*Mapping` methods describe outbound calls, not server routes.
+    private def feign_client?(decl : LibTreeSitter::TSNode, source : String) : Bool
+      found = false
+      each_annotation(decl, source) do |name, _args, _line|
+        found = true if name == "FeignClient"
+      end
+      found
     end
 
     # Detect whether a `prefix_expression` node carries annotations

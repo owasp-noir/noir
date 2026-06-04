@@ -145,6 +145,23 @@ describe "EndpointOptimizer" do
       result[1].params[1].name.should eq("comment_id")
     end
 
+    it "extracts every variable from a comma-packed segment" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      # Spring's matrix-style mapping packs sibling path variables into one
+      # segment separated by commas (e.g.
+      # @GetMapping("/bbox/{xMin},{yMin},{xMax},{yMax}")). Each is a path
+      # param; only the first used to be captured.
+      endpoints = [
+        Endpoint.new("/bbox/{xMin},{yMin},{xMax},{yMax}", "GET"),
+        Endpoint.new("/user/{userName}/location/{x},{y}", "PUT"),
+      ]
+
+      result = optimizer.add_path_parameters(endpoints)
+      result[0].params.map(&.name).should eq(["xMin", "yMin", "xMax", "yMax"])
+      result[0].params.all? { |p| p.param_type == "path" }.should be_true
+      result[1].params.map(&.name).should eq(["userName", "x", "y"])
+    end
+
     it "extracts parameters from colon patterns" do
       optimizer = EndpointOptimizer.new(logger, options)
       endpoints = [

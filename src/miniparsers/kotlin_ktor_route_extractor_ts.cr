@@ -49,17 +49,26 @@ module Noir
       "patch"   => "PATCH",
       "head"    => "HEAD",
       "options" => "OPTIONS",
+      # WebSocket / SSE handlers are registered with the same path +
+      # trailing-lambda DSL as the HTTP verbs. The connection opens with
+      # a GET (the WebSocket upgrade / SSE stream are both GET requests),
+      # so surface them as GET routes rather than dropping them.
+      "webSocket"    => "GET",
+      "webSocketRaw" => "GET",
+      "sse"          => "GET",
     }
 
     # Pass-through DSL calls — descend into their lambda body without
     # changing the path prefix. `routing` is the entry point;
     # `authenticate` wraps a sub-tree behind an auth realm; the
-    # remaining names cover the common Ktor scoping helpers.
+    # remaining names cover the common Ktor scoping helpers. `install`
+    # is handled separately (see `walk`) because only `install(Routing)`
+    # contributes routes — every other plugin config block must NOT be
+    # walked as routing.
     PASSTHROUGH_NAMES = Set{
       "routing",
       "authenticate",
       "rateLimit",
-      "install",
       "intercept",
       "host",
       "port",
@@ -83,11 +92,30 @@ module Noir
       end
     end
 
-    def extract_routes(source : String, string_constants = Hash(String, String).new, *, include_callees : Bool = false) : Array(Route)
+    # A `@Resource`-annotated class collected from a single file, before
+    # cross-class path composition. `lexical_name` is the dotted name as
+    # it would be referenced (`Articles.New`); `ctor_param_types` are the
+    # simple type names of its primary-constructor properties, one of
+    # which (when it names another resource, e.g. `root: Root` /
+    # `parent: ArticlesResource`) is the path-composition parent.
+    struct RawResource
+      getter simple_name : String
+      getter lexical_name : String
+      getter own_path : String
+      getter ctor_param_types : Array(String)
+
+      def initialize(@simple_name, @lexical_name, @own_path, @ctor_param_types)
+      end
+    end
+
+    def extract_routes(source : String,
+                       string_constants = Hash(String, String).new,
+                       resource_paths = Hash(String, String).new,
+                       *, include_callees : Bool = false) : Array(Route)
       routes = [] of Route
       local_string_constants = extract_string_constants(source)
       Noir::TreeSitter.parse_kotlin(source) do |root|
-        walk(root, source, "", routes, string_constants, local_string_constants, 0, include_callees, false)
+        walk(root, source, "", routes, string_constants, local_string_constants, 0, include_callees, false, resource_paths)
       end
       routes
     end
@@ -133,6 +161,256 @@ module Noir
       constants
     end
 
+    # ---- type-safe resource routing ----------------------------------
+
+    # Collect every `@Resource("path")`-annotated class/object in a file
+    # (including nested ones, with their dotted lexical name). The
+    # analyzer gathers these across the whole project before composing
+    # full paths, since a resource's parent is often declared in another
+    # module (Ktor's KMP `commonMain` resource definitions).
+    def extract_resource_classes(source : String) : Array(RawResource)
+      result = [] of RawResource
+      Noir::TreeSitter.parse_kotlin(source) do |root|
+        collect_resource_classes(root, source, "", result, 0)
+      end
+      result
+    end
+
+    # Resolve each raw resource to its full URL path. The parent is the
+    # first primary-constructor property whose type is itself a resource
+    # (`root: Root` → `/api`); the child path joins onto it. Returns a
+    # map keyed by BOTH the dotted lexical name (`Articles.New`) and the
+    # bare simple name (`TagsResource`) so `get<...>` references resolve
+    # either way.
+    def compose_resource_paths(raws : Array(RawResource)) : Hash(String, String)
+      by_simple = Hash(String, RawResource).new
+      raws.each { |r| by_simple[r.simple_name] ||= r }
+
+      result = Hash(String, String).new
+      raws.each do |r|
+        full = compose_full_path(r, by_simple, Set(String).new, 0)
+        next if full.empty?
+        result[r.lexical_name] = full
+        result[r.simple_name] ||= full
+      end
+      result
+    end
+
+    private def compose_full_path(r : RawResource,
+                                  by_simple : Hash(String, RawResource),
+                                  visiting : Set(String),
+                                  depth : Int32) : String
+      return r.own_path if depth > Noir::TreeSitter::MAX_AST_DEPTH
+      return r.own_path if visiting.includes?(r.lexical_name)
+      visiting.add(r.lexical_name)
+
+      parent_path = ""
+      r.ctor_param_types.each do |t|
+        next if t == r.simple_name
+        if parent = by_simple[t]?
+          parent_path = compose_full_path(parent, by_simple, visiting, depth + 1)
+          break
+        end
+      end
+
+      visiting.delete(r.lexical_name)
+      parent_path.empty? ? r.own_path : join_paths(parent_path, r.own_path)
+    end
+
+    private def collect_resource_classes(node : LibTreeSitter::TSNode,
+                                         source : String,
+                                         lexical_prefix : String,
+                                         sink : Array(RawResource),
+                                         depth : Int32)
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+      ty = Noir::TreeSitter.node_type(node)
+
+      if ty == "class_declaration" || ty == "object_declaration"
+        name = resource_class_name(node, source)
+        unless name.empty?
+          lexical = lexical_prefix.empty? ? name : "#{lexical_prefix}.#{name}"
+          if own = resource_annotation_path(node, source)
+            sink << RawResource.new(name, lexical, own, ctor_param_type_names(node, source))
+          end
+          if body = resource_class_body(node)
+            Noir::TreeSitter.each_named_child(body) do |member|
+              collect_resource_classes(member, source, lexical, sink, depth + 1)
+            end
+          end
+          return
+        end
+      end
+
+      Noir::TreeSitter.each_named_child(node) do |child|
+        collect_resource_classes(child, source, lexical_prefix, sink, depth + 1)
+      end
+    end
+
+    private def resource_class_name(decl : LibTreeSitter::TSNode, source : String) : String
+      count = LibTreeSitter.ts_node_named_child_count(decl)
+      count.times do |i|
+        child = LibTreeSitter.ts_node_named_child(decl, i.to_u32)
+        return Noir::TreeSitter.node_text(child, source) if Noir::TreeSitter.node_type(child) == "type_identifier"
+      end
+      ""
+    end
+
+    private def resource_class_body(decl : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+      count = LibTreeSitter.ts_node_named_child_count(decl)
+      count.times do |i|
+        child = LibTreeSitter.ts_node_named_child(decl, i.to_u32)
+        return child if Noir::TreeSitter.node_type(child) == "class_body"
+      end
+      nil
+    end
+
+    # `@Resource("/x")` → `/x`. The annotation parses as a `modifiers`
+    # child carrying an `annotation` whose `constructor_invocation` pairs
+    # the `Resource` user_type with a `value_arguments` holding the path
+    # string. Returns nil when the class has no `@Resource`.
+    private def resource_annotation_path(decl : LibTreeSitter::TSNode, source : String) : String?
+      count = LibTreeSitter.ts_node_named_child_count(decl)
+      count.times do |i|
+        mods = LibTreeSitter.ts_node_named_child(decl, i.to_u32)
+        next unless Noir::TreeSitter.node_type(mods) == "modifiers"
+        Noir::TreeSitter.each_named_child(mods) do |ann|
+          next unless Noir::TreeSitter.node_type(ann) == "annotation"
+          Noir::TreeSitter.each_named_child(ann) do |sub|
+            next unless Noir::TreeSitter.node_type(sub) == "constructor_invocation"
+            ann_name = ""
+            args : LibTreeSitter::TSNode? = nil
+            Noir::TreeSitter.each_named_child(sub) do |c|
+              case Noir::TreeSitter.node_type(c)
+              when "user_type"
+                ann_name = simple_type_name(Noir::TreeSitter.node_text(c, source))
+              when "value_arguments"
+                args = c
+              end
+            end
+            if ann_name == "Resource" && (a = args)
+              if path = first_string_in_arguments(a, source)
+                return path
+              end
+            end
+          end
+        end
+      end
+      nil
+    end
+
+    private def first_string_in_arguments(args : LibTreeSitter::TSNode, source : String) : String?
+      Noir::TreeSitter.each_named_child(args) do |arg|
+        next unless Noir::TreeSitter.node_type(arg) == "value_argument"
+        Noir::TreeSitter.each_named_child(arg) do |child|
+          return decode_string_literal(child, source) if Noir::TreeSitter.node_type(child) == "string_literal"
+        end
+      end
+      nil
+    end
+
+    private def ctor_param_type_names(decl : LibTreeSitter::TSNode, source : String) : Array(String)
+      result = [] of String
+      count = LibTreeSitter.ts_node_named_child_count(decl)
+      count.times do |i|
+        pc = LibTreeSitter.ts_node_named_child(decl, i.to_u32)
+        next unless Noir::TreeSitter.node_type(pc) == "primary_constructor"
+        Noir::TreeSitter.each_named_child(pc) do |param|
+          next unless Noir::TreeSitter.node_type(param) == "class_parameter"
+          Noir::TreeSitter.each_named_child(param) do |c|
+            ty = Noir::TreeSitter.node_type(c)
+            next unless ty == "user_type" || ty == "nullable_type" || ty == "type_identifier"
+            if leaf = type_leaf(c, source)
+              result << leaf
+              break
+            end
+          end
+        end
+      end
+      result
+    end
+
+    private def simple_type_name(full : String) : String
+      if idx = full.rindex('.')
+        full[(idx + 1)..]
+      else
+        full
+      end
+    end
+
+    # Pull the dotted type name out of a verb call's `<Type>` argument,
+    # e.g. `get<Articles.Id.Edit> { }` → "Articles.Id.Edit". Returns nil
+    # when the call carries no type argument (the ordinary string-path
+    # `get("/x")` form).
+    private def call_type_argument_name(call : LibTreeSitter::TSNode, source : String) : String?
+      ta = direct_type_arguments(call)
+      unless ta
+        first = first_named_child(call)
+        ta = direct_type_arguments(first) if first && Noir::TreeSitter.node_type(first) == "call_expression"
+      end
+      return unless ta
+      parts = [] of String
+      Noir::TreeSitter.each_named_child(ta) do |proj|
+        collect_type_identifiers(proj, source, parts, 0)
+      end
+      parts.empty? ? nil : parts.join(".")
+    end
+
+    private def direct_type_arguments(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+      Noir::TreeSitter.each_named_child(node) do |child|
+        ty = Noir::TreeSitter.node_type(child)
+        return child if ty == "type_arguments"
+        if ty == "call_suffix"
+          Noir::TreeSitter.each_named_child(child) do |sub|
+            return sub if Noir::TreeSitter.node_type(sub) == "type_arguments"
+          end
+        end
+      end
+      nil
+    end
+
+    private def collect_type_identifiers(node : LibTreeSitter::TSNode, source : String, parts : Array(String), depth : Int32)
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+      parts << Noir::TreeSitter.node_text(node, source) if Noir::TreeSitter.node_type(node) == "type_identifier"
+      Noir::TreeSitter.each_named_child(node) do |child|
+        collect_type_identifiers(child, source, parts, depth + 1)
+      end
+    end
+
+    private def resolve_resource_path(type_name : String, resource_paths : Hash(String, String)) : String?
+      resource_paths[type_name]? || resource_paths[type_name.split('.').last]?
+    end
+
+    # Emit a route for a `verb<Resource> { ... }` call. The path is the
+    # composed resource path; the lambda body is scanned for body/query/
+    # header params and callees exactly like a string-path verb route.
+    private def emit_resource_route(node : LibTreeSitter::TSNode,
+                                    source : String,
+                                    verb : String,
+                                    full_path : String,
+                                    routes : Array(Route),
+                                    include_callees : Bool)
+      line = Noir::TreeSitter.node_start_row(node)
+      receive_type : String? = nil
+      has_body = false
+      query_params = [] of String
+      header_params = [] of String
+      form_params = [] of String
+      callees = [] of Tuple(String, Int32)
+
+      if body = call_lambda_body(node)
+        receive_type = scan_handler_body(body, source, query_params, header_params, form_params)
+        has_body = !!receive_type || handler_reads_body?(body, source)
+        if include_callees
+          Noir::KotlinCalleeExtractor.callees_in_lambda(body, source, "").each do |entry|
+            name, _path, line_no = entry
+            callees << {name, line_no}
+          end
+        end
+      end
+
+      routes << Route.new(verb, full_path, line, receive_type, has_body, query_params, header_params, form_params, callees)
+    end
+
     # ---- traversal ----------------------------------------------------
 
     private def walk(node : LibTreeSitter::TSNode,
@@ -143,14 +421,15 @@ module Noir
                      local_string_constants : Hash(String, String),
                      depth : Int32,
                      include_callees : Bool,
-                     active : Bool)
+                     active : Bool,
+                     resource_paths : Hash(String, String))
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
 
       ty = Noir::TreeSitter.node_type(node)
 
       if ty == "function_declaration" && route_extension_function?(node, source)
         if body = function_body_statements(node)
-          walk(body, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, true)
+          walk(body, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, true, resource_paths)
         end
         return
       end
@@ -159,6 +438,16 @@ module Noir
         name = call_name(node, source)
         case
         when active && HTTP_VERB_NAMES.has_key?(name)
+          # Type-safe resource routing: `get<Articles.New> { ... }` carries
+          # a `<Type>` argument instead of a string path. Resolve the type
+          # to its @Resource-composed path; if it can't be resolved, skip
+          # rather than emit the bare routing prefix (a misleading "/").
+          if type_name = call_type_argument_name(node, source)
+            if rp = resolve_resource_path(type_name, resource_paths)
+              emit_resource_route(node, source, HTTP_VERB_NAMES[name], join_paths(prefix, rp), routes, include_callees)
+            end
+            return
+          end
           emit_route(node, source, name, prefix, routes, string_constants, local_string_constants, include_callees)
           return
         when active && name == "route"
@@ -169,19 +458,30 @@ module Noir
             if method = call_http_method_argument(node, source)
               emit_method_route(node, body, source, method, new_prefix, routes, include_callees) if has_handle_call?(body, source)
             end
-            walk(body, source, new_prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, true)
+            walk(body, source, new_prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, true, resource_paths)
+          end
+          return
+        when name == "install"
+          # `install(Routing) { ... }` contributes routes, so descend as
+          # routing. Every other plugin config block (CachingHeaders,
+          # CORS, StatusPages, …) is configuration, not routing — descend
+          # with routing disabled so a config-DSL lambda that happens to
+          # be named like a verb (e.g. CachingHeaders' `options { }`)
+          # isn't mistaken for an OPTIONS route.
+          if body = call_lambda_body(node)
+            walk(body, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, routing_install_call?(node, source), resource_paths)
           end
           return
         when name == "routing" || routing_install_call?(node, source) || (active && PASSTHROUGH_NAMES.includes?(name))
           if body = call_lambda_body(node)
-            walk(body, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, true)
+            walk(body, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, true, resource_paths)
           end
           return
         end
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, active)
+        walk(child, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, active, resource_paths)
       end
     end
 
