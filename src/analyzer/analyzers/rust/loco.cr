@@ -28,6 +28,10 @@ module Analyzer::Rust
       # so the content check alone is sufficient.
       return endpoints unless source.includes?("use loco_rs")
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      # `#[cfg(test)] mod tests { Routes::new().add("/x", get(h)); }` and
+      # path-normalization test fixtures live right in the framework's
+      # `src/app_routes.rs` etc.; gate them like the other Rust analyzers.
+      test_regions = RustEngine.collect_cfg_test_regions(source)
 
       Noir::TreeSitter.parse_rust(source) do |root|
         function_index = build_function_index(root, source)
@@ -41,7 +45,7 @@ module Analyzer::Rust
         # file uses this builder, the explicit routes are authoritative —
         # we return them and skip the convention pass so the two can't
         # double-count the same controller.
-        explicit = extract_explicit_routes(root, source, path, function_index, include_callee)
+        explicit = extract_explicit_routes(root, source, path, function_index, include_callee, test_regions)
         if !explicit.empty?
           endpoints.concat(explicit)
           next
@@ -59,6 +63,7 @@ module Analyzer::Rust
 
         walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "function_item"
+          next if RustEngine.inside_test_region?(node, test_regions)
           next unless public_async?(node, source)
           name_node = Noir::TreeSitter.field(node, "name")
           next unless name_node
@@ -91,10 +96,12 @@ module Analyzer::Rust
                                         source : String,
                                         path : String,
                                         function_index : Hash(String, LibTreeSitter::TSNode),
-                                        include_callee : Bool) : Array(Endpoint)
+                                        include_callee : Bool,
+                                        test_regions : Array(Tuple(Int32, Int32))) : Array(Endpoint)
       endpoints = [] of Endpoint
       walk(root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "call_expression"
+        next if RustEngine.inside_test_region?(node, test_regions)
         fn_node = Noir::TreeSitter.field(node, "function")
         next unless fn_node && Noir::TreeSitter.node_type(fn_node) == "field_expression"
         field = Noir::TreeSitter.field(fn_node, "field")
