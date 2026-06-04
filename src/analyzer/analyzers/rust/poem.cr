@@ -20,11 +20,17 @@ module Analyzer::Rust
       source = read_file_content(path)
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
+      # `#[cfg(test)] mod tests { Route::new().at("/x", get(h)); }` blocks
+      # would otherwise leak test-only routes; gate like the other Rust
+      # analyzers via the shared region scan.
+      test_regions = RustEngine.collect_cfg_test_regions(source)
+
       Noir::TreeSitter.parse_rust(source) do |root|
         function_index = build_function_index(root, source)
 
         walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
+          next if RustEngine.inside_test_region?(node, test_regions)
           at_call = decode_at_call(node, source)
           next unless at_call
           route_path, method_handler_pairs = at_call
@@ -45,6 +51,7 @@ module Analyzer::Rust
         end
 
         each_routing_pair(root) do |attr_item, function|
+          next if RustEngine.inside_test_region?(attr_item, test_regions)
           route = decode_oai_attribute(attr_item, source)
           next unless route
           route_path, method, attr_row = route
@@ -81,8 +88,31 @@ module Analyzer::Rust
       return unless route_path
 
       pairs = decode_method_handler_chain(named[1], source)
-      return if pairs.empty?
+      # `.at("/p", index)` / `.at("/p", EmbeddedFileEndpoint::new())` /
+      # `.at("/p", metrics.exporter())` register an Endpoint directly with
+      # no `get(...)` verb wrapper. poem serves these for any method; emit
+      # a single GET so the route surfaces. The handler name (if any) is
+      # used for callee/param enrichment.
+      if pairs.empty?
+        handler = bare_endpoint_handler(named[1], source)
+        return unless handler
+        return {route_path, [{"GET", handler}]}
+      end
       {route_path, pairs}
+    end
+
+    # The handler name for a verb-less `.at(path, endpoint)` argument:
+    # a bare identifier / scoped path, or the trailing segment of an
+    # endpoint-producing call / constructor (`x.exporter()` -> "exporter",
+    # `EmbeddedFileEndpoint::<F>::new(..)` -> "new"). Returns "" for an
+    # endpoint expression with no recoverable name (still a real route).
+    private def bare_endpoint_handler(node : LibTreeSitter::TSNode, source : String) : String?
+      case Noir::TreeSitter.node_type(node)
+      when "identifier", "scoped_identifier"
+        Noir::TreeSitter.node_text(node, source)
+      when "call_expression", "generic_function", "field_expression"
+        ""
+      end
     end
 
     # Walk `.get(h).post(h2)` chains. Each step is a `call_expression`
@@ -206,7 +236,13 @@ module Analyzer::Rust
         next if fn_text.nil?
 
         if fn_text.ends_with?(".header") || fn_text == "header"
-          name = first_string_literal_text(Noir::TreeSitter.field(call, "arguments"), source)
+          # Request-side header reads take exactly one (string) argument:
+          # `req.header("X")`. A two-arg call is a ResponseBuilder SETTING
+          # a header (`.header(header::LOCATION, "/")`) — the first arg is
+          # a const, the second the value — and must not be read as a
+          # request param.
+          args = Noir::TreeSitter.field(call, "arguments")
+          name = single_string_arg(args, source)
           if name && !endpoint.params.any? { |p| p.name == name && p.param_type == "header" }
             endpoint.push_param(Param.new(name, "", "header"))
           end
@@ -252,6 +288,18 @@ module Analyzer::Rust
     private def string_content_from_string_literal(node : LibTreeSitter::TSNode, source : String) : String?
       return unless Noir::TreeSitter.node_type(node) == "string_literal"
       string_content(node, source)
+    end
+
+    # The header name from a single-argument header read (`req.header("X")`),
+    # or nil when the call has zero or multiple arguments (a multi-arg
+    # `.header(name, value)` is a response-builder set, not a request read).
+    private def single_string_arg(args : LibTreeSitter::TSNode?, source : String) : String?
+      return unless args
+      named = [] of LibTreeSitter::TSNode
+      Noir::TreeSitter.each_named_child(args) { |c| named << c }
+      return unless named.size == 1
+      return unless Noir::TreeSitter.node_type(named[0]) == "string_literal"
+      string_content(named[0], source)
     end
 
     private def build_function_index(root : LibTreeSitter::TSNode, source : String) : Hash(String, LibTreeSitter::TSNode)

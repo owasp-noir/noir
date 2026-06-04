@@ -1,0 +1,7 @@
+[package]
+name = "poem_extras_fixture"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+poem = "3"
