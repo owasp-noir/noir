@@ -281,6 +281,133 @@ module Noir
       group_prefixes
     end
 
+    # A Gin "router-builder" helper — `func F(rg *gin.RouterGroup) {...}`
+    # — whose body registers routes onto the passed-in group. `param` is
+    # the group parameter's name; `start_row`/`end_row` bound the
+    # declaration so the caller can suppress the (prefix-less) routes the
+    # whole-file pass would otherwise emit for it.
+    struct RouterBuilder
+      getter param : String
+      getter start_row : Int32
+      getter end_row : Int32
+
+      def initialize(@param, @start_row, @end_row)
+      end
+    end
+
+    # Detects top-level Gin router-builder helpers. The canonical gin
+    # project layout splits registration across `func addXRoutes(rg
+    # *gin.RouterGroup)` helpers called from a central `getRoutes()` with
+    # a versioned group (`addUserRoutes(router.Group("/v1"))`). The group
+    # prefix lives at the call site, not in the helper, so the helper's
+    # routes need that prefix grafted on (see `extract_routes_from_function`).
+    # Returns `{func_name => RouterBuilder}`; only functions with exactly
+    # one `*gin.RouterGroup` parameter qualify (an ambiguous count can't be
+    # bound to a single prefix).
+    def collect_router_group_builders(source : String) : Hash(String, RouterBuilder)
+      result = Hash(String, RouterBuilder).new
+      Noir::TreeSitter.parse_go(source) do |root|
+        walk(root) do |node|
+          next unless Noir::TreeSitter.node_type(node) == "function_declaration"
+          name_node = Noir::TreeSitter.field(node, "name")
+          params = Noir::TreeSitter.field(node, "parameters")
+          next unless name_node && params
+          param = router_group_param_name(params, source)
+          next unless param
+          result[Noir::TreeSitter.node_text(name_node, source)] =
+            RouterBuilder.new(param, Noir::TreeSitter.node_start_row(node), Noir::TreeSitter.node_end_row(node))
+        end
+      end
+      result
+    end
+
+    # Returns the sole `*gin.RouterGroup` parameter's name, or nil when
+    # the function has zero or more than one such parameter.
+    private def router_group_param_name(params : LibTreeSitter::TSNode, source : String) : String?
+      found = nil
+      count = 0
+      Noir::TreeSitter.each_named_child(params) do |decl|
+        next unless Noir::TreeSitter.node_type(decl) == "parameter_declaration"
+        type_node = Noir::TreeSitter.field(decl, "type")
+        name_node = Noir::TreeSitter.field(decl, "name")
+        next unless type_node && name_node
+        final = Noir::TreeSitter.node_text(type_node, source).lchop('*').split('.').last
+        next unless final == "RouterGroup"
+        count += 1
+        found = Noir::TreeSitter.node_text(name_node, source)
+      end
+      count == 1 ? found : nil
+    end
+
+    # Finds calls to any of the named builder functions and returns
+    # `[{func_name, first_arg_identifier}]`. The first argument names the
+    # group passed in (`addUserRoutes(v1)` -> `{"addUserRoutes", "v1"}`),
+    # which the caller resolves to a prefix via the package group map.
+    def collect_router_builder_callsites(source : String, builders : Set(String)) : Array(Tuple(String, String))
+      calls = [] of Tuple(String, String)
+      return calls if builders.empty?
+      Noir::TreeSitter.parse_go(source) do |root|
+        walk(root) do |node|
+          next unless Noir::TreeSitter.node_type(node) == "call_expression"
+          fn = Noir::TreeSitter.field(node, "function")
+          next unless fn && Noir::TreeSitter.node_type(fn) == "identifier"
+          name = Noir::TreeSitter.node_text(fn, source)
+          next unless builders.includes?(name)
+          args = Noir::TreeSitter.field(node, "arguments")
+          next unless args
+          first_arg = nil
+          Noir::TreeSitter.each_named_child(args) { |a| first_arg ||= a }
+          next unless first_arg
+          next unless Noir::TreeSitter.node_type(first_arg) == "identifier"
+          calls << {name, Noir::TreeSitter.node_text(first_arg, source)}
+        end
+      end
+      calls
+    end
+
+    # Extracts the verb routes registered inside one named function's body,
+    # seeding `external_groups` with the function's group parameter bound to
+    # a call-site prefix (`{rg => "/v1"}`). This grafts the call-site prefix
+    # onto routes a router-builder helper registers on its parameter group
+    # (`users := rg.Group("/users"); users.GET("/")` -> `/v1/users/`). Route
+    # line numbers stay relative to `source` so code paths remain accurate.
+    def extract_routes_from_function(source : String, func_name : String,
+                                     external_groups : Hash(String, String),
+                                     handle_method : String? = nil) : Array(Route)
+      routes = [] of Route
+      Noir::TreeSitter.parse_go(source) do |root|
+        string_values = collect_string_values(root, source)
+        find_function_body_node(root, source, func_name) do |body|
+          group_prefixes = external_groups.dup
+          walk(body) do |node|
+            next unless group_assignment_node?(node)
+            collect_group(node, source, group_prefixes, "Group", [] of String, string_values)
+          end
+          walk(body) do |node|
+            next unless Noir::TreeSitter.node_type(node) == "call_expression"
+            if route = decode_verb_call(node, source, group_prefixes, [] of String, "Group", [] of String, string_values)
+              routes << route
+            elsif handle_method && (route = decode_handle_call(node, source, group_prefixes, handle_method))
+              routes << route
+            end
+          end
+        end
+      end
+      dedupe_routes(routes)
+    end
+
+    private def find_function_body_node(node : LibTreeSitter::TSNode, source : String, name : String, &block : LibTreeSitter::TSNode ->)
+      if Noir::TreeSitter.node_type(node) == "function_declaration"
+        if (nn = Noir::TreeSitter.field(node, "name")) && Noir::TreeSitter.node_text(nn, source) == name
+          if body = Noir::TreeSitter.field(node, "body")
+            yield body
+            return
+          end
+        end
+      end
+      Noir::TreeSitter.each_named_child(node) { |c| find_function_body_node(c, source, name, &block) }
+    end
+
     # Collects Beego controller types and the HTTP-verb-named methods they
     # implement, keyed by the (package-unqualified) type name. Used to
     # resolve mapping-less `web.Router("/path", &Ctrl{})` registrations

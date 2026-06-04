@@ -257,6 +257,10 @@ module Noir::TreeSitter
     LibTreeSitter.ts_node_start_point(node).row.to_i
   end
 
+  def self.node_end_row(node : LibTreeSitter::TSNode) : Int32
+    LibTreeSitter.ts_node_end_point(node).row.to_i
+  end
+
   def self.field(node : LibTreeSitter::TSNode, name : String) : LibTreeSitter::TSNode?
     child = LibTreeSitter.ts_node_child_by_field_name(node, name.to_unsafe, name.bytesize.to_u32)
     LibTreeSitter.ts_node_is_null(child) ? nil : child

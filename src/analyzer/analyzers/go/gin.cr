@@ -4,6 +4,10 @@ module Analyzer::Go
   class Gin < GoEngine
     IMPORT_MARKER = "github.com/gin-gonic/gin"
 
+    # Shared read-only fallback for directories with no resolved
+    # router-builder prefixes (never mutated).
+    EMPTY_BUILDER_PREFIXES = Hash(String, Set(String)).new
+
     def analyze
       # Source Analysis
       public_dirs = [] of (Hash(String, String))
@@ -13,6 +17,13 @@ module Analyzer::Go
       # O(1) lookup into `package_function_bodies` rather than re-
       # walking every sibling source file.
       package_function_bodies = collect_package_function_bodies(file_contents)
+      # Cross-file router-builder prefix resolution: `{dir => {builder_fn
+      # => set(call-site prefixes)}}`. Resolves the canonical gin layout
+      # where `func addXRoutes(rg *gin.RouterGroup)` helpers are called
+      # from a central function with a versioned group (`addUserRoutes(
+      # router.Group("/v1"))`). The prefix lives at the call site, so it
+      # must be grafted onto the helper's routes.
+      builder_prefixes_by_dir = resolve_router_builder_prefixes(file_contents, package_groups)
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       begin
         WaitGroup.wait do |wg|
@@ -42,6 +53,32 @@ module Analyzer::Go
                     # /GetHeader/Cookie) to the most recently declared route —
                     # matching the legacy `last_endpoint` semantics.
                     cross_file_groups = ts_groups_for_directory(package_groups, File.dirname(path))
+
+                    # Router-builder expansion: graft call-site prefixes onto
+                    # the routes of `func addXRoutes(rg *gin.RouterGroup)`
+                    # helpers DEFINED in this file. Only "case b" helpers are
+                    # expanded — those whose group parameter name is NOT
+                    # already a key in the package group map. ("Case a" helpers
+                    # whose parameter name happens to match a caller's group
+                    # variable, e.g. both named `v1`, are already resolved by
+                    # the whole-file pass below, so they're left untouched to
+                    # keep their params/callees.) Expanded helpers' bodies are
+                    # suppressed in the whole-file pass to avoid emitting the
+                    # prefix-less variant alongside the corrected one.
+                    dir = File.dirname(path)
+                    dir_builder_prefixes = builder_prefixes_by_dir[dir]? || EMPTY_BUILDER_PREFIXES
+                    expand_builders = [] of Tuple(String, Noir::TreeSitterGoRouteExtractor::RouterBuilder, Set(String))
+                    suppress_ranges = [] of Range(Int32, Int32)
+                    if content.includes?("*gin.RouterGroup")
+                      Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(content).each do |fn, rb|
+                        pset = dir_builder_prefixes[fn]?
+                        next unless pset && !pset.empty?
+                        next if cross_file_groups.has_key?(rb.param)
+                        suppress_ranges << (rb.start_row..rb.end_row)
+                        expand_builders << {fn, rb, pset}
+                      end
+                    end
+
                     # Gin also accepts `r.Handle(method, path, handler)`
                     # alongside the verb shortcuts (`r.GET`, etc.),
                     # so opt into the method-first decoder so those
@@ -71,6 +108,11 @@ module Analyzer::Go
                     end
 
                     lines.each_with_index do |line, index|
+                      # Skip lines inside an expanded router-builder body — its
+                      # routes (and any params) are emitted, with the call-site
+                      # prefix applied, by the expansion pass below.
+                      next if suppress_ranges.any? { |r| r.includes?(index) }
+
                       details = Details.new(PathInfo.new(path, index + 1))
 
                       # Emit endpoints for any verb route that begins on this
@@ -123,6 +165,25 @@ module Analyzer::Go
                         end
                       end
                     end
+
+                    # Expansion pass: emit each suppressed router-builder's
+                    # routes once per resolved call-site prefix, with the
+                    # group parameter bound to that prefix. (A helper called
+                    # from two versioned groups — `addPingRoutes(v1)` and
+                    # `addPingRoutes(v2)` — yields both `/v1/ping` and
+                    # `/v2/ping`.)
+                    expand_builders.each do |fn, rb, pset|
+                      pset.each do |prefix|
+                        Noir::TreeSitterGoRouteExtractor.extract_routes_from_function(
+                          content, fn, {rb.param => prefix}, handle_method: "Handle"
+                        ).each do |route|
+                          rdetails = Details.new(PathInfo.new(path, route.line + 1))
+                          Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
+                            result << Endpoint.new(route.path, verb, rdetails)
+                          end
+                        end
+                      end
+                    end
                   end
                 rescue File::NotFoundError
                   logger.debug "File not found: #{path}"
@@ -136,6 +197,44 @@ module Analyzer::Go
       end
 
       resolve_public_dirs(public_dirs)
+
+      result
+    end
+
+    # Builds `{dir => {builder_fn => set(prefixes)}}` for the package by
+    # (1) collecting every `func F(rg *gin.RouterGroup)` helper across the
+    # directory's files and (2) resolving each call site `F(arg)` to the
+    # prefix `arg` denotes via the directory group map. A helper called
+    # with several different groups accumulates each prefix.
+    private def resolve_router_builder_prefixes(file_contents : Hash(String, String),
+                                                package_groups : Hash(String, Hash(String, String))) : Hash(String, Hash(String, Set(String)))
+      result = Hash(String, Hash(String, Set(String))).new
+      files_by_dir = Hash(String, Array(String)).new
+      file_contents.each_key { |p| (files_by_dir[File.dirname(p)] ||= [] of String) << p }
+
+      files_by_dir.each do |dir, paths|
+        builders = Set(String).new
+        paths.each do |p|
+          content = file_contents[p]?
+          next unless content
+          next unless content.includes?("*gin.RouterGroup")
+          Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(content).each_key { |fn| builders << fn }
+        end
+        next if builders.empty?
+
+        group_map = package_groups[dir]? || Hash(String, String).new
+        prefixes = Hash(String, Set(String)).new
+        paths.each do |p|
+          content = file_contents[p]?
+          next unless content
+          Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(content, builders).each do |fn, arg|
+            if prefix = group_map[arg]?
+              (prefixes[fn] ||= Set(String).new) << prefix
+            end
+          end
+        end
+        result[dir] = prefixes unless prefixes.empty?
+      end
 
       result
     end
