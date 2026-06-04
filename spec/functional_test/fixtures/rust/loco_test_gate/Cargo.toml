@@ -1,0 +1,7 @@
+[package]
+name = "loco_test_gate_fixture"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+loco-rs = "0.10"
