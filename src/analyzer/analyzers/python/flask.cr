@@ -791,6 +791,17 @@ module Analyzer::Python
 
     private def flask_relevant_source?(source : ::String) : Bool
       return true if source.includes?("flask")
+      # A file that imports a competing decorator-based framework (and
+      # never mentions flask) is NOT Flask — its `@app.get`/`@router.post`
+      # decorators belong to that framework's analyzer. Without this
+      # guard, in any repo where the Flask detector fires (e.g. a sibling
+      # Flask example), the Flask analyzer ALSO claimed FastAPI / Sanic /
+      # Litestar / Starlette / Quart / Robyn handler files and mislabeled
+      # their routes `python_flask` with Flask-style (usually empty)
+      # params. The route's real owner still emits it correctly, so this
+      # only drops the duplicate mislabel (jupyterhub examples/service-
+      # fastapi was reported as python_flask).
+      return false if source.matches?(/^\s*(?:from|import)\s+(?:fastapi|sanic|litestar|starlette|quart|robyn)\b/m)
       return true if source.matches?(/^\s*@\s*#{DOT_NATION}\s*\.\s*(?:route|get|post|put|patch|delete|head|options|trace)\s*\(/m)
       return true if source.matches?(/\b#{DOT_NATION}\s*\.\s*(?:add_url_rule|register_blueprint)\s*\(/)
 
