@@ -22,7 +22,9 @@ expected_endpoints = [
   Endpoint.new("/api/users/{id}", "GET", [
     Param.new("id", "", "path"),
     Param.new("x-token", "", "header"),
+    Param.new("SIGNATURE_HEADER", "", "header"),
     Param.new("session", "", "cookie"),
+    Param.new("SESSION_COOKIE", "", "cookie"),
   ]),
   Endpoint.new("/api/users/{id}", "POST", [
     Param.new("id", "", "path"),
@@ -82,6 +84,7 @@ expected_endpoints = [
   Endpoint.new("/api/products/{id}", "GET", [
     Param.new("id", "", "path"),
     Param.new("x-token", "", "header"),
+    Param.new("WEBHOOK_SECRET", "", "header"),
     Param.new("session", "", "cookie"),
   ]),
   Endpoint.new("/api/products/{id}", "PUT", [
@@ -139,6 +142,25 @@ FunctionalTester.new("fixtures/javascript/nextjs/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests
+
+describe "Next.js variable header keys" do
+  it "surfaces identifier names for req.headers[CONST] and request.headers.get(CONST)" do
+    options = ConfigInitializer.new.default_options
+    options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/javascript/nextjs/")])
+    options["nolog"] = YAML::Any.new(true)
+
+    app = NoirRunner.new(options)
+    app.detect
+    app.analyze
+
+    pages_get = app.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/api/users/{id}" }
+    pages_get.params.any? { |p| p.name == "SIGNATURE_HEADER" && p.param_type == "header" }.should be_true
+    pages_get.params.any? { |p| p.name == "SESSION_COOKIE" && p.param_type == "cookie" }.should be_true
+
+    app_get = app.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/api/products/{id}" }
+    app_get.params.any? { |p| p.name == "WEBHOOK_SECRET" && p.param_type == "header" }.should be_true
+  end
+end
 
 describe "Next.js comment filtering" do
   it "does not emit endpoints for commented-out exports (// and /* */)" do

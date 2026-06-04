@@ -3,10 +3,13 @@ import { cookies } from "next/headers"
 
 type Context = { params: { id: string } }
 
+const WEBHOOK_SECRET = 'demo-secret'
+
 export async function GET(request: NextRequest, { params }: Context) {
   const token = request.headers.get("x-token")
+  const sig = request.headers.get(WEBHOOK_SECRET)
   const session = cookies().get("session")
-  return NextResponse.json({ id: params.id, token, session })
+  return NextResponse.json({ id: params.id, token, sig, session })
 }
 
 export async function PUT(request: NextRequest, { params }: Context) {
