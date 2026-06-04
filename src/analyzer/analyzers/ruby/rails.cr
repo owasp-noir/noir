@@ -145,7 +145,7 @@ module Analyzer::Ruby
       # `controllers foo: 'bar'` remaps the implementing controller.
       doorkeeper_skip = Set(String).new
       doorkeeper_controllers = Hash(String, String).new
-      logical_route_lines(routes_path).each do |raw_line|
+      expand_static_loops(logical_route_lines(routes_path)).each do |raw_line|
         line = raw_line.strip
         next if line.empty?
 
@@ -521,6 +521,68 @@ module Analyzer::Ruby
       end.join("|")
 
       "#{path}##{stack_key}"
+    end
+
+    # A `%w[...].each do |var|` / `%i[...].each_with_index do |var, i|`
+    # block over a STATIC literal list unrolls to one copy of its body per
+    # element with the loop variable's `#{var}` interpolations substituted.
+    # discourse alone wraps ~46 routes in `%w[users u].each` — without this,
+    # `get "#{root_path}/..."` leaks `{root_path}` into ~130 endpoints (a
+    # fabricated path param) AND the real /users + /u variants are lost.
+    #
+    # Only literal `%w`/`%i` receivers are expanded: a dynamic
+    # `Model.scopes.each do |s|` cannot be resolved to values at parse time,
+    # so it is left for the normal parser (its block opens a neutral frame).
+    LOOP_OPENER = /^%([wi])[\[\(\{]([^\]\)\}]*)[\]\)\}]\s*\.each(?:_with_index)?\s+do\s*\|\s*([a-z_]\w*)[^|]*\|\s*$/
+
+    private def expand_static_loops(lines : Array(String)) : Array(String)
+      return lines unless lines.any? { |l| l.matches?(LOOP_OPENER) }
+
+      result = [] of String
+      index = 0
+      while index < lines.size
+        line = lines[index]
+        if m = line.match(LOOP_OPENER)
+          var = m[3]
+          values = m[2].split(/\s+/).reject(&.empty?)
+
+          # Walk to the `end` that closes this `.each do`, mirroring the main
+          # parser's one-block-open-per-line / `end`-pops-one model.
+          depth = 1
+          body = [] of String
+          cursor = index + 1
+          while cursor < lines.size && depth > 0
+            body_line = lines[cursor]
+            if end_line?(body_line)
+              depth -= 1
+              break if depth == 0
+            elsif opens_do_block?(body_line) || opens_keyword_block?(body_line)
+              depth += 1
+            end
+            body << body_line
+            cursor += 1
+          end
+
+          expanded_body = expand_static_loops(body)
+          values.each do |value|
+            expanded_body.each { |body_line| result << substitute_loop_var(body_line, var, value) }
+          end
+          index = cursor + 1 # skip the closing `end`
+        else
+          result << line
+          index += 1
+        end
+      end
+
+      result
+    end
+
+    private def substitute_loop_var(line : String, var : String, value : String) : String
+      line.gsub(/\#\{\s*#{Regex.escape(var)}\s*\}/, value)
+    end
+
+    private def end_line?(line : String) : Bool
+      line == "end" || line.starts_with?("end ") || line.starts_with?("end;") || line.starts_with?("end#")
     end
 
     private def logical_route_lines(routes_path : String) : Array(String)
