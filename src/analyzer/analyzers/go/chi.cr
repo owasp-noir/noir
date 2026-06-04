@@ -53,14 +53,18 @@ module Analyzer::Go
           # Mount targets still need a regex sweep — the name that appears
           # in `r.Mount("/admin", adminRouter())` is a *symbol*, not a
           # route, and it determines which function bodies to exclude from
-          # the free-floating TS extraction pass below.
+          # the free-floating TS extraction pass below. The target may be
+          # a plain function (`adminRouter()`) or a struct value-method
+          # (`todosResource{}.Routes()`); each contributes a *skip key*
+          # (qualified by receiver type for methods, so a same-named
+          # `Routes()` on another type — or a top-level router builder
+          # also named `Routes()` — is not skipped by accident).
           next unless content.includes?(".Mount(")
           content.each_line do |scan_line|
-            if scan_line.includes?(".Mount(")
-              if scan_match = scan_line.match(/[a-zA-Z]\w*\.Mount\(\s*"([^"]+)"\s*,\s*([^(]+)\(\)/)
-                package_mounted_functions[dir] ||= Set(String).new
-                package_mounted_functions[dir] << scan_match[2].strip
-              end
+            next unless scan_line.includes?(".Mount(")
+            if target = parse_mount_target(scan_line)
+              package_mounted_functions[dir] ||= Set(String).new
+              package_mounted_functions[dir] << mount_skip_key(target)
             end
           end
         rescue File::NotFoundError
@@ -176,27 +180,38 @@ module Analyzer::Go
                       next
                     end
                     if !mounted_functions.empty? && line.strip.starts_with?("func ")
-                      if func_match = line.match(/func\s+([a-zA-Z_]\w*)\s*\(/)
-                        if mounted_functions.includes?(func_match[1])
-                          in_mounted_func = true
-                          mounted_func_brace_count = line.count("{") - line.count("}")
-                          if mounted_func_brace_count <= 0
-                            in_mounted_func = false
-                          end
-                          next
+                      # Match both plain functions (`func adminRouter(`) and
+                      # methods (`func (rs todosResource) Routes(`); either
+                      # can be a mount target whose body must be skipped so
+                      # its routes are attributed only to the Mount-expanded
+                      # (prefixed) endpoints, never the free-floating pass.
+                      # Methods are keyed by `Receiver.Method` so an
+                      # unmounted same-named method (e.g. a top-level
+                      # `func (s server) Routes()` used directly) keeps its
+                      # routes — and the `.Mount(...)` calls inside it.
+                      decl_name = nil
+                      if func_match = line.match(/func\s+\(\s*\w+\s+\*?([\w.]+)\)\s+([a-zA-Z_]\w*)\s*\(/)
+                        decl_name = "#{func_match[1].split('.').last}.#{func_match[2]}"
+                      elsif func_match = line.match(/func\s+([a-zA-Z_]\w*)\s*\(/)
+                        decl_name = func_match[1]
+                      end
+                      if decl_name && mounted_functions.includes?(decl_name)
+                        in_mounted_func = true
+                        mounted_func_brace_count = line.count("{") - line.count("}")
+                        if mounted_func_brace_count <= 0
+                          in_mounted_func = false
                         end
+                        next
                       end
                     end
 
                     details = Details.new(PathInfo.new(path, index + 1))
 
                     if line.includes?(".Mount(")
-                      if match = line.match(/[a-zA-Z]\w*\.Mount\(\s*"([^"]+)"\s*,\s*([^(]+)\(\)/)
-                        mount_prefix = match[1]
-                        router_function = match[2]
-                        endpoints = analyze_router_function(path, router_function, package_files, file_contents_cache, file_lines_cache)
+                      if target = parse_mount_target(line)
+                        endpoints = analyze_router_function(path, target[:func_name], package_files, file_contents_cache, file_lines_cache, target[:recv_type])
                         endpoints.each do |ep|
-                          ep.url = mount_prefix + ep.url
+                          ep.url = target[:prefix] + ep.url
                           result << ep
                         end
                       end
@@ -337,17 +352,63 @@ module Analyzer::Go
       Param.new(param_name, "", param_type)
     end
 
+    # Parses a `.Mount("/prefix", target())` line into its mount prefix
+    # and the declaration that builds the sub-router. Two target shapes
+    # are recognized:
+    #   * plain function   — `r.Mount("/admin", adminRouter())`
+    #     -> {func_name: "adminRouter", recv_type: nil}
+    #   * struct value-method (chi's idiomatic REST "resource" pattern) —
+    #     `r.Mount("/todos", todosResource{}.Routes())`
+    #     -> {func_name: "Routes", recv_type: "todosResource"}
+    # The receiver type is kept so two resources that both expose a
+    # `Routes()` method resolve to their own bodies, not the first one
+    # found. Returns nil for unsupported targets (e.g. a bare variable
+    # receiver `s.Routes()` whose concrete type can't be read locally).
+    private def parse_mount_target(line : String) : NamedTuple(prefix: String, func_name: String, recv_type: String?)?
+      # Value-receiver method: `Mount("/x", Type{}.Routes())` /
+      # `pkg.Type{...}.Routes()`.
+      if m = line.match(/\.Mount\(\s*"([^"]+)"\s*,\s*([\w.]+)\s*\{[^{}]*\}\s*\.\s*(\w+)\s*\(\s*\)/)
+        return {prefix: m[1], func_name: m[3], recv_type: m[2].split('.').last}
+      end
+      # Pointer-receiver method: `Mount("/x", (&Type{}).Routes())` — the
+      # only valid Go syntax for a pointer-receiver resource (`.` binds
+      # tighter than `&`, so the parens are required).
+      if m = line.match(/\.Mount\(\s*"([^"]+)"\s*,\s*\(\s*&\s*([\w.]+)\s*\{[^{}]*\}\s*\)\s*\.\s*(\w+)\s*\(\s*\)/)
+        return {prefix: m[1], func_name: m[3], recv_type: m[2].split('.').last}
+      end
+      # Plain function symbol: `Mount("/x", adminRouter())`.
+      if m = line.match(/\.Mount\(\s*"([^"]+)"\s*,\s*(\w+)\s*\(\s*\)/)
+        return {prefix: m[1], func_name: m[2], recv_type: nil}
+      end
+      nil
+    end
+
+    # Skip key for a parsed mount target: a method target is keyed by
+    # `Receiver.Method` so the free pass skips only the exact mounted
+    # method body, while a plain-function target is keyed by its bare
+    # name. Mirrors the keys produced when scanning declarations.
+    private def mount_skip_key(target : NamedTuple(prefix: String, func_name: String, recv_type: String?)) : String
+      if rt = target[:recv_type]
+        "#{rt}.#{target[:func_name]}"
+      else
+        target[:func_name]
+      end
+    end
+
     # Extracts endpoints from a router function definition, searching across
     # all .go files in the same directory (Go package) if not found in the
     # given file.
     #
     # Uses the tree-sitter walker too, but scoped down to just the target
     # function's declaration so the returned routes are relative to the
-    # function body — caller slaps on the Mount prefix.
+    # function body — caller slaps on the Mount prefix. When `recv_type`
+    # is given, the target is a method (`func (r Type) Name()`) and only
+    # the declaration on that receiver type is matched.
     def analyze_router_function(file_path : String, func_name : String,
                                 package_files : Hash(String, Array(String))? = nil,
                                 file_contents_cache : Hash(String, String)? = nil,
-                                file_lines_cache : Hash(String, Array(String))? = nil) : Array(Endpoint)
+                                file_lines_cache : Hash(String, Array(String))? = nil,
+                                recv_type : String? = nil) : Array(Endpoint)
       endpoints = [] of Endpoint
 
       # Search: given file first, then other files in the same directory.
@@ -368,7 +429,7 @@ module Analyzer::Go
               next
             end
 
-        routes = extract_router_function_routes(content, func_name)
+        routes = extract_router_function_routes(content, func_name, recv_type)
         next if routes.empty?
 
         # Capture routes' original line numbers on the endpoint details.
@@ -392,12 +453,13 @@ module Analyzer::Go
     end
 
     # Walks the full tree-sitter tree for `source`, isolating the body of
-    # `func <func_name>(...)` and returning only the routes registered
+    # `func <func_name>(...)` (or method `func (r <recv_type>) <func_name>()`
+    # when `recv_type` is given) and returning only the routes registered
     # there.
-    private def extract_router_function_routes(source : String, func_name : String) : Array(Noir::TreeSitterGoRouteExtractor::Route)
+    private def extract_router_function_routes(source : String, func_name : String, recv_type : String? = nil) : Array(Noir::TreeSitterGoRouteExtractor::Route)
       hits = [] of Noir::TreeSitterGoRouteExtractor::Route
       Noir::TreeSitter.parse_go(source) do |root|
-        find_func_declaration(root, source, func_name) do |body|
+        find_func_declaration(root, source, func_name, recv_type) do |body|
           # Re-run the chi walker against the isolated body. skip_functions
           # is empty because any nested func literal inside is the inline
           # handler which the walker already ignores by convention.
@@ -409,10 +471,16 @@ module Analyzer::Go
       hits
     end
 
-    private def find_func_declaration(node : LibTreeSitter::TSNode, source : String, name : String, &block : LibTreeSitter::TSNode ->)
-      if Noir::TreeSitter.node_type(node) == "function_declaration"
+    private def find_func_declaration(node : LibTreeSitter::TSNode, source : String, name : String, recv_type : String? = nil, &block : LibTreeSitter::TSNode ->)
+      node_ty = Noir::TreeSitter.node_type(node)
+      # A plain function (`func Name()`) matches when no receiver type was
+      # requested; a method (`func (r Type) Name()`) matches only when its
+      # receiver type equals `recv_type`.
+      wanted_ty = recv_type ? "method_declaration" : "function_declaration"
+      if node_ty == wanted_ty
         if name_node = Noir::TreeSitter.field(node, "name")
-          if Noir::TreeSitter.node_text(name_node, source) == name
+          if Noir::TreeSitter.node_text(name_node, source) == name &&
+             (recv_type.nil? || method_receiver_type(node, source) == recv_type)
             if body = Noir::TreeSitter.field(node, "body")
               yield body
               return
@@ -421,8 +489,25 @@ module Analyzer::Go
         end
       end
       Noir::TreeSitter.each_named_child(node) do |child|
-        find_func_declaration(child, source, name, &block)
+        find_func_declaration(child, source, name, recv_type, &block)
       end
+    end
+
+    # Returns the (package-unqualified, pointer-stripped) receiver type name
+    # of a `method_declaration` — `func (rs todosResource) Routes()` ->
+    # "todosResource", `func (s *Server) Routes()` -> "Server".
+    private def method_receiver_type(node : LibTreeSitter::TSNode, source : String) : String?
+      receiver = Noir::TreeSitter.field(node, "receiver")
+      return unless receiver
+      type_name = nil
+      Noir::TreeSitter.each_named_child(receiver) do |decl|
+        next unless Noir::TreeSitter.node_type(decl) == "parameter_declaration"
+        if type_node = Noir::TreeSitter.field(decl, "type")
+          type_name = Noir::TreeSitter.node_text(type_node, source)
+        end
+      end
+      return unless type_name
+      type_name.lchop('*').split('.').last
     end
 
     # Reattach the line-based param extractor to mount-expanded endpoints.

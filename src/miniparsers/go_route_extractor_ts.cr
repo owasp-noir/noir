@@ -85,6 +85,15 @@ module Noir
       # surfaces as a phantom `Any /error` route fanned across all 7
       # HTTP verbs (observed in gin-vue-admin: `/error`, `/mode`).
       "zap",
+      # The stdlib net/http package: `http.Handle("/x", h)` /
+      # `http.HandleFunc("/x", h)` register on the default ServeMux and
+      # collide with chi's identically-named all-methods registrations
+      # (chi `net_http_methods` path). `http` is never a chi router, so
+      # exclude it — otherwise every `http.Handle`/`http.HandleFunc` in a
+      # chi app (promhttp metrics, pprof, …) fans out to 7 phantom verbs.
+      # (`http.Get`/`http.Post` client calls are already dropped by the
+      # scheme / handler-arg guards.)
+      "http",
     }
 
     # Chain methods that return the receiving router/group unchanged —
@@ -469,19 +478,27 @@ module Noir
       getter? chain_prefix : Bool
       getter bind_methods : Array(String)
       getter bind_method_verb : String
+      getter? net_http_methods : Bool
 
       def initialize(@prefix_method = "Route",
                      @middleware_method = "Group",
                      @chain_prefix = false,
                      @bind_methods = [] of String,
-                     @bind_method_verb = "ALL")
+                     @bind_method_verb = "ALL",
+                     @net_http_methods = false)
       end
     end
 
+    # net/http-style registrations chi exposes alongside the verb
+    # shortcuts: `r.MethodFunc("GET", "/x", h)` (method as the first
+    # string arg, incl. custom verbs from `chi.RegisterMethod`) and
+    # `r.HandleFunc("/x", h)` / `r.Handle("/x", h)` (match ANY method).
+    # Gated behind `ScopedConfig#net_http_methods?` so the gf walker —
+    # which shares this recognizer — is untouched.
     def extract_chi_routes(source : String,
                            skip_functions : Set(String) = Set(String).new,
                            external_string_values : Hash(String, String) = Hash(String, String).new) : Array(Route)
-      extract_scoped_routes(source, ScopedConfig.new, skip_functions, external_string_values)
+      extract_scoped_routes(source, ScopedConfig.new(net_http_methods: true), skip_functions, external_string_values)
     end
 
     # Collects `<name> := "literal"` / `const <name> = "literal"` string
@@ -928,14 +945,16 @@ module Noir
     end
 
     # Exposes the closure-scoped walker against an arbitrary node
-    # (typically a function body captured elsewhere). Uses chi defaults.
+    # (typically a function body captured elsewhere). Uses chi defaults
+    # incl. the net/http registrations (MethodFunc/HandleFunc/Handle) so a
+    # Mount-expanded router function body is parsed like any chi file.
     def walk_chi_public(node : LibTreeSitter::TSNode,
                         source : String,
                         sink : Array(Route),
                         string_values : Hash(String, String) = Hash(String, String).new)
       local_groups = Hash(String, String).new
       skip = Set(String).new
-      walk_chi(node, source, [] of String, local_groups, sink, skip, ScopedConfig.new, string_values)
+      walk_chi(node, source, [] of String, local_groups, sink, skip, ScopedConfig.new(net_http_methods: true), string_values)
     end
 
     private def walk_chi(node : LibTreeSitter::TSNode,
@@ -949,10 +968,24 @@ module Noir
       ty = Noir::TreeSitter.node_type(node)
 
       # Skip `func <skipped>() { ... }` bodies entirely — their routes are
-      # emitted by a separate analysis pass (e.g. Mount expansion).
-      if ty == "function_declaration" && !skip_functions.empty?
+      # emitted by a separate analysis pass (e.g. Mount expansion). A plain
+      # function (`func adminRouter()`) is keyed by its bare name; a method
+      # (`func (rs todosResource) Routes()`) is keyed by `Receiver.Method`
+      # so ONLY the exact mounted method body is skipped — a same-named
+      # method on another type, or a top-level router builder also named
+      # `Routes()` used directly, keeps its routes (and the `.Mount`
+      # calls inside it).
+      if (ty == "function_declaration" || ty == "method_declaration") && !skip_functions.empty?
         if name_node = Noir::TreeSitter.field(node, "name")
-          return if skip_functions.includes?(Noir::TreeSitter.node_text(name_node, source))
+          name = Noir::TreeSitter.node_text(name_node, source)
+          skip_key = if ty == "method_declaration"
+                       if (recv = Noir::TreeSitter.field(node, "receiver")) && (rt = receiver_type_name(recv, source))
+                         "#{rt}.#{name}"
+                       end
+                     else
+                       name
+                     end
+          return if skip_key && skip_functions.includes?(skip_key)
         end
       end
 
@@ -1005,6 +1038,16 @@ module Noir
           return
         when ChiCall::Bind
           if route = decode_chi_bind_call(node, source, prefix_stack, local_groups, config, string_values)
+            routes << route
+          end
+          return
+        when ChiCall::MethodFunc
+          if route = decode_chi_methodfunc_call(node, source, prefix_stack, local_groups, string_values)
+            routes << route
+          end
+          return
+        when ChiCall::HandleAll
+          if route = decode_chi_handle_all_call(node, source, prefix_stack, local_groups, string_values)
             routes << route
           end
           return
@@ -1079,6 +1122,8 @@ module Noir
       Group
       Verb
       Bind
+      MethodFunc
+      HandleAll
     end
 
     # Classify a call_expression so `walk_chi` knows whether to descend
@@ -1117,6 +1162,16 @@ module Noir
       when "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS",
            "Get", "Post", "Put", "Delete", "Patch", "Head", "Options"
         return ChiCall::Verb
+      end
+
+      if config.net_http_methods?
+        # `r.MethodFunc("GET", "/x", h)` — method as the first string
+        # arg (the route path is the second). Also covers custom verbs
+        # registered via `chi.RegisterMethod`.
+        return ChiCall::MethodFunc if name == "MethodFunc"
+        # `r.HandleFunc("/x", h)` / `r.Handle("/x", h)` — match every
+        # HTTP method (chi fans these over the full method set).
+        return ChiCall::HandleAll if name == "HandleFunc" || name == "Handle"
       end
 
       ChiCall::None
@@ -1172,6 +1227,105 @@ module Noir
         handler_text,
         Noir::TreeSitter.node_start_row(call),
       )
+    end
+
+    # Resolve the verb-call receiver to a router name, rejecting known
+    # non-router operands. Accepts a bare identifier (`r.Get(...)`) and
+    # a struct-field selector (`s.router.Get(...)`), guarding the final
+    # field of the selector against `NON_ROUTER_OPERANDS`. Returns nil
+    # for any other operand shape (call chains, etc.).
+    private def chi_router_operand_name(operand : LibTreeSitter::TSNode, source : String) : String?
+      case Noir::TreeSitter.node_type(operand)
+      when "identifier"
+        name = Noir::TreeSitter.node_text(operand, source)
+        return if NON_ROUTER_OPERANDS.includes?(name)
+        name
+      when "selector_expression"
+        final_field = Noir::TreeSitter.field(operand, "field")
+        return unless final_field
+        return if NON_ROUTER_OPERANDS.includes?(Noir::TreeSitter.node_text(final_field, source))
+        Noir::TreeSitter.node_text(operand, source)
+      end
+    end
+
+    # Decode `r.MethodFunc("GET", "/path", handler)` — chi's net/http
+    # registration whose FIRST string arg is the HTTP method and second
+    # is the route path. The method may be a custom verb registered via
+    # `chi.RegisterMethod` (LINK/WOOHOO/...), so it is emitted verbatim.
+    private def decode_chi_methodfunc_call(call : LibTreeSitter::TSNode,
+                                           source : String,
+                                           prefix_stack : Array(String),
+                                           local_groups : Hash(String, String),
+                                           string_values : Hash(String, String) = Hash(String, String).new) : Route?
+      function = Noir::TreeSitter.field(call, "function")
+      return unless function
+      operand = Noir::TreeSitter.field(function, "operand")
+      return unless operand
+      router_name = chi_router_operand_name(operand, source)
+      return unless router_name
+
+      args = Noir::TreeSitter.field(call, "arguments")
+      return unless args
+      method = nil
+      raw_path = nil
+      handler_text = ""
+      Noir::TreeSitter.each_named_child(args) do |arg|
+        s = string_expr_text(arg, source, string_values)
+        if method.nil?
+          # First arg must be a string method ("GET", "WOOHOO", ...).
+          return if s.nil?
+          method = s
+        elsif raw_path.nil?
+          return if s.nil?
+          raw_path = s
+        elsif handler_text.empty?
+          handler_text = Noir::TreeSitter.node_text(arg, source)
+        end
+      end
+      return unless (m = method) && (path = raw_path)
+      return unless path.starts_with?("/")
+      return if handler_text.empty?
+
+      base_prefix = local_groups[router_name]? || prefix_stack.join
+      resolved = base_prefix.empty? ? path : join_paths(base_prefix, path)
+      Route.new(router_name, m.upcase, resolved, path, handler_text, Noir::TreeSitter.node_start_row(call))
+    end
+
+    # Decode `r.HandleFunc("/path", h)` / `r.Handle("/path", h)` — chi
+    # registers these for EVERY HTTP method, so they are emitted with a
+    # fan-out "ANY" verb (the analyzer expands it to each method).
+    private def decode_chi_handle_all_call(call : LibTreeSitter::TSNode,
+                                           source : String,
+                                           prefix_stack : Array(String),
+                                           local_groups : Hash(String, String),
+                                           string_values : Hash(String, String) = Hash(String, String).new) : Route?
+      function = Noir::TreeSitter.field(call, "function")
+      return unless function
+      operand = Noir::TreeSitter.field(function, "operand")
+      return unless operand
+      router_name = chi_router_operand_name(operand, source)
+      return unless router_name
+
+      args = Noir::TreeSitter.field(call, "arguments")
+      return unless args
+      raw_path = nil
+      handler_text = ""
+      Noir::TreeSitter.each_named_child(args) do |arg|
+        s = string_expr_text(arg, source, string_values)
+        if raw_path.nil?
+          return if s.nil?
+          raw_path = s
+        elsif handler_text.empty?
+          handler_text = Noir::TreeSitter.node_text(arg, source)
+        end
+      end
+      return unless path = raw_path
+      return unless path.starts_with?("/")
+      return if handler_text.empty?
+
+      base_prefix = local_groups[router_name]? || prefix_stack.join
+      resolved = base_prefix.empty? ? path : join_paths(base_prefix, path)
+      Route.new(router_name, "ANY", resolved, path, handler_text, Noir::TreeSitter.node_start_row(call))
     end
 
     # Extract `{prefix, body_block, closure_node}` from a Route/Group call.

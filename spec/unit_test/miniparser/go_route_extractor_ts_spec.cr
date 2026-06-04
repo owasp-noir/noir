@@ -558,4 +558,61 @@ describe Noir::TreeSitterGoRouteExtractor do
     routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
     routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/ok"}])
   end
+
+  it "decodes chi MethodFunc/HandleFunc/Handle net-http registrations" do
+    source = <<-GO
+      package main
+      func main() {
+          r := chi.NewRouter()
+          r.Route("/api", func(r chi.Router) {
+              r.MethodFunc("GET", "/health", health)
+              r.HandleFunc("/everything", everything)
+          })
+          r.Handle("/metrics", promhttp.Handler())
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_chi_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"ANY", "/api/everything"},
+      {"ANY", "/metrics"},
+      {"GET", "/api/health"},
+    ].sort)
+  end
+
+  it "does not read stdlib net/http Handle/HandleFunc as chi routes" do
+    source = <<-GO
+      package main
+      func main() {
+          r := chi.NewRouter()
+          r.Get("/", index)
+          http.HandleFunc("/legacy", legacy)
+          http.Handle("/metrics", promhttp.Handler())
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_chi_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/"}])
+  end
+
+  it "skips only the receiver-matched mounted method body, not a same-named method" do
+    # `subResource.Routes()` is the mount target; `server.Routes()` is a
+    # top-level builder used directly and must keep its routes.
+    source = <<-GO
+      package main
+      func (s server) Routes() chi.Router {
+          r := chi.NewRouter()
+          r.Get("/health", s.Health)
+          return r
+      }
+      func (s subResource) Routes() chi.Router {
+          r := chi.NewRouter()
+          r.Get("/item", s.Item)
+          return r
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_chi_routes(source, Set{"subResource.Routes"})
+    routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/health"}])
+  end
 end
