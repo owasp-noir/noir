@@ -38,6 +38,12 @@ expected_endpoints = [
   Endpoint.new("/named-url", "GET"),
   Endpoint.new("/spec-url", "GET"),
   Endpoint.new("/spec-url", "POST"),
+  # Module-level `default_handlers = [...]` registered from another
+  # module (no local Application) — picked up by the handler-list pass.
+  # The ("format %s", lowercase_arg) tuple in the same list is NOT a
+  # route and must be rejected by the handler-class gate.
+  Endpoint.new("/standalone", "GET"),
+  Endpoint.new("/standalone", "POST"),
 ]
 
 tester = FunctionalTester.new("fixtures/python/tornado/", {
