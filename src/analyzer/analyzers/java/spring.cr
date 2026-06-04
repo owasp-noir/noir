@@ -306,32 +306,36 @@ module Analyzer::Java
             # Reactive routes declared via `router().route(...).andRoute(...)`
             # — regex-scoped because the builder-pattern shape isn't
             # worth a dedicated tree-sitter walk yet.
-            #
-            # `extract_string_constants` and the per-block route/nest scans
-            # are amortised across the two passes below (constants once,
-            # not once-per-block as before).
-            constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants(content)
             route_blocks = [] of Tuple(Array(Tuple(Int32, String, String, String)), Array(Tuple(Int32, Int32, String)))
-            content.scan(REGEX_ROUTER_CODE_BLOCK) do |route_code|
-              method_code = route_code[0]
-              # Pick up `nest(RequestPredicates.path("/prefix"), ...)`
-              # / `nest(path("/prefix"), ...)` byte ranges so verb
-              # calls inside the nested lambda get the prefix added.
-              # Servlet-fn and WebFlux both use this idiom heavily;
-              # without prefix awareness routes like
-              # `route().nest(path("/product"), builder ->
-              # builder.GET("/name/{name}", ...))` surfaced as
-              # `GET /name/{name}` instead of `GET /product/name/{name}`.
-              route_blocks << {collect_router_route_calls(method_code, constants), collect_nest_prefixes(method_code, constants)}
-            end
-
-            # Resolve same-file `this::handler` method bodies to 1-hop
-            # callees so reactive endpoints carry handler context too.
             reactive_callees = {} of String => Array(Callee)
-            if include_callee
-              wanted = Set(String).new
-              route_blocks.each { |calls, _| calls.each { |call| wanted << call[3] unless call[3].empty? } }
-              reactive_callees = build_reactive_method_callees(content, path, wanted)
+
+            # Single tree-sitter parse for the whole reactive file: the
+            # constant table and the `this::handler` callee resolution both
+            # read from this one `root`, so the file isn't parsed twice
+            # when callees are requested (and constants are resolved once,
+            # not once-per-block).
+            Noir::TreeSitter.parse_java(content) do |root|
+              constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content)
+              content.scan(REGEX_ROUTER_CODE_BLOCK) do |route_code|
+                method_code = route_code[0]
+                # Pick up `nest(RequestPredicates.path("/prefix"), ...)`
+                # / `nest(path("/prefix"), ...)` byte ranges so verb
+                # calls inside the nested lambda get the prefix added.
+                # Servlet-fn and WebFlux both use this idiom heavily;
+                # without prefix awareness routes like
+                # `route().nest(path("/product"), builder ->
+                # builder.GET("/name/{name}", ...))` surfaced as
+                # `GET /name/{name}` instead of `GET /product/name/{name}`.
+                route_blocks << {collect_router_route_calls(method_code, constants), collect_nest_prefixes(method_code, constants)}
+              end
+
+              # Resolve same-file `this::handler` method bodies to 1-hop
+              # callees so reactive endpoints carry handler context too.
+              if include_callee
+                wanted = Set(String).new
+                route_blocks.each { |calls, _| calls.each { |call| wanted << call[3] unless call[3].empty? } }
+                reactive_callees = build_reactive_method_callees(root, content, path, wanted)
+              end
             end
 
             route_blocks.each do |calls, nest_prefixes|
@@ -818,30 +822,30 @@ module Analyzer::Java
       ""
     end
 
-    # Parse the file once and return `{handler_method_name => [Callee]}`
-    # for every wanted handler, mirroring the Vert.x analyzer's
-    # method-reference callee resolution. Name collisions keep the first
+    # Walk the already-parsed `root` and return `{handler_method_name =>
+    # [Callee]}` for every wanted handler, mirroring the Vert.x analyzer's
+    # method-reference callee resolution. Shares the caller's parse so a
+    # reactive file is read once. Name collisions keep the first
     # declaration (reactive router configs rarely repeat handler names in
     # one file).
-    private def build_reactive_method_callees(content : String,
+    private def build_reactive_method_callees(root : LibTreeSitter::TSNode,
+                                              content : String,
                                               path : String,
                                               wanted : Set(String)) : Hash(String, Array(Callee))
       result = {} of String => Array(Callee)
       return result if wanted.empty?
 
-      Noir::TreeSitter.parse_java(content) do |root|
-        walk_reactive_method_declarations(root) do |method|
-          name_node = Noir::TreeSitter.field(method, "name")
-          next unless name_node
-          method_name = Noir::TreeSitter.node_text(name_node, content)
-          next unless wanted.includes?(method_name)
-          next if result.has_key?(method_name)
+      walk_reactive_method_declarations(root) do |method|
+        name_node = Noir::TreeSitter.field(method, "name")
+        next unless name_node
+        method_name = Noir::TreeSitter.node_text(name_node, content)
+        next unless wanted.includes?(method_name)
+        next if result.has_key?(method_name)
 
-          body = Noir::TreeSitter.field(method, "body")
-          next unless body
-          result[method_name] = Noir::JavaCalleeExtractor.callees_in_body(body, content, path).map do |(name, callee_path, callee_line)|
-            Callee.new(name, path: callee_path, line: callee_line)
-          end
+        body = Noir::TreeSitter.field(method, "body")
+        next unless body
+        result[method_name] = Noir::JavaCalleeExtractor.callees_in_body(body, content, path).map do |(name, callee_path, callee_line)|
+          Callee.new(name, path: callee_path, line: callee_line)
         end
       end
 
