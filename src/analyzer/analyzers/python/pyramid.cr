@@ -229,13 +229,24 @@ module Analyzer::Python
       while idx >= 0
         line = lines[idx]
         stripped = line.lstrip
+        # A blank line ends the decorator block above the class.
         break if stripped.empty?
-        break unless stripped.starts_with?("@") || decorators.size > 0
 
         decorators.unshift(line)
+        # Stop once we reach the start of the `@view_defaults` decorator.
+        # The previous loop bailed on the FIRST line above the class when
+        # it didn't start with `@` — but a MULTI-LINE
+        # `@view_defaults(\n  route_name="x",\n)` puts the closing `)` (a
+        # continuation line, not an `@…`) directly above the class, so the
+        # whole decorator was skipped and the inherited route_name lost
+        # (warehouse: 18 class-based views via multi-line @view_defaults).
+        # Collect continuation lines until the `@view_defaults` head.
         break if stripped.starts_with?("@view_defaults") ||
                  stripped.starts_with?("@pyramid.view.view_defaults") ||
                  stripped.starts_with?("@pyramid.view_defaults")
+        # Defensive cap so a class with no decorators (no blank-line gap
+        # above it) doesn't walk the whole file.
+        break if decorators.size > 60
         idx -= 1
       end
 
