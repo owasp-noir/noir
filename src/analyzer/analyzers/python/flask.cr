@@ -38,6 +38,14 @@ module Analyzer::Python
       path_api_instances = Hash(::String, Hash(::String, ::String)).new
       register_blueprint = Hash(::String, Hash(::String, ::String)).new
       blueprint_mounts = Hash(::String, Array(Tuple(::String, ::String, ::String))).new
+      # flask-restx namespaces are module-level singletons: the Api host
+      # file (`api/__init__.py`) wires `api.add_namespace(ns, "/x")` with
+      # the blueprint's `url_prefix` (`/api/v1`), but each namespace's
+      # ROUTES live in a different file (`api/v1/x.py`). `path_api_instances`
+      # is per-file, so the route file never saw the host-computed prefix
+      # and every `@ns.route` surfaced without `/api/v1`. This GLOBAL map
+      # (namespace var name -> fully-resolved prefix) bridges the two files.
+      namespace_prefixes = Hash(::String, ::String).new
 
       # Iterate through all Python files in all base paths. Pulls from
       # the detector-built file_map so subtree pruning and --exclude-path
@@ -112,9 +120,21 @@ module Analyzer::Python
                 end
               end
 
+              # `Api(...)` and `add_namespace(...)` calls routinely wrap
+              # across lines (`X = Api(\n  blueprint,\n  ...\n)`), which
+              # hid the blueprint/app argument from the single-line regex
+              # and broke the whole `blueprint url_prefix -> Api -> namespace`
+              # chain. Coalesce continuation lines when the call is
+              # unbalanced so the argument is visible.
+              api_line = if line.includes?("Api(") && python_paren_delta(original_line) > 0
+                           join_until_python_call_closes(lines, line_index, original_line).gsub(" ", "")
+                         else
+                           line
+                         end
+
               # Api from flask instance
               flask_instances.each do |_flask_instance_name, _prefix|
-                api_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:flask_restx\.)?Api\((app=)?#{_flask_instance_name}/
+                api_match = api_line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:flask_restx\.)?Api\((app=)?#{_flask_instance_name}[,)]/
                 if api_match
                   api_instance_name = api_match[1]
                   api_instances[api_instance_name] ||= _prefix
@@ -123,7 +143,7 @@ module Analyzer::Python
 
               # Api from blueprint instance
               blueprint_prefixes.each do |_blueprint_instance_name, _prefix|
-                api_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:flask_restx\.)?Api\((app=)?#{_blueprint_instance_name}/
+                api_match = api_line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:flask_restx\.)?Api\((app=)?#{_blueprint_instance_name}[,)]/
                 if api_match
                   api_instance_name = api_match[1]
                   api_instances[api_instance_name] ||= _prefix
@@ -131,14 +151,32 @@ module Analyzer::Python
               end
 
               # Api Namespace
+              ns_line = if line.includes?(".add_namespace(") && python_paren_delta(original_line) > 0
+                          join_until_python_call_closes(lines, line_index, original_line).gsub(" ", "")
+                        else
+                          line
+                        end
               api_instances.each do |_api_instance_name, _prefix|
-                add_namespace_match = line.match /(#{_api_instance_name})\.add_namespace\((#{PYTHON_VAR_NAME_REGEX})/
+                add_namespace_match = ns_line.match /(#{_api_instance_name})\.add_namespace\((#{PYTHON_VAR_NAME_REGEX})/
                 if add_namespace_match
                   parser = get_parser(path)
                   if parser.@global_variables.has_key?(add_namespace_match[2])
                     gv = parser.@global_variables[add_namespace_match[2]]
                     if gv.type == "Namespace"
-                      api_instances[gv.name] = extract_namespace_prefix(parser, add_namespace_match[2], _prefix)
+                      # Prefer the explicit mount path on
+                      # `add_namespace(ns, "/x")` (authoritative); fall
+                      # back to the Namespace(...) definition's own
+                      # path=/name when no positional path is given.
+                      resolved = if mount_path = extract_add_namespace_path(ns_line, _api_instance_name, add_namespace_match[2])
+                                   joined = File.join(_prefix, mount_path)
+                                   joined.starts_with?("/") ? joined : "/#{joined}"
+                                 else
+                                   extract_namespace_prefix(parser, add_namespace_match[2], _prefix)
+                                 end
+                      api_instances[gv.name] = resolved
+                      # Bridge to the namespace's route-definition file,
+                      # which has no view onto this host file's prefixes.
+                      namespace_prefixes[gv.name] = resolved
                     end
                   end
                 end
@@ -443,6 +481,10 @@ module Analyzer::Python
           api_instances = path_api_instances[path]
           if api_instances.has_key?(router_name)
             prefix = api_instances[router_name]
+          elsif namespace_prefixes.has_key?(router_name)
+            # flask-restx namespace whose `add_namespace(...)` (with the
+            # blueprint url_prefix) was resolved in a different file.
+            prefix = namespace_prefixes[router_name]
           else
             parser = get_parser(path)
             prefix = extract_namespace_prefix(parser, router_name, "")
@@ -484,7 +526,19 @@ module Analyzer::Python
           end
 
           function_name_locations.each do |_class_def_index, _function_name|
+            http_verb = HTTP_METHODS.find { |http_method| _function_name.downcase == http_method.downcase }
+
             if is_class_router
+              # A class router is a flask-restx `Resource` / Flask
+              # `MethodView`: each HTTP-verb-named method IS a distinct
+              # endpoint verb (def get -> GET, def delete -> DELETE).
+              # Non-verb methods are helpers — skip them so they don't
+              # emit a phantom GET. Previously the decorator's default
+              # `methods=['GET']` (`.route` has no explicit verb)
+              # overrode the per-method verb in `get_endpoints`, so a
+              # Resource with get+post+delete collapsed to a single GET.
+              next unless http_verb
+
               # Replace the class expect params with the function expect params
               def_expect_params, _ = extract_params_from_decorator(path, lines, _class_def_index, :up)
               if def_expect_params.size > 0
@@ -497,8 +551,12 @@ module Analyzer::Python
             codeblock_lines = codeblock.split("\n")
 
             # Get the HTTP method from the function name when it is not specified in the route decorator
-            method = HTTP_METHODS.find { |http_method| _function_name.downcase == http_method.downcase } || "GET"
-            get_endpoints(method, route_path, extra_params, codeblock_lines, prefix).each do |endpoint|
+            method = http_verb ? http_verb.upcase : "GET"
+            # For class routers the per-method verb is authoritative; the
+            # decorator's synthesized `methods=['GET']` default must not
+            # override it (function routers still honour `methods=`).
+            method_extra_params = is_class_router ? "" : extra_params
+            get_endpoints(method, route_path, method_extra_params, codeblock_lines, prefix).each do |endpoint|
               details = Details.new(PathInfo.new(path, line_index + 1))
               endpoint.details = details
 
@@ -1131,6 +1189,25 @@ module Analyzer::Python
       end
 
       return params, [lines.size - 1, codeline_index].min
+    end
+
+    # Pull the explicit mount path off an `<api>.add_namespace(ns, "/x")`
+    # call (or `path="/x"` kwarg). `ns_line` is the space-stripped,
+    # paren-balanced call text. Returns nil when no positional path /
+    # `path=` is given, so the caller falls back to the Namespace's own
+    # `path=`/name. This is the authoritative mount point in flask-restx
+    # and overrides the namespace definition's default.
+    private def extract_add_namespace_path(ns_line : ::String, api_instance_name : ::String, ns_var : ::String) : ::String?
+      call_match = ns_line.match /#{Regex.escape(api_instance_name)}\.add_namespace\(#{Regex.escape(ns_var)},(.*)\)/
+      return unless call_match
+      args = call_match[1]
+      if kw = args.match /path=[rf]?['"]([^'"]*)['"]/
+        return kw[1]
+      end
+      if pos = args.match /^[rf]?['"]([^'"]*)['"]/
+        return pos[1]
+      end
+      nil
     end
 
     # Function to extract namespace from the parser and update the prefix
