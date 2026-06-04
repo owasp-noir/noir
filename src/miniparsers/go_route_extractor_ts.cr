@@ -1319,7 +1319,7 @@ module Noir
           handler_text = Noir::TreeSitter.node_text(arg, source)
         end
       end
-      return unless (path = raw_path)
+      return unless path = raw_path
       return unless path.starts_with?("/")
       return if handler_text.empty?
 
