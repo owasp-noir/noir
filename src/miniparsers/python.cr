@@ -37,6 +37,22 @@ class PythonParser
                  @visited : Array(String) = Array(String).new,
                  depth : Int32 = 0)
     @global_variables = Hash(String, GlobalVariables).new
+    # `@own_globals` holds ONLY this file's module-level assignments
+    # (`extract_globals`), never the transitively-merged, re-prefixed
+    # entries that flow into `@global_variables` from imports. Import
+    # re-prefixing (`import x.y` → `x.y.<key>`, `from pkg import sub`
+    # → `sub.<key>`) copies from `@own_globals`, NOT `@global_variables`.
+    #
+    # Without this split, each level re-prefixed the *entire*
+    # transitive set of the level below — so a module reachable through
+    # a fan-out of F submodules at depth D contributed F^D keys
+    # (`a.b.c.d.<name>` chains that routing code never references). On
+    # real apps with re-export-heavy packages (redash: 407 `from redash`
+    # imports) this made a scan that yields the same endpoints take
+    # >350s instead of ~1.5s. Copying only own definitions keeps the
+    # merge linear in the number of modules while preserving every
+    # 1-hop `module.instance` lookup Flask/Quart actually performs.
+    @own_globals = Hash(String, GlobalVariables).new
     @basedir = File.dirname(@path)
     while !@basedir.empty? && File.exists?(@basedir + "/__init__.py")
       @basedir = File.dirname(@basedir)
@@ -64,7 +80,9 @@ class PythonParser
         next unless Noir::TreeSitter.node_type(child) == "assignment"
         name, type, value = analyse_assignment(child, source)
         next if name.empty?
-        @global_variables[name] = GlobalVariables.new(name, type, value, @path)
+        gv = GlobalVariables.new(name, type, value, @path)
+        @global_variables[name] = gv
+        @own_globals[name] = gv
       end
     end
   end
@@ -281,7 +299,10 @@ class PythonParser
       sub = get_or_create_parser(pyfile)
       next unless sub
 
-      sub.@global_variables.each do |k, v|
+      # Only the submodule's OWN definitions become `sub.<key>` —
+      # re-prefixing its transitive imports too is what caused the
+      # F^D key explosion (see `@own_globals`).
+      sub.@own_globals.each do |k, v|
         @global_variables["#{local_name}.#{k}"] = v
       end
     end
@@ -334,7 +355,11 @@ class PythonParser
     sub = get_or_create_parser(pyfile)
     return unless sub
 
-    sub.@global_variables.each do |k, v|
+    # `import x.y` exposes `x.y.<name>` for names DEFINED in x/y — copy
+    # only own definitions, not the module's own transitive imports
+    # (those would re-prefix into `x.y.<deep.chain>` keys that routing
+    # never queries, and compound exponentially up the import tree).
+    sub.@own_globals.each do |k, v|
       @global_variables["#{prefix}#{k}"] = v
     end
   end
