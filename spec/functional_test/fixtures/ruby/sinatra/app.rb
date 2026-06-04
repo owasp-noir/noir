@@ -73,6 +73,10 @@ namespace "/admin" do
     params[:since]
   end
 end
+get "/files/*" do
+  params[:splat]
+  params[:real]
+end
 
 def helper_noise
   params[:should_not_attach]

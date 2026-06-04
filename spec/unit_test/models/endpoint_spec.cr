@@ -129,8 +129,8 @@ describe "Endpoint equality" do
       endpoint = Endpoint.new("/p", "GET")
       endpoint.push_param(Param.new("id", "", "query"))
       endpoint.push_param(Param.new("id", "later", "query")) # dup (name, type) — dropped
-      endpoint.push_param(Param.new("id", "", "path"))        # same name, different type — kept
-      endpoint.push_param(Param.new("name", "", "query"))     # different name — kept
+      endpoint.push_param(Param.new("id", "", "path"))       # same name, different type — kept
+      endpoint.push_param(Param.new("name", "", "query"))    # different name — kept
 
       endpoint.params.size.should eq 3
       endpoint.params.count { |p| p.name == "id" && p.param_type == "query" }.should eq 1

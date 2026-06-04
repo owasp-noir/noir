@@ -22,6 +22,11 @@ module Testapp
       end
 
       resource :account, only: %i[show]
+
+      post "/widgets/:id/build",
+           to: "widgets.build"
     end
+
+    mount Sidekiq::Web, at: "/sidekiq"
   end
 end

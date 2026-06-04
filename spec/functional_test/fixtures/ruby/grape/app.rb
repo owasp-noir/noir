@@ -47,6 +47,19 @@ class API < Grape::API
     end
   end
 
+  resource :articles do
+    # `requires :title` declares a json body param.
+    params do
+      requires :title
+    end
+    post do
+      token_header = "X-Token"
+      headers[token_header]   # bare variable subscript — must NOT become a param
+      headers["X-Request-Id"] # string literal — surfaces as a header param
+      params[:title]          # already declared json — must NOT re-add as query
+    end
+  end
+
   version "v2", using: :path
 
   resource :status do
