@@ -55,14 +55,16 @@ module Analyzer::Go
           # route, and it determines which function bodies to exclude from
           # the free-floating TS extraction pass below. The target may be
           # a plain function (`adminRouter()`) or a struct value-method
-          # (`todosResource{}.Routes()`) — both contribute a declaration
-          # *name* whose body must be skipped in the free pass.
+          # (`todosResource{}.Routes()`); each contributes a *skip key*
+          # (qualified by receiver type for methods, so a same-named
+          # `Routes()` on another type — or a top-level router builder
+          # also named `Routes()` — is not skipped by accident).
           next unless content.includes?(".Mount(")
           content.each_line do |scan_line|
             next unless scan_line.includes?(".Mount(")
             if target = parse_mount_target(scan_line)
               package_mounted_functions[dir] ||= Set(String).new
-              package_mounted_functions[dir] << target[:func_name]
+              package_mounted_functions[dir] << mount_skip_key(target)
             end
           end
         rescue File::NotFoundError
@@ -183,9 +185,13 @@ module Analyzer::Go
                       # can be a mount target whose body must be skipped so
                       # its routes are attributed only to the Mount-expanded
                       # (prefixed) endpoints, never the free-floating pass.
+                      # Methods are keyed by `Receiver.Method` so an
+                      # unmounted same-named method (e.g. a top-level
+                      # `func (s server) Routes()` used directly) keeps its
+                      # routes — and the `.Mount(...)` calls inside it.
                       decl_name = nil
-                      if func_match = line.match(/func\s+\([^)]*\)\s+([a-zA-Z_]\w*)\s*\(/)
-                        decl_name = func_match[1]
+                      if func_match = line.match(/func\s+\(\s*\w+\s+\*?([\w.]+)\)\s+([a-zA-Z_]\w*)\s*\(/)
+                        decl_name = "#{func_match[1].split('.').last}.#{func_match[2]}"
                       elsif func_match = line.match(/func\s+([a-zA-Z_]\w*)\s*\(/)
                         decl_name = func_match[1]
                       end
@@ -359,20 +365,34 @@ module Analyzer::Go
     # found. Returns nil for unsupported targets (e.g. a bare variable
     # receiver `s.Routes()` whose concrete type can't be read locally).
     private def parse_mount_target(line : String) : NamedTuple(prefix: String, func_name: String, recv_type: String?)?
-      match = line.match(/[a-zA-Z]\w*\.Mount\(\s*"([^"]+)"\s*,\s*([^(]+)\(\)/)
-      return unless match
-      prefix = match[1]
-      expr = match[2].strip
-      # `Type{}.Method` / `pkg.Type{...}.Method` / `&Type{}.Method`
-      if m = expr.match(/\A&?\s*([\w.]+)\s*\{[^{}]*\}\s*\.\s*(\w+)\z/)
-        recv_type = m[1].split('.').last
-        return {prefix: prefix, func_name: m[2], recv_type: recv_type}
+      # Value-receiver method: `Mount("/x", Type{}.Routes())` /
+      # `pkg.Type{...}.Routes()`.
+      if m = line.match(/\.Mount\(\s*"([^"]+)"\s*,\s*([\w.]+)\s*\{[^{}]*\}\s*\.\s*(\w+)\s*\(\s*\)/)
+        return {prefix: m[1], func_name: m[3], recv_type: m[2].split('.').last}
       end
-      # Plain function symbol.
-      if m = expr.match(/\A(\w+)\z/)
-        return {prefix: prefix, func_name: m[1], recv_type: nil}
+      # Pointer-receiver method: `Mount("/x", (&Type{}).Routes())` — the
+      # only valid Go syntax for a pointer-receiver resource (`.` binds
+      # tighter than `&`, so the parens are required).
+      if m = line.match(/\.Mount\(\s*"([^"]+)"\s*,\s*\(\s*&\s*([\w.]+)\s*\{[^{}]*\}\s*\)\s*\.\s*(\w+)\s*\(\s*\)/)
+        return {prefix: m[1], func_name: m[3], recv_type: m[2].split('.').last}
+      end
+      # Plain function symbol: `Mount("/x", adminRouter())`.
+      if m = line.match(/\.Mount\(\s*"([^"]+)"\s*,\s*(\w+)\s*\(\s*\)/)
+        return {prefix: m[1], func_name: m[2], recv_type: nil}
       end
       nil
+    end
+
+    # Skip key for a parsed mount target: a method target is keyed by
+    # `Receiver.Method` so the free pass skips only the exact mounted
+    # method body, while a plain-function target is keyed by its bare
+    # name. Mirrors the keys produced when scanning declarations.
+    private def mount_skip_key(target : NamedTuple(prefix: String, func_name: String, recv_type: String?)) : String
+      if rt = target[:recv_type]
+        "#{rt}.#{target[:func_name]}"
+      else
+        target[:func_name]
+      end
     end
 
     # Extracts endpoints from a router function definition, searching across

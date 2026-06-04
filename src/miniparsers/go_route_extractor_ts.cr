@@ -85,6 +85,15 @@ module Noir
       # surfaces as a phantom `Any /error` route fanned across all 7
       # HTTP verbs (observed in gin-vue-admin: `/error`, `/mode`).
       "zap",
+      # The stdlib net/http package: `http.Handle("/x", h)` /
+      # `http.HandleFunc("/x", h)` register on the default ServeMux and
+      # collide with chi's identically-named all-methods registrations
+      # (chi `net_http_methods` path). `http` is never a chi router, so
+      # exclude it — otherwise every `http.Handle`/`http.HandleFunc` in a
+      # chi app (promhttp metrics, pprof, …) fans out to 7 phantom verbs.
+      # (`http.Get`/`http.Post` client calls are already dropped by the
+      # scheme / handler-arg guards.)
+      "http",
     }
 
     # Chain methods that return the receiving router/group unchanged —
@@ -959,13 +968,24 @@ module Noir
       ty = Noir::TreeSitter.node_type(node)
 
       # Skip `func <skipped>() { ... }` bodies entirely — their routes are
-      # emitted by a separate analysis pass (e.g. Mount expansion). Both
-      # plain functions (`func adminRouter()`) and methods
-      # (`func (rs todosResource) Routes()`) can be mount targets, so
-      # match on the declaration name for either node type.
+      # emitted by a separate analysis pass (e.g. Mount expansion). A plain
+      # function (`func adminRouter()`) is keyed by its bare name; a method
+      # (`func (rs todosResource) Routes()`) is keyed by `Receiver.Method`
+      # so ONLY the exact mounted method body is skipped — a same-named
+      # method on another type, or a top-level router builder also named
+      # `Routes()` used directly, keeps its routes (and the `.Mount`
+      # calls inside it).
       if (ty == "function_declaration" || ty == "method_declaration") && !skip_functions.empty?
         if name_node = Noir::TreeSitter.field(node, "name")
-          return if skip_functions.includes?(Noir::TreeSitter.node_text(name_node, source))
+          name = Noir::TreeSitter.node_text(name_node, source)
+          skip_key = if ty == "method_declaration"
+                       if (recv = Noir::TreeSitter.field(node, "receiver")) && (rt = receiver_type_name(recv, source))
+                         "#{rt}.#{name}"
+                       end
+                     else
+                       name
+                     end
+          return if skip_key && skip_functions.includes?(skip_key)
         end
       end
 
