@@ -52,10 +52,17 @@ module Analyzer::Rust
       @current_source = source
       Noir::TreeSitter.parse_rust(source) do |root|
         controller_bodies = collect_controller_handle_bodies(root, source)
+        engine_prefixes = collect_engine_prefix_ranges(root, source)
 
-        collect_registrations(root, source).each do |reg|
+        collect_registrations(root, source, engine_prefixes).each do |reg|
           case reg.kind
-          when :route, :wildcard, :engine
+          when :engine
+            # `engine!("/prefix" => engine)` mounts a sub-engine; it is
+            # not itself an endpoint. Its child routes are prefix-composed
+            # via `engine_prefixes` during fragment scanning, so emitting
+            # the mount path here would be a phantom route.
+            next
+          when :route, :wildcard
             body = reg.controller ? controller_bodies[reg.controller]? : nil
             methods = body ? extract_methods(body, source) : [] of String
             methods << "GET" if methods.empty?
@@ -95,17 +102,49 @@ module Analyzer::Rust
     # Collect every route registration reachable from `root`: macros and
     # method calls in the real AST, plus everything hidden inside
     # re-parsed `vec!`-style macro bodies.
-    private def collect_registrations(root : LibTreeSitter::TSNode, source : String) : Array(Registration)
+    private def collect_registrations(root : LibTreeSitter::TSNode,
+                                      source : String,
+                                      engine_prefixes : Array(Tuple(Int32, Int32, String))) : Array(Registration)
       sink = [] of Registration
-      scan_registrations(root, source, 0, sink)
+      scan_registrations(root, source, 0, sink, "")
 
-      collect_route_macro_fragments(root, source).each do |fragment, row_offset|
+      collect_route_macro_fragments(root, source, engine_prefixes).each do |fragment, row_offset, prefix|
         Noir::TreeSitter.parse_rust(fragment) do |frag_root|
-          scan_registrations(frag_root, fragment, row_offset, sink)
+          scan_registrations(frag_root, fragment, row_offset, sink, prefix)
         end
       end
 
       sink
+    end
+
+    # Map each mounted sub-engine's `Engine::new(...)` byte range to its
+    # mount prefix, so route registrations hidden in that engine's `vec!`
+    # body inherit the prefix. `engine!("/admin" => engine)` is matched
+    # textually (the macro body is an unparsed token tree); the matching
+    # `let engine = Engine::new(...)` binding supplies the range.
+    private def collect_engine_prefix_ranges(root : LibTreeSitter::TSNode, source : String) : Array(Tuple(Int32, Int32, String))
+      mounts = {} of String => String
+      source.scan(/engine!\s*\(\s*"([^"]*)"\s*=>\s*([A-Za-z_]\w*)\s*\)/) do |m|
+        mounts[m[2]] = m[1]
+      end
+      ranges = [] of Tuple(Int32, Int32, String)
+      return ranges if mounts.empty?
+      walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "let_declaration"
+        pattern = Noir::TreeSitter.field(node, "pattern")
+        next unless pattern && Noir::TreeSitter.node_type(pattern) == "identifier"
+        prefix = mounts[Noir::TreeSitter.node_text(pattern, source)]?
+        next unless prefix
+        value = Noir::TreeSitter.field(node, "value")
+        next unless value
+        ranges << {LibTreeSitter.ts_node_start_byte(value).to_i, LibTreeSitter.ts_node_end_byte(value).to_i, prefix}
+      end
+      ranges
+    end
+
+    private def join_engine_path(prefix : String, route_path : String) : String
+      return route_path if prefix.empty?
+      "/#{prefix.strip('/')}/#{route_path.lstrip('/')}".rstrip('/')
     end
 
     # Walk `node` for both registration shapes:
@@ -115,7 +154,8 @@ module Analyzer::Rust
     private def scan_registrations(node : LibTreeSitter::TSNode,
                                    source : String,
                                    row_offset : Int32,
-                                   sink : Array(Registration))
+                                   sink : Array(Registration),
+                                   prefix : String)
       walk(node) do |child|
         case Noir::TreeSitter.node_type(child)
         when "macro_invocation"
@@ -131,10 +171,17 @@ module Analyzer::Rust
           decoded = decode_macro_token_tree(tt, source)
           next unless decoded
           route_path, controller = decoded
+          # Prefix the route with its enclosing engine's mount path
+          # (empty for top-level routes); `:engine` mounts keep their own
+          # path since they are dropped at emit time.
+          route_path = join_engine_path(prefix, route_path) if kind != :engine
           sink << Registration.new(route_path, controller, kind, Noir::TreeSitter.node_start_row(child) + 1 + row_offset)
         when "call_expression"
           reg = decode_method_call(child, source, row_offset)
-          sink << reg if reg
+          if reg
+            reg = Registration.new(join_engine_path(prefix, reg.path), reg.controller, reg.kind, reg.row) unless prefix.empty?
+            sink << reg
+          end
         end
       end
     end
@@ -223,8 +270,10 @@ module Analyzer::Rust
     # Re-parseable expression fragments for every macro body that
     # mentions a route registration, paired with the 0-based row of the
     # macro's `token_tree` so detected routes map back to the file line.
-    private def collect_route_macro_fragments(root : LibTreeSitter::TSNode, source : String) : Array(Tuple(String, Int32))
-      fragments = [] of Tuple(String, Int32)
+    private def collect_route_macro_fragments(root : LibTreeSitter::TSNode,
+                                              source : String,
+                                              engine_prefixes : Array(Tuple(Int32, Int32, String))) : Array(Tuple(String, Int32, String))
+      fragments = [] of Tuple(String, Int32, String)
       walk(root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "macro_invocation"
         name_node = Noir::TreeSitter.field(node, "macro")
@@ -238,7 +287,11 @@ module Analyzer::Rust
         next unless tt = token_tree
         text = Noir::TreeSitter.node_text(tt, source)
         next unless text.includes?("route") || text.includes?("crud") || text.includes?("rest") || text.includes?("wildcard")
-        fragments << {"fn __noir_rwf_wf() { let __noir_x = #{text}; }", Noir::TreeSitter.node_start_row(tt)}
+        # A `vec!` body sitting inside a mounted engine's `Engine::new(...)`
+        # inherits that engine's mount prefix.
+        tt_byte = LibTreeSitter.ts_node_start_byte(tt).to_i
+        prefix = (engine_prefixes.find { |s, e, _| tt_byte >= s && tt_byte < e }).try(&.[2]) || ""
+        fragments << {"fn __noir_rwf_wf() { let __noir_x = #{text}; }", Noir::TreeSitter.node_start_row(tt), prefix}
       end
       fragments
     end
