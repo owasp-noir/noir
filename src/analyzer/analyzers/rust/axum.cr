@@ -131,6 +131,10 @@ module Analyzer::Rust
     # axum apps (static-file mounts, SPA fallbacks, websocket upgrades).
     ROUTER_EMIT_NAMES = Set{
       "route", "route_service", "nest_service", "fallback", "fallback_service",
+      # aide's `ApiRouter` (OpenAPI companion, used by svix and many
+      # axum apps) mirrors `.route` with `.api_route(path, mr)` and
+      # `.api_route_with(path, mr, transform_closure)`.
+      "api_route", "api_route_with",
     }
 
     BUILDER_ROUTE_EMIT_NAMES = Set{
@@ -210,9 +214,14 @@ module Analyzer::Rust
       walk_router_builders(receiver, source, prefix, test_regions, mounted_router_names, &block)
     end
 
+    # `.nest("/p", router)` and aide's `.nest_api_service("/p", router)`
+    # both mount a sub-router under a path prefix.
+    NEST_NAMES = Set{"nest", "nest_api_service"}
+
     private def extract_nest_call(call : LibTreeSitter::TSNode,
                                   source : String) : Tuple(String, LibTreeSitter::TSNode)?
-      return unless field_call_name(call, source) == "nest"
+      name = field_call_name(call, source)
+      return unless name && NEST_NAMES.includes?(name)
       args = named_arguments(call)
       return unless args.size >= 2
       prefix = string_literal_text(args[0], source)
@@ -391,7 +400,11 @@ module Analyzer::Rust
       return unless kind
 
       case kind
-      when "route"
+      when "route", "api_route", "api_route_with"
+        # `.route(path, mr)`, aide `.api_route(path, mr)`, and
+        # `.api_route_with(path, mr, transform)` all carry the path in
+        # arg 0 and the method-router in arg 1 (the trailing transform
+        # closure of `api_route_with` is ignored).
         args = Noir::TreeSitter.field(call, "arguments")
         return unless args
         named = named_children(args)
@@ -468,20 +481,21 @@ module Analyzer::Rust
         break unless fn_node
         case Noir::TreeSitter.node_type(fn_node)
         when "identifier", "scoped_identifier"
-          # Innermost: `get(handler)`.
-          verb = Noir::TreeSitter.node_text(fn_node, source).split("::").last.downcase
-          if HTTP_VERBS.includes?(verb)
-            handlers.unshift({verb.upcase, first_callable_argument(cursor, source)})
+          # Innermost: `get(handler)` or aide's `get_with(handler, op)`.
+          verb = normalize_method_verb(Noir::TreeSitter.node_text(fn_node, source).split("::").last)
+          if verb
+            handlers.unshift({verb, first_callable_argument(cursor, source)})
           end
           break
         when "field_expression"
-          # Chained: `<inner>.post(...)`. Field is the verb. Non-verb
-          # layers (`.layer(...)`, `.route_layer(...)`) are transparent.
+          # Chained: `<inner>.post(...)` / `.post_with(...)`. Field is
+          # the verb. Non-verb layers (`.layer(...)`, `.route_layer(...)`)
+          # are transparent.
           field = Noir::TreeSitter.field(fn_node, "field")
           if field
-            verb = Noir::TreeSitter.node_text(field, source).downcase
-            if HTTP_VERBS.includes?(verb)
-              handlers.unshift({verb.upcase, first_callable_argument(cursor, source)})
+            verb = normalize_method_verb(Noir::TreeSitter.node_text(field, source))
+            if verb
+              handlers.unshift({verb, first_callable_argument(cursor, source)})
             end
           end
           inner = Noir::TreeSitter.field(fn_node, "value")
@@ -494,6 +508,16 @@ module Analyzer::Rust
 
       handlers << {"GET", nil.as(String?)} if handlers.empty?
       handlers
+    end
+
+    # Map a method-router constructor name to its canonical HTTP verb,
+    # or `nil` if it isn't one. Handles plain axum verbs (`get`, `post`,
+    # … `any`) and aide's operation-annotated `*_with` variants
+    # (`get_with`, `post_with`, …). Returns the upcased verb.
+    private def normalize_method_verb(name : String) : String?
+      verb = name.downcase
+      verb = verb[0...-"_with".size] if verb.ends_with?("_with")
+      HTTP_VERBS.includes?(verb) ? verb.upcase : nil
     end
 
     private def first_callable_argument(call : LibTreeSitter::TSNode, source : String) : String?
