@@ -434,6 +434,33 @@ module Analyzer::Ruby
             next
           end
 
+          # `get :action, to: "ctrl#action"` outside any resource block —
+          # e.g. inside a bare `namespace :apps`. The symbol is a literal
+          # path segment (`/api/v1/apps/verify_credentials`), not a resource
+          # action. Requires an explicit destination so a bare `get :foo`
+          # with no controller context isn't fabricated into a route.
+          if (am = rest.match(/^\s*:(\w+)\b/)) && explicit_route_destination?(rest)
+            segment = am[1]
+            prefix = current_path_prefix_for_route(stack, route_scope)
+            url = prefix.empty? ? "/#{segment}" : "/#{prefix}/#{segment}"
+
+            ctrl_action = parse_controller_action(rest, current_controller_scope(stack))
+            ctrl_path = nil.as(String?)
+            action_name = nil.as(String?)
+            action_params = [] of Param
+            if ctrl_action
+              ctrl_name, action = ctrl_action
+              ctrl_path = find_controller_file(framework_root, ctrl_name, stack)
+              action_name = action
+              action_params = params_for_action(ctrl_path, action, verb)
+            end
+
+            endpoint = Endpoint.new(url, verb, action_params, details)
+            attach_callees_for_action(endpoint, ctrl_path, action_name) if action_name
+            @result << endpoint
+            next
+          end
+
           # `get "path"` / `get "path" => "..."` / `get "path", to: "..."`.
           # The path literal may be empty (`get "" => "admin#index"` maps a
           # namespace to its bare prefix), so accept `*` not `+`.
