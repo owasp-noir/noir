@@ -280,6 +280,13 @@ module Analyzer::Rust
       leaf = ref.split("::").last
       if target = alias_map[leaf]?
         return target if fn_leaves.has_key?(target)
+        # A re-export written inside a nested `use a::{ b as c }` group records
+        # the alias target relative to that group (`events_routes`, not
+        # `core::events_routes`), so it won't be a registry key directly —
+        # match it as a unique module-qualified suffix instead.
+        tleaf = target.split("::").last
+        tmatches = fn_leaves.keys.select(&.ends_with?("::#{tleaf}"))
+        return tmatches.first if tmatches.size == 1
       end
       segs = ref.split("::")
       cand = segs.size >= 2 ? "#{segs[-2]}::#{segs[-1]}" : segs[-1]
