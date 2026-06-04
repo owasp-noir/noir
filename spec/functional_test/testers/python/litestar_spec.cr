@@ -18,6 +18,7 @@ expected_endpoints = [
     Param.new("room_id", "", "path"),
     Param.new("token", "", "query"),
   ]),
+  Endpoint.new("/ws-listener", "GET"),
   Endpoint.new("/headers", "GET", [Param.new("X-Token", "", "header")]),
   Endpoint.new("/cookies", "GET", [Param.new("session", "", "cookie")]),
   Endpoint.new("/inline/summary", "GET", [Param.new("mode", "", "query")]),
@@ -45,4 +46,10 @@ it "marks Litestar websocket endpoints with ws protocol" do
   websocket_route = tester.app.endpoints.find { |endpoint| endpoint.url == "/ws/{room_id}" }
   websocket_route.should_not be_nil
   websocket_route.try(&.protocol).should eq("ws")
+end
+
+it "detects @websocket_listener handlers as ws endpoints" do
+  listener_route = tester.app.endpoints.find { |endpoint| endpoint.url == "/ws-listener" }
+  listener_route.should_not be_nil
+  listener_route.try(&.protocol).should eq("ws")
 end

@@ -5,7 +5,12 @@ module Analyzer::Python
     # Decorator matching: @get("/path"), @post("/path"), etc. The tail
     # after the path literal is captured so extra kwargs (like methods=)
     # can be inspected for multi-method @route decorators.
-    DECORATOR_REGEX = /@(get|post|put|patch|delete|head|options|route|websocket)\s*\(([^)]*)/
+    # `websocket(?:_listener|_stream)?` also matches Litestar's
+    # `@websocket_listener("/ws")` and `@websocket_stream("/ws")`
+    # decorators (the listener/stream class-based WS handlers), which
+    # take a positional path just like `@websocket` — without the
+    # variants every listener/stream endpoint was silently dropped.
+    DECORATOR_REGEX = /@(get|post|put|patch|delete|head|options|route|websocket(?:_listener|_stream)?)\s*\(([^)]*)/
     # Path literal inside a decorator. Litestar accepts both a positional
     # path and an explicit `path=` keyword argument.
     DECORATOR_PATH_REGEX    = /^\s*[rf]?['"]([^'"]*)['"]/
@@ -88,7 +93,7 @@ module Analyzer::Python
           route_path = path_match[1]
 
           methods = [] of ::String
-          websocket_route = decorator == "websocket"
+          websocket_route = decorator.starts_with?("websocket")
           if decorator == "route"
             http_match = body.match(HTTP_METHOD_KW_REGEX)
             if http_match
@@ -465,7 +470,7 @@ module Analyzer::Python
     private def coalesce_litestar_decorator(lines : Array(::String),
                                             index : Int32,
                                             line : ::String) : ::String
-      return line unless line.matches?(/@(?:get|post|put|patch|delete|head|options|route|websocket)\s*\(/)
+      return line unless line.matches?(/@(?:get|post|put|patch|delete|head|options|route|websocket(?:_listener|_stream)?)\s*\(/)
       delta = python_decorator_paren_delta(line)
       return line if delta <= 0
 

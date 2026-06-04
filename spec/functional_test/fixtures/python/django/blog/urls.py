@@ -120,6 +120,18 @@ urlpatterns = [
         r'delete_test',
         views.delete_test,
         name='delete_test'),
+    path(
+        r'require_post',
+        views.require_post_view,
+        name='require_post_view'),
+    path(
+        r'require_methods',
+        views.require_methods_view,
+        name='require_methods_view'),
+    path(
+        r'widget/delete',
+        views.WidgetDeleteView.as_view(),
+        name='widget_delete'),
     re_path(
         r'^legacy/(?P<legacy_id>[0-9]+)/$',
         views.legacy_detail,

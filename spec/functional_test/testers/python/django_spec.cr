@@ -139,6 +139,14 @@ expected_endpoints = [
   Endpoint.new("/test", "PATCH", [Param.new("test_param", "", "form")]),
   Endpoint.new("/delete_test", "GET"),
   Endpoint.new("/delete_test", "DELETE"),
+  # @require_POST → POST only (no implicit GET).
+  Endpoint.new("/require_post", "POST"),
+  # @require_http_methods(["GET", "POST"]) under a non-route decorator.
+  Endpoint.new("/require_methods", "GET"),
+  Endpoint.new("/require_methods", "POST"),
+  # DeleteView → GET (confirm) + POST (delete), never HTTP DELETE.
+  Endpoint.new("/widget/delete", "GET"),
+  Endpoint.new("/widget/delete", "POST"),
   Endpoint.new("/legacy/{legacy_id}/", "GET", [
     Param.new("preview", "", "query"),
     Param.new("legacy_id", "", "path"),
