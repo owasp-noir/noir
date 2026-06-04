@@ -158,16 +158,22 @@ module Analyzer::Go
                           rdetails = Details.new(PathInfo.new(path, route.line + 1))
                           Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
                             ep = Endpoint.new(route.path, verb, rdetails)
+                            if entries = callees_by_route[route.line]?
+                              entries.each do |entry|
+                                name, callee_path, callee_line = entry
+                                ep.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+                              end
+                            end
                             result << ep
                             builder_emitted << ep
                           end
                         end
                       end
-                      # Attach any Gin params (Query/Bind/Cookie/Param) and
-                      # (future) callees from the builder function body to the
-                      # expanded endpoints. Mirrors chi's attach_router_function_params
-                      # for Mount-expanded routes so that helpers with c.Query etc.
-                      # inside produce correct params on the prefixed endpoints.
+                      # Attach any Gin params (Query/Bind/Cookie/Param) and callees
+                      # from the builder function body to the expanded endpoints.
+                      # Mirrors chi's attach_router_function_params for Mount-expanded
+                      # routes (callees were attached in the emit above using the
+                      # precomputed callees_by_route; params via the dedicated attach).
                       if !builder_emitted.empty?
                         attach_gin_builder_params(builder_emitted, content, rb.start_row, rb.end_row)
                       end
@@ -242,13 +248,32 @@ module Analyzer::Go
       end
       return if eps_by_line.empty?
       currents = [] of Endpoint
+      in_inline = false
+      brace_count = 0
       (start_row..[end_row, lines.size - 1].min).each do |i|
         line = lines[i]?
         next unless line
+        apply_now = false
         if eps = eps_by_line[i]?
           currents = eps
+          apply_now = true
+          if line.includes?("func(")
+            in_inline = true
+            brace_count = line.count("{") - line.count("}")
+            if brace_count <= 0
+              in_inline = false
+              brace_count = 0
+            end
+          end
+        elsif in_inline
+          brace_count += line.count("{") - line.count("}")
+          if brace_count <= 0
+            in_inline = false
+            brace_count = 0
+          end
+          apply_now = true
         end
-        if !currents.empty?
+        if !currents.empty? && apply_now
           add_gin_param_patterns_to_many(line, currents)
         end
       end
