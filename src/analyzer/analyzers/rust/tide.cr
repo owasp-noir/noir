@@ -152,7 +152,7 @@ module Analyzer::Rust
                                   ranges : Array(Tuple(Int32, Int32, String))) : String
       return route_path if ranges.empty?
       b = LibTreeSitter.ts_node_start_byte(node).to_i
-      enclosing = ranges.select { |s, e, _| b >= s && b < e }.sort_by { |s, _, _| s }
+      enclosing = ranges.select { |s, e, _| b >= s && b < e }.sort_by! { |s, _, _| s }
       return route_path if enclosing.empty?
       prefix = enclosing.map { |_, _, p| "/#{p.strip('/')}" }.join.rstrip('/')
       "#{prefix}/#{route_path.lstrip('/')}"
