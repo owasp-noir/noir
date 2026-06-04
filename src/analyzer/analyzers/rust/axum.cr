@@ -24,6 +24,22 @@ module Analyzer::Rust
     # whatever the client sends — so we mirror axum's `any` verb.
     SERVICE_METHOD = "ANY"
 
+    # utoipa-axum routes handlers by attribute, not by a `.route()` call:
+    # `#[utoipa::path(get, path = "/x")]` on the handler fn, then
+    # `OpenApiRouter::new().routes(routes!(mod::handler))`. The router is
+    # mounted with `.nest("/api/v1/x", mod_routes::create_routes())`, so the
+    # real URL is the nest prefix + the attribute path. `analyze` builds a
+    # `{module, handler_leaf} => [prefix]` index up front (resolving the
+    # cross-file `.nest(prefix, fn())` chain through the `routes!()`
+    # collectors); `analyze_file` then emits each `#[utoipa::path]` handler
+    # at its composed URL.
+    @utoipa_prefix : Hash(Tuple(String, String), Array(String))? = nil
+
+    def analyze
+      @utoipa_prefix = build_utoipa_prefix_index
+      super
+    end
+
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       # Path-based test filtering now lives in
@@ -119,6 +135,13 @@ module Analyzer::Rust
               mount_queue << {nested_name, nested_prefix} unless processed_mounts.includes?(nested_key)
             end
           end
+        end
+
+        # utoipa-axum `#[utoipa::path(...)]` attribute handlers (registered
+        # via `routes!()`, not `.route()`), composed with their OpenApiRouter
+        # nest prefix.
+        if source.includes?("utoipa::path")
+          collect_utoipa_endpoints(root, source, path, test_regions, include_callee, function_index, endpoints)
         end
       end
 
@@ -703,6 +726,298 @@ module Analyzer::Rust
         current_path[0, idx + marker.size - 1]
       else
         File.dirname(current_path)
+      end
+    end
+
+    # ── utoipa-axum #[utoipa::path] support ──────────────────────────
+
+    UTOIPA_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options", "trace"}
+
+    # Emit an endpoint for every `#[utoipa::path(method, path = "/x")]`
+    # handler in the file, composed with the OpenApiRouter nest prefix the
+    # handler is registered under.
+    private def collect_utoipa_endpoints(root : LibTreeSitter::TSNode, source : String, path : String,
+                                         test_regions : Array(Tuple(Int32, Int32)), include_callee : Bool,
+                                         function_index : Hash(String, LibTreeSitter::TSNode),
+                                         endpoints : Array(Endpoint))
+      file_mod = primary_module(path)
+      each_attribute_pair(root) do |attr_item, function|
+        next if RustEngine.inside_test_region?(attr_item, test_regions)
+        route = extract_utoipa_attr(attr_item, source)
+        next unless route
+        methods, attr_path = route
+        leaf = function_name(function, source)
+        # Only emit handlers actually registered through `routes!()` (so they
+        # appear in the nest index). A `#[utoipa::path]` handler wired up with
+        # a manual `.route(...)` instead — common when a body-limit layer is
+        # needed — is emitted by the builder pass already; emitting it here
+        # too would duplicate it at the bare, prefix-less attribute path.
+        prefixes = leaf ? @utoipa_prefix.try(&.[{file_mod, leaf}]?) : nil
+        next if prefixes.nil? || prefixes.empty?
+        root_path = attr_path.empty? || attr_path == "/"
+        urls = prefixes.map do |p|
+          if p.empty?
+            root_path ? "/" : ensure_leading_slash(attr_path)
+          elsif root_path
+            p # `path = "/"` registers at the nest root, no trailing slash
+          else
+            join_paths(p, attr_path)
+          end
+        end
+        attr_row = Noir::TreeSitter.node_start_row(attr_item) + 1
+        methods.each do |verb|
+          urls.each do |url|
+            details = Details.new(PathInfo.new(path, attr_row))
+            endpoint = Endpoint.new(url, verb, details)
+            if include_callee && leaf
+              entries = callee_entries_for_handler(function_index, source, path, leaf)
+              attach_rust_callees(endpoint, entries)
+            end
+            endpoints << endpoint
+          end
+        end
+      end
+    end
+
+    # `#[utoipa::path(get, path = "/x")]` / `#[utoipa::path(method(get, head),
+    # path = "/x")]` → `{[VERBS], "/x"}`. Returns nil for other attributes.
+    private def extract_utoipa_attr(attr_item : LibTreeSitter::TSNode, source : String) : Tuple(Array(String), String)?
+      attr = find_named_child(attr_item, "attribute")
+      return unless attr
+      name = attr_path_name(attr, source)
+      return unless name && (name == "utoipa::path" || name.ends_with?("::utoipa::path") || name == "path")
+      args = Noir::TreeSitter.field(attr, "arguments")
+      return unless args
+      text = Noir::TreeSitter.node_text(args, source)
+      path_m = text.match(/\bpath\s*=\s*"([^"]*)"/)
+      return unless path_m
+      head = text.split(/\bpath\s*=/, 2).first
+      methods = extract_utoipa_methods(head)
+      return if methods.empty?
+      {methods, path_m[1]}
+    end
+
+    private def extract_utoipa_methods(head : String) : Array(String)
+      verbs = [] of String
+      if mm = head.match(/\bmethod\s*\(\s*([^)]*)\)/)
+        mm[1].scan(/[A-Za-z]+/) do |m|
+          v = m[0].downcase
+          verbs << v.upcase if UTOIPA_VERBS.includes?(v)
+        end
+      end
+      if verbs.empty?
+        head.scan(/[A-Za-z]+/) do |m|
+          v = m[0].downcase
+          verbs << v.upcase if verbs.empty? && UTOIPA_VERBS.includes?(v)
+        end
+      end
+      verbs.uniq
+    end
+
+    private def attr_path_name(attr : LibTreeSitter::TSNode, source : String) : String?
+      result = nil.as(String?)
+      Noir::TreeSitter.each_named_child(attr) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "identifier", "scoped_identifier"
+          result = Noir::TreeSitter.node_text(child, source)
+          break
+        end
+      end
+      result
+    end
+
+    # Build `{module, handler_leaf} => [nest prefix]` from the OpenApiRouter
+    # composition: `.nest("/p", mod_routes::create_routes())` mounts a
+    # collector fn, whose `.routes(routes!(mod::handler))` calls list the
+    # handlers. The nest chain is threaded across files (and through nested
+    # `.nest()` inside collectors).
+    private def build_utoipa_prefix_index : Hash(Tuple(String, String), Array(String))
+      nest_edges = Hash(String, Array(Tuple(String, String))).new
+      nested_set = Set(String).new
+      fn_routes = Hash(String, Array(Tuple(String, String?))).new
+
+      all_files.each do |fpath|
+        next if File.directory?(fpath)
+        next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
+        next if RustEngine.test_path?(fpath)
+        src = read_file_content(fpath)
+        next unless src.includes?("OpenApiRouter") || src.includes?(".routes(")
+        file_mod = primary_module(fpath)
+        begin
+          test_regions = RustEngine.collect_cfg_test_regions(src)
+          Noir::TreeSitter.parse_rust(src) do |root|
+            collect_utoipa_fns(root, src, file_mod, test_regions, nest_edges, nested_set, fn_routes)
+          end
+        rescue e
+          logger.debug "axum utoipa index scan error #{fpath}: #{e}"
+        end
+      end
+
+      ext = Hash(String, Array(String)).new
+      nested_set.each { |f| resolve_nest_external(f, nest_edges, nested_set, ext, Set(String).new) }
+
+      index = Hash(Tuple(String, String), Array(String)).new
+      fn_routes.each do |fnkey, leaves|
+        prefixes = ext[fnkey]? || [""]
+        leaves.each do |leaf, ref_mod|
+          key = {ref_mod || fnkey.split("::").first, leaf}
+          bucket = (index[key] ||= [] of String)
+          prefixes.each { |p| bucket << p unless bucket.includes?(p) }
+        end
+      end
+      index
+    end
+
+    private def collect_utoipa_fns(root : LibTreeSitter::TSNode, source : String, file_mod : String,
+                                   test_regions : Array(Tuple(Int32, Int32)),
+                                   nest_edges : Hash(String, Array(Tuple(String, String))),
+                                   nested_set : Set(String),
+                                   fn_routes : Hash(String, Array(Tuple(String, String?))))
+      walk(root) do |n|
+        next unless Noir::TreeSitter.node_type(n) == "function_item"
+        next if RustEngine.inside_test_region?(n, test_regions)
+        name_node = Noir::TreeSitter.field(n, "name")
+        body = Noir::TreeSitter.field(n, "body")
+        next unless name_node && body
+        fn_key = "#{file_mod}::#{Noir::TreeSitter.node_text(name_node, source)}"
+        walk(body) do |c|
+          case Noir::TreeSitter.node_type(c)
+          when "macro_invocation"
+            collect_utoipa_routes_leaves(c, source, fn_key, fn_routes)
+          when "call_expression"
+            fnf = Noir::TreeSitter.field(c, "function")
+            next unless fnf && Noir::TreeSitter.node_type(fnf) == "field_expression"
+            fld = Noir::TreeSitter.field(fnf, "field")
+            next unless fld && Noir::TreeSitter.node_text(fld, source) == "nest"
+            args = Noir::TreeSitter.field(c, "arguments")
+            next unless args
+            named = [] of LibTreeSitter::TSNode
+            Noir::TreeSitter.each_named_child(args) { |a| named << a }
+            next if named.size < 2
+            prefix = string_literal_text(named[0], source)
+            next unless prefix
+            child_key = nest_child_key(named[1], source)
+            next unless child_key
+            (nest_edges[fn_key] ||= [] of Tuple(String, String)) << {child_key, prefix}
+            nested_set.add(child_key)
+          end
+        end
+      end
+    end
+
+    private def nest_child_key(node : LibTreeSitter::TSNode, source : String) : String?
+      return unless Noir::TreeSitter.node_type(node) == "call_expression"
+      fn = Noir::TreeSitter.field(node, "function")
+      return unless fn
+      case Noir::TreeSitter.node_type(fn)
+      when "scoped_identifier"
+        segs = Noir::TreeSitter.node_text(fn, source).split("::")
+        segs.size >= 2 ? "#{segs[-2]}::#{segs[-1]}" : segs[-1]
+      when "identifier"
+        Noir::TreeSitter.node_text(fn, source)
+      end
+    end
+
+    private def collect_utoipa_routes_leaves(macro_node : LibTreeSitter::TSNode, source : String,
+                                             fn_key : String, fn_routes : Hash(String, Array(Tuple(String, String?))))
+      mname = Noir::TreeSitter.field(macro_node, "macro")
+      return unless mname && Noir::TreeSitter.node_text(mname, source).split("::").last == "routes"
+      tt = nil.as(LibTreeSitter::TSNode?)
+      Noir::TreeSitter.each_named_child(macro_node) { |c| tt = c if Noir::TreeSitter.node_type(c) == "token_tree" }
+      return unless token_tree = tt
+      text = Noir::TreeSitter.node_text(token_tree, source)
+      inner = text.strip
+      inner = inner[1..] if inner.starts_with?('(') || inner.starts_with?('[')
+      inner = inner[0...-1] if inner.ends_with?(')') || inner.ends_with?(']')
+      inner = inner.gsub(/\/\/[^\n]*/, " ").gsub(%r{/\*.*?\*/}m, " ")
+      bucket = (fn_routes[fn_key] ||= [] of Tuple(String, String?))
+      inner.split(',').each do |raw|
+        m = raw.match(/([A-Za-z_]\w*(?:\s*::\s*[A-Za-z_]\w*)*)/)
+        next unless m
+        segs = m[1].split("::").map(&.strip)
+        bucket << {segs[-1], segs.size >= 2 ? segs[-2] : nil}
+      end
+    end
+
+    private def resolve_nest_external(name : String,
+                                      edges : Hash(String, Array(Tuple(String, String))),
+                                      nested_set : Set(String),
+                                      ext : Hash(String, Array(String)),
+                                      stack : Set(String)) : Array(String)
+      if cached = ext[name]?
+        return cached
+      end
+      return [""] unless nested_set.includes?(name)
+      return [] of String if stack.includes?(name)
+      stack.add(name)
+      result = [] of String
+      edges.each do |parent, lst|
+        lst.each do |child, prefix|
+          next unless child == name
+          resolve_nest_external(parent, edges, nested_set, ext, stack).each do |pe|
+            joined = join_nest(pe, prefix)
+            result << joined unless result.includes?(joined)
+          end
+        end
+      end
+      stack.delete(name)
+      final = result.empty? ? [""] : result
+      ext[name] = final
+      final
+    end
+
+    private def join_nest(a : String, b : String) : String
+      return b if a.empty?
+      return a if b.empty?
+      "#{a.rstrip('/')}/#{b.lstrip('/')}"
+    end
+
+    private def ensure_leading_slash(p : String) : String
+      p.starts_with?("/") ? p : "/#{p}"
+    end
+
+    private def primary_module(path : String) : String
+      base = File.basename(path, ".rs")
+      dir = File.dirname(path)
+      case base
+      when "mod"
+        File.basename(dir)
+      when "lib", "main"
+        parent = File.basename(dir)
+        parent == "src" ? File.basename(File.dirname(dir)) : parent
+      else
+        base
+      end
+    end
+
+    private def find_named_child(node : LibTreeSitter::TSNode, type : String) : LibTreeSitter::TSNode?
+      Noir::TreeSitter.each_named_child(node) do |child|
+        return child if Noir::TreeSitter.node_type(child) == type
+      end
+      nil
+    end
+
+    # Walk `node`'s children pairing each `attribute_item` with the
+    # `function_item` it decorates (skipping doc comments / other attrs).
+    private def each_attribute_pair(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode, LibTreeSitter::TSNode ->)
+      named = [] of LibTreeSitter::TSNode
+      Noir::TreeSitter.each_named_child(node) { |c| named << c }
+      named.each_with_index do |child, idx|
+        if Noir::TreeSitter.node_type(child) == "attribute_item"
+          (idx + 1...named.size).each do |i|
+            nxt = named[i]
+            case Noir::TreeSitter.node_type(nxt)
+            when "function_item"
+              block.call(child, nxt)
+              break
+            when "attribute_item", "line_comment", "block_comment"
+              next
+            else
+              break
+            end
+          end
+        end
+        each_attribute_pair(child, &block)
       end
     end
 
