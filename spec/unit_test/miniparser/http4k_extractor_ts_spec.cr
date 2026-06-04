@@ -102,12 +102,12 @@ describe Noir::TreeSitterHttp4kExtractor do
       )
       KT
     routes = Noir::TreeSitterHttp4kExtractor.extract_routes(source)
-    redirect = routes.find { |r| r.path == "/redirect" }.not_nil!
+    redirect = routes.find! { |r| r.path == "/redirect" }
     redirect.query_params.should eq(["target"])
     redirect.header_params.should be_empty
     redirect.has_body?.should be_false
 
-    ping = routes.find { |r| r.path == "/ping" }.not_nil!
+    ping = routes.find! { |r| r.path == "/ping" }
     ping.has_body?.should be_false
   end
 end
