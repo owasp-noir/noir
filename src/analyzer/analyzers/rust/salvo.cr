@@ -91,16 +91,23 @@ module Analyzer::Rust
                                         row_offset : Int32,
                                         test_regions : Array(Tuple(Int32, Int32))?,
                                         endpoints : Array(Endpoint))
+      # Nested routers compose their prefix top-down through `.push(...)`:
+      # `Router::with_path("api").push(Router::with_path("todos").get(h))`
+      # registers GET /api/todos. A flat per-verb receiver-walk only sees
+      # the innermost `.path()`, so we first thread the prefix through the
+      # push tree and record each Router base node's fully composed prefix.
+      router_prefixes = build_router_prefixes(chain_root, chain_source, test_regions)
+
       walk(chain_root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "call_expression"
         next if test_regions && RustEngine.inside_test_region?(node, test_regions)
-        chain = decode_router_chain(node, chain_source)
+        chain = decode_router_chain(node, chain_source, router_prefixes)
         next unless chain
         route_path, method, handler_name = chain
 
         row = Noir::TreeSitter.node_start_row(node) + 1 + row_offset
         details = Details.new(PathInfo.new(path, row))
-        endpoint = Endpoint.new("/#{route_path.lstrip('/')}", method, details)
+        endpoint = Endpoint.new("/#{canonicalize_salvo_path(route_path).lstrip('/')}", method, details)
         extract_path_params(route_path, endpoint)
 
         if handler_name && (handler_function = function_index[handler_name.split("::").last]?)
@@ -118,7 +125,9 @@ module Analyzer::Rust
     # scoped path (`html::pages::login`) or absent (`get(StaticDir::…)`);
     # either way the route is still emitted — the handler is only used to
     # enrich params/callees.
-    private def decode_router_chain(call : LibTreeSitter::TSNode, source : String) : Tuple(String, String, String?)?
+    private def decode_router_chain(call : LibTreeSitter::TSNode,
+                                    source : String,
+                                    router_prefixes : Hash(Int32, String)) : Tuple(String, String, String?)?
       fn_node = Noir::TreeSitter.field(call, "function")
       return unless fn_node && Noir::TreeSitter.node_type(fn_node) == "field_expression"
       verb_field = Noir::TreeSitter.field(fn_node, "field")
@@ -126,40 +135,151 @@ module Analyzer::Rust
       verb = Noir::TreeSitter.node_text(verb_field, source).downcase
       return unless HTTP_VERBS.includes?(verb)
 
-      route_path = find_chain_path(fn_node, source)
+      route_path = find_chain_path(fn_node, source, router_prefixes)
       return unless route_path
 
       handler_name = first_handler_argument(call, source)
       {route_path, verb.upcase, handler_name}
     end
 
-    # Walk up the receiver chain from a `.<verb>(...)` field expression
-    # looking for the nearest `.with_path("…")` / `.path("…")`. Returns
-    # its route string, or `nil` if the chain isn't a router chain (which
-    # is how non-routing `.get(...)` calls — `map.get(k)`,
-    # `req.headers().get("X")` — are filtered out).
-    private def find_chain_path(verb_fn : LibTreeSitter::TSNode, source : String) : String?
-      receiver = Noir::TreeSitter.field(verb_fn, "value")
+    # Thread each Router chain's path prefix top-down through `.push(...)`
+    # and record `base Router node start-byte -> fully composed prefix`.
+    # Roots (chains not reached via `.push`) are processed first thanks to
+    # pre-order traversal + a visited set, so every nested chain's prefix
+    # is unambiguous.
+    private def build_router_prefixes(chain_root : LibTreeSitter::TSNode,
+                                      source : String,
+                                      test_regions : Array(Tuple(Int32, Int32))?) : Hash(Int32, String)
+      map = {} of Int32 => String
+      visited = Set(Int32).new
+      walk(chain_root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "call_expression"
+        next if visited.includes?(node_byte(node))
+        next if test_regions && RustEngine.inside_test_region?(node, test_regions)
+        next unless router_chain_call?(node, source)
+        register_router_chain(node, "", map, visited, source)
+      end
+      map
+    end
+
+    # A call worth treating as a router-chain top: a `.push/.path/
+    # .with_path/.<verb>/.hoop(...)` method call or a `Router::*` base.
+    ROUTER_METHODS = Set{"push", "path", "with_path", "hoop", "then",
+                         "get", "post", "put", "delete", "patch", "head", "options"}
+
+    private def router_chain_call?(node : LibTreeSitter::TSNode, source : String) : Bool
+      fn = Noir::TreeSitter.field(node, "function")
+      return false unless fn
+      case Noir::TreeSitter.node_type(fn)
+      when "field_expression"
+        field = Noir::TreeSitter.field(fn, "field")
+        !!(field && ROUTER_METHODS.includes?(Noir::TreeSitter.node_text(field, source)))
+      when "scoped_identifier"
+        Noir::TreeSitter.node_text(fn, source).starts_with?("Router::")
+      else
+        false
+      end
+    end
+
+    private def register_router_chain(top : LibTreeSitter::TSNode,
+                                      inherited : String,
+                                      map : Hash(Int32, String),
+                                      visited : Set(Int32),
+                                      source : String)
+      base_node = nil.as(LibTreeSitter::TSNode?)
+      own_seg = nil.as(String?)
+      push_args = [] of LibTreeSitter::TSNode
+
+      cursor = top
       256.times do
-        return unless receiver && Noir::TreeSitter.node_type(receiver) == "call_expression"
+        break unless Noir::TreeSitter.node_type(cursor) == "call_expression"
+        visited.add(node_byte(cursor))
+        fn = Noir::TreeSitter.field(cursor, "function")
+        break unless fn
+        case Noir::TreeSitter.node_type(fn)
+        when "field_expression"
+          name = (f = Noir::TreeSitter.field(fn, "field")) ? Noir::TreeSitter.node_text(f, source) : ""
+          if (name == "path" || name == "with_path") && own_seg.nil?
+            own_seg = first_string_literal_text(Noir::TreeSitter.field(cursor, "arguments"), source)
+          elsif name == "push"
+            if pargs = Noir::TreeSitter.field(cursor, "arguments")
+              Noir::TreeSitter.each_named_child(pargs) do |arg|
+                push_args << arg if Noir::TreeSitter.node_type(arg) == "call_expression"
+              end
+            end
+          end
+          receiver = Noir::TreeSitter.field(fn, "value")
+          break unless receiver
+          cursor = receiver
+        when "scoped_identifier"
+          base_node = cursor
+          name = Noir::TreeSitter.node_text(fn, source).split("::").last
+          if name == "with_path" && own_seg.nil?
+            own_seg = first_string_literal_text(Noir::TreeSitter.field(cursor, "arguments"), source)
+          end
+          break
+        else
+          break
+        end
+      end
+
+      full = own_seg ? join_router_path(inherited, own_seg) : inherited
+      if base_node
+        map[node_byte(base_node)] = full
+      end
+      push_args.each { |arg| register_router_chain(arg, full, map, visited, source) }
+    end
+
+    private def join_router_path(prefix : String, seg : String) : String
+      return seg.strip('/') if prefix.empty?
+      "#{prefix.rstrip('/')}/#{seg.strip('/')}".strip('/')
+    end
+
+    private def node_byte(node : LibTreeSitter::TSNode) : Int32
+      LibTreeSitter.ts_node_start_byte(node).to_i
+    end
+
+    # Walk up the receiver chain from a `.<verb>(...)` field expression to
+    # the chain's `Router::*` base, returning the route's fully composed
+    # prefix. `router_prefixes` carries the prefix threaded through any
+    # enclosing `.push(...)` (so a nested router inherits its parents'
+    # path); we fall back to the chain's own local `.with_path`/`.path`
+    # segment when the base wasn't reached via a tracked root. A bare
+    # `Router::new().get(h)` (no path) resolves to "" — a real root route
+    # at `/`. Returns `nil` only when the chain isn't a Router chain
+    # (`map.get(k)`, `req.headers().get("X")` are filtered out this way).
+    private def find_chain_path(verb_fn : LibTreeSitter::TSNode,
+                                source : String,
+                                router_prefixes : Hash(Int32, String)) : String?
+      receiver = Noir::TreeSitter.field(verb_fn, "value")
+      local_seg = nil.as(String?)
+      256.times do
+        return local_seg unless receiver && Noir::TreeSitter.node_type(receiver) == "call_expression"
         rfn = Noir::TreeSitter.field(receiver, "function")
-        return unless rfn
+        return local_seg unless rfn
         case Noir::TreeSitter.node_type(rfn)
         when "field_expression"
           name = (f = Noir::TreeSitter.field(rfn, "field")) ? Noir::TreeSitter.node_text(f, source) : ""
-          if name == "with_path" || name == "path"
-            return first_string_literal_text(Noir::TreeSitter.field(receiver, "arguments"), source)
+          if (name == "with_path" || name == "path") && local_seg.nil?
+            local_seg = first_string_literal_text(Noir::TreeSitter.field(receiver, "arguments"), source)
           end
           receiver = Noir::TreeSitter.field(rfn, "value")
         when "scoped_identifier"
           # Chain base such as `Router::with_path("…")` or `Router::new()`.
           name = Noir::TreeSitter.node_text(rfn, source).split("::").last
-          if name == "with_path" || name == "path"
-            return first_string_literal_text(Noir::TreeSitter.field(receiver, "arguments"), source)
+          if (name == "with_path") && local_seg.nil?
+            local_seg = first_string_literal_text(Noir::TreeSitter.field(receiver, "arguments"), source)
           end
+          if full = router_prefixes[node_byte(receiver)]?
+            return full
+          end
+          return local_seg if local_seg
+          # `Router::new()` / `Router::with_path()` base with no tracked
+          # prefix: a path-less root router still registers at `/`.
+          return "" if name == "new" || name == "with_path"
           return
         else
-          return
+          return local_seg
         end
       end
       nil
@@ -225,6 +345,37 @@ module Analyzer::Rust
       end
       route.scan(/\{\**(\w+)(?:\|[^}]*)?\}/) do |match|
         push_path_param(endpoint, match[1])
+      end
+    end
+
+    # Strip the constraint from salvo brace params for the emitted URL,
+    # keeping the bare name: `{id|[0-9]+}` / `{id:guid}` -> `{id}`,
+    # `{**rest}` and `<id>` untouched. Uses balanced-brace matching so a
+    # nested regex quantifier (`{8}`) inside the constraint doesn't end
+    # the placeholder early.
+    private def canonicalize_salvo_path(route : String) : String
+      return route unless route.includes?('{')
+      String.build do |io|
+        i = 0
+        while i < route.size
+          if route[i] == '{'
+            depth = 1
+            j = i + 1
+            while j < route.size && depth > 0
+              depth += 1 if route[j] == '{'
+              depth -= 1 if route[j] == '}'
+              j += 1
+            end
+            inner = route[(i + 1)...(j - 1)]
+            stars = inner.starts_with?("**") ? "**" : inner.starts_with?("*") ? "*" : ""
+            name = inner.lstrip('*').split(/[:|]/, 2).first
+            io << "{#{stars}#{name}}"
+            i = j
+          else
+            io << route[i]
+            i += 1
+          end
+        end
       end
     end
 
@@ -375,7 +526,11 @@ module Analyzer::Rust
       result : String? = nil
       walk(node) do |child|
         next if result
-        if Noir::TreeSitter.node_type(child) == "string_literal"
+        case Noir::TreeSitter.node_type(child)
+        when "string_literal", "raw_string_literal"
+          # Salvo regex-constrained params live in raw strings:
+          # `Router::with_path(r"delete/{id|[0-9a-fA-F]{8}}")`. Those are
+          # `raw_string_literal` nodes, not `string_literal`.
           result = string_content(child, source)
         end
       end
