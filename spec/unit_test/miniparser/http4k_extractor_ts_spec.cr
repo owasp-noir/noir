@@ -71,4 +71,43 @@ describe Noir::TreeSitterHttp4kExtractor do
     })
     routes.should be_empty
   end
+
+  it "extracts request reads (query/header/body) from the request object" do
+    source = <<-KT
+      val app = routes(
+          "/x" bind POST to { req: Request ->
+              val q = req.query("q")
+              val h = req.header("X-Key")
+              val b = req.bodyString()
+          }
+      )
+      KT
+    route = Noir::TreeSitterHttp4kExtractor.extract_routes(source).first
+    route.query_params.should eq(["q"])
+    route.header_params.should eq(["X-Key"])
+    route.has_body?.should be_true
+  end
+
+  it "does not mint request params from Response builder calls" do
+    # `Response(...).header(...)` / `.body(...)` WRITE the response, so
+    # they must not be read as request inputs — otherwise a bodyless GET
+    # gains a phantom body:json and a redirect gains a 'location' header.
+    source = <<-KT
+      val app = routes(
+          "/redirect" bind POST to { req: Request ->
+              val target = req.query("target")
+              Response(SEE_OTHER).header("location", "/done").body("ignored")
+          },
+          "/ping" bind GET to { Response(OK).body("pong") }
+      )
+      KT
+    routes = Noir::TreeSitterHttp4kExtractor.extract_routes(source)
+    redirect = routes.find { |r| r.path == "/redirect" }.not_nil!
+    redirect.query_params.should eq(["target"])
+    redirect.header_params.should be_empty
+    redirect.has_body?.should be_false
+
+    ping = routes.find { |r| r.path == "/ping" }.not_nil!
+    ping.has_body?.should be_false
+  end
 end

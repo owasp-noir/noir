@@ -438,17 +438,23 @@ module Noir
         name = call_name(node, source)
         case
         when active && HTTP_VERB_NAMES.has_key?(name)
-          # Type-safe resource routing: `get<Articles.New> { ... }` carries
-          # a `<Type>` argument instead of a string path. Resolve the type
-          # to its @Resource-composed path; if it can't be resolved, skip
-          # rather than emit the bare routing prefix (a misleading "/").
-          if type_name = call_type_argument_name(node, source)
+          type_name = call_type_argument_name(node, source)
+          path_arg = call_string_argument(node, source, string_constants, local_string_constants)
+          if type_name && path_arg.nil?
+            # Type-safe RESOURCE routing: `get<Articles.New> { ... }` —
+            # a `<Type>` argument and NO string path. Resolve the type to
+            # its @Resource-composed path; if it can't be resolved, skip
+            # rather than emit the bare routing prefix (a misleading "/").
             if rp = resolve_resource_path(type_name, resource_paths)
               emit_resource_route(node, source, HTTP_VERB_NAMES[name], join_paths(prefix, rp), routes, include_callees)
             end
             return
           end
-          emit_route(node, source, name, prefix, routes, string_constants, local_string_constants, include_callees)
+          # `post<Body>("/path") { req -> }` (kopapi/typed-body DSL) and the
+          # plain `post("/path") { }` form both land here — the `<Type>`,
+          # when present alongside a path, names the request body, not a
+          # resource. Pass it through as the body type so the param surfaces.
+          emit_route(node, source, name, prefix, routes, string_constants, local_string_constants, include_callees, type_name)
           return
         when active && name == "route"
           path_arg = call_string_argument(node, source, string_constants, local_string_constants)
@@ -501,17 +507,21 @@ module Noir
                            routes : Array(Route),
                            string_constants : Hash(String, String),
                            local_string_constants : Hash(String, String),
-                           include_callees : Bool)
+                           include_callees : Bool,
+                           body_type : String? = nil)
       path_arg = call_string_argument(node, source, string_constants, local_string_constants)
-      return if path_arg.nil? && call_has_value_arguments?(node)
+      return if path_arg.nil? && call_has_value_arguments?(node) && body_type.nil?
       return unless path_arg || call_has_lambda?(node)
 
       verb = HTTP_VERB_NAMES[name]
       full_path = join_paths(prefix, path_arg || "")
       line = Noir::TreeSitter.node_start_row(node)
 
-      receive_type : String? = nil
-      has_body = false
+      # A `post<Body>("/x")` typed-body verb names the request body in its
+      # type argument; seed it so the json body param surfaces even when
+      # the handler never calls `call.receive<T>()` explicitly.
+      receive_type : String? = body_type
+      has_body = !body_type.nil?
       query_params = [] of String
       header_params = [] of String
       form_params = [] of String
@@ -519,9 +529,9 @@ module Noir
 
       if body = call_lambda_body(node)
         scan_handler_body(body, source, query_params, header_params, form_params).tap do |rt|
-          receive_type = rt
+          receive_type = rt unless rt.nil?
         end
-        has_body = !!receive_type || handler_reads_body?(body, source)
+        has_body = has_body || !!receive_type || handler_reads_body?(body, source)
         # KotlinCalleeExtractor uses `(name, file_path, line)` so it can
         # mirror the Java/Python/Go shape, but Ktor's route extractor
         # doesn't carry the file path — drop the placeholder here and

@@ -408,6 +408,15 @@ module Noir
     private def navigation_method_name(callee : LibTreeSitter::TSNode?, source : String) : String
       return "" unless callee
       return "" unless Noir::TreeSitter.node_type(callee) == "navigation_expression"
+      # Only treat `<receiver>.query/header/form/body(...)` as a REQUEST
+      # read when the receiver is a plain identifier (the handler's
+      # `req`/`it`/`request`). A receiver that is itself a call — most
+      # commonly `Response(OK).body(...)` / `Response(SEE_OTHER).header(
+      # "location", ...)` — is a RESPONSE builder, and matching it would
+      # mint a phantom request body/header param (notably a spurious
+      # `body:json` on bodyless GET routes).
+      receiver = first_named_child(callee)
+      return "" unless receiver && Noir::TreeSitter.node_type(receiver) == "simple_identifier"
       last_navigation_segment(callee, source)
     end
 
